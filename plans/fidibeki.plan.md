@@ -125,7 +125,7 @@ CREATE TYPE event_type AS ENUM ('feedback.created', 'issue.created', 'issue.upda
 | ask_text | BOOLEAN | NOT NULL, default true | |
 | ask_audio | BOOLEAN | NOT NULL, default false | |
 | ask_video | BOOLEAN | NOT NULL, default false | |
-| ask_dom_snapshot | BOOLEAN | NOT NULL, default false | |
+| ask_element_attachment | BOOLEAN | NOT NULL, default false | Allows user to attach a clicked DOM element + computed styles |
 | greeting | TEXT | | Custom message shown by the widget |
 | position | TEXT | NOT NULL, default 'bottom-left' | `bottom-left`, `bottom-right`, etc. |
 | replay_mode | TEXT | NOT NULL, default 'none' | `none`, `sampling`, `all` |
