@@ -44,3 +44,28 @@ The platform proxy allowlist, plan catalog, migration, polling limits, authorize
 
 ## Resolver's Notes
 No findings were declined. Telemetry failures are logged but intentionally do not affect widget availability. Production deployment remains deferred by user direction.
+
+---
+
+# AI Failure Diagnostics Review
+
+**Artifact**: `backend/internal/ai/processor.go` failure diagnostics and tests
+**Date**: 2026-07-21
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | high | 9/10 | Raw provider errors could expose customer text and create unbounded logs. | Fixed |
+| 2 | medium | 9/10 | Retry exhaustion did not represent terminal `SkipRetry` failures. | Fixed |
+| 3 | low | 10/10 | Tests did not cover retry disposition, malformed payloads, or terminal severity. | Fixed |
+
+## Changes Made
+Replaced raw error logging with allowlisted failure classes and numeric provider status codes. Added
+explicit retry disposition, terminal severity, safe identifier logging, and tests proving task payload
+and provider message text never appear in logs.
+
+## Reviewer's Summary
+The second review passed with no remaining privacy, correctness, retry, or finalization issues.
