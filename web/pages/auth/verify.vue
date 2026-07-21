@@ -7,51 +7,116 @@ definePageMeta({ layout: false })
 
 const { $apiFetch } = useNuxtApp()
 const route = useRoute()
+const router = useRouter()
 const { apply } = useAuth()
 const state = ref<'verifying' | 'success' | 'failed'>('verifying')
 const errorMessage = ref('')
+let verificationAttempt = 0
+let requestController: AbortController | null = null
 
-onMounted(async () => {
+function isCurrentAttempt(attempt: number, controller: AbortController) {
+  return attempt === verificationAttempt &&
+    requestController === controller &&
+    !controller.signal.aborted
+}
+
+async function verifyCurrentLink() {
+  const attempt = ++verificationAttempt
+  requestController?.abort()
+  const controller = new AbortController()
+  requestController = controller
+
+  state.value = 'verifying'
+  errorMessage.value = ''
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
   const token = fragment.get('token') || ''
-  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`)
+  try {
+    await router.replace({
+      path: window.location.pathname,
+      query: route.query,
+      hash: '',
+      force: true,
+    })
+  } catch {
+    if (!isCurrentAttempt(attempt, controller)) return
+    state.value = 'failed'
+    errorMessage.value = 'This sign-in link could not be opened safely. Please request another link.'
+    return
+  }
+  if (!isCurrentAttempt(attempt, controller)) return
   if (!token) {
     state.value = 'failed'
     errorMessage.value = 'This sign-in link is missing its verification token.'
     return
   }
+
+  let response: AuthResponse
   try {
-    const response = await $apiFetch<AuthResponse>('/auth/verify', {
+    response = await $apiFetch<AuthResponse>('/auth/verify', {
       method: 'POST',
       body: { token },
       auth: false,
       retryAuth: false,
+      signal: controller.signal,
     })
-    apply(response)
-    state.value = 'success'
-    const returnTo = typeof route.query.return_to === 'string' && route.query.return_to.startsWith('/') &&
-      !route.query.return_to.startsWith('//') ? route.query.return_to : ''
-    if (returnTo) {
-      await navigateTo(returnTo)
-      return
-    }
-    const permissions = response.member.permissions
-    if (canActivateWorkspace(permissions)) {
-      try {
-        const projects = await $apiFetch<{ projects: Project[] }>('/v1/projects')
-        if (projects.projects.length === 0) {
-          await navigateTo('/getting-started')
-          return
-        }
-      } catch {
-        // Authentication succeeded; the normal workspace route can recover from a transient list failure.
-      }
-    }
-    await navigateTo(firstAccessibleWorkspacePath(permissions))
   } catch (error) {
+    if (!isCurrentAttempt(attempt, controller)) return
     state.value = 'failed'
     errorMessage.value = apiErrorMessage(error, 'This sign-in link is invalid or has expired.')
+    return
   }
+
+  if (!isCurrentAttempt(attempt, controller)) return
+  apply(response)
+  state.value = 'success'
+
+  const returnTo = typeof route.query.return_to === 'string' && route.query.return_to.startsWith('/') &&
+    !route.query.return_to.startsWith('//') ? route.query.return_to : ''
+  if (returnTo) {
+    if (!isCurrentAttempt(attempt, controller)) return
+    await navigateTo(returnTo)
+    return
+  }
+
+  const permissions = response.member.permissions
+  if (canActivateWorkspace(permissions)) {
+    let projects: Project[] | null = null
+    try {
+      const result = await $apiFetch<{ projects: Project[] }>('/v1/projects', {
+        retryAuth: false,
+        signal: controller.signal,
+      })
+      if (!isCurrentAttempt(attempt, controller)) return
+      projects = result.projects
+    } catch {
+      if (!isCurrentAttempt(attempt, controller)) return
+      // Authentication succeeded; the normal workspace route can recover from a transient list failure.
+    }
+    if (projects?.length === 0) {
+      if (!isCurrentAttempt(attempt, controller)) return
+      await navigateTo('/getting-started')
+      return
+    }
+  }
+
+  if (!isCurrentAttempt(attempt, controller)) return
+  await navigateTo(firstAccessibleWorkspacePath(permissions))
+}
+
+function handleHashChange() {
+  void verifyCurrentLink()
+}
+
+onMounted(() => {
+  window.addEventListener('hashchange', handleHashChange)
+  void verifyCurrentLink()
+})
+
+onBeforeUnmount(() => {
+  verificationAttempt += 1
+  requestController?.abort()
+  requestController = null
+  window.removeEventListener('hashchange', handleHashChange)
 })
 
 useHead({ title: 'Verify sign in · Fidibeki' })

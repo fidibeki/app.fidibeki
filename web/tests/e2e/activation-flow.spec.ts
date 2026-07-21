@@ -77,6 +77,234 @@ test('public signup keeps form state and resets Turnstile after a conflict', asy
   await capture(page, testInfo, 'signup-confirmation')
 })
 
+test('a fresh magic link retries verification on the existing verify page', async ({ page }) => {
+  const tenant = {
+    id: 'tenant-new', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'trial',
+    trial_ends_at: '2026-08-04T12:00:00.000Z', deletion_requested_at: null,
+  }
+  const member = {
+    id: 'member-new', tenant_id: tenant.id, email: 'owner@acme.test', name: 'Owner',
+    permissions: [...allTenantPermissions],
+  }
+  const verifiedTokens: string[] = []
+  let freshExchangeState: { hash: string, marker: string | null } | undefined
+
+  await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
+    const request = route.request()
+    if (request.resourceType() === 'document') return route.continue()
+    const path = new URL(request.url()).pathname
+    const method = request.method()
+    if (path === '/auth/verify' && method === 'POST') {
+      const { token } = request.postDataJSON() as { token: string }
+      verifiedTokens.push(token)
+      if (token === 'fresh-token') {
+        freshExchangeState = await page.evaluate(() => ({
+          hash: window.location.hash,
+          marker: (window.history.state as { magicLinkMarker?: string } | null)?.magicLinkMarker || null,
+        }))
+      }
+      if (token === 'expired-token') {
+        return json(route, { error: { code: 'invalid_token', message: 'This sign-in link is invalid or has expired.' } }, 401)
+      }
+      return json(route, {
+        access_token: 'fresh-access-token', token_type: 'Bearer', expires_in: 900, member, tenant,
+      })
+    }
+    if (path === '/v1/projects' && method === 'GET') return json(route, { projects: [] })
+    return json(route, { error: { code: 'not_found', message: `Unhandled ${method} ${path}` } }, 404)
+  })
+
+  await page.goto('/auth/verify#token=expired-token')
+  await expect(page.getByRole('heading', { name: 'Sign-in link could not be verified' })).toBeVisible()
+  await expect(page).toHaveURL(/\/auth\/verify$/)
+
+  await page.evaluate(() => {
+    window.history.replaceState(
+      { ...window.history.state, magicLinkMarker: 'preserved' },
+      document.title,
+      `${window.location.pathname}${window.location.search}#token=fresh-token`,
+    )
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  })
+
+  await expect(page).toHaveURL(/\/getting-started$/)
+  expect(verifiedTokens).toEqual(['expired-token', 'fresh-token'])
+  expect(freshExchangeState).toEqual({ hash: '', marker: 'preserved' })
+})
+
+test('a newer magic link supersedes a pending project lookup', async ({ page }) => {
+  const tenant = {
+    id: 'tenant-new', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'trial',
+    trial_ends_at: '2026-08-04T12:00:00.000Z', deletion_requested_at: null,
+  }
+  const oldMember = {
+    id: 'member-old', tenant_id: tenant.id, email: 'old@acme.test', name: 'Old Owner',
+    permissions: [...allTenantPermissions],
+  }
+  const freshMember = {
+    id: 'member-fresh', tenant_id: tenant.id, email: 'fresh@acme.test', name: 'Fresh Owner',
+    permissions: ['feedback:read'],
+  }
+  const verifiedTokens: string[] = []
+  let feedbackAuthorization = ''
+  let markOldLookupStarted!: () => void
+  const oldLookupStarted = new Promise<void>((resolve) => { markOldLookupStarted = resolve })
+  let releaseOldLookup!: () => void
+  const oldLookupReleased = new Promise<void>((resolve) => { releaseOldLookup = resolve })
+  let markFreshVerificationStarted!: () => void
+  const freshVerificationStarted = new Promise<void>((resolve) => { markFreshVerificationStarted = resolve })
+  let releaseFreshVerification!: () => void
+  const freshVerificationReleased = new Promise<void>((resolve) => { releaseFreshVerification = resolve })
+
+  await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
+    const request = route.request()
+    if (request.resourceType() === 'document') return route.continue()
+    const path = new URL(request.url()).pathname
+    const method = request.method()
+    if (path === '/auth/verify' && method === 'POST') {
+      const { token } = request.postDataJSON() as { token: string }
+      verifiedTokens.push(token)
+      if (token === 'fresh-token') {
+        markFreshVerificationStarted()
+        await freshVerificationReleased
+        return json(route, {
+          access_token: 'fresh-access-token', token_type: 'Bearer', expires_in: 900,
+          member: freshMember, tenant,
+        })
+      }
+      return json(route, {
+        access_token: 'old-access-token', token_type: 'Bearer', expires_in: 900,
+        member: oldMember, tenant,
+      })
+    }
+    if (path === '/v1/projects' && method === 'GET') {
+      markOldLookupStarted()
+      await oldLookupReleased
+      return json(route, { projects: [] }).catch(() => undefined)
+    }
+    if (path === '/v1/feedbacks' && method === 'GET') {
+      feedbackAuthorization = request.headers().authorization || ''
+      return json(route, {
+        feedbacks: [],
+        pagination: { next_cursor: null, has_more: false, limit: 50 },
+      })
+    }
+    return json(route, { error: { code: 'not_found', message: `Unhandled ${method} ${path}` } }, 404)
+  })
+
+  await page.goto('/auth/verify#token=old-token')
+  await oldLookupStarted
+  await expect(page).toHaveURL(/\/auth\/verify$/)
+
+  await page.evaluate(() => { window.location.hash = 'token=fresh-token' })
+  await freshVerificationStarted
+  await expect(page).toHaveURL(/\/auth\/verify$/)
+
+  try {
+    releaseOldLookup()
+    await page.waitForTimeout(100)
+    await expect(page).toHaveURL(/\/auth\/verify$/)
+  } finally {
+    releaseFreshVerification()
+  }
+
+  await expect(page).toHaveURL(/\/feedback$/)
+  await expect.poll(() => feedbackAuthorization).toBe('Bearer fresh-access-token')
+  expect(verifiedTokens).toEqual(['old-token', 'fresh-token'])
+})
+
+test('the optional post-login project lookup never refreshes the session', async ({ page }) => {
+  const tenant = {
+    id: 'tenant-new', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'trial',
+    trial_ends_at: '2026-08-04T12:00:00.000Z', deletion_requested_at: null,
+  }
+  const member = {
+    id: 'member-new', tenant_id: tenant.id, email: 'owner@acme.test', name: 'Owner',
+    permissions: [...allTenantPermissions],
+  }
+  let projectResponses = 0
+  let refreshRequests = 0
+
+  await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
+    const request = route.request()
+    if (request.resourceType() === 'document') return route.continue()
+    const path = new URL(request.url()).pathname
+    const method = request.method()
+    if (path === '/auth/verify' && method === 'POST') {
+      return json(route, {
+        access_token: 'verified-access-token', token_type: 'Bearer', expires_in: 900,
+        member, tenant,
+      })
+    }
+    if (path === '/v1/projects' && method === 'GET') {
+      projectResponses += 1
+      if (projectResponses === 1) {
+        return json(route, { error: { code: 'unauthorized', message: 'Expired access token' } }, 401)
+      }
+      return json(route, { projects: [] })
+    }
+    if (path === '/auth/refresh' && method === 'POST') {
+      refreshRequests += 1
+      return json(route, {
+        access_token: 'stale-refreshed-token', token_type: 'Bearer', expires_in: 900,
+        member, tenant,
+      })
+    }
+    return json(route, { error: { code: 'not_found', message: `Unhandled ${method} ${path}` } }, 404)
+  })
+
+  await page.goto('/auth/verify#token=test-token')
+  await expect(page).toHaveURL(/\/$/)
+  expect(projectResponses).toBeGreaterThan(0)
+  expect(refreshRequests).toBe(0)
+})
+
+test('browser history cannot restore an exchanged magic-link token', async ({ page }) => {
+  const tenant = {
+    id: 'tenant-new', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'trial',
+    trial_ends_at: '2026-08-04T12:00:00.000Z', deletion_requested_at: null,
+  }
+  const member = {
+    id: 'member-new', tenant_id: tenant.id, email: 'owner@acme.test', name: 'Owner',
+    permissions: ['feedback:read'],
+  }
+  const verifiedTokens: string[] = []
+
+  await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
+    const request = route.request()
+    if (request.resourceType() === 'document') return route.continue()
+    const path = new URL(request.url()).pathname
+    const method = request.method()
+    if (path === '/auth/verify' && method === 'POST') {
+      const { token } = request.postDataJSON() as { token: string }
+      verifiedTokens.push(token)
+      return json(route, {
+        access_token: 'history-access-token', token_type: 'Bearer', expires_in: 900,
+        member, tenant,
+      })
+    }
+    if (path === '/v1/feedbacks' && method === 'GET') {
+      return json(route, {
+        feedbacks: [],
+        pagination: { next_cursor: null, has_more: false, limit: 50 },
+      })
+    }
+    return json(route, { error: { code: 'not_found', message: `Unhandled ${method} ${path}` } }, 404)
+  })
+
+  await page.goto('/login')
+  await page.goto('/auth/verify#token=history-token')
+  await expect(page).toHaveURL(/\/feedback$/)
+  expect(verifiedTokens).toEqual(['history-token'])
+
+  await page.goBack()
+  await page.waitForTimeout(100)
+
+  await expect(page).toHaveURL(/\/auth\/verify$/)
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('')
+  expect(verifiedTokens).toEqual(['history-token'])
+})
+
 test('magic link activates a project and detects its widget connection', async ({ page }, testInfo) => {
   const tenant = {
     id: 'tenant-new', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'trial',

@@ -88,3 +88,35 @@ expiry, and deletion semantics. Platform-admin cookies remain `SameSite=Strict`.
 ## Reviewer's Summary
 The change correctly permits top-level cross-site GET returns from Stripe without enabling the
 cookie on cross-site POST requests. No correctness, security, consistency, or test issues remain.
+
+---
+
+# Magic-Link Retry Review
+
+**Artifact**: `web/pages/auth/verify.vue` hash-only retry, cancellation, and token-history handling
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | high | 10/10 | A superseded project lookup could navigate over a newer verification attempt. | Fixed |
+| 2 | medium | 9/10 | Post-auth navigation failures could be presented as invalid-token failures. | Fixed |
+| 3 | medium | 9/10 | Direct history replacement discarded router history state. | Fixed |
+| 4 | medium | 9/10 | The sequential test did not cover overlapping verification work. | Fixed |
+| 5 | high | 10/10 | The optional project lookup could start an uncancellable refresh that overwrote a fresh session. | Fixed |
+| 6 | medium | 9/10 | Vue Router retained the exchanged fragment internally, allowing Back to restore the token. | Fixed |
+
+## Changes Made
+Verification attempts now use per-attempt abort controllers and identity guards after asynchronous
+work. Token exchange errors are handled separately from post-auth routing. The fragment is removed
+with a forced Vue Router replace before exchange, preserving history state while sanitizing router
+metadata. The optional project lookup cannot refresh the session.
+
+## Verification
+Browser regressions cover same-page retry, overlapping attempts, refresh suppression, history Back,
+and normal activation on desktop and mobile. The final full run passed 39 E2E tests with 9 expected
+skips; 16 unit tests and Nuxt typecheck also passed. The review chain stopped after its required
+maximum of two rounds; all six reported findings were resolved and exercised by the final test run.
