@@ -492,7 +492,8 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   await authenticate(page, state)
   await openPrimary(page, 'Feedback')
   await page.getByTitle('Open full detail').click()
-  await expect(page.getByRole('heading', { name: 'FB-1048' })).toBeVisible()
+  await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
 
   await page.getByRole('button', { name: 'View' }).click()
   await expect(page.getByRole('dialog', { name: 'Attachment evidence' })).toBeVisible()
@@ -516,6 +517,20 @@ test('issues merge into an existing project issue', async ({ page }, testInfo) =
   await page.getByRole('button', { name: 'Merge' }).click()
   await expect(page.getByText('This issue is merged into another issue.')).toBeVisible()
   expect(state.issues[0].merged_into_id).toBe('issue-2')
+})
+
+test('issue status can change without nesting the control inside its detail link', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Issues')
+
+  await expect(page.locator('.issues-table a select')).toHaveCount(0)
+  await capture(page, testInfo, 'dispatch-issues')
+  await page.getByLabel('Status for ISS-101').selectOption('resolved')
+
+  await expect(page).toHaveURL(`${tenantOrigin}/issues`)
+  await expect(page.getByLabel('Status for ISS-101')).toHaveValue('resolved')
+  expect(state.issues[0].status).toBe('resolved')
 })
 
 test('settings creates one-time credentials and delivery secrets', async ({ page }, testInfo) => {

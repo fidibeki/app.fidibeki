@@ -68,14 +68,15 @@ useHead({ title: 'Issues · Fidibeki' })
     <section v-else-if="filteredIssues.length === 0" class="app-surface app-state"><div><LayoutList :size="25" /><h2>No issues found</h2><p>Issue records are created as feedback enters the workspace.</p></div></section>
     <section v-else class="issues-table app-surface">
       <header><span>Issue</span><span>Project</span><span>Feedback</span><span>Status</span><span>Age</span><span /></header>
-      <NuxtLink v-for="issue in filteredIssues" :key="issue.id" :to="`/issues/${issue.id}`">
+      <div v-for="issue in filteredIssues" :key="issue.id" class="issues-row">
+        <NuxtLink class="issues-row-link" :to="`/issues/${issue.id}`" :aria-label="`Open ${issue.public_id}: ${issue.title}`" />
         <span class="issues-title"><CircleDot :size="15" /><span><b>{{ issue.public_id }}</b><small>{{ issue.title }}</small></span></span>
-        <span>{{ projectNames.get(issue.project_id) || 'Project' }}</span>
-        <span>{{ issue.feedback_count }}</span>
-        <select :value="issue.status" :disabled="updatingID === issue.id || !can('issue:update')" :aria-label="`Status for ${issue.public_id}`" @click.prevent.stop @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+        <span class="issues-project">{{ projectNames.get(issue.project_id) || 'Project' }}</span>
+        <span class="issues-feedback">{{ issue.feedback_count }}</span>
+        <select :value="issue.status" :disabled="updatingID === issue.id || !can('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
         <time>{{ formatAge(issue.created_at) }}</time>
         <ChevronRight :size="16" />
-      </NuxtLink>
+      </div>
     </section>
   </div>
 </template>
@@ -88,11 +89,15 @@ useHead({ title: 'Issues · Fidibeki' })
 .issues-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 5px; font-size: 11px; }
 .issues-table { overflow: hidden; }
 .issues-table > header,
-.issues-table > a { display: grid; min-height: 58px; grid-template-columns: minmax(260px, 1.4fr) minmax(120px, .7fr) 80px 130px 70px 18px; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.issues-row { display: grid; min-height: 58px; grid-template-columns: minmax(260px, 1.4fr) minmax(120px, .7fr) 80px 130px 70px 18px; position: relative; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
 .issues-table > header { min-height: 38px; background: #f8faf9; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.issues-table > a { color: var(--ink-soft); font-size: 10px; text-decoration: none; }
-.issues-table > a:last-child { border-bottom: 0; }
-.issues-table > a:hover { background: #f7faf9; }
+.issues-row { color: var(--ink-soft); font-size: 10px; }
+.issues-row:last-child { border-bottom: 0; }
+.issues-row:hover { background: #f7faf9; }
+.issues-row-link { position: absolute; z-index: 1; inset: 0; }
+.issues-row-link:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+.issues-row > :not(.issues-row-link) { position: relative; z-index: 2; pointer-events: none; }
+.issues-row select { pointer-events: auto; }
 .issues-title { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .issues-title > svg { flex: 0 0 auto; color: var(--teal); }
 .issues-title > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
@@ -104,9 +109,9 @@ useHead({ title: 'Issues · Fidibeki' })
 .issues-table time { color: var(--muted); font-size: 9px; }
 @media (max-width: 850px) {
   .issues-table > header { display: none; }
-  .issues-table > a { grid-template-columns: minmax(0, 1fr) 110px 50px 18px; gap: 8px; padding: 8px 12px; }
-  .issues-table > a > span:nth-child(2),
-  .issues-table > a > span:nth-child(3) { display: none; }
+  .issues-row { grid-template-columns: minmax(0, 1fr) 110px 50px 18px; gap: 8px; padding: 8px 12px; }
+  .issues-project,
+  .issues-feedback { display: none; }
   .issues-toolbar { align-items: stretch; flex-wrap: wrap; }
   .issues-toolbar label { width: 100%; }
   .issues-toolbar select { flex: 1; }
