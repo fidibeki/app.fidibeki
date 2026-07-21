@@ -1159,7 +1159,7 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 
 - [x] `docker build` produces runnable API and web images (alpine, multi-stage).
 - [x] Widget built to `widget/dist/` (esbuild, content-hashed filenames, long Cache-Control).
-- [ ] Railway deploys `main` to staging automatically; prod is manual promote.
+- [x] Railway deploys `main` to staging automatically; prod is manual promote.
 - [x] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
 - [x] All env vars documented in `docs/env.md` + `.env.example`.
 - [x] Healthcheck and DB connectivity verified on deploy (`/readyz`).
@@ -1169,5 +1169,5 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
   S3 storage full, deploy rollback, secrets rotation.
 - [x] Read-only Asynq queue operations UI mounted on `api.fidibeki.com` behind platform-admin auth.
 
-Local packaging and deployment automation are complete. The remaining item requires configuring
-the Railway project and performing the first staging and production promotions.
+Local packaging and deployment automation are complete. Railway staging is configured and verified;
+the first production promotion remains intentionally manual.
