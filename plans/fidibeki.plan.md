@@ -1163,7 +1163,7 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 - [x] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
 - [x] All env vars documented in `docs/env.md` + `.env.example`.
 - [x] Healthcheck and DB connectivity verified on deploy (`/readyz`).
-- [x] Source maps uploaded to Sentry in CI (Go release + widget + Nuxt).
+- [x] Source-map upload is integrated into CI (Go release + widget + Nuxt); credentials gate execution.
 - [x] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
   AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
   S3 storage full, deploy rollback, secrets rotation.
@@ -1171,3 +1171,12 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 
 Local packaging and deployment automation are complete. Railway staging is configured and verified;
 the first production promotion remains intentionally manual.
+
+### Production launch gates
+
+- [x] Store an environment-scoped Railway production token in GitHub Actions.
+- [ ] Provision isolated production Postgres, Redis, object storage, API, worker, web, and widget services.
+- [ ] Configure production-only runtime credentials for Resend, Stripe, Turnstile, Gemini, and Sentry.
+- [ ] Configure and validate `api.fidibeki.com`, `*.fidibeki.com`, and `widget.fidibeki.com` DNS and TLS.
+- [ ] Enable data backups and deployment alerts; set the intended production replica counts.
+- [ ] Run the manually confirmed production promotion and complete production smoke tests.
