@@ -293,6 +293,12 @@ async function installMockAPI(page: Page, state: MockState) {
     if (projectRulesMatch && method === 'GET') {
       return json(route, { widget_rules: state.widgetRules.filter(rule => rule.project_id === projectRulesMatch[1]) })
     }
+    const projectRuleMatch = path.match(/^\/v1\/projects\/([^/]+)\/widget-rules\/([^/]+)$/)
+    if (projectRuleMatch && method === 'PATCH') {
+      const rule = state.widgetRules.find(candidate => candidate.project_id === projectRuleMatch[1] && candidate.id === projectRuleMatch[2])
+      if (rule) Object.assign(rule, body(), { updated_at: now })
+      return json(route, { widget_rule: rule })
+    }
     const projectMatch = path.match(/^\/v1\/projects\/([^/]+)$/)
     if (projectMatch && method === 'GET') {
       return json(route, { project: state.projects.find(project => project.id === projectMatch[1]) })
@@ -484,6 +490,39 @@ test('project creation opens the new collection workspace', async ({ page }, tes
   await expect(page).toHaveURL(/\/projects\/project-2$/)
   await expect(page.getByText('Documentation', { exact: true }).first()).toBeVisible()
   expect(state.projects).toHaveLength(2)
+})
+
+test('widget rule save enforces browser validation before sending an update', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Native form validation is viewport independent')
+  const state = createMockState()
+  let updateRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'PATCH' && new URL(request.url()).pathname.endsWith('/widget-rules/rule-1')) updateRequests += 1
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const name = page.getByLabel('Name', { exact: true })
+  await name.fill('')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await expect(name).toBeFocused()
+  expect(updateRequests).toBe(0)
+})
+
+test('widget rule save submits a valid update', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Rule submission is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Name', { exact: true }).fill('Checkout follow-up')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0].name).toBe('Checkout follow-up')
 })
 
 test('feedback can be inspected, previewed, and archived', async ({ page }, testInfo) => {
