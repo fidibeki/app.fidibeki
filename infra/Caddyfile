@@ -5,6 +5,10 @@
 :80 {
 	encode zstd gzip
 
+	handle /healthz {
+		respond "ok" 200
+	}
+
 	@widget host widget.localhost widget.fidibeki.com {$WIDGET_HOST:widget.invalid}
 	handle @widget {
 		route {
@@ -38,8 +42,6 @@
 			reverse_proxy {$WIDGET_API_UPSTREAM:api:8080}
 		}
 	}
-
-	respond /healthz "ok" 200
 
 	handle {
 		reverse_proxy {$API_UPSTREAM:api:8080}

@@ -42,4 +42,21 @@ jobs:
       - run: pnpm --filter @fidibeki/widget test
       - run: pnpm --filter @fidibeki/widget exec playwright install --with-deps chromium
       - run: pnpm --filter @fidibeki/widget test:e2e
-      - run: docker build -f infra/caddy/Dockerfile .
+      - run: docker build --tag fidibeki-widget-ci -f infra/caddy/Dockerfile .
+      - name: Verify edge container routing
+        run: |
+          docker run --detach --name fidibeki-widget-ci --publish 127.0.0.1:8097:80 \
+            --env 'WIDGET_HOST=widget-staging.example.test widget.example.test' \
+            --env WIDGET_API_UPSTREAM=http://127.0.0.1:65535 \
+            --env API_UPSTREAM=http://127.0.0.1:65535 \
+            fidibeki-widget-ci
+          trap 'docker rm --force fidibeki-widget-ci' EXIT
+
+          for host in widget.example.test healthcheck.internal; do
+            response=$(curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
+              --header "Host: $host" http://127.0.0.1:8097/healthz)
+            test "$response" = "ok"
+          done
+
+          curl --fail --silent --show-error \
+            --header 'Host: widget.example.test' http://127.0.0.1:8097/v1/widget.js >/dev/null
