@@ -62,6 +62,23 @@ for both services because configuration is validated before the command starts.
 | `AI_RECONCILE_INTERVAL` | no | Stalled-task reconciliation interval; default `5m`. |
 | `SENTRY_DSN` | no | Backend Sentry DSN. Empty disables reporting. |
 
+### Browser upload CORS
+
+The widget uploads attachments and replay batches directly to presigned S3 `PUT` URLs. Configure
+this policy once on every environment's bucket before enabling those features:
+
+- allowed origins: `*`
+- allowed methods: `PUT`
+- allowed headers: `*`
+- exposed headers: `ETag`
+- max age: `3600` seconds
+
+The wildcard origin is intentional because customer widgets run on tenant-configured domains.
+Upload authorization remains constrained by the short-lived, object-specific presigned URL; bucket
+objects stay private and backoffice downloads continue through the authenticated API. Railway
+creates an isolated bucket for each environment, so configuring staging does not configure the
+future production bucket.
+
 ## Web and widget edge
 
 | Variable | Service | Purpose |

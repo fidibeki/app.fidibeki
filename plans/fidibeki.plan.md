@@ -1163,6 +1163,8 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 - [x] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
 - [x] All env vars documented in `docs/env.md` + `.env.example`.
 - [x] Healthcheck and DB connectivity verified on deploy (`/readyz`).
+- [x] Railway staging bucket CORS supports browser presigned `PUT`; a real widget screenshot and
+  replay batch uploaded, Gemini OCR completed, replay merge completed, and masked playback rendered.
 - [x] Source-map upload is integrated into CI (Go release + widget + Nuxt); credentials gate execution.
 - [x] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
   AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
@@ -1175,7 +1177,8 @@ the first production promotion remains intentionally manual.
 ### Production launch gates
 
 - [x] Store an environment-scoped Railway production token in GitHub Actions.
-- [ ] Provision isolated production Postgres, Redis, object storage, API, worker, web, and widget services.
+- [ ] Provision isolated production Postgres, Redis, object storage, API, worker, web, and widget services;
+  configure the production bucket's browser-upload CORS policy.
 - [ ] Configure production-only runtime credentials for Resend, Stripe, Turnstile, Gemini, and Sentry.
 - [ ] Configure and validate `api.fidibeki.com`, `*.fidibeki.com`, and `widget.fidibeki.com` DNS and TLS.
 - [ ] Enable data backups and deployment alerts; set the intended production replica counts.
