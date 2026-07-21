@@ -130,8 +130,9 @@ func validHeaderName(value string) bool {
 		return false
 	}
 	for _, character := range value {
-		if !(character >= 'a' && character <= 'z') && !(character >= 'A' && character <= 'Z') &&
-			!(character >= '0' && character <= '9') && !strings.ContainsRune("!#$%&'*+-.^_`|~", character) {
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+		digit := character >= '0' && character <= '9'
+		if !letter && !digit && !strings.ContainsRune("!#$%&'*+-.^_`|~", character) {
 			return false
 		}
 	}

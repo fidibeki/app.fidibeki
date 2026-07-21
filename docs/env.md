@@ -15,13 +15,13 @@ for both services because configuration is validated before the command starts.
 | `LOG_LEVEL` | no | Go slog level; defaults to `info`. |
 | `PORT` | managed | Platform port. Used as `:$PORT` when `HTTP_ADDRESS` is unset. |
 | `HTTP_ADDRESS` | no | Explicit listen address; overrides `PORT`. |
-| `BASE_DOMAIN` | yes | Root host without scheme, for example `fidibeki.app`. |
-| `PUBLIC_BASE_URL` | yes | Public API origin, for example `https://api.fidibeki.app`. |
+| `BASE_DOMAIN` | yes | Root host without scheme, for example `fidibeki.com`. |
+| `PUBLIC_BASE_URL` | yes | Public API origin, for example `https://api.fidibeki.com`. |
 | `READINESS_TIMEOUT` | no | Per-request readiness budget; default `2s`. |
 | `SHUTDOWN_TIMEOUT` | no | Graceful shutdown budget; default `10s`. |
-| `DATABASE_URL_APP` | yes | Pgbouncer URL using the RLS-constrained `fidibeki_app` role. |
-| `DATABASE_URL_ADMIN` | yes | Pgbouncer URL using the bypass-RLS admin role. |
-| `DATABASE_URL_DIRECT` | yes | Direct Postgres URL used only by migrations. |
+| `DATABASE_URL_APP` | yes | Runtime URL with the `fidibeki_app` username and password. `migrate up` applies these credentials to the RLS-constrained role. |
+| `DATABASE_URL_ADMIN` | yes | Runtime URL with the `fidibeki_admin` username and password. `migrate up` applies these credentials to the bypass-RLS role. |
+| `DATABASE_URL_DIRECT` | yes | Direct owner-level Postgres URL used by migrations and runtime-role provisioning. |
 | `DATABASE_APP_MAX_CONNS` | no | App pool maximum; default `10`. |
 | `DATABASE_ADMIN_MAX_CONNS` | no | Admin pool maximum; default `5`. |
 | `MIGRATIONS_PATH` | no | Migration directory; container default `/app/migrations`. |
@@ -32,6 +32,7 @@ for both services because configuration is validated before the command starts.
 | `S3_BUCKET` | yes | Private object bucket. |
 | `S3_ACCESS_KEY` | yes | S3 access key. |
 | `S3_SECRET_KEY` | yes | S3 secret key. |
+| `S3_VIRTUAL_HOST_STYLE` | no | Use bucket-as-subdomain URLs for providers such as Railway Buckets; default `false`. |
 | `S3_AUTO_CREATE_BUCKET` | no | Local/test convenience only; keep `false` in production. |
 | `JWT_SECRET` | yes | At least 32 random characters. Rotating it revokes all JWTs. |
 | `INTERNAL_PROXY_SECRET` | staging/prod | Shared secret used to authenticate tenant host forwarding from Nuxt. At least 32 random characters. |
@@ -69,8 +70,9 @@ for both services because configuration is validated before the command starts.
 | `HOST` | web | Listen host; image defaults to `0.0.0.0`. |
 | `NUXT_API_UPSTREAM` | web | Private API origin used by the same-origin server proxy. |
 | `NUXT_INTERNAL_PROXY_SECRET` | web | Must equal the API service's `INTERNAL_PROXY_SECRET`; never expose it through public runtime config. |
-| `WIDGET_API_UPSTREAM` | widget | Private API upstream for `widget.fidibeki.app`. |
+| `WIDGET_API_UPSTREAM` | widget | Private API upstream for `widget.fidibeki.com`. |
 | `API_UPSTREAM` | widget | Optional fallback upstream for non-widget edge traffic. |
+| `WIDGET_HOST` | widget | Additional widget hostname, used for environment-specific Railway domains. |
 
 ## CI and deployment
 
@@ -85,4 +87,5 @@ non-secret identifiers and URLs as GitHub environment or repository variables:
 Use `/railway.json` for the API service, `/railway.worker.json` for the worker,
 `/railway.web.json` for Nuxt, and `/railway.widget.json` for Caddy. Enable Railway GitHub
 autodeploy on `main` only in staging and enable **Wait for CI**. Production deployment is the
-GitHub `Promote Production` workflow, protected by the `production` environment approval gate.
+manually dispatched GitHub `Promote Production` workflow and requires typing `fidibeki.com`.
+Add a required reviewer to the `production` GitHub environment when the repository plan supports it.

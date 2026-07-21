@@ -201,7 +201,7 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 		Prices: PriceCatalog{
 			tenant.PlanStarter: "price_starter", tenant.PlanGrowth: "price_growth", tenant.PlanScale: "price_scale",
 		},
-		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost", AuthFrom: "auth@fidibeki.app",
+		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost", AuthFrom: "auth@fidibeki.com",
 		Now: func() time.Time { return now },
 	}
 	router := chi.NewRouter()

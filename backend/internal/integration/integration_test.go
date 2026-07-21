@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -219,12 +218,3 @@ func (d *captureDoer) Do(request *http.Request) (*http.Response, error) {
 }
 
 func stringPointer(value string) *string { return &value }
-
-func decodeMap(t *testing.T, body []byte) map[string]any {
-	t.Helper()
-	var value map[string]any
-	if err := json.Unmarshal(body, &value); err != nil {
-		t.Fatalf("decode JSON: %v", err)
-	}
-	return value
-}

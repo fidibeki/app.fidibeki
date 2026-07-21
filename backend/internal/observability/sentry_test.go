@@ -44,6 +44,19 @@ func TestSentryPanicReporterCapturesAnEvent(t *testing.T) {
 	}
 }
 
+func TestSentryHelpersRemainSafeWithoutAnActiveClient(t *testing.T) {
+	t.Parallel()
+
+	if eventID := (observability.SentryPanicReporter{
+		Hub: sentry.NewHub(nil, sentry.NewScope()),
+	}).CapturePanic(context.Background(), "not configured"); eventID != "" {
+		t.Errorf("CapturePanic() event ID = %q, want empty", eventID)
+	}
+	if observability.FlushSentry(0) {
+		t.Error("FlushSentry() = true without an active client")
+	}
+}
+
 type captureTransport struct {
 	event *sentry.Event
 }

@@ -341,7 +341,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 	for index := range columns {
 		columns[index] = alias + "." + columns[index]
 	}
-	return fmt.Sprintf("%s", joinColumns(columns))
+	return joinColumns(columns)
 }
 
 func joinColumns(columns []string) string {

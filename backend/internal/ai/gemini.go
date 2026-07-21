@@ -115,10 +115,10 @@ func NewGeminiAnalyzer(
 		return nil, ErrUnavailable
 	}
 	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("Gemini model is required")
+		return nil, fmt.Errorf("gemini model is required")
 	}
 	if fileLedger == nil {
-		return nil, fmt.Errorf("Gemini file ledger is required")
+		return nil, fmt.Errorf("gemini file ledger is required")
 	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: apiKey, Backend: genai.BackendGeminiAPI,
@@ -154,7 +154,7 @@ func (a *GeminiAnalyzer) AnalyzeAttachment(
 	}
 	if a.fileLedger == nil {
 		_, cleanupErr := a.deleteFileWithRetry(file.Name)
-		return Result{}, errors.Join(fmt.Errorf("Gemini file ledger is required"), cleanupErr)
+		return Result{}, errors.Join(fmt.Errorf("gemini file ledger is required"), cleanupErr)
 	}
 	trackedID, err := a.fileLedger.TrackGeminiFile(
 		ctx, work, file.Name, time.Now().UTC().Add(15*time.Minute),
@@ -183,13 +183,13 @@ func (a *GeminiAnalyzer) waitForFile(ctx context.Context, file *genai.File) (*ge
 		case genai.FileStateActive:
 			return file, nil
 		case genai.FileStateFailed:
-			return nil, permanent(fmt.Errorf("Gemini rejected malformed media"))
+			return nil, permanent(fmt.Errorf("gemini rejected malformed media"))
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline.C:
-			return nil, fmt.Errorf("Gemini file processing timed out")
+			return nil, fmt.Errorf("gemini file processing timed out")
 		case <-time.After(a.pollInterval):
 		}
 		updated, err := a.api.GetFile(ctx, file.Name)
@@ -212,10 +212,10 @@ func (a *GeminiAnalyzer) generate(ctx context.Context, contents []*genai.Content
 		return Result{}, classifyGeminiError(fmt.Errorf("generate Gemini analysis: %w", err))
 	}
 	if response == nil {
-		return Result{}, fmt.Errorf("Gemini returned no response")
+		return Result{}, fmt.Errorf("gemini returned no response")
 	}
 	if response.PromptFeedback != nil && response.PromptFeedback.BlockReason != "" {
-		return Result{}, permanent(fmt.Errorf("Gemini content policy blocked the input"))
+		return Result{}, permanent(fmt.Errorf("gemini content policy blocked the input"))
 	}
 	for _, candidate := range response.Candidates {
 		if candidate == nil {
@@ -226,13 +226,13 @@ func (a *GeminiAnalyzer) generate(ctx context.Context, contents []*genai.Content
 			genai.FinishReasonProhibitedContent, genai.FinishReasonSPII,
 			genai.FinishReasonRecitation, genai.FinishReasonLanguage:
 			return Result{}, permanent(fmt.Errorf(
-				"Gemini content policy ended generation: %s", candidate.FinishReason,
+				"gemini content policy ended generation: %s", candidate.FinishReason,
 			))
 		}
 	}
 	raw := response.Text()
 	if strings.TrimSpace(raw) == "" {
-		return Result{}, fmt.Errorf("Gemini returned no structured analysis")
+		return Result{}, fmt.Errorf("gemini returned no structured analysis")
 	}
 	var result Result
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
@@ -301,7 +301,7 @@ func (a *GeminiAnalyzer) FileDeleteHandler(store geminiFileDeleteStore) asynq.Ha
 			return err
 		}
 		if payload.Attempt <= 0 {
-			return fmt.Errorf("Gemini file deletion attempt is invalid: %w", asynq.SkipRetry)
+			return fmt.Errorf("gemini file deletion attempt is invalid: %w", asynq.SkipRetry)
 		}
 		work, err := store.ClaimGeminiFile(ctx, payload.TenantID, payload.ResourceID, payload.Attempt)
 		if errors.Is(err, ErrNoWork) {
@@ -321,7 +321,7 @@ func (a *GeminiAnalyzer) FileDeleteHandler(store geminiFileDeleteStore) asynq.Ha
 			return errors.Join(deleteErr, err)
 		}
 		if permanentFailure || requeue {
-			return fmt.Errorf("Gemini file deletion stopped: %w: %w", deleteErr, asynq.SkipRetry)
+			return fmt.Errorf("gemini file deletion stopped: %w: %w", deleteErr, asynq.SkipRetry)
 		}
 		return deleteErr
 	}
@@ -346,7 +346,7 @@ func UnavailableFileDeleteHandler(store geminiFileDeleteStore) asynq.HandlerFunc
 			); err != nil {
 				return err
 			}
-			return fmt.Errorf("Gemini file deletion unavailable: %w: %w", ErrUnavailable, asynq.SkipRetry)
+			return fmt.Errorf("gemini file deletion unavailable: %w: %w", ErrUnavailable, asynq.SkipRetry)
 		}
 		return ErrUnavailable
 	}

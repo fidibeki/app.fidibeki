@@ -108,10 +108,10 @@ func (p Processor) acquire(ctx context.Context) error {
 		Limit: p.RPM, Period: time.Minute,
 	})
 	if err != nil {
-		return fmt.Errorf("Gemini rate limiter: %w", err)
+		return fmt.Errorf("gemini rate limiter: %w", err)
 	}
 	if !decision.Allowed {
-		return fmt.Errorf("Gemini rate limit reached; retry after %s", decision.RetryAfter)
+		return fmt.Errorf("gemini rate limit reached; retry after %s", decision.RetryAfter)
 	}
 	return nil
 }

@@ -50,7 +50,7 @@ func TestReporterMessageEscapesContentAndUsesStableIdentity(t *testing.T) {
 		OutboxEventID: "event-id", TenantName: `Acme <script>`, PublicID: "ACME-2026-0001",
 		Title: `<img src=x onerror=alert(1)>`, Status: StatusInProgress,
 		ReporterEmail: "reporter@example.com",
-	}, "https://api.fidibeki.app/", "signed token")
+	}, "https://api.fidibeki.com/", "signed token")
 	if message.IdempotencyKey != "reporter:event-id" || message.To != "reporter@example.com" {
 		t.Errorf("message identity = %#v", message)
 	}
@@ -62,7 +62,7 @@ func TestReporterMessageEscapesContentAndUsesStableIdentity(t *testing.T) {
 		t.Errorf("message text = %q", message.Text)
 	}
 	if !strings.Contains(message.From, "Acme <script> via Fidibeki") ||
-		!strings.Contains(message.From, "updates@fidibeki.app") {
+		!strings.Contains(message.From, "updates@fidibeki.com") {
 		t.Errorf("message from = %q", message.From)
 	}
 }

@@ -19,8 +19,8 @@ func TestRequestMagicLinkIsNonEnumeratingAndQueuesKnownAdmin(t *testing.T) {
 	store := &fakeAuthStore{admin: Admin{ID: "admin-id", Email: "admin@example.com"}}
 	queue := &captureEnqueuer{}
 	service := Service{
-		Store: store, Email: queue, PublicBaseURL: "https://api.fidibeki.app",
-		AuthFrom: "Fidibeki <auth@fidibeki.app>", MagicLinkTTL: 10 * time.Minute,
+		Store: store, Email: queue, PublicBaseURL: "https://api.fidibeki.com",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>", MagicLinkTTL: 10 * time.Minute,
 		Now: func() time.Time { return now },
 	}
 
@@ -61,7 +61,7 @@ func TestRequestMagicLinkDeletesLinkWhenQueueFails(t *testing.T) {
 	store := &fakeAuthStore{admin: Admin{ID: "admin-id", Email: "admin@example.com"}}
 	service := Service{
 		Store: store, Email: &captureEnqueuer{err: errors.New("redis unavailable")},
-		PublicBaseURL: "https://api.fidibeki.app", AuthFrom: "Fidibeki <auth@fidibeki.app>",
+		PublicBaseURL: "https://api.fidibeki.com", AuthFrom: "Fidibeki <auth@fidibeki.com>",
 	}
 	if err := service.RequestMagicLink(context.Background(), "admin@example.com"); err == nil {
 		t.Fatal("RequestMagicLink() error = nil")

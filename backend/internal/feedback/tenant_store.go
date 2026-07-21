@@ -125,14 +125,16 @@ func (Store) ListTenantFeedback(
 		SELECT 1 FROM attachments AS attachment
 		WHERE attachment.feedback_id = feedback.id AND cardinality(attachment.moderation_flags) > 0
 	))`
-	if options.Moderation == "flagged" {
+	switch options.Moderation {
+	case "flagged":
 		where = append(where, moderationFilter)
-	} else if options.Moderation == "clean" {
+	case "clean":
 		where = append(where, "NOT "+moderationFilter)
 	}
-	if options.Issue == "linked" {
+	switch options.Issue {
+	case "linked":
 		where = append(where, "feedback.issue_id IS NOT NULL")
-	} else if options.Issue == "unlinked" {
+	case "unlinked":
 		where = append(where, "feedback.issue_id IS NULL")
 	}
 	if options.DateFrom != nil {

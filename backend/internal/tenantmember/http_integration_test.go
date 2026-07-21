@@ -96,7 +96,7 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	store := Store{RefreshTTL: 30 * 24 * time.Hour}
 	service := Service{
 		Store: store, JWT: jwtManager, PublicBaseURL: "http://api.localhost:8088",
-		BaseDomain: "localhost", AuthFrom: "Fidibeki <auth@fidibeki.app>",
+		BaseDomain: "localhost", AuthFrom: "Fidibeki <auth@fidibeki.com>",
 	}
 	probe, err := pools.App.Begin(ctx)
 	if err != nil {

@@ -59,8 +59,8 @@ func TestLoginDoesNotRevealWhetherAdminExists(t *testing.T) {
 
 	store := &fakeAuthStore{findErr: ErrAdminNotFound}
 	handler := NewHTTPHandler(HTTPOptions{Auth: Service{
-		Store: store, Email: &captureEnqueuer{}, PublicBaseURL: "https://api.fidibeki.app",
-		AuthFrom: "Fidibeki <auth@fidibeki.app>",
+		Store: store, Email: &captureEnqueuer{}, PublicBaseURL: "https://api.fidibeki.com",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>",
 	}})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(

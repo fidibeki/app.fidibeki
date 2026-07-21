@@ -30,6 +30,7 @@ type Config struct {
 	S3Bucket                 string
 	S3AccessKey              string
 	S3SecretKey              string
+	S3VirtualHostStyle       bool
 	JWTSecret                string
 	InternalProxySecret      string
 	IntegrationEncryptionKey string
@@ -91,6 +92,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	appDBMaxConns, appDBMaxConnsErr := strconv.ParseInt(get("DATABASE_APP_MAX_CONNS", "10"), 10, 32)
 	adminDBMaxConns, adminDBMaxConnsErr := strconv.ParseInt(get("DATABASE_ADMIN_MAX_CONNS", "5"), 10, 32)
 	s3AutoCreate, s3AutoCreateErr := strconv.ParseBool(get("S3_AUTO_CREATE_BUCKET", "false"))
+	s3VirtualHostStyle, s3VirtualHostStyleErr := strconv.ParseBool(
+		get("S3_VIRTUAL_HOST_STYLE", "false"),
+	)
 	emailConcurrency, emailConcurrencyErr := strconv.Atoi(get("EMAIL_QUEUE_CONCURRENCY", "20"))
 	aiConcurrency, aiConcurrencyErr := strconv.Atoi(get("AI_QUEUE_CONCURRENCY", "3"))
 	geminiRPM, geminiRPMErr := strconv.Atoi(get("GEMINI_RPM", "15"))
@@ -116,6 +120,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		S3Bucket:                 get("S3_BUCKET", ""),
 		S3AccessKey:              get("S3_ACCESS_KEY", ""),
 		S3SecretKey:              get("S3_SECRET_KEY", ""),
+		S3VirtualHostStyle:       s3VirtualHostStyle,
 		JWTSecret:                get("JWT_SECRET", ""),
 		InternalProxySecret:      get("INTERNAL_PROXY_SECRET", ""),
 		IntegrationEncryptionKey: get("INTEGRATION_ENCRYPTION_KEY", ""),
@@ -133,7 +138,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		EmailDriver:              get("EMAIL_DRIVER", "capture"),
 		EmailCaptureDir:          get("EMAIL_CAPTURE_DIR", "/tmp/fidibeki-emails"),
 		ResendAPIKey:             get("RESEND_API_KEY", ""),
-		ResendAuthFrom:           get("RESEND_AUTH_FROM", "Fidibeki <auth@fidibeki.app>"),
+		ResendAuthFrom:           get("RESEND_AUTH_FROM", "Fidibeki <auth@fidibeki.com>"),
 		ResendWebhookSecret:      get("RESEND_WEBHOOK_SECRET", ""),
 		EmailConcurrency:         emailConcurrency,
 		AIConcurrency:            aiConcurrency,
@@ -180,6 +185,12 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if s3AutoCreateErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("S3_AUTO_CREATE_BUCKET: %w", s3AutoCreateErr))
+	}
+	if s3VirtualHostStyleErr != nil {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("S3_VIRTUAL_HOST_STYLE: %w", s3VirtualHostStyleErr),
+		)
 	}
 	if emailConcurrencyErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("EMAIL_QUEUE_CONCURRENCY: %w", emailConcurrencyErr))
@@ -366,6 +377,7 @@ func (c Config) Redacted() map[string]any {
 		"s3_bucket":                  c.S3Bucket,
 		"s3_access_key":              "[REDACTED]",
 		"s3_secret_key":              "[REDACTED]",
+		"s3_virtual_host_style":      c.S3VirtualHostStyle,
 		"jwt_secret":                 "[REDACTED]",
 		"internal_proxy_secret":      "[REDACTED]",
 		"integration_encryption_key": "[REDACTED]",

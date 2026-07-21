@@ -35,7 +35,7 @@ const deletionDate = computed(() => {
 
 async function checkout(plan: TenantPlan) {
   if (plan === 'enterprise') {
-    window.location.href = 'mailto:sales@fidibeki.app?subject=Fidibeki%20Enterprise'
+    window.location.href = 'mailto:sales@fidibeki.com?subject=Fidibeki%20Enterprise'
     return
   }
   pendingAction.value = `checkout:${plan}`

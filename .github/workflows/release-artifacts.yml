@@ -19,11 +19,13 @@ jobs:
       SENTRY_WIDGET_PROJECT: ${{ vars.SENTRY_WIDGET_PROJECT }}
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
-      - run: npm install --global pnpm@11.15.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @fidibeki/widget build
       - run: pnpm --filter @fidibeki/web build

@@ -122,7 +122,7 @@ func (p Processor) appendBatch(
 	if err != nil {
 		return 0, fmt.Errorf("open replay batch %d: %w", batch.Index, err)
 	}
-	defer object.Close()
+	defer func() { _ = object.Close() }()
 	decoder := json.NewDecoder(io.LimitReader(object, batch.SizeBytes+1))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('[') {

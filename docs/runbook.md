@@ -8,10 +8,12 @@ customer evidence into chat or tickets.
 
 1. Keep the failed deploy inactive; Railway pre-deploy failure leaves the previous instance live.
 2. Inspect migration logs and `fidibeki-api migrate version` using `DATABASE_URL_DIRECT`.
-3. If the schema is dirty, stop deploys and take a database backup before changing anything.
-4. Fix forward with a new migration. Use `migrate down` only when that exact down migration was
+3. If runtime-role provisioning failed, verify that `DATABASE_URL_APP` uses `fidibeki_app` and
+   `DATABASE_URL_ADMIN` uses `fidibeki_admin`, each with a non-empty password.
+4. If the schema is dirty, stop deploys and take a database backup before changing anything.
+5. Fix forward with a new migration. Use `migrate down` only when that exact down migration was
    rehearsed against a restored production snapshot.
-5. Run up-down-up CI, deploy staging, check `/readyz`, then promote.
+6. Run up-down-up CI, deploy staging, check `/readyz`, then promote.
 
 ## 2. Stripe webhook replay
 
@@ -25,7 +27,7 @@ customer evidence into chat or tickets.
 
 1. Check Redis memory, connectivity, and worker restarts before changing concurrency.
 2. Sign in with a platform-admin magic link and inspect queue depth and oldest task at
-   `/admin/queues/` for `email`, `ai`, `replay`, and `integration` pools.
+   `/admin/queues/` for `email-pool`, `ai-pool`, and `domain-pool`.
 3. Scale only the affected worker pool and respect Gemini and provider rate limits.
 4. Preserve failed tasks for diagnosis; retry transient failures and archive malformed permanent jobs.
 5. Alert if queue age continues rising for 15 minutes or Redis persistence reports errors.
@@ -87,5 +89,5 @@ customer evidence into chat or tickets.
 2. Update staging, deploy, and verify the affected integration before production.
 3. For `JWT_SECRET`, expect all sessions to be revoked. For `INTEGRATION_ENCRYPTION_KEY`, re-encrypt
    stored integration credentials before removing the previous key.
-4. Deploy production through the approval workflow, verify, then revoke the old provider credential.
+4. Deploy production through the manually confirmed promotion workflow, verify, then revoke the old provider credential.
 5. Search logs and repository history for accidental exposure and rotate again if exposure is possible.

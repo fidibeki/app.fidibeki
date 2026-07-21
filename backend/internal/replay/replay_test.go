@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
@@ -435,15 +434,6 @@ type tenantResolverStub struct {
 
 func (s tenantResolverStub) Resolve(context.Context, string) (tenant.Tenant, error) {
 	return s.resolved, s.err
-}
-
-type tokenVerifierStub struct {
-	claims auth.Claims
-	err    error
-}
-
-func (s tokenVerifierStub) Verify(string, string) (auth.Claims, error) {
-	return s.claims, s.err
 }
 
 type projectAuthorizerStub struct {

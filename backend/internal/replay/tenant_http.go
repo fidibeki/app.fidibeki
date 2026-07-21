@@ -235,7 +235,11 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
-	defer object.Close()
+	defer func() {
+		if err := object.Close(); err != nil {
+			h.logger.WarnContext(r.Context(), "close replay object", "error", err, "session_id", session.ID)
+		}
+	}()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

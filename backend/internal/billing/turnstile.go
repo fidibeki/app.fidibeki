@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var ErrTurnstile = errors.New("Turnstile verification failed")
+var ErrTurnstile = errors.New("turnstile verification failed")
 
 type SignupVerifier interface {
 	Verify(context.Context, string, string, string) error
@@ -52,7 +52,7 @@ func (v TurnstileVerifier) Verify(ctx context.Context, token, remoteIP, idempote
 	if err != nil {
 		return fmt.Errorf("verify Turnstile token: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("verify Turnstile token: unexpected status %d", response.StatusCode)
 	}

@@ -5,7 +5,7 @@
 :80 {
 	encode zstd gzip
 
-	@widget host widget.localhost widget.fidibeki.app
+	@widget host widget.localhost widget.fidibeki.com {$WIDGET_HOST:widget.invalid}
 	handle @widget {
 		route {
 			@source_maps path_regexp sourceMap \.map$

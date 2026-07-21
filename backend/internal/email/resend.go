@@ -23,7 +23,7 @@ func (s ResendSender) Send(ctx context.Context, message Message) (string, error)
 		return "", fmt.Errorf("validate Resend email: %w", err)
 	}
 	if strings.TrimSpace(s.APIKey) == "" {
-		return "", fmt.Errorf("Resend API key is required")
+		return "", fmt.Errorf("resend API key is required")
 	}
 	payload, err := json.Marshal(map[string]any{
 		"from": message.From, "to": []string{message.To}, "subject": message.Subject,
@@ -53,13 +53,13 @@ func (s ResendSender) Send(ctx context.Context, message Message) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("send Resend email: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	if readErr != nil {
 		return "", fmt.Errorf("read Resend response: %w", readErr)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("Resend returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("resend returned %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
 	var result struct {
 		ID string `json:"id"`
@@ -68,7 +68,7 @@ func (s ResendSender) Send(ctx context.Context, message Message) (string, error)
 		return "", fmt.Errorf("decode Resend response: %w", err)
 	}
 	if result.ID == "" {
-		return "", fmt.Errorf("Resend response did not include a message ID")
+		return "", fmt.Errorf("resend response did not include a message ID")
 	}
 	return result.ID, nil
 }

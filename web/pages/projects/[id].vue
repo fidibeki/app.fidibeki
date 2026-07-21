@@ -73,7 +73,7 @@ const supportsVideo = computed(() => tenant.value?.plan === 'scale' || tenant.va
 const embedCode = computed(() => {
   const origin = import.meta.client && window.location.hostname.endsWith('localhost')
     ? 'http://widget.localhost:8088'
-    : 'https://widget.fidibeki.app'
+    : 'https://widget.fidibeki.com'
   return `<script src="${origin}/v1/loader.js" data-fidibeki-key="${data.value?.project.public_key || ''}" async><\/script>`
 })
 

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -689,16 +688,6 @@ func aiMigrationsPath(t *testing.T) string {
 		t.Fatalf("resolve migrations path: %v", err)
 	}
 	return path
-}
-
-func roleURL(t *testing.T, raw, username, password string) string {
-	t.Helper()
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		t.Fatalf("parse database URL: %v", err)
-	}
-	parsed.User = url.UserPassword(username, password)
-	return parsed.String()
 }
 
 type fakeAnalyzer struct {

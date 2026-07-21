@@ -13,12 +13,13 @@ import (
 )
 
 type Config struct {
-	Endpoint       string
-	PublicEndpoint string
-	Region         string
-	Bucket         string
-	AccessKey      string
-	SecretKey      string
+	Endpoint         string
+	PublicEndpoint   string
+	Region           string
+	Bucket           string
+	AccessKey        string
+	SecretKey        string
+	VirtualHostStyle bool
 }
 
 type Storage struct {
@@ -51,10 +52,15 @@ func Open(config Config) (*Storage, error) {
 }
 
 func newClient(endpoint *url.URL, config Config) (*minio.Client, error) {
+	bucketLookup := minio.BucketLookupAuto
+	if config.VirtualHostStyle {
+		bucketLookup = minio.BucketLookupDNS
+	}
 	client, err := minio.New(endpoint.Host, &minio.Options{
-		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
-		Secure: endpoint.Scheme == "https",
-		Region: config.Region,
+		Creds:        credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
+		Secure:       endpoint.Scheme == "https",
+		Region:       config.Region,
+		BucketLookup: bucketLookup,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create S3 client for %s: %w", endpoint.Host, err)

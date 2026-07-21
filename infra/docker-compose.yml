@@ -19,6 +19,7 @@ x-api-environment: &api-environment
   S3_BUCKET: fidibeki
   S3_ACCESS_KEY: fidibeki-local
   S3_SECRET_KEY: fidibeki-local-secret
+  S3_VIRTUAL_HOST_STYLE: "false"
   S3_AUTO_CREATE_BUCKET: "true"
   JWT_SECRET: local-only-jwt-secret-change-before-production
   INTERNAL_PROXY_SECRET: ${INTERNAL_PROXY_SECRET:-local-only-internal-proxy-secret-change-me}
@@ -36,7 +37,7 @@ x-api-environment: &api-environment
   EMAIL_DRIVER: capture
   EMAIL_CAPTURE_DIR: /var/lib/fidibeki-emails
   EMAIL_QUEUE_CONCURRENCY: 20
-  RESEND_AUTH_FROM: Fidibeki <auth@fidibeki.app>
+  RESEND_AUTH_FROM: Fidibeki <auth@fidibeki.com>
   RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
   REPORTER_UNSUBSCRIBE_TTL: ${REPORTER_UNSUBSCRIBE_TTL:-2160h}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}

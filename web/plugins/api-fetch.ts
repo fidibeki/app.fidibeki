@@ -4,7 +4,12 @@ import type { ApiFetch, ApiFetchOptions } from '~/utils/api-fetch'
 export default defineNuxtPlugin(() => {
   const session = useState<AuthSession>('auth:session')
   const forwardedHeaders = import.meta.server ? useRequestHeaders(['cookie', 'host']) : undefined
+  const requestEvent = import.meta.server ? useRequestEvent() : undefined
   const rawFetch = $fetch as unknown as <T>(request: string, options?: Record<string, unknown>) => Promise<T>
+  const rawFetchResponse = $fetch.raw as unknown as <T>(request: string, options?: Record<string, unknown>) => Promise<{
+    _data?: T
+    headers: Headers
+  }>
   let refreshPromise: Promise<void> | null = null
 
   function applySession(response: AuthResponse) {
@@ -29,12 +34,16 @@ export default defineNuxtPlugin(() => {
     if (refreshPromise) return refreshPromise
     refreshPromise = (async () => {
       try {
-        const response = await rawFetch<AuthResponse>('/auth/refresh', {
+        const upstream = await rawFetchResponse<AuthResponse>('/auth/refresh', {
           method: 'POST',
           credentials: 'include',
           headers: forwardedHeaders,
         })
-        applySession(response)
+        if (import.meta.server && requestEvent) {
+          forwardResponseCookies(upstream.headers, cookie => requestEvent.node.res.appendHeader('set-cookie', cookie))
+        }
+        if (!upstream._data) throw new Error('Authentication refresh returned no data')
+        applySession(upstream._data)
       } catch (error) {
         clearSession()
         throw error

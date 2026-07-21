@@ -71,12 +71,12 @@ func TestTurnstileVerifier(t *testing.T) {
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"success":true,"hostname":"fidibeki.app","action":"signup"}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"success":true,"hostname":"fidibeki.com","action":"signup"}`)),
 			Header:     make(http.Header),
 		}, nil
 	})}
 	verifier := TurnstileVerifier{
-		SecretKey: "secret", ExpectedHost: "fidibeki.app", VerificationURL: "https://turnstile.test/siteverify",
+		SecretKey: "secret", ExpectedHost: "fidibeki.com", VerificationURL: "https://turnstile.test/siteverify",
 		HTTPClient: client,
 	}
 	if err := verifier.Verify(context.Background(), "token", "127.0.0.1", "request-id"); err != nil {
@@ -194,7 +194,7 @@ func TestPlatformHTTPRoutesAndErrors(t *testing.T) {
 	service := Service{
 		Store: store, Provider: provider, Verifier: LocalSignupVerifier{}, Email: &emailCapture{},
 		Prices:        PriceCatalog{tenant.PlanStarter: "price_starter"},
-		PublicBaseURL: "https://api.fidibeki.app", BaseDomain: "fidibeki.app", AuthFrom: "auth@fidibeki.app",
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com", AuthFrom: "auth@fidibeki.com",
 	}
 	router := chi.NewRouter()
 	RegisterPlatformRoutes(router, HTTPOptions{Service: service})
@@ -212,7 +212,7 @@ func TestPlatformHTTPRoutesAndErrors(t *testing.T) {
 	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"id":"tenant"`) {
 		t.Fatalf("signup response = %d %s", response.Code, response.Body.String())
 	}
-	if response.Header().Get("Location") != "https://acme.fidibeki.app/login" {
+	if response.Header().Get("Location") != "https://acme.fidibeki.com/login" {
 		t.Fatalf("signup Location = %q", response.Header().Get("Location"))
 	}
 	if got := request("/v1/signup", `{`, nil); got.Code != http.StatusBadRequest {
@@ -266,8 +266,8 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 		Prices: PriceCatalog{
 			tenant.PlanStarter: "price_starter", tenant.PlanGrowth: "price_growth", tenant.PlanScale: "price_scale",
 		},
-		PublicBaseURL: "https://api.fidibeki.app", BaseDomain: "fidibeki.app",
-		AuthFrom: "Fidibeki <auth@fidibeki.app>", Now: func() time.Time { return now },
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>", Now: func() time.Time { return now },
 	}
 	store.signup = SignupResult{Tenant: store.tenant, MemberID: "member-id", Token: "magic-token"}
 	created, err := service.Signup(context.Background(), SignupInput{
@@ -343,7 +343,7 @@ func TestServiceErrorPaths(t *testing.T) {
 	emails := &emailCapture{}
 	service.Store, service.Provider, service.Email = store, provider, emails
 	service.Verifier = LocalSignupVerifier{}
-	service.PublicBaseURL, service.BaseDomain, service.AuthFrom = "https://api.fidibeki.app", "fidibeki.app", "auth@fidibeki.app"
+	service.PublicBaseURL, service.BaseDomain, service.AuthFrom = "https://api.fidibeki.com", "fidibeki.com", "auth@fidibeki.com"
 	store.signupErr = errors.New("database down")
 	if _, err := service.Signup(ctx, valid, "", "", ""); err == nil {
 		t.Fatal("Signup(store error) error = nil")
@@ -437,7 +437,7 @@ func TestDeletionAndDunning(t *testing.T) {
 		{ID: "expired", Name: "Expired", TrialEndsAt: &expired},
 	}, emails: []string{"owner@soon.test"}}
 	capture := &emailCapture{}
-	dunning := Dunning{Store: dunningStore, Email: capture, AuthFrom: "auth@fidibeki.app", Now: func() time.Time { return now }}
+	dunning := Dunning{Store: dunningStore, Email: capture, AuthFrom: "auth@fidibeki.com", Now: func() time.Time { return now }}
 	if err := dunning.Execute(ctx); err != nil {
 		t.Fatalf("Dunning.Execute() error = %v", err)
 	}
@@ -490,7 +490,7 @@ func TestMaintenanceFailurePaths(t *testing.T) {
 	}
 
 	dunningStore := &dunningStoreStub{trialsErr: errors.New("database down")}
-	dunning := Dunning{Store: dunningStore, Email: &emailCapture{}, AuthFrom: "auth@fidibeki.app"}
+	dunning := Dunning{Store: dunningStore, Email: &emailCapture{}, AuthFrom: "auth@fidibeki.com"}
 	if err := dunning.Execute(ctx); err == nil {
 		t.Fatal("Dunning(trials error) error = nil")
 	}

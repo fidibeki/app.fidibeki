@@ -212,7 +212,7 @@ func reporterMessage(notification ReporterNotification, publicBaseURL, token str
 		"/v1/reporter/unsubscribe?token=" + url.QueryEscape(token)
 	status := strings.ReplaceAll(string(notification.Status), "_", " ")
 	from := (&mail.Address{
-		Name: notification.TenantName + " via Fidibeki", Address: "updates@fidibeki.app",
+		Name: notification.TenantName + " via Fidibeki", Address: "updates@fidibeki.com",
 	}).String()
 	text := fmt.Sprintf(
 		"%s updated issue %s to %s.\n\n%s\n\nUnsubscribe: %s",

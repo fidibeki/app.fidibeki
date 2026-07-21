@@ -103,6 +103,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"S3_BUCKET":                  "fidibeki",
 		"S3_ACCESS_KEY":              "fidibeki",
 		"S3_SECRET_KEY":              "fidibeki-local-secret",
+		"S3_VIRTUAL_HOST_STYLE":      "true",
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 	}
@@ -130,6 +131,9 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.ReporterTokenTTL != 90*24*time.Hour {
 		t.Errorf("ReporterTokenTTL = %s, want 2160h", got.ReporterTokenTTL)
+	}
+	if !got.S3VirtualHostStyle {
+		t.Error("S3VirtualHostStyle = false, want true")
 	}
 }
 

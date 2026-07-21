@@ -20,6 +20,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping PostgreSQL integration test in short mode")
 	}
+	const appPassword = "app password with 'quotes'"
+	const adminPassword = `admin:/password?#@`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -56,17 +58,38 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := migrator.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
+	appURL := roleURL(t, directURL, "fidibeki_app", appPassword)
+	adminURL := roleURL(t, directURL, "fidibeki_admin", adminPassword)
+	if err := db.ConfigureRuntimeRoles(ctx, directURL, appURL, adminURL); err != nil {
+		t.Fatalf("configure runtime roles: %v", err)
+	}
 
 	root, err := pgx.Connect(ctx, directURL)
 	if err != nil {
 		t.Fatalf("connect as migration user: %v", err)
 	}
-	defer root.Close(ctx)
-	if _, err := root.Exec(ctx, `
-		ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password';
-		ALTER ROLE fidibeki_admin LOGIN PASSWORD 'admin-password';
-	`); err != nil {
-		t.Fatalf("enable test role logins: %v", err)
+	t.Cleanup(func() {
+		if err := root.Close(ctx); err != nil {
+			t.Errorf("close migration connection: %v", err)
+		}
+	})
+	for role, wantBypassRLS := range map[string]bool{
+		"fidibeki_app": false, "fidibeki_admin": true,
+	} {
+		var canLogin, isSuperuser, bypassRLS bool
+		if err := root.QueryRow(ctx, `
+			SELECT rolcanlogin, rolsuper, rolbypassrls
+			FROM pg_roles
+			WHERE rolname = $1
+		`, role).Scan(&canLogin, &isSuperuser, &bypassRLS); err != nil {
+			t.Fatalf("read %s role flags: %v", role, err)
+		}
+		if !canLogin || isSuperuser || bypassRLS != wantBypassRLS {
+			t.Fatalf(
+				"unexpected %s role flags: login=%t superuser=%t bypass_rls=%t",
+				role, canLogin, isSuperuser, bypassRLS,
+			)
+		}
 	}
 
 	var tenantA, tenantB string
@@ -252,8 +275,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 
 	pools, err := db.OpenPools(
 		ctx,
-		roleURL(t, directURL, "fidibeki_app", "app-password"),
-		roleURL(t, directURL, "fidibeki_admin", "admin-password"),
+		roleURL(t, directURL, "fidibeki_app", appPassword),
+		roleURL(t, directURL, "fidibeki_admin", adminPassword),
 		3,
 		2,
 	)
@@ -300,7 +323,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin tenant A transaction: %v", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	setTenantContext(t, ctx, tx, tenantA)
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM tenant_members`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A members: %v", err)

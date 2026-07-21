@@ -76,7 +76,11 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upload through presigned URL: %v", err)
 	}
-	defer response.Body.Close()
+	t.Cleanup(func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close upload response: %v", err)
+		}
+	})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("upload status = %d", response.StatusCode)
 	}
@@ -95,5 +99,32 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	closeErr := reader.Close()
 	if err != nil || closeErr != nil || string(contents) != "audio-data" {
 		t.Errorf("read uploaded object = %q, read error = %v, close error = %v", contents, err, closeErr)
+	}
+	for key, body := range map[string]string{
+		"tenants/test/cleanup/first.txt":  "first",
+		"tenants/test/cleanup/second.txt": "second",
+	} {
+		if err := client.PutObject(ctx, key, strings.NewReader(body), int64(len(body)), "text/plain"); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+	if err := client.RemoveObject(ctx, "tenants/test/attachment.webm"); err != nil {
+		t.Fatalf("remove uploaded object: %v", err)
+	}
+	if _, err := client.Stat(ctx, "tenants/test/attachment.webm"); err == nil {
+		t.Fatal("removed upload still exists")
+	}
+	if err := client.RemovePrefix(ctx, "tenants/test/cleanup/"); err != nil {
+		t.Fatalf("remove prefix: %v", err)
+	}
+	for _, key := range []string{
+		"tenants/test/cleanup/first.txt", "tenants/test/cleanup/second.txt",
+	} {
+		if _, err := client.Stat(ctx, key); err == nil {
+			t.Errorf("prefix object %s still exists", key)
+		}
+	}
+	if err := client.RemovePrefix(ctx, "tenants/test/missing/"); err != nil {
+		t.Fatalf("remove empty prefix: %v", err)
 	}
 }

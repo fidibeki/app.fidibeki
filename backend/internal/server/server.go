@@ -75,12 +75,12 @@ func hostDispatcher(options Options) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hostname := requestHostname(r.Host)
-		switch {
-		case hostname == platformHost:
+		switch hostname {
+		case platformHost:
 			platformHandler.ServeHTTP(w, r)
-		case hostname == widgetHost:
+		case widgetHost:
 			widgetHandler.ServeHTTP(w, r)
-		case hostname == baseDomain:
+		case baseDomain:
 			apiNotFoundHandler().ServeHTTP(w, r)
 		default:
 			if _, err := tenant.SlugFromHost(r.Host, baseDomain); err != nil {
@@ -152,7 +152,6 @@ func readyz(options Options) http.HandlerFunc {
 					statuses[result.name] = "ok"
 				}
 			case <-ctx.Done():
-				allReady = false
 				for name := range checks {
 					if _, exists := statuses[name]; !exists {
 						statuses[name] = "unavailable"

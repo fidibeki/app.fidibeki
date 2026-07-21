@@ -196,7 +196,8 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 	var affected int64
 	refundBudget := task.Kind != TaskKindFileDelete
-	if task.Kind == TaskKindText {
+	switch task.Kind {
+	case TaskKindText:
 		tag, err := tx.Exec(ctx, `
 				UPDATE feedbacks
 				SET text_process_status = 'pending', ai_job_enqueued_at = NULL
@@ -208,7 +209,7 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 			return fmt.Errorf("undo text AI enqueue: %w", err)
 		}
 		affected = tag.RowsAffected()
-	} else if task.Kind == TaskKindAttachment {
+	case TaskKindAttachment:
 		tag, err := tx.Exec(ctx, `
 			UPDATE attachments
 			SET processing_status = 'pending', processing_attempts = processing_attempts - 1
@@ -219,7 +220,7 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 			return fmt.Errorf("undo attachment AI enqueue: %w", err)
 		}
 		affected = tag.RowsAffected()
-	} else {
+	default:
 		tag, err := tx.Exec(ctx, `
 			UPDATE ai_gemini_files
 			SET delete_enqueued_at = NULL, delete_attempts = delete_attempts - 1

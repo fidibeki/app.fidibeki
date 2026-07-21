@@ -75,7 +75,7 @@ Self-service signup is `POST http://api.localhost:8088/v1/signup`. It creates a 
 the first tenant admin, then queues a fragment-based magic link. Production and staging require
 Cloudflare Turnstile plus `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and one Stripe Price ID in
 each of `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, and `STRIPE_PRICE_SCALE`. Configure the
-Stripe endpoint at `https://api.fidibeki.app/v1/billing/webhooks/stripe` for these six events:
+Stripe endpoint at `https://api.fidibeki.com/v1/billing/webhooks/stripe` for these six events:
 `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
 `customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`.
 
@@ -91,10 +91,10 @@ permissions can list and inspect issues, change status with an optional internal
 issue into another issue in the same project, and undo a merge. Status changes append immutable
 `issue_updates` history and enqueue opted-in reporter mail without holding the API transaction open.
 
-Reporter email uses `updates@fidibeki.app`, includes a 90-day audience-bound unsubscribe link, and
+Reporter email uses `updates@fidibeki.com`, includes a 90-day audience-bound unsubscribe link, and
 records every provider attempt in `delivery_logs`. In production, set `EMAIL_DRIVER=resend`,
 `RESEND_API_KEY`, and `RESEND_WEBHOOK_SECRET`; point the Resend webhook at
-`https://api.fidibeki.app/v1/webhooks/resend` for bounce and complaint handling.
+`https://api.fidibeki.com/v1/webhooks/resend` for bounce and complaint handling.
 
 Scale and Enterprise tenants can manage Slack, Teams, and generic webhook destinations at
 `/v1/integrations`. Each destination selects from `feedback.created`, `issue.created`,
@@ -193,7 +193,8 @@ Application code has two pools with deliberately separate capabilities:
 
 - `fidibeki_app` is subject to forced RLS and serves tenant-scoped handlers.
 - `fidibeki_admin` bypasses RLS for platform operations and tenant resolution.
-- Migrations use `DATABASE_URL_DIRECT` and bypass PgBouncer.
+- Migrations use `DATABASE_URL_DIRECT`, bypass PgBouncer, and provision both runtime roles from the
+  credentials in `DATABASE_URL_APP` and `DATABASE_URL_ADMIN`.
 
 Tenant HTTP requests run in an app-pool transaction. Middleware resolves the subdomain using the
 admin pool, sets `app.tenant_id` transaction-locally, and only flushes the HTTP response after the

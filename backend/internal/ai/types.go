@@ -18,7 +18,7 @@ var (
 	ErrNotFound       = errors.New("AI resource not found")
 	ErrNoWork         = errors.New("AI work is already terminal")
 	ErrAlreadyRunning = errors.New("AI work is already processing")
-	ErrUnavailable    = errors.New("Gemini is not configured")
+	ErrUnavailable    = errors.New("gemini is not configured")
 )
 
 type TaskKind string

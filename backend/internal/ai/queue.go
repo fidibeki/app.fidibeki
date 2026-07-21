@@ -51,9 +51,10 @@ func (q *Queue) Enqueue(ctx context.Context, prepared PreparedTask) error {
 		return fmt.Errorf("encode AI task: %w", err)
 	}
 	taskType := TaskTextProcess
-	if prepared.Kind == TaskKindAttachment {
+	switch prepared.Kind {
+	case TaskKindAttachment:
 		taskType = TaskAttachmentProcess
-	} else if prepared.Kind == TaskKindFileDelete {
+	case TaskKindFileDelete:
 		taskType = TaskGeminiFileDelete
 	}
 	_, err = q.client.EnqueueContext(

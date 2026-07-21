@@ -133,7 +133,11 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.writeError(w, r, err)
 		return
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			h.logger.WarnContext(r.Context(), "close feedback attachment stream", "error", err, "attachment_id", object.ID)
+		}
+	}()
 
 	w.Header().Set("Content-Type", object.ContentType)
 	w.Header().Set("Cache-Control", "private, no-store")

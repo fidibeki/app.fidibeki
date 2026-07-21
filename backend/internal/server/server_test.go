@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/server"
 )
@@ -128,6 +130,34 @@ func TestReadyzReportsDependencyHealth(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReadyzFailsClosedWithoutChecksAndOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	assertUnavailable := func(t *testing.T, options server.Options) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		server.New(options).ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable ||
+			!strings.Contains(recorder.Body.String(), "unavailable") {
+			t.Fatalf("readiness response = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+
+	assertUnavailable(t, server.Options{})
+	blocker := make(chan struct{})
+	defer close(blocker)
+	assertUnavailable(t, server.Options{
+		ReadinessTimeout: 10 * time.Millisecond,
+		Readiness: map[string]server.ReadinessCheck{
+			"blocked": readinessCheckFunc(func(context.Context) error {
+				<-blocker
+				return nil
+			}),
+		},
+	})
 }
 
 func TestUnknownRoutesUseTheAPIErrorEnvelope(t *testing.T) {

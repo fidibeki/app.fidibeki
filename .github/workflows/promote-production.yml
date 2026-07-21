@@ -2,6 +2,11 @@ name: Promote Production
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type fidibeki.com to confirm the production promotion
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +25,10 @@ jobs:
       WIDGET_SERVICE: ${{ vars.RAILWAY_WIDGET_SERVICE }}
       PRODUCTION_API_URL: ${{ vars.PRODUCTION_API_URL }}
     steps:
+      - name: Confirm production target
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: test "$CONFIRM" = "fidibeki.com"
       - uses: actions/checkout@v7
         with:
           ref: main

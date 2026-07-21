@@ -28,14 +28,14 @@
   Migrator uses `DATABASE_URL_DIRECT` (bypasses pgbouncer).
 - **Migrations**: `golang-migrate` with SQL files in `infra/migrations`, one file per concept
   (table/enum/index-set), each paired with a `.down.sql`. CI runs an up→down→up test.
-- **Multi-tenancy routing**: Subdomains of `fidibeki.app` resolve to a tenant via a
+- **Multi-tenancy routing**: Subdomains of `fidibeki.com` resolve to a tenant via a
   `TenantResolver` interface. MVP ships `SubdomainResolver` only; `CustomDomainResolver` is
   a typed-out stub for the enterprise custom-domain feature. `BASE_DOMAIN` env var.
-  `api.fidibeki.app` is the platform host (excluded from tenant resolution).
-- **Host-based router split**: `api.fidibeki.app` serves the platform router and a dedicated public
+  `api.fidibeki.com` is the platform host (excluded from tenant resolution).
+- **Host-based router split**: `api.fidibeki.com` serves the platform router and a dedicated public
   widget router. Platform routes use the admin pool. Public widget routes resolve the project/public
   key on the admin pool, then open an app-pool transaction and set transaction-local tenant context;
-  all business reads and writes therefore remain RLS-enforced. `*.fidibeki.app` serves tenant routes on the app pool.
+  all business reads and writes therefore remain RLS-enforced. `*.fidibeki.com` serves tenant routes on the app pool.
   Pool selection is router-group-level, never handler-selected. `X-Forwarded-Host` is NOT trusted
   (Caddy/forwarded header trust is a deploy-time decision).
 - **Tenant lookup**: no cache for MVP — indexed `SELECT id, status, plan, trial_ends_at
@@ -55,7 +55,7 @@
   reuse-of-revoked-token). No passwords stored.
 - **Token transport**: Access token in memory + `Authorization: Bearer` header; refresh token
   in httpOnly `SameSite=Strict` cookie. Same-origin (Nuxt + Go behind one Caddy reverse proxy
-  on `*.fidibeki.app`) — no CORS on backoffice calls, cookies flow naturally.
+  on `*.fidibeki.com`) — no CORS on backoffice calls, cookies flow naturally.
   Silent refresh on app boot; silent refresh on 401 via `apiFetch` plugin.
 - **Widget authentication**: Project public key (`pk_live_<22 base62>`) in `X-Fidibeki-Public-Key`
   header + strict `Origin` validation against `projects.allowed_domains` (exact match or
@@ -89,8 +89,8 @@
   budget enforced at enqueue time. Plan-gated: non-AI plans get `processing_status='skipped'`.
   Video uses Gemini's native video input (no FFmpeg in the Docker image).
 - **Email delivery**: Resend via asynq `email-pool`. Two sender identities on one domain:
-  `auth@fidibeki.app` (transactional — magic links, billing receipts) and
-  `updates@fidibeki.app` (reporter-facing issue updates). Isolated reputation per sender.
+  `auth@fidibeki.com` (transactional — magic links, billing receipts) and
+  `updates@fidibeki.com` (reporter-facing issue updates). Isolated reputation per sender.
   Go `html/template` + plaintext fallback, no MJML/React-Email for MVP. Async only.
   `delivery_logs` is one row per attempt (with `attempt_number`). Resend bounce/complaint
   webhook auto-unsubscribes reporters (`feedbacks.notify_reporter=false`).
@@ -102,8 +102,8 @@
   `maintenance-pool` (2). Per-task backoff policies. Terminal failures update the relevant
   DB row (`delivery_logs.status='failed'`, `attachments.processing_status='failed'`).
   Best-effort enqueue + 5-min `reconcile_pending_jobs` cron (self-healing if Redis blips).
-  Jobs carry IDs only; workers re-fetch fresh state. `asynqmon` web UI mounted on
-  `api.fidibeki.app` behind platform-admin auth.
+  Jobs carry IDs only; workers re-fetch fresh state. A native read-only queue operations UI is
+  mounted on `api.fidibeki.com` behind platform-admin auth.
 - **Payments**: Stripe Checkout (hosted) + Customer + Subscription + one Price per plan.
   Price IDs in env vars (`STRIPE_PRICE_*`). Hybrid trial: Stripe-native trial +
   Fidibeki `trial_ends_at` enforcement + daily cron + Resend dunning (3d/1d/0d before end).
@@ -119,7 +119,7 @@
   Cloudflare Turnstile on signup from day 1; Turnstile on widget deferred to Phase 12.
   `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `Retry-After` headers on every rate-limited response.
   API keys get a configurable higher limit (`api_keys.rate_limit_per_min`, default 1000).
-- **Backoffice UI**: Nuxt 3 on `*.fidibeki.app`, hybrid SSR (`/login` + `/` SSR for auth
+- **Backoffice UI**: Nuxt 3 on `*.fidibeki.com`, hybrid SSR (`/login` + `/` SSR for auth
   bootstrap, rest SPA). One Nuxt app reads `Host` → `tenantSlug` in SSR context.
   Same-origin via Caddy reverse proxy (path-prefix routing: `/api/*`, `/v1/*`, `/auth/*`,
   `/billing/*` → Go; everything else → Nuxt). `apiFetch` plugin with silent-refresh-on-401.
@@ -129,7 +129,7 @@
 - **Widget embed**: Vanilla JS, zero-dep. Single ~5KB `loader.js` + lazy-loaded ES modules
   (`rating.js`, `audio.js`, `video.js`, `screenshot.js`, `replay.js`, `error-reporting.js`) — only modules the plan allows
   are fetched. Shadow DOM for CSS/JS isolation. One-line embed:
-  `<script src="https://widget.fidibeki.app/v1/loader.js" data-fidibeki-key="pk_live_..." async>`.
+  `<script src="https://widget.fidibeki.com/v1/loader.js" data-fidibeki-key="pk_live_..." async>`.
   Config fetched once, checked on SPA navigation (history patch + custom event), refreshed
   every 5 min and on `visibilitychange`. Three triggers (delay/scroll/exit_intent) with
   `sessionStorage` suppression. Attach-element captures HTML + computed styles; screenshot
@@ -159,7 +159,7 @@
   request_id, tenant_id, tenant_slug, route, duration_ms, user_id, error`. PII redaction custom handler
   (scrubs `text`, `email`, `transcription`, `dom_snapshot_html`, `storage_key`).
   Sentry SaaS for Go + widget + Nuxt with source maps and PII scrubbing.
-  Skip Prometheus for MVP (derive from logs + asynqmon). `/healthz` (liveness, always 200) +
+  Skip Prometheus for MVP (derive from logs + the queue operations UI). `/healthz` (liveness, always 200) +
   `/readyz` (readiness, checks DB+Redis+S3 with 2s timeouts). Widget lazy-loads Sentry SDK
   on first error (preserves 5KB loader). `docs/runbook.md` with 10 scenarios.
 - **API contract**: Flat single resources / `{ data, meta: { has_next, next_cursor } }` collections.
@@ -185,7 +185,7 @@
   Daily `tenant_deletion_executor` cron: cancel Stripe sub, revoke sessions, delete S3 prefix,
   `DELETE FROM tenants CASCADE`, insert into `tenant_deletions` audit table. Soft during grace,
   hard after. No automatic refunds (manual via Stripe dashboard). Data export deferred to Phase 12+.
-- **Self-service signup**: `POST api.fidibeki.app/v1/signup` (no auth, Turnstile-protected) creates
+- **Self-service signup**: `POST api.fidibeki.com/v1/signup` (no auth, Turnstile-protected) creates
   a `trial` tenant + first admin member. Lazy Stripe customer creation (on first billing interaction).
   Trial gets the chosen plan's limits. Magic-link verify flow: the email opens Nuxt
   `GET /auth/verify#token=...`; client code reads and immediately clears the fragment, then sends the
@@ -728,7 +728,7 @@ app.fidibeki/
 ├── infra/
 │   ├── migrations/         # ~33 numbered SQL file pairs
 │   ├── docker-compose.yml  # postgres, pgbouncer, redis, minio, caddy, api, web
-│   ├── Caddyfile           # *.fidibeki.app → {api, web}; widget.fidibeki.app → static
+│   ├── Caddyfile           # *.fidibeki.com → {api, web}; widget.fidibeki.com → static
 │   ├── railway.json
 │   └── stripe/fixtures/    # webhook event fixtures for tests
 ├── docs/
@@ -807,7 +807,7 @@ testcontainers (Postgres, Redis, MinIO) with RLS positive/negative/admin tests.
 
 - [x] `docker compose up` starts Postgres, pgbouncer, MinIO, Redis, Caddy, and the API.
 - [x] `go test ./...` runs unit + integration tests including testcontainers Postgres.
-- [ ] `go test -short` runs unit tests only (no testcontainers) in <1s.
+- [x] `make test-short` runs unit tests only (no testcontainers) in <1s with a warm build cache.
 - [x] `GET /healthz` returns `200 OK` with `{ "status": "ok" }`.
 - [x] `GET /readyz` returns `200` if DB+Redis+S3 pass, `503` with per-check status otherwise.
 - [x] Two `pgxpool` instances (app + admin) with the right roles; migrator uses direct URL.
@@ -1016,10 +1016,10 @@ Bounce/complaint webhook auto-unsubscribes.
 - [x] Auto-created per feedback (title = first 80 chars of text or `[No text]`).
 - [x] Tenant can merge issues (soft-merge, `merged_into_id` preserved, un-merge possible).
 - [x] Reporter email optional; if provided + opted-in, status updates trigger an email.
-- [x] Emails sent from `updates@fidibeki.app` with `{Tenant name} via Fidibeki` from-name.
+- [x] Emails sent from `updates@fidibeki.com` with `{Tenant name} via Fidibeki` from-name.
 - [x] Unsubscribe link (JWT, 90d) in every reporter email; clicking sets `notify_reporter=false`.
 - [x] `delivery_logs` records each attempt with `attempt_number`, `status`, `provider_message_id`.
-- [x] Resend bounce/complaint webhook on `api.fidibeki.app`: updates `delivery_logs.status='bounced'`,
+- [x] Resend bounce/complaint webhook on `api.fidibeki.com`: updates `delivery_logs.status='bounced'`,
   auto-unsubscribes reporter on complaint.
 - [x] `issue_updates` records every status change with `member_id`, `old_status`, `new_status`, `comment`.
 
@@ -1085,7 +1085,7 @@ that the platform bills me automatically. I can also close my account.
 
 ### What to build
 
-Self-service signup (`POST api.fidibeki.app/v1/signup`, Turnstile-protected). Stripe Checkout
+Self-service signup (`POST api.fidibeki.com/v1/signup`, Turnstile-protected). Stripe Checkout
 (hosted) + Customer + Subscription + one Price per plan. Hybrid trial (Stripe + Fidibeki
 `trial_ends_at` + daily cron + Resend dunning). 6 webhook events + `stripe_events` idempotency.
 Downgrades: restrict-new-creation + `pending_plan` applied at next period. Customer Portal.
@@ -1119,7 +1119,7 @@ issues and configure the widget in a branded backoffice.
 
 ### What to build
 
-Nuxt 3 on `*.fidibeki.app`, hybrid SSR (`/login` + `/` SSR, rest SPA). `apiFetch` plugin with
+Nuxt 3 on `*.fidibeki.com`, hybrid SSR (`/login` + `/` SSR, rest SPA). `apiFetch` plugin with
 silent-refresh-on-401. `useState` for auth. `can(perm)` for authz (plan limits surface as 402).
 Pages: dashboard (metrics), project list, widget config editor, feedback list (cursor-paginated
 + 9 filters), feedback detail (metadata, screenshot, transcript, sentiment, replay player),
@@ -1167,7 +1167,7 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 - [x] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
   AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
   S3 storage full, deploy rollback, secrets rotation.
-- [x] Read-only Asynq queue operations UI mounted on `api.fidibeki.app` behind platform-admin auth.
+- [x] Read-only Asynq queue operations UI mounted on `api.fidibeki.com` behind platform-admin auth.
 
 Local packaging and deployment automation are complete. The remaining item requires configuring
 the Railway project and performing the first staging and production promotions.

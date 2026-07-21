@@ -293,7 +293,7 @@ useHead({ title: 'Settings - Fidibeki' })
         <div class="app-surface settings-section">
           <header><div><p class="app-eyebrow">Workspace</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ data.configuration.tenant.status }}</span></header>
           <dl class="settings-ledger">
-            <div><dt>Subdomain</dt><dd>{{ data.configuration.tenant.slug }}.fidibeki.app</dd></div>
+            <div><dt>Subdomain</dt><dd>{{ data.configuration.tenant.slug }}.fidibeki.com</dd></div>
             <div><dt>Plan</dt><dd class="capitalize">{{ data.configuration.plan.plan }}</dd></div>
             <div><dt>Rate</dt><dd>{{ planPrice }}</dd></div>
             <div><dt>Retention</dt><dd>{{ data.configuration.plan.limits.storage_days < 0 ? 'Custom' : `${data.configuration.plan.limits.storage_days} days` }}</dd></div>

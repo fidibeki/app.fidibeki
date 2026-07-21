@@ -18,13 +18,13 @@ func TestSlugFromHostAcceptsExactlyOneValidatedSubdomain(t *testing.T) {
 		wantErr  error
 	}{
 		{name: "local host with port", host: "acme.localhost:8080", base: "localhost", wantSlug: "acme"},
-		{name: "production host", host: "beta.fidibeki.app", base: "fidibeki.app", wantSlug: "beta"},
-		{name: "case normalized", host: "Acme.FIDIBEKI.APP", base: "fidibeki.app", wantSlug: "acme"},
-		{name: "base host", host: "fidibeki.app", base: "fidibeki.app", wantErr: tenant.ErrNotTenantHost},
-		{name: "nested subdomain", host: "one.two.fidibeki.app", base: "fidibeki.app", wantErr: tenant.ErrNotTenantHost},
-		{name: "suffix spoof", host: "acme.fidibeki.app.evil.test", base: "fidibeki.app", wantErr: tenant.ErrNotTenantHost},
-		{name: "reserved platform host", host: "api.fidibeki.app", base: "fidibeki.app", wantErr: tenant.ErrInvalidSlug},
-		{name: "invalid slug", host: "-bad.fidibeki.app", base: "fidibeki.app", wantErr: tenant.ErrInvalidSlug},
+		{name: "production host", host: "beta.fidibeki.com", base: "fidibeki.com", wantSlug: "beta"},
+		{name: "case normalized", host: "Acme.FIDIBEKI.COM", base: "fidibeki.com", wantSlug: "acme"},
+		{name: "base host", host: "fidibeki.com", base: "fidibeki.com", wantErr: tenant.ErrNotTenantHost},
+		{name: "nested subdomain", host: "one.two.fidibeki.com", base: "fidibeki.com", wantErr: tenant.ErrNotTenantHost},
+		{name: "suffix spoof", host: "acme.fidibeki.com.evil.test", base: "fidibeki.com", wantErr: tenant.ErrNotTenantHost},
+		{name: "reserved platform host", host: "api.fidibeki.com", base: "fidibeki.com", wantErr: tenant.ErrInvalidSlug},
+		{name: "invalid slug", host: "-bad.fidibeki.com", base: "fidibeki.com", wantErr: tenant.ErrInvalidSlug},
 	}
 
 	for _, tt := range tests {

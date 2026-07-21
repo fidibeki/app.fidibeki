@@ -18,11 +18,13 @@ jobs:
       STAGING_TENANT_URL: ${{ vars.STAGING_TENANT_URL }}
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
-      - run: npm install --global pnpm@11.15.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @fidibeki/web exec playwright install --with-deps chromium
       - run: pnpm --filter @fidibeki/web exec playwright test tests/e2e/staging-smoke.spec.ts --project=desktop

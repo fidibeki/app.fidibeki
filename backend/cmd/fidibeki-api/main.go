@@ -117,6 +117,16 @@ func runMigrations(logger *slog.Logger, settings config.Config, args []string) i
 	switch action {
 	case "up":
 		err = migrator.Up()
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err = db.ConfigureRuntimeRoles(
+				ctx,
+				settings.DatabaseURLDirect,
+				settings.DatabaseURLApp,
+				settings.DatabaseURLAdmin,
+			)
+			cancel()
+		}
 	case "down":
 		err = migrator.Down()
 	case "version":
@@ -169,6 +179,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Endpoint: settings.S3Endpoint, PublicEndpoint: settings.S3PublicEndpoint,
 		Region: settings.S3Region, Bucket: settings.S3Bucket,
 		AccessKey: settings.S3AccessKey, SecretKey: settings.S3SecretKey,
+		VirtualHostStyle: settings.S3VirtualHostStyle,
 	})
 	if err != nil {
 		return err
@@ -434,6 +445,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Endpoint: settings.S3Endpoint, PublicEndpoint: settings.S3PublicEndpoint,
 		Region: settings.S3Region, Bucket: settings.S3Bucket,
 		AccessKey: settings.S3AccessKey, SecretKey: settings.S3SecretKey,
+		VirtualHostStyle: settings.S3VirtualHostStyle,
 	})
 	if err != nil {
 		return err
