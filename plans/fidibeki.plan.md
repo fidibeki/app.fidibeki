@@ -121,11 +121,11 @@ CREATE TYPE event_type AS ENUM ('feedback.created', 'issue.created', 'issue.upda
 | trigger_type | trigger_type | NOT NULL | `delay`, `scroll`, `exit_intent` |
 | trigger_delay_seconds | INT | | Used when trigger_type = 'delay' |
 | trigger_scroll_percent | INT | | Used when trigger_type = 'scroll' |
-| ask_rating | BOOLEAN | NOT NULL, default true | |
-| ask_text | BOOLEAN | NOT NULL, default true | |
-| ask_audio | BOOLEAN | NOT NULL, default false | |
-| ask_video | BOOLEAN | NOT NULL, default false | |
-| ask_element_attachment | BOOLEAN | NOT NULL, default false | Allows user to attach a clicked DOM element + computed styles |
+| can_rate | BOOLEAN | NOT NULL, default true | User can submit a 1-5 star rating |
+| can_write_text | BOOLEAN | NOT NULL, default true | User can write a free-form review |
+| can_record_audio | BOOLEAN | NOT NULL, default false | User can record an audio message |
+| can_record_video | BOOLEAN | NOT NULL, default false | User can record a video message |
+| can_attach_element | BOOLEAN | NOT NULL, default false | User can attach a clicked DOM element + computed styles |
 | greeting | TEXT | | Custom message shown by the widget |
 | position | TEXT | NOT NULL, default 'bottom-left' | `bottom-left`, `bottom-right`, etc. |
 | replay_mode | TEXT | NOT NULL, default 'none' | `none`, `sampling`, `all` |
