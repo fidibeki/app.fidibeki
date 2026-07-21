@@ -2,6 +2,7 @@
 import { AlertTriangle, ArrowLeft, GitMerge, RotateCcw } from '@lucide/vue'
 import type { FeedbackPage, Issue, IssueStatus, IssueUpdate } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
@@ -68,7 +69,7 @@ async function undoMerge() {
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  return formatDateTime(value)
 }
 
 useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` }))

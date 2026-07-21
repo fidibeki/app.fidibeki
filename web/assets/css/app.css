@@ -73,6 +73,7 @@
   border: 1px solid var(--line);
   border-radius: 5px;
   color: var(--ink-soft);
+  text-decoration: none;
 }
 
 .app-tenant-switcher > span {
@@ -748,12 +749,15 @@
     padding: 12px;
     background: #fff;
     box-shadow: var(--shadow-overlay);
+    visibility: hidden;
     transform: translateX(-105%);
-    transition: transform 160ms ease;
+    transition: transform 160ms ease, visibility 0s linear 160ms;
   }
 
   .app-global-rail[data-open='true'] {
+    visibility: visible;
     transform: translateX(0);
+    transition-delay: 0s;
   }
 
   .app-mobile-rail-head {

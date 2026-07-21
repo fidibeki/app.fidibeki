@@ -2,6 +2,7 @@
 import { AlertTriangle, ArrowUpRight, Check, Clock3, CreditCard, ShieldAlert, Trash2, X } from '@lucide/vue'
 import type { BillingSummary, TenantPlan } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDate, formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch, $refreshSession } = useNuxtApp()
@@ -113,13 +114,13 @@ useHead({ title: 'Billing - Fidibeki' })
     <template v-else-if="billing">
       <section v-if="billing.deletion_requested_at" class="billing-deletion-banner">
         <ShieldAlert :size="20" />
-        <div><b>Deletion scheduled</b><span>Workspace removal is scheduled for {{ deletionDate?.toLocaleString() }}.</span></div>
+        <div><b>Deletion scheduled</b><span>Workspace removal is scheduled for {{ deletionDate ? formatDateTime(deletionDate) : '' }}.</span></div>
         <button v-if="can('billing:manage')" class="app-button" :disabled="pendingAction === 'cancel-delete'" @click="cancelDeletion">{{ pendingAction === 'cancel-delete' ? 'Restoring...' : 'Cancel deletion' }}</button>
       </section>
 
       <section class="billing-summary app-surface">
         <div><p class="app-eyebrow">Current plan</p><h2 class="capitalize">{{ billing.plan }}</h2><span v-if="billing.pending_plan">Changes to {{ billing.pending_plan }} next period</span><span v-else>{{ billing.status }}</span></div>
-        <div><p class="app-eyebrow">Trial</p><h2>{{ trialDays == null ? 'Not active' : `${trialDays} days` }}</h2><span>{{ billing.trial_ends_at ? new Date(billing.trial_ends_at).toLocaleDateString() : 'No trial end date' }}</span></div>
+        <div><p class="app-eyebrow">Trial</p><h2>{{ trialDays == null ? 'Not active' : `${trialDays} days` }}</h2><span>{{ billing.trial_ends_at ? formatDate(billing.trial_ends_at) : 'No trial end date' }}</span></div>
         <div><p class="app-eyebrow">Payment account</p><h2>{{ billing.has_customer ? 'Connected' : 'Not created' }}</h2><span>{{ billing.has_subscription ? 'Subscription active' : 'No subscription' }}</span></div>
         <button v-if="can('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? 'Opening...' : 'Billing portal' }}<ArrowUpRight :size="13" /></button>
       </section>
@@ -151,16 +152,16 @@ useHead({ title: 'Billing - Fidibeki' })
       </section>
     </template>
 
-    <div v-if="deleteOpen" class="app-modal-backdrop" @click.self="deleteOpen = false">
-      <section class="billing-modal" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <AppDialog :open="deleteOpen" aria-labelledby="delete-title" @close="deleteOpen = false">
+      <section class="billing-modal">
         <header><div><p class="app-eyebrow">Irreversible after grace</p><h2 id="delete-title">Schedule workspace deletion</h2></div><button class="app-icon-button" title="Close" @click="deleteOpen = false"><X :size="18" /></button></header>
         <form @submit.prevent="requestDeletion">
-          <label>Type <code>{{ tenant?.slug }}</code> to confirm<input v-model.trim="confirmation" class="app-input" required autocomplete="off" /></label>
+          <label>Type <code>{{ tenant?.slug }}</code> to confirm<input v-model.trim="confirmation" class="app-input" required autocomplete="off" autofocus /></label>
           <p v-if="actionError" class="billing-form-error">{{ actionError }}</p>
           <footer><button class="app-button" type="button" @click="deleteOpen = false">Cancel</button><button class="app-button billing-delete-button" type="submit" :disabled="pendingAction === 'delete' || confirmation !== tenant?.slug">{{ pendingAction === 'delete' ? 'Scheduling...' : 'Schedule deletion' }}</button></footer>
         </form>
       </section>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
@@ -198,7 +199,6 @@ useHead({ title: 'Billing - Fidibeki' })
 .billing-danger span { color: var(--muted); font-size: 10px; }
 .billing-delete-button { background: #fff; color: var(--red); border-color: #d8a1a8; }
 .billing-delete-button:hover:not(:disabled) { background: var(--red-soft); }
-.app-modal-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px; background: rgb(10 20 17 / 42%); }
 .billing-modal { width: min(500px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .billing-modal > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 11px 15px; border-bottom: 1px solid var(--line); }
 .billing-modal h2 { margin: 3px 0 0; font-size: 15px; }

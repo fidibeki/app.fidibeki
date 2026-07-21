@@ -2,6 +2,7 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, RefreshCw } from '@lucide/vue'
 import type { PlanCatalogResponse, SignupResponse, TenantPlan } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatWholeNumber } from '~/utils/format'
 import {
   baseDomainURL,
   normalizeWorkspaceSlug,
@@ -203,7 +204,7 @@ useHead({ title: 'Create workspace · Fidibeki' })
             <label v-for="plan in catalog?.plans" :key="plan.plan" :data-selected="selectedPlan === plan.plan">
               <input v-model="selectedPlan" type="radio" name="plan" :value="plan.plan" />
               <span><b>{{ planName(plan.plan) }}</b><strong>{{ planPrice(plan.monthly_price_cents) }}<small>/mo</small></strong></span>
-              <small>{{ plan.limits.projects }} project{{ plan.limits.projects === 1 ? '' : 's' }} · {{ plan.limits.feedback_per_month.toLocaleString() }} feedback/mo</small>
+              <small>{{ plan.limits.projects }} project{{ plan.limits.projects === 1 ? '' : 's' }} · {{ formatWholeNumber(plan.limits.feedback_per_month) }} feedback/mo</small>
             </label>
           </div>
         </fieldset>

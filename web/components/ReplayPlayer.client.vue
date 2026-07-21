@@ -15,6 +15,17 @@ const eventCount = ref(0)
 let player: { $destroy?: () => void, triggerResize?: () => void } | null = null
 let resizeObserver: ResizeObserver | null = null
 
+function labelReplayControls() {
+  if (!target.value) return
+  const buttons = target.value.querySelectorAll<HTMLButtonElement>('.rr-controller__btns > button')
+  const playPause = buttons.item(0)
+  const fullscreen = buttons.item(buttons.length - 1)
+  playPause?.setAttribute('aria-label', 'Play or pause replay')
+  fullscreen?.setAttribute('aria-label', 'Toggle fullscreen replay')
+  target.value.querySelector<HTMLInputElement>('.rr-controller input[type="checkbox"]')
+    ?.setAttribute('aria-label', 'Skip inactive periods')
+}
+
 async function loadReplay() {
   state.value = 'loading'
   errorMessage.value = ''
@@ -44,6 +55,7 @@ async function loadReplay() {
         maxScale: 1,
       },
     })
+    labelReplayControls()
     state.value = 'ready'
     resizeObserver?.disconnect()
     resizeObserver = new ResizeObserver(() => player?.triggerResize?.())
@@ -67,7 +79,7 @@ onBeforeUnmount(() => {
     <div v-if="state === 'loading'" class="replay-player-state"><span class="app-spinner" /><h3>Loading replay</h3></div>
     <div v-else-if="state === 'error'" class="replay-player-state"><AlertTriangle :size="24" /><h3>Replay unavailable</h3><p>{{ errorMessage }}</p><button class="app-button" type="button" @click="loadReplay"><RotateCcw :size="14" /> Retry</button></div>
     <div v-show="state === 'ready'" ref="target" class="replay-player-target" />
-    <span v-if="state === 'ready'" class="replay-player-count"><MonitorPlay :size="13" /> {{ eventCount.toLocaleString() }} events</span>
+    <span v-if="state === 'ready'" class="replay-player-count"><MonitorPlay :size="13" /> {{ formatWholeNumber(eventCount) }} events</span>
   </div>
 </template>
 

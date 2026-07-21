@@ -2,6 +2,7 @@
 import { AlertTriangle, ChevronRight, FolderKanban, Plus, X } from '@lucide/vue'
 import type { Project } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDate } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
 const { can } = useAuth()
@@ -51,16 +52,16 @@ useHead({ title: 'Projects · Fidibeki' })
       <header><span>Project</span><span>Allowed origins</span><span>Public key</span><span>Updated</span><span /></header>
       <NuxtLink v-for="project in data.projects" :key="project.id" :to="`/projects/${project.id}`">
         <span class="project-list-name"><i>{{ project.name.slice(0, 1).toUpperCase() }}</i><b>{{ project.name }}</b></span>
-        <span>{{ project.allowed_domains.join(', ') || 'No domains' }}</span><code>{{ project.public_key }}</code><time>{{ new Date(project.updated_at).toLocaleDateString() }}</time><ChevronRight :size="16" />
+        <span>{{ project.allowed_domains.join(', ') || 'No domains' }}</span><code>{{ project.public_key }}</code><time>{{ formatDate(project.updated_at) }}</time><ChevronRight :size="16" />
       </NuxtLink>
     </section>
 
-    <div v-if="createOpen" class="app-modal-backdrop" @click.self="createOpen = false">
-      <section class="app-modal" role="dialog" aria-modal="true" aria-labelledby="create-project-title">
+    <AppDialog :open="createOpen" aria-labelledby="create-project-title" @close="createOpen = false">
+      <section class="app-modal">
         <header><div><p class="app-eyebrow">Collection endpoint</p><h2 id="create-project-title">Create project</h2></div><button class="app-icon-button" title="Close" @click="createOpen = false"><X :size="18" /></button></header>
-        <form @submit.prevent="createProject"><label>Project name<input v-model.trim="name" class="app-input" required maxlength="120" placeholder="Storefront" /></label><label>Allowed domains<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><span>One exact hostname or leading wildcard per line.</span></label><p v-if="formError" class="project-form-error" role="alert">{{ formError }}</p><footer><button class="app-button" type="button" @click="createOpen = false">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !name || !parsedDomains().length">{{ pending ? 'Creating…' : 'Create project' }}</button></footer></form>
+        <form @submit.prevent="createProject"><label>Project name<input v-model.trim="name" class="app-input" required maxlength="120" placeholder="Storefront" autofocus /></label><label>Allowed domains<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><span>One exact hostname or leading wildcard per line.</span></label><p v-if="formError" class="project-form-error" role="alert">{{ formError }}</p><footer><button class="app-button" type="button" @click="createOpen = false">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !name || !parsedDomains().length">{{ pending ? 'Creating…' : 'Create project' }}</button></footer></form>
       </section>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
@@ -77,7 +78,6 @@ useHead({ title: 'Projects · Fidibeki' })
 .project-list code,
 .project-list > a > span:not(.project-list-name) { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .project-list time { color: var(--muted); font-size: 9px; }
-.app-modal-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px; background: rgb(10 20 17 / 42%); }
 .app-modal { width: min(520px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .app-modal > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .app-modal h2 { margin: 4px 0 0; font-size: 15px; }

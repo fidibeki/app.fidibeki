@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 import type { Project, WidgetRule } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 
 const { $apiFetch } = useNuxtApp()
@@ -189,7 +190,7 @@ useHead({ title: 'Connect your first project · Fidibeki' })
         <Radio v-else :size="23" />
         <p class="app-eyebrow">Connection</p>
         <h2>{{ connected ? 'Widget connected' : 'Awaiting connection' }}</h2>
-        <p v-if="connected && project?.widget_last_seen_at">Last seen {{ new Date(project.widget_last_seen_at).toLocaleString() }}</p>
+        <p v-if="connected && project?.widget_last_seen_at">Last seen {{ formatDateTime(project.widget_last_seen_at) }}</p>
         <p v-else>The status updates after the loader requests an authorized widget configuration.</p>
         <NuxtLink v-if="connected" class="app-button app-button--primary" to="/">Open workspace <ArrowRight :size="15" /></NuxtLink>
       </aside>

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   Archive,
-  Bell,
   ChevronDown,
   CircleAlert,
   CircleUserRound,
@@ -28,6 +27,8 @@ const mobileNavOpen = ref(false)
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const loggingOut = ref(false)
 const accountMenu = ref<HTMLDetailsElement | null>(null)
+const mobileMenuButton = ref<HTMLButtonElement | null>(null)
+const mobileNavCloseButton = ref<HTMLButtonElement | null>(null)
 
 const showQueueRail = computed(() => can('feedback:read') && (route.path.startsWith('/feedback') || route.path === '/'))
 const workspaceHome = computed(() => firstAccessibleWorkspacePath(member.value?.permissions || []))
@@ -72,6 +73,21 @@ function submitSearch() {
   router.push({ path: '/feedback', query: search.value.trim() ? { q: search.value.trim() } : {} })
 }
 
+async function openMobileNavigation() {
+  mobileNavOpen.value = true
+  await nextTick()
+  mobileNavCloseButton.value?.focus()
+}
+
+async function closeMobileNavigation(restoreFocus = true) {
+  if (!mobileNavOpen.value) return
+  mobileNavOpen.value = false
+  if (restoreFocus) {
+    await nextTick()
+    mobileMenuButton.value?.focus()
+  }
+}
+
 async function logout() {
   if (loggingOut.value) return
   loggingOut.value = true
@@ -89,7 +105,7 @@ async function logout() {
 watch(
   () => route.fullPath,
   () => {
-    mobileNavOpen.value = false
+    void closeMobileNavigation(false)
     if (accountMenu.value) accountMenu.value.open = false
   },
 )
@@ -97,19 +113,19 @@ watch(
 
 <template>
   <div class="app-shell" :class="{ 'app-shell--queues': showQueueRail }">
-    <header class="app-topbar">
-      <button class="app-icon-button app-mobile-menu" type="button" title="Open navigation" @click="mobileNavOpen = true">
+    <header class="app-topbar" :inert="mobileNavOpen">
+      <button ref="mobileMenuButton" class="app-icon-button app-mobile-menu" type="button" title="Open navigation" @click="openMobileNavigation">
         <Menu :size="19" />
         <span class="sr-only">Open navigation</span>
       </button>
       <NuxtLink :to="workspaceHome" class="app-brand" aria-label="Fidibeki workspace">
         <img src="/brand/fidibeki-color.png" alt="Fidibeki" />
       </NuxtLink>
-      <button class="app-tenant-switcher" type="button" title="Current workspace">
+      <NuxtLink class="app-tenant-switcher" to="/settings" title="Workspace settings">
         <span>{{ tenantInitials }}</span>
         <b>{{ tenant?.name || 'Workspace' }}</b>
-        <ChevronDown :size="14" />
-      </button>
+        <Settings :size="14" />
+      </NuxtLink>
       <form v-if="can('feedback:read')" class="app-global-search" role="search" @submit.prevent="submitSearch">
         <Search :size="15" />
         <input v-model="search" type="search" autocomplete="off" placeholder="Search feedback" aria-label="Search feedback" />
@@ -117,10 +133,6 @@ watch(
       <NuxtLink v-if="tenant?.status === 'trial'" to="/billing" class="app-trial-status">
         <i /> {{ tenant.plan }} trial · {{ trialDays }} days
       </NuxtLink>
-      <button class="app-icon-button" type="button" title="Notifications">
-        <Bell :size="17" />
-        <span class="sr-only">Notifications</span>
-      </button>
       <details ref="accountMenu" class="app-account-menu">
         <summary><CircleUserRound :size="19" /><span>{{ displayName }}</span><ChevronDown :size="13" /></summary>
         <div>
@@ -131,10 +143,17 @@ watch(
       </details>
     </header>
 
-    <aside class="app-global-rail" :data-open="mobileNavOpen">
+    <aside
+      class="app-global-rail"
+      :data-open="mobileNavOpen"
+      :role="mobileNavOpen ? 'dialog' : undefined"
+      :aria-modal="mobileNavOpen ? 'true' : undefined"
+      :aria-label="mobileNavOpen ? 'Navigation' : undefined"
+      @keydown.esc.stop.prevent="closeMobileNavigation()"
+    >
       <div class="app-mobile-rail-head">
         <b>Navigation</b>
-        <button class="app-icon-button" type="button" title="Close navigation" @click="mobileNavOpen = false"><X :size="18" /></button>
+        <button ref="mobileNavCloseButton" class="app-icon-button" type="button" title="Close navigation" @click="closeMobileNavigation()"><X :size="18" /></button>
       </div>
       <nav aria-label="Primary navigation">
         <NuxtLink
@@ -148,9 +167,9 @@ watch(
         </NuxtLink>
       </nav>
     </aside>
-    <button v-if="mobileNavOpen" class="app-nav-scrim" type="button" aria-label="Close navigation" @click="mobileNavOpen = false" />
+    <div v-if="mobileNavOpen" class="app-nav-scrim" aria-hidden="true" @click="closeMobileNavigation()" />
 
-    <aside v-if="showQueueRail" class="app-queue-rail">
+    <aside v-if="showQueueRail" class="app-queue-rail" :inert="mobileNavOpen">
       <div class="app-queue-heading"><span>Feedback queues</span></div>
       <nav aria-label="Feedback queues">
         <NuxtLink v-for="item in queueNavigation" :key="item.label" :to="item.to">
@@ -164,12 +183,12 @@ watch(
       </div>
     </aside>
 
-    <div v-if="tenant?.deletion_requested_at" class="app-readonly-banner" role="status">
+    <div v-if="tenant?.deletion_requested_at" class="app-readonly-banner" role="status" :inert="mobileNavOpen">
       This workspace is pending deletion and is read-only.
       <NuxtLink to="/billing">Review deletion</NuxtLink>
     </div>
 
-    <main class="app-main" tabindex="-1">
+    <main class="app-main" tabindex="-1" :inert="mobileNavOpen">
       <slot />
     </main>
   </div>

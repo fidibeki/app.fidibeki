@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 import type { Project, WidgetRule, WidgetRuleInput } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 
 const route = useRoute()
@@ -194,7 +195,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
     <section v-else-if="error" class="app-state"><div><AlertTriangle :size="24" /><h2>Project unavailable</h2><p>{{ apiErrorMessage(error) }}</p></div></section>
     <template v-else-if="data">
       <section class="project-config-band">
-        <div><p class="app-eyebrow">Project configuration</p><h1>{{ data.project.name }}</h1><span>{{ data.rules.length }} widget rule{{ data.rules.length === 1 ? '' : 's' }}</span><p class="project-connection" :data-connected="Boolean(connectedAt)"><i />{{ connectedAt ? `Connected ${new Date(connectedAt).toLocaleString()}` : 'Awaiting widget connection' }}</p></div>
+        <div><p class="app-eyebrow">Project configuration</p><h1>{{ data.project.name }}</h1><span>{{ data.rules.length }} widget rule{{ data.rules.length === 1 ? '' : 's' }}</span><p class="project-connection" :data-connected="Boolean(connectedAt)"><i />{{ connectedAt ? `Connected ${formatDateTime(connectedAt)}` : 'Awaiting widget connection' }}</p></div>
         <div class="project-embed"><Code2 :size="15" /><code>{{ embedCode }}</code><button title="Copy embed code" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
       </section>
       <p v-if="formError" class="project-config-error" role="alert"><AlertTriangle :size="15" /> {{ formError }}</p>
@@ -207,7 +208,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
         </aside>
 
         <main class="project-rule-editor">
-          <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && can('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" :disabled="pending || !(editingNew ? can('widget_rule:create') : can('widget_rule:update'))" @click="saveRule"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
+          <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && can('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" :disabled="pending || !(editingNew ? can('widget_rule:create') : can('widget_rule:update'))" @click="saveRule"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
           <form @submit.prevent="saveRule">
             <section><h3>Rule identity</h3><div class="project-form-grid"><label class="wide">Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Enabled</span></label></div></section>
             <section><h3>Page matching</h3><div class="project-form-grid"><label>Matcher<select v-model="ruleForm.matcher_type" class="app-select"><option value="all_pages">All pages</option><option value="url_exact">Exact URL</option><option value="url_prefix">URL prefix</option><option value="url_regex">URL regular expression</option></select></label><label v-if="ruleForm.matcher_type !== 'all_pages'" class="wide">Matcher value<input v-model="ruleForm.matcher_value" class="app-input" required /></label></div></section>

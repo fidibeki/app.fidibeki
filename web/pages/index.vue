@@ -2,6 +2,7 @@
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Inbox } from '@lucide/vue'
 import type { DashboardSummary, FeedbackPage, Project } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatWholeNumber } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
 const { can, member } = useAuth()
@@ -96,7 +97,7 @@ useHead({ title: 'Overview · Fidibeki' })
       <section class="dashboard-ledger" aria-label="Workspace metrics">
         <article>
           <span>Feedback received</span>
-          <strong>{{ data.dashboard.feedback_count.toLocaleString() }}</strong>
+          <strong>{{ formatWholeNumber(data.dashboard.feedback_count) }}</strong>
           <small :data-positive="(data.dashboard.feedback_delta_percent || 0) >= 0">
             <component :is="(data.dashboard.feedback_delta_percent || 0) >= 0 ? ArrowUpRight : ArrowDownRight" :size="13" />
             {{ signed(data.dashboard.feedback_delta_percent) }}
@@ -104,7 +105,7 @@ useHead({ title: 'Overview · Fidibeki' })
         </article>
         <article>
           <span>Open issues</span>
-          <strong>{{ data.dashboard.open_issue_count.toLocaleString() }}</strong>
+          <strong>{{ formatWholeNumber(data.dashboard.open_issue_count) }}</strong>
           <small>Active product work</small>
         </article>
         <article>

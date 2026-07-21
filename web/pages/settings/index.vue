@@ -27,6 +27,7 @@ import {
   type PermissionPreset,
 } from '~/data/permissions'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDate, formatMonthlyUSD, formatWholeNumber } from '~/utils/format'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -101,9 +102,7 @@ const availablePermissionGroups = computed(() => tenantPermissionGroups.map((gro
 
 const planPrice = computed(() => {
   const cents = data.value?.configuration.plan.monthly_price_cents
-  return cents == null ? 'Managed contract' : new Intl.NumberFormat(undefined, {
-    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
-  }).format(cents / 100) + '/month'
+  return formatMonthlyUSD(cents)
 })
 
 function applyPreset(target: 'member' | 'key', preset: PermissionPreset) {
@@ -309,7 +308,7 @@ useHead({ title: 'Settings - Fidibeki' })
           <header><div><p class="app-eyebrow">Entitlements</p><h2>Capacity and capture</h2></div><NuxtLink class="app-button" to="/billing">Manage billing</NuxtLink></header>
           <div class="settings-entitlements">
             <div><b>{{ data.configuration.plan.limits.projects < 0 ? 'Unlimited' : data.configuration.plan.limits.projects }}</b><span>Projects</span></div>
-            <div><b>{{ data.configuration.plan.limits.feedback_per_month < 0 ? 'Unlimited' : data.configuration.plan.limits.feedback_per_month.toLocaleString() }}</b><span>Feedback / month</span></div>
+            <div><b>{{ data.configuration.plan.limits.feedback_per_month < 0 ? 'Unlimited' : formatWholeNumber(data.configuration.plan.limits.feedback_per_month) }}</b><span>Feedback / month</span></div>
             <div><b>{{ data.configuration.plan.limits.users < 0 ? 'Unlimited' : data.configuration.plan.limits.users }}</b><span>Members</span></div>
           </div>
           <ul class="settings-features">
@@ -341,9 +340,9 @@ useHead({ title: 'Settings - Fidibeki' })
           <div class="settings-row settings-row--head"><span>Key</span><span>Scope</span><span>Last used</span><span>Expiry</span><span /></div>
           <div v-for="key in data.keys" :key="key.id" class="settings-row" :data-muted="isExpired(key.expires_at)">
             <span><b>{{ key.name }}</b><code>{{ key.token_prefix }}</code></span>
-            <span>{{ key.permissions.length }} perms · {{ key.rate_limit_per_min.toLocaleString() }}/min</span>
-            <span>{{ key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never' }}</span>
-            <span>{{ key.expires_at ? new Date(key.expires_at).toLocaleDateString() : 'Never' }}</span>
+            <span>{{ key.permissions.length }} perms · {{ formatWholeNumber(key.rate_limit_per_min) }}/min</span>
+            <span>{{ key.last_used_at ? formatDate(key.last_used_at) : 'Never' }}</span>
+            <span>{{ key.expires_at ? formatDate(key.expires_at) : 'Never' }}</span>
             <button v-if="can('api_key:delete')" class="app-icon-button settings-danger-icon" title="Revoke API key" @click="deleteKey(key)"><Trash2 :size="16" /></button>
           </div>
         </div>
@@ -366,12 +365,12 @@ useHead({ title: 'Settings - Fidibeki' })
       </section>
     </template>
 
-    <div v-if="modal" class="app-modal-backdrop" @click.self="modal = null">
-      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">
+      <section v-if="modal" class="settings-modal">
         <header><div><p class="app-eyebrow">{{ modal === 'member' ? 'Access policy' : modal === 'key' ? 'Machine credential' : 'Delivery endpoint' }}</p><h2 id="settings-modal-title">{{ modal === 'member' ? (memberMode === 'invite' ? 'Invite member' : 'Edit member') : modal === 'key' ? 'Create API key' : 'Add integration' }}</h2></div><button class="app-icon-button" title="Close" @click="modal = null"><X :size="18" /></button></header>
 
         <form v-if="modal === 'member'" @submit.prevent="saveMember">
-          <label>Email<input v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" /></label>
+          <label>Email<input v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus /></label>
           <div class="permission-presets" role="group" aria-label="Permission preset"><button v-for="preset in (['admin', 'editor', 'viewer'] as PermissionPreset[])" :key="preset" type="button" :data-active="memberPreset === preset" @click="applyPreset('member', preset)">{{ preset }}</button></div>
           <div class="permission-grid"><fieldset v-for="group in availablePermissionGroups" :key="group.label"><legend>{{ group.label }}</legend><label v-for="permission in group.permissions" :key="permission"><input type="checkbox" :checked="memberPermissions.includes(permission)" @change="togglePermission('member', permission)" />{{ permissionLabel(permission) }}</label></fieldset></div>
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
@@ -381,7 +380,7 @@ useHead({ title: 'Settings - Fidibeki' })
         <form v-else-if="modal === 'key'" @submit.prevent="createKey">
           <div v-if="revealedToken" class="settings-secret"><ShieldCheck :size="20" /><h3>API key created</h3><code>{{ revealedToken }}</code><button class="app-button" type="button" @click="copyToken"><component :is="tokenCopied ? Check : Copy" :size="15" />{{ tokenCopied ? 'Copied' : 'Copy key' }}</button></div>
           <template v-else>
-            <div class="settings-form-grid"><label>Name<input v-model.trim="keyName" class="app-input" required maxlength="120" placeholder="Production exporter" /></label><label>Expires<select v-model="keyExpiry" class="app-select"><option value="never">Never</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label><label>Rate limit / minute<input v-model.number="keyRateLimit" class="app-input" type="number" min="1" max="100000" required /></label></div>
+            <div class="settings-form-grid"><label>Name<input v-model.trim="keyName" class="app-input" required maxlength="120" placeholder="Production exporter" autofocus /></label><label>Expires<select v-model="keyExpiry" class="app-select"><option value="never">Never</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label><label>Rate limit / minute<input v-model.number="keyRateLimit" class="app-input" type="number" min="1" max="100000" required /></label></div>
             <div class="permission-presets" role="group" aria-label="Permission preset"><button v-for="preset in (['admin', 'editor', 'viewer'] as PermissionPreset[])" :key="preset" type="button" :data-active="keyPreset === preset" @click="applyPreset('key', preset)">{{ preset }}</button></div>
             <div class="permission-grid"><fieldset v-for="group in availablePermissionGroups" :key="group.label"><legend>{{ group.label }}</legend><label v-for="permission in group.permissions" :key="permission"><input type="checkbox" :checked="keyPermissions.includes(permission)" @change="togglePermission('key', permission)" />{{ permissionLabel(permission) }}</label></fieldset></div>
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
@@ -392,19 +391,18 @@ useHead({ title: 'Settings - Fidibeki' })
         <form v-else @submit.prevent="createIntegration">
           <div v-if="revealedSecret" class="settings-secret"><ShieldCheck :size="20" /><h3>Signing secret</h3><code>{{ revealedSecret }}</code><button class="app-button" type="button" @click="copySecret"><Copy :size="15" /> Copy secret</button></div>
           <template v-else>
-            <div class="settings-form-grid"><label>Type<select v-model="integrationKind" class="app-select"><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="teams">Teams</option></select></label><label>Name<input v-model.trim="integrationName" class="app-input" required maxlength="100" placeholder="Operations" /></label><label class="wide">Webhook URL<input v-model.trim="integrationURL" class="app-input" type="url" required placeholder="https://hooks.example.com/..." /></label><label v-if="integrationKind === 'slack'" class="wide">Channel<input v-model.trim="integrationChannel" class="app-input" required placeholder="#feedback" /></label></div>
+            <div class="settings-form-grid"><label>Type<select v-model="integrationKind" class="app-select" autofocus><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="teams">Teams</option></select></label><label>Name<input v-model.trim="integrationName" class="app-input" required maxlength="100" placeholder="Operations" /></label><label class="wide">Webhook URL<input v-model.trim="integrationURL" class="app-input" type="url" required placeholder="https://hooks.example.com/..." /></label><label v-if="integrationKind === 'slack'" class="wide">Channel<input v-model.trim="integrationChannel" class="app-input" required placeholder="#feedback" /></label></div>
             <fieldset class="settings-events"><legend>Events</legend><label v-for="event in (['feedback.created', 'issue.created', 'issue.updated', 'issue.resolved'] as IntegrationEvent[])" :key="event"><input type="checkbox" :checked="integrationEvents.includes(event)" @change="toggleEvent(event)" />{{ event }}</label></fieldset>
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? 'Done' : 'Cancel' }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? 'Connecting...' : 'Add integration' }}</button></footer>
         </form>
       </section>
-    </div>
+    </AppDialog>
   </div>
 </template>
 
 <style scoped>
-.app-modal-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px; background: rgb(10 20 17 / 42%); }
 .settings-page { max-width: 1320px; margin: 0 auto; }
 .settings-tabs { display: flex; gap: 22px; margin: -4px 0 18px; border-bottom: 1px solid var(--line); }
 .settings-tabs a { position: relative; padding: 0 1px 11px; color: var(--muted); font-size: 11px; font-weight: 750; text-decoration: none; }

@@ -15,6 +15,7 @@ import {
 } from '@lucide/vue'
 import type { FeedbackDetail, FeedbackStatus } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
@@ -95,7 +96,7 @@ async function retryAttachment(id: string) {
 
 function formatDate(value?: string) {
   if (!value) return 'Not available'
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  return formatDateTime(value)
 }
 
 useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki` }))
