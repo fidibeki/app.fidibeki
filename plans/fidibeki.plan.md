@@ -21,16 +21,21 @@
 
 ## Data model principles
 
-All tenant data is stored in a single PostgreSQL database and isolated by `tenant_id`. Instead of many small, feature-specific tables, we use a small set of generic, scalable tables and store flexible attributes in typed JSONB columns. This avoids orphan tables as new features are added and keeps the schema stable.
+All tenant data is stored in a single PostgreSQL database and isolated by `tenant_id`. For the MVP we avoid JSONB entirely: every attribute that matters is a typed column. Arrays and enums are allowed where the set of values is bounded and queryable. New features are added by extending tables with typed columns, not by stuffing blobs into JSONB.
 
 ## Key tables
 
-- `tenants` — root company accounts. Plan, status, billing and all tenant-level settings live in a single `config` JSONB column.
-- `tenant_members` — any actor that belongs to a tenant (`kind`: user, api_key, service_account). Access is controlled by an explicit `permissions` array, not coarse roles.
-- `projects` — a site or app monitored by a tenant. Embed key and all project/widget settings live in a single `config` JSONB column.
-- `resources` — polymorphic tenant-scoped records (`feedback`, `issue`, `session`, `replay_event`, `email`, `webhook`, ...). Each row has `resource_type`, `public_id`, `status` and a `data` JSONB payload.
-- `blobs` — metadata for uploaded files (screenshots, audio, video, replay bundles). The bytes live in S3/MinIO; this table links them to tenants, projects and resources.
-- `integrations` — generic external service connections (Slack, email, Teams, webhooks). `kind`, `config` and subscribed `events` are stored as JSONB/arrays.
+- `tenants` — root company accounts with typed plan, status and billing columns.
+- `tenant_members` — any actor that belongs to a tenant. Access is controlled by an explicit `permissions` text array, not coarse roles.
+- `projects` — a site or app monitored by a tenant. Embed key and allowed domains are typed columns.
+- `widget_rules` — per-page widget configuration. Trigger, form fields, replay sampling and theme are typed columns.
+- `feedbacks` — a captured user response with typed rating, text, metadata, DOM snapshot and status.
+- `attachments` — media linked to a feedback (screenshot, audio, video, replay) with typed transcription, sentiment and moderation flags.
+- `sessions` — session replay bundles with typed start/end times and event counts.
+- `issues` — grouping of feedbacks with typed public id and status workflow.
+- `issue_updates` — status change history for an issue.
+- `integrations` — generic external service connections (Slack, Teams, webhook). `kind`, `events[]` and config URL/channel are typed columns.
+- `delivery_logs` — generic audit trail of every outgoing notification (email, Slack, webhook) with typed status and event.
 
 ## Plans & feature flags
 
@@ -108,13 +113,13 @@ Magic-link registration/login flow for the first user of a tenant plus invitatio
 
 ### What to build
 
-CRUD for projects under a tenant. Each project stores a public embed key and all widget settings inside a single `config` JSONB column. Widget configuration is an array of rules (URL pattern, greeting, triggers, capture types, replay sampling, theme) stored in `projects.config`. Endpoint returns the public widget config and embed script URL.
+CRUD for projects and their widget rules. Projects hold a public embed key and allowed domains. Widget rules are stored in a dedicated `widget_rules` table with typed columns for matcher, trigger, form fields, replay sampling and theme.
 
 ### Acceptance criteria
 
-- [ ] Members with `project:create`/`project:update` can manage projects.
+- [ ] Members with `project:create`/`project:update` can manage projects and widget rules.
 - [ ] Each project has a unique public key used by the embed script.
-- [ ] Widget config can vary by URL pattern (e.g. `/assets/*` vs `/dashboard`).
+- [ ] Widget rules can vary by URL pattern (e.g. `/assets/*` vs `/dashboard`).
 - [ ] The embed script endpoint returns the correct JS URL for a given project key.
 - [ ] Only requests from allowed domains can fetch widget config (CORS + origin validation).
 
@@ -145,13 +150,13 @@ Zero-dependency vanilla JS widget loaded via `<script>`. It detects the current 
 
 ### What to build
 
-Public `POST /v1/feedback` endpoint authenticated by project public key. Stores a `resources` row of type `feedback` with rating, text, metadata and DOM snapshot. Screenshot/audio uploads create `blobs` rows linked to the feedback. Returns an optional issue public id and reporter token if the user opts into email updates.
+Public `POST /v1/feedback` endpoint authenticated by project public key. Stores a `feedbacks` row with rating, text, metadata and DOM snapshot. Screenshot/audio uploads create `attachments` rows linked to the feedback. Returns an optional issue public id and reporter token if the user opts into email updates.
 
 ### Acceptance criteria
 
 - [ ] Valid project key and allowed origin are required.
 - [ ] Monthly feedback count is checked against the tenant plan; exceeded limits return `429` with a clear error.
-- [ ] Screenshot and audio files create `blobs` rows and are uploaded to object storage.
+- [ ] Screenshot and audio files create `attachments` rows and are uploaded to object storage.
 - [ ] Invalid payloads return `400` with structured validation errors.
 - [ ] End user can optionally provide an email to receive issue updates.
 - [ ] Integration tests cover happy path, invalid origin, plan limit and malformed body.
@@ -164,7 +169,7 @@ Public `POST /v1/feedback` endpoint authenticated by project public key. Stores 
 
 ### What to build
 
-Async worker that sends audio/video to Gemini for transcription, cleans the text, analyses sentiment and flags offensive content. Results are stored in the `resources.data` JSONB payload of the feedback row. AI features only enabled for plans with `AIProcessing=true`.
+Async worker that sends audio/video to Gemini for transcription, cleans the text, analyses sentiment and flags offensive content. Results are stored in typed columns on the `attachments` row. AI features only enabled for plans with `AIProcessing=true`.
 
 ### Acceptance criteria
 
@@ -182,14 +187,14 @@ Async worker that sends audio/video to Gemini for transcription, cleans the text
 
 ### What to build
 
-Issues are `resources` rows of type `issue`, grouped to feedbacks via IDs in `data`. Public human-readable issue id, status workflow (`open`, `in_progress`, `resolved`). Email notifications to reporters when status changes are also recorded as `resources` rows of type `email`, with actual delivery via Resend. Async queue for Resend.
+Issues are typed rows in `issues`, grouped to feedbacks via `issue_id`. Public human-readable issue id, status workflow (`open`, `in_progress`, `resolved`). Email notifications to reporters when status changes are recorded in `delivery_logs` with actual delivery via Resend. Async queue for Resend.
 
 ### Acceptance criteria
 
 - [ ] Each issue gets a public id like `TAU-2026-0001` based on tenant slug.
 - [ ] Feedback can be linked to an existing issue or create a new one automatically.
 - [ ] Reporter email is optional; if provided and opted-in, status updates trigger an email.
-- [ ] Email sends and status updates are recorded as `resources` rows.
+- [ ] Email sends and status updates are recorded in `delivery_logs`.
 - [ ] Unsubscribe/update preferences can be managed via a signed URL.
 
 ---
@@ -218,7 +223,7 @@ Lightweight client-side event recorder (DOM mutations, clicks, scrolls, inputs) 
 
 ### What to build
 
-Integrations are stored in the generic `integrations` table. Slack is one `kind`; other kinds (email, webhook, Teams) can be added without schema changes. A worker reads events from the queue and dispatches to all active integrations subscribed to that event.
+Integrations are stored in the generic `integrations` table with typed columns. Slack is one `kind`; other kinds (Teams, webhook) can be added by extending the `kind` enum. A worker reads events from the queue and dispatches to all active integrations subscribed to that event. Deliveries are audited in `delivery_logs`.
 
 ### Acceptance criteria
 
