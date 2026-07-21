@@ -35,6 +35,7 @@ const turnstile = ref<{ reset: () => void; retry: () => Promise<void> } | null>(
 const { data: catalog, status: plansStatus, error: plansError, refresh: refreshPlans } = await useAsyncData(
   'public-plan-catalog',
   () => $apiFetch<PlanCatalogResponse>('/v1/plans', { auth: false, retryAuth: false }),
+  { server: false },
 )
 
 const signupSlugError = computed(() => slug.value ? workspaceSlugError(slug.value) : '')
