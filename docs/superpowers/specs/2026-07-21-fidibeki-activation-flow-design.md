@@ -1,7 +1,7 @@
 # Fidibeki Activation Flow Design
 
 **Date:** 2026-07-21
-**Status:** Approved; implementation verified locally, staging deployment pending
+**Status:** Approved; implementation verified locally and on staging
 **Target:** Staging only; production remains deferred
 
 ## Problem
@@ -170,12 +170,19 @@ Frontend coverage:
 
 Staging verification:
 
-- Configure `staging.fidibeki.com` on the web service and confirm DNS/TLS.
-- Set `NUXT_BASE_DOMAIN=staging.fidibeki.com`, `NUXT_PUBLIC_BASE_DOMAIN=staging.fidibeki.com`, and reference the API's public Turnstile site key from
+- [x] Configure `staging.fidibeki.com` on the web service and confirm DNS/TLS.
+- [x] Set `NUXT_BASE_DOMAIN=staging.fidibeki.com`, `NUXT_PUBLIC_BASE_DOMAIN=staging.fidibeki.com`, and reference the API's public Turnstile site key from
   the web service.
-- Verify the signup page and Turnstile rendering without creating production resources.
-- Complete one controlled staging signup, magic-link verification, first project, widget load from an
+- [x] Verify the signup page and Turnstile rendering without creating production resources.
+- [x] Complete one controlled staging signup, magic-link verification, first project, widget load from an
   allowed test origin, connected signal, and feedback submission.
+
+The controlled staging smoke used the exact public web and widget domains with the configured
+Turnstile and Resend services. It verified outbound magic-link delivery, first-run project and rule
+creation, an authorized widget configuration request, connection detection, feedback submission,
+queue visibility, and full feedback detail. `GET /signup` and the widget loader returned `200`, while
+the intentionally invalid widget health path returned `404`, confirming that widget traffic was not
+falling through to the web application container.
 
 ## Deferred Work
 
