@@ -8,7 +8,10 @@ permissions:
 
 jobs:
   smoke:
-    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'staging'
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      (github.event.deployment.environment == 'staging' ||
+      endsWith(github.event.deployment.environment, ' / staging'))
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment: staging

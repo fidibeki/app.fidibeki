@@ -9,6 +9,10 @@ test('staging API and tenant login surface are live', async ({ page, request }) 
   expect(readiness.ok()).toBeTruthy()
   await expect(readiness.json()).resolves.toMatchObject({ status: 'ok' })
 
+  const webHealth = await request.get(new URL('/web-healthz', tenantURL).href)
+  expect(webHealth.ok()).toBeTruthy()
+  await expect(webHealth.json()).resolves.toMatchObject({ status: 'ok' })
+
   await page.goto(new URL('/login', tenantURL).href)
   await expect(page.getByRole('heading', { name: 'Sign in to Fidibeki' })).toBeVisible()
   await expect(page.getByLabel('Work email')).toBeVisible()
