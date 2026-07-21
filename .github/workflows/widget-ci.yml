@@ -53,7 +53,7 @@ jobs:
           trap 'docker rm --force fidibeki-widget-ci' EXIT
 
           for host in widget.example.test healthcheck.internal; do
-            response=$(curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
+            response=$(curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 1 \
               --header "Host: $host" http://127.0.0.1:8097/healthz)
             test "$response" = "ok"
           done
