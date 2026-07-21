@@ -253,14 +253,14 @@ func (h *HTTPHandler) setCookie(w http.ResponseWriter, value string) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: tenantRefreshCookie, Value: value, Path: "/", MaxAge: int(ttl.Seconds()),
-		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteStrictMode,
+		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteLaxMode,
 	})
 }
 
 func (h *HTTPHandler) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name: tenantRefreshCookie, Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteStrictMode,
+		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteLaxMode,
 	})
 }
 

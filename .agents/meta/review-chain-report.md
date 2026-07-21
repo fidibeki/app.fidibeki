@@ -69,3 +69,22 @@ and provider message text never appear in logs.
 
 ## Reviewer's Summary
 The second review passed with no remaining privacy, correctness, retry, or finalization issues.
+
+---
+
+# Stripe Return Authentication Review
+
+**Artifact**: Tenant refresh-cookie policy for Stripe Checkout return navigation
+**Date**: 2026-07-21
+**Rounds**: 1
+
+## Verdict: PASS
+
+## Changes Reviewed
+The tenant refresh cookie now uses `SameSite=Lax` when issued and cleared. The focused regression
+test covers both lifecycle paths while preserving `HttpOnly`, configurable `Secure`, root path,
+expiry, and deletion semantics. Platform-admin cookies remain `SameSite=Strict`.
+
+## Reviewer's Summary
+The change correctly permits top-level cross-site GET returns from Stripe without enabling the
+cookie on cross-site POST requests. No correctness, security, consistency, or test issues remain.
