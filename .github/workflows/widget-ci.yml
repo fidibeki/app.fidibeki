@@ -1,0 +1,39 @@
+name: Widget CI
+
+on:
+  pull_request:
+    paths:
+      - "widget/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/widget-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "widget/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/widget-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install --global pnpm@11.15.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fidibeki/widget typecheck
+      - run: pnpm --filter @fidibeki/widget build
+      - run: pnpm --filter @fidibeki/widget test
+      - run: pnpm --filter @fidibeki/widget exec playwright install --with-deps chromium
+      - run: pnpm --filter @fidibeki/widget test:e2e
+      - run: docker build -f infra/caddy/Dockerfile .

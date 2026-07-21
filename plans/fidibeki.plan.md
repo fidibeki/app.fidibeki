@@ -7,17 +7,20 @@
 
 ## Architectural decisions
 
-- **Runtime & backend**: Go 1.23, `chi` router, `slog` for structured logging.
+- **Runtime & backend**: Go 1.25 (latest supported patch in CI/images), `chi` router, `slog` for
+  structured logging. The module toolchain directive pins the local/CI patch release.
 - **Database**: PostgreSQL 16, **Postgres Row-Level Security (RLS) as defense-in-depth**
   (not just app-layer `WHERE tenant_id`). Every tenant-scoped table has RLS enabled with
   `FORCE ROW LEVEL SECURITY` and policies `USING (tenant_id = current_setting('app.tenant_id')::uuid)`.
 - **Two DB roles, two pools**:
   - `fidibeki_app` — RLS-enforced. Used by tenant-scoped HTTP handlers.
   - `fidibeki_admin` — `BYPASSRLS`. Used by platform routes, migrations, Stripe webhooks, and async workers.
-- **Per-request transaction with `SET LOCAL`**: every request on the app pool runs inside a `pgx.Tx`;
-  the tenant middleware does `SET LOCAL app.tenant_id = $1` at the start. It buffers the handler
+- **Per-request transaction with transaction-local tenant context**: every request on the app pool
+  runs inside a `pgx.Tx`; the tenant middleware calls
+  `SELECT set_config('app.tenant_id', $1, true)` with a bound UUID at the start. It buffers the handler
   response, rolls back on panic, and only flushes the response after a successful commit.
-  `SET LOCAL` dies with the transaction — no GUC leak across requests, panic commit, or false-success response.
+  The transaction-local setting dies with the transaction — no GUC leak across requests, panic
+  commit, SQL interpolation, or false-success response.
   Handlers take a `Querier` interface (satisfied by both `pgx.Tx` and `pgxpool.Pool`).
 - **pgbouncer in transaction mode from day 1**: multiplexes many app connections onto few
   Postgres connections. `SET LOCAL` works in transaction mode; `SET` (session-level) does not.
@@ -31,15 +34,15 @@
   `api.fidibeki.app` is the platform host (excluded from tenant resolution).
 - **Host-based router split**: `api.fidibeki.app` serves the platform router and a dedicated public
   widget router. Platform routes use the admin pool. Public widget routes resolve the project/public
-  key on the admin pool, then open an app-pool transaction with `SET LOCAL app.tenant_id`; all business
-  reads and writes therefore remain RLS-enforced. `*.fidibeki.app` serves tenant routes on the app pool.
+  key on the admin pool, then open an app-pool transaction and set transaction-local tenant context;
+  all business reads and writes therefore remain RLS-enforced. `*.fidibeki.app` serves tenant routes on the app pool.
   Pool selection is router-group-level, never handler-selected. `X-Forwarded-Host` is NOT trusted
   (Caddy/forwarded header trust is a deploy-time decision).
 - **Tenant lookup**: no cache for MVP — indexed `SELECT id, status, plan, trial_ends_at
   FROM tenants WHERE slug = $1` per request on the admin pool. Status is not cached to
   preserve the "suspended tenant can't transact" guarantee.
 - **Middleware classification by chi route group**: four middlewares mounted per group —
-  `Resolve` (always: subdomain → tenant, start tx, SET LOCAL),
+  `Resolve` (always: subdomain → tenant, start tx, set transaction-local tenant context),
   `RequireActive` (write gate: 403 if suspended/expired-trial),
   `AllowDegraded` (read gate: suspended OK),
   `AllowAlways` (auth/billing gate).
@@ -58,7 +61,9 @@
   header + strict `Origin` validation against `projects.allowed_domains` (exact match or
   explicit `*.domain` wildcard entries). Dynamic CORS origin echo, `credentials: 'omit'`,
   no `Access-Control-Allow-Credentials`. CORS is convenience, not the security boundary.
-- **File storage**: MinIO/S3-compatible. Single shared bucket, `tenants/{tenant_id}/...` prefixed
+- **File storage**: S3-compatible storage in production. MinIO is pinned to the final official
+  container release for local tests only because its server repository is archived. A single shared
+  bucket uses `tenants/{tenant_id}/...` prefixed
   keys. The server exclusively constructs keys and presigns one exact key; production uses scoped
   STS credentials where the provider supports them. A shared root credential is not described as
   storage-layer tenant isolation. No versioning;
@@ -75,6 +80,8 @@
   Presigned URL TTL: 10 minutes. `sweep_attachments` cron deletes orphaned uploads after 1h.
 - **AI processing**: Google Gemini `gemini-2.5-flash` for all tasks (transcription, sentiment,
   moderation, OCR). Stream MinIO → Gemini File API → `generateContent` → delete Gemini file.
+  Persist each remote filename before analysis; bounded inline deletion retries fall back to the
+  durable `ai_gemini_files` cleanup ledger and reconciler.
   Per-attachment + per-text asynq jobs; `processing_status` state machine
   (`pending|processing|completed|failed|skipped`) with CAS transitions; revert to `pending` on
   transient failure, `failed` + `asynq.SkipRetry` on permanent (content policy, malformed media).
@@ -120,13 +127,13 @@
   for SPA routes. `can(perm)` helper for authz only (plan limits separate, surface as 402 on click).
   No per-tenant branding for MVP (tenant name in header only).
 - **Widget embed**: Vanilla JS, zero-dep. Single ~5KB `loader.js` + lazy-loaded ES modules
-  (`rating.js`, `audio.js`, `replay.js`, `error-reporting.js`) — only modules the plan allows
+  (`rating.js`, `audio.js`, `video.js`, `screenshot.js`, `replay.js`, `error-reporting.js`) — only modules the plan allows
   are fetched. Shadow DOM for CSS/JS isolation. One-line embed:
   `<script src="https://widget.fidibeki.app/v1/loader.js" data-fidibeki-key="pk_live_..." async>`.
   Config fetched once, checked on SPA navigation (history patch + custom event), refreshed
   every 5 min and on `visibilitychange`. Three triggers (delay/scroll/exit_intent) with
-  `sessionStorage` suppression. Attach-element = HTML + computed styles only for MVP
-  (screenshot deferred to a lazy `html2canvas` module or Phase 4.1).
+  `sessionStorage` suppression. Attach-element captures HTML + computed styles; screenshot
+  capture is a separate lazy module using the browser's display-capture permission flow.
 - **Session replay**: rrweb (pinned version) with PII masking (`maskAllInputs`, `maskTextSelector`).
   Session-level sampling (`widget_rules.replay_sampling_rate`) + caps (30 min, 50k events).
   Continuous recording across SPA navigations, ends on `pagehide` or 5-min idle.
@@ -169,7 +176,7 @@
   Secrets vs. non-secrets convention; `Config.Redacted()` for safe logging.
   `plans.go` is code (not env) — plan features/limits are product decisions; Stripe Price IDs
   are env (deploy-specific). `.env.example` committed and maintained.
-- **Permissions**: 31 tenant permissions (`resource:action`, no wildcards) + 9 `platform:*` permissions.
+- **Permissions**: 32 tenant permissions (`resource:action`, no wildcards) + 9 `platform:*` permissions.
   3 UI presets (admin/editor/viewer) stored as explicit `permissions[]` arrays. `RequirePerm`
   middleware per route. First member (founder) gets all permissions. API keys use the same model.
   Accept up to 10-min JWT staleness on permission changes (token refresh picks up new perms).
@@ -419,6 +426,7 @@ plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecor
 | text_sentiment_score | DECIMAL(3,2) | -1.0 to 1.0 |
 | text_moderation_flags | TEXT[] NOT NULL DEFAULT '{}' | AI moderation flags on text |
 | text_process_status | processing_status NOT NULL DEFAULT 'pending' | AI pass state for text |
+| text_processing_generation | BIGINT NOT NULL DEFAULT 0 | Invalidates stale retry tasks after reprocess |
 | ai_processed_at | TIMESTAMPTZ | When all AI passes finished |
 | ai_job_enqueued_at | TIMESTAMPTZ | For reconcile_pending_jobs |
 | reporter_email | TEXT | Optional email for follow-ups |
@@ -468,6 +476,13 @@ plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecor
 
 **Indexes**: `idx_attachments_tenant_id`, `idx_attachments_feedback_id`, `idx_attachments_kind`,
 `idx_attachments_processing_status`, `idx_attachments_client_attachment_id` (unique composite)
+
+### `ai_gemini_files`
+
+Durable cleanup ledger for temporary Gemini File API uploads. Each row records the tenant,
+attachment, remote filename, next deletion time, enqueue time, attempt count, last error, and
+terminal `deleted_at` or `failed_at` timestamp. The reconciler claims due rows with
+`FOR UPDATE SKIP LOCKED`; filenames remain recoverable across worker crashes and provider outages.
 
 ### `sessions`
 
@@ -562,6 +577,7 @@ plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecor
 |--------|------|-------|
 | id | UUID PK DEFAULT gen_random_uuid() | |
 | tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| outbox_event_id | UUID NOT NULL FK → outbox_events(id) ON DELETE CASCADE | Stable retry identity |
 | integration_id | UUID FK → integrations(id) ON DELETE SET NULL | Null for reporter emails |
 | event | event_type NOT NULL | What triggered the delivery |
 | resource_type | TEXT NOT NULL | `feedback` or `issue` |
@@ -571,6 +587,7 @@ plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecor
 | provider_message_id | TEXT | Resend/Slack message ID on success |
 | error_message | TEXT | On failure |
 | sent_at | TIMESTAMPTZ | When provider confirmed send |
+| webhook_event_id | TEXT | Last verified provider webhook event id |
 | created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | When this attempt was created |
 
 **Indexes**: `idx_delivery_logs_tenant_id`, `idx_delivery_logs_integration_id`,
@@ -589,12 +606,13 @@ updates a `sent` row to `bounced`).
 | event | event_type NOT NULL | Domain event |
 | resource_type | TEXT NOT NULL | `feedback` or `issue` |
 | resource_id | UUID NOT NULL | |
+| event_key | TEXT NOT NULL DEFAULT '' | Distinguishes repeated events for one resource |
 | created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | Written in the domain transaction |
 | dispatched_at | TIMESTAMPTZ | Set only after all deterministic destination tasks are accepted |
 | attempts | INT NOT NULL DEFAULT 0 | Dispatcher attempts |
 | last_error | TEXT | Last dispatcher error |
 
-**Constraints**: `UNIQUE(event, resource_type, resource_id)`.
+**Constraints**: `UNIQUE(event, resource_type, resource_id, event_key)`.
 
 The dispatcher re-fetches active destinations and uses deterministic task IDs derived from
 `outbox_event_id + destination_kind + destination_id`. Duplicate dispatch is therefore harmless.
@@ -640,7 +658,7 @@ gets `features.session_replay=false` and the widget ignores the setting).
 
 ## Permissions
 
-31 tenant permissions (`resource:action`, no wildcards):
+32 tenant permissions (`resource:action`, no wildcards):
 
 `project:create|read|update|delete`, `widget_rule:create|read|update|delete`,
 `feedback:read|update|delete`, `issue:read|update|delete|merge`,
@@ -740,6 +758,9 @@ site key), Queue (4 concurrency overrides), Widget (CDN base).
 `create_platform_admins`, `create_platform_admin_sessions`,
 `create_platform_admin_magic_links`, `create_tenant_member_sessions`, `create_tenant_magic_links`.
 
+**Phase 2** (1): `add_tenant_magic_link_invite_permissions` (persists the explicit permission
+snapshot for invitations whose `member_id` remains null until the link is consumed).
+
 **Phase 3** (3): `create_projects` (+RLS), `create_widget_enums`, `create_widget_rules` (+RLS).
 
 **Phase 5** (10): `create_feedback_status_enum`, `create_processing_status_enum` (with `skipped`),
@@ -748,9 +769,11 @@ site key), Queue (4 concurrency overrides), Widget (CDN base).
 client_feedback_id, ai_job_enqueued_at), `create_attachments` (+RLS, includes client_attachment_id,
 complete_token_hash, completed_at), `create_outbox_events` (+RLS), `create_delivery_status_enum`.
 
-**Phase 6** (3): `add_feedbacks_text_ai_columns` (text_cleaned, text_sentiment_score,
-text_moderation_flags, text_process_status, ai_processed_at), `add_attachments_error_columns`
-(error_message, processing_attempts), `create_ai_daily_usage` (+RLS, atomic per-tenant/day budget).
+**Phase 6** (4): `add_feedbacks_text_ai_columns` (text_cleaned, text_sentiment_score,
+text_moderation_flags, text_process_status, text_processing_generation, ai_processed_at),
+`add_attachments_error_columns` (error_message, processing_attempts, terminal-state backfill),
+`create_ai_daily_usage` (+RLS, atomic per-tenant/day budget), `create_ai_gemini_files`
+(+RLS, durable Gemini file cleanup ledger).
 
 **Phase 7** (2): `create_issue_updates` (+RLS), `create_delivery_logs` (+RLS, reporter email attempts).
 
@@ -776,26 +799,26 @@ develop and test end-to-end.
 
 Set up the monorepo, local infrastructure (Postgres + pgbouncer, MinIO, Redis, Caddy reverse
 proxy), the Go module with chi, slog, Sentry init, two pgxpool instances (app + admin), the
-first 10 migrations (auth + tenant + RLS), tenant subdomain middleware with `SET LOCAL`, the
+first 10 migrations (auth + tenant + RLS), tenant subdomain middleware with transaction-local context, the
 platform/tenant router split, `/healthz` + `/readyz`, and integration tests against real
 testcontainers (Postgres, Redis, MinIO) with RLS positive/negative/admin tests.
 
 ### Acceptance criteria
 
-- [ ] `docker compose up` starts Postgres, pgbouncer, MinIO, Redis, Caddy, and the API.
-- [ ] `go test ./...` runs unit + integration tests including testcontainers Postgres.
+- [x] `docker compose up` starts Postgres, pgbouncer, MinIO, Redis, Caddy, and the API.
+- [x] `go test ./...` runs unit + integration tests including testcontainers Postgres.
 - [ ] `go test -short` runs unit tests only (no testcontainers) in <1s.
-- [ ] `GET /healthz` returns `200 OK` with `{ "status": "ok" }`.
-- [ ] `GET /readyz` returns `200` if DB+Redis+S3 pass, `503` with per-check status otherwise.
-- [ ] Two `pgxpool` instances (app + admin) with the right roles; migrator uses direct URL.
-- [ ] Middleware resolves `acme.localhost` → tenant, starts `pgx.Tx`, and sets
-  `SET LOCAL app.tenant_id`; it rolls back on panic and flushes the buffered response only after
+- [x] `GET /healthz` returns `200 OK` with `{ "status": "ok" }`.
+- [x] `GET /readyz` returns `200` if DB+Redis+S3 pass, `503` with per-check status otherwise.
+- [x] Two `pgxpool` instances (app + admin) with the right roles; migrator uses direct URL.
+- [x] Middleware resolves `acme.localhost` → tenant, starts `pgx.Tx`, and calls
+  `SELECT set_config('app.tenant_id', $1, true)`; it rolls back on panic and flushes the buffered response only after
   commit succeeds. Unknown subdomain → `404 unknown_tenant`. Suspended → `403 tenant_suspended`.
-- [ ] RLS enabled on all tenant-scoped tables; integration tests verify positive (tenant reads own),
+- [x] RLS enabled on all tenant-scoped tables; integration tests verify positive (tenant reads own),
   negative (tenant can't read other tenant's), and admin bypass.
-- [ ] `X-Request-ID` header on every response; `slog` logs include `request_id`, `tenant_id`, `tenant_slug`.
-- [ ] CI runs `go vet`, `golangci-lint`, `go test` (with testcontainers), up→down→up migration test.
-- [ ] `.env.example` committed; `Config.Validate()` exits with clear error on missing required vars.
+- [x] `X-Request-ID` header on every response; `slog` logs include `request_id`, `tenant_id`, `tenant_slug`.
+- [x] CI runs `go vet`, `golangci-lint`, `go test` (with testcontainers), up→down→up migration test.
+- [x] `.env.example` committed; `Config.Validate()` exits with clear error on missing required vars.
 
 ---
 
@@ -815,20 +838,20 @@ Slug validation (3-24 chars, lowercase, not reserved, unique). Cross-tenant acce
 
 ### Acceptance criteria
 
-- [ ] `POST /admin/tenants` creates a tenant (platform-admin auth, `platform:tenant:create` perm).
-- [ ] Middleware injects `(tenant, status, plan, trial_ends_at)` into request context.
-- [ ] Unknown subdomains return `404 unknown_tenant`; suspended tenants return `403 tenant_suspended`.
-- [ ] `CanUseFeature(tenant, feature)` returns false when a feature is not in the tenant's plan.
-- [ ] `RequirePlanLimit` middleware returns `402 plan_limit_exceeded` with `upgrade_url` on exceeded limits.
-- [ ] `RequirePlanLimit` returns `402 plan_feature_unavailable` when a feature isn't in the plan.
-- [ ] A tenant's plan limits (projects, users, feedback/month, storage days, features) returned by a config endpoint.
-- [ ] Cross-tenant resource access is rejected with `403` in integration tests (RLS + app-layer).
-- [ ] Platform admin magic-link auth flow: `POST /admin/auth/login`, `POST /admin/auth/verify`,
+- [x] `POST /admin/tenants` creates a tenant (platform-admin auth, `platform:tenant:create` perm).
+- [x] Middleware injects `(tenant, status, plan, trial_ends_at)` into request context.
+- [x] Unknown subdomains return `404 unknown_tenant`; suspended tenants return `403 tenant_suspended`.
+- [x] `CanUseFeature(tenant, feature)` returns false when a feature is not in the tenant's plan.
+- [x] `RequirePlanLimit` middleware returns `402 plan_limit_exceeded` with `upgrade_url` on exceeded limits.
+- [x] `RequirePlanLimit` returns `402 plan_feature_unavailable` when a feature isn't in the plan.
+- [x] A tenant's plan limits (projects, users, feedback/month, storage days, features) returned by a config endpoint.
+- [x] Cross-tenant resource access is rejected with `403` in integration tests (RLS + app-layer).
+- [x] Platform admin magic-link auth flow: `POST /admin/auth/login`, `POST /admin/auth/verify`,
   `POST /admin/auth/refresh`, `POST /admin/auth/logout`.
-- [ ] `fidibeki-api admin bootstrap --email ...` idempotently creates the first platform admin.
-- [ ] Magic-link delivery works through the local capture adapter and the production Resend adapter.
-- [ ] `RequirePlatformAdmin(perm)` middleware on platform routes; `aud=platform` JWT enforced.
-- [ ] Slug validation at app + DB level (regex + reserved words check).
+- [x] `fidibeki-api admin bootstrap --email ...` idempotently creates the first platform admin.
+- [x] Magic-link delivery works through the local capture adapter and the production Resend adapter.
+- [x] `RequirePlatformAdmin(perm)` middleware on platform routes; `aud=platform` JWT enforced.
+- [x] Slug validation at app + DB level (regex + reserved words check).
 
 ---
 
@@ -846,15 +869,15 @@ users (magic link with `member_id=null` until consumed). Refresh token rotation 
 
 ### Acceptance criteria
 
-- [ ] `POST /auth/login` sends a magic link email (async via asynq `email-pool`).
-- [ ] `POST /auth/verify` validates the magic link token, issues access + refresh, sets refresh cookie.
-- [ ] `POST /auth/refresh` rotates the refresh token (revoke old, issue new); reuse-of-revoked revokes all sessions.
-- [ ] `POST /auth/logout` revokes the session, clears the refresh cookie.
-- [ ] Admins have full permissions; custom permission sets assignable to members.
-- [ ] Backoffice routes require `tenant` context + `RequireTenantMember` + `RequirePerm(perm)`.
-- [ ] `aud=tenant` JWTs rejected on platform routes; `aud=platform` JWTs rejected on tenant routes.
-- [ ] Refresh tokens stored hashed; revocable per-session and per-member.
-- [ ] Invitations: `POST /auth/invite` sends a magic link to a non-member email; on verify, creates the member.
+- [x] `POST /auth/login` sends a magic link email (async via asynq `email-pool`).
+- [x] `POST /auth/verify` validates the magic link token, issues access + refresh, sets refresh cookie.
+- [x] `POST /auth/refresh` rotates the refresh token (revoke old, issue new); reuse-of-revoked revokes all sessions.
+- [x] `POST /auth/logout` revokes the session, clears the refresh cookie.
+- [x] Admins have full permissions; custom permission sets assignable to members.
+- [x] Backoffice routes require `tenant` context + `RequireTenantMember` + `RequirePerm(perm)`.
+- [x] `aud=tenant` JWTs rejected on platform routes; `aud=platform` JWTs rejected on tenant routes.
+- [x] Refresh tokens stored hashed; revocable per-session and per-member.
+- [x] Invitations: `POST /auth/invite` sends a magic link to a non-member email; on verify, creates the member.
 
 ---
 
@@ -872,13 +895,13 @@ plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecor
 
 ### Acceptance criteria
 
-- [ ] Members with `project:create`/`project:update` can manage projects and widget rules.
-- [ ] Each project has a unique `pk_live_` public key.
-- [ ] Widget rules can vary by URL pattern (`all_pages`, `url_exact`, `url_prefix`, `url_regex`).
-- [ ] `allowed_domains` supports exact + `*.domain` wildcard entries.
-- [ ] Save-time validation: trigger/matcher consistency, regex compiles, accent_color format,
+- [x] Members with `project:create`/`project:update` can manage projects and widget rules.
+- [x] Each project has a unique `pk_live_` public key.
+- [x] Widget rules can vary by URL pattern (`all_pages`, `url_exact`, `url_prefix`, `url_regex`).
+- [x] `allowed_domains` supports exact + `*.domain` wildcard entries.
+- [x] Save-time validation: trigger/matcher consistency, regex compiles, accent_color format,
   plan-feature alignment (`422` with field-level errors if misaligned).
-- [ ] `RequirePerm` middleware enforces `widget_rule:create/update/delete` per route.
+- [x] `RequirePerm` middleware enforces `widget_rule:create/update/delete` per route.
 
 ---
 
@@ -894,20 +917,20 @@ Shadow DOM for isolation. One-line embed (`<script src=... data-fidibeki-key=...
 Config fetch from `GET /v1/widget/config` (public key + Origin check). Triggers: delay, scroll,
 exit_intent with `sessionStorage` suppression. SPA navigation detection via history patch +
 custom event; config refreshed every 5 min and on `visibilitychange`. Attach-element: HTML +
-computed styles (screenshot deferred). Honeypot field for bot protection.
+computed styles. Screenshot capture is independently plan/rule gated. Honeypot field for bot protection.
 
 ### Acceptance criteria
 
-- [ ] Widget loads on allowed domains and is blocked on unknown domains (`403` from config endpoint).
-- [ ] Trigger respects per-page config (delay, scroll depth, exit intent).
-- [ ] End user can rate 1-5 stars and write a text review.
-- [ ] End user can click a page element to attach its HTML + computed styles.
-- [ ] Widget sends OS, browser, viewport size, URL, referrer metadata.
-- [ ] Lazy modules load only for features the plan allows (`features` object from config).
-- [ ] Honeypot field silently drops bot submissions (returns `200` but no feedback created).
-- [ ] Sentry SDK lazy-loads on first error; PII scrubbed in `beforeSend`.
-- [ ] Vitest unit tests for trigger logic, config matching, suppression state.
-- [ ] Playwright E2E: open sample page → fetch config → trigger widget → serialize a submission
+- [x] Widget loads on allowed domains and is blocked on unknown domains (`403` from config endpoint).
+- [x] Trigger respects per-page config (delay, scroll depth, exit intent).
+- [x] End user can rate 1-5 stars and write a text review.
+- [x] End user can click a page element to attach its HTML + computed styles.
+- [x] Widget sends OS, browser, viewport size, URL, referrer metadata.
+- [x] Lazy modules load only for features the plan allows (`features` object from config).
+- [x] Honeypot field silently drops bot submissions (returns `200` but no feedback created).
+- [x] Sentry SDK lazy-loads on first error; PII scrubbed in `beforeSend`.
+- [x] Vitest unit tests for trigger logic, config matching, suppression state.
+- [x] Playwright E2E: open sample page → fetch config → trigger widget → serialize a submission
   against a contract-compatible mock API. The real submission/DB E2E is owned by Phase 5.
 
 ---
@@ -928,17 +951,17 @@ project + 100/hour per project ceiling). Plan limit checked (402 if exceeded).
 
 ### Acceptance criteria
 
-- [ ] Valid project key + allowed origin required (`403` otherwise).
-- [ ] Monthly feedback count checked against plan; exceeded returns `402 plan_limit_exceeded`.
-- [ ] Rate limit: 10/min per IP per project (`429` with `Retry-After`); 100/hour per-project ceiling.
-- [ ] `client_feedback_id` + `client_attachment_id` provide idempotency (duplicate → returns existing).
-- [ ] Presigned S3 URLs returned (10-min TTL); widget PUTs directly; completion callback verifies
+- [x] Valid project key + allowed origin required (`403` otherwise).
+- [x] Monthly feedback count checked against plan; exceeded returns `402 plan_limit_exceeded`.
+- [x] Rate limit: 10/min per IP per project (`429` with `Retry-After`); 100/hour per-project ceiling.
+- [x] `client_feedback_id` + `client_attachment_id` provide idempotency (duplicate → returns existing).
+- [x] Presigned S3 URLs returned (10-min TTL); widget PUTs directly; completion callback verifies
   token + S3 HEAD (size + MIME).
-- [ ] Invalid payloads return `422 validation_error` with field-level `details[]`.
-- [ ] Issue auto-created in the same transaction (`public_id` allocated via `issue_counters`).
-- [ ] Feedback and its `feedback.created` outbox event are committed atomically; the dispatcher
+- [x] Invalid payloads return `422 validation_error` with field-level `details[]`.
+- [x] Issue auto-created in the same transaction (`public_id` allocated via `issue_counters`).
+- [x] Feedback and its `feedback.created` outbox event are committed atomically; the dispatcher
   uses deterministic task IDs and retries undispatched rows.
-- [ ] Integration tests: happy path, invalid origin, plan limit, rate limit, malformed body, idempotent retry.
+- [x] Integration tests: happy path, invalid origin, plan limit, rate limit, malformed body, idempotent retry.
 
 ---
 
@@ -958,17 +981,18 @@ attachment + reprocess-all per feedback from backoffice.
 
 ### Acceptance criteria
 
-- [ ] Audio feedback transcribed when plan allows AI; `processing_status='completed'` with `transcription`.
-- [ ] Text feedback: cleaned (filler removed), sentiment score stored, moderation flags stored.
-- [ ] Screenshot OCR extracts visible text when plan allows AI.
-- [ ] Video: Gemini native video transcription (no FFmpeg).
-- [ ] Offensive language flagged in `moderation_flags`; not auto-hidden (flag-only, tenant decides).
-- [ ] AI jobs queued via asynq `ai-pool` (concurrency 3) with `redis_rate` Gemini limiter.
-- [ ] Transient failures (429, 500, timeout): revert to `pending`, asynq retries with backoff.
-- [ ] Permanent failures (content policy, malformed media): `processing_status='failed'`, `asynq.SkipRetry`.
-- [ ] `feedbacks.ai_processed_at` set when all passes finish; backoffice shows progress badge.
-- [ ] `POST /v1/attachments/{id}/retry` (re-enqueues) + `POST /v1/feedbacks/{id}/reprocess` (all).
-- [ ] Failures never crash the feedback submission flow (async, isolated).
+- [x] Audio feedback transcribed when plan allows AI; `processing_status='completed'` with `transcription`.
+- [x] Text feedback: cleaned (filler removed), sentiment score stored, moderation flags stored.
+- [x] Screenshot OCR extracts visible text when plan allows AI.
+- [x] Video: Gemini native video transcription (no FFmpeg).
+- [x] Offensive language flagged in `moderation_flags`; not auto-hidden (flag-only, tenant decides).
+- [x] AI jobs queued via asynq `ai-pool` (concurrency 3) with `redis_rate` Gemini limiter.
+- [x] Transient failures (429, 500, timeout): revert to `pending`, asynq retries with backoff.
+- [x] Permanent failures (content policy, malformed media): `processing_status='failed'`, `asynq.SkipRetry`.
+- [x] `feedbacks.ai_processed_at` set when all passes finish.
+- [x] Backoffice shows AI progress badge (Phase 12 dashboard dependency).
+- [x] `POST /v1/attachments/{id}/retry` (re-enqueues) + `POST /v1/feedbacks/{id}/reprocess` (all).
+- [x] Failures never crash the feedback submission flow (async, isolated).
 
 ---
 
@@ -988,16 +1012,16 @@ Bounce/complaint webhook auto-unsubscribes.
 
 ### Acceptance criteria
 
-- [ ] Each issue gets a public id like `TAU-2026-0001` (uppercase slug, 4-digit seq, yearly reset).
-- [ ] Auto-created per feedback (title = first 80 chars of text or `[No text]`).
-- [ ] Tenant can merge issues (soft-merge, `merged_into_id` preserved, un-merge possible).
-- [ ] Reporter email optional; if provided + opted-in, status updates trigger an email.
-- [ ] Emails sent from `updates@fidibeki.app` with `{Tenant name} via Fidibeki` from-name.
-- [ ] Unsubscribe link (JWT, 90d) in every reporter email; clicking sets `notify_reporter=false`.
-- [ ] `delivery_logs` records each attempt with `attempt_number`, `status`, `provider_message_id`.
-- [ ] Resend bounce/complaint webhook on `api.fidibeki.app`: updates `delivery_logs.status='bounced'`,
+- [x] Each issue gets a public id like `TAU-2026-0001` (uppercase slug, 4-digit seq, yearly reset).
+- [x] Auto-created per feedback (title = first 80 chars of text or `[No text]`).
+- [x] Tenant can merge issues (soft-merge, `merged_into_id` preserved, un-merge possible).
+- [x] Reporter email optional; if provided + opted-in, status updates trigger an email.
+- [x] Emails sent from `updates@fidibeki.app` with `{Tenant name} via Fidibeki` from-name.
+- [x] Unsubscribe link (JWT, 90d) in every reporter email; clicking sets `notify_reporter=false`.
+- [x] `delivery_logs` records each attempt with `attempt_number`, `status`, `provider_message_id`.
+- [x] Resend bounce/complaint webhook on `api.fidibeki.app`: updates `delivery_logs.status='bounced'`,
   auto-unsubscribes reporter on complaint.
-- [ ] `issue_updates` records every status change with `member_id`, `old_status`, `new_status`, `comment`.
+- [x] `issue_updates` records every status change with `member_id`, `old_status`, `new_status`, `comment`.
 
 ---
 
@@ -1016,14 +1040,14 @@ Retention = plan's `storage_days` (lifecycle + daily DB cleanup cron).
 
 ### Acceptance criteria
 
-- [ ] Replay recording respects tenant sampling config (0%, 1%, 100%, etc.).
-- [ ] PII masking: `maskAllInputs=true`, `maskTextSelector` for extra fields.
-- [ ] Recording continuous across SPA navigations; ends on `pagehide` or 5-min idle.
-- [ ] Batch upload (one S3 object per ~50 events); `replay.merge` job produces final `replay.json`.
-- [ ] Backoffice shows "processing" until merge, then "ready"; player loads concatenated events.
-- [ ] Replay linked to feedback (both `sessions.feedback_id` and `feedbacks.session_id`).
-- [ ] Storage respects plan retention days (lifecycle policy + daily cleanup cron).
-- [ ] Feature blocked for plans without `SessionReplay=true` (`402 plan_feature_unavailable`).
+- [x] Replay recording respects tenant sampling config (0%, 1%, 100%, etc.).
+- [x] PII masking: `maskAllInputs=true`, `maskTextSelector` for extra fields.
+- [x] Recording continuous across SPA navigations; ends on `pagehide` or 5-min idle.
+- [x] Batch upload (one S3 object per ~50 events); `replay.merge` job produces final `replay.json`.
+- [x] Backoffice shows "processing" until merge, then "ready"; player loads concatenated events.
+- [x] Replay linked to feedback (both `sessions.feedback_id` and `feedbacks.session_id`).
+- [x] Storage respects plan retention days (lifecycle policy + daily cleanup cron).
+- [x] Feature blocked for plans without `SessionReplay=true` (`402 plan_feature_unavailable`).
 
 ---
 
@@ -1042,15 +1066,15 @@ messages. Webhooks signed with `X-Fidibeki-Signature: HMAC-SHA256`. Teams Messag
 
 ### Acceptance criteria
 
-- [ ] Admins can save/remove integrations and select event types (`integration:create/delete` perm).
-- [ ] Webhook secret generated on creation, shown once, stored application-encrypted with a
+- [x] Admins can save/remove integrations and select event types (`integration:create/delete` perm).
+- [x] Webhook secret generated on creation, shown once, stored application-encrypted with a
   fingerprint; `X-Fidibeki-Signature` header on every webhook.
-- [ ] New feedback sends a Slack message (Block Kit) when configured for `feedback.created`.
-- [ ] Slack/Teams/webhook failures retried per asynq policy; logged in `delivery_logs`; don't block feedback flow.
-- [ ] One asynq job per integration (failure isolation); reporter email is a separate job.
-- [ ] Transactional outbox rows fan out to deterministic per-integration tasks; partial enqueue
+- [x] New feedback sends a Slack message (Block Kit) when configured for `feedback.created`.
+- [x] Slack/Teams/webhook failures retried per asynq policy; logged in `delivery_logs`; don't block feedback flow.
+- [x] One asynq job per integration (failure isolation); reporter email is a separate job.
+- [x] Transactional outbox rows fan out to deterministic per-integration tasks; partial enqueue
   retries do not duplicate provider deliveries.
-- [ ] Feature only available for plans with `SlackNotifications=true` (`402` otherwise).
+- [x] Feature only available for plans with `SlackNotifications=true` (`402` otherwise).
 
 ---
 
@@ -1070,21 +1094,21 @@ Account deletion: self-service with 7-day grace + platform admin force-delete +
 
 ### Acceptance criteria
 
-- [ ] `POST /v1/signup` creates a `trial` tenant + first admin member; sends magic link; Turnstile verified.
-- [ ] New tenant starts a 14-day trial with the chosen plan's limits.
-- [ ] Lazy Stripe customer creation on first billing interaction.
-- [ ] Stripe checkout creates a subscription and links it to the tenant.
-- [ ] Webhooks update plan, status, trial end date (`stripe_events` idempotency; load-from-Stripe).
-- [ ] Dunning emails at 3d/1d/0d before trial end (Resend async).
-- [ ] Unpaid trial converts to suspended; feedback API blocks suspended tenants.
-- [ ] Downgrades allowed; new resource creation blocked over limit (`402`); existing resources fully usable.
-- [ ] `pending_plan` applied at next billing period via `invoice.paid` webhook.
-- [ ] Customer portal link available for admins (`POST /billing/portal`).
-- [ ] `POST /v1/billing/delete-account` (typed confirmation, 7-day grace, email to members).
-- [ ] `POST /v1/billing/cancel-deletion` (during grace).
-- [ ] `DELETE /admin/tenants/{id}` (platform admin force-delete, immediate, audited).
-- [ ] Daily `tenant_deletion_executor` cron: cancel Stripe, revoke sessions, delete S3, `DELETE FROM tenants CASCADE`, audit log.
-- [ ] Delete unverified tenants (no magic-link consumption) after 24h.
+- [x] `POST /v1/signup` creates a `trial` tenant + first admin member; sends magic link; Turnstile verified.
+- [x] New tenant starts a 14-day trial with the chosen plan's limits.
+- [x] Lazy Stripe customer creation on first billing interaction.
+- [x] Stripe checkout creates a subscription and links it to the tenant.
+- [x] Webhooks update plan, status, trial end date (`stripe_events` idempotency; load-from-Stripe).
+- [x] Dunning emails at 3d/1d/0d before trial end (Resend async).
+- [x] Unpaid trial converts to suspended; feedback API blocks suspended tenants.
+- [x] Downgrades allowed; new resource creation blocked over limit (`402`); existing resources fully usable.
+- [x] `pending_plan` applied at next billing period via `invoice.paid` webhook.
+- [x] Customer portal link available for admins (`POST /billing/portal`).
+- [x] `POST /v1/billing/delete-account` (typed confirmation, 7-day grace, email to members).
+- [x] `POST /v1/billing/cancel-deletion` (during grace).
+- [x] `DELETE /admin/tenants/{id}` (platform admin force-delete, immediate, audited).
+- [x] Daily `tenant_deletion_executor` cron: cancel Stripe, revoke sessions, delete S3, `DELETE FROM tenants CASCADE`, audit log.
+- [x] Delete unverified tenants (no magic-link consumption) after 24h.
 
 ---
 
@@ -1104,17 +1128,17 @@ issue detail (status updates, merge), settings (members, api_keys, integrations)
 
 ### Acceptance criteria
 
-- [ ] Login page per subdomain sends magic link; `GET /auth/verify` (SSR) → `POST /auth/verify` (Go).
-- [ ] Dashboard shows feedback count, issue count, satisfaction trend.
-- [ ] Members with correct permissions can manage projects and widget configuration.
-- [ ] Feedback list: cursor pagination + filters (project, status, rating, attachment, moderation, issue, date, sort).
-- [ ] Feedback detail: metadata, screenshot, transcript, sentiment, replay player (`rrweb-player`).
-- [ ] Issues can be created/updated/resolved/merged and trigger emails.
-- [ ] "Retry AI" per attachment + "Reprocess all" per feedback.
-- [ ] Settings: members (invite, permissions editor with 3 presets), API keys, integrations.
-- [ ] Billing: plan, customer portal link, delete-account with typed confirmation + grace banner.
-- [ ] Trial banner ("14-day trial") shown during trial.
-- [ ] Playwright E2E: login, project creation, feedback triage, issue merge, billing delete-request.
+- [x] Login page per subdomain sends magic link; `GET /auth/verify` (SSR) → `POST /auth/verify` (Go).
+- [x] Dashboard shows feedback count, issue count, satisfaction trend.
+- [x] Members with correct permissions can manage projects and widget configuration.
+- [x] Feedback list: cursor pagination + filters (project, status, rating, attachment, moderation, issue, date, sort).
+- [x] Feedback detail: metadata, screenshot, transcript, sentiment, replay player (`rrweb-player`).
+- [x] Issues can be created/updated/resolved/merged and trigger emails.
+- [x] "Retry AI" per attachment + "Reprocess all" per feedback.
+- [x] Settings: members (invite, permissions editor with 3 presets), API keys, integrations.
+- [x] Billing: plan, customer portal link, delete-account with typed confirmation + grace banner.
+- [x] Trial banner ("14-day trial") shown during trial.
+- [x] Playwright E2E: login, project creation, feedback triage, issue merge, billing delete-request.
 
 ---
 
@@ -1133,14 +1157,17 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 
 ### Acceptance criteria
 
-- [ ] `docker build` produces runnable API and web images (alpine, multi-stage).
-- [ ] Widget built to `widget/dist/` (esbuild, content-hashed filenames, long Cache-Control).
+- [x] `docker build` produces runnable API and web images (alpine, multi-stage).
+- [x] Widget built to `widget/dist/` (esbuild, content-hashed filenames, long Cache-Control).
 - [ ] Railway deploys `main` to staging automatically; prod is manual promote.
-- [ ] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
-- [ ] All env vars documented in `docs/env.md` + `.env.example`.
-- [ ] Healthcheck and DB connectivity verified on deploy (`/readyz`).
-- [ ] Source maps uploaded to Sentry in CI (Go binary + widget + Nuxt).
-- [ ] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
+- [x] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
+- [x] All env vars documented in `docs/env.md` + `.env.example`.
+- [x] Healthcheck and DB connectivity verified on deploy (`/readyz`).
+- [x] Source maps uploaded to Sentry in CI (Go release + widget + Nuxt).
+- [x] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
   AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
   S3 storage full, deploy rollback, secrets rotation.
-- [ ] asynqmon web UI mounted on `api.fidibeki.app` behind platform-admin auth.
+- [x] Read-only Asynq queue operations UI mounted on `api.fidibeki.app` behind platform-admin auth.
+
+Local packaging and deployment automation are complete. The remaining item requires configuring
+the Railway project and performing the first staging and production promotions.

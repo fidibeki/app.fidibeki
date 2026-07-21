@@ -1,0 +1,15 @@
+{
+  "name": "fidibeki",
+  "private": true,
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "build:widget": "pnpm --filter @fidibeki/widget build",
+    "build:web": "pnpm --filter @fidibeki/web build",
+    "dev:web": "pnpm --filter @fidibeki/web dev",
+    "test:widget": "pnpm --filter @fidibeki/widget test",
+    "test:widget:e2e": "pnpm --filter @fidibeki/widget test:e2e",
+    "test:web": "pnpm --filter @fidibeki/web test",
+    "test:web:e2e": "pnpm --filter @fidibeki/web test:e2e",
+    "typecheck:web": "pnpm --filter @fidibeki/web typecheck"
+  }
+}

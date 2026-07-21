@@ -1,0 +1,183 @@
+name: fidibeki
+
+x-api-environment: &api-environment
+  APP_ENV: local
+  APP_VERSION: local
+  LOG_LEVEL: debug
+  HTTP_ADDRESS: :8080
+  BASE_DOMAIN: localhost
+  PUBLIC_BASE_URL: http://api.localhost:8088
+  DATABASE_URL_APP: postgres://fidibeki_app:fidibeki-app-local@pgbouncer:6432/fidibeki?sslmode=disable
+  DATABASE_URL_ADMIN: postgres://fidibeki_admin:fidibeki-admin-local@pgbouncer:6432/fidibeki?sslmode=disable
+  DATABASE_URL_DIRECT: postgres://postgres:postgres@postgres:5432/fidibeki?sslmode=disable
+  DATABASE_APP_MAX_CONNS: 10
+  DATABASE_ADMIN_MAX_CONNS: 5
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: http://localhost:9000
+  S3_REGION: us-east-1
+  S3_BUCKET: fidibeki
+  S3_ACCESS_KEY: fidibeki-local
+  S3_SECRET_KEY: fidibeki-local-secret
+  S3_AUTO_CREATE_BUCKET: "true"
+  JWT_SECRET: local-only-jwt-secret-change-before-production
+  INTERNAL_PROXY_SECRET: ${INTERNAL_PROXY_SECRET:-local-only-internal-proxy-secret-change-me}
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+  AUTH_ACCESS_TOKEN_TTL: 10m
+  AUTH_MAGIC_LINK_TTL: 10m
+  AUTH_REFRESH_TOKEN_TTL: 720h
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+  STRIPE_PRICE_STARTER: ${STRIPE_PRICE_STARTER:-}
+  STRIPE_PRICE_GROWTH: ${STRIPE_PRICE_GROWTH:-}
+  STRIPE_PRICE_SCALE: ${STRIPE_PRICE_SCALE:-}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+  TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+  EMAIL_DRIVER: capture
+  EMAIL_CAPTURE_DIR: /var/lib/fidibeki-emails
+  EMAIL_QUEUE_CONCURRENCY: 20
+  RESEND_AUTH_FROM: Fidibeki <auth@fidibeki.app>
+  RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+  REPORTER_UNSUBSCRIBE_TTL: ${REPORTER_UNSUBSCRIBE_TTL:-2160h}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: gemini-2.5-flash
+  GEMINI_RPM: 15
+  AI_QUEUE_CONCURRENCY: 3
+  AI_DAILY_REQUEST_LIMIT: 5000
+  AI_RECONCILE_INTERVAL: 5m
+  MIGRATIONS_PATH: /app/migrations
+  READINESS_TIMEOUT: 2s
+  SHUTDOWN_TIMEOUT: 10s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fidibeki
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fidibeki"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5433:5432"
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U fidibeki_admin -d fidibeki"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6432:6432"
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6380:6379"
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: fidibeki-local
+      MINIO_ROOT_PASSWORD: fidibeki-local-secret
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  migrations:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["migrate", "up"]
+    environment: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment: *api-environment
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["worker"]
+    environment: *api-environment
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    volumes:
+      - email-capture:/var/lib/fidibeki-emails
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: infra/caddy/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8088:80"
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  email-capture:

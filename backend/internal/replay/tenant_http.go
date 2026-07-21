@@ -1,0 +1,278 @@
+package replay
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+)
+
+type TenantTokenVerifier interface {
+	Verify(string, string) (auth.Claims, error)
+}
+
+type ReplayStorage interface {
+	OpenObject(context.Context, string) (io.ReadCloser, error)
+	RemoveObject(context.Context, string) error
+}
+
+type TenantHTTPOptions struct {
+	Store   Store
+	JWT     TenantTokenVerifier
+	Storage ReplayStorage
+	Logger  *slog.Logger
+}
+
+type TenantHTTPHandler struct {
+	options TenantHTTPOptions
+	logger  *slog.Logger
+}
+
+func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	handler := &TenantHTTPHandler{options: options, logger: logger}
+	router.With(
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionSessionRead),
+	).Get("/v1/sessions/{sessionID}", handler.getSession)
+	router.With(
+		appmiddleware.RequireWritable,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionSessionDelete),
+	).Delete("/v1/sessions/{sessionID}", handler.deleteSession)
+}
+
+func (h *TenantHTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.sessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	response := map[string]any{
+		"id": session.ID, "project_id": session.ProjectID,
+		"session_id": session.ClientSessionID, "page_url": session.PageURL,
+		"started_at": session.StartedAt, "ended_at": session.EndedAt,
+		"events_count": session.EventsCount, "batches_count": session.BatchesCount,
+		"rrweb_version": session.RRWebVersion, "merged_at": session.MergedAt,
+		"status": session.Status(), "feedback_id": session.FeedbackID,
+	}
+	if session.Status() == "ready" {
+		response["replay_url"] = "/v1/sessions/" + session.ID + "/replay"
+	}
+	api.WriteJSON(w, http.StatusOK, response)
+}
+
+func (h *TenantHTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	keys, err := h.options.Store.DeleteSession(r.Context(), query, resolved.ID, sessionID)
+	if errors.Is(err, ErrNotFound) {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if len(keys) > 0 && h.options.Storage != nil {
+		appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
+			var result error
+			for _, key := range keys {
+				if err := h.options.Storage.RemoveObject(ctx, key); err != nil {
+					result = errors.Join(result, err)
+				}
+			}
+			return result
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *TenantHTTPHandler) sessionFromRequest(w http.ResponseWriter, r *http.Request) (Session, bool) {
+	sessionID := chi.URLParam(r, "sessionID")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeTenantReplayNotFound(w)
+		return Session{}, false
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return Session{}, false
+	}
+	session, err := h.options.Store.GetSession(r.Context(), query, resolved.ID, sessionID)
+	if errors.Is(err, ErrNotFound) {
+		writeTenantReplayNotFound(w)
+		return Session{}, false
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return Session{}, false
+	}
+	return session, true
+}
+
+func (h *TenantHTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	h.logger.ErrorContext(r.Context(), "tenant replay request failed", "error", err)
+	api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+}
+
+func writeTenantReplayNotFound(w http.ResponseWriter) {
+	api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "replay session not found", nil)
+}
+
+type StreamHTTPOptions struct {
+	BaseDomain string
+	Resolver   tenant.Resolver
+	Begin      db.BeginFunc
+	Store      Store
+	JWT        TenantTokenVerifier
+	Storage    ReplayStorage
+	Logger     *slog.Logger
+	Now        func() time.Time
+}
+
+type StreamHTTPHandler struct {
+	options StreamHTTPOptions
+	logger  *slog.Logger
+}
+
+func NewStreamHTTPHandler(options StreamHTTPOptions) http.Handler {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	return &StreamHTTPHandler{options: options, logger: logger}
+}
+
+func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		api.WriteError(w, http.StatusMethodNotAllowed, api.CodeBadRequest, "method not allowed", nil)
+		return
+	}
+	sessionID := chi.URLParam(r, "sessionID")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	resolved, ok := h.resolveTenant(w, r)
+	if !ok {
+		return
+	}
+	tx, err := h.options.Begin(r.Context())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(r.Context())
+		}
+	}()
+	var configured string
+	if err := tx.QueryRow(r.Context(), `SELECT set_config('app.tenant_id', $1, true)`, resolved.ID).Scan(&configured); err != nil || configured != resolved.ID {
+		h.writeError(w, r, fmt.Errorf("set replay stream tenant context: %w", err))
+		return
+	}
+	claims, err := appmiddleware.AuthenticateTenantCredential(
+		r.Context(), tx, h.options.JWT, resolved.ID, r.Header.Get("Authorization"),
+	)
+	if errors.Is(err, appmiddleware.ErrTenantCredentialInvalid) {
+		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
+		return
+	}
+	if errors.Is(err, appmiddleware.ErrTenantCredentialForbidden) {
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "tenant access denied", nil)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if !auth.HasPermission(claims.Permissions, auth.PermissionSessionRead) {
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "permission denied", nil)
+		return
+	}
+	session, err := h.options.Store.GetSession(r.Context(), tx, resolved.ID, sessionID)
+	if errors.Is(err, ErrNotFound) || (err == nil && (session.MergedAt == nil || session.StorageKey == nil)) {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	committed = true
+	object, err := h.options.Storage.OpenObject(r.Context(), *session.StorageKey)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	defer object.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, object); err != nil {
+		h.logger.WarnContext(r.Context(), "stream replay object", "error", err, "session_id", session.ID)
+	}
+}
+
+func (h *StreamHTTPHandler) resolveTenant(w http.ResponseWriter, r *http.Request) (tenant.Tenant, bool) {
+	slug, err := tenant.SlugFromHost(r.Host, h.options.BaseDomain)
+	if err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeUnknownTenant, "unknown tenant", nil)
+		return tenant.Tenant{}, false
+	}
+	resolved, err := h.options.Resolver.Resolve(r.Context(), slug)
+	if errors.Is(err, tenant.ErrUnknownTenant) {
+		api.WriteError(w, http.StatusNotFound, api.CodeUnknownTenant, "unknown tenant", nil)
+		return tenant.Tenant{}, false
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return tenant.Tenant{}, false
+	}
+	now := time.Now()
+	if h.options.Now != nil {
+		now = h.options.Now()
+	}
+	if resolved.Status != tenant.StatusActive &&
+		(resolved.Status != tenant.StatusTrial || resolved.TrialEndsAt == nil || !resolved.TrialEndsAt.After(now)) {
+		api.WriteError(w, http.StatusForbidden, api.CodeTenantSuspended, "tenant is not active", nil)
+		return tenant.Tenant{}, false
+	}
+	return resolved, true
+}
+
+func (h *StreamHTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	h.logger.ErrorContext(r.Context(), "replay stream request failed", "error", err)
+	api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+}

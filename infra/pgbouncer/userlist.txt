@@ -1,0 +1,2 @@
+"fidibeki_app" "fidibeki-app-local"
+"fidibeki_admin" "fidibeki-admin-local"

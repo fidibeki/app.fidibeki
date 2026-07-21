@@ -1,0 +1,20 @@
+packages:
+  - widget
+  - web
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@sentry/browser-utils@10.67.0'
+  - '@sentry/browser@10.67.0'
+  - '@sentry/core@10.67.0'
+  - '@sentry/feedback@10.67.0'
+  - '@sentry/replay-canvas@10.67.0'
+  - '@sentry/replay@10.67.0'
+  - '@rrweb/types@2.1.1'
+  - '@rrweb/utils@2.1.1'
+  - rrdom@2.1.1
+  - rrweb-snapshot@2.1.1
+  - rrweb@2.1.1
+  - '@rrweb/packer@2.1.1'
+  - '@rrweb/replay@2.1.1'
+  - rrweb-player@2.1.1

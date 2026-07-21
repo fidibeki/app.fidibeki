@@ -1,7 +1,17 @@
 # Fidibeki Five Interface Studies
 
 **Date:** 2026-07-21
-**Status:** Approved for visual prototyping
+**Status:** Dispatch selected for production
+
+## Production Selection
+
+Dispatch was selected on 2026-07-21 as the Phase 11 production foundation.
+
+- The global rail, queue rail, dense work stream, persistent inspector, and dedicated mobile detail route become the production interaction model.
+- The production entry point uses real tenant, authentication, feedback, issue, project, widget, member, integration, and billing data.
+- `/designs` remains available as a frozen comparison reference. Clearspace, Signal Observatory, Project Deck, and Flowboard are not maintained as runtime themes.
+- Production pages may extend Dispatch for configuration and administration, but must retain its compact operational hierarchy, border-led surfaces, and context-preserving workflows.
+- Fixture-only notices and local prototype mutations must not appear in production routes.
 
 ## Purpose
 

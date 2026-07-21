@@ -1,0 +1,39 @@
+name: Promote Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      API_SERVICE: ${{ vars.RAILWAY_API_SERVICE }}
+      WORKER_SERVICE: ${{ vars.RAILWAY_WORKER_SERVICE }}
+      WEB_SERVICE: ${{ vars.RAILWAY_WEB_SERVICE }}
+      WIDGET_SERVICE: ${{ vars.RAILWAY_WIDGET_SERVICE }}
+      PRODUCTION_API_URL: ${{ vars.PRODUCTION_API_URL }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install --global @railway/cli@5.27.2
+      - name: Deploy API and worker
+        run: |
+          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$API_SERVICE"
+          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WORKER_SERVICE"
+      - name: Deploy web and widget edge
+        run: |
+          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WEB_SERVICE"
+          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WIDGET_SERVICE"
+      - name: Verify production readiness
+        run: curl --fail --show-error --retry 12 --retry-delay 10 "$PRODUCTION_API_URL/readyz"

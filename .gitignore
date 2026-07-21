@@ -1,0 +1,16 @@
+.DS_Store
+.env
+backend/.env
+backend/coverage.out
+coverage.out
+
+.idea/
+.vscode/
+
+node_modules/
+.nuxt/
+.output/
+dist/
+coverage/
+playwright-report/
+test-results/

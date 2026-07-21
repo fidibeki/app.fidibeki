@@ -1,0 +1,25 @@
+{
+  "name": "@fidibeki/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@lucide/vue": "1.25.0",
+    "nuxt": "3.21.9",
+    "rrweb-player": "2.1.1",
+    "vue": "3.5.40"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.2.5"
+  }
+}

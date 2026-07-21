@@ -1,0 +1,329 @@
+package platformadmin
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+)
+
+func TestTenantCreationRequiresPermissionAndValidatesPlan(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeTenantStore{}
+	handler := NewHTTPHandler(HTTPOptions{Tenants: store, JWT: jwtManager})
+	body := []byte(`{"name":"Acme","slug":"acme","plan":"growth"}`)
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/admin/tenants", bytes.NewReader(body)))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated status = %d", unauthenticated.Code)
+	}
+
+	readOnlyToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+	})
+	forbidden := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/tenants", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	handler.ServeHTTP(forbidden, request)
+	if forbidden.Code != http.StatusForbidden {
+		t.Errorf("forbidden status = %d", forbidden.Code)
+	}
+
+	createToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantCreate),
+	})
+	created := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/admin/tenants", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+createToken)
+	handler.ServeHTTP(created, request)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+	}
+	if store.created.Plan != tenant.PlanGrowth || store.created.Status != tenant.StatusTrial || store.created.TrialEndsAt == nil {
+		t.Errorf("create input = %#v", store.created)
+	}
+}
+
+func TestLoginDoesNotRevealWhetherAdminExists(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeAuthStore{findErr: ErrAdminNotFound}
+	handler := NewHTTPHandler(HTTPOptions{Auth: Service{
+		Store: store, Email: &captureEnqueuer{}, PublicBaseURL: "https://api.fidibeki.app",
+		AuthFrom: "Fidibeki <auth@fidibeki.app>",
+	}})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost, "/admin/auth/login", strings.NewReader(`{"email":"missing@example.com"}`),
+	))
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
+	t.Parallel()
+
+	admin := Admin{ID: "admin-id", Email: "admin@example.com", Permissions: auth.PlatformPermissionStrings()}
+	store := &fakeAuthStore{admin: admin}
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth: Service{Store: store, JWT: jwtManager}, JWT: jwtManager,
+		SecureCookies: true, RefreshTTL: 30 * 24 * time.Hour,
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/auth/verify", strings.NewReader(`{"token":"magic"}`))
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Errorf("cookies = %#v", cookies)
+	}
+	for _, cookie := range cookies {
+		if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
+			t.Errorf("cookie = %#v", cookie)
+		}
+	}
+	queueCookie := cookieByName(cookies, PlatformQueueAccessCookie)
+	if queueCookie == nil || queueCookie.Path != "/admin/queues" {
+		t.Errorf("queue access cookie = %#v", queueCookie)
+	}
+	var response map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["access_token"] == "" {
+		t.Error("access token missing")
+	}
+}
+
+func TestPlatformAdminMagicLinkRequiresConfirmationBeforeRedirectingToQueues(t *testing.T) {
+	t.Parallel()
+
+	admin := Admin{ID: "admin-id", Email: "admin@example.com", Permissions: auth.PlatformPermissionStrings()}
+	store := &fakeAuthStore{admin: admin}
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth: Service{Store: store, JWT: jwtManager}, JWT: jwtManager,
+		SecureCookies: true, RefreshTTL: 30 * 24 * time.Hour,
+	})
+
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/auth/verify?token=magic%3Ctoken%3E", nil))
+	if page.Code != http.StatusOK || store.consumedHash != "" {
+		t.Fatalf("GET status = %d, consumed hash = %q", page.Code, store.consumedHash)
+	}
+	if !strings.Contains(page.Body.String(), `value="magic&lt;token&gt;"`) ||
+		!strings.Contains(page.Header().Get("Content-Security-Policy"), "form-action 'self'") {
+		t.Errorf("confirmation page or headers are incomplete: headers=%v body=%s", page.Header(), page.Body.String())
+	}
+
+	confirmed := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/auth/verify", strings.NewReader("token=magic-token"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(confirmed, request)
+	if confirmed.Code != http.StatusSeeOther || confirmed.Header().Get("Location") != "/admin/queues/" {
+		t.Fatalf("POST status = %d, location = %q, body = %s", confirmed.Code, confirmed.Header().Get("Location"), confirmed.Body.String())
+	}
+	if store.consumedHash != auth.HashToken("magic-token") {
+		t.Errorf("consumed hash = %q", store.consumedHash)
+	}
+	if cookieByName(confirmed.Result().Cookies(), PlatformQueueAccessCookie) == nil {
+		t.Error("queue access cookie missing")
+	}
+}
+
+func TestPlatformAdminMagicLinkPageRejectsMissingToken(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHTTPHandler(HTTPOptions{})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/auth/verify", nil))
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "does not include a verification token") {
+		t.Errorf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func cookieByName(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
+}
+
+func TestAuthenticatedTenantManagementAndSessionRoutes(t *testing.T) {
+	t.Parallel()
+
+	admin := Admin{ID: "admin-id", Email: "admin@example.com", Permissions: auth.PlatformPermissionStrings()}
+	authStore := &fakeAuthStore{admin: admin}
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	tenantStore := &fakeTenantStore{record: TenantRecord{
+		ID: "tenant-id", Name: "Acme", Slug: "acme", Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
+	}}
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth: Service{Store: authStore, JWT: jwtManager}, Tenants: tenantStore, JWT: jwtManager,
+		RefreshTTL: 30 * 24 * time.Hour,
+	})
+	accessToken, _, _ := jwtManager.Issue(admin.ID, auth.AudiencePlatform, admin.Permissions)
+
+	for _, path := range []string{"/admin/tenants", "/admin/tenants/tenant-id"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, body = %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	update := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/admin/tenants/tenant-id", strings.NewReader(
+		`{"name":"Beta","slug":"beta","plan":"scale","status":"suspended","billing_email":"billing@example.com"}`,
+	))
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	handler.ServeHTTP(update, request)
+	if update.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body = %s", update.Code, update.Body.String())
+	}
+	if tenantStore.updated.Name != "Beta" || tenantStore.updated.Status != tenant.StatusSuspended || tenantStore.updated.Plan != tenant.PlanScale {
+		t.Errorf("updated tenant = %#v", tenantStore.updated)
+	}
+
+	deleted := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodDelete, "/admin/tenants/tenant-id", nil)
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	handler.ServeHTTP(deleted, request)
+	if deleted.Code != http.StatusNoContent || tenantStore.deletedID != "tenant-id" {
+		t.Errorf("DELETE status = %d, deleted ID = %q", deleted.Code, tenantStore.deletedID)
+	}
+
+	refreshed := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/admin/auth/refresh", nil)
+	request.AddCookie(&http.Cookie{Name: platformRefreshCookie, Value: "refresh-token"})
+	handler.ServeHTTP(refreshed, request)
+	if refreshed.Code != http.StatusOK || authStore.currentRefreshHash != auth.HashToken("refresh-token") {
+		t.Errorf("refresh status = %d, current hash = %q", refreshed.Code, authStore.currentRefreshHash)
+	}
+
+	loggedOut := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/admin/auth/logout", nil)
+	request.AddCookie(&http.Cookie{Name: platformRefreshCookie, Value: "refresh-token"})
+	handler.ServeHTTP(loggedOut, request)
+	if loggedOut.Code != http.StatusNoContent || authStore.revokedHash != auth.HashToken("refresh-token") {
+		t.Errorf("logout status = %d, revoked hash = %q", loggedOut.Code, authStore.revokedHash)
+	}
+}
+
+func TestTenantManagementMapsDomainErrors(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, auth.PlatformPermissionStrings())
+	store := &fakeTenantStore{createErr: ErrSlugConflict, getErr: ErrTenantNotFound, deleteErr: ErrTenantNotFound}
+	handler := NewHTTPHandler(HTTPOptions{Tenants: store, JWT: jwtManager})
+
+	tests := []struct {
+		method string
+		path   string
+		body   string
+		status int
+	}{
+		{method: http.MethodPost, path: "/admin/tenants", body: `{"name":"Acme","slug":"acme","status":"active"}`, status: http.StatusConflict},
+		{method: http.MethodGet, path: "/admin/tenants/missing", status: http.StatusNotFound},
+		{method: http.MethodDelete, path: "/admin/tenants/missing", status: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != tt.status {
+			t.Errorf("%s %s status = %d, want %d; body = %s", tt.method, tt.path, recorder.Code, tt.status, recorder.Body.String())
+		}
+	}
+}
+
+func TestInvalidAuthAndRequestBodiesFailClosed(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeAuthStore{consumeErr: ErrMagicLinkInvalid, rotateErr: ErrRefreshReuse}
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	handler := NewHTTPHandler(HTTPOptions{Auth: Service{Store: store, JWT: jwtManager}, JWT: jwtManager})
+
+	tests := []struct {
+		path   string
+		body   string
+		cookie bool
+		status int
+	}{
+		{path: "/admin/auth/login", body: `{"email":"invalid"}`, status: http.StatusUnprocessableEntity},
+		{path: "/admin/auth/login", body: `{"email":"admin@example.com"} {}`, status: http.StatusBadRequest},
+		{path: "/admin/auth/verify", body: `{"token":"invalid"}`, status: http.StatusUnauthorized},
+		{path: "/admin/auth/refresh", cookie: true, status: http.StatusUnauthorized},
+		{path: "/admin/auth/refresh", status: http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+		if tt.cookie {
+			request.AddCookie(&http.Cookie{Name: platformRefreshCookie, Value: "reused"})
+		}
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != tt.status {
+			t.Errorf("POST %s status = %d, want %d; body = %s", tt.path, recorder.Code, tt.status, recorder.Body.String())
+		}
+	}
+}
+
+type fakeTenantStore struct {
+	created   CreateTenantParams
+	record    TenantRecord
+	updated   TenantRecord
+	deletedID string
+	createErr error
+	getErr    error
+	deleteErr error
+}
+
+func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {
+	s.created = input
+	if s.createErr != nil {
+		return TenantRecord{}, s.createErr
+	}
+	return TenantRecord{
+		ID: "tenant-id", Name: input.Name, Slug: input.Slug, Plan: input.Plan,
+		Status: input.Status, TrialEndsAt: input.TrialEndsAt,
+	}, nil
+}
+
+func (s *fakeTenantStore) GetTenant(context.Context, string) (TenantRecord, error) {
+	return s.record, s.getErr
+}
+
+func (s *fakeTenantStore) ListTenants(context.Context) ([]TenantRecord, error) {
+	return []TenantRecord{s.record}, nil
+}
+
+func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord) (TenantRecord, error) {
+	s.updated = input
+	return input, nil
+}
+
+func (s *fakeTenantStore) DeleteTenant(_ context.Context, id string) error {
+	s.deletedID = id
+	return s.deleteErr
+}

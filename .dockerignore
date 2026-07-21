@@ -1,0 +1,13 @@
+.git
+.github
+.env
+backend/.env
+backend/coverage.out
+coverage.out
+.worktrees
+backend/.env
+backend/coverage.out
+node_modules
+widget/dist
+web/.nuxt
+web/.output

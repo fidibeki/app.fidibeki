@@ -1,0 +1,47 @@
+{
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+
+	@widget host widget.localhost widget.fidibeki.app
+	handle @widget {
+		route {
+			@source_maps path_regexp sourceMap \.map$
+			respond @source_maps 404
+
+			@immutable_assets path /v1/assets/*
+			handle @immutable_assets {
+				root * /srv/widget
+				header {
+					Access-Control-Allow-Origin "*"
+					Cache-Control "public, max-age=31536000, immutable"
+					Cross-Origin-Resource-Policy "cross-origin"
+					X-Content-Type-Options "nosniff"
+				}
+				file_server
+			}
+
+			@widget_entries path /v1/*.js /v1/manifest.json
+			handle @widget_entries {
+				root * /srv/widget
+				header {
+					Access-Control-Allow-Origin "*"
+					Cache-Control "public, max-age=300, must-revalidate"
+					Cross-Origin-Resource-Policy "cross-origin"
+					X-Content-Type-Options "nosniff"
+				}
+				file_server
+			}
+
+			reverse_proxy {$WIDGET_API_UPSTREAM:api:8080}
+		}
+	}
+
+	respond /healthz "ok" 200
+
+	handle {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+}

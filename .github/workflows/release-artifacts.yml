@@ -1,0 +1,39 @@
+name: Release Artifacts
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sentry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_API_PROJECT: ${{ vars.SENTRY_API_PROJECT }}
+      SENTRY_WEB_PROJECT: ${{ vars.SENTRY_WEB_PROJECT }}
+      SENTRY_WIDGET_PROJECT: ${{ vars.SENTRY_WIDGET_PROJECT }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: npm install --global pnpm@11.15.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fidibeki/widget build
+      - run: pnpm --filter @fidibeki/web build
+      - name: Create release and upload source maps
+        if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != ''
+        run: |
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases new "$GITHUB_SHA" --project "$SENTRY_API_PROJECT"
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases set-commits "$GITHUB_SHA" --auto
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps inject widget/dist/v1
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps upload --release "$GITHUB_SHA" --project "$SENTRY_WIDGET_PROJECT" widget/dist/v1
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps inject web/.output
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps upload --release "$GITHUB_SHA" --project "$SENTRY_WEB_PROJECT" web/.output
+          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases finalize "$GITHUB_SHA"
