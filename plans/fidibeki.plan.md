@@ -1,525 +1,1104 @@
 # Plan: Fidibeki
 
 > Source PRD: Conversation with founder — instant feedback capture SaaS for web apps.
+> This plan was stress-tested via a 41-branch grilling interview. Every architectural
+> decision below is the result of that interview and is considered locked.
 
 ## Architectural decisions
 
 - **Runtime & backend**: Go 1.23, `chi` router, `slog` for structured logging.
-- **Database**: PostgreSQL 16, row-level tenant isolation via `tenant_id` columns. Single shared database for the MVP.
-- **Migrations**: `golang-migrate` with SQL files stored in `infra/migrations`.
-- **Multi-tenancy routing**: Subdomains of `fidibeki.app` (e.g. `tauview.fidibeki.app`) resolve to a tenant via middleware. API routes also accept a `Host` header for tests.
-- **Authentication backoffice**: Magic-link login with short-lived JWT access tokens + refresh tokens. No passwords stored.
-- **Widget authentication**: Project public key + allowed-origin CORS check. No user-facing auth required.
-- **File storage**: MinIO/S3-compatible object storage for screenshots, audio, video and replay sessions. Local filesystem fallback in dev via env var.
-- **AI processing**: Google Gemini for audio transcription, text cleanup, sentiment analysis and moderation.
-- **Email delivery**: Resend via async queue.
-- **Queue**: Redis-backed Go workers for AI processing, email sending and Slack webhooks.
-- **Payments**: Stripe Checkout + webhooks; 14-day free trial; plan limits enforced at runtime.
-- **Backoffice UI**: Nuxt 3 (Vue) served per-tenant subdomain.
-- **Deploy target**: Railway (Docker + Postgres + Redis + optional S3/MinIO).
-- **Testing discipline**: TDD with ≥80% coverage. Go tests use `testcontainers-go` for Postgres integration tests. Widget uses Playwright E2E tests.
+- **Database**: PostgreSQL 16, **Postgres Row-Level Security (RLS) as defense-in-depth**
+  (not just app-layer `WHERE tenant_id`). Every tenant-scoped table has RLS enabled with
+  `FORCE ROW LEVEL SECURITY` and policies `USING (tenant_id = current_setting('app.tenant_id')::uuid)`.
+- **Two DB roles, two pools**:
+  - `fidibeki_app` — RLS-enforced. Used by tenant-scoped HTTP handlers.
+  - `fidibeki_admin` — `BYPASSRLS`. Used by platform routes, migrations, Stripe webhooks, and async workers.
+- **Per-request transaction with `SET LOCAL`**: every request on the app pool runs inside a `pgx.Tx`;
+  the tenant middleware does `SET LOCAL app.tenant_id = $1` at the start and commits in `defer`.
+  `SET LOCAL` dies with the transaction — no GUC leak across requests, no panic gap.
+  Handlers take a `Querier` interface (satisfied by both `pgx.Tx` and `pgxpool.Pool`).
+- **pgbouncer in transaction mode from day 1**: multiplexes many app connections onto few
+  Postgres connections. `SET LOCAL` works in transaction mode; `SET` (session-level) does not.
+  Prepared statements disabled (`default_query_exec_mode=exec`) to avoid pgbouncer version gotchas.
+  Migrator uses `DATABASE_URL_DIRECT` (bypasses pgbouncer).
+- **Migrations**: `golang-migrate` with SQL files in `infra/migrations`, one file per concept
+  (table/enum/index-set), each paired with a `.down.sql`. CI runs an up→down→up test.
+- **Multi-tenancy routing**: Subdomains of `fidibeki.app` resolve to a tenant via a
+  `TenantResolver` interface. MVP ships `SubdomainResolver` only; `CustomDomainResolver` is
+  a typed-out stub for the enterprise custom-domain feature. `BASE_DOMAIN` env var.
+  `api.fidibeki.app` is the platform host (excluded from tenant resolution).
+- **Host-based router split**: `api.fidibeki.app` → platform router (admin pool),
+  `*.fidibeki.app` → tenant router (app pool). Pool selection is router-level, never
+  handler-level. `X-Forwarded-Host` is NOT trusted (Caddy/forwarded header trust is a
+  deploy-time decision).
+- **Tenant lookup**: no cache for MVP — indexed `SELECT id, status, plan, trial_ends_at
+  FROM tenants WHERE slug = $1` per request on the admin pool. Status is not cached to
+  preserve the "suspended tenant can't transact" guarantee.
+- **Middleware classification by chi route group**: four middlewares mounted per group —
+  `Resolve` (always: subdomain → tenant, start tx, SET LOCAL),
+  `RequireActive` (write gate: 403 if suspended/expired-trial),
+  `AllowDegraded` (read gate: suspended OK),
+  `AllowAlways` (auth/billing gate).
+  Plus `RequirePlanLimit(feature)` as a separate downstream middleware for 402s.
+  Classification is by mounting, not by URL sniffing.
+- **Authentication backoffice**: Magic-link login. Shared `internal/auth/magiclink` library
+  built in Phase 1 (platform consumer); Phase 2 adds the tenant consumer.
+  JWT access tokens (HMAC-S256, 10-min, `aud=platform|tenant`, `permissions` snapshot in claims)
+  + opaque rotating refresh tokens (hashed in `*_sessions` tables, 30d, theft-detection via
+  reuse-of-revoked-token). No passwords stored.
+- **Token transport**: Access token in memory + `Authorization: Bearer` header; refresh token
+  in httpOnly `SameSite=Strict` cookie. Same-origin (Nuxt + Go behind one Caddy reverse proxy
+  on `*.fidibeki.app`) — no CORS on backoffice calls, cookies flow naturally.
+  Silent refresh on app boot; silent refresh on 401 via `apiFetch` plugin.
+- **Widget authentication**: Project public key (`pk_live_<22 base62>`) in `X-Fidibeki-Public-Key`
+  header + strict `Origin` validation against `projects.allowed_domains` (exact match or
+  explicit `*.domain` wildcard entries). Dynamic CORS origin echo, `credentials: 'omit'`,
+  no `Access-Control-Allow-Credentials`. CORS is convenience, not the security boundary.
+- **File storage**: MinIO/S3-compatible. Single shared bucket, `tenants/{tenant_id}/...` prefixed
+  keys. Bucket policy enforces prefix isolation (storage-layer RLS equivalent). No versioning;
+  write-once keys; lifecycle policy for retention (per plan's `storage_days`); async
+  `delete_prefix` worker for explicit deletes. `Content-Disposition: attachment` at presign.
+  Server validates MIME + size at `complete` via S3 HEAD; bucket policy denies dangerous MIME
+  types (`text/html`, `application/javascript`).
+- **Feedback submission wire format**: JSON metadata first → presigned S3 uploads for files →
+  completion callback. `POST /v1/feedback` returns `{ feedback_id, presigned_urls[], complete_tokens[] }`;
+  widget PUTs directly to S3; widget calls `POST /v1/attachments/{id}/complete` with a
+  single-use completion token; server verifies token + S3 HEAD (size + MIME).
+  `client_feedback_id` + `client_attachment_id` UUIDs provide idempotency
+  (`UNIQUE(project_id, client_feedback_id)`, `UNIQUE(feedback_id, client_attachment_id)`).
+  Presigned URL TTL: 10 minutes. `sweep_attachments` cron deletes orphaned uploads after 1h.
+- **AI processing**: Google Gemini `gemini-2.5-flash` for all tasks (transcription, sentiment,
+  moderation, OCR). Stream MinIO → Gemini File API → `generateContent` → delete Gemini file.
+  Per-attachment + per-text asynq jobs; `processing_status` state machine
+  (`pending|processing|completed|failed|skipped`) with CAS transitions; revert to `pending` on
+  transient failure, `failed` + `asynq.SkipRetry` on permanent (content policy, malformed media).
+  `redis_rate` limiter keyed `gemini` with `GEMINI_RPM` env (default 15). Per-tenant daily AI
+  budget enforced at enqueue time. Plan-gated: non-AI plans get `processing_status='skipped'`.
+  Video uses Gemini's native video input (no FFmpeg in the Docker image).
+- **Email delivery**: Resend via asynq `email-pool`. Two sender identities on one domain:
+  `auth@fidibeki.app` (transactional — magic links, billing receipts) and
+  `updates@fidibeki.app` (reporter-facing issue updates). Isolated reputation per sender.
+  Go `html/template` + plaintext fallback, no MJML/React-Email for MVP. Async only.
+  `delivery_logs` is one row per attempt (with `attempt_number`). Resend bounce/complaint
+  webhook auto-unsubscribes reporters (`feedbacks.notify_reporter=false`).
+  Unsubscribe via JWT (`aud=reporter-unsubscribe`, 90d TTL, dedicated middleware).
+- **Queue**: `hibiken/asynq` on Redis. Four isolated worker pools in one Go binary:
+  `email-pool` (concurrency 20), `ai-pool` (concurrency 3), `notification-pool` (10),
+  `maintenance-pool` (2). Per-task backoff policies. Terminal failures update the relevant
+  DB row (`delivery_logs.status='failed'`, `attachments.processing_status='failed'`).
+  Best-effort enqueue + 5-min `reconcile_pending_jobs` cron (self-healing if Redis blips).
+  Jobs carry IDs only; workers re-fetch fresh state. `asynqmon` web UI mounted on
+  `api.fidibeki.app` behind platform-admin auth.
+- **Payments**: Stripe Checkout (hosted) + Customer + Subscription + one Price per plan.
+  Price IDs in env vars (`STRIPE_PRICE_*`). Hybrid trial: Stripe-native trial +
+  Fidibeki `trial_ends_at` enforcement + daily cron + Resend dunning (3d/1d/0d before end).
+  6 webhook events with `stripe_events` idempotency table; handlers load-from-Stripe
+  (event is a signal, Stripe is source of truth). Downgrades allowed: restrict-new-creation
+  (not read-only-existing) + `pending_plan` applied at next period. Customer Portal for
+  self-service card/cancel. Enterprise is platform-admin-managed, no Stripe integration.
+  Plan limits return `402 Payment Required` with `upgrade_url`; rate limits return `429`.
+- **Rate limiting**: `redis_rate` (GCRA) on Redis. Widget endpoints keyed per-IP + per-project;
+  backoffice keyed per-member; platform keyed per-IP. Fail-open on Redis outage.
+  Rate limit (429, per-IP/member, Redis) and plan limit (402, per-tenant, DB count) are
+  separate middlewares; rate limit runs first. Per-project ceiling + honeypot field for MVP;
+  Cloudflare Turnstile on signup from day 1; Turnstile on widget deferred to Phase 12.
+  `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `Retry-After` headers on every rate-limited response.
+  API keys get a configurable higher limit (`api_keys.rate_limit_per_min`, default 1000).
+- **Backoffice UI**: Nuxt 3 on `*.fidibeki.app`, hybrid SSR (`/login` + `/` SSR for auth
+  bootstrap, rest SPA). One Nuxt app reads `Host` → `tenantSlug` in SSR context.
+  Same-origin via Caddy reverse proxy (path-prefix routing: `/api/*`, `/v1/*`, `/auth/*`,
+  `/billing/*` → Go; everything else → Nuxt). `apiFetch` plugin with silent-refresh-on-401.
+  `useState` for auth (no Pinia for MVP). Server middleware for SSR routes, page middleware
+  for SPA routes. `can(perm)` helper for authz only (plan limits separate, surface as 402 on click).
+  No per-tenant branding for MVP (tenant name in header only).
+- **Widget embed**: Vanilla JS, zero-dep. Single ~5KB `loader.js` + lazy-loaded ES modules
+  (`rating.js`, `audio.js`, `replay.js`, `error-reporting.js`) — only modules the plan allows
+  are fetched. Shadow DOM for CSS/JS isolation. One-line embed:
+  `<script src="https://widget.fidibeki.app/v1/loader.js" data-fidibeki-key="pk_live_..." async>`.
+  Config fetched once, checked on SPA navigation (history patch + custom event), refreshed
+  every 5 min and on `visibilitychange`. Three triggers (delay/scroll/exit_intent) with
+  `sessionStorage` suppression. Attach-element = HTML + computed styles only for MVP
+  (screenshot deferred to a lazy `html2canvas` module or Phase 4.1).
+- **Session replay**: rrweb (pinned version) with PII masking (`maskAllInputs`, `maskTextSelector`).
+  Session-level sampling (`widget_rules.replay_sampling_rate`) + caps (30 min, 50k events).
+  Continuous recording across SPA navigations, ends on `pagehide` or 5-min idle.
+  Batch upload to S3 presigned PUT (one object per ~50-event batch, ~200KB each);
+  post-session `replay.merge` job concatenates batches into `replay.json` and deletes batches.
+  Player is `rrweb-player` in a Vue component; replay streamed through Go API (auth + RLS).
+  `sessions.rrweb_version` + `sessions.merged_at` columns. Both `sessions.feedback_id` and
+  `feedbacks.session_id` for bidirectional links.
+- **Deploy target**: Railway (Docker + Postgres + Redis + optional S3/MinIO + pgbouncer).
+  Multi-stage alpine Dockerfiles for Go API and Nuxt app (separate images). Widget is static
+  files served by Caddy/CDN. GitHub Actions: PR pipeline (fast + integration, <8 min) →
+  merge to main → auto-deploy staging → E2E post-deploy → manual promote to prod.
+  Migrations run as part of deploy (`migrate up` before app start). Expand-then-contract
+  for destructive changes. Real secrets in Railway only; CI uses mocks + testcontainers.
+- **Testing discipline**: TDD with ≥80% total coverage + no package below 60% (excluding `main`/`cmd`).
+  4-layer pyramid: unit (pure functions, mocked services), integration (testcontainers Postgres
+  + Redis + MinIO, transaction-per-test, RLS positive+negative+admin tests per table),
+  E2E (Playwright for widget + backoffice + Stripe test mode), contract (Stripe/Resend/Gemini fixtures).
+  Widget: Vitest + `happy-dom` unit + Playwright E2E. Nuxt: Vitest for composables + Playwright E2E
+  (skip component unit tests for MVP). Workers: test handler functions directly with mocked deps
+  + 1 integration test per job type via real Redis testcontainer.
+- **Observability**: `slog` JSON → stdout (Railway-collected) with fields: `time, level, msg,
+  request_id, tenant_id, tenant_slug, route, duration_ms, user_id, error`. PII redaction custom handler
+  (scrubs `text`, `email`, `transcription`, `dom_snapshot_html`, `storage_key`).
+  Sentry SaaS for Go + widget + Nuxt with source maps and PII scrubbing.
+  Skip Prometheus for MVP (derive from logs + asynqmon). `/healthz` (liveness, always 200) +
+  `/readyz` (readiness, checks DB+Redis+S3 with 2s timeouts). Widget lazy-loads Sentry SDK
+  on first error (preserves 5KB loader). `docs/runbook.md` with 10 scenarios.
+- **API contract**: Flat single resources / `{ data, meta: { has_next, next_cursor } }` collections.
+  Error envelope `{ error: { code, message, details? } }` with 12-code catalog
+  (`bad_request`, `unauthenticated`, `forbidden`, `tenant_suspended`, `not_found`,
+  `unknown_tenant`, `conflict`, `validation_error`, `rate_limit_exceeded`,
+  `plan_limit_exceeded`, `plan_feature_unavailable`, `internal_error`, `service_unavailable`).
+  `402` for plan limits (distinct from `429` rate limits). `500` includes `sentry_event_id`.
+  `402` responses include `upgrade_url`. `Location` header on `201`. `X-Request-ID` on every
+  response. URL path versioning (`/v1/`). JSON only (`application/json; charset=utf-8`).
+  Widget maps `error.code` → friendly user-facing messages (`widget/src/messages.ts`).
+- **Config**: Env vars + `.env` for local dev via `godotenv`. Typed `Config` struct with
+  `Validate()` at startup (exit with clear error if invalid). ~35 env vars grouped by concern.
+  Secrets vs. non-secrets convention; `Config.Redacted()` for safe logging.
+  `plans.go` is code (not env) — plan features/limits are product decisions; Stripe Price IDs
+  are env (deploy-specific). `.env.example` committed and maintained.
+- **Permissions**: 31 tenant permissions (`resource:action`, no wildcards) + 9 `platform:*` permissions.
+  3 UI presets (admin/editor/viewer) stored as explicit `permissions[]` arrays. `RequirePerm`
+  middleware per route. First member (founder) gets all permissions. API keys use the same model.
+  Accept up to 10-min JWT staleness on permission changes (token refresh picks up new perms).
+- **Tenant deletion**: Self-service with 7-day grace period + platform admin force-delete.
+  `tenants.deletion_requested_at` column; middleware treats non-null as read-only.
+  Daily `tenant_deletion_executor` cron: cancel Stripe sub, revoke sessions, delete S3 prefix,
+  `DELETE FROM tenants CASCADE`, insert into `tenant_deletions` audit table. Soft during grace,
+  hard after. No automatic refunds (manual via Stripe dashboard). Data export deferred to Phase 12+.
+- **Self-service signup**: `POST api.fidibeki.app/v1/signup` (no auth, Turnstile-protected) creates
+  a `trial` tenant + first admin member. Lazy Stripe customer creation (on first billing interaction).
+  Trial gets the chosen plan's limits. Magic-link verify flow: Nuxt `GET /auth/verify` →
+  Go `POST /auth/verify` (no token in URL). Delete unverified tenants after 24h. First-come-first-served slugs.
 
 ## Data model principles
 
-All tenant data is stored in a single PostgreSQL database and isolated by `tenant_id`. For the MVP we avoid JSONB entirely: every attribute that matters is a typed column. Arrays and enums are allowed where the set of values is bounded and queryable. New features are added by extending tables with typed columns, not by stuffing blobs into JSONB.
+All tenant data is stored in a single PostgreSQL database and isolated by `tenant_id` with RLS.
+For the MVP we avoid JSONB entirely: every attribute that matters is a typed column.
+Arrays and enums are allowed where the set of values is bounded and queryable.
+Every tenant-scoped table has:
+```sql
+ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE <t> FORCE ROW LEVEL SECURITY;
+CREATE POLICY <t>_tenant_isolation ON <t>
+  FOR ALL TO fidibeki_app
+  USING (tenant_id = current_setting('app.tenant_id')::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
+GRANT SELECT, INSERT, UPDATE, DELETE ON <t> TO fidibeki_app;
+```
 
-## Key tables
-
-- `tenants` — root company accounts with typed plan, status and billing columns.
-- `tenant_members` — any actor that belongs to a tenant. Access is controlled by an explicit `permissions` text array, not coarse roles.
-- `projects` — a site or app monitored by a tenant. Embed key and allowed domains are typed columns.
-- `widget_rules` — per-page widget configuration. Trigger, form fields, replay sampling and theme are typed columns.
-- `feedbacks` — a captured user response with typed rating, text, metadata, DOM snapshot and status.
-- `attachments` — media linked to a feedback (screenshot, audio, video, replay) with typed transcription, sentiment and moderation flags.
-- `sessions` — session replay bundles with typed start/end times and event counts.
-- `issues` — grouping of feedbacks with typed public id and status workflow.
-- `issue_updates` — status change history for an issue.
-- `integrations` — generic external service connections (Slack, Teams, webhook). `kind`, `events[]` and config URL/channel are typed columns.
-- `delivery_logs` — generic audit trail of every outgoing notification (email, Slack, webhook) with typed status and event.
-
-## Detailed database schema
-
-No JSONB columns in the MVP. Every attribute is a typed column. Arrays and enums are used where the value set is bounded.
-
-### Enums
+## Enums
 
 ```sql
 CREATE TYPE tenant_plan AS ENUM ('starter', 'growth', 'scale', 'enterprise');
 CREATE TYPE tenant_status AS ENUM ('active', 'suspended', 'trial', 'cancelled');
-CREATE TYPE member_kind AS ENUM ('user', 'api_key', 'service_account');
 CREATE TYPE matcher_type AS ENUM ('all_pages', 'url_exact', 'url_prefix', 'url_regex');
 CREATE TYPE trigger_type AS ENUM ('delay', 'scroll', 'exit_intent');
 CREATE TYPE attachment_kind AS ENUM ('screenshot', 'audio', 'video', 'replay');
-CREATE TYPE processing_status AS ENUM ('pending', 'processing', 'completed', 'failed');
+CREATE TYPE processing_status AS ENUM ('pending', 'processing', 'completed', 'failed', 'skipped');
+CREATE TYPE feedback_status AS ENUM ('open', 'spam', 'archived');
 CREATE TYPE issue_status AS ENUM ('open', 'in_progress', 'resolved', 'closed');
-CREATE TYPE integration_kind AS ENUM ('slack', 'teams', 'webhook', 'email');
+CREATE TYPE integration_kind AS ENUM ('slack', 'teams', 'webhook');
 CREATE TYPE delivery_status AS ENUM ('pending', 'sent', 'failed', 'bounced');
 CREATE TYPE event_type AS ENUM ('feedback.created', 'issue.created', 'issue.updated', 'issue.resolved');
+CREATE TYPE widget_position AS ENUM ('bottom-left', 'bottom-right', 'top-left', 'top-right');
+CREATE TYPE replay_mode AS ENUM ('none', 'sampling', 'all');
+CREATE TYPE widget_theme AS ENUM ('light', 'dark', 'auto');
 ```
 
-### Tables
+Note: `member_kind` was removed — API keys live in a separate `api_keys` table.
+Note: `email` was removed from `integration_kind` — reporter emails are not integrations.
 
-#### `tenants`
+## Key tables
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| name | TEXT | NOT NULL | Display name of the company |
-| slug | TEXT | NOT NULL, UNIQUE | Subdomain identifier, e.g. `tauview` |
-| plan | tenant_plan | NOT NULL, default 'starter' | Billing tier |
-| status | tenant_status | NOT NULL, default 'trial' | Account lifecycle state |
-| billing_email | TEXT | | Invoice/billing contact |
-| stripe_customer_id | TEXT | | Stripe Customer object id |
-| stripe_subscription_id | TEXT | | Stripe Subscription object id |
-| trial_ends_at | TIMESTAMPTZ | | Null when not on trial |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+- `tenants` — root company accounts with typed plan, status, billing, trial, deletion columns.
+- `tenant_members` — human users belonging to a tenant. Access via explicit `permissions` text array.
+- `api_keys` — machine credentials with `token_hash`, `permissions`, `rate_limit_per_min`.
+- `tenant_member_sessions` — hashed rotating refresh tokens, revocable.
+- `tenant_magic_links` — single-use magic-link tokens (SHA-256 hashed, 10-min TTL).
+- `platform_admins` + `platform_admin_sessions` + `platform_admin_magic_links` — platform-level auth.
+- `projects` — a site or app monitored by a tenant. Embed key and allowed domains are typed columns.
+- `widget_rules` — per-page widget configuration with typed matcher/trigger/form/replay/theme columns.
+- `feedbacks` — a captured user response with typed rating, text, AI columns, metadata, DOM snapshot, status.
+- `attachments` — media linked to a feedback with typed transcription, sentiment, moderation, processing state.
+- `sessions` — session replay bundles with rrweb version, merge state, event counts.
+- `issues` — grouping of feedbacks with typed public id, status workflow, soft-merge support.
+- `issue_updates` — status change history for an issue.
+- `issue_counters` — per-(tenant, year) atomic sequence for public id allocation.
+- `integrations` — external service connections (Slack, Teams, webhook) with typed config + webhook secret.
+- `delivery_logs` — per-attempt audit trail of every outgoing notification with status and error.
+- `stripe_events` — webhook idempotency table (event_id PK).
+- `tenant_deletions` — compliance audit log of deleted tenants (not tenant-scoped, no RLS).
+
+## Detailed database schema
+
+### `tenants`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| name | TEXT NOT NULL | Display name of the company |
+| slug | TEXT NOT NULL UNIQUE | Subdomain identifier, 3-24 chars, `[a-z0-9-]`, not reserved |
+| plan | tenant_plan NOT NULL DEFAULT 'starter' | Billing tier |
+| pending_plan | tenant_plan NULL | Scheduled downgrade, applied at next period |
+| status | tenant_status NOT NULL DEFAULT 'trial' | Account lifecycle state |
+| billing_email | TEXT | Invoice/billing contact |
+| email_bounced | BOOLEAN NOT NULL DEFAULT false | Set by bounce webhook on billing_email |
+| stripe_customer_id | TEXT | Stripe Customer object id (lazy-created) |
+| stripe_subscription_id | TEXT | Stripe Subscription object id |
+| trial_ends_at | TIMESTAMPTZ | Null when not on trial |
+| deletion_requested_at | TIMESTAMPTZ | Non-null = in 7-day deletion grace (read-only) |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+**Constraints**: `CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{1,22}[a-z0-9])?$' AND slug NOT IN
+('api','www','admin','mail','widget','auth','billing','app','staging','dev','test','demo','support','help'))`
 
 **Indexes**: `idx_tenants_slug`, `idx_tenants_status`, `idx_tenants_stripe_subscription_id`
 
-#### `tenant_members`
+**RLS**: self-read + self-update (name, billing_email only) via app role; all other writes via admin role.
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| kind | member_kind | NOT NULL, default 'user' | Distinguishes users, api keys, service accounts |
-| email | TEXT | NOT NULL | Login/contact email |
-| name | TEXT | | Display name |
-| permissions | TEXT[] | NOT NULL, default '{}' | Explicit permission strings |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `tenant_members`
 
-**Constraints**: UNIQUE(tenant_id, email)
-**Indexes**: `idx_tenant_members_tenant_id`, `idx_tenant_members_kind`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| email | TEXT NOT NULL | Login/contact email |
+| name | TEXT | Display name |
+| permissions | TEXT[] NOT NULL DEFAULT '{}' | Explicit permission strings (31 possible) |
+| email_bounced | BOOLEAN NOT NULL DEFAULT false | Bounce webhook on this email |
+| email_complained | BOOLEAN NOT NULL DEFAULT false | Complaint webhook on this email |
+| last_login_at | TIMESTAMPTZ | Updated on magic-link verify |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
-#### `projects`
+**Constraints**: `UNIQUE(tenant_id, email)`, `CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$')`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| name | TEXT | NOT NULL | Human name, e.g. `Tauview Web` |
-| public_key | TEXT | NOT NULL, UNIQUE | Embeddable public identifier |
-| allowed_domains | TEXT[] | NOT NULL, default '{}' | Domains allowed to load the widget |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+**Indexes**: `idx_tenant_members_tenant_id`, `idx_tenant_members_email`
+
+### `api_keys`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| name | TEXT NOT NULL | "Slack integration script" |
+| token_hash | TEXT NOT NULL UNIQUE | SHA-256 of `fk_live_<32 base62>` |
+| token_prefix | TEXT NOT NULL | First 8 chars for display: `fk_live_ab12...` |
+| permissions | TEXT[] NOT NULL DEFAULT '{}' | Same permission model as members |
+| rate_limit_per_min | INT NOT NULL DEFAULT 1000 | Per-key rate limit override |
+| last_used_at | TIMESTAMPTZ | |
+| expires_at | TIMESTAMPTZ | Null = no expiry |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+**Indexes**: `idx_api_keys_tenant_id`, `idx_api_keys_token_hash` (unique)
+
+### `tenant_member_sessions`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| member_id | UUID NOT NULL FK → tenant_members(id) ON DELETE CASCADE | |
+| refresh_hash | TEXT NOT NULL | SHA-256 of the refresh token |
+| issued_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| last_used_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| revoked_at | TIMESTAMPTZ | Null = active |
+| user_agent | TEXT | |
+| ip | INET | |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+**Indexes**: `idx_tenant_member_sessions_member_id`, `idx_tenant_member_sessions_refresh_hash`
+
+### `tenant_magic_links`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| member_id | UUID FK → tenant_members(id) ON DELETE CASCADE | Null if invitation (email not yet a member) |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| email | TEXT NOT NULL | The email the link was sent to |
+| token_hash | TEXT NOT NULL | SHA-256 of the magic-link token |
+| expires_at | TIMESTAMPTZ NOT NULL | 10 min from creation |
+| consumed_at | TIMESTAMPTZ | Null = not yet consumed |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+**Indexes**: `idx_tenant_magic_links_token_hash`, `idx_tenant_magic_links_email`
+
+### `platform_admins` + `platform_admin_sessions` + `platform_admin_magic_links`
+
+Same shape as the tenant equivalents, with `admin_id` instead of `member_id` and no `tenant_id`.
+`platform_admins.email` is `UNIQUE`. `permissions` uses the `platform:*` namespace (9 permissions).
+
+### `projects`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| name | TEXT NOT NULL | Human name, e.g. `Tauview Web` |
+| public_key | TEXT NOT NULL UNIQUE | `pk_live_<22 base62>` |
+| allowed_domains | TEXT[] NOT NULL DEFAULT '{}' | Exact or `*.domain` wildcard entries |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
 **Indexes**: `idx_projects_tenant_id`, `idx_projects_public_key`
 
-#### `widget_rules`
+### `widget_rules`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
-| name | TEXT | NOT NULL | Label for this rule, e.g. `Asset page` |
-| priority | INT | NOT NULL, default 0 | Higher number wins on overlapping matches |
-| enabled | BOOLEAN | NOT NULL, default true | |
-| matcher_type | matcher_type | NOT NULL | How to match the current page URL |
-| matcher_value | TEXT | | Pattern/URL to match |
-| trigger_type | trigger_type | NOT NULL | `delay`, `scroll`, `exit_intent` |
-| trigger_delay_seconds | INT | | Used when trigger_type = 'delay' |
-| trigger_scroll_percent | INT | | Used when trigger_type = 'scroll' |
-| can_rate | BOOLEAN | NOT NULL, default true | User can submit a 1-5 star rating |
-| can_write_text | BOOLEAN | NOT NULL, default true | User can write a free-form review |
-| can_record_audio | BOOLEAN | NOT NULL, default false | User can record an audio message |
-| can_record_video | BOOLEAN | NOT NULL, default false | User can record a video message |
-| can_attach_element | BOOLEAN | NOT NULL, default false | User can attach a clicked DOM element + computed styles |
-| greeting | TEXT | | Custom message shown by the widget |
-| position | TEXT | NOT NULL, default 'bottom-left' | `bottom-left`, `bottom-right`, etc. |
-| replay_mode | TEXT | NOT NULL, default 'none' | `none`, `sampling`, `all` |
-| replay_sampling_rate | INT | NOT NULL, default 0 | 0-100, used when replay_mode = 'sampling' |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| project_id | UUID NOT NULL FK → projects(id) ON DELETE CASCADE | |
+| name | TEXT NOT NULL | Label for this rule |
+| priority | INT NOT NULL DEFAULT 0 | Higher wins on overlapping matches |
+| enabled | BOOLEAN NOT NULL DEFAULT true | |
+| matcher_type | matcher_type NOT NULL | `all_pages`, `url_exact`, `url_prefix`, `url_regex` |
+| matcher_value | TEXT | Pattern/URL (null if `all_pages`) |
+| trigger_type | trigger_type NOT NULL | `delay`, `scroll`, `exit_intent` |
+| trigger_delay_seconds | INT | Used when `trigger_type='delay'` |
+| trigger_scroll_percent | INT | Used when `trigger_type='scroll'` |
+| can_rate | BOOLEAN NOT NULL DEFAULT true | |
+| can_write_text | BOOLEAN NOT NULL DEFAULT true | |
+| can_record_audio | BOOLEAN NOT NULL DEFAULT false | Plan-gated |
+| can_record_video | BOOLEAN NOT NULL DEFAULT false | Plan-gated |
+| can_attach_element | BOOLEAN NOT NULL DEFAULT false | HTML + computed styles |
+| can_attach_screenshot | BOOLEAN NOT NULL DEFAULT false | Separate from element attach |
+| greeting | TEXT | Custom message shown by the widget |
+| position | widget_position NOT NULL DEFAULT 'bottom-left' | |
+| theme | widget_theme NOT NULL DEFAULT 'light' | |
+| accent_color | TEXT | Hex color `^#[0-9a-fA-F]{6}$`, empty = default |
+| replay_mode | replay_mode NOT NULL DEFAULT 'none' | Plan-gated |
+| replay_sampling_rate | INT NOT NULL DEFAULT 0 | 0-100, used when `replay_mode='sampling'` |
+| replay_max_duration_seconds | INT NOT NULL DEFAULT 1800 | |
+| replay_max_events | INT NOT NULL DEFAULT 50000 | |
+| replay_mask_all_inputs | BOOLEAN NOT NULL DEFAULT true | rrweb `maskAllInputs` |
+| replay_mask_text_selector | TEXT | CSS selector for extra masking |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
 **Indexes**: `idx_widget_rules_project_id`, `idx_widget_rules_enabled`, `idx_widget_rules_priority`
 
-#### `feedbacks`
+**Save-time validation**: trigger/matcher consistency, regex compiles, accent_color format,
+plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecording=true`).
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
-| widget_rule_id | UUID | FK → widget_rules(id) ON DELETE SET NULL | Which rule triggered the widget |
-| public_id | TEXT | NOT NULL | Short public id, e.g. `fb_abc123` |
-| issue_id | UUID | FK → issues(id) ON DELETE SET NULL | Optional grouping |
-| rating | SMALLINT | | 1-5 star rating |
-| text | TEXT | | Free-form review text |
-| reporter_email | TEXT | | Optional email for follow-ups |
-| notify_reporter | BOOLEAN | NOT NULL, default false | Opt-in for issue updates |
-| page_url | TEXT | NOT NULL | URL where feedback was submitted |
-| referrer | TEXT | | HTTP referrer |
-| user_agent | TEXT | | Raw user agent string |
-| os | TEXT | | Parsed operating system |
-| browser | TEXT | | Parsed browser name |
-| device | TEXT | | `desktop`, `tablet`, `mobile` |
-| viewport_width | INT | | Screen/viewport width |
-| viewport_height | INT | | Screen/viewport height |
-| language | TEXT | | Browser language |
-| dom_snapshot_html | TEXT | | HTML of the attached element |
-| dom_snapshot_styles | TEXT | | Computed styles of the attached element |
-| status | TEXT | NOT NULL, default 'open' | `open`, `spam`, `archived` |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `feedbacks`
 
-**Indexes**: `idx_feedbacks_tenant_id`, `idx_feedbacks_project_id`, `idx_feedbacks_issue_id`, `idx_feedbacks_public_id`, `idx_feedbacks_status`, `idx_feedbacks_created_at`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID NOT NULL FK → projects(id) ON DELETE CASCADE | |
+| widget_rule_id | UUID FK → widget_rules(id) ON DELETE SET NULL | |
+| public_id | TEXT NOT NULL | `fb_<8 base62>`, `UNIQUE(tenant_id, public_id)` |
+| issue_id | UUID FK → issues(id) ON DELETE SET NULL | Auto-created issue per feedback |
+| session_id | UUID FK → sessions(id) ON DELETE SET NULL | Optional replay link |
+| client_feedback_id | UUID NOT NULL | Widget-generated, idempotency key, `UNIQUE(project_id, client_feedback_id)` |
+| rating | SMALLINT | 1-5 |
+| text | TEXT | Free-form review text |
+| text_cleaned | TEXT | AI-cleaned text (filler removed) |
+| text_sentiment_score | DECIMAL(3,2) | -1.0 to 1.0 |
+| text_moderation_flags | TEXT[] NOT NULL DEFAULT '{}' | AI moderation flags on text |
+| text_process_status | processing_status NOT NULL DEFAULT 'pending' | AI pass state for text |
+| ai_processed_at | TIMESTAMPTZ | When all AI passes finished |
+| ai_job_enqueued_at | TIMESTAMPTZ | For reconcile_pending_jobs |
+| delivery_dispatched | BOOLEAN NOT NULL DEFAULT false | For delivery reconciliation |
+| reporter_email | TEXT | Optional email for follow-ups |
+| notify_reporter | BOOLEAN NOT NULL DEFAULT false | Opt-in for issue updates |
+| page_url | TEXT NOT NULL | |
+| referrer | TEXT | |
+| user_agent | TEXT | |
+| os | TEXT | Parsed |
+| browser | TEXT | Parsed |
+| device | TEXT | `desktop`, `tablet`, `mobile` |
+| viewport_width | INT | |
+| viewport_height | INT | |
+| language | TEXT | |
+| dom_snapshot_html | TEXT | HTML of attached element |
+| dom_snapshot_styles | TEXT | Computed styles of attached element |
+| status | feedback_status NOT NULL DEFAULT 'open' | `open`, `spam`, `archived` |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
-#### `attachments`
+**Indexes**: `idx_feedbacks_tenant_id`, `idx_feedbacks_project_id`, `idx_feedbacks_issue_id`,
+`idx_feedbacks_session_id`, `idx_feedbacks_public_id`, `idx_feedbacks_status`,
+`idx_feedbacks_created_at`, `idx_feedbacks_client_feedback_id` (unique composite with project_id)
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| feedback_id | UUID | NOT NULL, FK → feedbacks(id) ON DELETE CASCADE | |
-| kind | attachment_kind | NOT NULL | `screenshot`, `audio`, `video`, `replay` |
-| storage_key | TEXT | NOT NULL | Path/key in object storage |
-| content_type | TEXT | | MIME type |
-| size_bytes | BIGINT | | File size |
-| duration_seconds | INT | | For audio/video/replay |
-| processing_status | processing_status | NOT NULL, default 'pending' | AI / transcoding state |
-| transcription | TEXT | | AI-generated transcript |
-| sentiment_score | DECIMAL(3,2) | | -1.0 to 1.0 |
-| moderation_flags | TEXT[] | NOT NULL, default '{}' | e.g. `profanity`, `harassment` |
-| processed_at | TIMESTAMPTZ | | When AI finished |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `attachments`
 
-**Indexes**: `idx_attachments_tenant_id`, `idx_attachments_feedback_id`, `idx_attachments_kind`, `idx_attachments_processing_status`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| feedback_id | UUID NOT NULL FK → feedbacks(id) ON DELETE CASCADE | |
+| kind | attachment_kind NOT NULL | `screenshot`, `audio`, `video`, `replay` |
+| client_attachment_id | UUID NOT NULL | Widget-generated, `UNIQUE(feedback_id, client_attachment_id)` |
+| storage_key | TEXT NOT NULL | `tenants/{tid}/feedbacks/{fid}/attachments/{aid}/{kind}.{ext}` |
+| content_type | TEXT | MIME type |
+| size_bytes | BIGINT | |
+| duration_seconds | INT | For audio/video/replay |
+| processing_status | processing_status NOT NULL DEFAULT 'pending' | Includes `skipped` |
+| processing_attempts | INT NOT NULL DEFAULT 0 | |
+| complete_token_hash | TEXT | Single-use completion token, cleared on complete |
+| completed_at | TIMESTAMPTZ | |
+| transcription | TEXT | AI-generated transcript |
+| sentiment_score | DECIMAL(3,2) | -1.0 to 1.0 |
+| moderation_flags | TEXT[] NOT NULL DEFAULT '{}' | e.g. `profanity`, `harassment` |
+| error_message | TEXT | On failure |
+| processed_at | TIMESTAMPTZ | When AI finished |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
-#### `sessions`
+**Indexes**: `idx_attachments_tenant_id`, `idx_attachments_feedback_id`, `idx_attachments_kind`,
+`idx_attachments_processing_status`, `idx_attachments_client_attachment_id` (unique composite)
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
-| feedback_id | UUID | FK → feedbacks(id) ON DELETE SET NULL | Optional link |
-| session_id | TEXT | NOT NULL | Client-generated session uuid |
-| page_url | TEXT | | First page of the session |
-| started_at | TIMESTAMPTZ | NOT NULL | |
-| ended_at | TIMESTAMPTZ | | |
-| events_count | INT | NOT NULL, default 0 | |
-| storage_key | TEXT | NOT NULL | rrweb bundle in object storage |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `sessions`
 
-**Indexes**: `idx_sessions_tenant_id`, `idx_sessions_project_id`, `idx_sessions_feedback_id`, `idx_sessions_session_id`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID NOT NULL FK → projects(id) ON DELETE CASCADE | |
+| feedback_id | UUID FK → feedbacks(id) ON DELETE SET NULL | Primary display link |
+| session_id | TEXT NOT NULL | Client-generated session uuid |
+| page_url | TEXT | First page of the session |
+| started_at | TIMESTAMPTZ NOT NULL | |
+| ended_at | TIMESTAMPTZ | |
+| events_count | INT NOT NULL DEFAULT 0 | |
+| storage_key | TEXT NOT NULL | `tenants/{tid}/sessions/{sid}/replay.json` (set after merge) |
+| rrweb_version | TEXT NOT NULL | Pinned capture library version |
+| merged_at | TIMESTAMPTZ | When batch merge job finished |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
-#### `issues`
+**Indexes**: `idx_sessions_tenant_id`, `idx_sessions_project_id`, `idx_sessions_feedback_id`,
+`idx_sessions_session_id`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
-| public_id | TEXT | NOT NULL | Human id like `TAU-2026-0001` |
-| title | TEXT | | Auto or manually set |
-| status | issue_status | NOT NULL, default 'open' | |
-| reporter_email | TEXT | | For notifications |
-| notify_reporter | BOOLEAN | NOT NULL, default false | |
-| resolved_at | TIMESTAMPTZ | | |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `issues`
 
-**Indexes**: `idx_issues_tenant_id`, `idx_issues_project_id`, `idx_issues_public_id`, `idx_issues_status`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID NOT NULL FK → projects(id) ON DELETE CASCADE | |
+| public_id | TEXT NOT NULL | `{SLUG_UPPER}-{YEAR}-{SEQ:0000}`, e.g. `TAU-2026-0001` |
+| title | TEXT | Auto-set from feedback text (first 80 chars) or `[No text]` |
+| status | issue_status NOT NULL DEFAULT 'open' | |
+| merged_into_id | UUID FK → issues(id) ON DELETE SET NULL | Soft-merge target |
+| merged_at | TIMESTAMPTZ | |
+| reporter_email | TEXT | For notifications (copied from feedback) |
+| notify_reporter | BOOLEAN NOT NULL DEFAULT false | |
+| resolved_at | TIMESTAMPTZ | |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
-#### `issue_updates`
+**Indexes**: `idx_issues_tenant_id`, `idx_issues_project_id`, `idx_issues_public_id`,
+`idx_issues_status`, `idx_issues_merged_into_id`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| issue_id | UUID | NOT NULL, FK → issues(id) ON DELETE CASCADE | |
-| member_id | UUID | FK → tenant_members(id) ON DELETE SET NULL | Who made the change |
-| old_status | issue_status | | |
-| new_status | issue_status | NOT NULL | |
-| comment | TEXT | | Optional internal note |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+### `issue_updates`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| issue_id | UUID NOT NULL FK → issues(id) ON DELETE CASCADE | |
+| member_id | UUID FK → tenant_members(id) ON DELETE SET NULL | Who made the change |
+| old_status | issue_status | |
+| new_status | issue_status NOT NULL | |
+| comment | TEXT | Optional internal note |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
 **Indexes**: `idx_issue_updates_tenant_id`, `idx_issue_updates_issue_id`, `idx_issue_updates_created_at`
 
-#### `integrations`
+### `issue_counters`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| kind | integration_kind | NOT NULL | `slack`, `teams`, `webhook`, `email` |
-| name | TEXT | NOT NULL | Display label |
-| webhook_url | TEXT | | For Slack/Teams/webhook |
-| channel | TEXT | | Slack/Teams channel |
-| from_address | TEXT | | Email sender address |
-| events | event_type[] | NOT NULL, default '{}' | Subscribed events |
-| is_active | BOOLEAN | NOT NULL, default true | |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
-| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| Column | Type | Notes |
+|--------|------|-------|
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | PK part 1 |
+| year | INT NOT NULL | PK part 2 |
+| next_seq | INT NOT NULL DEFAULT 1 | Atomic increment via `ON CONFLICT DO UPDATE` |
+
+**Primary key**: `(tenant_id, year)`. No additional indexes needed.
+
+### `integrations`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| kind | integration_kind NOT NULL | `slack`, `teams`, `webhook` (no `email`) |
+| name | TEXT NOT NULL | Display label |
+| webhook_url | TEXT | Slack/Teams/webhook URL |
+| channel | TEXT | Slack channel override |
+| custom_headers | TEXT[] NOT NULL DEFAULT '{}' | Webhook only, `key: value` strings |
+| webhook_secret_hash | TEXT | Per-integration HMAC secret (webhook only) |
+| events | event_type[] NOT NULL DEFAULT '{}' | Subscribed events |
+| is_active | BOOLEAN NOT NULL DEFAULT true | |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| updated_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 
 **Indexes**: `idx_integrations_tenant_id`, `idx_integrations_kind`, `idx_integrations_active`
 
-#### `delivery_logs`
+### `delivery_logs`
 
-| Column | Type | Constraints | Notes |
-|--------|------|-------------|-------|
-| id | UUID | PK, default uuid_generate_v4() | |
-| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
-| integration_id | UUID | FK → integrations(id) ON DELETE SET NULL | Can be null for direct email |
-| event | event_type | NOT NULL | What triggered the delivery |
-| resource_type | TEXT | NOT NULL | `feedback`, `issue` |
-| resource_id | UUID | NOT NULL | ID of the related row |
-| status | delivery_status | NOT NULL, default 'pending' | |
-| provider_message_id | TEXT | | Resend/Slack message id |
-| error_message | TEXT | | On failure |
-| sent_at | TIMESTAMPTZ | | When provider confirmed send |
-| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID PK DEFAULT gen_random_uuid() | |
+| tenant_id | UUID NOT NULL FK → tenants(id) ON DELETE CASCADE | |
+| integration_id | UUID FK → integrations(id) ON DELETE SET NULL | Null for reporter emails |
+| event | event_type NOT NULL | What triggered the delivery |
+| resource_type | TEXT NOT NULL | `feedback` or `issue` |
+| resource_id | UUID NOT NULL | |
+| attempt_number | INT NOT NULL | 1, 2, 3... (from asynq retry count) |
+| status | delivery_status NOT NULL DEFAULT 'pending' | `pending`, `sent`, `failed`, `bounced` |
+| provider_message_id | TEXT | Resend/Slack message ID on success |
+| error_message | TEXT | On failure |
+| sent_at | TIMESTAMPTZ | When provider confirmed send |
+| created_at | TIMESTAMPTZ NOT NULL DEFAULT now() | When this attempt was created |
 
-**Indexes**: `idx_delivery_logs_tenant_id`, `idx_delivery_logs_integration_id`, `idx_delivery_logs_status`, `idx_delivery_logs_created_at`
+**Indexes**: `idx_delivery_logs_tenant_id`, `idx_delivery_logs_integration_id`,
+`idx_delivery_logs_resource` (composite: `resource_type, resource_id`),
+`idx_delivery_logs_status`, `idx_delivery_logs_created_at`
+
+Note: one row per attempt. `bounced` is the only post-creation status change (async bounce webhook
+updates a `sent` row to `bounced`).
+
+### `stripe_events`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| event_id | TEXT PK | `evt_...` from Stripe |
+| processed_at | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+
+Webhook idempotency — `INSERT ... ON CONFLICT DO NOTHING` returns 0 rows for duplicates.
+
+### `tenant_deletions` (compliance audit, not tenant-scoped, no RLS)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| tenant_id | UUID PK | The deleted tenant's ID, retained |
+| tenant_slug | TEXT NOT NULL | |
+| tenant_name | TEXT NOT NULL | |
+| requested_at | TIMESTAMPTZ NOT NULL | |
+| executed_at | TIMESTAMPTZ NOT NULL | |
+| requested_by_member_id | UUID | Null for platform-admin force-delete |
+| forced_by_platform_admin_id | UUID | Null for self-service |
+| feedback_count | INT NOT NULL | |
+| attachment_count | INT NOT NULL | |
 
 ## Plans & feature flags
 
-All plan definitions live in `backend/internal/config/plans.go` so limits and features can be changed without touching business logic.
+All plan definitions live in `backend/internal/config/plans.go` so limits and features can be
+changed without touching business logic. `-1` means unlimited.
 
-| Plan | Monthly | Yearly discount | Projects | Feedback/month | Users | Storage days | Notes |
-|------|---------|-----------------|----------|----------------|-------|--------------|-------|
-| starter | €4.99 | 7% | 1 | 500 | 1 | 30 | rating + text + screenshot |
-| growth | €9.99 | 14% | 4 | 2,500 | 3 | 90 | + audio + DOM snapshot + limited replay + AI |
-| scale | €27.99 | 14% | 10 | 10,000 | 10 | 365 | + video + unlimited replay + Slack + AI |
-| enterprise | custom | custom | custom | custom | custom | custom | SLA + custom domain (future issue) |
+| Plan | Monthly | Yearly | Projects | Feedback/mo | Users | Storage days | AI | Replay | Slack | Video | Audio | DOM | Custom domain |
+|------|---------|--------|----------|-------------|-------|--------------|----|--------|-------|-------|-------|-----|---------------|
+| starter | €4.99 | 7% off | 1 | 500 | 1 | 30 | no | no | no | no | no | no | no |
+| growth | €9.99 | 14% off | 4 | 2,500 | 3 | 90 | yes | limited | no | no | yes | yes | no |
+| scale | €27.99 | 14% off | 10 | 10,000 | 10 | 365 | yes | yes | yes | yes | yes | yes | no |
+| enterprise | custom | custom | -1 | -1 | -1 | -1 | yes | yes | yes | yes | yes | yes | yes (future) |
+
+The `features` object returned by `GET /v1/widget/config` is derived from this table at request
+time, not stored per rule. Plan overrides rule (a `starter` tenant with `replay_mode='sampling'`
+gets `features.session_replay=false` and the widget ignores the setting).
+
+## Permissions
+
+31 tenant permissions (`resource:action`, no wildcards):
+
+`project:create|read|update|delete`, `widget_rule:create|read|update|delete`,
+`feedback:read|update|delete`, `issue:read|update|delete|merge`,
+`session:read|delete`, `member:read|invite|update|remove`,
+`api_key:create|read|delete`, `integration:create|read|update|delete`,
+`billing:manage|read`, `tenant:update|read`.
+
+3 UI presets (stored as explicit arrays, not roles): admin (all), editor (no deletes/member/api_key/billing), viewer (read-only).
+
+9 platform permissions: `platform:tenant:create|read|update|suspend|delete`,
+`platform:admin:create|read|update|delete`.
+
+Enforced by `RequirePerm(perm)` middleware per route. JWT carries `permissions` snapshot
+(10-min staleness accepted). API keys use the same permission model.
+
+## Monorepo structure
+
+```
+app.fidibeki/
+├── .github/workflows/      # backend-ci, widget-ci, web-ci, deploy
+├── backend/                # Go module
+│   ├── cmd/fidibeki-api/main.go
+│   ├── internal/
+│   │   ├── config/         # config.go, plans.go
+│   │   ├── server/         # chi router wiring
+│   │   ├── middleware/     # tenantmw, authmw, planmw, corsmw, ratelimit
+│   │   ├── auth/           # magiclink, jwt, sessions, permissions.go
+│   │   ├── tenant/         # TenantResolver, SubdomainResolver, CustomDomainResolver (stub)
+│   │   ├── project/        # project + widget_rules CRUD
+│   │   ├── feedback/       # feedback API, attachments, presign
+│   │   ├── issue/          # issues, issue_updates, merge, public_id allocation
+│   │   ├── ai/             # Gemini client, prompts, worker handlers
+│   │   ├── email/          # Resend client, templates, worker handlers
+│   │   ├── storage/        # S3/MinIO client, presign, keys.go
+│   │   ├── queue/          # asynq client, server, job definitions, reconciliation
+│   │   ├── stripe/         # checkout, webhooks, portal
+│   │   ├── integration/    # Slack, Teams, webhook delivery
+│   │   ├── platformadmin/  # platform admin auth, tenant CRUD, force-delete
+│   │   ├── replay/         # session recording API, batch merge job
+│   │   ├── db/             # pgxpool setup, Querier interface, migrations helper
+│   │   ├── logging/        # slog setup, PII redaction, request_id
+│   │   ├── api/            # errors.go (envelope + code catalog), response helpers
+│   │   └── testutil/       # testcontainers, fixtures, RLS assertion helpers
+│   └── Dockerfile          # multi-stage alpine
+├── widget/                 # vanilla JS, esbuild, Vitest + happy-dom
+│   ├── src/
+│   │   ├── loader.ts       # ~5KB entry, config fetch, trigger logic
+│   │   ├── widget.ts       # Shadow DOM UI
+│   │   ├── triggers.ts     # delay, scroll, exit_intent
+│   │   ├── config.ts       # config cache, SPA navigation detection
+│   │   ├── recorder.ts     # rrweb integration, batch upload
+│   │   ├── messages.ts     # error.code → user-facing strings
+│   │   └── modules/        # lazy-loaded: rating, audio, video, screenshot, error-reporting
+│   ├── tests/unit/         # Vitest
+│   ├── tests/e2e/          # Playwright
+│   └── esbuild.config.js
+├── web/                    # Nuxt 3 backoffice
+│   ├── pages/              # /login, /, /feedback/[id], /issues, /settings, /billing, /integrations
+│   ├── components/
+│   ├── composables/        # useAuth, can()
+│   ├── plugins/            # apiFetch (silent refresh on 401)
+│   ├── middleware/         # auth.ts (page), server middleware (SSR)
+│   ├── tests/unit/         # Vitest
+│   ├── tests/e2e/          # Playwright
+│   ├── nuxt.config.ts
+│   └── Dockerfile
+├── infra/
+│   ├── migrations/         # ~33 numbered SQL file pairs
+│   ├── docker-compose.yml  # postgres, pgbouncer, redis, minio, caddy, api, web
+│   ├── Caddyfile           # *.fidibeki.app → {api, web}; widget.fidibeki.app → static
+│   ├── railway.json
+│   └── stripe/fixtures/    # webhook event fixtures for tests
+├── docs/
+│   ├── env.md              # all env vars documented
+│   ├── runbook.md          # 10 failure scenarios
+│   ├── api.md              # generated API docs
+│   └── architecture.md     # this plan's decisions
+├── plans/fidibeki.plan.md  # this file
+├── .env.example            # all env vars with defaults/placeholders
+└── README.md
+```
+
+pnpm workspace for `widget/` + `web/` (shared dev deps: vitest, typescript, esbuild).
+
+## Env var catalog
+
+See `.env.example` for the full list (~35 vars). Key groups: App, Database (3 URLs), Redis,
+S3/MinIO, Auth (JWT_SECRET + TTLs), Stripe (secret + webhook + 6 Price IDs), Resend (key + 3
+from/reply addresses), Gemini (key + model + RPM), Sentry (DSN + release), Turnstile (secret +
+site key), Queue (4 concurrency overrides), Widget (CDN base).
+
+## Migration sequence by phase
+
+**Phase 0** (auth + tenant + RLS core, 10 migrations):
+`create_extensions` (placeholder), `create_roles` (with `ALTER DEFAULT PRIVILEGES`),
+`create_tenants` (+RLS), `create_tenant_members` (+RLS), `create_api_keys` (+RLS),
+`create_platform_admins`, `create_platform_admin_sessions`,
+`create_platform_admin_magic_links`, `create_tenant_member_sessions`, `create_tenant_magic_links`.
+
+**Phase 3** (3): `create_projects` (+RLS), `create_widget_enums`, `create_widget_rules` (+RLS).
+
+**Phase 5** (~7): `create_feedback_status_enum`, `create_feedbacks` (+RLS, includes reporter_email,
+notify_reporter, client_feedback_id), `create_processing_status_enum` (with `skipped`),
+`create_attachments` (+RLS, includes client_attachment_id, complete_token_hash, completed_at),
+`add_feedbacks_delivery_flags` (delivery_dispatched, ai_job_enqueued_at).
+
+**Phase 6** (2): `add_feedbacks_text_ai_columns` (text_cleaned, text_sentiment_score,
+text_moderation_flags, text_process_status, ai_processed_at), `add_attachments_error_columns`
+(error_message, processing_attempts).
+
+**Phase 7** (4): `create_issue_status_enum`, `create_issues` (+RLS, includes merged_into_id,
+merged_at), `create_issue_updates` (+RLS), `create_issue_counters`, `add_feedbacks_issue_link`.
+
+**Phase 8** (2): `create_sessions` (+RLS, includes feedback_id, rrweb_version, merged_at),
+`add_feedbacks_session_link`.
+
+**Phase 9** (3): `create_integration_enums` (integration_kind, event_type, delivery_status),
+`create_integrations` (+RLS, includes webhook_secret_hash, custom_headers),
+`create_delivery_logs` (+RLS, includes attempt_number).
+
+**Phase 10** (2): `create_stripe_events`, `add_tenants_billing_columns` (pending_plan, email_bounced,
+deletion_requested_at), `create_tenant_deletions` (compliance audit, no RLS).
+
+Every migration is one concept, inline RLS, paired `.down.sql`, tested via up→down→up in CI.
 
 ---
 
 ## Phase 0: Foundations
 
-**User stories covered**: As a developer, I can run the entire platform locally so that I can develop and test end-to-end.
+**User stories covered**: As a developer, I can run the entire platform locally so that I can
+develop and test end-to-end.
 
 ### What to build
 
-Set up the monorepo, local infrastructure (Postgres, MinIO, Redis), the Go module with chi, logging and environment config, the first database migrations, tenant subdomain middleware and a healthcheck endpoint with integration tests against a real Postgres container.
+Set up the monorepo, local infrastructure (Postgres + pgbouncer, MinIO, Redis, Caddy reverse
+proxy), the Go module with chi, slog, Sentry init, two pgxpool instances (app + admin), the
+first 10 migrations (auth + tenant + RLS), tenant subdomain middleware with `SET LOCAL`, the
+platform/tenant router split, `/healthz` + `/readyz`, and integration tests against real
+testcontainers (Postgres, Redis, MinIO) with RLS positive/negative/admin tests.
 
 ### Acceptance criteria
 
-- [ ] `docker compose up` starts Postgres, MinIO and Redis.
-- [ ] `go test ./...` runs unit and integration tests, including tests that spin up a Postgres container.
-- [ ] `GET /healthz` returns `200 OK` with JSON `{ "status": "ok" }`.
-- [ ] Middleware extracts a tenant from `tauview.fidibeki.app` style subdomains and rejects unknown or suspended tenants with `404` / `403`.
-- [ ] CI runs tests, `go vet`, and builds the backend binary on every push.
-- [ ] All code is committed with a clear history following TDD checkpoint commits.
+- [ ] `docker compose up` starts Postgres, pgbouncer, MinIO, Redis, Caddy, and the API.
+- [ ] `go test ./...` runs unit + integration tests including testcontainers Postgres.
+- [ ] `go test -short` runs unit tests only (no testcontainers) in <1s.
+- [ ] `GET /healthz` returns `200 OK` with `{ "status": "ok" }`.
+- [ ] `GET /readyz` returns `200` if DB+Redis+S3 pass, `503` with per-check status otherwise.
+- [ ] Two `pgxpool` instances (app + admin) with the right roles; migrator uses direct URL.
+- [ ] Middleware resolves `tauview.localhost` → tenant, starts `pgx.Tx`, `SET LOCAL app.tenant_id`,
+  commits in `defer`. Unknown subdomain → `404 unknown_tenant`. Suspended → `403 tenant_suspended`.
+- [ ] RLS enabled on all tenant-scoped tables; integration tests verify positive (tenant reads own),
+  negative (tenant can't read other tenant's), and admin bypass.
+- [ ] `X-Request-ID` header on every response; `slog` logs include `request_id`, `tenant_id`, `tenant_slug`.
+- [ ] CI runs `go vet`, `golangci-lint`, `go test` (with testcontainers), up→down→up migration test.
+- [ ] `.env.example` committed; `Config.Validate()` exits with clear error on missing required vars.
 
 ---
 
 ## Phase 1: Multi-tenancy & Plans
 
-**User stories covered**: As the platform, I can identify and limit each company account so that data stays isolated and plan features are enforced.
+**User stories covered**: As the platform, I can identify and limit each company account so that
+data stays isolated and plan features are enforced.
 
 ### What to build
 
-Implement tenant management, plan configuration and runtime feature/limit checks. Build admin-level endpoints to create tenants and add seed data. Enforce that one tenant cannot access another tenant's resources.
+Tenant management, plan configuration in `plans.go`, runtime feature/limit checks via
+`CanUseFeature(tenant, feature)` and `RequirePlanLimit` middleware. Platform admin auth (magic-link,
+shared library) + `POST /admin/tenants` CRUD. Slug validation (3-24 chars, lowercase, not reserved,
+unique). Cross-tenant access rejected with `403` in integration tests.
 
 ### Acceptance criteria
 
-- [ ] `POST /admin/tenants` creates a tenant with a unique subdomain slug and selected plan.
-- [ ] Middleware injects the active tenant into request context for all routes under subdomains.
-- [ ] Unknown subdomains return `404`; suspended tenants return `403`.
-- [ ] `CanUseFeature(tenant, feature)` helper returns false when a feature is not in the tenant's plan.
-- [ ] A tenant's plan limits (projects, users, feedback/month, storage days) are returned by a public config endpoint.
-- [ ] Cross-tenant resource access is rejected with `403` in integration tests.
+- [ ] `POST /admin/tenants` creates a tenant (platform-admin auth, `platform:tenant:create` perm).
+- [ ] Middleware injects `(tenant, status, plan, trial_ends_at)` into request context.
+- [ ] Unknown subdomains return `404 unknown_tenant`; suspended tenants return `403 tenant_suspended`.
+- [ ] `CanUseFeature(tenant, feature)` returns false when a feature is not in the tenant's plan.
+- [ ] `RequirePlanLimit` middleware returns `402 plan_limit_exceeded` with `upgrade_url` on exceeded limits.
+- [ ] `RequirePlanLimit` returns `402 plan_feature_unavailable` when a feature isn't in the plan.
+- [ ] A tenant's plan limits (projects, users, feedback/month, storage days, features) returned by a config endpoint.
+- [ ] Cross-tenant resource access is rejected with `403` in integration tests (RLS + app-layer).
+- [ ] Platform admin magic-link auth flow: `POST /admin/auth/login`, `POST /admin/auth/verify`,
+  `POST /admin/auth/refresh`, `POST /admin/auth/logout`.
+- [ ] `RequirePlatformAdmin(perm)` middleware on platform routes; `aud=platform` JWT enforced.
+- [ ] Slug validation at app + DB level (regex + reserved words check).
 
 ---
 
 ## Phase 2: Backoffice authentication
 
-**User stories covered**: As a company user, I can log into the backoffice via magic link and invite teammates so that I can manage feedback securely.
+**User stories covered**: As a company user, I can log into the backoffice via magic link and
+invite teammates so that I can manage feedback securely.
 
 ### What to build
 
-Magic-link registration/login flow for the first user of a tenant plus invitation flow for additional users. JWT access + refresh tokens. Permission-based access control (e.g. `project:create`, `project:delete`, `billing:manage`, `member:invite`). Each tenant member holds an explicit `permissions` array.
+Magic-link registration/login flow for tenant members (reuses the `internal/auth/magiclink`
+library from Phase 1, adds `TenantStore`). JWT access + refresh tokens with `aud=tenant`.
+Permission-based access control via `RequirePerm` middleware. Invitation flow for additional
+users (magic link with `member_id=null` until consumed). Refresh token rotation + revocation.
 
 ### Acceptance criteria
 
-- [ ] `POST /auth/login` sends a magic link email to a backoffice user.
-- [ ] `POST /auth/verify` validates the magic link token and issues access + refresh JWTs.
-- [ ] `POST /auth/refresh` rotates the access token using a valid refresh token.
-- [ ] Admins have full permissions; custom permission sets can be assigned to members.
-- [ ] Backoffice routes require `tenant` context and relevant permissions.
-- [ ] Refresh tokens are stored hashed and can be revoked.
+- [ ] `POST /auth/login` sends a magic link email (async via asynq `email-pool`).
+- [ ] `POST /auth/verify` validates the magic link token, issues access + refresh, sets refresh cookie.
+- [ ] `POST /auth/refresh` rotates the refresh token (revoke old, issue new); reuse-of-revoked revokes all sessions.
+- [ ] `POST /auth/logout` revokes the session, clears the refresh cookie.
+- [ ] Admins have full permissions; custom permission sets assignable to members.
+- [ ] Backoffice routes require `tenant` context + `RequireTenantMember` + `RequirePerm(perm)`.
+- [ ] `aud=tenant` JWTs rejected on platform routes; `aud=platform` JWTs rejected on tenant routes.
+- [ ] Refresh tokens stored hashed; revocable per-session and per-member.
+- [ ] Invitations: `POST /auth/invite` sends a magic link to a non-member email; on verify, creates the member.
 
 ---
 
 ## Phase 3: Projects & widget configuration
 
-**User stories covered**: As a product team, I can create a project, configure the widget per page and get an embed script so that I can collect feedback on my site.
+**User stories covered**: As a product team, I can create a project, configure the widget per
+page and get an embed script so that I can collect feedback on my site.
 
 ### What to build
 
-CRUD for projects and their widget rules. Projects hold a public embed key and allowed domains. Widget rules are stored in a dedicated `widget_rules` table with typed columns for matcher, trigger, form fields, replay sampling and theme.
+CRUD for projects + widget_rules. Projects hold a unique public key (`pk_live_<22 base62>`)
+and allowed domains (exact or `*.domain` wildcards). Widget rules stored per the revised schema
+(typed columns for matcher, trigger, form fields, replay, theme). Save-time validation including
+plan-feature alignment (e.g. `can_record_audio=true` requires plan's `AudioRecording`).
 
 ### Acceptance criteria
 
 - [ ] Members with `project:create`/`project:update` can manage projects and widget rules.
-- [ ] Each project has a unique public key used by the embed script.
-- [ ] Widget rules can vary by URL pattern (e.g. `/assets/*` vs `/dashboard`).
-- [ ] The embed script endpoint returns the correct JS URL for a given project key.
-- [ ] Only requests from allowed domains can fetch widget config (CORS + origin validation).
+- [ ] Each project has a unique `pk_live_` public key.
+- [ ] Widget rules can vary by URL pattern (`all_pages`, `url_exact`, `url_prefix`, `url_regex`).
+- [ ] `allowed_domains` supports exact + `*.domain` wildcard entries.
+- [ ] Save-time validation: trigger/matcher consistency, regex compiles, accent_color format,
+  plan-feature alignment (`422` with field-level errors if misaligned).
+- [ ] `RequirePerm` middleware enforces `widget_rule:create/update/delete` per route.
 
 ---
 
 ## Phase 4: Widget embed
 
-**User stories covered**: As an end user, I am asked for feedback at the right moment on a website so that I can report confusing or helpful experiences easily.
+**User stories covered**: As an end user, I am asked for feedback at the right moment on a
+website so that I can report confusing or helpful experiences easily.
 
 ### What to build
 
-Zero-dependency vanilla JS widget loaded via `<script>`. It detects the current page, fetches its config and triggers after configured delay/scroll/exit intent. UI appears bottom-left with greeting, star rating, text input and DOM element attachment. Captures metadata and DOM snapshot and sends feedback to the public API.
+Zero-dependency vanilla JS widget built with esbuild into a ~5KB `loader.js` + lazy ES modules.
+Shadow DOM for isolation. One-line embed (`<script src=... data-fidibeki-key=... async>`).
+Config fetch from `GET /v1/widget/config` (public key + Origin check). Triggers: delay, scroll,
+exit_intent with `sessionStorage` suppression. SPA navigation detection via history patch +
+custom event; config refreshed every 5 min and on `visibilitychange`. Attach-element: HTML +
+computed styles (screenshot deferred). Honeypot field for bot protection.
 
 ### Acceptance criteria
 
-- [ ] Widget loads on allowed domains and is blocked on unknown domains.
+- [ ] Widget loads on allowed domains and is blocked on unknown domains (`403` from config endpoint).
 - [ ] Trigger respects per-page config (delay, scroll depth, exit intent).
 - [ ] End user can rate 1-5 stars and write a text review.
-- [ ] End user can click a page element to attach its HTML + computed styles + screenshot.
-- [ ] Widget sends OS, browser, viewport size, URL and referrer metadata.
-- [ ] Playwright E2E test opens a sample page, triggers the widget and submits feedback.
+- [ ] End user can click a page element to attach its HTML + computed styles.
+- [ ] Widget sends OS, browser, viewport size, URL, referrer metadata.
+- [ ] Lazy modules load only for features the plan allows (`features` object from config).
+- [ ] Honeypot field silently drops bot submissions (returns `200` but no feedback created).
+- [ ] Sentry SDK lazy-loads on first error; PII scrubbed in `beforeSend`.
+- [ ] Vitest unit tests for trigger logic, config matching, suppression state.
+- [ ] Playwright E2E: open sample page → trigger widget → submit feedback → verify DB row.
 
 ---
 
 ## Phase 5: Feedback API
 
-**User stories covered**: As the widget, I can submit feedback and media to the platform so that product teams see it in the backoffice.
+**User stories covered**: As the widget, I can submit feedback and media to the platform so
+that product teams see it in the backoffice.
 
 ### What to build
 
-Public `POST /v1/feedback` endpoint authenticated by project public key. Stores a `feedbacks` row with rating, text, metadata and DOM snapshot. Screenshot/audio uploads create `attachments` rows linked to the feedback. Returns an optional issue public id and reporter token if the user opts into email updates.
+Public `POST /v1/feedback` (widget auth: `X-Fidibeki-Public-Key` + Origin + rate limit).
+JSON metadata first → presigned S3 URLs → completion callback. Auto-creates an issue per
+feedback (transactional). Returns `{ feedback_id, issue_public_id, notify_reporter }`.
+No reporter token (email-only via Q19e unsubscribe JWT). Rate-limited (10/min per IP per
+project + 100/hour per project ceiling). Plan limit checked (402 if exceeded).
 
 ### Acceptance criteria
 
-- [ ] Valid project key and allowed origin are required.
-- [ ] Monthly feedback count is checked against the tenant plan; exceeded limits return `429` with a clear error.
-- [ ] Screenshot and audio files create `attachments` rows and are uploaded to object storage.
-- [ ] Invalid payloads return `400` with structured validation errors.
-- [ ] End user can optionally provide an email to receive issue updates.
-- [ ] Integration tests cover happy path, invalid origin, plan limit and malformed body.
+- [ ] Valid project key + allowed origin required (`403` otherwise).
+- [ ] Monthly feedback count checked against plan; exceeded returns `402 plan_limit_exceeded`.
+- [ ] Rate limit: 10/min per IP per project (`429` with `Retry-After`); 100/hour per-project ceiling.
+- [ ] `client_feedback_id` + `client_attachment_id` provide idempotency (duplicate → returns existing).
+- [ ] Presigned S3 URLs returned (10-min TTL); widget PUTs directly; completion callback verifies
+  token + S3 HEAD (size + MIME).
+- [ ] Invalid payloads return `422 validation_error` with field-level `details[]`.
+- [ ] Issue auto-created in the same transaction (`public_id` allocated via `issue_counters`).
+- [ ] `feedbacks.delivery_dispatched=false` set; reconciliation cron picks up missed dispatches.
+- [ ] Integration tests: happy path, invalid origin, plan limit, rate limit, malformed body, idempotent retry.
 
 ---
 
 ## Phase 6: AI processing (Gemini)
 
-**User stories covered**: As a product team, I can see transcribed and moderated feedback so that I can triage faster.
+**User stories covered**: As a product team, I can see transcribed and moderated feedback so
+that I can triage faster.
 
 ### What to build
 
-Async worker that sends audio/video to Gemini for transcription, cleans the text, analyses sentiment and flags offensive content. Results are stored in typed columns on the `attachments` row. AI features only enabled for plans with `AIProcessing=true`.
+Per-attachment + per-text asynq jobs (`ai.attachment_process`, `ai.text_process`).
+Gemini `2.5-flash` for all tasks. Stream MinIO → Gemini File API → `generateContent` (structured
+JSON output) → delete Gemini file. `redis_rate` limiter keyed `gemini` (`GEMINI_RPM` env).
+Completion check sets `feedbacks.ai_processed_at` when all passes done. Plan-gated: non-AI plans
+get `processing_status='skipped'`. Video uses Gemini native video (no FFmpeg). Manual retry per
+attachment + reprocess-all per feedback from backoffice.
 
 ### Acceptance criteria
 
-- [ ] Audio feedback is transcribed when plan allows AI.
-- [ ] Text is cleaned (trim, filler removal) and sentiment score is stored.
-- [ ] Offensive language is flagged and optionally hidden in the UI.
-- [ ] AI jobs are queued via Redis and retried on transient failures.
-- [ ] Failures are logged but never crash the feedback submission flow.
+- [ ] Audio feedback transcribed when plan allows AI; `processing_status='completed'` with `transcription`.
+- [ ] Text feedback: cleaned (filler removed), sentiment score stored, moderation flags stored.
+- [ ] Screenshot OCR extracts visible text when plan allows AI.
+- [ ] Video: Gemini native video transcription (no FFmpeg).
+- [ ] Offensive language flagged in `moderation_flags`; not auto-hidden (flag-only, tenant decides).
+- [ ] AI jobs queued via asynq `ai-pool` (concurrency 3) with `redis_rate` Gemini limiter.
+- [ ] Transient failures (429, 500, timeout): revert to `pending`, asynq retries with backoff.
+- [ ] Permanent failures (content policy, malformed media): `processing_status='failed'`, `asynq.SkipRetry`.
+- [ ] `feedbacks.ai_processed_at` set when all passes finish; backoffice shows progress badge.
+- [ ] `POST /v1/attachments/{id}/retry` (re-enqueues) + `POST /v1/feedbacks/{id}/reprocess` (all).
+- [ ] Failures never crash the feedback submission flow (async, isolated).
 
 ---
 
 ## Phase 7: Issues & email notifications (Resend)
 
-**User stories covered**: As an end user, I can receive email updates about the issue I reported so that I know my feedback was acted on.
+**User stories covered**: As an end user, I can receive email updates about the issue I reported
+so that I know my feedback was acted on.
 
 ### What to build
 
-Issues are typed rows in `issues`, grouped to feedbacks via `issue_id`. Public human-readable issue id, status workflow (`open`, `in_progress`, `resolved`). Email notifications to reporters when status changes are recorded in `delivery_logs` with actual delivery via Resend. Async queue for Resend.
+Issues typed rows with `{SLUG}-{YEAR}-{SEQ}` public id (allocated via `issue_counters`).
+Auto-created per feedback (Q20d); tenant can merge (soft-merge with `merged_into_id`).
+Status workflow `open|in_progress|resolved|closed` with `issue_updates` history.
+Reporter email notifications on issue status changes, sent via Resend `email-pool` async.
+`delivery_logs` one row per attempt. Unsubscribe via JWT (`aud=reporter-unsubscribe`, 90d).
+Bounce/complaint webhook auto-unsubscribes.
 
 ### Acceptance criteria
 
-- [ ] Each issue gets a public id like `TAU-2026-0001` based on tenant slug.
-- [ ] Feedback can be linked to an existing issue or create a new one automatically.
-- [ ] Reporter email is optional; if provided and opted-in, status updates trigger an email.
-- [ ] Email sends and status updates are recorded in `delivery_logs`.
-- [ ] Unsubscribe/update preferences can be managed via a signed URL.
+- [ ] Each issue gets a public id like `TAU-2026-0001` (uppercase slug, 4-digit seq, yearly reset).
+- [ ] Auto-created per feedback (title = first 80 chars of text or `[No text]`).
+- [ ] Tenant can merge issues (soft-merge, `merged_into_id` preserved, un-merge possible).
+- [ ] Reporter email optional; if provided + opted-in, status updates trigger an email.
+- [ ] Emails sent from `updates@fidibeki.app` with `{Tenant name} via Fidibeki` from-name.
+- [ ] Unsubscribe link (JWT, 90d) in every reporter email; clicking sets `notify_reporter=false`.
+- [ ] `delivery_logs` records each attempt with `attempt_number`, `status`, `provider_message_id`.
+- [ ] Resend bounce/complaint webhook on `api.fidibeki.app`: updates `delivery_logs.status='bounced'`,
+  auto-unsubscribes reporter on complaint.
+- [ ] `issue_updates` records every status change with `member_id`, `old_status`, `new_status`, `comment`.
 
 ---
 
 ## Phase 8: Session replay
 
-**User stories covered**: As a product team, I can replay a user's session so that I can understand exactly what confused them.
+**User stories covered**: As a product team, I can replay a user's session so that I can
+understand exactly what confused them.
 
 ### What to build
 
-Lightweight client-side event recorder (DOM mutations, clicks, scrolls, inputs) configurable by sampling rate (0-100%). Storage of event stream + snapshots. Replay player in the backoffice.
+rrweb (pinned) with PII masking. Session-level sampling + caps (30 min, 50k events).
+Batch upload to S3 presigned PUT (~200KB per batch); post-session `replay.merge` job concatenates
+into `replay.json` and deletes batches. `rrweb-player` in a Vue component; replay streamed
+through Go API (auth + RLS, not direct S3). `sessions.rrweb_version` + `merged_at` columns.
+Retention = plan's `storage_days` (lifecycle + daily DB cleanup cron).
 
 ### Acceptance criteria
 
 - [ ] Replay recording respects tenant sampling config (0%, 1%, 100%, etc.).
-- [ ] Recorded events reproduce the same visual sequence in the player.
-- [ ] Replay is linked to a feedback item when both exist.
-- [ ] Storage respects plan retention days.
-- [ ] Feature is blocked for plans without `SessionReplay=true`.
+- [ ] PII masking: `maskAllInputs=true`, `maskTextSelector` for extra fields.
+- [ ] Recording continuous across SPA navigations; ends on `pagehide` or 5-min idle.
+- [ ] Batch upload (one S3 object per ~50 events); `replay.merge` job produces final `replay.json`.
+- [ ] Backoffice shows "processing" until merge, then "ready"; player loads concatenated events.
+- [ ] Replay linked to feedback (both `sessions.feedback_id` and `feedbacks.session_id`).
+- [ ] Storage respects plan retention days (lifecycle policy + daily cleanup cron).
+- [ ] Feature blocked for plans without `SessionReplay=true` (`402 plan_feature_unavailable`).
 
 ---
 
 ## Phase 9: Slack integration
 
-**User stories covered**: As a product team, I can receive feedback notifications in Slack so that my team reacts immediately.
+**User stories covered**: As a product team, I can receive feedback notifications in Slack so
+that my team reacts immediately.
 
 ### What to build
 
-Integrations are stored in the generic `integrations` table with typed columns. Slack is one `kind`; other kinds (Teams, webhook) can be added by extending the `kind` enum. A worker reads events from the queue and dispatches to all active integrations subscribed to that event. Deliveries are audited in `delivery_logs`.
+Integrations in the generic `integrations` table (Slack/Teams/webhook, no email kind).
+Per-integration HMAC webhook secret. Event dispatch: on `feedback.created` etc., enqueue
+one `integration.deliver` job per active integration subscribed to the event. Slack Block Kit
+messages. Webhooks signed with `X-Fidibeki-Signature: HMAC-SHA256`. Teams MessageCard for MVP.
+`delivery_logs` per attempt. `delivery_dispatched` flag + reconciliation.
 
 ### Acceptance criteria
 
-- [ ] Admins can save/remove a Slack integration and select event types.
-- [ ] New feedback sends a Slack message when configured.
-- [ ] Slack failures are retried and logged but do not block feedback flow.
-- [ ] Feature only available for plans with `SlackNotifications=true`.
+- [ ] Admins can save/remove integrations and select event types (`integration:create/delete` perm).
+- [ ] Webhook secret generated on creation (shown once, hashed stored); `X-Fidibeki-Signature` header on every webhook.
+- [ ] New feedback sends a Slack message (Block Kit) when configured for `feedback.created`.
+- [ ] Slack/Teams/webhook failures retried per asynq policy; logged in `delivery_logs`; don't block feedback flow.
+- [ ] One asynq job per integration (failure isolation); reporter email is a separate job.
+- [ ] `delivery_dispatched` flag on feedback/issue; reconciliation cron re-dispatches missed.
+- [ ] Feature only available for plans with `SlackNotifications=true` (`402` otherwise).
 
 ---
 
 ## Phase 10: Stripe billing
 
-**User stories covered**: As a company, I can start a free trial, choose a plan and pay so that the platform bills me automatically.
+**User stories covered**: As a company, I can start a free trial, choose a plan and pay so
+that the platform bills me automatically. I can also close my account.
 
 ### What to build
 
-Stripe Checkout integration, 14-day trial, plan upgrades/downgrades, webhook handling for `checkout.session.completed`, `invoice.paid`, `customer.subscription.updated/deleted`. Automatic suspension when trial ends unpaid. Self-service customer portal link.
+Self-service signup (`POST api.fidibeki.app/v1/signup`, Turnstile-protected). Stripe Checkout
+(hosted) + Customer + Subscription + one Price per plan. Hybrid trial (Stripe + Fidibeki
+`trial_ends_at` + daily cron + Resend dunning). 6 webhook events + `stripe_events` idempotency.
+Downgrades: restrict-new-creation + `pending_plan` applied at next period. Customer Portal.
+Account deletion: self-service with 7-day grace + platform admin force-delete +
+`tenant_deletions` audit table.
 
 ### Acceptance criteria
-- [ ] New tenant starts a 14-day trial automatically.
+
+- [ ] `POST /v1/signup` creates a `trial` tenant + first admin member; sends magic link; Turnstile verified.
+- [ ] New tenant starts a 14-day trial with the chosen plan's limits.
+- [ ] Lazy Stripe customer creation on first billing interaction.
 - [ ] Stripe checkout creates a subscription and links it to the tenant.
-- [ ] Webhooks update plan, status and trial end date.
+- [ ] Webhooks update plan, status, trial end date (`stripe_events` idempotency; load-from-Stripe).
+- [ ] Dunning emails at 3d/1d/0d before trial end (Resend async).
 - [ ] Unpaid trial converts to suspended; feedback API blocks suspended tenants.
-- [ ] Downgrades are allowed but existing over-limit resources are read-only until within limit.
-- [ ] Customer portal link is available for admins.
+- [ ] Downgrades allowed; new resource creation blocked over limit (`402`); existing resources fully usable.
+- [ ] `pending_plan` applied at next billing period via `invoice.paid` webhook.
+- [ ] Customer portal link available for admins (`POST /billing/portal`).
+- [ ] `POST /v1/billing/delete-account` (typed confirmation, 7-day grace, email to members).
+- [ ] `POST /v1/billing/cancel-deletion` (during grace).
+- [ ] `DELETE /admin/tenants/{id}` (platform admin force-delete, immediate, audited).
+- [ ] Daily `tenant_deletion_executor` cron: cancel Stripe, revoke sessions, delete S3, `DELETE FROM tenants CASCADE`, audit log.
+- [ ] Delete unverified tenants (no magic-link consumption) after 24h.
 
 ---
 
 ## Phase 11: Backoffice Nuxt UI
 
-**User stories covered**: As a company user, I can manage projects, view feedback, triage issues and configure the widget in a branded backoffice.
+**User stories covered**: As a company user, I can manage projects, view feedback, triage
+issues and configure the widget in a branded backoffice.
 
 ### What to build
 
-Nuxt 3 app served at tenant subdomains. Dashboard with metrics, project list, widget config editor, feedback list with filters, issue detail with status updates, replay player, integrations and Stripe settings.
+Nuxt 3 on `*.fidibeki.app`, hybrid SSR (`/login` + `/` SSR, rest SPA). `apiFetch` plugin with
+silent-refresh-on-401. `useState` for auth. `can(perm)` for authz (plan limits surface as 402).
+Pages: dashboard (metrics), project list, widget config editor, feedback list (cursor-paginated
++ 9 filters), feedback detail (metadata, screenshot, transcript, sentiment, replay player),
+issue detail (status updates, merge), settings (members, api_keys, integrations), billing
+(plan, portal, delete-account). No per-tenant branding for MVP (tenant name in header).
 
 ### Acceptance criteria
 
-- [ ] Login page per subdomain sends magic link.
-- [ ] Dashboard shows feedback count, issue count and satisfaction trend.
+- [ ] Login page per subdomain sends magic link; `GET /auth/verify` (SSR) → `POST /auth/verify` (Go).
+- [ ] Dashboard shows feedback count, issue count, satisfaction trend.
 - [ ] Members with correct permissions can manage projects and widget configuration.
-- [ ] Feedback detail shows metadata, screenshot, transcript and sentiment.
-- [ ] Issues can be created/updated/resolved and trigger emails.
-- [ ] Playwright E2E tests cover login, project creation and feedback triage.
+- [ ] Feedback list: cursor pagination + filters (project, status, rating, attachment, moderation, issue, date, sort).
+- [ ] Feedback detail: metadata, screenshot, transcript, sentiment, replay player (`rrweb-player`).
+- [ ] Issues can be created/updated/resolved/merged and trigger emails.
+- [ ] "Retry AI" per attachment + "Reprocess all" per feedback.
+- [ ] Settings: members (invite, permissions editor with 3 presets), API keys, integrations.
+- [ ] Billing: plan, customer portal link, delete-account with typed confirmation + grace banner.
+- [ ] Trial banner ("14-day trial") shown during trial.
+- [ ] Playwright E2E: login, project creation, feedback triage, issue merge, billing delete-request.
 
 ---
 
 ## Phase 12: Deploy & observability
 
-**User stories covered**: As the platform, I run reliably in production with logs, CI/CD and staging parity.
+**User stories covered**: As the platform, I run reliably in production with logs, CI/CD and
+staging parity.
 
 ### What to build
 
-Multi-stage Dockerfiles for Go API and Nuxt app. Railway `railway.json` and environment templates. GitHub Actions deploy to staging on merge to `main`. Structured logs, basic error tracking and runbooks.
+Multi-stage alpine Dockerfiles (Go + Nuxt separate). Widget served as static files by Caddy/CDN.
+Railway `railway.json` + pgbouncer config. GitHub Actions: PR pipeline (<8 min, fast + integration),
+main pipeline (auto-deploy staging + post-deploy E2E + manual promote to prod). Migrations run
+in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sentry in CI.
+`docs/env.md` + `docs/runbook.md` (10 scenarios). Data export tool (deferred — manual via runbook for now).
 
 ### Acceptance criteria
 
-- [ ] `docker build` produces runnable API and web images.
-- [ ] Railway deploys `main` to a staging environment.
-- [ ] All env vars are documented in `docs/env.md`.
-- [ ] Healthcheck and DB connectivity are verified on deploy.
-- [ ] Runbook covers common failures: DB migrations, Stripe webhook, Redis queue.
+- [ ] `docker build` produces runnable API and web images (alpine, multi-stage).
+- [ ] Widget built to `widget/dist/` (esbuild, content-hashed filenames, long Cache-Control).
+- [ ] Railway deploys `main` to staging automatically; prod is manual promote.
+- [ ] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
+- [ ] All env vars documented in `docs/env.md` + `.env.example`.
+- [ ] Healthcheck and DB connectivity verified on deploy (`/readyz`).
+- [ ] Source maps uploaded to Sentry in CI (Go binary + widget + Nuxt).
+- [ ] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
+  AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
+  S3 storage full, deploy rollback, secrets rotation.
+- [ ] asynqmon web UI mounted on `api.fidibeki.app` behind platform-admin auth.
