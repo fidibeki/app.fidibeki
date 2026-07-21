@@ -55,7 +55,7 @@ for both services because configuration is validated before the command starts.
 | `TURNSTILE_SECRET_KEY` | staging/prod | Cloudflare Turnstile server key. |
 | `TURNSTILE_SITE_KEY` | staging/prod | Cloudflare Turnstile public key. |
 | `GEMINI_API_KEY` | production | Gemini API key. Empty is allowed outside production. |
-| `GEMINI_MODEL` | no | Model name; default `gemini-2.5-flash`. |
+| `GEMINI_MODEL` | no | Model name; default `gemini-3.1-flash-lite`. |
 | `GEMINI_RPM` | no | Provider request limit; default `15`. |
 | `AI_QUEUE_CONCURRENCY` | no | AI worker concurrency; default `3`. |
 | `AI_DAILY_REQUEST_LIMIT` | no | Tenant-independent safety ceiling; default `5000`. |

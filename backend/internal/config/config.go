@@ -143,7 +143,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		EmailConcurrency:         emailConcurrency,
 		AIConcurrency:            aiConcurrency,
 		GeminiAPIKey:             get("GEMINI_API_KEY", ""),
-		GeminiModel:              get("GEMINI_MODEL", "gemini-2.5-flash"),
+		GeminiModel:              get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		GeminiRPM:                geminiRPM,
 		AIDailyLimit:             aiDailyLimit,
 		AIReconcileEvery:         aiReconcileEvery,

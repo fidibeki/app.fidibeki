@@ -124,7 +124,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	if got.ReadinessTimeout.String() != "2s" {
 		t.Errorf("ReadinessTimeout = %s, want 2s", got.ReadinessTimeout)
 	}
-	if got.GeminiModel != "gemini-2.5-flash" || got.GeminiRPM != 15 ||
+	if got.GeminiModel != "gemini-3.1-flash-lite" || got.GeminiRPM != 15 ||
 		got.AIConcurrency != 3 || got.AIDailyLimit != 5000 || got.AIReconcileEvery != 5*time.Minute {
 		t.Errorf("AI defaults = model %q rpm %d concurrency %d daily %d reconcile %s",
 			got.GeminiModel, got.GeminiRPM, got.AIConcurrency, got.AIDailyLimit, got.AIReconcileEvery)
