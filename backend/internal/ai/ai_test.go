@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -414,6 +415,143 @@ func TestTaskDecoderRejectsMalformedPayload(t *testing.T) {
 	)
 	if nullableText("  ") != nil || nullableText("value") == nil {
 		t.Error("nullableText() did not normalize blank and non-blank values")
+	}
+}
+
+func TestProcessorErrorHandlerLogsSafeProviderFailure(t *testing.T) {
+	t.Parallel()
+	const payloadSecret = "sensitive customer words"
+	const providerSecret = "provider echoed customer feedback and api key"
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	task := asynq.NewTask(TaskTextProcess, []byte(`{
+		"tenant_id":"tenant-1",
+		"resource_id":"feedback-1",
+		"generation":2,
+		"text":"`+payloadSecret+`"
+	}`))
+	failure := errors.Join(
+		permanent(genai.APIError{
+			Code: 404, Message: providerSecret, Status: providerSecret,
+			Details: []map[string]any{{"debug": providerSecret}},
+		}),
+		asynq.SkipRetry,
+	)
+
+	(Processor{Logger: logger}).ErrorHandler().HandleError(
+		context.Background(), task, failure,
+	)
+
+	var logged map[string]any
+	if err := json.NewDecoder(&output).Decode(&logged); err != nil {
+		t.Fatalf("decode failure log: %v", err)
+	}
+	expected := map[string]any{
+		"level": "ERROR", "msg": "AI task failed", "task_type": TaskTextProcess,
+		"task_payload_decoded": true, "tenant_id": "tenant-1", "resource_id": "feedback-1",
+		"failure_class": "provider_not_found", "failure_permanent": true,
+		"provider_code": float64(404), "retry_disposition": "skip_retry", "will_retry": false,
+	}
+	for key, want := range expected {
+		if got := logged[key]; got != want {
+			t.Errorf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+	if _, exists := logged["error"]; exists {
+		t.Errorf("failure log contains raw error: %#v", logged["error"])
+	}
+	encoded := output.String()
+	for _, secret := range []string{payloadSecret, providerSecret} {
+		if strings.Contains(encoded, secret) {
+			t.Errorf("failure log contains sensitive text %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestProcessorErrorHandlerOmitsMalformedPayloadMetadata(t *testing.T) {
+	t.Parallel()
+	const secret = "malformed payload customer text"
+	task := asynq.NewTask(TaskTextProcess, []byte(
+		`{"tenant_id":"tenant-1","text":"`+secret+`"`,
+	))
+	_, decodeErr := decodeTask(task)
+
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	(Processor{Logger: logger}).ErrorHandler().HandleError(
+		context.Background(), task, fmt.Errorf("sensitive wrapper %s: %w", secret, decodeErr),
+	)
+
+	var logged map[string]any
+	if err := json.NewDecoder(&output).Decode(&logged); err != nil {
+		t.Fatalf("decode failure log: %v", err)
+	}
+	if logged["task_payload_decoded"] != false || logged["retry_disposition"] != "skip_retry" ||
+		logged["will_retry"] != false || logged["level"] != "ERROR" {
+		t.Errorf("terminal metadata = %#v", logged)
+	}
+	for _, key := range []string{"tenant_id", "resource_id", "error"} {
+		if _, exists := logged[key]; exists {
+			t.Errorf("malformed task log contains %q: %#v", key, logged[key])
+		}
+	}
+	if strings.Contains(output.String(), secret) {
+		t.Errorf("malformed task log contains sensitive text: %s", output.String())
+	}
+}
+
+func TestSafeFailureLogAttrsRetryState(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		retry       retryMetadata
+		wantLevel   slog.Level
+		wantExhaust bool
+		wantRetry   bool
+		wantState   string
+	}{
+		{
+			name: "retry pending",
+			retry: retryMetadata{
+				Count: 2, CountKnown: true, Maximum: 5, MaxKnown: true,
+			},
+			wantLevel: slog.LevelWarn, wantRetry: true, wantState: "retry",
+		},
+		{
+			name: "retry exhausted",
+			retry: retryMetadata{
+				Count: 5, CountKnown: true, Maximum: 5, MaxKnown: true,
+			},
+			wantLevel: slog.LevelError, wantExhaust: true, wantState: "exhausted",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const secret = "unbounded provider failure text"
+			level, exhausted, attributes := safeFailureLogAttrs(errors.New(secret), test.retry)
+			if level != test.wantLevel || exhausted != test.wantExhaust {
+				t.Fatalf("metadata = level %s, exhausted %t", level, exhausted)
+			}
+			var output bytes.Buffer
+			slog.New(slog.NewJSONHandler(&output, nil)).LogAttrs(
+				context.Background(), level, "test", attributes...,
+			)
+			var logged map[string]any
+			if err := json.NewDecoder(&output).Decode(&logged); err != nil {
+				t.Fatalf("decode metadata log: %v", err)
+			}
+			if logged["retry_count"] != float64(test.retry.Count) ||
+				logged["max_retry"] != float64(test.retry.Maximum) ||
+				logged["retry_exhausted"] != test.wantExhaust ||
+				logged["will_retry"] != test.wantRetry ||
+				logged["retry_disposition"] != test.wantState {
+				t.Errorf("retry metadata = %#v", logged)
+			}
+			if strings.Contains(output.String(), secret) {
+				t.Errorf("metadata log contains raw error: %s", output.String())
+			}
+		})
 	}
 }
 

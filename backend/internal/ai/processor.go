@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/hibiken/asynq"
+	"google.golang.org/genai"
 )
 
 type ObjectSource interface {
@@ -142,13 +144,122 @@ func (p Processor) handleAttachmentFailure(
 	return fmt.Errorf("attachment AI failed transiently: %w", failure)
 }
 
+type retryMetadata struct {
+	Count      int
+	CountKnown bool
+	Maximum    int
+	MaxKnown   bool
+}
+
+func safeFailureLogAttrs(failure error, retry retryMetadata) (slog.Level, bool, []slog.Attr) {
+	classification := "internal_error"
+	providerCode := 0
+
+	var apiError genai.APIError
+	if errors.As(failure, &apiError) {
+		providerCode = apiError.Code
+		switch {
+		case apiError.Code == 401:
+			classification = "provider_unauthenticated"
+		case apiError.Code == 403:
+			classification = "provider_forbidden"
+		case apiError.Code == 404:
+			classification = "provider_not_found"
+		case apiError.Code == 408 || apiError.Code == 504:
+			classification = "provider_timeout"
+		case apiError.Code == 409:
+			classification = "provider_conflict"
+		case apiError.Code == 429:
+			classification = "provider_rate_limited"
+		case apiError.Code >= 500 && apiError.Code <= 599:
+			classification = "provider_unavailable"
+		case apiError.Code >= 400 && apiError.Code <= 499:
+			classification = "provider_rejected"
+		default:
+			classification = "provider_error"
+		}
+	} else if errors.Is(failure, ErrUnavailable) {
+		classification = "analyzer_unavailable"
+	} else if errors.Is(failure, context.DeadlineExceeded) {
+		classification = "deadline_exceeded"
+	} else if errors.Is(failure, context.Canceled) {
+		classification = "canceled"
+	} else {
+		var networkError net.Error
+		switch {
+		case errors.As(failure, &networkError) && networkError.Timeout():
+			classification = "network_timeout"
+		case errors.As(failure, &networkError):
+			classification = "network_error"
+		case IsPermanent(failure):
+			classification = "permanent_failure"
+		}
+	}
+
+	attributes := []slog.Attr{
+		slog.String("failure_class", classification),
+		slog.Bool("failure_permanent", IsPermanent(failure)),
+	}
+	if providerCode >= 400 && providerCode <= 599 {
+		attributes = append(attributes, slog.Int("provider_code", providerCode))
+	}
+	if retry.CountKnown {
+		attributes = append(attributes, slog.Int("retry_count", retry.Count))
+	}
+	if retry.MaxKnown {
+		attributes = append(attributes, slog.Int("max_retry", retry.Maximum))
+	}
+
+	retryKnown := retry.CountKnown && retry.MaxKnown
+	exhausted := retryKnown && retry.Count >= retry.Maximum
+	skipRetry := errors.Is(failure, asynq.SkipRetry)
+	level := slog.LevelWarn
+	disposition := "unknown"
+	switch {
+	case exhausted:
+		level = slog.LevelError
+		disposition = "exhausted"
+	case skipRetry:
+		level = slog.LevelError
+		disposition = "skip_retry"
+	case retryKnown:
+		disposition = "retry"
+	}
+	attributes = append(attributes, slog.String("retry_disposition", disposition))
+	if retryKnown {
+		attributes = append(attributes,
+			slog.Bool("retry_exhausted", exhausted),
+			slog.Bool("will_retry", !exhausted && !skipRetry),
+		)
+	} else if skipRetry {
+		attributes = append(attributes, slog.Bool("will_retry", false))
+	}
+	return level, exhausted, attributes
+}
+
 func (p Processor) ErrorHandler() asynq.ErrorHandler {
 	return asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, failure error) {
-		if !retryExhausted(ctx) {
-			return
+		payload, decodeErr := decodeTask(task)
+		retryCount, retryCountOK := asynq.GetRetryCount(ctx)
+		maxRetry, maxRetryOK := asynq.GetMaxRetry(ctx)
+		level, exhausted, failureAttributes := safeFailureLogAttrs(failure, retryMetadata{
+			Count: retryCount, CountKnown: retryCountOK, Maximum: maxRetry, MaxKnown: maxRetryOK,
+		})
+		if p.Logger != nil {
+			attributes := []slog.Attr{
+				slog.String("task_type", task.Type()),
+				slog.Bool("task_payload_decoded", decodeErr == nil),
+			}
+			attributes = append(attributes, failureAttributes...)
+			if decodeErr == nil {
+				attributes = append(attributes,
+					slog.String("tenant_id", payload.TenantID),
+					slog.String("resource_id", payload.ResourceID),
+				)
+			}
+			p.Logger.LogAttrs(ctx, level, "AI task failed", attributes...)
 		}
-		payload, err := decodeTask(task)
-		if err != nil {
+		if !exhausted || decodeErr != nil {
 			return
 		}
 		var kind TaskKind
