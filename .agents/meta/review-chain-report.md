@@ -24,6 +24,7 @@ status: final
 | 6 | medium | 10/10 | `backend/internal/widgetapi/http.go`, `widget/src/config.ts` | Go and JavaScript regular-expression engines could disagree during duplicated rule matching. | Fixed |
 | 7 | medium | 9/10 | `backend/internal/widgetapi/http.go` | A telemetry write failure could prevent an otherwise valid widget configuration from loading. | Fixed |
 | 8 | medium | 10/10 | `web/pages/signup.vue` | Server-side plan loading could prevent the signup document from rendering when the API upstream was unavailable. | Fixed |
+| 9 | medium | 10/10 | `web/playwright.config.ts` | CI started Nuxt dev over production build artifacts, causing unresolved manifest imports and random navigation stalls. | Fixed |
 
 ## Input Quality Assessment
 | Input | Rating | Evidence |
@@ -39,7 +40,7 @@ Connection detection now uses one client-side rule resolver followed by a minima
 Added recoverable Turnstile loading, complete activation permission enforcement, privacy-safe best-effort widget activity reporting, separate private/public Nuxt base-domain variables, and client-side plan loading with an explicit retry state. Added focused backend, widget, web unit, and browser coverage for each correction.
 
 ## Reviewer's Summary
-The platform proxy allowlist, plan catalog, migration, polling limits, authorized-origin ordering, and activation UI were sound. Two review rounds and the first CI run identified eight concrete issues; all were resolved and the final backend, web, widget, browser, production-build, and database-backed checks pass.
+The platform proxy allowlist, plan catalog, migration, polling limits, authorized-origin ordering, and activation UI were sound. Two review rounds and CI identified nine concrete issues; all were resolved and the final backend, web, widget, browser, production-build, and database-backed checks pass.
 
 ## Resolver's Notes
 No findings were declined. Telemetry failures are logged but intentionally do not affect widget availability. Production deployment remains deferred by user direction.
