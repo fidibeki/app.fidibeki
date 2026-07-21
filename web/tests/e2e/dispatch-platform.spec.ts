@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 import { allTenantPermissions } from '../../data/permissions'
 
-const tenantOrigin = 'http://acme.localhost:4321'
+const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
 
 type MockState = ReturnType<typeof createMockState>

@@ -1,17 +1,20 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const port = process.env.PLAYWRIGHT_PORT || '4321'
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
+  workers: process.env.CI ? 2 : undefined,
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4321',
+    baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
   },
   webServer: process.env.PLAYWRIGHT_EXTERNAL ? undefined : {
-    command: 'npm exec --yes --package=pnpm@11.15.1 -- pnpm dev --host 127.0.0.1 --port 4321',
-    url: 'http://127.0.0.1:4321/designs',
+    command: `NUXT_IGNORE_LOCK=1 ./node_modules/.bin/nuxt dev --host 127.0.0.1 --port ${port}`,
+    url: `http://127.0.0.1:${port}/designs`,
     reuseExistingServer: true,
     timeout: 120_000,
   },
