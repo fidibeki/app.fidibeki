@@ -37,6 +37,243 @@ All tenant data is stored in a single PostgreSQL database and isolated by `tenan
 - `integrations` — generic external service connections (Slack, Teams, webhook). `kind`, `events[]` and config URL/channel are typed columns.
 - `delivery_logs` — generic audit trail of every outgoing notification (email, Slack, webhook) with typed status and event.
 
+## Detailed database schema
+
+No JSONB columns in the MVP. Every attribute is a typed column. Arrays and enums are used where the value set is bounded.
+
+### Enums
+
+```sql
+CREATE TYPE tenant_plan AS ENUM ('starter', 'growth', 'scale', 'enterprise');
+CREATE TYPE tenant_status AS ENUM ('active', 'suspended', 'trial', 'cancelled');
+CREATE TYPE member_kind AS ENUM ('user', 'api_key', 'service_account');
+CREATE TYPE matcher_type AS ENUM ('all_pages', 'url_exact', 'url_prefix', 'url_regex');
+CREATE TYPE trigger_type AS ENUM ('delay', 'scroll', 'exit_intent');
+CREATE TYPE attachment_kind AS ENUM ('screenshot', 'audio', 'video', 'replay');
+CREATE TYPE processing_status AS ENUM ('pending', 'processing', 'completed', 'failed');
+CREATE TYPE issue_status AS ENUM ('open', 'in_progress', 'resolved', 'closed');
+CREATE TYPE integration_kind AS ENUM ('slack', 'teams', 'webhook', 'email');
+CREATE TYPE delivery_status AS ENUM ('pending', 'sent', 'failed', 'bounced');
+CREATE TYPE event_type AS ENUM ('feedback.created', 'issue.created', 'issue.updated', 'issue.resolved');
+```
+
+### Tables
+
+#### `tenants`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| name | TEXT | NOT NULL | Display name of the company |
+| slug | TEXT | NOT NULL, UNIQUE | Subdomain identifier, e.g. `tauview` |
+| plan | tenant_plan | NOT NULL, default 'starter' | Billing tier |
+| status | tenant_status | NOT NULL, default 'trial' | Account lifecycle state |
+| billing_email | TEXT | | Invoice/billing contact |
+| stripe_customer_id | TEXT | | Stripe Customer object id |
+| stripe_subscription_id | TEXT | | Stripe Subscription object id |
+| trial_ends_at | TIMESTAMPTZ | | Null when not on trial |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_tenants_slug`, `idx_tenants_status`, `idx_tenants_stripe_subscription_id`
+
+#### `tenant_members`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| kind | member_kind | NOT NULL, default 'user' | Distinguishes users, api keys, service accounts |
+| email | TEXT | NOT NULL | Login/contact email |
+| name | TEXT | | Display name |
+| permissions | TEXT[] | NOT NULL, default '{}' | Explicit permission strings |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Constraints**: UNIQUE(tenant_id, email)
+**Indexes**: `idx_tenant_members_tenant_id`, `idx_tenant_members_kind`
+
+#### `projects`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| name | TEXT | NOT NULL | Human name, e.g. `Tauview Web` |
+| public_key | TEXT | NOT NULL, UNIQUE | Embeddable public identifier |
+| allowed_domains | TEXT[] | NOT NULL, default '{}' | Domains allowed to load the widget |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_projects_tenant_id`, `idx_projects_public_key`
+
+#### `widget_rules`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
+| name | TEXT | NOT NULL | Label for this rule, e.g. `Asset page` |
+| priority | INT | NOT NULL, default 0 | Higher number wins on overlapping matches |
+| enabled | BOOLEAN | NOT NULL, default true | |
+| matcher_type | matcher_type | NOT NULL | How to match the current page URL |
+| matcher_value | TEXT | | Pattern/URL to match |
+| trigger_type | trigger_type | NOT NULL | `delay`, `scroll`, `exit_intent` |
+| trigger_delay_seconds | INT | | Used when trigger_type = 'delay' |
+| trigger_scroll_percent | INT | | Used when trigger_type = 'scroll' |
+| ask_rating | BOOLEAN | NOT NULL, default true | |
+| ask_text | BOOLEAN | NOT NULL, default true | |
+| ask_audio | BOOLEAN | NOT NULL, default false | |
+| ask_video | BOOLEAN | NOT NULL, default false | |
+| ask_dom_snapshot | BOOLEAN | NOT NULL, default false | |
+| greeting | TEXT | | Custom message shown by the widget |
+| position | TEXT | NOT NULL, default 'bottom-left' | `bottom-left`, `bottom-right`, etc. |
+| replay_mode | TEXT | NOT NULL, default 'none' | `none`, `sampling`, `all` |
+| replay_sampling_rate | INT | NOT NULL, default 0 | 0-100, used when replay_mode = 'sampling' |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_widget_rules_project_id`, `idx_widget_rules_enabled`, `idx_widget_rules_priority`
+
+#### `feedbacks`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
+| widget_rule_id | UUID | FK → widget_rules(id) ON DELETE SET NULL | Which rule triggered the widget |
+| public_id | TEXT | NOT NULL | Short public id, e.g. `fb_abc123` |
+| issue_id | UUID | FK → issues(id) ON DELETE SET NULL | Optional grouping |
+| rating | SMALLINT | | 1-5 star rating |
+| text | TEXT | | Free-form review text |
+| reporter_email | TEXT | | Optional email for follow-ups |
+| notify_reporter | BOOLEAN | NOT NULL, default false | Opt-in for issue updates |
+| page_url | TEXT | NOT NULL | URL where feedback was submitted |
+| referrer | TEXT | | HTTP referrer |
+| user_agent | TEXT | | Raw user agent string |
+| os | TEXT | | Parsed operating system |
+| browser | TEXT | | Parsed browser name |
+| device | TEXT | | `desktop`, `tablet`, `mobile` |
+| viewport_width | INT | | Screen/viewport width |
+| viewport_height | INT | | Screen/viewport height |
+| language | TEXT | | Browser language |
+| dom_snapshot_html | TEXT | | HTML of the attached element |
+| dom_snapshot_styles | TEXT | | Computed styles of the attached element |
+| status | TEXT | NOT NULL, default 'open' | `open`, `spam`, `archived` |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_feedbacks_tenant_id`, `idx_feedbacks_project_id`, `idx_feedbacks_issue_id`, `idx_feedbacks_public_id`, `idx_feedbacks_status`, `idx_feedbacks_created_at`
+
+#### `attachments`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| feedback_id | UUID | NOT NULL, FK → feedbacks(id) ON DELETE CASCADE | |
+| kind | attachment_kind | NOT NULL | `screenshot`, `audio`, `video`, `replay` |
+| storage_key | TEXT | NOT NULL | Path/key in object storage |
+| content_type | TEXT | | MIME type |
+| size_bytes | BIGINT | | File size |
+| duration_seconds | INT | | For audio/video/replay |
+| processing_status | processing_status | NOT NULL, default 'pending' | AI / transcoding state |
+| transcription | TEXT | | AI-generated transcript |
+| sentiment_score | DECIMAL(3,2) | | -1.0 to 1.0 |
+| moderation_flags | TEXT[] | NOT NULL, default '{}' | e.g. `profanity`, `harassment` |
+| processed_at | TIMESTAMPTZ | | When AI finished |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_attachments_tenant_id`, `idx_attachments_feedback_id`, `idx_attachments_kind`, `idx_attachments_processing_status`
+
+#### `sessions`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
+| feedback_id | UUID | FK → feedbacks(id) ON DELETE SET NULL | Optional link |
+| session_id | TEXT | NOT NULL | Client-generated session uuid |
+| page_url | TEXT | | First page of the session |
+| started_at | TIMESTAMPTZ | NOT NULL | |
+| ended_at | TIMESTAMPTZ | | |
+| events_count | INT | NOT NULL, default 0 | |
+| storage_key | TEXT | NOT NULL | rrweb bundle in object storage |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_sessions_tenant_id`, `idx_sessions_project_id`, `idx_sessions_feedback_id`, `idx_sessions_session_id`
+
+#### `issues`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| project_id | UUID | NOT NULL, FK → projects(id) ON DELETE CASCADE | |
+| public_id | TEXT | NOT NULL | Human id like `TAU-2026-0001` |
+| title | TEXT | | Auto or manually set |
+| status | issue_status | NOT NULL, default 'open' | |
+| reporter_email | TEXT | | For notifications |
+| notify_reporter | BOOLEAN | NOT NULL, default false | |
+| resolved_at | TIMESTAMPTZ | | |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_issues_tenant_id`, `idx_issues_project_id`, `idx_issues_public_id`, `idx_issues_status`
+
+#### `issue_updates`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| issue_id | UUID | NOT NULL, FK → issues(id) ON DELETE CASCADE | |
+| member_id | UUID | FK → tenant_members(id) ON DELETE SET NULL | Who made the change |
+| old_status | issue_status | | |
+| new_status | issue_status | NOT NULL | |
+| comment | TEXT | | Optional internal note |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_issue_updates_tenant_id`, `idx_issue_updates_issue_id`, `idx_issue_updates_created_at`
+
+#### `integrations`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| kind | integration_kind | NOT NULL | `slack`, `teams`, `webhook`, `email` |
+| name | TEXT | NOT NULL | Display label |
+| webhook_url | TEXT | | For Slack/Teams/webhook |
+| channel | TEXT | | Slack/Teams channel |
+| from_address | TEXT | | Email sender address |
+| events | event_type[] | NOT NULL, default '{}' | Subscribed events |
+| is_active | BOOLEAN | NOT NULL, default true | |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+| updated_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_integrations_tenant_id`, `idx_integrations_kind`, `idx_integrations_active`
+
+#### `delivery_logs`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK, default uuid_generate_v4() | |
+| tenant_id | UUID | NOT NULL, FK → tenants(id) ON DELETE CASCADE | |
+| integration_id | UUID | FK → integrations(id) ON DELETE SET NULL | Can be null for direct email |
+| event | event_type | NOT NULL | What triggered the delivery |
+| resource_type | TEXT | NOT NULL | `feedback`, `issue` |
+| resource_id | UUID | NOT NULL | ID of the related row |
+| status | delivery_status | NOT NULL, default 'pending' | |
+| provider_message_id | TEXT | | Resend/Slack message id |
+| error_message | TEXT | | On failure |
+| sent_at | TIMESTAMPTZ | | When provider confirmed send |
+| created_at | TIMESTAMPTZ | NOT NULL, default now() | |
+
+**Indexes**: `idx_delivery_logs_tenant_id`, `idx_delivery_logs_integration_id`, `idx_delivery_logs_status`, `idx_delivery_logs_created_at`
+
 ## Plans & feature flags
 
 All plan definitions live in `backend/internal/config/plans.go` so limits and features can be changed without touching business logic.
