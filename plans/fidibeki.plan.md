@@ -1098,6 +1098,8 @@ Account deletion: self-service with 7-day grace + platform admin force-delete +
 - [x] New tenant starts a 14-day trial with the chosen plan's limits.
 - [x] Lazy Stripe customer creation on first billing interaction.
 - [x] Stripe checkout creates a subscription and links it to the tenant.
+- [x] Stripe Checkout success/cancel top-level returns preserve the tenant session; staging cancel
+  verification returned to billing while authenticated without creating a subscription or plan change.
 - [x] Webhooks update plan, status, trial end date (`stripe_events` idempotency; load-from-Stripe).
 - [x] Dunning emails at 3d/1d/0d before trial end (Resend async).
 - [x] Unpaid trial converts to suspended; feedback API blocks suspended tenants.
@@ -1163,8 +1165,8 @@ in deploy (`migrate up` via `DATABASE_URL_DIRECT`). Source maps uploaded to Sent
 - [x] Migrations run before app start (`migrate up` via direct URL); failure = old instance stays live.
 - [x] All env vars documented in `docs/env.md` + `.env.example`.
 - [x] Healthcheck and DB connectivity verified on deploy (`/readyz`).
-- [x] Railway staging bucket CORS supports browser presigned `PUT`; a real widget screenshot and
-  replay batch uploaded, Gemini OCR completed, replay merge completed, and masked playback rendered.
+- [x] Railway staging bucket CORS supports browser presigned `PUT`; real widget screenshot, audio,
+  and replay uploads completed, Gemini OCR completed, replay merge completed, and masked playback rendered.
 - [x] Source-map upload is integrated into CI (Go release + widget + Nuxt); credentials gate execution.
 - [x] `docs/runbook.md` covers: DB migration failure, Stripe webhook replay, Redis queue backup,
   AI processing failures, email delivery failures, tenant suspended incorrectly, widget not loading,
