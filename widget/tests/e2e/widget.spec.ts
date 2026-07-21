@@ -3,12 +3,14 @@ import { expect, test } from '@playwright/test'
 test('loads the matching rule and serializes feedback through the public contract', async ({ page }) => {
   const loadedScripts: string[] = []
   const submissions: Array<Record<string, unknown>> = []
+  const connections: string[] = []
   let feedbackAttempts = 0
   page.on('request', (request) => {
     if (request.resourceType() === 'script') loadedScripts.push(request.url())
   })
   await page.route('**/v1/widget/config*', async (route) => {
     expect(route.request().headers()['x-fidibeki-public-key']).toBe('pk_live_browser_contract')
+    expect(new URL(route.request().url()).searchParams.has('page_url')).toBe(false)
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -34,6 +36,13 @@ test('loads the matching rule and serializes feedback through the public contrac
       }),
     })
   })
+  await page.route('**/v1/widget/connected*', async (route) => {
+		const requestURL = new URL(route.request().url())
+		expect(requestURL.searchParams.get('key')).toBe('pk_live_browser_contract')
+		expect(requestURL.searchParams.get('rule_id')).toBe('rule-browser')
+		connections.push(requestURL.href)
+		await route.fulfill({ status: 204 })
+	})
   await page.route('**/v1/feedback?*', async (route) => {
 		expect(new URL(route.request().url()).searchParams.get('key')).toBe('pk_live_browser_contract')
     submissions.push(route.request().postDataJSON() as Record<string, unknown>)
@@ -47,6 +56,7 @@ test('loads the matching rule and serializes feedback through the public contrac
 
   await page.goto('/sample.html')
   await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect.poll(() => connections.length).toBeGreaterThan(0)
   if (process.env.FIDIBEKI_VISUAL === '1') {
     await page.waitForTimeout(300)
     await page.screenshot({ path: '/tmp/fidibeki-widget-desktop.png', fullPage: true })

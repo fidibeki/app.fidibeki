@@ -1,7 +1,7 @@
 # Fidibeki Activation Flow Design
 
 **Date:** 2026-07-21
-**Status:** Approved direction, awaiting written-spec review
+**Status:** Approved; implementation verified locally, staging deployment pending
 **Target:** Staging only; production remains deferred
 
 ## Problem
@@ -41,6 +41,7 @@ backend's Turnstile hostname check because staging `BASE_DOMAIN` is `staging.fid
 Nuxt receives two new runtime values:
 
 - `NUXT_BASE_DOMAIN`: private server configuration used to construct the trusted platform host.
+- `NUXT_PUBLIC_BASE_DOMAIN`: browser-visible root used for workspace and widget URLs.
 - `NUXT_PUBLIC_TURNSTILE_SITE_KEY`: public configuration used only to render Turnstile.
 
 The server proxy treats only `GET /v1/plans` and `POST /v1/signup` as platform requests and forwards
@@ -111,9 +112,10 @@ first-run activation, and incomplete setup remains recoverable from the project 
 
 ## Widget Connection Signal
 
-Add nullable `widget_last_seen_at` to `projects`. A successful authorized widget configuration fetch
-updates it only when the stored value is absent or older than five minutes. This provides an
-objective installation signal while limiting write amplification.
+Add nullable `widget_last_seen_at` to `projects`. After local rule resolution, the widget sends an
+authorized acknowledgement containing only the selected enabled rule ID. The backend updates the
+timestamp only when the stored value is absent or older than five minutes. This provides an
+objective installation signal while limiting write amplification and avoids transmitting page URLs.
 
 Tenant project responses include `widget_last_seen_at`. The activation page polls the created project
 every five seconds while visible and stops after connection, navigation, or a two-minute foreground
@@ -151,8 +153,8 @@ Backend coverage:
 
 - Public plan catalog excludes Enterprise and provider IDs.
 - Signup routing remains platform-host only.
-- Widget activity updates after an authorized config request, is throttled, and is unchanged for
-  rejected origins, keys, suspended tenants, or unmatched rules.
+- Widget activity updates after an authorized matched-rule acknowledgement, is throttled, and is
+  unchanged for rejected origins, keys, suspended tenants, or unmatched rules.
 - Project JSON includes nullable and populated activity timestamps.
 - Migration up-down-up remains clean and RLS behavior remains intact.
 
@@ -169,7 +171,7 @@ Frontend coverage:
 Staging verification:
 
 - Configure `staging.fidibeki.com` on the web service and confirm DNS/TLS.
-- Set `NUXT_BASE_DOMAIN=staging.fidibeki.com` and reference the API's public Turnstile site key from
+- Set `NUXT_BASE_DOMAIN=staging.fidibeki.com`, `NUXT_PUBLIC_BASE_DOMAIN=staging.fidibeki.com`, and reference the API's public Turnstile site key from
   the web service.
 - Verify the signup page and Turnstile rendering without creating production resources.
 - Complete one controlled staging signup, magic-link verification, first project, widget load from an

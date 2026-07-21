@@ -1,5 +1,10 @@
 export default defineNuxtRouteMiddleware(async (to) => {
-  if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/auth/verify') return
+  const config = useRuntimeConfig()
+  if ((to.path === '/' || to.path === '/login') &&
+    isBaseDomainHost(useRequestURL().hostname, String(config.public.baseDomain || ''))) {
+    return navigateTo('/signup')
+  }
+  if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' || to.path === '/auth/verify') return
 
   const { authenticated, member } = useAuth()
 
@@ -14,6 +19,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const permissions = member.value?.permissions || []
   const home = firstAccessibleWorkspacePath(permissions)
+  if (to.path === '/getting-started' && !canActivateWorkspace(permissions)) return navigateTo(home)
   if (to.path === '/access-denied' && home !== '/access-denied') return navigateTo(home)
   if (!canAccessWorkspacePath(to.path, permissions)) return navigateTo(home)
 })

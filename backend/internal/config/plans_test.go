@@ -34,6 +34,24 @@ func TestPlanDefinitionsMatchProductLimits(t *testing.T) {
 	}
 }
 
+func TestSelfServicePlansAreStableAndExcludeEnterprise(t *testing.T) {
+	t.Parallel()
+
+	plans := config.SelfServicePlans()
+	want := []tenant.Plan{tenant.PlanStarter, tenant.PlanGrowth, tenant.PlanScale}
+	if len(plans) != len(want) {
+		t.Fatalf("SelfServicePlans() length = %d, want %d", len(plans), len(want))
+	}
+	for index, plan := range plans {
+		if plan.Plan != want[index] {
+			t.Errorf("SelfServicePlans()[%d].Plan = %q, want %q", index, plan.Plan, want[index])
+		}
+		if plan.MonthlyPriceCents == nil {
+			t.Errorf("SelfServicePlans()[%d].MonthlyPriceCents = nil", index)
+		}
+	}
+}
+
 func TestCanUseFeatureRejectsUnavailableAndUnknownFeatures(t *testing.T) {
 	t.Parallel()
 

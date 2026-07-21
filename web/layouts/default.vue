@@ -103,7 +103,7 @@ watch(
         <span class="sr-only">Open navigation</span>
       </button>
       <NuxtLink :to="workspaceHome" class="app-brand" aria-label="Fidibeki workspace">
-        <span>F</span><b>fidibeki</b>
+        <img src="/brand/fidibeki-color.png" alt="Fidibeki" />
       </NuxtLink>
       <button class="app-tenant-switcher" type="button" title="Current workspace">
         <span>{{ tenantInitials }}</span>

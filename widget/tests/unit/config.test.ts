@@ -1,4 +1,4 @@
-import { cacheIsFresh, fetchConfiguration, matchRule, ruleMatches } from '../../src/config'
+import { cacheIsFresh, fetchConfiguration, matchRule, reportConnection, ruleMatches } from '../../src/config'
 import type { WidgetConfiguration } from '../../src/types'
 import { rule } from './fixtures'
 
@@ -42,6 +42,7 @@ describe('configuration fetch and cache', () => {
     })).resolves.toEqual(configuration)
     const [url, options] = fetchImpl.mock.calls[0] ?? []
     expect(String(url)).toContain('key=pk_live_test')
+    expect(String(url)).not.toContain('page_url')
     expect(options).toMatchObject({ credentials: 'omit', mode: 'cors' })
     expect(new Headers(options?.headers).get('X-Fidibeki-Public-Key')).toBe('pk_live_test')
   })
@@ -49,8 +50,22 @@ describe('configuration fetch and cache', () => {
   it('throws for denied configuration', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 403 }))
     await expect(fetchConfiguration({
-      endpoint: new URL('https://widget.test/v1/widget/config'), publicKey: 'denied', fetchImpl,
+      endpoint: new URL('https://widget.test/v1/widget/config'), publicKey: 'denied',
+      fetchImpl,
     })).rejects.toThrow('status 403')
+  })
+
+  it('reports only the selected rule without page data', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 204 }))
+    await expect(reportConnection({
+      endpoint: new URL('https://widget.test/v1/widget/connected'),
+      publicKey: 'pk_live_test',
+      ruleID: 'rule-test',
+      fetchImpl,
+    })).resolves.toBeUndefined()
+    const [url, options] = fetchImpl.mock.calls[0] ?? []
+    expect(String(url)).toBe('https://widget.test/v1/widget/connected?key=pk_live_test&rule_id=rule-test')
+    expect(options).toEqual({ method: 'POST', mode: 'cors', credentials: 'omit' })
   })
 
   it('uses the server refresh interval', () => {

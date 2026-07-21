@@ -70,6 +70,9 @@ for both services because configuration is validated before the command starts.
 | `HOST` | web | Listen host; image defaults to `0.0.0.0`. |
 | `NUXT_API_UPSTREAM` | web | Private API origin used by the same-origin server proxy. |
 | `NUXT_INTERNAL_PROXY_SECRET` | web | Must equal the API service's `INTERNAL_PROXY_SECRET`; never expose it through public runtime config. |
+| `NUXT_BASE_DOMAIN` | web | Server-only trusted base domain used when proxying public platform endpoints. |
+| `NUXT_PUBLIC_BASE_DOMAIN` | web | Browser-visible base domain used to construct workspace and environment-specific widget URLs. |
+| `NUXT_PUBLIC_TURNSTILE_SITE_KEY` | web | Public Turnstile site key rendered by the signup form. |
 | `WIDGET_API_UPSTREAM` | widget | Private API upstream for `widget.fidibeki.com`. |
 | `API_UPSTREAM` | widget | Optional fallback upstream for non-widget edge traffic. |
 | `WIDGET_HOST` | widget | Additional widget hostname, used for environment-specific Railway domains. |

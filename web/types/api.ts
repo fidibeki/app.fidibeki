@@ -52,6 +52,7 @@ export interface Project {
   name: string
   public_key: string
   allowed_domains: string[]
+  widget_last_seen_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -244,6 +245,14 @@ export interface PlanDefinition {
   yearly_discount_percent?: number | null
   limits: PlanLimits
   features: PlanFeatures
+}
+
+export interface PlanCatalogResponse {
+  plans: PlanDefinition[]
+}
+
+export interface SignupResponse {
+  tenant: TenantSummary
 }
 
 export interface TenantConfiguration {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight, CheckCircle2 } from '@lucide/vue'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { baseDomainURL } from '~/utils/workspace-url'
 
 definePageMeta({ layout: false })
 
@@ -12,6 +13,8 @@ const pending = ref(false)
 const sent = ref(false)
 const errorMessage = ref('')
 const requestURL = useRequestURL()
+const config = useRuntimeConfig()
+const signupURL = baseDomainURL(String(config.public.baseDomain || requestURL.hostname), '/signup', requestURL)
 const hostLabel = computed(() => {
   const first = requestURL.hostname.split('.')[0]
   return first && !['localhost', '127', 'www'].includes(first) ? first : 'your workspace'
@@ -50,7 +53,7 @@ useHead({ title: 'Sign in · Fidibeki' })
 <template>
   <main class="auth-page">
     <section class="auth-context">
-      <NuxtLink to="/" class="app-brand"><span>F</span><b>fidibeki</b></NuxtLink>
+      <NuxtLink to="/" class="app-brand auth-brand"><img src="/brand/fidibeki-white.png" alt="Fidibeki" /></NuxtLink>
       <div>
         <h1>Return to the feedback queue.</h1>
         <p>Review captured evidence, connect product signals to issues, and keep the team moving from one operational workspace.</p>
@@ -70,7 +73,14 @@ useHead({ title: 'Sign in · Fidibeki' })
         </button>
         <p v-if="sent" class="auth-message auth-message--success" role="status"><CheckCircle2 :size="15" /> Check your inbox. The link expires in 10 minutes.</p>
         <p v-if="errorMessage" class="auth-message auth-message--error" role="alert">{{ errorMessage }}</p>
+        <p class="auth-signup-link">New to Fidibeki? <a :href="signupURL">Create a workspace</a></p>
       </form>
     </section>
   </main>
 </template>
+
+<style scoped>
+.auth-brand img { display: block; width: 142px; height: auto; }
+.auth-signup-link { margin-top: 20px !important; text-align: center; }
+.auth-signup-link a { color: var(--teal); font-weight: 750; }
+</style>

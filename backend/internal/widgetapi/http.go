@@ -21,6 +21,7 @@ const PublicKeyHeader = "X-Fidibeki-Public-Key"
 
 type ConfigurationStore interface {
 	LoadPublicConfiguration(context.Context, db.Querier, string) (project.PublicConfiguration, error)
+	MarkWidgetSeen(context.Context, db.Querier, string, time.Time) error
 }
 
 type HTTPOptions struct {
@@ -95,6 +96,7 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	}
 	router.Get("/v1/widget/config", handler.configuration)
 	router.Options("/v1/widget/config", handler.preflight)
+	router.Post("/v1/widget/connected", handler.connected)
 }
 
 func (h *HTTPHandler) preflight(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +139,45 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 		ProjectID: configuration.ProjectID, Features: definition.Features,
 		Rules: rules, RefreshAfterSeconds: 300, ErrorReportingDSN: h.options.SentryDSN,
 	})
+}
+
+func (h *HTTPHandler) connected(w http.ResponseWriter, r *http.Request) {
+	configuration, origin, ok := h.authorize(w, r, r.URL.Query().Get("key"))
+	if !ok {
+		return
+	}
+	if _, exists := config.PlanFor(configuration.Plan); !exists {
+		h.logger.ErrorContext(r.Context(), "widget connection project has unknown plan", "project_id", configuration.ProjectID)
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	ruleID := r.URL.Query().Get("rule_id")
+	if !configurationHasRule(configuration, ruleID) {
+		writeAccessDenied(w)
+		return
+	}
+	seenAt := time.Now().UTC()
+	if h.options.Now != nil {
+		seenAt = h.options.Now().UTC()
+	}
+	if err := h.options.Store.MarkWidgetSeen(r.Context(), h.options.Database, configuration.ProjectID, seenAt); err != nil {
+		h.logger.ErrorContext(r.Context(), "record widget activity failed", "project_id", configuration.ProjectID, "error", err)
+	}
+	SetCORSHeaders(w, origin)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func configurationHasRule(configuration project.PublicConfiguration, ruleID string) bool {
+	if ruleID == "" {
+		return false
+	}
+	for _, rule := range configuration.Rules {
+		if rule.ID == ruleID {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *HTTPHandler) authorize(

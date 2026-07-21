@@ -12,10 +12,12 @@ import {
 } from '@lucide/vue'
 import type { Project, WidgetRule, WidgetRuleInput } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
+import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
 const { can, tenant } = useAuth()
+const config = useRuntimeConfig()
 const projectID = computed(() => String(route.params.id || ''))
 const selectedRuleID = ref('')
 const editingNew = ref(false)
@@ -26,19 +28,7 @@ const projectName = ref('')
 const projectDomains = ref('')
 const copied = ref(false)
 
-function defaultRule(): WidgetRuleInput {
-  return {
-    name: 'All pages', priority: 0, enabled: true, matcher_type: 'all_pages', matcher_value: null,
-    trigger_type: 'delay', trigger_delay_seconds: 0, trigger_scroll_percent: null,
-    can_rate: true, can_write_text: true, can_record_audio: false, can_record_video: false,
-    can_attach_element: false, can_attach_screenshot: false, greeting: 'How was your experience?',
-    position: 'bottom-right', theme: 'auto', accent_color: '#087f73', replay_mode: 'none',
-    replay_sampling_rate: 0, replay_max_duration_seconds: 1800, replay_max_events: 50000,
-    replay_mask_all_inputs: true, replay_mask_text_selector: null,
-  }
-}
-
-const ruleForm = reactive<WidgetRuleInput>(defaultRule())
+const ruleForm = reactive<WidgetRuleInput>(defaultWidgetRule())
 
 const { data, status, error, refresh } = await useAsyncData(
   () => `project:${projectID.value}`,
@@ -70,12 +60,11 @@ const supportsAudio = computed(() => tenant.value?.plan !== 'starter')
 const supportsDOM = computed(() => tenant.value?.plan !== 'starter')
 const supportsReplay = computed(() => tenant.value?.plan !== 'starter')
 const supportsVideo = computed(() => tenant.value?.plan === 'scale' || tenant.value?.plan === 'enterprise')
-const embedCode = computed(() => {
-  const origin = import.meta.client && window.location.hostname.endsWith('localhost')
-    ? 'http://widget.localhost:8088'
-    : 'https://widget.fidibeki.com'
-  return `<script src="${origin}/v1/loader.js" data-fidibeki-key="${data.value?.project.public_key || ''}" async><\/script>`
-})
+const embedCode = computed(() => widgetEmbedCode(
+  data.value?.project.public_key || '',
+  String(config.public.baseDomain || 'fidibeki.com'),
+))
+const connectedAt = computed(() => data.value?.project.widget_last_seen_at || '')
 
 function selectRule(rule: WidgetRule) {
   selectedRuleID.value = rule.id
@@ -99,7 +88,7 @@ function selectRule(rule: WidgetRule) {
 function startNewRule() {
   selectedRuleID.value = ''
   editingNew.value = true
-  Object.assign(ruleForm, defaultRule())
+  Object.assign(ruleForm, defaultWidgetRule())
 }
 
 function normalizedRule(): WidgetRuleInput {
@@ -183,9 +172,13 @@ async function deleteProject() {
 }
 
 async function copyEmbed() {
-  await navigator.clipboard.writeText(embedCode.value)
-  copied.value = true
-  window.setTimeout(() => { copied.value = false }, 1800)
+  try {
+    await navigator.clipboard.writeText(embedCode.value)
+    copied.value = true
+    window.setTimeout(() => { copied.value = false }, 1800)
+  } catch {
+    formError.value = 'The install code could not be copied. Select the code and copy it manually.'
+  }
 }
 
 useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }))
@@ -201,7 +194,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
     <section v-else-if="error" class="app-state"><div><AlertTriangle :size="24" /><h2>Project unavailable</h2><p>{{ apiErrorMessage(error) }}</p></div></section>
     <template v-else-if="data">
       <section class="project-config-band">
-        <div><p class="app-eyebrow">Project configuration</p><h1>{{ data.project.name }}</h1><span>{{ data.rules.length }} widget rule{{ data.rules.length === 1 ? '' : 's' }}</span></div>
+        <div><p class="app-eyebrow">Project configuration</p><h1>{{ data.project.name }}</h1><span>{{ data.rules.length }} widget rule{{ data.rules.length === 1 ? '' : 's' }}</span><p class="project-connection" :data-connected="Boolean(connectedAt)"><i />{{ connectedAt ? `Connected ${new Date(connectedAt).toLocaleString()}` : 'Awaiting widget connection' }}</p></div>
         <div class="project-embed"><Code2 :size="15" /><code>{{ embedCode }}</code><button title="Copy embed code" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
       </section>
       <p v-if="formError" class="project-config-error" role="alert"><AlertTriangle :size="15" /> {{ formError }}</p>
@@ -238,6 +231,9 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 </template>
 
 <style scoped>
+.project-connection { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--amber); font-size: 9px; font-weight: 700; }
+.project-connection i { width: 7px; height: 7px; background: currentColor; border-radius: 50%; }
+.project-connection[data-connected='true'] { color: var(--green); }
 .project-workspace { min-height: calc(100vh - 56px); background: #f6f8f7; }
 .project-workspace-head { display: flex; min-height: 64px; align-items: center; gap: 14px; padding: 9px 18px; background: #fff; border-bottom: 1px solid var(--line); }
 .project-workspace-head > div { display: flex; align-items: center; gap: 9px; }

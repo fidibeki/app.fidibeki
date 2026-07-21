@@ -54,6 +54,12 @@
   letter-spacing: 0;
 }
 
+.app-brand > img {
+  display: block;
+  width: 106px;
+  height: auto;
+}
+
 .app-tenant-switcher {
   display: flex;
   min-width: 150px;
@@ -563,6 +569,10 @@
 .auth-context .app-brand > span {
   background: #fff;
   color: #17231f;
+}
+
+.auth-context .app-brand > img {
+  width: 142px;
 }
 
 .auth-context > div:last-child {

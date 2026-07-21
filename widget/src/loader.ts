@@ -1,4 +1,4 @@
-import { cacheIsFresh, fetchConfiguration, matchRule, type ConfigCache } from './config'
+import { cacheIsFresh, fetchConfiguration, matchRule, reportConnection, type ConfigCache } from './config'
 import { isSuppressed, suppress } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -44,6 +44,7 @@ if (script && publicKey) {
 async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<void> {
   const assetBase = new URL('.', loaderScript.src)
   const configurationEndpoint = new URL('widget/config', assetBase)
+  const connectionEndpoint = new URL('widget/connected', assetBase)
   let cache: ConfigCache | null = null
   let cleanupTrigger: TriggerCleanup | null = null
   let unmountWidget: WidgetUnmount | null = null
@@ -66,7 +67,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
     const now = Date.now()
     if (!force && cacheIsFresh(cache, now)) return cache.value
-    const value = await fetchConfiguration({ endpoint: configurationEndpoint, publicKey: key })
+    const value = await fetchConfiguration({
+      endpoint: configurationEndpoint,
+      publicKey: key,
+    })
     cache = { value, fetchedAt: now }
     return value
   }
@@ -81,6 +85,9 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
       const rule = matchRule(configuration.rules, window.location.href)
+			if (rule) {
+				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
+			}
 			await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
       if (!rule || isSuppressed(sessionStorage, configuration.project_id, rule.id, window.location.href)) return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -38,7 +39,7 @@ func (Store) CreateProject(
 		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (public_key) DO NOTHING
-		RETURNING id, tenant_id, name, public_key, allowed_domains, created_at, updated_at
+		RETURNING id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
 	`, tenantID, name, publicKey, allowedDomains))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrPublicKeyConflict
@@ -51,7 +52,7 @@ func (Store) CreateProject(
 
 func (Store) ListProjects(ctx context.Context, query db.Querier, tenantID string) ([]Project, error) {
 	rows, err := query.Query(ctx, `
-		SELECT id, tenant_id, name, public_key, allowed_domains, created_at, updated_at
+		SELECT id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 ORDER BY created_at, id
 	`, tenantID)
 	if err != nil {
@@ -79,7 +80,7 @@ func (Store) GetProject(
 	projectID string,
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
-		SELECT id, tenant_id, name, public_key, allowed_domains, created_at, updated_at
+		SELECT id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 AND id = $2
 	`, tenantID, projectID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -102,7 +103,7 @@ func (Store) UpdateProject(
 	project, err := scanProject(query.QueryRow(ctx, `
 		UPDATE projects SET name = $3, allowed_domains = $4
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, name, public_key, allowed_domains, created_at, updated_at
+		RETURNING id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
 	`, tenantID, projectID, name, allowedDomains))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrNotFound
@@ -321,6 +322,19 @@ func (Store) LoadPublicConfiguration(
 	return configuration, nil
 }
 
+func (Store) MarkWidgetSeen(ctx context.Context, query db.Querier, projectID string, seenAt time.Time) error {
+	_, err := query.Exec(ctx, `
+		UPDATE projects
+		SET widget_last_seen_at = $2
+		WHERE id = $1
+		  AND (widget_last_seen_at IS NULL OR widget_last_seen_at < $2::timestamptz - interval '5 minutes')
+	`, projectID, seenAt)
+	if err != nil {
+		return fmt.Errorf("mark widget seen: %w", err)
+	}
+	return nil
+}
+
 const widgetRuleColumns = `
 	id, project_id, name, priority, enabled, matcher_type, matcher_value,
 	trigger_type, trigger_delay_seconds, trigger_scroll_percent,
@@ -377,10 +391,14 @@ type rowScanner interface {
 
 func scanProject(row rowScanner) (Project, error) {
 	var project Project
+	var widgetLastSeenAt pgtype.Timestamptz
 	err := row.Scan(
 		&project.ID, &project.TenantID, &project.Name, &project.PublicKey,
-		&project.AllowedDomains, &project.CreatedAt, &project.UpdatedAt,
+		&project.AllowedDomains, &widgetLastSeenAt, &project.CreatedAt, &project.UpdatedAt,
 	)
+	if widgetLastSeenAt.Valid {
+		project.WidgetLastSeenAt = &widgetLastSeenAt.Time
+	}
 	return project, err
 }
 

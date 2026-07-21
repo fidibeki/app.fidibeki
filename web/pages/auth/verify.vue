@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2 } from '@lucide/vue'
-import type { AuthResponse } from '~/types/api'
+import type { AuthResponse, Project } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 
 definePageMeta({ layout: false })
 
 const { $apiFetch } = useNuxtApp()
+const route = useRoute()
 const { apply } = useAuth()
 const state = ref<'verifying' | 'success' | 'failed'>('verifying')
 const errorMessage = ref('')
@@ -28,7 +29,25 @@ onMounted(async () => {
     })
     apply(response)
     state.value = 'success'
-    await navigateTo(firstAccessibleWorkspacePath(response.member.permissions))
+    const returnTo = typeof route.query.return_to === 'string' && route.query.return_to.startsWith('/') &&
+      !route.query.return_to.startsWith('//') ? route.query.return_to : ''
+    if (returnTo) {
+      await navigateTo(returnTo)
+      return
+    }
+    const permissions = response.member.permissions
+    if (canActivateWorkspace(permissions)) {
+      try {
+        const projects = await $apiFetch<{ projects: Project[] }>('/v1/projects')
+        if (projects.projects.length === 0) {
+          await navigateTo('/getting-started')
+          return
+        }
+      } catch {
+        // Authentication succeeded; the normal workspace route can recover from a transient list failure.
+      }
+    }
+    await navigateTo(firstAccessibleWorkspacePath(permissions))
   } catch (error) {
     state.value = 'failed'
     errorMessage.value = apiErrorMessage(error, 'This sign-in link is invalid or has expired.')
@@ -41,7 +60,7 @@ useHead({ title: 'Verify sign in · Fidibeki' })
 <template>
   <main class="auth-page">
     <section class="auth-context">
-      <NuxtLink to="/" class="app-brand"><span>F</span><b>fidibeki</b></NuxtLink>
+      <NuxtLink to="/" class="app-brand"><img src="/brand/fidibeki-white.png" alt="Fidibeki" /></NuxtLink>
       <div><h1>Secure workspace access.</h1><p>The verification token is removed from the address before it is exchanged for your session.</p></div>
     </section>
     <section class="auth-panel">

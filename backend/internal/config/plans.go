@@ -113,6 +113,15 @@ func PlanFor(plan tenant.Plan) (PlanDefinition, bool) {
 	return definition, exists
 }
 
+func SelfServicePlans() []PlanDefinition {
+	plans := []tenant.Plan{tenant.PlanStarter, tenant.PlanGrowth, tenant.PlanScale}
+	definitions := make([]PlanDefinition, 0, len(plans))
+	for _, plan := range plans {
+		definitions = append(definitions, planDefinitions[plan])
+	}
+	return definitions
+}
+
 func CanUseFeature(resolved tenant.Tenant, feature Feature) bool {
 	definition, exists := PlanFor(resolved.Plan)
 	return exists && definition.Features.Enabled(feature)

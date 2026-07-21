@@ -47,13 +47,14 @@ const (
 )
 
 type Project struct {
-	ID             string    `json:"id"`
-	TenantID       string    `json:"tenant_id"`
-	Name           string    `json:"name"`
-	PublicKey      string    `json:"public_key"`
-	AllowedDomains []string  `json:"allowed_domains"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID               string     `json:"id"`
+	TenantID         string     `json:"tenant_id"`
+	Name             string     `json:"name"`
+	PublicKey        string     `json:"public_key"`
+	AllowedDomains   []string   `json:"allowed_domains"`
+	WidgetLastSeenAt *time.Time `json:"widget_last_seen_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type WidgetRule struct {

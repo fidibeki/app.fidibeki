@@ -124,6 +124,31 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if len(created.Project.AllowedDomains) != 2 || created.Project.AllowedDomains[0] != "example.com" {
 		t.Errorf("allowed domains = %#v", created.Project.AllowedDomains)
 	}
+	if created.Project.WidgetLastSeenAt != nil {
+		t.Errorf("new project widget activity = %s, want nil", created.Project.WidgetLastSeenAt)
+	}
+	firstSeen := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	if err := (Store{}).MarkWidgetSeen(ctx, pools.Admin, created.Project.ID, firstSeen); err != nil {
+		t.Fatalf("mark widget seen: %v", err)
+	}
+	if err := (Store{}).MarkWidgetSeen(ctx, pools.Admin, created.Project.ID, firstSeen.Add(time.Minute)); err != nil {
+		t.Fatalf("throttle widget activity: %v", err)
+	}
+	seenProject, err := (Store{}).GetProject(ctx, pools.Admin, acmeID, created.Project.ID)
+	if err != nil {
+		t.Fatalf("get project activity: %v", err)
+	}
+	if seenProject.WidgetLastSeenAt == nil || !seenProject.WidgetLastSeenAt.Equal(firstSeen) {
+		t.Fatalf("throttled widget activity = %v, want %s", seenProject.WidgetLastSeenAt, firstSeen)
+	}
+	refreshedSeen := firstSeen.Add(6 * time.Minute)
+	if err := (Store{}).MarkWidgetSeen(ctx, pools.Admin, created.Project.ID, refreshedSeen); err != nil {
+		t.Fatalf("refresh widget activity: %v", err)
+	}
+	seenProject, err = (Store{}).GetProject(ctx, pools.Admin, acmeID, created.Project.ID)
+	if err != nil || seenProject.WidgetLastSeenAt == nil || !seenProject.WidgetLastSeenAt.Equal(refreshedSeen) {
+		t.Fatalf("refreshed widget activity = %v, error = %v", seenProject.WidgetLastSeenAt, err)
+	}
 
 	limitResponse := performProjectRequest(
 		handler, "acme", http.MethodPost, "/v1/projects",
@@ -134,7 +159,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	}
 
 	listed := performProjectRequest(handler, "acme", http.MethodGet, "/v1/projects", "", viewerToken)
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), created.Project.ID) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), created.Project.ID) ||
+		!strings.Contains(listed.Body.String(), `"widget_last_seen_at":"2026-07-21T12:06:00Z"`) {
 		t.Errorf("list projects status = %d, body = %s", listed.Code, listed.Body.String())
 	}
 	viewerCreate := performProjectRequest(

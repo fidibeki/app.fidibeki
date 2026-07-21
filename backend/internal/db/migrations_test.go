@@ -529,8 +529,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 38 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 38 clean", version, dirty)
+	if version != 39 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 39 clean", version, dirty)
 	}
 }
 

@@ -22,6 +22,28 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
   return response.json() as Promise<WidgetConfiguration>
 }
 
+export interface ConnectionRequest {
+  endpoint: URL
+  publicKey: string
+  ruleID: string
+  fetchImpl?: typeof fetch
+}
+
+export async function reportConnection(request: ConnectionRequest): Promise<void> {
+  const fetchImpl = request.fetchImpl ?? fetch
+  const url = new URL(request.endpoint)
+  url.searchParams.set('key', request.publicKey)
+  url.searchParams.set('rule_id', request.ruleID)
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    mode: 'cors',
+    credentials: 'omit',
+  })
+  if (!response.ok) {
+    throw new Error(`Fidibeki connection report failed with status ${response.status}`)
+  }
+}
+
 export function matchRule(rules: WidgetRule[], currentURL: string): WidgetRule | null {
   const ordered = [...rules].sort((left, right) => right.priority - left.priority)
   for (const rule of ordered) {

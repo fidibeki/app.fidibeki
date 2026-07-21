@@ -29,6 +29,7 @@ import {
 import { apiErrorMessage } from '~/utils/api-fetch'
 
 const route = useRoute()
+const runtimeConfig = useRuntimeConfig()
 const { $apiFetch } = useNuxtApp()
 const { can, member: currentMember } = useAuth()
 
@@ -87,6 +88,11 @@ const integrationURL = ref('')
 const integrationChannel = ref('')
 const integrationEvents = ref<IntegrationEvent[]>(['feedback.created'])
 const revealedSecret = ref('')
+const workspaceHost = computed(() => {
+  const slug = data.value?.configuration.tenant.slug
+  if (!slug) return ''
+  return `${slug}.${String(runtimeConfig.public.baseDomain || 'fidibeki.com')}`
+})
 
 const availablePermissionGroups = computed(() => tenantPermissionGroups.map((group) => ({
   ...group,
@@ -293,7 +299,7 @@ useHead({ title: 'Settings - Fidibeki' })
         <div class="app-surface settings-section">
           <header><div><p class="app-eyebrow">Workspace</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ data.configuration.tenant.status }}</span></header>
           <dl class="settings-ledger">
-            <div><dt>Subdomain</dt><dd>{{ data.configuration.tenant.slug }}.fidibeki.com</dd></div>
+            <div><dt>Subdomain</dt><dd>{{ workspaceHost }}</dd></div>
             <div><dt>Plan</dt><dd class="capitalize">{{ data.configuration.plan.plan }}</dd></div>
             <div><dt>Rate</dt><dd>{{ planPrice }}</dd></div>
             <div><dt>Retention</dt><dd>{{ data.configuration.plan.limits.storage_days < 0 ? 'Custom' : `${data.configuration.plan.limits.storage_days} days` }}</dd></div>

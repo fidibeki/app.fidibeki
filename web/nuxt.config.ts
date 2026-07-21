@@ -1,3 +1,7 @@
+const developmentBaseDomain = process.env.NODE_ENV === 'development' ? 'localhost' : ''
+const baseDomain = process.env.NUXT_BASE_DOMAIN || developmentBaseDomain
+const publicBaseDomain = process.env.NUXT_PUBLIC_BASE_DOMAIN || developmentBaseDomain
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-21',
   components: [
@@ -12,6 +16,7 @@ export default defineNuxtConfig({
   routeRules: {
     '/': { ssr: true },
     '/login': { ssr: true },
+    '/signup': { ssr: true },
     '/auth/verify': { ssr: false },
     '/designs/**': { ssr: false },
   },
@@ -22,6 +27,11 @@ export default defineNuxtConfig({
     apiUpstream:
       process.env.NUXT_API_UPSTREAM ||
       (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8088' : ''),
+    baseDomain,
+    public: {
+      baseDomain: publicBaseDomain,
+      turnstileSiteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
+    },
   },
   typescript: {
     strict: true,

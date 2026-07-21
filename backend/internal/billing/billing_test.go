@@ -208,6 +208,13 @@ func TestPlatformHTTPRoutesAndErrors(t *testing.T) {
 		router.ServeHTTP(response, req)
 		return response
 	}
+	plansRequest := httptest.NewRequest(http.MethodGet, "/v1/plans", nil)
+	plansResponse := httptest.NewRecorder()
+	router.ServeHTTP(plansResponse, plansRequest)
+	if plansResponse.Code != http.StatusOK || !strings.Contains(plansResponse.Body.String(), `"plan":"growth"`) ||
+		strings.Contains(plansResponse.Body.String(), `"plan":"enterprise"`) {
+		t.Fatalf("plans response = %d %s", plansResponse.Code, plansResponse.Body.String())
+	}
 	response := request("/v1/signup", `{"name":"Acme","slug":"acme","email":"owner@acme.test","plan":"starter","turnstile_token":"token"}`, nil)
 	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"id":"tenant"`) {
 		t.Fatalf("signup response = %d %s", response.Code, response.Body.String())

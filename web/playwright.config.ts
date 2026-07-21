@@ -16,7 +16,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: process.env.PLAYWRIGHT_EXTERNAL ? undefined : {
-    command: `NUXT_IGNORE_LOCK=1 ./node_modules/.bin/nuxt dev --host 127.0.0.1 --port ${port}`,
+    command: `NUXT_IGNORE_LOCK=1 NUXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA ./node_modules/.bin/nuxt dev --host 127.0.0.1 --port ${port}`,
     url: `http://127.0.0.1:${port}/designs`,
     reuseExistingServer: true,
     timeout: 120_000,

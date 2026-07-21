@@ -1,4 +1,5 @@
 import { getRequestHost, getRequestURL, proxyRequest } from 'h3'
+import { proxyHostForRequest } from '../utils/proxy-host'
 
 const apiPrefixes = ['/auth/', '/v1/', '/healthz', '/readyz']
 
@@ -15,9 +16,20 @@ export default defineEventHandler(async (event) => {
   if (!proxySecret) {
     throw createError({ statusCode: 503, statusMessage: 'API proxy is not configured' })
   }
+  let proxyHost = ''
+  try {
+    proxyHost = proxyHostForRequest(
+      event.method,
+      path,
+      getRequestHost(event, { xForwardedHost: false }),
+      String(config.baseDomain || ''),
+    )
+  } catch {
+    throw createError({ statusCode: 503, statusMessage: 'Base domain is not configured' })
+  }
   return proxyRequest(event, target.toString(), {
     headers: {
-      'x-fidibeki-proxy-host': getRequestHost(event, { xForwardedHost: false }),
+      'x-fidibeki-proxy-host': proxyHost,
       'x-fidibeki-proxy-secret': proxySecret,
     },
   })

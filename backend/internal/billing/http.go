@@ -10,6 +10,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
@@ -24,8 +25,13 @@ type HTTPHandler struct{ options HTTPOptions }
 
 func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 	handler := &HTTPHandler{options: options}
+	router.Get("/v1/plans", handler.plans)
 	router.Post("/v1/signup", handler.signup)
 	router.Post("/v1/billing/webhooks/stripe", handler.webhook)
+}
+
+func (h *HTTPHandler) plans(w http.ResponseWriter, _ *http.Request) {
+	api.WriteJSON(w, http.StatusOK, map[string]any{"plans": config.SelfServicePlans()})
 }
 
 func RegisterTenantRoutes(router chi.Router, options HTTPOptions) {
