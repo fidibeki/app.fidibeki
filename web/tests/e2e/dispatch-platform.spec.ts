@@ -311,7 +311,14 @@ async function installMockAPI(page: Page, state: MockState) {
 
     if (path === '/v1/feedbacks' && method === 'GET') {
       const requestedStatus = url.searchParams.get('status')
-      const items = state.feedback.filter(item => !requestedStatus || item.status === requestedStatus)
+      const requestedAttachment = url.searchParams.get('attachment')
+      const items = state.feedback.filter((item) => {
+        if (requestedStatus && item.status !== requestedStatus) return false
+        if (requestedAttachment === 'replay') return item.has_replay
+        if (requestedAttachment === 'none') return item.attachment_kinds.length === 0 && !item.has_replay
+        if (requestedAttachment) return (item.attachment_kinds as string[]).includes(requestedAttachment)
+        return true
+      })
       return json(route, { feedbacks: items, pagination: { next_cursor: null, has_more: false, limit: 50 } })
     }
     const attachmentMatch = path.match(/^\/v1\/feedbacks\/([^/]+)\/attachments\/([^/]+)\/content$/)
@@ -600,6 +607,64 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   expect(state.feedback[0].status).toBe('archived')
 })
 
+test('feedback queue links apply their filters without a document reload', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Queue routing is viewport independent')
+  const state = createMockState()
+  state.feedback[1].status = 'archived'
+  let documentRequests = 0
+  page.on('request', (request) => {
+    if (request.resourceType() === 'document') documentRequests += 1
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  const documentRequestsBeforeQueueNavigation = documentRequests
+
+  const queues = page.getByRole('navigation', { name: 'Feedback queues' })
+  await queues.getByRole('link', { name: 'Has replay' }).click()
+
+  await expect(page).toHaveURL(/\/feedback\?.*attachment=replay/)
+  await expect(page.getByLabel('Evidence filter')).toHaveValue('replay')
+  await expect(page.getByLabel('Status filter')).toHaveValue('open')
+  await expect(page.getByText('1 loaded')).toBeVisible()
+
+  await queues.getByRole('link', { name: 'Archived' }).click()
+
+  await expect(page).toHaveURL(`${tenantOrigin}/feedback?status=archived`)
+  await expect(page.getByLabel('Status filter')).toHaveValue('archived')
+  await expect(page.getByLabel('Evidence filter')).toHaveValue('')
+  await expect(page.getByText('1 loaded')).toBeVisible()
+  await expect(page.locator('.feedback-stream')).toContainText('FB-1047')
+  expect(documentRequests).toBe(documentRequestsBeforeQueueNavigation)
+})
+
+test('all-status and clear-filters choices survive route synchronization', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Filter routing is viewport independent')
+  const state = createMockState()
+  state.feedback[1].status = 'archived'
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const statusFilter = page.getByLabel('Status filter')
+  await statusFilter.selectOption('')
+
+  await expect(statusFilter).toHaveValue('')
+  await expect(page.getByText('2 loaded')).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('status')).toBe(false)
+  await page.locator('.feedback-stream article').filter({ hasText: 'FB-1047' }).click()
+  await expect(statusFilter).toHaveValue('')
+  await expect(page.getByText('2 loaded')).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('status')).toBe(false)
+
+  await statusFilter.selectOption('archived')
+  await expect(page.getByText('1 loaded')).toBeVisible()
+  await page.getByText('More filters', { exact: true }).click()
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+
+  await expect(statusFilter).toHaveValue('')
+  await expect(page.getByText('2 loaded')).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('status')).toBe(false)
+})
+
 test('read-only feedback rows preserve grid placement', async ({ page }) => {
   const state = createMockState()
   state.member.permissions = ['feedback:read', 'issue:read']
@@ -653,6 +718,19 @@ test('issues merge into an existing project issue', async ({ page }, testInfo) =
   await page.getByRole('button', { name: 'Merge' }).click()
   await expect(page.getByText('This issue is merged into another issue.')).toBeVisible()
   expect(state.issues[0].merged_into_id).toBe('issue-2')
+})
+
+test('issue detail uses singular feedback copy for one linked record', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Copy behavior is viewport independent')
+  const state = createMockState()
+  state.issues[0].feedback_count = 1
+  state.feedback.splice(1)
+  await authenticate(page, state)
+  await openPrimary(page, 'Issues')
+  await page.locator('.issues-table').getByRole('link', { name: /ISS-101/ }).click()
+
+  await expect(page.locator('.issue-detail-heading')).toContainText('1 feedback record · created')
+  await expect(page.locator('.issue-feedback > header > span')).toHaveText('1 record')
 })
 
 test('issue status can change without nesting the control inside its detail link', async ({ page }, testInfo) => {

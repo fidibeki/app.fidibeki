@@ -177,3 +177,29 @@ Widget activity and API-key usage telemetry are suppressed during the grace peri
 Route and PostgreSQL integration tests assert blocked billing mutations have no provider or store side
 effects, manage-only cancellation works, API-key reads do not update usage, and public or streamed reads
 remain available for suspended and expired-trial tenants. The final independent security review passed.
+
+---
+
+# Feedback Route Synchronization Review
+
+**Artifact**: Feedback queue route/filter synchronization and issue-count copy
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | Missing `status` was ambiguous between default Open navigation and the local All-status choice. | Fixed |
+| 2 | minor | 9/10 | The first queue regression test did not prove navigation remained client-side. | Fixed |
+
+## Changes Made
+Filter-driven query destinations are now marked locally so the route watcher only imports state from
+external queue, search, and history navigation. All status, Clear filters, and row selection retain
+their state and clean URLs. Issue detail counts use singular copy for one linked feedback record.
+
+## Verification
+Mixed-status E2E coverage exercises queue links, All status, Clear filters, row selection, filtered
+records, URL state, and the absence of document reloads. The final independent review passed with no
+remaining findings.

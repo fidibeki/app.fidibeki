@@ -13,6 +13,7 @@ import {
   Search,
   ShieldAlert,
 } from '@lucide/vue'
+import type { LocationQueryRaw } from 'vue-router'
 import type { FeedbackItem, FeedbackPage, FeedbackStatus, Project } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 
@@ -43,6 +44,16 @@ const loadingMore = ref(false)
 const mutationPending = ref(false)
 const notice = ref('')
 const mutationError = ref('')
+const localQueryTargets = new Set<string>()
+
+function replaceLocalQuery(query: LocationQueryRaw) {
+  const target = router.resolve({ query }).fullPath
+  if (target === route.fullPath) return
+
+  localQueryTargets.add(target)
+  const cleanup = () => localQueryTargets.delete(target)
+  void router.replace({ query }).then(cleanup, cleanup)
+}
 
 const filterQuery = computed(() => {
   const params = new URLSearchParams()
@@ -91,21 +102,39 @@ watch(
     const params = Object.fromEntries(new URLSearchParams(filterQuery.value).entries())
     delete params.limit
     if (selectedId.value) params.id = selectedId.value
-    router.replace({ query: params })
+    replaceLocalQuery(params)
   },
 )
 
-watch(() => route.query.q, (value) => {
-  const next = typeof value === 'string' ? value : ''
-  if (next !== query.value) query.value = next
-})
+watch(() => route.fullPath, (fullPath) => {
+  if (localQueryTargets.delete(fullPath)) return
+
+  const value = (key: string, fallback = '') => {
+    const queryValue = route.query[key]
+    return typeof queryValue === 'string' ? queryValue : fallback
+  }
+
+  selectedId.value = value('id')
+  query.value = value('q')
+  project.value = value('project_id')
+  feedbackStatus.value = value('status', 'open')
+  rating.value = value('rating')
+  attachment.value = value('attachment')
+  moderation.value = value('moderation')
+  issue.value = value('issue')
+  processing.value = value('processing')
+  sentiment.value = value('sentiment')
+  dateFrom.value = value('date_from')
+  dateTo.value = value('date_to')
+  sort.value = value('sort', 'newest')
+}, { flush: 'sync' })
 
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) || items.value[0])
 
 function selectItem(item: FeedbackItem) {
   selectedId.value = item.id
   inspectorTab.value = 'feedback'
-  router.replace({ query: { ...route.query, id: item.id } })
+  replaceLocalQuery({ ...route.query, id: item.id })
 }
 
 function moveSelection(direction: number) {
