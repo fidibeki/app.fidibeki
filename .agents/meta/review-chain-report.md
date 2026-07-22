@@ -56,3 +56,38 @@ Round two found logout-chain, expiry-commit, exact-TTL, and rolling-deploy gaps;
 
 Revoked-row cleanup was intentionally not bundled into this authentication fix. The current schema lacks a
 stable per-session expiry needed to define safe deletion independently of later configuration changes.
+
+---
+
+# Review Chain Report: Widget Funnel Analytics
+
+**Artifact**: Slice 4.1 matched event pipeline, migration 000049, public ingest, tenant summary, and widget identity
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+
+| # | Severity | Confidence | Location | Problem | Status |
+|---|----------|------------|----------|---------|--------|
+| 1 | medium | 9/10 | widget/src/loader.ts | Awaiting configuration before rotating page identity could miss rapid intermediate SPA paths. | Fixed by visiting the captured URL synchronously before any await, with a double-navigation E2E regression. |
+| 2 | medium | 8/10 | backend/internal/widgetanalytics/store.go | Concurrent reversed batches could lock aggregate rows in opposite order and deadlock. | Fixed with a stable project-row transaction lock and concurrent PostgreSQL regression. |
+
+## Input Quality Assessment
+
+| Input | Rating | Evidence |
+|-------|--------|----------|
+| Product/domain context | Rich | Approved analytics design, widget recurrence/targeting behavior, and product plan were available. |
+| Requirements clarity | Precise | Task 1 defines lifecycle, identity, authorization, idempotency, aggregation, and acceptance tests. |
+| Upstream artifacts | Fresh | Design and implementation plan were created on 2026-07-22. |
+
+## Simplifications Applied
+
+A project row provides the existing stable serialization boundary, avoiding a new advisory-lock scheme or
+lock table. The browser tracker remains independent of delivery so later outbox work can be additive.
+
+## Reviewer's Summary
+
+The second round passed after synchronous page-view rotation and same-project transaction serialization were
+added. Tenant isolation, canonical validation, lifecycle uniqueness, and atomic aggregate updates remained sound.
