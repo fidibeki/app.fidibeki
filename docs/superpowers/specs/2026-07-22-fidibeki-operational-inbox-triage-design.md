@@ -1,7 +1,7 @@
 # Fidibeki Operational Inbox Triage Design
 
 **Date:** 2026-07-22
-**Status:** Awaiting written review (domain decisions approved)
+**Status:** Approved
 **Target:** Product vertical slice 2
 
 ## Problem
@@ -100,7 +100,8 @@ already-unlinked record as an idempotent no-op. Both endpoints require `feedback
 editable title, description, priority, assignee, and tags, allocates one public ID, copies reporter
 notification details only when the selected records have one unambiguous subscribed reporter, links
 all records, and writes one `issue.created` outbox event. Any conflict rolls back the Issue, links,
-counter allocation, and outbox event. It requires `feedback:update` and `issue:create`.
+counter allocation, and outbox event. It requires the existing `feedback:update` and `issue:update`
+permissions, preserving the current Issue-creation RBAC contract.
 
 ### Issue Triage
 
