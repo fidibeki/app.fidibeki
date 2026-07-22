@@ -563,6 +563,23 @@ test('project settings submit a valid update', async ({ page }, testInfo) => {
   expect(state.projects[0].name).toBe('European Storefront')
 })
 
+test('widget preview controls stay out of keyboard and accessibility navigation', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The preview is hidden on smaller viewports')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const preview = page.locator('.widget-preview-page')
+  const receivedFocus = await preview.locator('button, textarea').first().evaluate((control) => {
+    control.focus()
+    return document.activeElement === control
+  })
+
+  expect(receivedFocus).toBe(false)
+  await expect(preview.getByRole('button')).toHaveCount(0)
+})
+
 test('feedback can be inspected, previewed, and archived', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Covered once as an interaction workflow')
   const state = createMockState()
