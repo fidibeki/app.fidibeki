@@ -97,3 +97,22 @@ added. Tenant isolation, canonical validation, lifecycle uniqueness, and atomic 
 The visibility and first-interaction extension passed an additional fresh-eyes review. The reviewer verified
 current-mount impression timing, suppressed/untriggered behavior, meaningful-action deduplication, ordered
 delivery, and the backend matched-predecessor constraint without finding further issues.
+
+### Slice 4.3 Transactional Outcomes
+
+**Artifact**: Transactional `submitted` events, explicit `dismissed` events, and widget submission state
+**Date**: 2026-07-22
+**Rounds**: 2
+
+#### Verdict: FIXED
+
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | medium | 10/10 | `ON CONFLICT DO NOTHING` treated an unrelated `event_id` collision as a successful duplicate and could commit feedback without its `submitted` event. | Fixed with globally serialized event IDs, an RLS-safe existence guard, immutable retry comparison, and rollback regressions. |
+| 2 | medium | 9/10 | Closing during an in-flight request could emit `dismissed` before the same submission was accepted. | Fixed by disabling and guarding close while submitting, restoring it only after failure. |
+| 3 | medium | 10/10 | The first collision fix remained ambiguous when a cross-tenant event ID and a visible local lifecycle duplicate existed together. | Fixed with migration 000050, a minimal `SECURITY DEFINER` existence predicate, an event-ID advisory lock, and a cross-tenant integration regression. |
+
+Exact immutable retries and lifecycle duplicates remain idempotent. Concurrent same-ID attempts produce one
+raw event and one aggregate increment. The final backend suite, 78 widget unit tests, typecheck, build, and all
+20 Playwright tests pass. The two-round review cap was reached; the final RLS ambiguity was resolved and covered
+by PostgreSQL integration tests rather than opening a third review round.
