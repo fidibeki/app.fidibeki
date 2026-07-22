@@ -107,10 +107,67 @@ test('loads the matching rule and serializes feedback through the public contrac
   expect(loadedScripts.some((url) => url.endsWith('/v1/audio.js'))).toBe(false)
   expect(loadedScripts.some((url) => url.endsWith('/v1/video.js'))).toBe(false)
   expect(loadedScripts.some((url) => url.endsWith('/v1/replay.js'))).toBe(false)
+  expect(loadedScripts.some((url) => url.endsWith('/v1/targeting-regex.js'))).toBe(false)
 
   await page.goto('/sample.html?asset=BIC')
   await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
   expect(submissions).toHaveLength(2)
+})
+
+test('uses additive targeting conditions and normalized page URLs', async ({ page }) => {
+  const configuredRule = {
+    ...browserRule,
+    matcher_type: 'url_exact',
+    matcher_value: 'http://127.0.0.1:4173/sample.html',
+    include_conditions: [
+      { matcher_type: 'url_exact', matcher_value: 'http://127.0.0.1:4173/sample.html', position: 0 },
+      { matcher_type: 'url_prefix', matcher_value: 'http://127.0.0.1:4173/docs', position: 1 },
+    ],
+    exclude_conditions: [
+      { matcher_type: 'url_prefix', matcher_value: 'http://127.0.0.1:4173/sample.html/private', position: 0 },
+    ],
+  } satisfies WidgetRule
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(browserConfiguration(configuredRule)),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html?asset=BAI#price')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await page.evaluate(() => history.pushState({}, '', '/sample.html/?asset=BIC#details'))
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await page.evaluate(() => history.pushState({}, '', '/sample.html/private?asset=BIC#details'))
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+  await page.evaluate(() => history.pushState({}, '', '/docs/getting-started/?source=nav'))
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+})
+
+test('loads the safe regex asset only for a regex rule', async ({ page }) => {
+  const loadedScripts: string[] = []
+  page.on('request', (request) => {
+    if (request.resourceType() === 'script') loadedScripts.push(request.url())
+  })
+  const regexRule = {
+    ...browserRule,
+    include_conditions: [{
+      matcher_type: 'url_regex',
+      matcher_value: '^http://127\\.0\\.0\\.1:4173/sample\\.html$',
+      position: 0,
+    }],
+    exclude_conditions: [],
+  } satisfies WidgetRule
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(browserConfiguration(regexRule)),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html?asset=BAI#price')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  expect(loadedScripts.some((url) => url.endsWith('/v1/targeting-regex.js'))).toBe(true)
 })
 
 test('opening the widget does not suppress it after a refresh', async ({ page }) => {

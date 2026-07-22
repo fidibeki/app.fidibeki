@@ -5,6 +5,13 @@ export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 
+export interface TargetCondition {
+  id?: string
+  matcher_type: MatcherType
+  matcher_value: string | null
+  position?: number
+}
+
 export interface PlanFeatures {
   ai: boolean
   session_replay: boolean
@@ -21,6 +28,8 @@ export interface WidgetRule {
   priority: number
   matcher_type: MatcherType
   matcher_value: string | null
+  include_conditions?: TargetCondition[]
+  exclude_conditions?: TargetCondition[]
   trigger_type: TriggerType
   trigger_delay_seconds: number | null
   trigger_scroll_percent: number | null

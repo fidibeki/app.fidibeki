@@ -1,4 +1,11 @@
-import { cacheIsFresh, fetchConfiguration, matchRule, reportConnection, type ConfigCache } from './config'
+import {
+  cacheIsFresh,
+  fetchConfiguration,
+  matchRule,
+  reportConnection,
+  type ConfigCache,
+  type TargetingRegexModule,
+} from './config'
 import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -88,7 +95,11 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
       const evaluationURL = window.location.href
-      const rule = matchRule(configuration.rules, evaluationURL)
+      const rule = await matchRule(configuration.rules, evaluationURL, {
+        loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
+        onError: (error) => void report(error, 'targeting'),
+      })
+			if (currentEvaluation !== evaluation) return
 			if (rule) {
 				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
 			}

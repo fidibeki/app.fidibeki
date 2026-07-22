@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "canonical_pages": [
+    {
+      "name": "query and fragment are discarded",
+      "input": "https://Example.COM/chart?asset=BAI#price",
+      "valid": true,
+      "canonical": "https://example.com/chart",
+      "pathname": "/chart"
+    },
+    {
+      "name": "trailing slashes are removed",
+      "input": "https://example.com/chart///?asset=BIC",
+      "valid": true,
+      "canonical": "https://example.com/chart",
+      "pathname": "/chart"
+    },
+    {
+      "name": "root slash is retained",
+      "input": "https://example.com/?source=home#top",
+      "valid": true,
+      "canonical": "https://example.com/",
+      "pathname": "/"
+    },
+    {
+      "name": "case and internal repeated slashes are retained",
+      "input": "https://example.com/Chart//live/",
+      "valid": true,
+      "canonical": "https://example.com/Chart//live",
+      "pathname": "/Chart//live"
+    },
+    {
+      "name": "default ports are removed",
+      "input": "http://EXAMPLE.com:80/docs/",
+      "valid": true,
+      "canonical": "http://example.com/docs",
+      "pathname": "/docs"
+    },
+    {
+      "name": "non-default ports are retained",
+      "input": "https://example.com:8443/docs",
+      "valid": true,
+      "canonical": "https://example.com:8443/docs",
+      "pathname": "/docs"
+    },
+    {
+      "name": "relative URLs are invalid",
+      "input": "/chart",
+      "valid": false
+    },
+    {
+      "name": "non-HTTP URLs are invalid",
+      "input": "ftp://example.com/chart",
+      "valid": false
+    },
+    {
+      "name": "malformed URLs are invalid",
+      "input": "not a URL",
+      "valid": false
+    }
+  ],
+  "condition_matches": [
+    {
+      "name": "all pages matches any canonical page",
+      "url": "https://example.com/anything?source=test",
+      "condition": { "matcher_type": "all_pages", "matcher_value": null },
+      "matches": true
+    },
+    {
+      "name": "exact ignores query fragment and trailing slash",
+      "url": "https://example.com/chart/?asset=BIC#price",
+      "condition": { "matcher_type": "url_exact", "matcher_value": "https://example.com/chart" },
+      "matches": true
+    },
+    {
+      "name": "exact retains pathname case",
+      "url": "https://example.com/Chart",
+      "condition": { "matcher_type": "url_exact", "matcher_value": "https://example.com/chart" },
+      "matches": false
+    },
+    {
+      "name": "prefix matches a descendant",
+      "url": "https://example.com/docs/getting-started?language=en",
+      "condition": { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" },
+      "matches": true
+    },
+    {
+      "name": "prefix keeps literal starts-with semantics",
+      "url": "https://example.com/docs-other",
+      "condition": { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" },
+      "matches": true
+    },
+    {
+      "name": "regex evaluates the canonical target",
+      "url": "https://example.com/help/article-42/?source=search",
+      "condition": { "matcher_type": "url_regex", "matcher_value": "^https://example\\.com/help/article-[0-9]+$" },
+      "matches": true
+    },
+    {
+      "name": "regex cannot observe query parameters",
+      "url": "https://example.com/chart?asset=BAI",
+      "condition": { "matcher_type": "url_regex", "matcher_value": "asset=BAI" },
+      "matches": false
+    }
+  ],
+  "rule_decisions": [
+    {
+      "name": "one of several includes is enough",
+      "url": "https://example.com/help/contact",
+      "include_conditions": [
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" },
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/help" }
+      ],
+      "exclude_conditions": [],
+      "eligible": true,
+      "reason": "included"
+    },
+    {
+      "name": "exclude wins after an include",
+      "url": "https://example.com/docs/private/security",
+      "include_conditions": [
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" }
+      ],
+      "exclude_conditions": [
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs/private" }
+      ],
+      "eligible": false,
+      "reason": "excluded"
+    },
+    {
+      "name": "all pages can have exclusions",
+      "url": "https://example.com/account/settings",
+      "include_conditions": [
+        { "matcher_type": "all_pages", "matcher_value": null }
+      ],
+      "exclude_conditions": [
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/account" }
+      ],
+      "eligible": false,
+      "reason": "excluded"
+    },
+    {
+      "name": "no include matched",
+      "url": "https://example.com/pricing",
+      "include_conditions": [
+        { "matcher_type": "url_exact", "matcher_value": "https://example.com/docs" }
+      ],
+      "exclude_conditions": [],
+      "eligible": false,
+      "reason": "unmatched"
+    }
+  ],
+  "invalid_rules": [
+    {
+      "name": "at least one include is required",
+      "include_conditions": [],
+      "exclude_conditions": [],
+      "field": "include_conditions"
+    },
+    {
+      "name": "all pages must be the sole include",
+      "include_conditions": [
+        { "matcher_type": "all_pages", "matcher_value": null },
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" }
+      ],
+      "exclude_conditions": [],
+      "field": "include_conditions"
+    },
+    {
+      "name": "all pages cannot be excluded",
+      "include_conditions": [
+        { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" }
+      ],
+      "exclude_conditions": [
+        { "matcher_type": "all_pages", "matcher_value": null }
+      ],
+      "field": "exclude_conditions[0].matcher_type"
+    },
+    {
+      "name": "exact values must be absolute HTTP URLs",
+      "include_conditions": [
+        { "matcher_type": "url_exact", "matcher_value": "/docs" }
+      ],
+      "exclude_conditions": [],
+      "field": "include_conditions[0].matcher_value"
+    },
+    {
+      "name": "invalid regex syntax is rejected",
+      "include_conditions": [
+        { "matcher_type": "url_regex", "matcher_value": "[" }
+      ],
+      "exclude_conditions": [],
+      "field": "include_conditions[0].matcher_value"
+    }
+  ]
+}

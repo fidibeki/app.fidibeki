@@ -37,6 +37,9 @@ describe('widget state suppression', () => {
   it('identifies a page by pathname and ignores query parameters and hashes', () => {
     expect(pageIdentity(page)).toBe('/chart')
     expect(widgetStateKey('project', 'rule', page)).toContain('project:rule:/chart')
+    expect(widgetStateKey('project', 'rule', 'https://example.com/chart/')).toBe(
+      widgetStateKey('project', 'rule', page),
+    )
   })
 
   it('does not suppress a widget that was only opened', () => {

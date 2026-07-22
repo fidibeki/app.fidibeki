@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@sentry/browser": "10.67.0",
+    "re2js": "2.8.6",
     "rrweb": "2.1.1"
   },
   "devDependencies": {

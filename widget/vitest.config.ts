@@ -8,7 +8,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
 			include: [
-				'src/config.ts', 'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
+				'src/config.ts', 'src/targeting.ts', 'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
 				'src/modules/replay.ts',
 			],
       reporter: ['text', 'json-summary'],

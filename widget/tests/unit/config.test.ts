@@ -1,8 +1,20 @@
-import { cacheIsFresh, fetchConfiguration, matchRule, reportConnection, ruleMatches } from '../../src/config'
-import type { WidgetConfiguration } from '../../src/types'
+import targetingContract from '../../../contracts/widget-targeting.json'
+import { cacheIsFresh, canonicalPage, fetchConfiguration, matchRule, reportConnection, ruleMatches } from '../../src/config'
+import type { TargetCondition, WidgetConfiguration } from '../../src/types'
 import { rule } from './fixtures'
 
+const loadTestRegex = async () => ({ matches: (pattern: string, value: string) => new RegExp(pattern).test(value) })
+
 describe('rule matching', () => {
+  it.each(targetingContract.canonical_pages)('canonicalizes $name', (testCase) => {
+    const result = canonicalPage(testCase.input)
+    if (!testCase.valid) {
+      expect(result).toBeNull()
+      return
+    }
+    expect(result).toEqual({ target: testCase.canonical, pathname: testCase.pathname })
+  })
+
   it.each([
     [rule({ matcher_type: 'all_pages' }), 'https://example.com/anything', true],
     [rule({ matcher_type: 'url_exact', matcher_value: 'https://example.com/docs' }), 'https://example.com/docs', true],
@@ -11,22 +23,78 @@ describe('rule matching', () => {
     [rule({ matcher_type: 'url_regex', matcher_value: '^https://example\\.com/(docs|help)' }), 'https://example.com/help', true],
     [rule({ matcher_type: 'url_regex', matcher_value: '[' }), 'https://example.com/help', false],
     [rule({ matcher_type: 'url_regex', matcher_value: null }), 'https://example.com/help', false],
-  ])('matches %#j against %s', (candidate, url, want) => {
-    expect(ruleMatches(candidate, url)).toBe(want)
+  ])('matches %#j against %s', async (candidate, url, want) => {
+    await expect(ruleMatches(candidate, url, { loadRegex: loadTestRegex })).resolves.toBe(want)
   })
 
-  it('selects the highest priority matching rule without mutating input', () => {
+  it.each(targetingContract.condition_matches)('matches shared condition: $name', async (testCase) => {
+    const condition = testCase.condition as TargetCondition
+    await expect(ruleMatches(rule({
+      matcher_type: condition.matcher_type,
+      matcher_value: condition.matcher_value,
+    }), testCase.url, { loadRegex: loadTestRegex })).resolves.toBe(testCase.matches)
+  })
+
+  it.each(targetingContract.rule_decisions)('matches shared rule: $name', async (testCase) => {
+    await expect(ruleMatches(rule({
+      include_conditions: testCase.include_conditions as TargetCondition[],
+      exclude_conditions: testCase.exclude_conditions as TargetCondition[],
+    }), testCase.url, { loadRegex: loadTestRegex })).resolves.toBe(testCase.eligible)
+  })
+
+  it('selects the highest priority matching rule without mutating input', async () => {
     const rules = [
       rule({ id: 'fallback', priority: 1 }),
       rule({ id: 'checkout', priority: 20, matcher_type: 'url_prefix', matcher_value: 'https://example.com/checkout' }),
       rule({ id: 'other', priority: 50, matcher_type: 'url_exact', matcher_value: 'https://example.com/other' }),
     ]
-    expect(matchRule(rules, 'https://example.com/checkout/confirm')?.id).toBe('checkout')
+    expect((await matchRule(rules, 'https://example.com/checkout/confirm'))?.id).toBe('checkout')
     expect(rules.map((candidate) => candidate.id)).toEqual(['fallback', 'checkout', 'other'])
   })
 
-  it('returns null when no rules match', () => {
-    expect(matchRule([rule({ matcher_type: 'url_exact', matcher_value: 'https://other.test' })], 'https://example.com')).toBeNull()
+  it('returns null when no rules match', async () => {
+    await expect(matchRule(
+      [rule({ matcher_type: 'url_exact', matcher_value: 'https://other.test' })],
+      'https://example.com',
+    )).resolves.toBeNull()
+  })
+
+  it('fails malformed condition arrays closed and reports the rule', async () => {
+    const onError = vi.fn()
+    await expect(ruleMatches(rule({ include_conditions: [], exclude_conditions: [] }), 'https://example.com', {
+      onError,
+    })).resolves.toBe(false)
+    expect(onError).toHaveBeenCalledOnce()
+  })
+
+  it('loads the regex evaluator once and fails the complete rule closed on regex errors', async () => {
+    const loadRegex = vi.fn().mockResolvedValue({
+      matches: (pattern: string, value: string) => {
+        if (pattern === '[') throw new Error('invalid regex')
+        return new RegExp(pattern).test(value)
+      },
+    })
+    const onError = vi.fn()
+    const candidate = rule({
+      include_conditions: [
+        { matcher_type: 'url_exact', matcher_value: 'https://example.com/docs' },
+        { matcher_type: 'url_regex', matcher_value: '^https://example\\.com/docs' },
+      ],
+      exclude_conditions: [{ matcher_type: 'url_regex', matcher_value: '[' }],
+    })
+
+    await expect(ruleMatches(candidate, 'https://example.com/docs', { loadRegex, onError })).resolves.toBe(false)
+    expect(loadRegex).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledOnce()
+  })
+
+  it('does not load the regex evaluator for exact and prefix conditions', async () => {
+    const loadRegex = vi.fn()
+    await expect(ruleMatches(rule({
+      include_conditions: [{ matcher_type: 'url_prefix', matcher_value: 'https://example.com/docs' }],
+      exclude_conditions: [{ matcher_type: 'url_exact', matcher_value: 'https://example.com/docs/private' }],
+    }), 'https://example.com/docs/public', { loadRegex })).resolves.toBe(true)
+    expect(loadRegex).not.toHaveBeenCalled()
   })
 })
 

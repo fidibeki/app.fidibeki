@@ -1,4 +1,5 @@
 import type { RecurrenceMode } from './types'
+import { canonicalPage } from './targeting'
 
 export interface StorageLike {
   getItem(key: string): string | null
@@ -41,7 +42,9 @@ const dayMilliseconds = 86_400_000
 const widgetStates = new Set<WidgetState>(['new', 'submitted', 'minimized', 'dismissed', 'snoozed'])
 
 export function pageIdentity(rawURL: string): string {
-  return new URL(rawURL).pathname
+  const page = canonicalPage(rawURL)
+  if (!page) throw new TypeError('Widget state requires an absolute HTTP(S) URL')
+  return page.pathname
 }
 
 export function widgetStateKey(projectID: string, ruleID: string, rawURL: string): string {

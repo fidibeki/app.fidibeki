@@ -22,6 +22,7 @@ const moduleEntries = {
   screenshot: 'src/modules/screenshot.ts',
   'element-attachment': 'src/modules/element-attachment.ts',
   'error-reporting': 'src/modules/error-reporting.ts',
+  'targeting-regex': 'src/modules/targeting-regex.ts',
 }
 
 const modules = await build({
