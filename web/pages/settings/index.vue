@@ -12,6 +12,12 @@ import {
   Users,
   X,
 } from '@lucide/vue'
+import {
+  permissionLabel,
+  permissionPresets,
+  tenantPermissionGroups,
+  type PermissionPreset,
+} from '~/data/permissions'
 import type {
   APIKey,
   Integration,
@@ -20,12 +26,6 @@ import type {
   Member,
   TenantConfiguration,
 } from '~/types/api'
-import {
-  permissionLabel,
-  permissionPresets,
-  tenantPermissionGroups,
-  type PermissionPreset,
-} from '~/data/permissions'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDate, formatMonthlyEuro, formatWholeNumber } from '~/utils/format'
 
@@ -417,7 +417,6 @@ useHead({ title: 'Settings - Fidibeki' })
 </template>
 
 <style scoped>
-.settings-page { max-width: 1320px; margin: 0 auto; }
 .settings-tabs { display: flex; gap: 22px; margin: -4px 0 18px; border-bottom: 1px solid var(--line); }
 .settings-tabs a { position: relative; padding: 0 1px 11px; color: var(--muted); font-size: 11px; font-weight: 750; text-decoration: none; }
 .settings-tabs a[data-active='true'] { color: var(--teal); }
