@@ -91,3 +91,9 @@ lock table. The browser tracker remains independent of delivery so later outbox 
 
 The second round passed after synchronous page-view rotation and same-project transaction serialization were
 added. Tenant isolation, canonical validation, lifecycle uniqueness, and atomic aggregate updates remained sound.
+
+### Slice 4.2 Follow-up
+
+The visibility and first-interaction extension passed an additional fresh-eyes review. The reviewer verified
+current-mount impression timing, suppressed/untriggered behavior, meaningful-action deduplication, ordered
+delivery, and the backend matched-predecessor constraint without finding further issues.
