@@ -47,7 +47,7 @@ const safeDOMSnapshot = computed(() => {
 })
 
 async function updateStatus(nextStatus: FeedbackStatus) {
-  if (!feedback.value || mutationPending.value) return
+  if (!can('feedback:update') || !feedback.value || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -63,7 +63,7 @@ async function updateStatus(nextStatus: FeedbackStatus) {
 }
 
 async function reprocessAll() {
-  if (!feedback.value || mutationPending.value) return
+  if (!can('feedback:update') || !feedback.value || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -79,7 +79,7 @@ async function reprocessAll() {
 }
 
 async function retryAttachment(id: string) {
-  if (mutationPending.value) return
+  if (!can('feedback:update') || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -107,9 +107,11 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
     <header class="feedback-detail-toolbar">
       <NuxtLink class="app-button" to="/feedback"><ArrowLeft :size="15" /> Back to queue</NuxtLink>
       <div v-if="feedback">
-        <button v-if="feedback.status === 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus('archived')"><Archive :size="15" /> Archive</button>
-        <button v-else class="app-button" :disabled="mutationPending" @click="updateStatus('open')">Reopen</button>
-        <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> Spam</button>
+        <template v-if="can('feedback:update')">
+          <button v-if="feedback.status === 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus('archived')"><Archive :size="15" /> Archive</button>
+          <button v-else class="app-button" :disabled="mutationPending" @click="updateStatus('open')">Reopen</button>
+          <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> Spam</button>
+        </template>
         <NuxtLink v-if="feedback.issue_id" class="app-button app-button--primary" :to="`/issues/${feedback.issue_id}`"><Link2 :size="15" /> Open issue</NuxtLink>
       </div>
     </header>

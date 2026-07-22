@@ -120,3 +120,28 @@ Browser regressions cover same-page retry, overlapping attempts, refresh suppres
 and normal activation on desktop and mobile. The final full run passed 39 E2E tests with 9 expected
 skips; 16 unit tests and Nuxt typecheck also passed. The review chain stopped after its required
 maximum of two rounds; all six reported findings were resolved and exercised by the final test run.
+
+---
+
+# Feedback RBAC Review
+
+**Artifact**: Feedback queue and detail mutation controls for read-only tenant members
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | Removing the selection cell shifted every later feedback-row grid item for read-only members. | Fixed |
+
+## Changes Made
+Feedback status, AI reprocessing, attachment retry controls, and their client handlers now require
+`feedback:update`. Read-only members retain feedback, issue, evidence, and attachment inspection.
+An inert grid placeholder preserves row placement without exposing a selection control.
+
+## Verification
+Rendered-position coverage exercises read-only rows on desktop and mobile. The final verification
+passed 16 unit tests, Nuxt typecheck, production build, and 49 Playwright tests with 15 expected
+skips. The second independent review found no remaining authorization or layout issues.

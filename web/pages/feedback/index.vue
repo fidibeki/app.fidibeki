@@ -137,7 +137,7 @@ async function loadMore() {
 }
 
 async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
-  if (!ids.length || mutationPending.value) return
+  if (!can('feedback:update') || !ids.length || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -156,7 +156,7 @@ async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
 }
 
 async function reprocess(ids: string[]) {
-  if (!ids.length || mutationPending.value) return
+  if (!can('feedback:update') || !ids.length || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -229,10 +229,10 @@ useHead({ title: 'Feedback · Fidibeki' })
         </details>
       </div>
 
-      <div v-if="selectedIds.length" class="feedback-bulk-bar">
+      <div v-if="selectedIds.length && can('feedback:update')" class="feedback-bulk-bar">
         <b>{{ selectedIds.length }} selected</b>
         <button type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'archived')"><Archive :size="14" /> Archive</button>
-        <button type="button" :disabled="mutationPending || !can('feedback:update')" @click="reprocess(selectedIds)"><RotateCcw :size="14" /> Reprocess AI</button>
+        <button type="button" :disabled="mutationPending" @click="reprocess(selectedIds)"><RotateCcw :size="14" /> Reprocess AI</button>
         <button class="danger" type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'spam')"><ShieldAlert :size="14" /> Spam</button>
       </div>
 
@@ -242,7 +242,8 @@ useHead({ title: 'Feedback · Fidibeki' })
       <div v-else-if="items.length === 0" class="feedback-list-state"><Inbox :size="22" /><p>No feedback matches these filters.</p><button class="app-button" @click="clearFilters">Clear filters</button></div>
       <div v-else class="feedback-stream" role="list">
         <article v-for="item in items" :key="item.id" role="listitem" :data-selected="selected?.id === item.id" @click="selectItem(item)">
-          <label class="feedback-row-check" @click.stop><input type="checkbox" :checked="selectedIds.includes(item.id)" :aria-label="`Select ${item.public_id}`" @change="toggleSelected(item.id)" /></label>
+          <label v-if="can('feedback:update')" class="feedback-row-check" @click.stop><input type="checkbox" :checked="selectedIds.includes(item.id)" :aria-label="`Select ${item.public_id}`" @change="toggleSelected(item.id)" /></label>
+          <span v-else class="feedback-row-check" aria-hidden="true" />
           <RatingMark v-if="item.rating" :rating="item.rating" compact /><span v-else class="feedback-no-rating">—</span>
           <div class="feedback-row-copy"><strong>{{ copy(item) }}</strong><span>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</span></div>
           <AttachmentIcons :attachments="item.attachment_kinds" />
@@ -264,7 +265,7 @@ useHead({ title: 'Feedback · Fidibeki' })
       <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body"><p class="feedback-quote">{{ copy(selected) }}</p><dl><div><dt>Reporter</dt><dd>{{ selected.reporter_email || 'Anonymous' }}</dd></div><div><dt>Sentiment</dt><dd>{{ selected.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Issue</dt><dd>{{ selected.issue_public_id || 'Not linked' }}</dd></div><div><dt>AI</dt><dd><span class="status-pill" :class="`status-${selected.ai_status}`">{{ selected.ai_status }}</span></dd></div></dl></div>
       <div v-else-if="inspectorTab === 'evidence'" class="feedback-inspector-body feedback-inspector-evidence"><AttachmentIcons :attachments="selected.attachment_kinds" /><p>{{ selected.attachment_kinds.length ? 'Open full detail to inspect captured evidence.' : 'No evidence was attached.' }}</p></div>
       <div v-else class="feedback-inspector-body feedback-inspector-evidence"><PanelRightOpen :size="24" /><p>{{ selected.has_replay ? 'A session replay is attached and available in full detail.' : 'No replay is attached.' }}</p></div>
-      <footer><button v-if="selected.status !== 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'open')">Reopen</button><button v-else class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'archived')"><Archive :size="15" /> Archive</button><NuxtLink class="app-button app-button--primary" :to="selected.issue_id ? `/issues/${selected.issue_id}` : `/feedback/${selected.id}`"><Link2 :size="15" /> {{ selected.issue_id ? 'Open issue' : 'Triage' }}</NuxtLink></footer>
+      <footer><template v-if="can('feedback:update')"><button v-if="selected.status !== 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'open')">Reopen</button><button v-else class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'archived')"><Archive :size="15" /> Archive</button></template><NuxtLink class="app-button app-button--primary" :to="selected.issue_id ? `/issues/${selected.issue_id}` : `/feedback/${selected.id}`"><Link2 :size="15" /> {{ selected.issue_id ? 'Open issue' : 'Triage' }}</NuxtLink></footer>
     </aside>
 
     <p v-if="notice" class="feedback-toast" role="status">{{ notice }}</p>

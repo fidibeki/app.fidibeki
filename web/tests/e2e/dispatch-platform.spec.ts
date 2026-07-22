@@ -600,6 +600,48 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   expect(state.feedback[0].status).toBe('archived')
 })
 
+test('read-only feedback rows preserve grid placement', async ({ page }) => {
+  const state = createMockState()
+  state.member.permissions = ['feedback:read', 'issue:read']
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const row = page.getByRole('listitem').first()
+  await expect(row).toBeVisible()
+  const placement = await row.evaluate((element) => {
+    const rating = element.querySelector<HTMLElement>('.rating-mark')!
+    const style = getComputedStyle(element)
+    return {
+      actual: rating.getBoundingClientRect().left - element.getBoundingClientRect().left,
+      expected: parseFloat(style.paddingLeft)
+        + parseFloat(style.gridTemplateColumns.split(/\s+/)[0]!)
+        + parseFloat(style.columnGap),
+    }
+  })
+  expect(placement.actual).toBeCloseTo(placement.expected, 0)
+})
+
+test('read-only members can inspect feedback without mutation controls', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Permission behavior is viewport independent')
+  const state = createMockState()
+  state.member.permissions = ['feedback:read', 'issue:read']
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  await expect(page.getByRole('checkbox', { name: /^Select FB-/ })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Spam', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Reprocess AI', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Open issue', exact: true })).toBeVisible()
+
+  await page.getByTitle('Open full detail').click()
+  await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Spam', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Reprocess all', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'View', exact: true })).toBeVisible()
+})
+
 test('issues merge into an existing project issue', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Covered once as an interaction workflow')
   const state = createMockState()
