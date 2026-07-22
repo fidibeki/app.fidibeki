@@ -39,6 +39,24 @@ func (Store) InsertEvents(
 		return IngestResult{}, fmt.Errorf("lock widget funnel project: %w", err)
 	}
 	for _, event := range events {
+		if event.EventType != EventMatched {
+			var matched bool
+			if err := query.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM widget_funnel_events
+					WHERE tenant_id = $1 AND project_id = $2 AND rule_id = $3
+					  AND page_view_id = $4 AND visitor_id = $5
+					  AND page_key = $6 AND event_type = 'matched'
+				)
+			`, event.TenantID, event.ProjectID, event.RuleID, event.PageViewID,
+				event.VisitorID, event.PageKey,
+			).Scan(&matched); err != nil {
+				return IngestResult{}, fmt.Errorf("check widget funnel matched event: %w", err)
+			}
+			if !matched {
+				return IngestResult{}, errors.New("widget funnel event requires a matching matched event")
+			}
+		}
 		var insertedID string
 		err := query.QueryRow(ctx, `
 			INSERT INTO widget_funnel_events (

@@ -137,6 +137,8 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	if summary.Matched != 1 || summary.Impressions != 0 || summary.ImpressionRate == nil || *summary.ImpressionRate != 0 {
 		t.Fatalf("summary = %#v", summary)
 	}
+	assertEventWithoutMatchedIsRejected(t, ctx, pools, store, configuration, ruleID, now)
+	assertVisibleInteractionStages(t, ctx, pools, store, configuration, inputs[0], now)
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("a", 32), "fidibeki", 10*time.Minute)
 	if err != nil {
@@ -159,7 +161,9 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 		Begin: db.BeginFromPool(pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})(routes)
 	response := tenantAnalyticsRequest(handler, "/v1/analytics/widget?range=7d&project_id="+projectID, readToken)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"matched":1`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"matched":1`) ||
+		!strings.Contains(response.Body.String(), `"impressions":1`) ||
+		!strings.Contains(response.Body.String(), `"interactions":1`) {
 		t.Fatalf("analytics response = status %d body %s", response.Code, response.Body.String())
 	}
 	if denied := tenantAnalyticsRequest(handler, "/v1/analytics/widget", deniedToken); denied.Code != http.StatusForbidden {
@@ -173,7 +177,7 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	var rawCount int
 	var ruleName string
 	if err := root.QueryRow(ctx, `SELECT count(*), max(rule_name) FROM widget_funnel_events WHERE project_id = $1`, projectID).
-		Scan(&rawCount, &ruleName); err != nil || rawCount != 3 || ruleName != "Checkout" {
+		Scan(&rawCount, &ruleName); err != nil || rawCount != 5 || ruleName != "Checkout" {
 		t.Fatalf("historical event after rule delete = count %d name %q error %v", rawCount, ruleName, err)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
@@ -184,6 +188,80 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 			t.Fatalf("%s after project delete = %d, error %v", table, rawCount, err)
 		}
 	}
+}
+
+func assertVisibleInteractionStages(
+	t *testing.T,
+	ctx context.Context,
+	pools *db.Pools,
+	store Store,
+	configuration project.PublicConfiguration,
+	matchedInput EventInput,
+	now time.Time,
+) {
+	t.Helper()
+	inputs := []EventInput{
+		matchedInput,
+		matchedInput,
+	}
+	inputs[0].EventID = "00000000-0000-4000-8000-000000000041"
+	inputs[0].EventType = EventImpression
+	inputs[1].EventID = "00000000-0000-4000-8000-000000000042"
+	inputs[1].EventType = EventInteraction
+	values, fields := ValidateEvents(inputs, configuration, "https://example.com", now)
+	if len(fields) > 0 {
+		t.Fatalf("validate visible interaction stages: %#v", fields)
+	}
+	tx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin visible interaction transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
+		t.Fatalf("set visible interaction tenant: %v", err)
+	}
+	result, err := store.InsertEvents(ctx, tx, values)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert visible interaction stages: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit visible interaction stages: %v", err)
+	}
+	if len(result.AcceptedEventIDs) != 2 || len(result.DuplicateEventIDs) != 0 {
+		t.Fatalf("visible interaction result = %#v", result)
+	}
+}
+
+func assertEventWithoutMatchedIsRejected(
+	t *testing.T,
+	ctx context.Context,
+	pools *db.Pools,
+	store Store,
+	configuration project.PublicConfiguration,
+	ruleID string,
+	now time.Time,
+) {
+	t.Helper()
+	values, fields := ValidateEvents([]EventInput{{
+		EventID: "00000000-0000-4000-8000-000000000031", EventType: EventImpression,
+		VisitorID: "00000000-0000-4000-8000-000000000032", PageViewID: "00000000-0000-4000-8000-000000000033",
+		RuleID: ruleID, PageURL: "https://example.com/missing-match", OccurredAt: now,
+	}}, configuration, "https://example.com", now)
+	if len(fields) > 0 {
+		t.Fatalf("validate unmatched impression: %#v", fields)
+	}
+	tx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin unmatched impression transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
+		t.Fatalf("set unmatched impression tenant: %v", err)
+	}
+	if _, err := store.InsertEvents(ctx, tx, values); err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("impression without matched event succeeded")
+	}
+	_ = tx.Rollback(ctx)
 }
 
 func assertConcurrentReversedBatches(
@@ -278,8 +356,8 @@ func assertConcurrentReversedBatches(
 	`, projectID).Scan(&matchedCount); err != nil {
 		t.Fatalf("count concurrent aggregates: %v", err)
 	}
-	if rawCount != 3 || matchedCount != 3 {
-		t.Fatalf("counts after concurrent ingestion = raw %d matched %d, want 3/3", rawCount, matchedCount)
+	if rawCount != 5 || matchedCount != 3 {
+		t.Fatalf("counts after concurrent ingestion = raw %d matched %d, want 5/3", rawCount, matchedCount)
 	}
 }
 
