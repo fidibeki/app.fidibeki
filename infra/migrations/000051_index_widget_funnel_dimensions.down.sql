@@ -1,0 +1,2 @@
+DROP INDEX idx_widget_funnel_daily_tenant_page_date;
+DROP INDEX idx_widget_funnel_daily_tenant_rule_date;

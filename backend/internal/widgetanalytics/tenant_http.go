@@ -2,33 +2,91 @@ package widgetanalytics
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-type SummaryStore interface {
-	Summary(context.Context, db.Querier, string, string, int, time.Time) (Summary, error)
+type AnalyticsStore interface {
+	Workspace(context.Context, db.Querier, string, AnalyticsQuery) (Workspace, error)
 }
 
 type TenantHTTPOptions struct {
-	Store SummaryStore
-	JWT   *auth.JWTManager
-	Now   func() time.Time
+	Store        AnalyticsStore
+	JWT          *auth.JWTManager
+	Now          func() time.Time
+	Logger       *slog.Logger
+	QueryTimeout time.Duration
 }
 
 type TenantHTTPHandler struct {
-	options TenantHTTPOptions
+	options      TenantHTTPOptions
+	logger       *slog.Logger
+	queryTimeout time.Duration
+	concurrency  *analyticsTenantConcurrency
+}
+
+const (
+	analyticsRequestTimeout           = 10 * time.Second
+	maximumConcurrentAnalyticsQueries = 2
+	analyticsConcurrencyRetryAfter    = "1"
+)
+
+type analyticsTenantConcurrency struct {
+	mu     sync.Mutex
+	active map[string]int
+}
+
+func newAnalyticsTenantConcurrency() *analyticsTenantConcurrency {
+	return &analyticsTenantConcurrency{active: make(map[string]int)}
+}
+
+func (limiter *analyticsTenantConcurrency) acquire(tenantID string) bool {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if limiter.active[tenantID] >= maximumConcurrentAnalyticsQueries {
+		return false
+	}
+	limiter.active[tenantID]++
+	return true
+}
+
+func (limiter *analyticsTenantConcurrency) release(tenantID string) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	limiter.active[tenantID]--
+	if limiter.active[tenantID] <= 0 {
+		delete(limiter.active, tenantID)
+	}
 }
 
 func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
-	handler := &TenantHTTPHandler{options: options}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	queryTimeout := options.QueryTimeout
+	if queryTimeout <= 0 {
+		queryTimeout = analyticsRequestTimeout
+	}
+	handler := &TenantHTTPHandler{
+		options: options, logger: logger, queryTimeout: queryTimeout,
+		concurrency: newAnalyticsTenantConcurrency(),
+	}
 	router.With(
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
@@ -37,28 +95,11 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 }
 
 func (h *TenantHTTPHandler) summary(w http.ResponseWriter, r *http.Request) {
-	rangeValue, rangeDays := "30d", 30
-	if raw := r.URL.Query().Get("range"); raw != "" {
-		switch raw {
-		case "7d":
-			rangeValue, rangeDays = raw, 7
-		case "30d":
-			rangeValue, rangeDays = raw, 30
-		case "90d":
-			rangeValue, rangeDays = raw, 90
-		default:
-			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
-				"analytics query is invalid", map[string]string{"range": "must be 7d, 30d, or 90d"})
-			return
-		}
-	}
-	projectID := r.URL.Query().Get("project_id")
-	if projectID != "" {
-		if _, err := uuid.Parse(projectID); err != nil {
-			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
-				"analytics query is invalid", map[string]string{"project_id": "must be a UUID"})
-			return
-		}
+	analyticsQuery, fields := parseAnalyticsQuery(r.URL.Query())
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"analytics query is invalid", fields)
+		return
 	}
 	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
 	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
@@ -66,17 +107,90 @@ func (h *TenantHTTPHandler) summary(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
-	now := time.Now().UTC()
-	if h.options.Now != nil {
-		now = h.options.Now().UTC()
+	if !h.concurrency.acquire(resolved.ID) {
+		w.Header().Set("Retry-After", analyticsConcurrencyRetryAfter)
+		api.WriteError(w, http.StatusTooManyRequests, api.CodeRateLimitExceeded,
+			"too many concurrent analytics queries", nil)
+		return
 	}
-	summary, err := h.options.Store.Summary(r.Context(), query, resolved.ID, projectID, rangeDays, now)
+	defer h.concurrency.release(resolved.ID)
+	analyticsQuery.Now = time.Now().UTC()
+	if h.options.Now != nil {
+		analyticsQuery.Now = h.options.Now().UTC()
+	}
+	startedAt := time.Now()
+	queryContext, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
+	defer cancel()
+	workspace, err := h.options.Store.Workspace(queryContext, query, resolved.ID, analyticsQuery)
+	if errors.Is(err, ErrAnalyticsFilterNotFound) {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "analytics filter not found", nil)
+		return
+	}
 	if err != nil {
+		h.logger.ErrorContext(r.Context(), "widget analytics query failed",
+			"error", err, "tenant_id", resolved.ID, "range", analyticsQuery.Range,
+			"has_project_filter", analyticsQuery.ProjectID != "",
+			"has_rule_filter", analyticsQuery.RuleID != "",
+			"has_page_filter", analyticsQuery.PageURL != "",
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 		return
 	}
-	api.WriteJSON(w, http.StatusOK, map[string]any{
-		"range":   rangeValue,
-		"summary": summary,
-	})
+	h.logger.InfoContext(r.Context(), "widget analytics query completed",
+		"tenant_id", resolved.ID, "range", analyticsQuery.Range,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+		"projects_returned", len(workspace.Projects), "projects_total", workspace.Metadata.Projects.Total,
+		"rules_returned", len(workspace.Rules), "rules_total", workspace.Metadata.Rules.Total,
+		"pages_returned", len(workspace.Pages), "pages_total", workspace.Metadata.Pages.Total,
+		"results_truncated", workspace.Metadata.Projects.Truncated ||
+			workspace.Metadata.Rules.Truncated || workspace.Metadata.Pages.Truncated,
+	)
+	api.WriteJSON(w, http.StatusOK, workspace)
+}
+
+func parseAnalyticsQuery(values url.Values) (AnalyticsQuery, FieldErrors) {
+	query := AnalyticsQuery{Range: "30d", RangeDays: 30}
+	fields := FieldErrors{}
+	if raw := strings.TrimSpace(values.Get("range")); raw != "" {
+		switch raw {
+		case "7d":
+			query.Range, query.RangeDays = raw, 7
+		case "30d":
+			query.Range, query.RangeDays = raw, 30
+		case "90d":
+			query.Range, query.RangeDays = raw, 90
+		default:
+			fields["range"] = "must be 7d, 30d, or 90d"
+		}
+	}
+	query.ProjectID = strings.TrimSpace(values.Get("project_id"))
+	if query.ProjectID != "" {
+		parsed, err := uuid.Parse(query.ProjectID)
+		if err != nil {
+			fields["project_id"] = "must be a UUID"
+		} else {
+			query.ProjectID = parsed.String()
+		}
+	}
+	query.RuleID = strings.TrimSpace(values.Get("rule_id"))
+	if query.RuleID != "" {
+		parsed, err := uuid.Parse(query.RuleID)
+		if err != nil {
+			fields["rule_id"] = "must be a UUID"
+		} else {
+			query.RuleID = parsed.String()
+		}
+	}
+	if rawPage := strings.TrimSpace(values.Get("page")); rawPage != "" {
+		page, err := project.CanonicalizePage(rawPage)
+		if err != nil || len(page.Target) > 4096 {
+			fields["page"] = "must be an absolute canonical HTTP(S) page URL"
+		} else {
+			query.PageURL = page.Target
+			pageKey := sha256.Sum256([]byte(page.Target))
+			query.PageKey = pageKey[:]
+		}
+	}
+	return query, fields
 }

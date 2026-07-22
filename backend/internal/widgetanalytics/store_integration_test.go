@@ -1,6 +1,7 @@
 package widgetanalytics
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -141,6 +142,7 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	assertEventWithoutMatchedIsRejected(t, ctx, pools, store, configuration, ruleID, now)
 	assertLifecycleDuplicateWithDifferentEventID(t, ctx, pools, store, configuration, inputs[0], now)
 	assertVisibleInteractionStages(t, ctx, pools, store, configuration, inputs[0], now)
+	assertAnalyticsWorkspace(t, ctx, root, pools, store, tenantID, projectID, ruleID, now)
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("a", 32), "fidibeki", 10*time.Minute)
 	if err != nil {
@@ -171,6 +173,7 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	if denied := tenantAnalyticsRequest(handler, "/v1/analytics/widget", deniedToken); denied.Code != http.StatusForbidden {
 		t.Fatalf("denied analytics status = %d, body = %s", denied.Code, denied.Body.String())
 	}
+	assertAnalyticsQueryTimeout(t, pools, jwtManager, readToken, now)
 	assertConcurrentReversedBatches(t, ctx, pools, store, configuration, tenantID, projectID, ruleID, now)
 	assertConcurrentSameEventID(t, ctx, pools, configuration, projectID, ruleID, now)
 	assertCrossTenantEventIDCollision(t, ctx, root, pools, store, configuration, inputs[0], now)
@@ -191,6 +194,269 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 		if err := root.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&rawCount); err != nil || rawCount != 0 {
 			t.Fatalf("%s after project delete = %d, error %v", table, rawCount, err)
 		}
+	}
+}
+
+type blockingAnalyticsStore struct{}
+
+func (blockingAnalyticsStore) Workspace(ctx context.Context, _ db.Querier, _ string, _ AnalyticsQuery) (Workspace, error) {
+	<-ctx.Done()
+	return Workspace{}, ctx.Err()
+}
+
+func assertAnalyticsQueryTimeout(
+	t *testing.T,
+	pools *db.Pools,
+	jwtManager *auth.JWTManager,
+	readToken string,
+	now time.Time,
+) {
+	t.Helper()
+	var logs bytes.Buffer
+	routes := chi.NewRouter()
+	RegisterTenantRoutes(routes, TenantHTTPOptions{
+		Store: blockingAnalyticsStore{}, JWT: jwtManager, Now: func() time.Time { return now },
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)), QueryTimeout: time.Millisecond,
+	})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
+		Begin: db.BeginFromPool(pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	})(routes)
+
+	response := tenantAnalyticsRequest(handler, "/v1/analytics/widget?range=90d", readToken)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("timed-out analytics status = %d body %s", response.Code, response.Body.String())
+	}
+	for _, field := range []string{
+		`"msg":"widget analytics query failed"`, `"tenant_id":`, `"range":"90d"`, `"duration_ms":`,
+	} {
+		if !strings.Contains(logs.String(), field) {
+			t.Fatalf("timed-out analytics log = %s, missing %s", logs.String(), field)
+		}
+	}
+}
+
+func assertAnalyticsWorkspace(
+	t *testing.T,
+	ctx context.Context,
+	root *pgx.Conn,
+	pools *db.Pools,
+	store Store,
+	tenantID string,
+	projectID string,
+	ruleID string,
+	now time.Time,
+) {
+	t.Helper()
+	var deletedRuleID, dormantRuleID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (project_id, name, matcher_type, trigger_type, trigger_delay_seconds)
+		VALUES ($1, 'Legacy campaign', 'all_pages', 'delay', 0) RETURNING id
+	`, projectID).Scan(&deletedRuleID); err != nil {
+		t.Fatalf("create historical analytics rule: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (project_id, name, matcher_type, trigger_type, trigger_delay_seconds)
+		VALUES ($1, 'Dormant campaign', 'all_pages', 'delay', 0) RETURNING id
+	`, projectID).Scan(&dormantRuleID); err != nil {
+		t.Fatalf("create dormant historical analytics rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_daily (
+			tenant_id, project_id, rule_id, rule_name, page_url, page_key, event_date,
+			matched_count, impression_count, interaction_count, submitted_count, dismissed_count
+		) VALUES
+			($1, $2, $3, 'Checkout', 'https://example.com/pricing', digest('https://example.com/pricing', 'sha256'), $5::date - 10, 10, 8, 4, 2, 1),
+			($1, $2, $4, 'Legacy campaign', 'https://example.com/docs', digest('https://example.com/docs', 'sha256'), $5::date, 5, 1, 1, 1, 0),
+			($1, $2, $3, 'Checkout', 'https://example.com/no-impression', digest('https://example.com/no-impression', 'sha256'), $5::date, 3, 0, 0, 0, 0),
+			($1, $2, $3, 'Checkout', 'https://example.com/day-89', digest('https://example.com/day-89', 'sha256'), $5::date - 89, 7, 7, 3, 1, 0),
+			($1, $2, $3, 'Checkout', 'https://example.com/day-90', digest('https://example.com/day-90', 'sha256'), $5::date - 90, 9, 9, 4, 2, 0),
+			($1, $2, $6, 'Dormant campaign', 'https://example.com/dormant', digest('https://example.com/dormant', 'sha256'), $5::date - 100, 2, 1, 1, 0, 0)
+	`, tenantID, projectID, ruleID, deletedRuleID, now, dormantRuleID); err != nil {
+		t.Fatalf("seed analytics workspace: %v", err)
+	}
+	defer func() {
+		if _, err := root.Exec(ctx, `
+			DELETE FROM widget_funnel_daily
+				WHERE project_id = $1
+				  AND (rule_id IN ($2, $3) OR page_url IN (
+				'https://example.com/pricing', 'https://example.com/no-impression',
+				'https://example.com/day-89', 'https://example.com/day-90',
+				'https://example.com/tie-a', 'https://example.com/tie-b'
+			  ) OR page_url LIKE 'https://example.com/generated/%')
+			`, projectID, deletedRuleID, dormantRuleID); err != nil {
+			t.Errorf("clean analytics workspace rows: %v", err)
+		}
+	}()
+	if _, err := root.Exec(ctx, `DELETE FROM widget_rules WHERE id = $1`, deletedRuleID); err != nil {
+		t.Fatalf("delete historical analytics rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM widget_rules WHERE id = $1`, dormantRuleID); err != nil {
+		t.Fatalf("delete dormant historical analytics rule: %v", err)
+	}
+
+	read := func(filters AnalyticsQuery) (Workspace, error) {
+		tx, err := pools.App.Begin(ctx)
+		if err != nil {
+			return Workspace{}, err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID); err != nil {
+			return Workspace{}, err
+		}
+		return store.Workspace(ctx, tx, tenantID, filters)
+	}
+	sevenDays, err := read(AnalyticsQuery{Range: "7d", RangeDays: 7, Now: now})
+	if err != nil {
+		t.Fatalf("read seven-day workspace: %v", err)
+	}
+	if sevenDays.Period.StartDate != "2026-07-16" || sevenDays.Period.EndDate != "2026-07-22" ||
+		len(sevenDays.Trend) != 7 || sevenDays.Trend[0].Date != "2026-07-16" ||
+		sevenDays.Trend[6].Date != "2026-07-22" {
+		t.Fatalf("seven-day period = %#v trend = %#v", sevenDays.Period, sevenDays.Trend)
+	}
+	if sevenDays.Summary.Matched != 9 || sevenDays.Summary.Impressions != 2 ||
+		sevenDays.Summary.Interactions != 2 || sevenDays.Summary.Submissions != 1 ||
+		sevenDays.Summary.InteractionRate == nil || *sevenDays.Summary.InteractionRate != 1 ||
+		sevenDays.Summary.CompletionRate == nil || *sevenDays.Summary.CompletionRate != 0.5 {
+		t.Fatalf("seven-day summary = %#v", sevenDays.Summary)
+	}
+	if len(sevenDays.Rules) != 2 || sevenDays.Rules[0].RuleID != deletedRuleID ||
+		!sevenDays.Rules[0].Deleted || sevenDays.Rules[1].RuleID != ruleID {
+		t.Fatalf("stable historical rule breakdowns = %#v", sevenDays.Rules)
+	}
+	if len(sevenDays.Pages) != 3 || sevenDays.Pages[2].PageURL != "https://example.com/no-impression" ||
+		sevenDays.Pages[2].InteractionRate != nil || sevenDays.Pages[2].SubmitRate != nil {
+		t.Fatalf("page breakdowns = %#v", sevenDays.Pages)
+	}
+	if len(sevenDays.Options.Rules) != 2 || !sevenDays.Options.Rules[1].Deleted {
+		t.Fatalf("rule options = %#v", sevenDays.Options.Rules)
+	}
+
+	thirtyDays, err := read(AnalyticsQuery{Range: "30d", RangeDays: 30, Now: now})
+	if err != nil || thirtyDays.Summary.Impressions != 10 || thirtyDays.Summary.Submissions != 3 {
+		t.Fatalf("thirty-day workspace = %#v error %v", thirtyDays, err)
+	}
+	ninetyDays, err := read(AnalyticsQuery{Range: "90d", RangeDays: 90, Now: now})
+	if err != nil || ninetyDays.Period.StartDate != "2026-04-24" ||
+		ninetyDays.Summary.Impressions != 17 || ninetyDays.Summary.Submissions != 4 {
+		t.Fatalf("ninety-day workspace = %#v error %v", ninetyDays, err)
+	}
+	pageOnly, err := read(AnalyticsQuery{
+		Range: "30d", RangeDays: 30, PageURL: "https://example.com/pricing", Now: now,
+	})
+	if err != nil || pageOnly.Summary.Matched != 10 || len(pageOnly.Pages) != 1 {
+		t.Fatalf("page-filtered workspace = %#v error %v", pageOnly, err)
+	}
+	historicalPage, err := read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, PageURL: "https://example.com/day-89", Now: now,
+	})
+	historicalPageOptionFound := false
+	for _, option := range historicalPage.Options.Pages {
+		historicalPageOptionFound = historicalPageOptionFound || option.URL == "https://example.com/day-89"
+	}
+	if err != nil || historicalPage.Summary.Matched != 0 || len(historicalPage.Pages) != 0 ||
+		!historicalPageOptionFound {
+		t.Fatalf("historical selected page workspace = %#v error %v", historicalPage, err)
+	}
+	_, err = read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, PageURL: "https://example.com/never-observed", Now: now,
+	})
+	if !errors.Is(err, ErrAnalyticsFilterNotFound) {
+		t.Fatalf("missing page filter error = %v", err)
+	}
+	deletedRule, err := read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, ProjectID: projectID, RuleID: deletedRuleID, Now: now,
+	})
+	if err != nil || deletedRule.Summary.Submissions != 1 || len(deletedRule.Rules) != 1 {
+		t.Fatalf("deleted-rule workspace = %#v error %v", deletedRule, err)
+	}
+	dormantRule, err := read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, ProjectID: projectID, RuleID: dormantRuleID, Now: now,
+	})
+	dormantRuleOptionFound := false
+	for _, option := range dormantRule.Options.Rules {
+		dormantRuleOptionFound = dormantRuleOptionFound || option.ID == dormantRuleID && option.Deleted
+	}
+	if err != nil || dormantRule.Summary.Matched != 0 || len(dormantRule.Rules) != 0 || !dormantRuleOptionFound {
+		t.Fatalf("dormant selected rule workspace = %#v error %v", dormantRule, err)
+	}
+	_, err = read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7,
+		ProjectID: "00000000-0000-4000-8000-000000000099", Now: now,
+	})
+	if !errors.Is(err, ErrAnalyticsFilterNotFound) {
+		t.Fatalf("missing project filter error = %v", err)
+	}
+
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_daily (
+			tenant_id, project_id, rule_id, rule_name, page_url, page_key, event_date,
+			matched_count, impression_count, interaction_count, submitted_count, dismissed_count
+		)
+		SELECT $1::uuid, $2::uuid, $3::uuid, 'Checkout', page_url, digest(page_url, 'sha256'), $4::date,
+		       1, 1, 0, CASE WHEN number % 2 = 1 THEN 1 ELSE 0 END, 0
+		FROM generate_series(1, 205) AS number
+		CROSS JOIN LATERAL (SELECT 'https://example.com/generated/' || lpad(number::text, 3, '0') AS page_url) AS page
+		UNION ALL
+		SELECT $1::uuid, $2::uuid, $3::uuid, 'Checkout', page_url, digest(page_url, 'sha256'), $4::date, 5, 5, 2, 2, 0
+		FROM unnest(ARRAY['https://example.com/tie-a', 'https://example.com/tie-b']) AS page_url
+	`, tenantID, projectID, ruleID, now); err != nil {
+		t.Fatalf("seed high-cardinality analytics pages: %v", err)
+	}
+	bounded, err := read(AnalyticsQuery{Range: "7d", RangeDays: 7, Now: now})
+	if err != nil || len(bounded.Pages) != maximumAnalyticsBreakdownRows ||
+		bounded.Metadata.Pages.Total != 210 || !bounded.Metadata.Pages.Truncated ||
+		len(bounded.Options.Pages) != maximumAnalyticsOptionRows || !bounded.Metadata.PageOptions.Truncated {
+		t.Fatalf("bounded analytics metadata = %#v pages %d options %d error %v",
+			bounded.Metadata, len(bounded.Pages), len(bounded.Options.Pages), err)
+	}
+	if bounded.Pages[0].PageURL != "https://example.com/tie-a" || bounded.Pages[1].PageURL != "https://example.com/tie-b" {
+		t.Fatalf("stable equal-count page order = %#v", bounded.Pages[:2])
+	}
+	selectedLowRank, err := read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, PageURL: "https://example.com/generated/204", Now: now,
+	})
+	selectedOptionFound := false
+	for _, option := range selectedLowRank.Options.Pages {
+		selectedOptionFound = selectedOptionFound || option.URL == "https://example.com/generated/204"
+	}
+	if err != nil || selectedLowRank.Summary.Matched != 1 || len(selectedLowRank.Pages) != 1 ||
+		!selectedOptionFound {
+		t.Fatalf("selected bounded page = %#v error %v", selectedLowRank, err)
+	}
+
+	var siblingProjectID, siblingRuleID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Sibling Web', 'pk_live_SIBLINGANALYTICSRULE1X', '{sibling.example.com}')
+		RETURNING id
+	`, tenantID).Scan(&siblingProjectID); err != nil {
+		t.Fatalf("create sibling analytics project: %v", err)
+	}
+	defer func() {
+		if _, err := root.Exec(ctx, `DELETE FROM projects WHERE id = $1`, siblingProjectID); err != nil {
+			t.Errorf("delete sibling analytics project: %v", err)
+		}
+	}()
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (project_id, name, matcher_type, trigger_type, trigger_delay_seconds)
+		VALUES ($1, 'Sibling rule', 'all_pages', 'delay', 0) RETURNING id
+	`, siblingProjectID).Scan(&siblingRuleID); err != nil {
+		t.Fatalf("create sibling analytics rule: %v", err)
+	}
+	_, err = read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, ProjectID: projectID, RuleID: siblingRuleID, Now: now,
+	})
+	if !errors.Is(err, ErrAnalyticsFilterNotFound) {
+		t.Fatalf("mismatched project/rule filter error = %v", err)
+	}
+	_, err = read(AnalyticsQuery{
+		Range: "7d", RangeDays: 7, ProjectID: siblingProjectID,
+		PageURL: "https://example.com/chart", Now: now,
+	})
+	if !errors.Is(err, ErrAnalyticsFilterNotFound) {
+		t.Fatalf("mismatched project/page filter error = %v", err)
 	}
 }
 
@@ -241,6 +507,16 @@ func assertCrossTenantEventIDCollision(
 	`, collisionEventID, tenantID, projectID, ruleID, now); err != nil {
 		t.Fatalf("seed cross-tenant event ID collision: %v", err)
 	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_daily (
+			tenant_id, project_id, rule_id, rule_name, page_url, page_key, event_date, matched_count
+		) VALUES (
+			$1, $2, $3, 'Other rule', 'https://other.example.com',
+			digest('https://other.example.com', 'sha256'), $4::date, 1
+		)
+	`, tenantID, projectID, ruleID, now); err != nil {
+		t.Fatalf("seed cross-tenant analytics page: %v", err)
+	}
 
 	collisionInput := localLifecycle
 	collisionInput.EventID = collisionEventID
@@ -254,6 +530,16 @@ func assertCrossTenantEventIDCollision(
 	}
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
 		t.Fatalf("set cross-tenant collision tenant: %v", err)
+	}
+	for _, filters := range []AnalyticsQuery{
+		{Range: "7d", RangeDays: 7, ProjectID: projectID, Now: now},
+		{Range: "7d", RangeDays: 7, RuleID: ruleID, Now: now},
+		{Range: "7d", RangeDays: 7, PageURL: "https://other.example.com", Now: now},
+	} {
+		if _, err := store.Workspace(ctx, tx, configuration.TenantID, filters); !errors.Is(err, ErrAnalyticsFilterNotFound) {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("cross-tenant analytics filter error = %v", err)
+		}
 	}
 	if _, err := store.InsertEvents(ctx, tx, values); !errors.Is(err, errEventIDConflict) {
 		_ = tx.Rollback(ctx)

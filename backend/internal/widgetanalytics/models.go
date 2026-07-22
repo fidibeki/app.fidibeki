@@ -62,6 +62,109 @@ type Summary struct {
 	SubmitRate      *float64 `json:"submit_rate"`
 }
 
+type AnalyticsQuery struct {
+	Range     string
+	RangeDays int
+	ProjectID string
+	RuleID    string
+	PageURL   string
+	PageKey   []byte
+	Now       time.Time
+}
+
+type Period struct {
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
+	Timezone  string `json:"timezone"`
+}
+
+type AppliedFilters struct {
+	ProjectID string `json:"project_id,omitempty"`
+	RuleID    string `json:"rule_id,omitempty"`
+	PageURL   string `json:"page,omitempty"`
+}
+
+type TrendPoint struct {
+	Date         string `json:"date"`
+	Impressions  int64  `json:"impressions"`
+	Interactions int64  `json:"interactions"`
+	Submissions  int64  `json:"submissions"`
+}
+
+type Breakdown struct {
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
+	RuleID      string `json:"rule_id,omitempty"`
+	RuleName    string `json:"rule_name,omitempty"`
+	PageURL     string `json:"page_url,omitempty"`
+	Deleted     bool   `json:"deleted,omitempty"`
+	Summary
+}
+
+type ProjectOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type RuleOption struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Deleted   bool   `json:"deleted"`
+}
+
+type PageOption struct {
+	URL string `json:"url"`
+}
+
+type AnalyticsOptions struct {
+	Projects []ProjectOption `json:"projects"`
+	Rules    []RuleOption    `json:"rules"`
+	Pages    []PageOption    `json:"pages"`
+}
+
+type ResultMetadata struct {
+	Total     int64 `json:"total"`
+	Returned  int   `json:"returned"`
+	Limit     int   `json:"limit"`
+	Truncated bool  `json:"truncated"`
+}
+
+type AnalyticsMetadata struct {
+	Projects       ResultMetadata `json:"projects"`
+	Rules          ResultMetadata `json:"rules"`
+	Pages          ResultMetadata `json:"pages"`
+	ProjectOptions ResultMetadata `json:"project_options"`
+	RuleOptions    ResultMetadata `json:"rule_options"`
+	PageOptions    ResultMetadata `json:"page_options"`
+}
+
+type Workspace struct {
+	Range    string            `json:"range"`
+	Period   Period            `json:"period"`
+	Filters  AppliedFilters    `json:"filters"`
+	Summary  Summary           `json:"summary"`
+	Trend    []TrendPoint      `json:"trend"`
+	Projects []Breakdown       `json:"projects"`
+	Rules    []Breakdown       `json:"rules"`
+	Pages    []Breakdown       `json:"pages"`
+	Options  AnalyticsOptions  `json:"options"`
+	Metadata AnalyticsMetadata `json:"metadata"`
+}
+
+func (workspace *Workspace) CalculateRates() {
+	workspace.Summary.CalculateRates()
+	for index := range workspace.Projects {
+		workspace.Projects[index].Summary.CalculateRates()
+	}
+	for index := range workspace.Rules {
+		workspace.Rules[index].Summary.CalculateRates()
+	}
+	for index := range workspace.Pages {
+		workspace.Pages[index].Summary.CalculateRates()
+	}
+}
+
 func (summary *Summary) CalculateRates() {
 	summary.ImpressionRate = ratio(summary.Impressions, summary.Matched)
 	summary.InteractionRate = ratio(summary.Interactions, summary.Impressions)

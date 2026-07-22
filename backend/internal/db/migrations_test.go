@@ -864,13 +864,13 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		}
 	}
 
-	if err := migrator.Steps(-2); err != nil {
+	if err := migrator.Steps(-3); err != nil {
 		t.Fatalf("roll back widget funnel analytics migration: %v", err)
 	}
-	if err := migrator.Steps(2); err != nil {
+	if err := migrator.Steps(3); err != nil {
 		t.Fatalf("reapply widget funnel analytics migration: %v", err)
 	}
-	if err := migrator.Steps(-3); err != nil {
+	if err := migrator.Steps(-4); err != nil {
 		t.Fatalf("roll back widget target conditions migration: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
@@ -887,7 +887,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if preservedIssueID != issueA {
 		t.Fatalf("feedback issue after targeting rollback = %q, want %q", preservedIssueID, issueA)
 	}
-	if err := migrator.Steps(3); err != nil {
+	if err := migrator.Steps(4); err != nil {
 		t.Fatalf("reapply widget target conditions migration: %v", err)
 	}
 	var targetKind, targetMatcherType, targetMatcherValue string
@@ -906,10 +906,10 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			targetKind, targetMatcherType, targetMatcherValue, targetPosition,
 		)
 	}
-	if err := migrator.Steps(-4); err != nil {
+	if err := migrator.Steps(-5); err != nil {
 		t.Fatalf("roll back targeting and widget recurrence migrations: %v", err)
 	}
-	if err := migrator.Steps(4); err != nil {
+	if err := migrator.Steps(5); err != nil {
 		t.Fatalf("reapply widget recurrence and targeting migrations: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
@@ -925,14 +925,14 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("state after recurrence replay = issue %q recurrence %q/%v", preservedIssueID, recurrenceMode, recurrenceDays)
 	}
 
-	if err := migrator.Steps(-6); err != nil {
+	if err := migrator.Steps(-7); err != nil {
 		t.Fatalf("roll back targeting, recurrence, triage, and feedback/issue decoupling migrations: %v", err)
 	}
 	legacyDescription := "Legacy feedback keeps its complete description after migration. More detail follows."
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET text = $2 WHERE id = $1`, feedbackA, legacyDescription); err != nil {
 		t.Fatalf("prepare legacy feedback before migration replay: %v", err)
 	}
-	if err := migrator.Steps(6); err != nil {
+	if err := migrator.Steps(7); err != nil {
 		t.Fatalf("reapply feedback/issue decoupling, triage, recurrence, and targeting migrations: %v", err)
 	}
 	var migratedTitle, migratedDescription, migratedIssueDescription, migratedIssueID string
@@ -953,7 +953,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			migratedTitle, migratedDescription, migratedIssueID, migratedIssueDescription)
 	}
 
-	if err := migrator.Steps(-8); err != nil {
+	if err := migrator.Steps(-9); err != nil {
 		t.Fatalf("roll back targeting, recurrence, triage, product fields, session rotation marker, and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
@@ -1000,8 +1000,20 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 50 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 50 clean", version, dirty)
+	if version != 51 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 51 clean", version, dirty)
+	}
+	var analyticsIndexCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_indexes
+		WHERE schemaname = 'public'
+		  AND indexname IN (
+			'idx_widget_funnel_daily_tenant_rule_date',
+			'idx_widget_funnel_daily_tenant_page_date'
+		  )
+	`).Scan(&analyticsIndexCount); err != nil || analyticsIndexCount != 2 {
+		t.Fatalf("widget funnel dimension index count = %d, error = %v, want 2", analyticsIndexCount, err)
 	}
 }
 

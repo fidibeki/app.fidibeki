@@ -323,7 +323,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: feedback.Store{}, JWT: jwtManager,
 	})
 	widgetanalytics.RegisterTenantRoutes(tenantRoutes, widgetanalytics.TenantHTTPOptions{
-		Store: widgetanalytics.Store{}, JWT: jwtManager,
+		Store: widgetanalytics.Store{}, JWT: jwtManager, Logger: logger,
 	})
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
