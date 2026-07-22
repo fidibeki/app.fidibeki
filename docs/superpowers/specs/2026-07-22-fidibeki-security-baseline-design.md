@@ -1,7 +1,7 @@
 # Fidibeki Security Baseline Design
 
 **Date:** 2026-07-22
-**Status:** Approved design; awaiting written-spec review
+**Status:** Approved
 **Target:** Repository and staging validation only; production remains deferred
 
 ## Problem
