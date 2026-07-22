@@ -8,11 +8,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
 )
@@ -24,11 +28,13 @@ type EventStore interface {
 }
 
 type PublicHTTPOptions struct {
-	Authorizer widgetapi.ProjectAuthorizer
-	Begin      db.BeginFunc
-	Store      EventStore
-	Logger     *slog.Logger
-	Now        func() time.Time
+	Authorizer        widgetapi.ProjectAuthorizer
+	Begin             db.BeginFunc
+	Store             EventStore
+	Limiter           ratelimit.Limiter
+	TrustedProxyCIDRs []netip.Prefix
+	Logger            *slog.Logger
+	Now               func() time.Time
 }
 
 type PublicHTTPHandler struct {
@@ -75,6 +81,9 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	}
 	var request ingestRequest
 	if !decodeIngestRequest(w, r, &request) {
+		return
+	}
+	if !h.allow(w, r, configuration.ProjectID, len(request.Events)) {
 		return
 	}
 	values, fields := ValidateEvents(request.Events, configuration, origin, h.now())
@@ -156,12 +165,59 @@ func decodeIngestRequest(w http.ResponseWriter, r *http.Request, destination any
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
-		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "invalid JSON request body", nil)
+		writeDecodeError(w, err)
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "invalid JSON request body", nil)
+		writeDecodeError(w, err)
 		return false
+	}
+	return true
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maximum *http.MaxBytesError
+	if errors.As(err, &maximum) {
+		api.WriteError(w, http.StatusRequestEntityTooLarge, api.CodeBadRequest, "request body is too large", nil)
+		return
+	}
+	api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "invalid JSON request body", nil)
+}
+
+func (h *PublicHTTPHandler) allow(w http.ResponseWriter, r *http.Request, projectID string, eventCount int) bool {
+	const limit = 300
+	window := ratelimit.Window{Limit: limit, Period: time.Minute}
+	w.Header().Set("X-RateLimit-Limit", "300;w=60")
+	if h.options.Limiter == nil {
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(limit))
+		return true
+	}
+	cost := eventCount
+	if cost < 1 {
+		cost = 1
+	}
+	if cost > maximumBatchEvents {
+		cost = maximumBatchEvents
+	}
+	key := "widget:analytics:ip:" + projectID + ":" + httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs)
+	for range cost {
+		decision, err := h.options.Limiter.Allow(r.Context(), key, window)
+		if err != nil {
+			h.logger.WarnContext(r.Context(), "widget analytics rate limiter unavailable; allowing request", "error", err)
+			w.Header().Set("X-RateLimit-Remaining", "unknown")
+			return true
+		}
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+		if !decision.Allowed {
+			retrySeconds := int((decision.RetryAfter + time.Second - 1) / time.Second)
+			if retrySeconds < 1 {
+				retrySeconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+			api.WriteError(w, http.StatusTooManyRequests, api.CodeRateLimitExceeded,
+				"rate limit exceeded", nil)
+			return false
+		}
 	}
 	return true
 }

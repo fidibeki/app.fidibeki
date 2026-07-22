@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -33,6 +34,7 @@ type Config struct {
 	S3VirtualHostStyle       bool
 	JWTSecret                string
 	InternalProxySecret      string
+	TrustedProxyCIDRs        []netip.Prefix
 	IntegrationEncryptionKey string
 	StripeSecretKey          string
 	StripeWebhookSecret      string
@@ -102,6 +104,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	geminiRPM, geminiRPMErr := strconv.Atoi(get("GEMINI_RPM", "15"))
 	aiDailyLimit, aiDailyLimitErr := strconv.Atoi(get("AI_DAILY_REQUEST_LIMIT", "5000"))
 	aiReconcileEvery, aiReconcileEveryErr := time.ParseDuration(get("AI_RECONCILE_INTERVAL", "5m"))
+	trustedProxyCIDRs, trustedProxyCIDRsErr := parseCIDRs(get("TRUSTED_PROXY_CIDRS", ""))
 	s3Endpoint := get("S3_ENDPOINT", "")
 	httpAddress := ":8080"
 	if port := get("PORT", ""); port != "" {
@@ -125,6 +128,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		S3VirtualHostStyle:       s3VirtualHostStyle,
 		JWTSecret:                get("JWT_SECRET", ""),
 		InternalProxySecret:      get("INTERNAL_PROXY_SECRET", ""),
+		TrustedProxyCIDRs:        trustedProxyCIDRs,
 		IntegrationEncryptionKey: get("INTEGRATION_ENCRYPTION_KEY", ""),
 		StripeSecretKey:          get("STRIPE_SECRET_KEY", ""),
 		StripeWebhookSecret:      get("STRIPE_WEBHOOK_SECRET", ""),
@@ -212,6 +216,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if aiReconcileEveryErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_RECONCILE_INTERVAL: %w", aiReconcileEveryErr))
+	}
+	if trustedProxyCIDRsErr != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("TRUSTED_PROXY_CIDRS: %w", trustedProxyCIDRsErr))
 	}
 	validationErrors = append(validationErrors, config.validate()...)
 	if len(validationErrors) > 0 {
@@ -392,6 +399,7 @@ func (c Config) Redacted() map[string]any {
 		"s3_virtual_host_style":      c.S3VirtualHostStyle,
 		"jwt_secret":                 "[REDACTED]",
 		"internal_proxy_secret":      "[REDACTED]",
+		"trusted_proxy_cidrs":        c.TrustedProxyCIDRs,
 		"integration_encryption_key": "[REDACTED]",
 		"stripe_secret_key":          "[REDACTED]",
 		"stripe_webhook_secret":      "[REDACTED]",
@@ -425,4 +433,20 @@ func (c Config) Redacted() map[string]any {
 		"readiness_timeout":          c.ReadinessTimeout.String(),
 		"shutdown_timeout":           c.ShutdownTimeout.String(),
 	}
+}
+
+func parseCIDRs(raw string) ([]netip.Prefix, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	values := strings.Split(raw, ",")
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a valid network prefix", strings.TrimSpace(value))
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }

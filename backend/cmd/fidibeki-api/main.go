@@ -368,11 +368,13 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	feedback.RegisterRoutes(widgetRoutes, feedback.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: feedback.Store{},
 		Limiter: ratelimit.NewRedisLimiter(redisClient.Client()), Storage: objectStorage, Logger: logger,
-		Scheduler: aiScheduler, Analytics: widgetanalytics.Store{},
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+		Scheduler:         aiScheduler, Analytics: widgetanalytics.Store{},
 	})
 	widgetanalytics.RegisterPublicRoutes(widgetRoutes, widgetanalytics.PublicHTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App),
-		Store: widgetanalytics.Store{}, Logger: logger,
+		Store: widgetanalytics.Store{}, Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
 	})
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: replay.Store{},

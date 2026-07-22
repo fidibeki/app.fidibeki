@@ -36,6 +36,7 @@ for both services because configuration is validated before the command starts.
 | `S3_AUTO_CREATE_BUCKET` | no | Local/test convenience only; keep `false` in production. |
 | `JWT_SECRET` | yes | At least 32 random characters. Rotating it revokes all JWTs. |
 | `INTERNAL_PROXY_SECRET` | staging/prod | Shared secret used to authenticate tenant host forwarding from Nuxt. At least 32 random characters. |
+| `TRUSTED_PROXY_CIDRS` | no | Comma-separated ingress proxy networks allowed to supply `X-Forwarded-For`; empty trusts none. |
 | `INTEGRATION_ENCRYPTION_KEY` | yes | Base64 encoding of exactly 32 random bytes. |
 | `AUTH_ACCESS_TOKEN_TTL` | no | Access-token lifetime; default `10m`. |
 | `AUTH_MAGIC_LINK_TTL` | no | Magic-link lifetime; default `10m`. |

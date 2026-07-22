@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
@@ -46,16 +47,17 @@ type SubmissionAnalyticsStore interface {
 }
 
 type HTTPOptions struct {
-	Authorizer       widgetapi.ProjectAuthorizer
-	Begin            db.BeginFunc
-	Store            Store
-	Limiter          ratelimit.Limiter
-	Storage          ObjectStorage
-	Scheduler        AttachmentScheduler
-	Analytics        SubmissionAnalyticsStore
-	Logger           *slog.Logger
-	Now              func() time.Time
-	GeneratePublicID func() (string, error)
+	Authorizer        widgetapi.ProjectAuthorizer
+	Begin             db.BeginFunc
+	Store             Store
+	Limiter           ratelimit.Limiter
+	TrustedProxyCIDRs []netip.Prefix
+	Storage           ObjectStorage
+	Scheduler         AttachmentScheduler
+	Analytics         SubmissionAnalyticsStore
+	Logger            *slog.Logger
+	Now               func() time.Time
+	GeneratePublicID  func() (string, error)
 }
 
 type HTTPHandler struct {
@@ -344,7 +346,7 @@ func (h *HTTPHandler) allow(w http.ResponseWriter, r *http.Request, projectID st
 		key    string
 		window ratelimit.Window
 	}{
-		{key: "widget:ip:" + projectID + ":" + clientIP(r), window: ratelimit.Window{Limit: 10, Period: time.Minute}},
+		{key: "widget:ip:" + projectID + ":" + httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs), window: ratelimit.Window{Limit: 10, Period: time.Minute}},
 		{key: "widget:project:" + projectID, window: ratelimit.Window{Limit: 100, Period: time.Hour}},
 	}
 	limits := make([]string, 0, len(windows))
@@ -564,15 +566,4 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 		return false
 	}
 	return true
-}
-
-func clientIP(r *http.Request) string {
-	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); net.ParseIP(forwarded) != nil {
-		return forwarded
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && net.ParseIP(host) != nil {
-		return host
-	}
-	return "unknown"
 }

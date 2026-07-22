@@ -11,6 +11,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
@@ -90,6 +91,77 @@ func TestPublicHTTPRejectsInvalidAccessAndPayloadBeforeTransaction(t *testing.T)
 	}
 }
 
+func TestPublicHTTPEnforcesBodyAndEventRateLimitsBeforeTransaction(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	t.Run("body larger than 64 KiB", func(t *testing.T) {
+		t.Parallel()
+		beginCalls := 0
+		handler := publicAnalyticsHandler(PublicHTTPOptions{
+			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+			Begin: func(context.Context) (db.Transaction, error) {
+				beginCalls++
+				return &analyticsTransaction{}, nil
+			},
+			Store: &eventStoreStub{}, Now: func() time.Time { return now },
+		})
+		body := `{"events":[],"padding":"` + strings.Repeat("x", int(maximumBodySize)) + `"}`
+		response := performAnalyticsRequest(handler, http.MethodPost,
+			"/v1/widget/events?key=pk_live_test", body, "", "https://example.com")
+		if response.Code != http.StatusRequestEntityTooLarge || beginCalls != 0 {
+			t.Fatalf("oversized response = status %d body %s begin %d", response.Code, response.Body.String(), beginCalls)
+		}
+	})
+
+	t.Run("three hundred events per minute by project and source IP", func(t *testing.T) {
+		t.Parallel()
+		beginCalls := 0
+		limiter := &analyticsLimiterStub{decisions: []ratelimit.Decision{
+			{Allowed: true, Limit: 300, Remaining: 1},
+			{Allowed: false, Limit: 300, Remaining: 0, RetryAfter: 1500 * time.Millisecond},
+		}}
+		handler := publicAnalyticsHandler(PublicHTTPOptions{
+			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+			Begin: func(context.Context) (db.Transaction, error) {
+				beginCalls++
+				return &analyticsTransaction{}, nil
+			},
+			Store: &eventStoreStub{}, Limiter: limiter, Now: func() time.Time { return now },
+		})
+		response := performAnalyticsRequest(handler, http.MethodPost,
+			"/v1/widget/events?key=pk_live_test", `{"events":[{},{}]}`, "", "https://example.com")
+		if response.Code != http.StatusTooManyRequests || beginCalls != 0 || limiter.calls != 2 {
+			t.Fatalf("rate response = status %d body %s begin %d calls %d",
+				response.Code, response.Body.String(), beginCalls, limiter.calls)
+		}
+		if limiter.window != (ratelimit.Window{Limit: 300, Period: time.Minute}) ||
+			!strings.Contains(limiter.key, analyticsHTTPConfiguration().ProjectID+":192.0.2.1") {
+			t.Fatalf("rate limiter = key %q window %#v", limiter.key, limiter.window)
+		}
+		if response.Header().Get("Retry-After") != "2" ||
+			response.Header().Get("X-RateLimit-Limit") != "300;w=60" {
+			t.Fatalf("rate headers = %#v", response.Header())
+		}
+	})
+
+	t.Run("limiter outage fails open", func(t *testing.T) {
+		t.Parallel()
+		limiter := &analyticsLimiterStub{err: errors.New("redis unavailable")}
+		handler := publicAnalyticsHandler(PublicHTTPOptions{
+			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+			Begin:      func(context.Context) (db.Transaction, error) { return &analyticsTransaction{}, nil },
+			Store:      &eventStoreStub{}, Limiter: limiter, Now: func() time.Time { return now },
+		})
+		response := performAnalyticsRequest(handler, http.MethodPost,
+			"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
+		if response.Code != http.StatusAccepted || limiter.calls != 1 ||
+			response.Header().Get("X-RateLimit-Remaining") != "unknown" {
+			t.Fatalf("limiter outage response = status %d body %s calls %d headers %#v",
+				response.Code, response.Body.String(), limiter.calls, response.Header())
+		}
+	})
+}
+
 func TestSummaryCalculatesRatesWithNullZeroDenominators(t *testing.T) {
 	t.Parallel()
 	summary := Summary{Matched: 8, Impressions: 4, Interactions: 2, Submissions: 1}
@@ -157,6 +229,28 @@ type eventStoreStub struct {
 	result IngestResult
 	events []EventValues
 	err    error
+}
+
+type analyticsLimiterStub struct {
+	decisions []ratelimit.Decision
+	err       error
+	key       string
+	window    ratelimit.Window
+	calls     int
+}
+
+func (l *analyticsLimiterStub) Allow(_ context.Context, key string, window ratelimit.Window) (ratelimit.Decision, error) {
+	l.calls++
+	l.key = key
+	l.window = window
+	if len(l.decisions) == 0 {
+		return ratelimit.Decision{Allowed: true, Limit: window.Limit, Remaining: window.Limit}, l.err
+	}
+	index := l.calls - 1
+	if index >= len(l.decisions) {
+		index = len(l.decisions) - 1
+	}
+	return l.decisions[index], l.err
 }
 
 func (s *eventStoreStub) InsertEvents(_ context.Context, _ db.Querier, events []EventValues) (IngestResult, error) {

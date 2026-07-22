@@ -54,6 +54,7 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		"S3_SECRET_KEY":              "storage-secret",
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTERNAL_PROXY_SECRET":      "abcdef0123456789abcdef0123456789",
+		"TRUSTED_PROXY_CIDRS":        "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 		"SENTRY_DSN":                 "https://public:private@sentry.example.test/1",
@@ -106,6 +107,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"S3_SECRET_KEY":              "fidibeki-local-secret",
 		"S3_VIRTUAL_HOST_STYLE":      "true",
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
+		"TRUSTED_PROXY_CIDRS":        "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 	}
@@ -136,6 +138,10 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.RefreshRetryGrace != 10*time.Second {
 		t.Errorf("RefreshRetryGrace = %s, want 10s", got.RefreshRetryGrace)
+	}
+	if len(got.TrustedProxyCIDRs) != 2 || got.TrustedProxyCIDRs[0].String() != "10.0.0.0/8" ||
+		got.TrustedProxyCIDRs[1].String() != "192.0.2.0/24" {
+		t.Errorf("TrustedProxyCIDRs = %#v", got.TrustedProxyCIDRs)
 	}
 	if !got.S3VirtualHostStyle {
 		t.Error("S3VirtualHostStyle = false, want true")
@@ -190,6 +196,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"S3_SECRET_KEY":              "secret",
 		"JWT_SECRET":                 "too-short",
 		"INTERNAL_PROXY_SECRET":      "too-short",
+		"TRUSTED_PROXY_CIDRS":        "not-a-network",
 		"INTEGRATION_ENCRYPTION_KEY": "not-base64",
 		"READINESS_TIMEOUT":          "soon",
 		"SHUTDOWN_TIMEOUT":           "0s",
@@ -220,7 +227,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 	for _, expected := range []string{
 		"APP_ENV", "BASE_DOMAIN", "PUBLIC_BASE_URL", "DATABASE_URL_APP", "DATABASE_URL_ADMIN",
 		"DATABASE_URL_DIRECT", "REDIS_URL", "S3_ENDPOINT", "JWT_SECRET",
-		"INTERNAL_PROXY_SECRET", "INTEGRATION_ENCRYPTION_KEY",
+		"INTERNAL_PROXY_SECRET", "TRUSTED_PROXY_CIDRS", "INTEGRATION_ENCRYPTION_KEY",
 		"READINESS_TIMEOUT", "SHUTDOWN_TIMEOUT", "DATABASE_APP_MAX_CONNS",
 		"DATABASE_ADMIN_MAX_CONNS", "S3_AUTO_CREATE_BUCKET", "LOG_LEVEL",
 		"AUTH_ACCESS_TOKEN_TTL", "AUTH_MAGIC_LINK_TTL", "AUTH_REFRESH_TOKEN_TTL",
