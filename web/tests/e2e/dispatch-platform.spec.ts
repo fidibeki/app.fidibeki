@@ -303,6 +303,11 @@ async function installMockAPI(page: Page, state: MockState) {
     if (projectMatch && method === 'GET') {
       return json(route, { project: state.projects.find(project => project.id === projectMatch[1]) })
     }
+    if (projectMatch && method === 'PATCH') {
+      const project = state.projects.find(candidate => candidate.id === projectMatch[1])
+      if (project) Object.assign(project, body(), { updated_at: now })
+      return json(route, { project })
+    }
 
     if (path === '/v1/feedbacks' && method === 'GET') {
       const requestedStatus = url.searchParams.get('status')
@@ -523,6 +528,39 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
+})
+
+test('project settings enforce browser validation before sending an update', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Native form validation is viewport independent')
+  const state = createMockState()
+  let updateRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'PATCH' && new URL(request.url()).pathname === '/v1/projects/project-1') updateRequests += 1
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const name = page.getByLabel('Project name')
+  await name.fill('')
+  await page.getByRole('button', { name: 'Save project' }).click()
+
+  await expect(name).toBeFocused()
+  expect(updateRequests).toBe(0)
+})
+
+test('project settings submit a valid update', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Project submission is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Project name').fill('European Storefront')
+  await page.getByRole('button', { name: 'Save project' }).click()
+
+  await expect(page.getByRole('status')).toHaveText('Project settings saved.')
+  expect(state.projects[0].name).toBe('European Storefront')
 })
 
 test('feedback can be inspected, previewed, and archived', async ({ page }, testInfo) => {

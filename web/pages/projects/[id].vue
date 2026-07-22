@@ -225,7 +225,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" :disabled="pending || !can('project:update')" @click="saveProject"><Save :size="14" /> Save project</button></header><div><label>Project name<input v-model.trim="projectName" class="app-input" maxlength="120" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></div><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !can('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !can('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !can('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
@@ -307,7 +307,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-settings > header { display: flex; min-height: 66px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .project-settings h2 { margin: 0; font-size: 13px; }
 .project-settings header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
-.project-settings > div { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; padding: 16px; }
+.project-settings > form { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; padding: 16px; }
 .project-settings label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .project-settings textarea { min-height: 96px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 10px; }
 .project-settings > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; background: #fff8f8; border-top: 1px solid #efc2c6; }
@@ -317,6 +317,6 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-danger { color: var(--red); border-color: #e4adb4; }
 .project-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 10px; }
 @media (max-width: 1180px) { .project-config-grid { grid-template-columns: 190px minmax(480px, 1fr); } .project-widget-preview { display: none; } }
-@media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > div { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > form { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } }
 </style>
