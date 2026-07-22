@@ -22,16 +22,22 @@ func TestResultNormalizeAndGeminiErrorClassification(t *testing.T) {
 	result := Result{
 		Transcription: "  hello  ", CleanedText: "  clear text ", SentimentScore: 0.5,
 		ModerationFlags: []string{" Profanity ", "profanity", "", "PII"},
+		SuggestedTitle:  "  Checkout validation fails  ", Actionability: "actionable",
+		Category: "  checkout  ", Priority: "high",
 	}
 	if err := result.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
 	}
 	if result.Transcription != "hello" || result.CleanedText != "clear text" ||
-		fmt.Sprint(result.ModerationFlags) != "[profanity pii]" {
+		fmt.Sprint(result.ModerationFlags) != "[profanity pii]" ||
+		result.SuggestedTitle != "Checkout validation fails" || result.Category != "checkout" {
 		t.Errorf("normalized result = %#v", result)
 	}
 	if err := (&Result{SentimentScore: 1.1}).Normalize(); err == nil {
 		t.Fatal("Normalize(out-of-range sentiment) error = nil")
+	}
+	if err := (&Result{Actionability: "maybe", Priority: "immediate"}).Normalize(); err == nil {
+		t.Fatal("Normalize(invalid recommendations) error = nil")
 	}
 	if !IsPermanent(classifyGeminiError(genai.APIError{Code: 400, Message: "bad media"})) {
 		t.Error("400 API error was not permanent")

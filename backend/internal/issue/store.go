@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -79,6 +80,88 @@ func (Store) ListUpdates(
 		return nil, fmt.Errorf("iterate issue updates: %w", err)
 	}
 	return updates, nil
+}
+
+func (store Store) CreateFromFeedback(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	tenantSlug string,
+	feedbackID string,
+	title string,
+	description string,
+	now time.Time,
+) (Issue, error) {
+	var projectID string
+	var reporterEmail *string
+	var notifyReporter bool
+	var issueID *string
+	err := query.QueryRow(ctx, `
+		SELECT project_id, reporter_email, notify_reporter, issue_id
+		FROM feedbacks
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, feedbackID).Scan(&projectID, &reporterEmail, &notifyReporter, &issueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Issue{}, ErrNotFound
+	}
+	if err != nil {
+		return Issue{}, fmt.Errorf("lock feedback for issue creation: %w", err)
+	}
+	if issueID != nil {
+		return Issue{}, ErrFeedbackLinked
+	}
+	sequence, err := allocateIssueSequence(ctx, query, tenantID, now.Year())
+	if err != nil {
+		return Issue{}, err
+	}
+	createdID := uuid.NewString()
+	publicID := fmt.Sprintf("%s-%d-%04d", strings.ToUpper(tenantSlug), now.Year(), sequence)
+	if _, err := query.Exec(ctx, `
+		INSERT INTO issues (
+			id, tenant_id, project_id, public_id, title, description,
+			reporter_email, notify_reporter
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, createdID, tenantID, projectID, publicID, title, description,
+		reporterEmail, notifyReporter); err != nil {
+		return Issue{}, fmt.Errorf("create issue from feedback: %w", err)
+	}
+	tag, err := query.Exec(ctx, `
+		UPDATE feedbacks SET issue_id = $3
+		WHERE tenant_id = $1 AND id = $2 AND issue_id IS NULL
+	`, tenantID, feedbackID, createdID)
+	if err != nil {
+		return Issue{}, fmt.Errorf("link feedback to created issue: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return Issue{}, ErrFeedbackLinked
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
+		VALUES ($1, 'issue.created', 'issue', $2)
+	`, tenantID, createdID); err != nil {
+		return Issue{}, fmt.Errorf("create issue outbox event: %w", err)
+	}
+	return store.Get(ctx, query, tenantID, createdID)
+}
+
+func allocateIssueSequence(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	year int,
+) (int, error) {
+	var sequence int
+	if err := query.QueryRow(ctx, `
+		INSERT INTO issue_counters (tenant_id, year, next_seq)
+		VALUES ($1, $2, 2)
+		ON CONFLICT (tenant_id, year) DO UPDATE
+		SET next_seq = issue_counters.next_seq + 1
+		RETURNING next_seq - 1
+	`, tenantID, year).Scan(&sequence); err != nil {
+		return 0, fmt.Errorf("allocate issue sequence: %w", err)
+	}
+	return sequence, nil
 }
 
 func (store Store) UpdateStatus(
@@ -228,7 +311,7 @@ func (store Store) Unmerge(
 }
 
 const issueSelect = `
-	SELECT issue.id, issue.tenant_id, issue.project_id, issue.public_id, issue.title,
+	SELECT issue.id, issue.tenant_id, issue.project_id, issue.public_id, issue.title, issue.description,
 	       issue.status, issue.merged_into_id, issue.merged_at, issue.reporter_email,
 	       issue.notify_reporter, issue.resolved_at,
 	       (SELECT count(*) FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id),
@@ -243,7 +326,7 @@ type rowScanner interface {
 func scanIssue(row rowScanner) (Issue, error) {
 	var found Issue
 	if err := row.Scan(
-		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title,
+		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title, &found.Description,
 		&found.Status, &found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
 		&found.NotifyReporter, &found.ResolvedAt, &found.FeedbackCount,
 		&found.CreatedAt, &found.UpdatedAt,

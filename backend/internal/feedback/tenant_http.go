@@ -22,7 +22,7 @@ import (
 type TenantReadStore interface {
 	ListTenantFeedback(context.Context, db.Querier, string, ListOptions) ([]Item, error)
 	GetTenantFeedback(context.Context, db.Querier, string, string) (Detail, error)
-	UpdateTenantFeedbackStatus(context.Context, db.Querier, string, string, Status) (Detail, error)
+	UpdateTenantFeedback(context.Context, db.Querier, string, string, *Status, *string) (Detail, error)
 	TenantDashboard(context.Context, db.Querier, string, string, int, time.Time) (Dashboard, error)
 }
 
@@ -128,21 +128,34 @@ func (h *TenantHTTPHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Status Status `json:"status"`
+		Status *Status `json:"status"`
+		Title  *string `json:"title"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	if !request.Status.Valid() {
+	if request.Status != nil && !request.Status.Valid() {
 		writeTenantValidation(w, map[string]string{"status": "must be open, spam, or archived"})
+		return
+	}
+	if request.Title != nil {
+		trimmed := strings.TrimSpace(*request.Title)
+		if length := len([]rune(trimmed)); length < 1 || length > 80 {
+			writeTenantValidation(w, map[string]string{"title": "must be between 1 and 80 characters"})
+			return
+		}
+		request.Title = &trimmed
+	}
+	if request.Status == nil && request.Title == nil {
+		writeTenantValidation(w, map[string]string{"request": "must include status or title"})
 		return
 	}
 	resolved, query, ok := tenantFeedbackRequestState(w, r)
 	if !ok {
 		return
 	}
-	updated, err := h.options.Store.UpdateTenantFeedbackStatus(
-		r.Context(), query, resolved.ID, feedbackID, request.Status,
+	updated, err := h.options.Store.UpdateTenantFeedback(
+		r.Context(), query, resolved.ID, feedbackID, request.Status, request.Title,
 	)
 	if err != nil {
 		writeTenantStoreError(w, err)

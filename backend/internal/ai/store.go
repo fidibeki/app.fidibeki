@@ -689,11 +689,14 @@ func (s Store) CompleteText(ctx context.Context, work TextWork, result Result, n
 		UPDATE feedbacks
 		SET text_cleaned = $3, text_sentiment_score = $4,
 		    text_moderation_flags = $5, text_process_status = 'completed',
-		    ai_job_enqueued_at = NULL
+		    ai_job_enqueued_at = NULL, ai_suggested_title = $7,
+		    ai_actionability = $8, ai_category = $9, ai_priority = $10
 		WHERE id = $1 AND tenant_id = $2 AND text_process_status = 'processing'
 		  AND text_processing_generation = $6
 	`, work.FeedbackID, work.TenantID, nullableText(result.CleanedText),
-		result.SentimentScore, moderationFlags(result.ModerationFlags), work.Generation)
+		result.SentimentScore, moderationFlags(result.ModerationFlags), work.Generation,
+		nullableText(result.SuggestedTitle), nullableText(result.Actionability),
+		nullableText(result.Category), nullableText(result.Priority))
 	if err != nil {
 		return fmt.Errorf("complete text AI: %w", err)
 	}
@@ -732,6 +735,18 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNoWork
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE feedbacks
+		SET ai_suggested_title = COALESCE(ai_suggested_title, $3),
+		    ai_actionability = COALESCE(ai_actionability, $4),
+		    ai_category = COALESCE(ai_category, $5),
+		    ai_priority = COALESCE(ai_priority, $6)
+		WHERE id = $1 AND tenant_id = $2
+	`, work.FeedbackID, work.TenantID, nullableText(result.SuggestedTitle),
+		nullableText(result.Actionability), nullableText(result.Category),
+		nullableText(result.Priority)); err != nil {
+		return fmt.Errorf("store attachment AI recommendations: %w", err)
 	}
 	if err := updateCompletion(ctx, tx, work.FeedbackID, now); err != nil {
 		return err
@@ -876,6 +891,8 @@ func (Store) ReprocessFeedback(
 		        ELSE 'pending'::processing_status
 		    END,
 		    text_cleaned = NULL, text_sentiment_score = NULL, text_moderation_flags = '{}',
+		    ai_suggested_title = NULL, ai_actionability = NULL,
+		    ai_category = NULL, ai_priority = NULL,
 		    text_processing_generation = text_processing_generation + 1,
 		    ai_job_enqueued_at = NULL, ai_processed_at = NULL
 		WHERE feedback.id = $1 AND feedback.tenant_id = $2

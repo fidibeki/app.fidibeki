@@ -37,12 +37,63 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/issues", handler.list)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
 		Get("/v1/issues/{issueID}", handler.get)
+	router.With(append(protected,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
+		appmiddleware.RequirePermission(auth.PermissionIssueUpdate),
+	)...).Post("/v1/feedbacks/{feedbackID}/issue", handler.createFromFeedback)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueUpdate))...).
 		Patch("/v1/issues/{issueID}", handler.updateStatus)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueMerge))...).
 		Post("/v1/issues/{issueID}/merge", handler.merge)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueMerge))...).
 		Delete("/v1/issues/{issueID}/merge", handler.unmerge)
+}
+
+func (h *HTTPHandler) createFromFeedback(w http.ResponseWriter, r *http.Request) {
+	feedbackID := chi.URLParam(r, "feedbackID")
+	if _, err := uuid.Parse(feedbackID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
+		return
+	}
+	var request struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	request.Description = strings.TrimSpace(request.Description)
+	fields := make(map[string]string)
+	if length := len([]rune(request.Title)); length < 1 || length > 80 {
+		fields["title"] = "must be between 1 and 80 characters"
+	}
+	if len([]rune(request.Description)) > 10000 {
+		fields["description"] = "must be at most 10000 characters"
+	}
+	if len(fields) > 0 {
+		writeValidation(w, fields)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	now := time.Now().UTC()
+	if h.options.Now != nil {
+		now = h.options.Now().UTC()
+	}
+	created, err := h.options.Store.CreateFromFeedback(
+		r.Context(), query, resolved.ID, resolved.Slug, feedbackID,
+		request.Title, request.Description, now,
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.Header().Set("Location", "/v1/issues/"+created.ID)
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"issue": created})
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +281,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "issue already has that status", nil)
 	case errors.Is(err, ErrInvalidMerge):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "issues cannot be merged", nil)
+	case errors.Is(err, ErrFeedbackLinked):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "feedback is already linked to an issue", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

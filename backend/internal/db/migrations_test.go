@@ -536,8 +536,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("admin replay batch count = %d, error = %v, want 2", count, err)
 	}
 
-	if err := migrator.Steps(-2); err != nil {
-		t.Fatalf("roll back session rotation marker and replay cap migrations: %v", err)
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back feedback/issue decoupling migration: %v", err)
+	}
+	legacyDescription := "Legacy feedback keeps its complete description after migration. More detail follows."
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET text = $2 WHERE id = $1`, feedbackA, legacyDescription); err != nil {
+		t.Fatalf("prepare legacy feedback before migration replay: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply feedback/issue decoupling migration: %v", err)
+	}
+	var migratedTitle, migratedDescription, migratedIssueDescription, migratedIssueID string
+	if err := root.QueryRow(ctx, `
+		SELECT feedback.title, feedback.description, feedback.issue_id, issue.description
+		FROM feedbacks AS feedback
+		JOIN issues AS issue ON issue.id = feedback.issue_id
+		WHERE feedback.id = $1
+	`, feedbackA).Scan(
+		&migratedTitle, &migratedDescription, &migratedIssueID, &migratedIssueDescription,
+	); err != nil {
+		t.Fatalf("read feedback/issue backfill after migration replay: %v", err)
+	}
+	if migratedTitle != "Legacy feedback keeps its complete description after migration." ||
+		migratedDescription != legacyDescription || migratedIssueID != issueA ||
+		migratedIssueDescription != legacyDescription {
+		t.Fatalf("migration backfill = title %q description %q issue %q issue description %q",
+			migratedTitle, migratedDescription, migratedIssueID, migratedIssueDescription)
+	}
+
+	if err := migrator.Steps(-3); err != nil {
+		t.Fatalf("roll back product fields, session rotation marker, and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
 		if _, err := root.Exec(ctx, `
@@ -583,8 +611,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 44 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 44 clean", version, dirty)
+	if version != 45 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 45 clean", version, dirty)
 	}
 }
 

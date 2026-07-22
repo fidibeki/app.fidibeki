@@ -126,6 +126,59 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		BaseDomain: "fidibeki.localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App),
 	})(routes)
+	if _, err := root.Exec(ctx, `
+		INSERT INTO issue_counters (tenant_id, year, next_seq) VALUES ($1, 2026, 3)
+	`, tenantID); err != nil {
+		t.Fatalf("seed issue counter: %v", err)
+	}
+	var unlinkedFeedbackID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, title, description, text,
+			reporter_email, notify_reporter, page_url, text_process_status
+		) VALUES (
+			$1, $2, 'fb_Unlinked', gen_random_uuid(), 'Checkout freezes after promotion',
+			'The checkout freezes after I apply a promotion code.',
+			'The checkout freezes after I apply a promotion code.',
+			'reporter2@example.com', true, 'https://example.com/checkout', 'completed'
+		) RETURNING id
+	`, tenantID, projectID).Scan(&unlinkedFeedbackID); err != nil {
+		t.Fatalf("create unlinked feedback: %v", err)
+	}
+	createdFromFeedback := issueRequest(
+		handler, accessToken, http.MethodPost, "/v1/feedbacks/"+unlinkedFeedbackID+"/issue",
+		`{"title":"Promotion code freezes checkout","description":"Applying a valid promotion code freezes checkout before payment."}`,
+	)
+	if createdFromFeedback.Code != http.StatusCreated ||
+		!strings.Contains(createdFromFeedback.Body.String(), "ACME-2026-0003") ||
+		!strings.Contains(createdFromFeedback.Body.String(), "Applying a valid promotion code") {
+		t.Fatalf("create issue from feedback = %d, body = %s", createdFromFeedback.Code, createdFromFeedback.Body.String())
+	}
+	var createdIssueID, createdTitle, createdDescription, linkedIssueID string
+	var createdNotify bool
+	if err := root.QueryRow(ctx, `
+		SELECT id, title, description, notify_reporter
+		FROM issues WHERE tenant_id = $1 AND public_id = 'ACME-2026-0003'
+	`, tenantID).Scan(&createdIssueID, &createdTitle, &createdDescription, &createdNotify); err != nil {
+		t.Fatalf("read issue created from feedback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, unlinkedFeedbackID).
+		Scan(&linkedIssueID); err != nil {
+		t.Fatalf("read new feedback issue link: %v", err)
+	}
+	if createdTitle != "Promotion code freezes checkout" ||
+		createdDescription != "Applying a valid promotion code freezes checkout before payment." ||
+		!createdNotify || linkedIssueID != createdIssueID {
+		t.Errorf("created issue/link = %q/%q notify=%t linked=%q issue=%q",
+			createdTitle, createdDescription, createdNotify, linkedIssueID, createdIssueID)
+	}
+	duplicateCreate := issueRequest(
+		handler, accessToken, http.MethodPost, "/v1/feedbacks/"+unlinkedFeedbackID+"/issue",
+		`{"title":"Duplicate","description":"Must not be created."}`,
+	)
+	if duplicateCreate.Code != http.StatusConflict {
+		t.Errorf("duplicate issue creation = %d, body = %s", duplicateCreate.Code, duplicateCreate.Body.String())
+	}
 
 	list := issueRequest(handler, accessToken, http.MethodGet, "/v1/issues", "")
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "ACME-2026-0001") {

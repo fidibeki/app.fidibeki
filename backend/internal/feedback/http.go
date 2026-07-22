@@ -165,7 +165,7 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 				})
 			return
 		}
-		feedbackID, issueID := NewIDs()
+		feedbackID := NewID()
 		prepared, err := prepareAttachments(
 			configuration, feedbackID, values.Attachments, definition.Features.AI, rawTokens,
 		)
@@ -179,8 +179,7 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		submission, err = h.options.Store.CreateSubmission(
-			r.Context(), tx, configuration, values, feedbackID, issueID,
-			publicIDs, prepared, h.now().UTC(),
+			r.Context(), tx, configuration, values, feedbackID, publicIDs, prepared,
 		)
 		if err != nil {
 			h.writeStoreError(w, r, err)

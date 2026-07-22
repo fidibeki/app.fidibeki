@@ -9,6 +9,7 @@ var (
 	ErrNotFound       = errors.New("issue not found")
 	ErrNoStatusChange = errors.New("issue status did not change")
 	ErrInvalidMerge   = errors.New("issues cannot be merged")
+	ErrFeedbackLinked = errors.New("feedback is already linked to an issue")
 )
 
 type Status string
@@ -30,6 +31,7 @@ type Issue struct {
 	ProjectID      string     `json:"project_id"`
 	PublicID       string     `json:"public_id"`
 	Title          string     `json:"title"`
+	Description    string     `json:"description"`
 	Status         Status     `json:"status"`
 	MergedIntoID   *string    `json:"merged_into_id,omitempty"`
 	MergedAt       *time.Time `json:"merged_at,omitempty"`

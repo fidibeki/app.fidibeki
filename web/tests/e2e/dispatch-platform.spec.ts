@@ -87,6 +87,8 @@ function createMockState() {
     issue_public_id: 'ISS-101',
     issue_status: 'open',
     rating: 2,
+    title: 'Checkout froze after I applied a promotion code.',
+    description: 'Checkout froze after I applied a promotion code.',
     text: 'Checkout froze after I applied a promotion code.',
     text_cleaned: 'Checkout froze after I applied a promotion code.',
     reporter_email: 'customer@example.test',
@@ -114,6 +116,8 @@ function createMockState() {
     project_id: projects[0].id,
     project_name: projects[0].name,
     rating: 5,
+    title: 'The new checkout is much clearer.',
+    description: 'The new checkout is much clearer.',
     text: 'The new checkout is much clearer.',
     text_cleaned: 'The new checkout is much clearer.',
     notify_reporter: false,
@@ -133,6 +137,7 @@ function createMockState() {
     project_id: projects[0].id,
     public_id: 'ISS-101',
     title: 'Promotion code can freeze checkout',
+    description: 'Customers cannot complete payment after applying some promotion codes.',
     status: 'open',
     reporter_email: 'customer@example.test',
     notify_reporter: true,
@@ -146,6 +151,7 @@ function createMockState() {
     project_id: projects[0].id,
     public_id: 'ISS-099',
     title: 'Checkout stalls during promotion validation',
+    description: 'Promotion validation can leave the checkout waiting indefinitely.',
     status: 'in_progress',
     reporter_email: 'ops@acme.test',
     notify_reporter: false,
@@ -342,7 +348,10 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/feedbacks' && method === 'GET') {
       const requestedStatus = url.searchParams.get('status')
       const requestedAttachment = url.searchParams.get('attachment')
+      const requestedQuery = url.searchParams.get('q')?.toLowerCase()
       const items = state.feedback.filter((item) => {
+        if (requestedQuery && ![item.public_id, item.title, item.description, item.issue_public_id]
+          .some(value => value?.toLowerCase().includes(requestedQuery))) return false
         if (requestedStatus && item.status !== requestedStatus) return false
         if (requestedAttachment === 'replay') return item.has_replay
         if (requestedAttachment === 'none') return item.attachment_kinds.length === 0 && !item.has_replay
@@ -364,7 +373,26 @@ async function installMockAPI(page: Page, state: MockState) {
     if (feedbackMatch && method === 'PATCH') {
       const item = state.feedback.find(candidate => candidate.id === feedbackMatch[1])
       if (item && body().status) item.status = String(body().status)
+      if (item && body().title) item.title = String(body().title)
       return json(route, { feedback: item })
+    }
+    const feedbackIssueMatch = path.match(/^\/v1\/feedbacks\/([^/]+)\/issue$/)
+    if (feedbackIssueMatch && method === 'POST') {
+      const feedbackItem = state.feedback.find(candidate => candidate.id === feedbackIssueMatch[1])
+      const input = body()
+      const issue = {
+        id: 'issue-created', tenant_id: state.tenant.id, project_id: feedbackItem?.project_id || 'project-1',
+        public_id: 'ISS-102', title: String(input.title), description: String(input.description || ''),
+        status: 'open', reporter_email: feedbackItem?.reporter_email || '', notify_reporter: feedbackItem?.notify_reporter || false,
+        feedback_count: 1, created_at: now, updated_at: now, merged_into_id: undefined as string | undefined,
+      }
+      state.issues.push(issue)
+      if (feedbackItem) {
+        feedbackItem.issue_id = issue.id
+        feedbackItem.issue_public_id = issue.public_id
+        feedbackItem.issue_status = 'open'
+      }
+      return json(route, { issue }, 201)
     }
     if (/^\/v1\/feedbacks\/[^/]+\/reprocess$/.test(path) && method === 'POST') return json(route, {}, 202)
     if (/^\/v1\/attachments\/[^/]+\/retry$/.test(path) && method === 'POST') return json(route, {}, 202)
@@ -707,6 +735,38 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   await expect(page.getByText('Feedback marked archived.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible()
   expect(state.feedback[0].status).toBe('archived')
+})
+
+test('unlinked feedback can be titled and promoted into an editable issue', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('link', { name: 'Open FB-1047' }).click()
+  } else {
+    await page.getByRole('listitem').filter({ hasText: 'FB-1047' }).click()
+    await page.getByTitle('Open full detail').click()
+  }
+
+  await expect(page.getByRole('heading', { name: 'The new checkout is much clearer.' })).toBeVisible()
+  await expect(page.getByText('The new checkout is much clearer.', { exact: true })).toHaveCount(2)
+  await page.getByTitle('Edit feedback title').click()
+  await page.getByLabel('Feedback title').fill('Checkout success page is clearer')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Checkout success page is clearer' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Create issue' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: 'Create issue from feedback' })).toBeVisible()
+  await expect(dialog.getByLabel('Title')).toHaveValue('Checkout success page is clearer')
+  await dialog.getByLabel('Description').fill('Customers confirm that the redesigned success page is easier to understand.')
+  await dialog.getByRole('button', { name: 'Create issue' }).click()
+
+  await expect(page).toHaveURL(/\/issues\/issue-created$/)
+  await expect(page.getByRole('heading', { name: 'Checkout success page is clearer' })).toBeVisible()
+  await expect(page.getByText('Customers confirm that the redesigned success page is easier to understand.')).toBeVisible()
+  expect(state.feedback[1].issue_id).toBe('issue-created')
+  await capture(page, testInfo, 'issue-created-from-feedback')
 })
 
 test('expired uploads are not offered an AI processing retry', async ({ page }, testInfo) => {

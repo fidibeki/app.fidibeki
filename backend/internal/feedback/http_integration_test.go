@@ -137,7 +137,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	var first SubmissionResponse
 	decodeFeedbackResponse(t, created, &first)
-	if first.FeedbackID == "" || first.FeedbackPublicID == "" || first.IssuePublicID != "ACME-2026-0001" {
+	if first.FeedbackID == "" || first.FeedbackPublicID == "" || first.IssuePublicID != "" {
 		t.Errorf("created response = %#v", first)
 	}
 	if len(first.Attachments) != 1 || first.Attachments[0].CompleteToken == "" ||
@@ -462,7 +462,7 @@ func assertTenantFeedbackReadFlow(
 
 	filters := url.Values{
 		"project_id": {projectID}, "status": {"open"}, "rating": {"2"},
-		"attachment": {"audio"}, "moderation": {"flagged"}, "issue": {"linked"},
+		"attachment": {"audio"}, "moderation": {"flagged"}, "issue": {"unlinked"},
 		"sentiment": {"negative"}, "date_from": {now.Add(-time.Hour).Format(time.RFC3339)},
 	}.Encode()
 	filtered := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/feedbacks?"+filters, "", ownerToken)
@@ -559,15 +559,18 @@ func assertTenantFeedbackReadFlow(
 	}
 	decodeFeedbackResponse(t, dashboardResponse, &dashboardEnvelope)
 	if dashboardResponse.Code != http.StatusOK || dashboardEnvelope.Dashboard.FeedbackCount != 2 ||
-		dashboardEnvelope.Dashboard.OpenIssueCount != 1 || dashboardEnvelope.Dashboard.AttentionCount != 1 ||
+		dashboardEnvelope.Dashboard.OpenIssueCount != 0 || dashboardEnvelope.Dashboard.AttentionCount != 1 ||
 		dashboardEnvelope.Dashboard.Satisfaction == nil || *dashboardEnvelope.Dashboard.Satisfaction != 3.5 {
 		t.Fatalf("tenant dashboard = %d %#v", dashboardResponse.Code, dashboardEnvelope.Dashboard)
 	}
 
 	updated := performTenantFeedbackRequest(
-		handler, http.MethodPatch, "/v1/feedbacks/"+feedbackID, `{"status":"archived"}`, ownerToken,
+		handler, http.MethodPatch, "/v1/feedbacks/"+feedbackID,
+		`{"status":"archived","title":"Checkout total changes unexpectedly"}`, ownerToken,
 	)
-	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"status":"archived"`) {
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"status":"archived"`) ||
+		!strings.Contains(updated.Body.String(), `"title":"Checkout total changes unexpectedly"`) ||
+		!strings.Contains(updated.Body.String(), `"description":"Checkout was clear"`) {
 		t.Fatalf("update tenant feedback status = %d, body = %s", updated.Code, updated.Body.String())
 	}
 	invalidFilter := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/feedbacks?rating=9", "", ownerToken)
@@ -740,7 +743,16 @@ func assertFeedbackRows(
 	`, tenantID, projectID).Scan(&issueEvents); err != nil {
 		t.Fatalf("count issue-created outbox events: %v", err)
 	}
-	if issues != 1 || feedbacks != 1 || attachments != 1 || events != 1 || issueEvents != 1 {
+	var title string
+	var description *string
+	if err := root.QueryRow(ctx, `SELECT title, description FROM feedbacks WHERE id = $1`, feedbackID).
+		Scan(&title, &description); err != nil {
+		t.Fatalf("read feedback copy: %v", err)
+	}
+	if title != "Checkout was clear" || description == nil || *description != "Checkout was clear" {
+		t.Errorf("feedback title/description = %q/%v", title, description)
+	}
+	if issues != 0 || feedbacks != 1 || attachments != 1 || events != 1 || issueEvents != 0 {
 		t.Fatalf("row counts: issues=%d feedbacks=%d attachments=%d events=%d issue_events=%d",
 			issues, feedbacks, attachments, events, issueEvents)
 	}

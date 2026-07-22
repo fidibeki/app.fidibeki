@@ -92,16 +92,20 @@ func TestAttachmentHelpersCoverSupportedFormats(t *testing.T) {
 			t.Errorf("attachmentExtension(%q) = %q, want %q", contentType, got, want)
 		}
 	}
-	short := "Short title"
-	if got := feedbackTitle(nil); got != "[No text]" {
+	short := "Short title. More context belongs in the description."
+	if got := feedbackTitle(nil); got != "Feedback without written detail" {
 		t.Errorf("feedbackTitle(nil) = %q", got)
 	}
-	if got := feedbackTitle(&short); got != short {
+	if got := feedbackTitle(&short); got != "Short title." {
 		t.Errorf("feedbackTitle(short) = %q", got)
 	}
 	long := strings.Repeat("a", 81)
 	if got := feedbackTitle(&long); len([]rune(got)) != 80 {
 		t.Errorf("feedbackTitle(long) rune count = %d", len([]rune(got)))
+	}
+	multiline := "The checkout froze\nI had already entered my card details"
+	if got := feedbackTitle(&multiline); got != "The checkout froze" {
+		t.Errorf("feedbackTitle(multiline) = %q", got)
 	}
 }
 

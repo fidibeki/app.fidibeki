@@ -41,8 +41,10 @@ END`
 const tenantFeedbackColumns = `
 	feedback.id, feedback.public_id, feedback.project_id, project.name,
 	feedback.widget_rule_id, feedback.session_id, feedback.issue_id,
-	issue.public_id, issue.status::text, feedback.rating, feedback.text,
-	feedback.text_cleaned, feedback.reporter_email, feedback.notify_reporter,
+	issue.public_id, issue.status::text, feedback.rating, feedback.title, feedback.description,
+	feedback.text, feedback.text_cleaned, feedback.ai_suggested_title,
+	feedback.ai_actionability, feedback.ai_category, feedback.ai_priority,
+	feedback.reporter_email, feedback.notify_reporter,
 	feedback.page_url, feedback.referrer, feedback.user_agent, feedback.os,
 	feedback.browser, feedback.device, feedback.viewport_width,
 	feedback.viewport_height, feedback.language, feedback.status::text,
@@ -94,7 +96,8 @@ func (Store) ListTenantFeedback(
 	if options.Query != "" {
 		term := add("%" + options.Query + "%")
 		where = append(where, `(feedback.public_id ILIKE `+term+`
-			OR COALESCE(feedback.text_cleaned, feedback.text, '') ILIKE `+term+`
+			OR feedback.title ILIKE `+term+`
+			OR COALESCE(feedback.description, feedback.text_cleaned, feedback.text, '') ILIKE `+term+`
 			OR feedback.page_url ILIKE `+term+`
 			OR COALESCE(feedback.reporter_email, '') ILIKE `+term+`
 			OR project.name ILIKE `+term+`
@@ -238,17 +241,19 @@ func (Store) GetTenantFeedback(
 	return detail, nil
 }
 
-func (Store) UpdateTenantFeedbackStatus(
+func (Store) UpdateTenantFeedback(
 	ctx context.Context,
 	query db.Querier,
 	tenantID string,
 	feedbackID string,
-	status Status,
+	status *Status,
+	title *string,
 ) (Detail, error) {
 	tag, err := query.Exec(ctx, `
-		UPDATE feedbacks SET status = $3::feedback_status
+		UPDATE feedbacks
+		SET status = COALESCE($3::feedback_status, status), title = COALESCE($4, title)
 		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, feedbackID, status)
+	`, tenantID, feedbackID, status, title)
 	if err != nil {
 		return Detail{}, fmt.Errorf("update feedback status: %w", err)
 	}
@@ -390,7 +395,9 @@ func tenantFeedbackScanTargets(item *Item, attachmentKinds *[]string) []any {
 	return []any{
 		&item.ID, &item.PublicID, &item.ProjectID, &item.ProjectName,
 		&item.WidgetRuleID, &item.SessionID, &item.IssueID, &item.IssuePublicID,
-		&item.IssueStatus, &item.Rating, &item.Text, &item.TextCleaned,
+		&item.IssueStatus, &item.Rating, &item.Title, &item.Description,
+		&item.Text, &item.TextCleaned, &item.AISuggestedTitle,
+		&item.AIActionability, &item.AICategory, &item.AIPriority,
 		&item.ReporterEmail, &item.NotifyReporter, &item.PageURL, &item.Referrer,
 		&item.UserAgent, &item.OS, &item.Browser, &item.Device, &item.ViewportWidth,
 		&item.ViewportHeight, &item.Language, &item.Status, &item.AIStatus,

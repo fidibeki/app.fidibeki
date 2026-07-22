@@ -10,15 +10,19 @@ import {
   Link2,
   Mic,
   MonitorPlay,
+  Pencil,
+  Plus,
   RotateCcw,
   ShieldAlert,
   Video,
+  X,
 } from '@lucide/vue'
 import type { FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
+const router = useRouter()
 const { $apiFetch } = useNuxtApp()
 const { canWrite } = useAuth()
 const feedbackID = computed(() => String(route.params.id || ''))
@@ -26,6 +30,11 @@ const tab = ref<'evidence' | 'replay' | 'details'>('evidence')
 const mutationPending = ref(false)
 const mutationError = ref('')
 const notice = ref('')
+const titleEditing = ref(false)
+const titleDraft = ref('')
+const createIssueOpen = ref(false)
+const issueTitle = ref('')
+const issueDescription = ref('')
 
 const { data, status, error, refresh } = await useAsyncData(
   () => `feedback-detail:${feedbackID.value}`,
@@ -41,7 +50,7 @@ const { data, status, error, refresh } = await useAsyncData(
 
 const feedback = computed(() => data.value?.feedback)
 const configuration = computed(() => data.value?.configuration)
-const copy = computed(() => feedback.value?.text_cleaned || feedback.value?.text || 'Feedback without written detail')
+const description = computed(() => feedback.value?.description || feedback.value?.text || '')
 const transcript = computed(() => feedback.value?.attachments.find((item) => item.transcription)?.transcription)
 const retryableAttachments = computed(() => feedback.value?.attachments.filter((item) => (
   item.processing_status === 'failed' && Boolean(item.completed_at)
@@ -75,6 +84,55 @@ async function updateStatus(nextStatus: FeedbackStatus) {
   } finally {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
+  }
+}
+
+function editTitle() {
+  if (!feedback.value) return
+  titleDraft.value = feedback.value.title
+  titleEditing.value = true
+}
+
+async function saveTitle() {
+  const title = titleDraft.value.trim()
+  if (!canWrite('feedback:update') || !feedback.value || mutationPending.value || !title) return
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    await $apiFetch(`/v1/feedbacks/${feedback.value.id}`, { method: 'PATCH', body: { title } })
+    titleEditing.value = false
+    notice.value = 'Feedback title updated.'
+    await refresh()
+  } catch (updateError) {
+    mutationError.value = apiErrorMessage(updateError, 'Feedback title could not be updated.')
+  } finally {
+    mutationPending.value = false
+    window.setTimeout(() => { notice.value = '' }, 3000)
+  }
+}
+
+function openCreateIssue() {
+  if (!feedback.value || feedback.value.issue_id) return
+  issueTitle.value = feedback.value.ai_suggested_title || feedback.value.title
+  issueDescription.value = description.value
+  createIssueOpen.value = true
+}
+
+async function createIssue() {
+  if (!feedback.value || feedback.value.issue_id || mutationPending.value || !issueTitle.value.trim()) return
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ issue: { id: string } }>(`/v1/feedbacks/${feedback.value.id}/issue`, {
+      method: 'POST',
+      body: { title: issueTitle.value.trim(), description: issueDescription.value.trim() },
+    })
+    createIssueOpen.value = false
+    await router.push(`/issues/${response.issue.id}`)
+  } catch (createError) {
+    mutationError.value = apiErrorMessage(createError, 'Issue could not be created.')
+  } finally {
+    mutationPending.value = false
   }
 }
 
@@ -129,6 +187,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
           <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> Spam</button>
         </template>
         <NuxtLink v-if="feedback.issue_id" class="app-button app-button--primary" :to="`/issues/${feedback.issue_id}`"><Link2 :size="15" /> Open issue</NuxtLink>
+        <button v-else-if="canWrite('feedback:update') && canWrite('issue:update')" class="app-button app-button--primary" :disabled="mutationPending" @click="openCreateIssue"><Plus :size="15" /> Create issue</button>
       </div>
     </header>
 
@@ -137,7 +196,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 
     <template v-else-if="feedback">
       <section class="feedback-detail-heading">
-        <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><h1>{{ copy }}</h1><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
+        <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" aria-label="Feedback title" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">Save</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">Cancel</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" title="Edit feedback title" aria-label="Edit feedback title" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
         <RatingMark v-if="feedback.rating" :rating="feedback.rating" /><span v-else class="feedback-detail-no-rating">No rating</span>
       </section>
 
@@ -189,12 +248,21 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
         </main>
 
         <aside class="feedback-case-facts">
-          <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div><dt>Sentiment</dt><dd>{{ feedback.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
+          <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div v-if="feedback.ai_actionability"><dt>Actionability</dt><dd>{{ feedback.ai_actionability.replace('_', ' ') }}</dd></div><div v-if="feedback.ai_category"><dt>Category</dt><dd>{{ feedback.ai_category }}</dd></div><div v-if="feedback.ai_priority"><dt>Suggested priority</dt><dd>{{ feedback.ai_priority }}</dd></div><div><dt>Sentiment</dt><dd>{{ feedback.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
           <section><h2>Reporter</h2><dl><div><dt>Email</dt><dd>{{ feedback.reporter_email || 'Anonymous' }}</dd></div><div><dt>Updates</dt><dd>{{ feedback.notify_reporter ? 'Subscribed' : 'Not subscribed' }}</dd></div></dl></section>
           <section v-if="retryableAttachments.length"><h2>AI failures</h2><p>{{ retryableAttachments.length }} attachment{{ retryableAttachments.length === 1 ? '' : 's' }} can be retried.</p></section>
         </aside>
       </div>
     </template>
+    <AppDialog :open="createIssueOpen" aria-labelledby="create-issue-title" @close="createIssueOpen = false">
+      <form class="feedback-issue-modal app-modal" @submit.prevent="createIssue">
+        <header><div><p class="app-eyebrow">Create actionable work</p><h2 id="create-issue-title">Create issue from feedback</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="createIssueOpen = false"><X :size="16" /></button></header>
+        <label><span>Title</span><input v-model="issueTitle" class="app-input" required maxlength="80" autofocus /></label>
+        <label><span>Description</span><textarea v-model="issueDescription" class="app-input" rows="6" maxlength="10000" /></label>
+        <p v-if="feedback?.ai_suggested_title && feedback.ai_suggested_title !== feedback.title" class="feedback-ai-suggestion">AI suggestion: {{ feedback.ai_suggested_title }}</p>
+        <footer><button type="button" class="app-button" :disabled="mutationPending" @click="createIssueOpen = false">Cancel</button><button class="app-button app-button--primary" :disabled="mutationPending || !issueTitle.trim()" type="submit"><Plus :size="14" /> {{ mutationPending ? 'Creating...' : 'Create issue' }}</button></footer>
+      </form>
+    </AppDialog>
     <p v-if="notice" class="feedback-toast" role="status"><CheckCircle2 :size="14" /> {{ notice }}</p>
   </div>
 </template>
@@ -206,6 +274,11 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 .feedback-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; padding: 26px clamp(16px, 3vw, 38px) 22px; background: #fff; border-bottom: 1px solid var(--line); }
 .feedback-detail-heading > div { max-width: 900px; }
 .feedback-detail-heading h1 { margin: 7px 0 8px; font-size: 21px; font-weight: 650; line-height: 1.4; }
+.feedback-detail-heading h1 { display: flex; align-items: center; gap: 8px; }
+.feedback-title-edit { display: inline-grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; padding: 0; background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 4px; }
+.feedback-title-edit:hover { color: var(--teal); border-color: var(--line); }
+.feedback-title-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; margin: 7px 0 8px; }
+.feedback-description { max-width: 760px; margin: 0 0 9px; color: var(--ink-soft); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .feedback-detail-heading > div > span { color: var(--muted); font-size: 10px; }
 .feedback-detail-no-rating { padding: 7px 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; font-size: 10px; }
 .feedback-detail-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px clamp(16px, 3vw, 38px); background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
@@ -258,6 +331,12 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 .feedback-case-facts a { color: var(--teal); font-weight: 700; }
 .feedback-case-facts section > p { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .feedback-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 11px; }
+.feedback-issue-modal { width: min(560px, calc(100vw - 32px)); }
+.feedback-issue-modal label { display: grid; gap: 6px; margin-top: 12px; }
+.feedback-issue-modal label span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.feedback-issue-modal textarea { min-height: 130px; padding: 10px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
+.feedback-issue-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.feedback-ai-suggestion { margin: 10px 0 0; color: var(--muted); font-size: 9px; }
 
 @media (max-width: 900px) {
   .feedback-detail-grid { grid-template-columns: 1fr; }
@@ -269,6 +348,8 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
   .feedback-detail-toolbar > div .app-button--primary { grid-column: 1 / -1; }
   .feedback-detail-heading { padding: 18px 14px; }
   .feedback-detail-heading h1 { font-size: 17px; }
+  .feedback-title-editor { grid-template-columns: 1fr 1fr; }
+  .feedback-title-editor input { grid-column: 1 / -1; }
   .feedback-detail-tabs { padding: 0 8px; }
   .feedback-detail-grid { padding: 12px 12px 36px; }
   .feedback-case-facts { grid-row: auto; display: flex; }

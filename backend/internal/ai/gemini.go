@@ -30,8 +30,23 @@ var responseJSONSchema = map[string]any{
 		"moderation_flags": map[string]any{
 			"type": "array", "items": map[string]any{"type": "string"},
 		},
+		"suggested_title": map[string]any{
+			"type": "string", "maxLength": 80,
+		},
+		"actionability": map[string]any{
+			"type": "string", "enum": []string{"actionable", "not_actionable", "uncertain"},
+		},
+		"category": map[string]any{
+			"type": "string", "maxLength": 80,
+		},
+		"priority": map[string]any{
+			"type": "string", "enum": []string{"low", "medium", "high", "urgent"},
+		},
 	},
-	"required":             []string{"transcription", "cleaned_text", "sentiment_score", "moderation_flags"},
+	"required": []string{
+		"transcription", "cleaned_text", "sentiment_score", "moderation_flags",
+		"suggested_title", "actionability", "category", "priority",
+	},
 	"additionalProperties": false,
 }
 
@@ -136,7 +151,8 @@ func NewGeminiAnalyzer(
 func (a *GeminiAnalyzer) AnalyzeText(ctx context.Context, text string) (Result, error) {
 	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{
 		genai.NewPartFromText("Analyze this written feedback. Remove filler and repetition in cleaned_text. " +
-			"Leave transcription empty.\n\n<feedback>\n" + text + "\n</feedback>"),
+			"Leave transcription empty. Suggest a concise title, whether it is actionable, a short product " +
+			"category, and an operational priority. These are recommendations only.\n\n<feedback>\n" + text + "\n</feedback>"),
 	}}}
 	return a.generate(ctx, contents)
 }
@@ -369,18 +385,20 @@ func geminiStatusCode(err error) int {
 }
 
 func attachmentPrompt(kind string) string {
+	recommendations := " Suggest a concise title, whether it is actionable, a short product category, and an operational priority."
 	switch kind {
 	case "screenshot":
 		return "Extract all visible text into transcription. Put a concise cleaned version in cleaned_text, " +
-			"score the expressed sentiment, and flag offensive or sensitive content."
+			"score the expressed sentiment, and flag offensive or sensitive content." + recommendations
 	case "audio":
 		return "Transcribe the audio accurately into transcription, remove filler and repetition in cleaned_text, " +
-			"score sentiment, and flag offensive or sensitive language."
+			"score sentiment, and flag offensive or sensitive language." + recommendations
 	case "video":
 		return "Use the video and audio natively. Transcribe spoken and materially visible text into transcription, " +
-			"produce concise cleaned_text, score sentiment, and flag offensive or sensitive content."
+			"produce concise cleaned_text, score sentiment, and flag offensive or sensitive content." + recommendations
 	default:
-		return "Extract the feedback into transcription and cleaned_text, score sentiment, and add moderation flags."
+		return "Extract the feedback into transcription and cleaned_text, score sentiment, and add moderation flags." +
+			recommendations
 	}
 }
 

@@ -69,13 +69,33 @@ type Result struct {
 	CleanedText     string   `json:"cleaned_text"`
 	SentimentScore  float64  `json:"sentiment_score"`
 	ModerationFlags []string `json:"moderation_flags"`
+	SuggestedTitle  string   `json:"suggested_title"`
+	Actionability   string   `json:"actionability"`
+	Category        string   `json:"category"`
+	Priority        string   `json:"priority"`
 }
 
 func (r *Result) Normalize() error {
 	r.Transcription = strings.TrimSpace(r.Transcription)
 	r.CleanedText = strings.TrimSpace(r.CleanedText)
+	r.SuggestedTitle = strings.TrimSpace(r.SuggestedTitle)
+	r.Category = strings.TrimSpace(r.Category)
 	if r.SentimentScore < -1 || r.SentimentScore > 1 {
 		return fmt.Errorf("sentiment score must be between -1 and 1")
+	}
+	if len([]rune(r.SuggestedTitle)) > 80 {
+		return fmt.Errorf("suggested title must be at most 80 characters")
+	}
+	if len([]rune(r.Category)) > 80 {
+		return fmt.Errorf("category must be at most 80 characters")
+	}
+	if r.Actionability != "" && r.Actionability != "actionable" &&
+		r.Actionability != "not_actionable" && r.Actionability != "uncertain" {
+		return fmt.Errorf("actionability is invalid")
+	}
+	if r.Priority != "" && r.Priority != "low" && r.Priority != "medium" &&
+		r.Priority != "high" && r.Priority != "urgent" {
+		return fmt.Errorf("priority is invalid")
 	}
 	seen := make(map[string]struct{}, len(r.ModerationFlags))
 	flags := make([]string, 0, len(r.ModerationFlags))

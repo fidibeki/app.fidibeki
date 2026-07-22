@@ -162,37 +162,43 @@ type SessionDetail struct {
 }
 
 type Item struct {
-	ID              string           `json:"id"`
-	PublicID        string           `json:"public_id"`
-	ProjectID       string           `json:"project_id"`
-	ProjectName     string           `json:"project_name"`
-	WidgetRuleID    *string          `json:"widget_rule_id,omitempty"`
-	SessionID       *string          `json:"session_id,omitempty"`
-	IssueID         *string          `json:"issue_id,omitempty"`
-	IssuePublicID   *string          `json:"issue_public_id,omitempty"`
-	IssueStatus     *string          `json:"issue_status,omitempty"`
-	Rating          *int             `json:"rating,omitempty"`
-	Text            *string          `json:"text,omitempty"`
-	TextCleaned     *string          `json:"text_cleaned,omitempty"`
-	ReporterEmail   *string          `json:"reporter_email,omitempty"`
-	NotifyReporter  bool             `json:"notify_reporter"`
-	PageURL         string           `json:"page_url"`
-	Referrer        *string          `json:"referrer,omitempty"`
-	UserAgent       *string          `json:"user_agent,omitempty"`
-	OS              *string          `json:"os,omitempty"`
-	Browser         *string          `json:"browser,omitempty"`
-	Device          *string          `json:"device,omitempty"`
-	ViewportWidth   *int             `json:"viewport_width,omitempty"`
-	ViewportHeight  *int             `json:"viewport_height,omitempty"`
-	Language        *string          `json:"language,omitempty"`
-	Status          Status           `json:"status"`
-	AIStatus        string           `json:"ai_status"`
-	SentimentScore  *float64         `json:"sentiment_score,omitempty"`
-	ModerationFlags []string         `json:"moderation_flags"`
-	AttachmentKinds []AttachmentKind `json:"attachment_kinds"`
-	HasReplay       bool             `json:"has_replay"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID               string           `json:"id"`
+	PublicID         string           `json:"public_id"`
+	ProjectID        string           `json:"project_id"`
+	ProjectName      string           `json:"project_name"`
+	WidgetRuleID     *string          `json:"widget_rule_id,omitempty"`
+	SessionID        *string          `json:"session_id,omitempty"`
+	IssueID          *string          `json:"issue_id,omitempty"`
+	IssuePublicID    *string          `json:"issue_public_id,omitempty"`
+	IssueStatus      *string          `json:"issue_status,omitempty"`
+	Rating           *int             `json:"rating,omitempty"`
+	Title            string           `json:"title"`
+	Description      *string          `json:"description,omitempty"`
+	Text             *string          `json:"text,omitempty"`
+	TextCleaned      *string          `json:"text_cleaned,omitempty"`
+	AISuggestedTitle *string          `json:"ai_suggested_title,omitempty"`
+	AIActionability  *string          `json:"ai_actionability,omitempty"`
+	AICategory       *string          `json:"ai_category,omitempty"`
+	AIPriority       *string          `json:"ai_priority,omitempty"`
+	ReporterEmail    *string          `json:"reporter_email,omitempty"`
+	NotifyReporter   bool             `json:"notify_reporter"`
+	PageURL          string           `json:"page_url"`
+	Referrer         *string          `json:"referrer,omitempty"`
+	UserAgent        *string          `json:"user_agent,omitempty"`
+	OS               *string          `json:"os,omitempty"`
+	Browser          *string          `json:"browser,omitempty"`
+	Device           *string          `json:"device,omitempty"`
+	ViewportWidth    *int             `json:"viewport_width,omitempty"`
+	ViewportHeight   *int             `json:"viewport_height,omitempty"`
+	Language         *string          `json:"language,omitempty"`
+	Status           Status           `json:"status"`
+	AIStatus         string           `json:"ai_status"`
+	SentimentScore   *float64         `json:"sentiment_score,omitempty"`
+	ModerationFlags  []string         `json:"moderation_flags"`
+	AttachmentKinds  []AttachmentKind `json:"attachment_kinds"`
+	HasReplay        bool             `json:"has_replay"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
 }
 
 type Detail struct {
@@ -266,7 +272,7 @@ type AttachmentUpload struct {
 type SubmissionResponse struct {
 	FeedbackID       string             `json:"feedback_id"`
 	FeedbackPublicID string             `json:"feedback_public_id"`
-	IssuePublicID    string             `json:"issue_public_id"`
+	IssuePublicID    string             `json:"issue_public_id,omitempty"`
 	NotifyReporter   bool               `json:"notify_reporter"`
 	Attachments      []AttachmentUpload `json:"attachments"`
 }

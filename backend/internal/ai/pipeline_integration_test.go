@@ -93,12 +93,25 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		Store: store, Analyzer: analyzer, Storage: stringObjectSource{}, Limiter: allowLimiter{}, RPM: 15,
 		Now: func() time.Time { return dayOne.Add(time.Minute) },
 	}
+	var dayOneTextTask, dayOneAttachmentTask PreparedTask
 	for _, task := range prepared {
-		if err := runPreparedTask(ctx, processor, task); err != nil {
-			t.Fatalf("process day-one task %#v: %v", task, err)
+		if task.Kind == TaskKindText {
+			dayOneTextTask = task
+		} else {
+			dayOneAttachmentTask = task
 		}
 	}
+	if err := runPreparedTask(ctx, processor, dayOneAttachmentTask); err != nil {
+		t.Fatalf("process day-one attachment %#v: %v", dayOneAttachmentTask, err)
+	}
+	assertRecommendations(t, ctx, pool, testFeedbackID,
+		"Checkout audio is confusing", "actionable", "checkout", "high")
+	if err := runPreparedTask(ctx, processor, dayOneTextTask); err != nil {
+		t.Fatalf("process day-one text %#v: %v", dayOneTextTask, err)
+	}
 	assertAIState(t, ctx, pool, testFeedbackID, "completed", nil)
+	assertRecommendations(t, ctx, pool, testFeedbackID,
+		"Checkout is confusing", "actionable", "checkout", "high")
 	assertAttachmentState(t, ctx, pool, testAudioID, "completed", 1, nil)
 	assertAttachmentState(t, ctx, pool, testScreenshotID, "pending", 0, nil)
 
@@ -826,6 +839,29 @@ func assertAttachmentState(
 	}
 }
 
+func assertRecommendations(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	feedbackID, wantTitle, wantActionability, wantCategory, wantPriority string,
+) {
+	t.Helper()
+	var title, actionability, category, priority string
+	if err := pool.QueryRow(ctx, `
+		SELECT COALESCE(ai_suggested_title, ''), COALESCE(ai_actionability, ''),
+		       COALESCE(ai_category, ''), COALESCE(ai_priority, '')
+		FROM feedbacks WHERE id = $1
+	`, feedbackID).Scan(&title, &actionability, &category, &priority); err != nil {
+		t.Fatalf("read feedback AI recommendations: %v", err)
+	}
+	if title != wantTitle || actionability != wantActionability ||
+		category != wantCategory || priority != wantPriority {
+		t.Errorf("AI recommendations = %q/%q/%q/%q, want %q/%q/%q/%q",
+			title, actionability, category, priority,
+			wantTitle, wantActionability, wantCategory, wantPriority)
+	}
+}
+
 func assertUsage(t *testing.T, ctx context.Context, pool *pgxpool.Pool, day time.Time, want int) {
 	t.Helper()
 	var requests int
@@ -862,7 +898,8 @@ func (a *fakeAnalyzer) AnalyzeText(context.Context, string) (Result, error) {
 		return Result{}, a.textErr
 	}
 	return Result{CleanedText: "checkout is confusing", SentimentScore: -0.7,
-		ModerationFlags: []string{"profanity"}}, nil
+		ModerationFlags: []string{"profanity"}, SuggestedTitle: "Checkout is confusing",
+		Actionability: "actionable", Category: "checkout", Priority: "high"}, nil
 }
 
 func (a *fakeAnalyzer) AnalyzeAttachment(_ context.Context, work AttachmentWork, _ io.Reader) (Result, error) {
@@ -873,7 +910,9 @@ func (a *fakeAnalyzer) AnalyzeAttachment(_ context.Context, work AttachmentWork,
 		return Result{Transcription: "Payment failed", CleanedText: "Payment failed", SentimentScore: -0.4}, nil
 	}
 	return Result{Transcription: "The checkout is confusing", CleanedText: "checkout is confusing",
-		SentimentScore: -0.7, ModerationFlags: []string{"profanity"}}, nil
+		SentimentScore: -0.7, ModerationFlags: []string{"profanity"},
+		SuggestedTitle: "Checkout audio is confusing", Actionability: "actionable",
+		Category: "checkout", Priority: "high"}, nil
 }
 
 type stringObjectSource struct{}

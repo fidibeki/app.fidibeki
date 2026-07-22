@@ -124,8 +124,14 @@ export interface FeedbackItem {
   issue_public_id?: string
   issue_status?: IssueStatus
   rating?: number
+  title: string
+  description?: string
   text?: string
   text_cleaned?: string
+  ai_suggested_title?: string
+  ai_actionability?: 'actionable' | 'not_actionable' | 'uncertain'
+  ai_category?: string
+  ai_priority?: 'low' | 'medium' | 'high' | 'urgent'
   reporter_email?: string
   notify_reporter: boolean
   page_url: string
@@ -202,6 +208,7 @@ export interface Issue {
   project_id: string
   public_id: string
   title: string
+  description: string
   status: IssueStatus
   merged_into_id?: string
   merged_at?: string

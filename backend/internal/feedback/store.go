@@ -74,9 +74,9 @@ func (Store) FindSubmission(
 ) (Submission, bool, error) {
 	var submission Submission
 	err := query.QueryRow(ctx, `
-		SELECT feedback.id, feedback.public_id, issue.public_id, feedback.notify_reporter
+		SELECT feedback.id, feedback.public_id, COALESCE(issue.public_id, ''), feedback.notify_reporter
 		FROM feedbacks AS feedback
-		JOIN issues AS issue ON issue.id = feedback.issue_id
+		LEFT JOIN issues AS issue ON issue.id = feedback.issue_id
 		WHERE feedback.project_id = $1 AND feedback.client_feedback_id = $2
 	`, projectID, clientFeedbackID).Scan(
 		&submission.ID, &submission.PublicID, &submission.IssuePublicID, &submission.NotifyReporter,
@@ -119,43 +119,27 @@ func (Store) CreateSubmission(
 	configuration project.PublicConfiguration,
 	values SubmissionValues,
 	feedbackID string,
-	issueID string,
 	publicIDCandidates []string,
 	attachments []PreparedAttachment,
-	now time.Time,
 ) (Submission, error) {
-	sequence, err := allocateIssueSequence(ctx, query, configuration.TenantID, now.Year())
-	if err != nil {
-		return Submission{}, err
-	}
-	issuePublicID := fmt.Sprintf("%s-%d-%04d", strings.ToUpper(configuration.TenantSlug), now.Year(), sequence)
 	title := feedbackTitle(values.Text)
-	if _, err := query.Exec(ctx, `
-		INSERT INTO issues (
-			id, tenant_id, project_id, public_id, title, reporter_email, notify_reporter
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, issueID, configuration.TenantID, configuration.ProjectID, issuePublicID,
-		title, values.ReporterEmail, values.NotifyReporter); err != nil {
-		return Submission{}, fmt.Errorf("create issue for feedback: %w", err)
-	}
-
 	publicID := ""
 	for _, candidate := range publicIDCandidates {
 		err := query.QueryRow(ctx, `
 			INSERT INTO feedbacks (
-				id, tenant_id, project_id, widget_rule_id, public_id, issue_id,
-				client_feedback_id, rating, text, reporter_email, notify_reporter,
+				id, tenant_id, project_id, widget_rule_id, public_id,
+				client_feedback_id, rating, title, description, text, reporter_email, notify_reporter,
 				page_url, referrer, user_agent, os, browser, device,
 				viewport_width, viewport_height, language, dom_snapshot_html, dom_snapshot_styles,
 				text_process_status, session_id
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11,
 				$12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 			)
 			ON CONFLICT (tenant_id, public_id) DO NOTHING
 			RETURNING public_id
 		`, feedbackID, configuration.TenantID, configuration.ProjectID, values.WidgetRuleID,
-			candidate, issueID, values.ClientFeedbackID, values.Rating, values.Text,
+			candidate, values.ClientFeedbackID, values.Rating, title, values.Text,
 			values.ReporterEmail, values.NotifyReporter, values.PageURL, values.Referrer,
 			values.UserAgent, values.OS, values.Browser, values.Device, values.ViewportWidth,
 			values.ViewportHeight, values.Language, values.DOMSnapshotHTML, values.DOMSnapshotStyles,
@@ -205,14 +189,8 @@ func (Store) CreateSubmission(
 	`, configuration.TenantID, feedbackID); err != nil {
 		return Submission{}, fmt.Errorf("create feedback outbox event: %w", err)
 	}
-	if _, err := query.Exec(ctx, `
-		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
-		VALUES ($1, 'issue.created', 'issue', $2)
-	`, configuration.TenantID, issueID); err != nil {
-		return Submission{}, fmt.Errorf("create issue outbox event: %w", err)
-	}
 	return Submission{
-		ID: feedbackID, PublicID: publicID, IssuePublicID: issuePublicID,
+		ID: feedbackID, PublicID: publicID,
 		NotifyReporter: values.NotifyReporter, Attachments: createdAttachments,
 	}, nil
 }
@@ -321,25 +299,6 @@ func (Store) CompleteAttachment(
 	return nil
 }
 
-func allocateIssueSequence(
-	ctx context.Context,
-	query db.Querier,
-	tenantID string,
-	year int,
-) (int, error) {
-	var sequence int
-	if err := query.QueryRow(ctx, `
-		INSERT INTO issue_counters (tenant_id, year, next_seq)
-		VALUES ($1, $2, 2)
-		ON CONFLICT (tenant_id, year) DO UPDATE
-		SET next_seq = issue_counters.next_seq + 1
-		RETURNING next_seq - 1
-	`, tenantID, year).Scan(&sequence); err != nil {
-		return 0, fmt.Errorf("allocate issue sequence: %w", err)
-	}
-	return sequence, nil
-}
-
 func listAttachments(ctx context.Context, query db.Querier, feedbackID string) ([]Attachment, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, client_attachment_id, kind, storage_key, content_type, size_bytes,
@@ -370,9 +329,19 @@ func listAttachments(ctx context.Context, query db.Querier, feedbackID string) (
 
 func feedbackTitle(text *string) string {
 	if text == nil || strings.TrimSpace(*text) == "" {
-		return "[No text]"
+		return "Feedback without written detail"
 	}
 	title := strings.TrimSpace(*text)
+	for index, character := range title {
+		if character == '\n' || character == '\r' {
+			title = strings.TrimSpace(title[:index])
+			break
+		}
+		if character == '.' || character == '!' || character == '?' {
+			title = strings.TrimSpace(title[:index+len(string(character))])
+			break
+		}
+	}
 	if utf8.RuneCountInString(title) <= 80 {
 		return title
 	}
@@ -390,6 +359,6 @@ func textProcessingStatus(text *string, plan tenant.Plan) string {
 	return "pending"
 }
 
-func NewIDs() (string, string) {
-	return uuid.NewString(), uuid.NewString()
+func NewID() string {
+	return uuid.NewString()
 }
