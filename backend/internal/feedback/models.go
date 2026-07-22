@@ -225,6 +225,7 @@ type ListCursor struct {
 }
 
 type ListOptions struct {
+	IDs        []string
 	Query      string
 	ProjectID  string
 	Status     Status
@@ -239,6 +240,17 @@ type ListOptions struct {
 	Sort       SortOrder
 	Limit      int
 	Cursor     *ListCursor
+}
+
+type TenantMutation struct {
+	Status       *Status
+	Title        *string
+	SetPriority  bool
+	Priority     *triage.Priority
+	SetAssignee  bool
+	AssigneeID   *string
+	AddTagIDs    []string
+	RemoveTagIDs []string
 }
 
 type TrendPoint struct {

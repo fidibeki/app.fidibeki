@@ -108,6 +108,9 @@ func (Store) ListTenantFeedback(
 	if options.ProjectID != "" {
 		where = append(where, "feedback.project_id = "+add(options.ProjectID))
 	}
+	if len(options.IDs) > 0 {
+		where = append(where, "feedback.id = ANY("+add(options.IDs)+"::uuid[])")
+	}
 	if options.Query != "" {
 		term := add("%" + options.Query + "%")
 		where = append(where, `(feedback.public_id ILIKE `+term+`
@@ -261,21 +264,134 @@ func (Store) UpdateTenantFeedback(
 	query db.Querier,
 	tenantID string,
 	feedbackID string,
-	status *Status,
-	title *string,
+	mutation TenantMutation,
 ) (Detail, error) {
-	tag, err := query.Exec(ctx, `
-		UPDATE feedbacks
-		SET status = COALESCE($3::feedback_status, status), title = COALESCE($4, title)
-		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, feedbackID, status, title)
-	if err != nil {
-		return Detail{}, fmt.Errorf("update feedback status: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return Detail{}, ErrNotFound
+	if _, err := (Store{}).BulkUpdateTenantFeedback(
+		ctx, query, tenantID, []string{feedbackID}, mutation,
+	); err != nil {
+		return Detail{}, err
 	}
 	return (Store{}).GetTenantFeedback(ctx, query, tenantID, feedbackID)
+}
+
+func (Store) BulkUpdateTenantFeedback(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+	mutation TenantMutation,
+) ([]Item, error) {
+	rows, err := query.Query(ctx, `
+		SELECT id
+		FROM feedbacks
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		ORDER BY id
+		FOR UPDATE
+	`, tenantID, feedbackIDs)
+	if err != nil {
+		return nil, fmt.Errorf("lock feedback for bulk update: %w", err)
+	}
+	locked := 0
+	for rows.Next() {
+		locked++
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate locked feedback: %w", err)
+	}
+	if locked != len(feedbackIDs) {
+		return nil, ErrNotFound
+	}
+	if mutation.SetAssignee && mutation.AssigneeID != nil {
+		var exists bool
+		err := query.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM tenant_members WHERE tenant_id = $1 AND id = $2
+			)
+		`, tenantID, *mutation.AssigneeID).Scan(&exists)
+		if err != nil {
+			return nil, fmt.Errorf("validate feedback assignee: %w", err)
+		}
+		if !exists {
+			return nil, ErrNotFound
+		}
+	}
+	tagIDs := uniqueTenantMutationIDs(mutation.AddTagIDs, mutation.RemoveTagIDs)
+	if len(tagIDs) > 0 {
+		var count int
+		if err := query.QueryRow(ctx, `
+			SELECT count(*) FROM tags WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		`, tenantID, tagIDs).Scan(&count); err != nil {
+			return nil, fmt.Errorf("validate feedback tags: %w", err)
+		}
+		if count != len(tagIDs) {
+			return nil, ErrNotFound
+		}
+	}
+	var status, priority, assignee any
+	if mutation.Status != nil {
+		status = string(*mutation.Status)
+	}
+	if mutation.Priority != nil {
+		priority = string(*mutation.Priority)
+	}
+	if mutation.AssigneeID != nil {
+		assignee = *mutation.AssigneeID
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks
+		SET status = CASE WHEN $3 THEN $4::feedback_status ELSE status END,
+		    title = CASE WHEN $5 THEN $6 ELSE title END,
+		    priority = CASE WHEN $7 THEN $8 ELSE priority END,
+		    assignee_id = CASE WHEN $9 THEN $10::uuid ELSE assignee_id END
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+	`, tenantID, feedbackIDs,
+		mutation.Status != nil, status,
+		mutation.Title != nil, mutation.Title,
+		mutation.SetPriority, priority,
+		mutation.SetAssignee, assignee,
+	); err != nil {
+		return nil, fmt.Errorf("bulk update feedback: %w", err)
+	}
+	if len(mutation.RemoveTagIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			DELETE FROM feedback_tags
+			WHERE tenant_id = $1
+			  AND feedback_id = ANY($2::uuid[])
+			  AND tag_id = ANY($3::uuid[])
+		`, tenantID, feedbackIDs, mutation.RemoveTagIDs); err != nil {
+			return nil, fmt.Errorf("remove feedback tags: %w", err)
+		}
+	}
+	if len(mutation.AddTagIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id)
+			SELECT $1, feedback_id, tag_id
+			FROM unnest($2::uuid[]) AS feedback_id
+			CROSS JOIN unnest($3::uuid[]) AS tag_id
+			ON CONFLICT DO NOTHING
+		`, tenantID, feedbackIDs, mutation.AddTagIDs); err != nil {
+			return nil, fmt.Errorf("add feedback tags: %w", err)
+		}
+	}
+	return (Store{}).ListTenantFeedback(ctx, query, tenantID, ListOptions{
+		IDs: feedbackIDs, Sort: SortNewest, Limit: len(feedbackIDs),
+	})
+}
+
+func uniqueTenantMutationIDs(groups ...[]string) []string {
+	seen := make(map[string]struct{})
+	values := make([]string, 0)
+	for _, group := range groups {
+		for _, value := range group {
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func (Store) TenantDashboard(

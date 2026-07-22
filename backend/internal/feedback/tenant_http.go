@@ -15,6 +15,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -22,7 +23,8 @@ import (
 type TenantReadStore interface {
 	ListTenantFeedback(context.Context, db.Querier, string, ListOptions) ([]Item, error)
 	GetTenantFeedback(context.Context, db.Querier, string, string) (Detail, error)
-	UpdateTenantFeedback(context.Context, db.Querier, string, string, *Status, *string) (Detail, error)
+	UpdateTenantFeedback(context.Context, db.Querier, string, string, TenantMutation) (Detail, error)
+	BulkUpdateTenantFeedback(context.Context, db.Querier, string, []string, TenantMutation) ([]Item, error)
 	TenantDashboard(context.Context, db.Querier, string, string, int, time.Time) (Dashboard, error)
 }
 
@@ -48,6 +50,10 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 	)...).Get("/v1/dashboard", handler.dashboard)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionFeedbackRead))...).
 		Get("/v1/feedbacks", handler.list)
+	router.With(append(protected,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
+	)...).Patch("/v1/feedbacks/bulk", handler.bulkUpdate)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionFeedbackRead))...).
 		Get("/v1/feedbacks/{feedbackID}", handler.get)
 	router.With(append(protected,
@@ -127,27 +133,17 @@ func (h *TenantHTTPHandler) update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request struct {
-		Status *Status `json:"status"`
-		Title  *string `json:"title"`
-	}
+	var request tenantFeedbackMutationRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	if request.Status != nil && !request.Status.Valid() {
-		writeTenantValidation(w, map[string]string{"status": "must be open, spam, or archived"})
+	if request.FeedbackIDs != nil {
+		writeTenantValidation(w, map[string]string{"feedback_ids": "is only valid for bulk updates"})
 		return
 	}
-	if request.Title != nil {
-		trimmed := strings.TrimSpace(*request.Title)
-		if length := len([]rune(trimmed)); length < 1 || length > 80 {
-			writeTenantValidation(w, map[string]string{"title": "must be between 1 and 80 characters"})
-			return
-		}
-		request.Title = &trimmed
-	}
-	if request.Status == nil && request.Title == nil {
-		writeTenantValidation(w, map[string]string{"request": "must include status or title"})
+	mutation, fields := validateTenantFeedbackMutation(request, true)
+	if len(fields) > 0 {
+		writeTenantValidation(w, fields)
 		return
 	}
 	resolved, query, ok := tenantFeedbackRequestState(w, r)
@@ -155,13 +151,149 @@ func (h *TenantHTTPHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := h.options.Store.UpdateTenantFeedback(
-		r.Context(), query, resolved.ID, feedbackID, request.Status, request.Title,
+		r.Context(), query, resolved.ID, feedbackID, mutation,
 	)
 	if err != nil {
 		writeTenantStoreError(w, err)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"feedback": updated})
+}
+
+func (h *TenantHTTPHandler) bulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var request tenantFeedbackMutationRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	fields := validateTenantFeedbackIDs(request.FeedbackIDs)
+	if request.Title != nil {
+		fields["title"] = "is not supported for bulk updates"
+	}
+	mutation, mutationFields := validateTenantFeedbackMutation(request, false)
+	for field, message := range mutationFields {
+		fields[field] = message
+	}
+	if len(fields) > 0 {
+		writeTenantValidation(w, fields)
+		return
+	}
+	resolved, query, ok := tenantFeedbackRequestState(w, r)
+	if !ok {
+		return
+	}
+	updated, err := h.options.Store.BulkUpdateTenantFeedback(
+		r.Context(), query, resolved.ID, request.FeedbackIDs, mutation,
+	)
+	if err != nil {
+		writeTenantStoreError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"updated_count": len(updated),
+		"feedbacks":     updated,
+	})
+}
+
+type tenantFeedbackMutationRequest struct {
+	FeedbackIDs  []string `json:"feedback_ids"`
+	Status       *Status  `json:"status"`
+	Title        *string  `json:"title"`
+	Priority     *string  `json:"priority"`
+	AssigneeID   *string  `json:"assignee_id"`
+	Unassign     bool     `json:"unassign"`
+	AddTagIDs    []string `json:"add_tag_ids"`
+	RemoveTagIDs []string `json:"remove_tag_ids"`
+}
+
+func validateTenantFeedbackMutation(
+	request tenantFeedbackMutationRequest,
+	allowTitle bool,
+) (TenantMutation, map[string]string) {
+	fields := make(map[string]string)
+	mutation := TenantMutation{Status: request.Status}
+	if request.Status != nil && !request.Status.Valid() {
+		fields["status"] = "must be open, spam, or archived"
+	}
+	if allowTitle && request.Title != nil {
+		trimmed := strings.TrimSpace(*request.Title)
+		if length := len([]rune(trimmed)); length < 1 || length > 80 {
+			fields["title"] = "must be between 1 and 80 characters"
+		} else {
+			mutation.Title = &trimmed
+		}
+	}
+	if request.Priority != nil {
+		mutation.SetPriority = true
+		if *request.Priority != "none" {
+			priority := triage.Priority(*request.Priority)
+			if !priority.Valid() {
+				fields["priority"] = "must be low, medium, high, urgent, or none"
+			} else {
+				mutation.Priority = &priority
+			}
+		}
+	}
+	if request.AssigneeID != nil && request.Unassign {
+		fields["assignee_id"] = "cannot be combined with unassign"
+	} else if request.AssigneeID != nil {
+		if _, err := uuid.Parse(*request.AssigneeID); err != nil {
+			fields["assignee_id"] = "must be a UUID"
+		} else {
+			mutation.SetAssignee = true
+			mutation.AssigneeID = request.AssigneeID
+		}
+	} else if request.Unassign {
+		mutation.SetAssignee = true
+	}
+	mutation.AddTagIDs = validateTenantMutationUUIDs("add_tag_ids", request.AddTagIDs, fields)
+	mutation.RemoveTagIDs = validateTenantMutationUUIDs("remove_tag_ids", request.RemoveTagIDs, fields)
+	removeSet := make(map[string]struct{}, len(mutation.RemoveTagIDs))
+	for _, tagID := range mutation.RemoveTagIDs {
+		removeSet[tagID] = struct{}{}
+	}
+	for _, tagID := range mutation.AddTagIDs {
+		if _, exists := removeSet[tagID]; exists {
+			fields["add_tag_ids"] = "must be disjoint from remove_tag_ids"
+			break
+		}
+	}
+	if request.Status == nil && mutation.Title == nil && !mutation.SetPriority &&
+		!mutation.SetAssignee && len(mutation.AddTagIDs) == 0 && len(mutation.RemoveTagIDs) == 0 {
+		fields["request"] = "must include at least one operation"
+	}
+	return mutation, fields
+}
+
+func validateTenantFeedbackIDs(values []string) map[string]string {
+	fields := make(map[string]string)
+	if len(values) < 1 || len(values) > 100 {
+		fields["feedback_ids"] = "must contain between 1 and 100 UUIDs"
+		return fields
+	}
+	validateTenantMutationUUIDs("feedback_ids", values, fields)
+	return fields
+}
+
+func validateTenantMutationUUIDs(
+	field string,
+	values []string,
+	fields map[string]string,
+) []string {
+	seen := make(map[string]struct{}, len(values))
+	validated := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, err := uuid.Parse(value); err != nil {
+			fields[field] = "must contain only UUIDs"
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			fields[field] = "must contain unique UUIDs"
+			continue
+		}
+		seen[value] = struct{}{}
+		validated = append(validated, value)
+	}
+	return validated
 }
 
 func (h *TenantHTTPHandler) dashboard(w http.ResponseWriter, r *http.Request) {

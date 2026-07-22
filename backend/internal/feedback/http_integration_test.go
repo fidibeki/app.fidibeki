@@ -609,6 +609,100 @@ func assertTenantFeedbackReadFlow(
 		!strings.Contains(updated.Body.String(), `"description":"Checkout was clear"`) {
 		t.Fatalf("update tenant feedback status = %d, body = %s", updated.Code, updated.Body.String())
 	}
+	var needsReviewTagID, otherTenantID, otherTagID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color)
+		VALUES ($1, 'Needs review', '#DC6B2F') RETURNING id
+	`, tenantID).Scan(&needsReviewTagID); err != nil {
+		t.Fatalf("create bulk feedback tag: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Other', 'other-feedback', 'growth', 'active') RETURNING id
+	`).Scan(&otherTenantID); err != nil {
+		t.Fatalf("create other tenant for bulk feedback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color)
+		VALUES ($1, 'Private', '#111827') RETURNING id
+	`, otherTenantID).Scan(&otherTagID); err != nil {
+		t.Fatalf("create other tenant bulk feedback tag: %v", err)
+	}
+	bulkBody := fmt.Sprintf(`{
+		"feedback_ids":[%q,%q],"status":"archived","priority":"high","assignee_id":%q,
+		"add_tag_ids":[%q],"remove_tag_ids":[%q]
+	}`, feedbackID, secondFeedbackID, assigneeID, needsReviewTagID, checkoutTagID)
+	bulk := performTenantFeedbackRequest(
+		handler, http.MethodPatch, "/v1/feedbacks/bulk", bulkBody, ownerToken,
+	)
+	if bulk.Code != http.StatusOK {
+		t.Fatalf("bulk feedback update = %d body=%s", bulk.Code, bulk.Body.String())
+	}
+	var bulkEnvelope struct {
+		UpdatedCount int    `json:"updated_count"`
+		Feedbacks    []Item `json:"feedbacks"`
+	}
+	decodeFeedbackResponse(t, bulk, &bulkEnvelope)
+	if bulkEnvelope.UpdatedCount != 2 || len(bulkEnvelope.Feedbacks) != 2 {
+		t.Fatalf("bulk feedback result = %#v", bulkEnvelope)
+	}
+	for _, item := range bulkEnvelope.Feedbacks {
+		if item.Status != StatusArchived || item.Priority == nil || string(*item.Priority) != "high" ||
+			item.Assignee == nil || item.Assignee.ID != assigneeID {
+			t.Fatalf("bulk feedback metadata = %#v", item)
+		}
+		if item.ID == feedbackID && (len(item.Tags) != 2 || item.Tags[0].Name != "Accessibility" ||
+			item.Tags[1].Name != "Needs review") {
+			t.Fatalf("first bulk feedback tags = %#v", item.Tags)
+		}
+		if item.ID == secondFeedbackID && (len(item.Tags) != 1 || item.Tags[0].Name != "Needs review") {
+			t.Fatalf("second bulk feedback tags = %#v", item.Tags)
+		}
+	}
+	failedBulk := performTenantFeedbackRequest(
+		handler, http.MethodPatch, "/v1/feedbacks/bulk",
+		fmt.Sprintf(`{"feedback_ids":[%q,%q],"status":"spam","priority":"urgent","unassign":true,"add_tag_ids":[%q]}`,
+			feedbackID, secondFeedbackID, otherTagID), ownerToken,
+	)
+	if failedBulk.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant bulk feedback update = %d body=%s", failedBulk.Code, failedBulk.Body.String())
+	}
+	for _, itemID := range []string{feedbackID, secondFeedbackID} {
+		response := performTenantFeedbackRequest(
+			handler, http.MethodGet, "/v1/feedbacks/"+itemID, "", ownerToken,
+		)
+		var envelope struct {
+			Feedback Detail `json:"feedback"`
+		}
+		decodeFeedbackResponse(t, response, &envelope)
+		if response.Code != http.StatusOK || envelope.Feedback.Status != StatusArchived ||
+			envelope.Feedback.Priority == nil || string(*envelope.Feedback.Priority) != "high" ||
+			envelope.Feedback.Assignee == nil || envelope.Feedback.Assignee.ID != assigneeID {
+			t.Fatalf("feedback changed after failed bulk update = %d %#v", response.Code, envelope.Feedback)
+		}
+	}
+	singleTriage := performTenantFeedbackRequest(
+		handler, http.MethodPatch, "/v1/feedbacks/"+feedbackID,
+		fmt.Sprintf(`{"priority":"none","unassign":true,"add_tag_ids":[%q],"remove_tag_ids":[%q]}`,
+			checkoutTagID, accessibilityTagID), ownerToken,
+	)
+	var singleEnvelope struct {
+		Feedback Detail `json:"feedback"`
+	}
+	decodeFeedbackResponse(t, singleTriage, &singleEnvelope)
+	if singleTriage.Code != http.StatusOK || singleEnvelope.Feedback.Priority != nil ||
+		singleEnvelope.Feedback.Assignee != nil || len(singleEnvelope.Feedback.Tags) != 2 ||
+		singleEnvelope.Feedback.Tags[0].Name != "Checkout" ||
+		singleEnvelope.Feedback.Tags[1].Name != "Needs review" {
+		t.Fatalf("single feedback triage update = %d %#v", singleTriage.Code, singleEnvelope.Feedback)
+	}
+	duplicateBulk := performTenantFeedbackRequest(
+		handler, http.MethodPatch, "/v1/feedbacks/bulk",
+		fmt.Sprintf(`{"feedback_ids":[%q,%q],"status":"open"}`, feedbackID, feedbackID), ownerToken,
+	)
+	if duplicateBulk.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate bulk feedback IDs = %d body=%s", duplicateBulk.Code, duplicateBulk.Body.String())
+	}
 	invalidFilter := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/feedbacks?rating=9", "", ownerToken)
 	if invalidFilter.Code != http.StatusUnprocessableEntity {
 		t.Errorf("invalid tenant feedback filter status = %d", invalidFilter.Code)
