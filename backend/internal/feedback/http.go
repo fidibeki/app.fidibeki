@@ -403,7 +403,9 @@ func (h *HTTPHandler) rotateIncompleteTokens(
 		if err != nil {
 			return err
 		}
-		if err := h.options.Store.RotateCompletionToken(ctx, query, attachment.ID, tokenHash); err != nil {
+		if err := h.options.Store.RotateCompletionToken(
+			ctx, query, attachment.ID, tokenHash, h.now().UTC(),
+		); err != nil {
 			return err
 		}
 		rawTokens[attachment.ID] = raw

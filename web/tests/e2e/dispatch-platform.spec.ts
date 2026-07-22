@@ -174,13 +174,25 @@ function feedbackDetail(state: MockState, id: string) {
       kind: 'screenshot',
       content_type: 'image/png',
       size_bytes: 2120,
-      processing_status: 'completed',
+      processing_status: 'failed',
+      error_message: 'Screenshot analysis timed out',
       moderation_flags: [],
       processing_attempts: 1,
       completed_at: now,
       processed_at: now,
       created_at: now,
       content_url: `/v1/feedbacks/${id}/attachments/attachment-1/content`,
+    }, {
+      id: 'attachment-2',
+      kind: 'audio',
+      content_type: 'audio/webm',
+      size_bytes: 4096,
+      processing_status: 'failed',
+      error_message: 'attachment upload expired before completion',
+      moderation_flags: [],
+      processing_attempts: 0,
+      processed_at: now,
+      created_at: now,
     }] : [],
     session: id === 'feedback-1' ? {
       id: 'session-1',
@@ -605,6 +617,29 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   await expect(page.getByText('Feedback marked archived.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible()
   expect(state.feedback[0].status).toBe('archived')
+})
+
+test('expired uploads are not offered an AI processing retry', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Attachment retry behavior is viewport independent')
+  const state = createMockState()
+  const retryRequests: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'POST' && /^\/v1\/attachments\/[^/]+\/retry$/.test(path)) retryRequests.push(path)
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await page.getByTitle('Open full detail').click()
+  await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
+
+  const expiredUpload = page.locator('.feedback-attachment-list article').filter({ hasText: 'attachment upload expired before completion' })
+  await expect(expiredUpload).toBeVisible()
+  await expect(expiredUpload.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
+  await expect(page.getByText('1 attachment can be retried.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('Attachment retry queued.')
+  expect(retryRequests).toEqual(['/v1/attachments/attachment-1/retry'])
 })
 
 test('feedback queue links apply their filters without a document reload', async ({ page }, testInfo) => {

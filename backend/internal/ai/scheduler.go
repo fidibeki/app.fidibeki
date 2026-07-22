@@ -12,6 +12,8 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+const incompleteAttachmentGrace = 15 * time.Minute
+
 type Scheduler struct {
 	Store      Store
 	Queue      TaskQueue
@@ -57,6 +59,14 @@ func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 		now = s.Now().UTC()
 	}
 	var scheduleErrors []error
+	expired, err := s.Store.ExpireIncompleteAttachments(
+		ctx, now.Add(-incompleteAttachmentGrace), now, 100,
+	)
+	if err != nil {
+		scheduleErrors = append(scheduleErrors, err)
+	} else if expired > 0 {
+		s.logger().WarnContext(ctx, "incomplete attachment uploads expired", "count", expired)
+	}
 	inFlight, err := s.Store.InFlightTasks(ctx, 500)
 	if err != nil {
 		scheduleErrors = append(scheduleErrors, err)

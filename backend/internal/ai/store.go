@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -339,6 +340,83 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 		return nil, fmt.Errorf("iterate in-flight AI tasks: %w", err)
 	}
 	return tasks, nil
+}
+
+func (s Store) ExpireIncompleteAttachments(
+	ctx context.Context,
+	staleBefore time.Time,
+	now time.Time,
+	limit int,
+) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin incomplete attachment expiration: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM attachments
+			WHERE completed_at IS NULL
+			  AND processing_status IN ('pending', 'processing')
+			  AND upload_refreshed_at < $1
+			ORDER BY upload_refreshed_at, id
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE attachments AS attachment
+		SET processing_status = 'failed',
+		    error_message = 'attachment upload expired before completion',
+		    processed_at = $2
+		FROM expired
+		WHERE attachment.id = expired.id
+		RETURNING attachment.feedback_id
+	`, staleBefore.UTC(), now.UTC(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("expire incomplete attachments: %w", err)
+	}
+	feedbackIDs := make(map[string]struct{})
+	expiredCount := 0
+	for rows.Next() {
+		var feedbackID string
+		if err := rows.Scan(&feedbackID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan expired attachment feedback: %w", err)
+		}
+		feedbackIDs[feedbackID] = struct{}{}
+		expiredCount++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate expired attachment feedbacks: %w", err)
+	}
+	rows.Close()
+	orderedFeedbackIDs := make([]string, 0, len(feedbackIDs))
+	for feedbackID := range feedbackIDs {
+		orderedFeedbackIDs = append(orderedFeedbackIDs, feedbackID)
+	}
+	sort.Strings(orderedFeedbackIDs)
+	for _, feedbackID := range orderedFeedbackIDs {
+		var lockedID string
+		if err := tx.QueryRow(ctx, `
+			/* lock expired attachment feedbacks */
+			SELECT id FROM feedbacks WHERE id = $1 FOR UPDATE
+		`, feedbackID).Scan(&lockedID); err != nil {
+			return 0, fmt.Errorf("lock expired attachment feedback %s: %w", feedbackID, err)
+		}
+	}
+	for _, feedbackID := range orderedFeedbackIDs {
+		if err := updateCompletion(ctx, tx, feedbackID, now.UTC()); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit incomplete attachment expiration: %w", err)
+	}
+	return expiredCount, nil
 }
 
 func (s Store) TrackGeminiFile(

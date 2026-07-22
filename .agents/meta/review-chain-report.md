@@ -203,3 +203,33 @@ their state and clean URLs. Issue detail counts use singular copy for one linked
 Mixed-status E2E coverage exercises queue links, All status, Clear filters, row selection, filtered
 records, URL state, and the absence of document reloads. The final independent review passed with no
 remaining findings.
+
+---
+
+# Abandoned Attachment Upload Review
+
+**Artifact**: Expired attachment reconciliation, recovery paths, migration, and feedback-detail UI
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 9/10 | Concurrent reconcilers could expire different attachments for one feedback without either completing its AI state. | Fixed |
+| 2 | minor | 9/10 | The activity index retained terminal incomplete uploads and would degrade reconciliation over time. | Fixed |
+
+## Changes Made
+Incomplete uploads expire after a 15-minute grace period and no longer block feedback completion.
+Affected feedback rows are locked in stable order before completion is recalculated, preventing the
+multi-reconciler race. Idempotent submission and late completion recover an expired upload, while the
+backoffice only offers AI retry for uploads that actually completed. The partial index now contains only
+pending or processing incomplete uploads.
+
+## Verification
+A deterministic PostgreSQL concurrency regression holds a feedback lock while two reconcilers expire
+different attachments, then proves the final feedback completion is recorded. Backend tests, vet,
+coverage enforcement, migration tests, web unit tests, typecheck, production build, and the full browser
+suite pass. The second review's focused index finding was fixed and revalidated without starting a third
+review round.

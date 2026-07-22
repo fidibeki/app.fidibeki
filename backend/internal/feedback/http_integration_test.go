@@ -179,6 +179,14 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if dispatchedAt == nil || dispatchAttempts != 1 {
 		t.Errorf("dispatched_at = %#v, attempts = %d", dispatchedAt, dispatchAttempts)
 	}
+	if _, err := root.Exec(ctx, `
+		UPDATE attachments
+		SET processing_status = 'failed', error_message = 'attachment upload expired before completion',
+		    processed_at = $2, upload_refreshed_at = $2
+		WHERE id = $1
+	`, first.Attachments[0].AttachmentID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("expire attachment before retry: %v", err)
+	}
 
 	idempotent := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
 	if idempotent.Code != http.StatusOK {
@@ -191,6 +199,22 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	if len(second.Attachments) != 1 || second.Attachments[0].CompleteToken == first.Attachments[0].CompleteToken {
 		t.Errorf("idempotent attachment token was not rotated")
+	}
+	var retriedStatus string
+	var retriedError *string
+	var retriedProcessedAt *time.Time
+	var uploadRefreshedAt time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT processing_status, error_message, processed_at, upload_refreshed_at
+		FROM attachments WHERE id = $1
+	`, second.Attachments[0].AttachmentID).Scan(
+		&retriedStatus, &retriedError, &retriedProcessedAt, &uploadRefreshedAt,
+	); err != nil {
+		t.Fatalf("read retried attachment state: %v", err)
+	}
+	if retriedStatus != "pending" || retriedError != nil || retriedProcessedAt != nil || !uploadRefreshedAt.Equal(now) {
+		t.Errorf("retried attachment state = %s/%v/%v/%v", retriedStatus, retriedError,
+			retriedProcessedAt, uploadRefreshedAt)
 	}
 
 	completeBody := fmt.Sprintf(`{"complete_token":%q}`, second.Attachments[0].CompleteToken)
@@ -209,6 +233,14 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		!strings.Contains(mismatchedUpload.Body.String(), `"field":"content_type"`) {
 		t.Errorf("mismatched upload status = %d, body = %s", mismatchedUpload.Code, mismatchedUpload.Body.String())
 	}
+	if _, err := root.Exec(ctx, `
+		UPDATE attachments
+		SET processing_status = 'failed', error_message = 'attachment upload expired before completion',
+		    processed_at = $2
+		WHERE id = $1
+	`, second.Attachments[0].AttachmentID, now.Add(time.Minute)); err != nil {
+		t.Fatalf("expire attachment before late completion: %v", err)
+	}
 	storageClient.stat = storage.ObjectInfo{Size: 2048, ContentType: "audio/webm"}
 	completed := performFeedbackRequest(handler, http.MethodPost,
 		"/v1/attachments/"+second.Attachments[0].AttachmentID+"/complete?key="+publicKey,
@@ -216,16 +248,21 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if completed.Code != http.StatusNoContent {
 		t.Fatalf("complete status = %d, body = %s", completed.Code, completed.Body.String())
 	}
-	var tokenHash *string
+	var tokenHash, completedError *string
 	var completedAt *time.Time
+	var completedStatus string
+	var completedProcessedAt *time.Time
 	if err := root.QueryRow(ctx,
-		`SELECT complete_token_hash, completed_at FROM attachments WHERE id = $1`,
+		`SELECT complete_token_hash, completed_at, processing_status, error_message, processed_at
+		 FROM attachments WHERE id = $1`,
 		second.Attachments[0].AttachmentID,
-	).Scan(&tokenHash, &completedAt); err != nil {
+	).Scan(&tokenHash, &completedAt, &completedStatus, &completedError, &completedProcessedAt); err != nil {
 		t.Fatalf("read completed attachment: %v", err)
 	}
-	if tokenHash != nil || completedAt == nil {
-		t.Errorf("completed token hash = %#v, completed at = %#v", tokenHash, completedAt)
+	if tokenHash != nil || completedAt == nil || completedStatus != "pending" ||
+		completedError != nil || completedProcessedAt != nil {
+		t.Errorf("completed attachment state = token %#v at %#v status %s error %#v processed %#v",
+			tokenHash, completedAt, completedStatus, completedError, completedProcessedAt)
 	}
 	if scheduler.attachmentID != second.Attachments[0].AttachmentID || scheduler.feedbackID != first.FeedbackID {
 		t.Errorf("scheduled attachment/feedback = %q/%q", scheduler.attachmentID, scheduler.feedbackID)

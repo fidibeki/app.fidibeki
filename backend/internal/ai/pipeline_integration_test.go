@@ -437,6 +437,168 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		t.Fatalf("RecordGeminiFileDeleteFailure(permanent) error = %v", err)
 	}
 
+	expiredFeedbackID := "60000000-0000-4000-8000-000000000001"
+	recentFeedbackID := "60000000-0000-4000-8000-000000000002"
+	expiredAttachmentID := "60000000-0000-4000-8000-000000000003"
+	recentAttachmentID := "60000000-0000-4000-8000-000000000004"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO feedbacks (
+			id, tenant_id, project_id, public_id, client_feedback_id,
+			text, page_url, text_process_status
+		) VALUES
+			($1, $3, $4, 'fb_Expire01', '60000000-0000-4000-8000-000000000005',
+			 'Expired upload', 'https://example.com/expired', 'completed'),
+			($2, $3, $4, 'fb_Recent01', '60000000-0000-4000-8000-000000000006',
+			 'Recent upload', 'https://example.com/recent', 'completed')
+	`, expiredFeedbackID, recentFeedbackID, testTenantID, testProjectID); err != nil {
+		t.Fatalf("seed incomplete-upload feedback: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO attachments (
+			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, complete_token_hash,
+			upload_refreshed_at, created_at
+		) VALUES
+			($1, $3, $4, 'screenshot', '60000000-0000-4000-8000-000000000007',
+			 'expired.png', 'image/png', 10, 'pending', 'hash', $6, $6),
+			($2, $3, $5, 'screenshot', '60000000-0000-4000-8000-000000000008',
+			 'recent.png', 'image/png', 10, 'pending', 'hash', $7, $7)
+	`, expiredAttachmentID, recentAttachmentID, testTenantID, expiredFeedbackID,
+		recentFeedbackID, daySeven.Add(-20*time.Minute), daySeven.Add(-time.Minute)); err != nil {
+		t.Fatalf("seed incomplete uploads: %v", err)
+	}
+	expired, err := store.ExpireIncompleteAttachments(
+		ctx, daySeven.Add(-15*time.Minute), daySeven, 100,
+	)
+	if err != nil || expired != 1 {
+		t.Fatalf("ExpireIncompleteAttachments() = %d, %v", expired, err)
+	}
+	var expiredStatus, expiredError string
+	var expiredProcessedAt, expiredFeedbackProcessedAt *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT attachment.processing_status, attachment.error_message, attachment.processed_at,
+		       feedback.ai_processed_at
+		FROM attachments AS attachment
+		JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
+		WHERE attachment.id = $1
+	`, expiredAttachmentID).Scan(
+		&expiredStatus, &expiredError, &expiredProcessedAt, &expiredFeedbackProcessedAt,
+	); err != nil {
+		t.Fatalf("read expired upload state: %v", err)
+	}
+	if expiredStatus != "failed" || expiredError != "attachment upload expired before completion" ||
+		expiredProcessedAt == nil || expiredFeedbackProcessedAt == nil {
+		t.Errorf("expired upload state = %s/%q/%v/%v", expiredStatus, expiredError,
+			expiredProcessedAt, expiredFeedbackProcessedAt)
+	}
+	var recentStatus string
+	var recentProcessedAt, recentFeedbackProcessedAt *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT attachment.processing_status, attachment.processed_at, feedback.ai_processed_at
+		FROM attachments AS attachment
+		JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
+		WHERE attachment.id = $1
+	`, recentAttachmentID).Scan(&recentStatus, &recentProcessedAt, &recentFeedbackProcessedAt); err != nil {
+		t.Fatalf("read recent upload state: %v", err)
+	}
+	if recentStatus != "pending" || recentProcessedAt != nil || recentFeedbackProcessedAt != nil {
+		t.Errorf("recent upload state = %s/%v/%v", recentStatus, recentProcessedAt, recentFeedbackProcessedAt)
+	}
+
+	concurrentFeedbackID := "60000000-0000-4000-8000-000000000009"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO feedbacks (
+			id, tenant_id, project_id, public_id, client_feedback_id,
+			text, page_url, text_process_status
+		) VALUES (
+			$1, $2, $3, 'fb_Concur01', '60000000-0000-4000-8000-000000000010',
+			'Concurrent uploads', 'https://example.com/concurrent', 'completed'
+		)
+	`, concurrentFeedbackID, testTenantID, testProjectID); err != nil {
+		t.Fatalf("seed concurrent incomplete-upload feedback: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO attachments (
+			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, complete_token_hash,
+			upload_refreshed_at, created_at
+		) VALUES
+			('60000000-0000-4000-8000-000000000011', $1, $2, 'screenshot',
+			 '60000000-0000-4000-8000-000000000012', 'concurrent-a.png', 'image/png',
+			 10, 'pending', 'hash-a', $3, $3),
+			('60000000-0000-4000-8000-000000000013', $1, $2, 'screenshot',
+			 '60000000-0000-4000-8000-000000000014', 'concurrent-b.png', 'image/png',
+			 10, 'pending', 'hash-b', $3, $3)
+	`, testTenantID, concurrentFeedbackID, daySeven.Add(-20*time.Minute)); err != nil {
+		t.Fatalf("seed concurrent incomplete uploads: %v", err)
+	}
+	feedbackBlocker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin feedback blocker: %v", err)
+	}
+	if _, err := feedbackBlocker.Exec(ctx,
+		`SELECT id FROM feedbacks WHERE id = $1 FOR UPDATE`, concurrentFeedbackID,
+	); err != nil {
+		_ = feedbackBlocker.Rollback(ctx)
+		t.Fatalf("lock feedback before concurrent expiration: %v", err)
+	}
+	type expirationResult struct {
+		count int
+		err   error
+	}
+	startExpirations := make(chan struct{})
+	expirationResults := make(chan expirationResult, 2)
+	for range 2 {
+		go func() {
+			<-startExpirations
+			count, err := store.ExpireIncompleteAttachments(
+				ctx, daySeven.Add(-15*time.Minute), daySeven, 1,
+			)
+			expirationResults <- expirationResult{count: count, err: err}
+		}()
+	}
+	close(startExpirations)
+	lockDeadline := time.Now().Add(5 * time.Second)
+	blockedExpirations := 0
+	for time.Now().Before(lockDeadline) {
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*)
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+			  AND query LIKE '%lock expired attachment feedbacks%'
+		`).Scan(&blockedExpirations); err != nil {
+			_ = feedbackBlocker.Rollback(ctx)
+			t.Fatalf("inspect concurrent expiration locks: %v", err)
+		}
+		if blockedExpirations == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := feedbackBlocker.Commit(ctx); err != nil {
+		t.Fatalf("release feedback blocker: %v", err)
+	}
+	for range 2 {
+		result := <-expirationResults
+		if result.err != nil || result.count != 1 {
+			t.Errorf("concurrent ExpireIncompleteAttachments() = %d, %v", result.count, result.err)
+		}
+	}
+	if blockedExpirations != 2 {
+		t.Fatalf("blocked concurrent expirations = %d, want 2", blockedExpirations)
+	}
+	var concurrentProcessedAt *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT ai_processed_at FROM feedbacks WHERE id = $1`, concurrentFeedbackID,
+	).Scan(&concurrentProcessedAt); err != nil {
+		t.Fatalf("read concurrent feedback completion: %v", err)
+	}
+	if concurrentProcessedAt == nil {
+		t.Error("concurrent feedback ai_processed_at = nil")
+	}
+
 	eligibleTenantID := "50000000-0000-4000-8000-000000000001"
 	eligibleProjectID := "50000000-0000-4000-8000-000000000002"
 	eligibleFeedbackID := "50000000-0000-4000-8000-000000000003"

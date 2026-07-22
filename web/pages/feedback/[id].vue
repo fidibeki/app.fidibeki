@@ -35,7 +35,9 @@ const { data, status, error, refresh } = await useAsyncData(
 const feedback = computed(() => data.value?.feedback)
 const copy = computed(() => feedback.value?.text_cleaned || feedback.value?.text || 'Feedback without written detail')
 const transcript = computed(() => feedback.value?.attachments.find((item) => item.transcription)?.transcription)
-const failedAttachments = computed(() => feedback.value?.attachments.filter((item) => item.processing_status === 'failed') || [])
+const retryableAttachments = computed(() => feedback.value?.attachments.filter((item) => (
+  item.processing_status === 'failed' && Boolean(item.completed_at)
+)) || [])
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 
 const safeDOMSnapshot = computed(() => {
@@ -143,7 +145,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
                   <div><b>{{ attachmentItem.kind }}</b><span>{{ attachmentItem.content_type }} · {{ (attachmentItem.size_bytes / 1024).toFixed(1) }} KB</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentItem.error_message }}</p></div>
                   <span class="status-pill" :class="`status-${attachmentItem.processing_status}`">{{ attachmentItem.processing_status }}</span>
-                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
+                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
                 </article>
               </div>
               <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>No media was attached to this feedback.</p></div>
@@ -175,7 +177,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
         <aside class="feedback-case-facts">
           <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div><dt>Sentiment</dt><dd>{{ feedback.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
           <section><h2>Reporter</h2><dl><div><dt>Email</dt><dd>{{ feedback.reporter_email || 'Anonymous' }}</dd></div><div><dt>Updates</dt><dd>{{ feedback.notify_reporter ? 'Subscribed' : 'Not subscribed' }}</dd></div></dl></section>
-          <section v-if="failedAttachments.length"><h2>AI failures</h2><p>{{ failedAttachments.length }} attachment{{ failedAttachments.length === 1 ? '' : 's' }} can be retried.</p></section>
+          <section v-if="retryableAttachments.length"><h2>AI failures</h2><p>{{ retryableAttachments.length }} attachment{{ retryableAttachments.length === 1 ? '' : 's' }} can be retried.</p></section>
         </aside>
       </div>
     </template>

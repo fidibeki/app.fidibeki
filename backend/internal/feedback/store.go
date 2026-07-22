@@ -222,16 +222,33 @@ func (Store) RotateCompletionToken(
 	query db.Querier,
 	attachmentID string,
 	tokenHash string,
+	refreshedAt time.Time,
 ) error {
-	tag, err := query.Exec(ctx, `
-		UPDATE attachments SET complete_token_hash = $2
+	var feedbackID string
+	var pendingAI bool
+	err := query.QueryRow(ctx, `
+		UPDATE attachments
+		SET complete_token_hash = $2,
+		    upload_refreshed_at = $3,
+		    processing_status = CASE
+		        WHEN processing_status = 'failed' THEN 'pending'::processing_status
+		        ELSE processing_status
+		    END,
+		    error_message = CASE WHEN processing_status = 'failed' THEN NULL ELSE error_message END,
+		    processed_at = CASE WHEN processing_status = 'failed' THEN NULL ELSE processed_at END
 		WHERE id = $1 AND completed_at IS NULL
-	`, attachmentID, tokenHash)
+		RETURNING feedback_id, processing_status = 'pending'
+	`, attachmentID, tokenHash, refreshedAt.UTC()).Scan(&feedbackID, &pendingAI)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("rotate attachment completion token: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if pendingAI {
+		if _, err := query.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
+			return fmt.Errorf("reset feedback AI after attachment retry: %w", err)
+		}
 	}
 	return nil
 }
@@ -275,16 +292,31 @@ func (Store) CompleteAttachment(
 	attachmentID string,
 	completedAt time.Time,
 ) error {
-	tag, err := query.Exec(ctx, `
+	var feedbackID string
+	var pendingAI bool
+	err := query.QueryRow(ctx, `
 		UPDATE attachments
-		SET complete_token_hash = NULL, completed_at = $2
+		SET complete_token_hash = NULL,
+		    completed_at = $2,
+		    processing_status = CASE
+		        WHEN processing_status = 'failed' THEN 'pending'::processing_status
+		        ELSE processing_status
+		    END,
+		    error_message = CASE WHEN processing_status = 'failed' THEN NULL ELSE error_message END,
+		    processed_at = CASE WHEN processing_status = 'failed' THEN NULL ELSE processed_at END
 		WHERE id = $1 AND completed_at IS NULL AND complete_token_hash IS NOT NULL
-	`, attachmentID, completedAt)
+		RETURNING feedback_id, processing_status = 'pending'
+	`, attachmentID, completedAt.UTC()).Scan(&feedbackID, &pendingAI)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("complete attachment: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if pendingAI {
+		if _, err := query.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
+			return fmt.Errorf("reset feedback AI after attachment completion: %w", err)
+		}
 	}
 	return nil
 }
