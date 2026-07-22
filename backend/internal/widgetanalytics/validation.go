@@ -1,0 +1,85 @@
+package widgetanalytics
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/google/uuid"
+)
+
+const maximumBatchEvents = 20
+
+func ValidateEvents(
+	inputs []EventInput,
+	configuration project.PublicConfiguration,
+	origin string,
+	now time.Time,
+) ([]EventValues, FieldErrors) {
+	fields := FieldErrors{}
+	if len(inputs) < 1 || len(inputs) > maximumBatchEvents {
+		fields["events"] = "must contain between 1 and 20 events"
+		return nil, fields
+	}
+	now = now.UTC()
+	rules := make(map[string]string, len(configuration.Rules))
+	for _, rule := range configuration.Rules {
+		rules[rule.ID] = rule.Name
+	}
+	originPage, originErr := project.CanonicalizePage(origin)
+	seenEventIDs := make(map[string]struct{}, len(inputs))
+	values := make([]EventValues, len(inputs))
+	for index, input := range inputs {
+		prefix := fmt.Sprintf("events[%d].", index)
+		if _, err := uuid.Parse(input.EventID); err != nil {
+			fields[prefix+"event_id"] = "must be a UUID"
+		} else if _, exists := seenEventIDs[input.EventID]; exists {
+			fields[prefix+"event_id"] = "must be unique within the batch"
+		} else {
+			seenEventIDs[input.EventID] = struct{}{}
+		}
+		if !input.EventType.ClientWritable() {
+			fields[prefix+"event_type"] = "must be matched, impression, interaction, or dismissed"
+		}
+		if _, err := uuid.Parse(input.VisitorID); err != nil {
+			fields[prefix+"visitor_id"] = "must be a UUID"
+		}
+		if _, err := uuid.Parse(input.PageViewID); err != nil {
+			fields[prefix+"page_view_id"] = "must be a UUID"
+		}
+		ruleName, ruleExists := rules[input.RuleID]
+		if _, err := uuid.Parse(input.RuleID); err != nil || !ruleExists {
+			fields[prefix+"rule_id"] = "must identify an enabled project rule"
+		}
+		page, err := project.CanonicalizePage(strings.TrimSpace(input.PageURL))
+		if err != nil || len(page.Target) > 4096 || originErr != nil || !targetsShareOrigin(page.Target, originPage.Target) {
+			fields[prefix+"page_url"] = "must be an allowed canonical page on the request origin"
+		}
+		occurredAt := input.OccurredAt.UTC()
+		if input.OccurredAt.IsZero() || occurredAt.Before(now.Add(-24*time.Hour)) ||
+			occurredAt.After(now.Add(5*time.Minute)) {
+			fields[prefix+"occurred_at"] = "must be within the last 24 hours and no more than 5 minutes in the future"
+		}
+		pageKey := sha256.Sum256([]byte(page.Target))
+		values[index] = EventValues{
+			EventID: input.EventID, TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
+			RuleID: input.RuleID, RuleName: ruleName, EventType: input.EventType,
+			VisitorID: input.VisitorID, PageViewID: input.PageViewID,
+			PageURL: page.Target, PageKey: pageKey[:], OccurredAt: occurredAt, ReceivedAt: now,
+		}
+	}
+	if len(fields) > 0 {
+		return nil, fields
+	}
+	return values, nil
+}
+
+func targetsShareOrigin(left, right string) bool {
+	leftURL, leftErr := url.Parse(left)
+	rightURL, rightErr := url.Parse(right)
+	return leftErr == nil && rightErr == nil &&
+		leftURL.Scheme == rightURL.Scheme && leftURL.Host == rightURL.Host
+}
