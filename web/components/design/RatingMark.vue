@@ -1,12 +1,16 @@
 <script setup lang="ts">
-const props = defineProps<{ rating: number; compact?: boolean }>()
+const props = defineProps<{ rating?: number | null; compact?: boolean }>()
+
+const hasRating = computed(() => props.rating !== null && props.rating !== undefined)
+const label = computed(() => hasRating.value ? `${props.rating} out of 5` : 'Not rated')
+const visibleValue = computed(() => hasRating.value ? props.rating : props.compact ? '—' : 'Not rated')
 </script>
 
 <template>
-  <span class="rating-mark" :class="[`rating-${rating}`, { 'rating-mark--compact': compact }]" :title="`${rating} out of 5`">
-    <span aria-hidden="true">{{ rating }}</span>
-    <span v-if="!compact" class="rating-label">/ 5</span>
-    <span class="sr-only">{{ rating }} out of 5</span>
+  <span class="rating-mark" :class="[hasRating ? `rating-${rating}` : null, { 'rating-mark--compact': compact }]" :title="label">
+    <span aria-hidden="true">{{ visibleValue }}</span>
+    <span v-if="hasRating && !compact" class="rating-label">/ 5</span>
+    <span class="sr-only">{{ label }}</span>
   </span>
 </template>
 

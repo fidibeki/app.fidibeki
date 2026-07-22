@@ -480,6 +480,20 @@ test('magic-link login enters the Dispatch workspace', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Good afternoon, Alex' })).toBeVisible()
 })
 
+test('dashboard distinguishes unrated feedback from a zero rating', async ({ page }, testInfo) => {
+  const state = createMockState()
+  delete (state.feedback[1] as Partial<(typeof state.feedback)[number]>).rating
+  await authenticate(page, state)
+
+  const ratedRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1048' })
+  const unratedRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1047' })
+  await expect(ratedRow.getByTitle('2 out of 5')).toBeVisible()
+  await expect(unratedRow.getByTitle('Not rated')).toBeVisible()
+  await expect(unratedRow.locator('.rating-mark > [aria-hidden="true"]')).toHaveText('—')
+  await expect(page.getByTitle('0 out of 5')).toHaveCount(0)
+  await capture(page, testInfo, 'dispatch-dashboard-unrated')
+})
+
 test('restricted members enter their first permitted workspace section', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Permission routing is viewport independent')
   const state = createMockState()

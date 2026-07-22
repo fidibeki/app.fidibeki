@@ -135,7 +135,7 @@ useHead({ title: 'Overview · Fidibeki' })
         </div>
         <NuxtLink v-for="item in data.feedbacks" :key="item.id" :to="`/feedback/${item.id}`" class="dashboard-work-row">
           <span class="dashboard-priority" :data-tone="item.moderation_flags.length ? 'critical' : item.ai_status" />
-          <RatingMark :rating="item.rating || 0" compact />
+          <RatingMark :rating="item.rating" compact />
           <span class="dashboard-work-copy"><b>{{ feedbackCopy(item) }}</b><small>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</small></span>
           <AttachmentIcons :attachments="item.attachment_kinds" />
           <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">Unlinked</span>
