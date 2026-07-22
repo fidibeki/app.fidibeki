@@ -1,11 +1,8 @@
 import type { RecurrenceMode } from './types'
 import { canonicalPage } from './targeting'
+import type { StorageLike } from './storage'
 
-export interface StorageLike {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
+export type { StorageLike } from './storage'
 
 export type WidgetState = 'new' | 'submitted' | 'minimized' | 'dismissed' | 'snoozed'
 
@@ -44,11 +41,11 @@ const widgetStates = new Set<WidgetState>(['new', 'submitted', 'minimized', 'dis
 export function pageIdentity(rawURL: string): string {
   const page = canonicalPage(rawURL)
   if (!page) throw new TypeError('Widget state requires an absolute HTTP(S) URL')
-  return page.pathname
+  return page.target
 }
 
 export function widgetStateKey(projectID: string, ruleID: string, rawURL: string): string {
-  return `fidibeki:state:v1:${projectID}:${ruleID}:${pageIdentity(rawURL)}`
+  return `fidibeki:state:v2:${projectID}:${ruleID}:${pageIdentity(rawURL)}`
 }
 
 export function getSessionID(store: StorageLike, createID: () => string = randomID): string {
@@ -81,7 +78,7 @@ export function recordWidgetState(store: StorageLike, options: RecordWidgetState
 
 export function isSuppressed(store: StorageLike, options: SuppressionOptions): boolean {
   const key = widgetStateKey(options.projectID, options.ruleID, options.rawURL)
-  const record = readRecord(store, key)
+  const record = readRecord(store, key) ?? migrateLegacyRecord(store, key, options)
   if (!record) return false
 
   const now = options.now ?? Date.now()
@@ -106,6 +103,25 @@ export function isSuppressed(store: StorageLike, options: SuppressionOptions): b
   if (now < occurredAt + days * dayMilliseconds) return true
   removeRecord(store, key)
   return false
+}
+
+function migrateLegacyRecord(
+  store: StorageLike,
+  key: string,
+  identity: WidgetStateIdentity,
+): WidgetStateRecord | null {
+  const page = canonicalPage(identity.rawURL)
+  if (!page) return null
+  const legacyKey = `fidibeki:state:v1:${identity.projectID}:${identity.ruleID}:${page.pathname}`
+  const record = readRecord(store, legacyKey)
+  if (!record) return null
+  try {
+    store.setItem(key, JSON.stringify(record))
+    store.removeItem(legacyKey)
+  } catch {
+    // The legacy record can still govern the current evaluation when migration is blocked.
+  }
+  return record
 }
 
 function readRecord(store: StorageLike, key: string): WidgetStateRecord | null {

@@ -12,6 +12,7 @@ import {
 } from './analytics'
 import { createAnalyticsOutbox } from './analytics-outbox'
 import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
+import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
 
@@ -67,11 +68,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let cleanupTrigger: TriggerCleanup | null = null
   let unmountWidget: WidgetUnmount | null = null
 	let replayCapture: ReplayCapture | null = null
-	let replayFingerprint = ''
-	let replayTransition = 0
+  let replayFingerprint = ''
+  let replayTransition = 0
   let evaluation = 0
-  const widgetSessionID = currentSessionID()
-  const analytics = createAnalyticsTracker({ storage: localStorageIfAvailable() })
+  const durableStorage = storageOrMemory(() => window.localStorage)
+  const sessionStorage = storageOrMemory(() => window.sessionStorage)
+  const widgetSessionID = getSessionID(sessionStorage)
+  const analytics = createAnalyticsTracker({ storage: durableStorage })
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -88,7 +91,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     endpoint: analyticsEndpoint,
     publicKey: key,
     ownerID: widgetSessionID,
-    storage: localStorageIfAvailable(),
+    storage: durableStorage,
     sendBeacon: typeof navigator.sendBeacon === 'function' ? navigator.sendBeacon.bind(navigator) : undefined,
     onError: (error) => void report(error, 'analytics'),
   })
@@ -132,7 +135,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			}
 			await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
-      if (!rule || ruleIsSuppressed(configuration, rule, evaluationURL, widgetSessionID)) return
+      if (!rule || ruleIsSuppressed(durableStorage, configuration, rule, evaluationURL, widgetSessionID)) return
       cleanupTrigger = armTrigger(rule, () => {
         void import(new URL('widget.js', assetBase).href)
           .then((module) => {
@@ -147,10 +150,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               onVisible: () => recordAnalytics('impression', rule),
               onInteraction: () => recordAnalytics('interaction', rule),
               submissionAnalytics: () => analytics.record('submitted', rule.id),
-              onSubmitted: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
+              onSubmitted: () => persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => {
 					recordAnalytics('dismissed', rule)
-					persistState(configuration, rule, evaluationURL, widgetSessionID, 'dismissed')
+					persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'dismissed')
 				},
             })
           })
@@ -212,60 +215,38 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   await evaluate()
 }
 
-function currentSessionID(): string {
-  try {
-    return getSessionID(window.sessionStorage)
-  } catch {
-    return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-  }
-}
-
-function localStorageIfAvailable(): Storage | undefined {
-  try {
-    return window.localStorage
-  } catch {
-    return undefined
-  }
-}
-
 function ruleIsSuppressed(
+  store: StorageLike,
   configuration: WidgetConfiguration,
   rule: WidgetRule,
   rawURL: string,
   sessionID: string,
 ): boolean {
-  try {
-    return isSuppressed(window.localStorage, {
-      projectID: configuration.project_id,
-      ruleID: rule.id,
-      rawURL,
-      sessionID,
-      recurrenceMode: rule.recurrence_mode ?? 'cooldown',
-      recurrenceDays: rule.recurrence_days ?? 30,
-    })
-  } catch {
-    return false
-  }
+  return isSuppressed(store, {
+    projectID: configuration.project_id,
+    ruleID: rule.id,
+    rawURL,
+    sessionID,
+    recurrenceMode: rule.recurrence_mode ?? 'cooldown',
+    recurrenceDays: rule.recurrence_days ?? 30,
+  })
 }
 
 function persistState(
+  store: StorageLike,
   configuration: WidgetConfiguration,
   rule: WidgetRule,
   rawURL: string,
   sessionID: string,
   state: 'submitted' | 'dismissed',
 ): void {
-  try {
-    recordWidgetState(window.localStorage, {
-      projectID: configuration.project_id,
-      ruleID: rule.id,
-      rawURL,
-      sessionID,
-      state,
-    })
-  } catch {
-    // Storage restrictions must not interfere with feedback collection.
-  }
+  recordWidgetState(store, {
+    projectID: configuration.project_id,
+    ruleID: rule.id,
+    rawURL,
+    sessionID,
+    state,
+  })
 }
 
 function findLoaderScript(): HTMLScriptElement | null {

@@ -34,10 +34,13 @@ function suppressed(
 }
 
 describe('widget state suppression', () => {
-  it('identifies a page by pathname and ignores query parameters and hashes', () => {
-    expect(pageIdentity(page)).toBe('/chart')
-    expect(widgetStateKey('project', 'rule', page)).toContain('project:rule:/chart')
+  it('identifies a page by origin and pathname while ignoring query parameters and hashes', () => {
+    expect(pageIdentity(page)).toBe('https://example.com/chart')
+    expect(widgetStateKey('project', 'rule', page)).toContain('project:rule:https://example.com/chart')
     expect(widgetStateKey('project', 'rule', 'https://example.com/chart/')).toBe(
+      widgetStateKey('project', 'rule', page),
+    )
+    expect(widgetStateKey('project', 'rule', 'https://other.test/chart')).not.toBe(
       widgetStateKey('project', 'rule', page),
     )
   })
@@ -68,6 +71,20 @@ describe('widget state suppression', () => {
 
     expect(suppressed(store, { recurrenceMode: 'never', now: now + 400 * 86_400_000 })).toBe(true)
     expect(suppressed(store, { recurrenceMode: 'session', sessionID: 'session-two' })).toBe(false)
+  })
+
+  it('migrates legacy pathname-only records without extending their lifetime', () => {
+    const store = new MemoryStore()
+    store.setItem('fidibeki:state:v1:project:rule:/chart', JSON.stringify({
+      version: 1,
+      state: 'submitted',
+      session_id: 'session-one',
+      occurred_at: new Date(now).toISOString(),
+    }))
+
+    expect(suppressed(store)).toBe(true)
+    expect(store.getItem('fidibeki:state:v1:project:rule:/chart')).toBeNull()
+    expect(store.getItem(widgetStateKey('project', 'rule', page))).not.toBeNull()
   })
 
   it('suppresses dismissals only during the current browser session', () => {
