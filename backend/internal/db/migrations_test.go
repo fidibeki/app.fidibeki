@@ -165,6 +165,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, projectA).Scan(&widgetRuleA); err != nil {
 		t.Fatalf("create tenant A widget rule: %v", err)
 	}
+	var recurrenceMode string
+	var recurrenceDays *int
+	if err := root.QueryRow(ctx, `
+		SELECT recurrence_mode, recurrence_days FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(&recurrenceMode, &recurrenceDays); err != nil {
+		t.Fatalf("read widget recurrence defaults: %v", err)
+	}
+	if recurrenceMode != "cooldown" || recurrenceDays == nil || *recurrenceDays != 30 {
+		t.Fatalf("widget recurrence defaults = %q/%v, want cooldown/30", recurrenceMode, recurrenceDays)
+	}
+	for name, statement := range map[string]string{
+		"cooldown below minimum": `UPDATE widget_rules SET recurrence_days = 0 WHERE id = $1`,
+		"cooldown above maximum": `UPDATE widget_rules SET recurrence_days = 3651 WHERE id = $1`,
+		"session with days":      `UPDATE widget_rules SET recurrence_mode = 'session', recurrence_days = 30 WHERE id = $1`,
+		"never with days":        `UPDATE widget_rules SET recurrence_mode = 'never', recurrence_days = 30 WHERE id = $1`,
+	} {
+		if _, err := root.Exec(ctx, statement, widgetRuleA); err == nil {
+			t.Fatalf("invalid widget recurrence %s succeeded", name)
+		}
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET recurrence_mode = 'session', recurrence_days = NULL WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("set session widget recurrence: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET recurrence_mode = 'cooldown', recurrence_days = 3650 WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("set maximum widget recurrence cooldown: %v", err)
+	}
 	if _, err := root.Exec(ctx, `
 		UPDATE widget_rules SET replay_max_duration_seconds = 1801 WHERE id = $1
 	`, widgetRuleA); err == nil {
@@ -659,34 +689,40 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 
 	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back operational triage migration: %v", err)
+		t.Fatalf("roll back widget recurrence migration: %v", err)
 	}
 	var preservedIssueID string
 	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, feedbackA).Scan(&preservedIssueID); err != nil {
-		t.Fatalf("read feedback link after triage rollback: %v", err)
+		t.Fatalf("read feedback link after recurrence rollback: %v", err)
 	}
 	if preservedIssueID != issueA {
-		t.Fatalf("feedback issue after triage rollback = %q, want %q", preservedIssueID, issueA)
+		t.Fatalf("feedback issue after recurrence rollback = %q, want %q", preservedIssueID, issueA)
 	}
 	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("reapply operational triage migration: %v", err)
+		t.Fatalf("reapply widget recurrence migration: %v", err)
 	}
-	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, feedbackA).Scan(&preservedIssueID); err != nil {
-		t.Fatalf("read feedback link after triage replay: %v", err)
+	if err := root.QueryRow(ctx, `
+		SELECT feedback.issue_id, rule.recurrence_mode, rule.recurrence_days
+		FROM feedbacks AS feedback
+		JOIN widget_rules AS rule ON rule.id = $2
+		WHERE feedback.id = $1
+	`, feedbackA, widgetRuleA).Scan(&preservedIssueID, &recurrenceMode, &recurrenceDays); err != nil {
+		t.Fatalf("read state after recurrence replay: %v", err)
 	}
-	if preservedIssueID != issueA {
-		t.Fatalf("feedback issue after triage replay = %q, want %q", preservedIssueID, issueA)
+	if preservedIssueID != issueA || recurrenceMode != "cooldown" ||
+		recurrenceDays == nil || *recurrenceDays != 30 {
+		t.Fatalf("state after recurrence replay = issue %q recurrence %q/%v", preservedIssueID, recurrenceMode, recurrenceDays)
 	}
 
-	if err := migrator.Steps(-2); err != nil {
-		t.Fatalf("roll back triage and feedback/issue decoupling migrations: %v", err)
+	if err := migrator.Steps(-3); err != nil {
+		t.Fatalf("roll back recurrence, triage, and feedback/issue decoupling migrations: %v", err)
 	}
 	legacyDescription := "Legacy feedback keeps its complete description after migration. More detail follows."
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET text = $2 WHERE id = $1`, feedbackA, legacyDescription); err != nil {
 		t.Fatalf("prepare legacy feedback before migration replay: %v", err)
 	}
-	if err := migrator.Steps(2); err != nil {
-		t.Fatalf("reapply feedback/issue decoupling and triage migrations: %v", err)
+	if err := migrator.Steps(3); err != nil {
+		t.Fatalf("reapply feedback/issue decoupling, triage, and recurrence migrations: %v", err)
 	}
 	var migratedTitle, migratedDescription, migratedIssueDescription, migratedIssueID string
 	if err := root.QueryRow(ctx, `
@@ -706,8 +742,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			migratedTitle, migratedDescription, migratedIssueID, migratedIssueDescription)
 	}
 
-	if err := migrator.Steps(-4); err != nil {
-		t.Fatalf("roll back triage, product fields, session rotation marker, and replay cap migrations: %v", err)
+	if err := migrator.Steps(-5); err != nil {
+		t.Fatalf("roll back recurrence, triage, product fields, session rotation marker, and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
 		if _, err := root.Exec(ctx, `
@@ -753,8 +789,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 46 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 46 clean", version, dirty)
+	if version != 47 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 47 clean", version, dirty)
 	}
 }
 
