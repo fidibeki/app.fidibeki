@@ -118,6 +118,30 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Fatalf("create member %s: %v", email, err)
 		}
 	}
+	var memberA, memberB string
+	if err := root.QueryRow(ctx,
+		`SELECT id FROM tenant_members WHERE tenant_id = $1 AND email = 'owner@acme.test'`, tenantA,
+	).Scan(&memberA); err != nil {
+		t.Fatalf("read tenant A member: %v", err)
+	}
+	if err := root.QueryRow(ctx,
+		`SELECT id FROM tenant_members WHERE tenant_id = $1 AND email = 'owner@beta.test'`, tenantB,
+	).Scan(&memberB); err != nil {
+		t.Fatalf("read tenant B member: %v", err)
+	}
+	var assigneeA, assigneeB string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name)
+		VALUES ($1, 'assignee@acme.test', 'Acme Assignee') RETURNING id
+	`, tenantA).Scan(&assigneeA); err != nil {
+		t.Fatalf("create tenant A assignee: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name)
+		VALUES ($1, 'assignee@beta.test', 'Beta Assignee') RETURNING id
+	`, tenantB).Scan(&assigneeB); err != nil {
+		t.Fatalf("create tenant B assignee: %v", err)
+	}
 	var projectA, projectB, widgetRuleA, issueA, issueB, feedbackA, feedbackB, attachmentA, attachmentB string
 	var sessionA, sessionB string
 	var integrationA, integrationB string
@@ -179,6 +203,52 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, tenantB, projectB, issueB).Scan(&feedbackB); err != nil {
 		t.Fatalf("create tenant B feedback: %v", err)
 	}
+	if _, err := root.Exec(ctx,
+		`UPDATE feedbacks SET priority = 'urgent', assignee_id = $2 WHERE id = $1`,
+		feedbackA, assigneeA,
+	); err != nil {
+		t.Fatalf("assign tenant A feedback triage metadata: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`UPDATE issues SET priority = 'high', assignee_id = $2 WHERE id = $1`,
+		issueA, assigneeA,
+	); err != nil {
+		t.Fatalf("assign tenant A issue triage metadata: %v", err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET priority = 'invalid' WHERE id = $1`, feedbackA); err == nil {
+		t.Fatal("invalid feedback priority succeeded")
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET assignee_id = $2 WHERE id = $1`, feedbackA, assigneeB); err == nil {
+		t.Fatal("cross-tenant feedback assignment succeeded")
+	}
+	var tagA, tagB string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'Billing', '#167D68') RETURNING id
+	`, tenantA).Scan(&tagA); err != nil {
+		t.Fatalf("create tenant A tag: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'Billing', '#3B82F6') RETURNING id
+	`, tenantB).Scan(&tagB); err != nil {
+		t.Fatalf("create tenant B tag: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id) VALUES ($1, $2, $3)`,
+		tenantA, feedbackA, tagA,
+	); err != nil {
+		t.Fatalf("tag tenant A feedback: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`INSERT INTO issue_tags (tenant_id, issue_id, tag_id) VALUES ($1, $2, $3)`,
+		tenantA, issueA, tagA,
+	); err != nil {
+		t.Fatalf("tag tenant A issue: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id) VALUES ($1, $2, $3)
+	`, tenantA, feedbackA, tagB); err == nil {
+		t.Fatal("cross-tenant feedback tag succeeded")
+	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, feedback_id, session_id, page_url, started_at,
@@ -229,9 +299,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		if err := root.QueryRow(ctx, `
 			INSERT INTO issue_updates (tenant_id, issue_id, member_id, old_status, new_status)
 			SELECT $1, $2, id, 'open', 'in_progress'
-			FROM tenant_members WHERE tenant_id = $1 LIMIT 1
+			FROM tenant_members WHERE tenant_id = $1 AND id = $3
 			RETURNING id
-		`, tenantID, issueID).Scan(&updateID); err != nil {
+		`, tenantID, issueID, map[string]string{tenantA: memberA, tenantB: memberB}[tenantID]).Scan(&updateID); err != nil {
 			t.Fatalf("create issue update for tenant %s: %v", tenantID, err)
 		}
 		if err := root.QueryRow(ctx, `
@@ -336,6 +406,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("app role without tenant context read %d rows, want 0", count)
 	}
+	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM tags`).Scan(&count); err != nil {
+		t.Fatalf("query tags without tenant context: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app role without tenant context read %d tags, want 0", count)
+	}
 
 	tx, err := appPool.Begin(ctx)
 	if err != nil {
@@ -346,8 +422,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM tenant_members`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A members: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("tenant A member count = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("tenant A member count = %d, want 2", count)
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM ai_daily_usage`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A AI usage: %v", err)
@@ -378,6 +454,11 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM session_batches`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("tenant A replay batch count = %d, error = %v, want 1", count, err)
+	}
+	for table, want := range map[string]int{"tags": 1, "feedback_tags": 1, "issue_tags": 1} {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
+			t.Fatalf("tenant A %s count = %d, error = %v, want %d", table, count, err, want)
+		}
 	}
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM tenant_members WHERE tenant_id = $1`, tenantB,
@@ -448,6 +529,18 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 
 	tx, err = appPool.Begin(ctx)
 	if err != nil {
+		t.Fatalf("begin mixed-tenant feedback tag write: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id) VALUES ($1, $2, $3)
+	`, tenantA, feedbackA, tagB); err == nil {
+		t.Fatal("mixed-tenant feedback tag succeeded, want composite FK rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
 		t.Fatalf("begin mixed-tenant replay write: %v", err)
 	}
 	setTenantContext(t, ctx, tx, tenantA)
@@ -511,8 +604,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM tenant_members`).Scan(&count); err != nil {
 		t.Fatalf("query members as admin role: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("admin member count = %d, want 2", count)
+	if count != 4 {
+		t.Fatalf("admin member count = %d, want 4", count)
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM ai_daily_usage`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin AI usage count = %d, error = %v, want 2", count, err)
@@ -535,16 +628,65 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM session_batches`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin replay batch count = %d, error = %v, want 2", count, err)
 	}
+	for table, want := range map[string]int{"tags": 2, "feedback_tags": 1, "issue_tags": 1} {
+		if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
+			t.Fatalf("admin %s count = %d, error = %v, want %d", table, count, err, want)
+		}
+	}
+
+	if _, err := root.Exec(ctx, `DELETE FROM tenant_members WHERE id = $1`, assigneeA); err != nil {
+		t.Fatalf("delete assigned tenant member: %v", err)
+	}
+	var feedbackAssignee, issueAssignee *string
+	if err := root.QueryRow(ctx, `
+		SELECT feedback.assignee_id, issue.assignee_id
+		FROM feedbacks AS feedback
+		JOIN issues AS issue ON issue.id = $2
+		WHERE feedback.id = $1
+	`, feedbackA, issueA).Scan(&feedbackAssignee, &issueAssignee); err != nil {
+		t.Fatalf("read resources after assigned member deletion: %v", err)
+	}
+	if feedbackAssignee != nil || issueAssignee != nil {
+		t.Fatalf("assignees after member deletion = feedback %v issue %v, want nil", feedbackAssignee, issueAssignee)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tags WHERE id = $1`, tagA); err != nil {
+		t.Fatalf("delete assigned tag: %v", err)
+	}
+	for table := range map[string]struct{}{"feedback_tags": {}, "issue_tags": {}} {
+		if err := root.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE tenant_id = $1`, tenantA).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("tenant A %s after tag deletion = %d, error = %v, want 0", table, count, err)
+		}
+	}
 
 	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back feedback/issue decoupling migration: %v", err)
+		t.Fatalf("roll back operational triage migration: %v", err)
+	}
+	var preservedIssueID string
+	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, feedbackA).Scan(&preservedIssueID); err != nil {
+		t.Fatalf("read feedback link after triage rollback: %v", err)
+	}
+	if preservedIssueID != issueA {
+		t.Fatalf("feedback issue after triage rollback = %q, want %q", preservedIssueID, issueA)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply operational triage migration: %v", err)
+	}
+	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, feedbackA).Scan(&preservedIssueID); err != nil {
+		t.Fatalf("read feedback link after triage replay: %v", err)
+	}
+	if preservedIssueID != issueA {
+		t.Fatalf("feedback issue after triage replay = %q, want %q", preservedIssueID, issueA)
+	}
+
+	if err := migrator.Steps(-2); err != nil {
+		t.Fatalf("roll back triage and feedback/issue decoupling migrations: %v", err)
 	}
 	legacyDescription := "Legacy feedback keeps its complete description after migration. More detail follows."
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET text = $2 WHERE id = $1`, feedbackA, legacyDescription); err != nil {
 		t.Fatalf("prepare legacy feedback before migration replay: %v", err)
 	}
-	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("reapply feedback/issue decoupling migration: %v", err)
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("reapply feedback/issue decoupling and triage migrations: %v", err)
 	}
 	var migratedTitle, migratedDescription, migratedIssueDescription, migratedIssueID string
 	if err := root.QueryRow(ctx, `
@@ -564,8 +706,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			migratedTitle, migratedDescription, migratedIssueID, migratedIssueDescription)
 	}
 
-	if err := migrator.Steps(-3); err != nil {
-		t.Fatalf("roll back product fields, session rotation marker, and replay cap migrations: %v", err)
+	if err := migrator.Steps(-4); err != nil {
+		t.Fatalf("roll back triage, product fields, session rotation marker, and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
 		if _, err := root.Exec(ctx, `
@@ -611,8 +753,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 45 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 45 clean", version, dirty)
+	if version != 46 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 46 clean", version, dirty)
 	}
 }
 
