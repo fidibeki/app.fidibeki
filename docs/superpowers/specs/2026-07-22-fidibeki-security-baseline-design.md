@@ -18,7 +18,8 @@ reviewable record of the existing false positives without weakening detection fo
 ## Goals
 
 - Upgrade the affected Go modules to versions that contain the published fixes.
-- Run the official Go vulnerability analyzer as a repeatable local command and required CI check.
+- Run the official Go vulnerability analyzer as a repeatable local command and CI check on every
+  push and pull request.
 - Run Gitleaks for every push and pull request, with an explicit full-history audit path.
 - Suppress only the exact, reviewed fixture findings already present in history.
 - Enable GitHub Dependabot vulnerability alerts and automated security fixes when the repository
@@ -39,16 +40,25 @@ reviewable record of the existing false positives without weakening detection fo
 
 Update the backend dependency graph to at least these exact versions:
 
-- `github.com/go-chi/chi/v5 v5.2.2`
+- `github.com/go-chi/chi/v5 v5.2.4`
 - `github.com/jackc/pgx/v5 v5.9.2`
+- `github.com/testcontainers/testcontainers-go v0.43.0`
+- `github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0`
 - `golang.org/x/net v0.56.0`
 - `golang.org/x/text v0.39.0`
 - `golang.org/x/crypto v0.53.0`
-- `google.golang.org/grpc v1.79.3`
+- `google.golang.org/grpc v1.82.1`
 
-The first two are direct dependencies. The remaining modules may stay indirect, but they are pinned
+The first four are direct dependencies. The remaining modules may stay indirect, but they are pinned
 explicitly because the audited graph otherwise resolves to vulnerable versions. `x/crypto v0.53.0`
-is required by `x/net v0.56.0` and supersedes the independently safe `v0.52.0` audit floor.
+is required by `x/net v0.56.0` and supersedes the independently safe `v0.52.0` audit floor. Enabling
+Dependabot surfaced a high-severity gRPC advisory published on 2026-07-21 and advisories against the
+legacy Docker module used by Testcontainers. `grpc v1.82.1` includes the new fix, while Testcontainers
+`v0.43.0` uses the split Moby API/client modules instead of `github.com/docker/docker`. The legacy
+module remains in module metadata through the upstream migrator driver's own test dependencies; it
+is absent from the application package graph and must be triaged in Dependabot as `not_used` with
+that evidence rather than suppressed in code.
+
 Dependency changes are produced with Go module tooling, followed by `go mod tidy`; `go.mod` and
 `go.sum` remain the only dependency source of truth.
 
@@ -71,22 +81,26 @@ failure. Package-level advisories that are not reachable remain visible in verbo
 do not fail the standard symbol-level gate.
 
 The workflow uses the Go toolchain declared in `backend/go.mod` and the existing module cache pattern.
-It has read-only repository permissions.
+It has read-only repository permissions. GitHub's current private-repository plan does not support
+branch protection or rulesets, so the checks cannot technically block direct pushes to `main`. The
+workflow remains fail-closed and visible on every commit; making it a merge-required check requires
+GitHub Pro or a public repository and is deferred as an external account limitation.
 
 ## Secret-Scanning Gate
 
 The same workflow contains a separate Gitleaks job so Go setup or dependency failures cannot prevent
-secret scanning. It checks out full history and uses:
+secret scanning. It checks out and scans full history on every event. It uses:
 
-- `gitleaks/gitleaks-action` pinned to commit
-  `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` (the reviewed `v3.0.0` release).
-- Gitleaks CLI `8.30.1`, set explicitly through `GITLEAKS_VERSION`.
-- PR comments disabled, because the read-only workflow should report through its check summary.
-- SARIF artifact upload disabled, so even redacted findings are not retained as a separate artifact.
+- The official Gitleaks `v8.30.1` container pinned to immutable digest
+  `sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f`.
+- A direct CLI invocation with redaction and no GitHub token, PR API calls, comments, or report
+  artifact.
+- `actions/checkout` and `actions/setup-go` pinned to their reviewed release commit SHAs.
 
-Push and pull-request runs scan the commits introduced by the event. `workflow_dispatch` runs without
-a commit range and is the explicit full-history audit. The initial implementation must run a full
-history scan locally and then run the manual CI path once after merge.
+Scanning the complete repository history avoids merge-diff, first-parent, pagination, and fork-PR
+coverage gaps. The repository is small enough that the stronger scan takes less than one second
+locally. The initial implementation must run the same full-history command locally and then run the
+manual CI path once after merge.
 
 Add a root `gitleaks.toml` that extends the built-in rules without weakening them. Add a root
 `.gitleaksignore` containing only exact Gitleaks fingerprints for the 17 findings already reviewed as
@@ -116,7 +130,7 @@ locally enforceable vulnerability and secret checks active.
   credential, or baseline only an independently verified fixture fingerprint.
 - A Gitleaks action or CLI download fails: fail CI rather than skipping the scan.
 - Dependabot enablement is unavailable: preserve the API error in the verification record and rely on
-  the required repository-owned gates until account support changes.
+  the repository-owned checks until account support changes.
 
 ## Testing And Verification
 

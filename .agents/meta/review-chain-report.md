@@ -289,3 +289,36 @@ constraint names without accepting concurrent out-of-range writes.
 The PostgreSQL migration test exercises version 42, upgrade, rollback, and a second upgrade while
 asserting legacy values are accepted before migration and clamped afterward. Backend tests and vet,
 web unit tests, typecheck, production build, the full browser suite, and the final independent review pass.
+
+---
+
+# Security Baseline Review
+
+**Artifact**: Dependency remediation and repository security CI baseline
+**Date**: 2026-07-22
+**Rounds**: 1
+
+## Verdict: FIXED
+
+## Input Quality
+Rich, precise, and fresh: the review covered the final workflow, dependency graph, vulnerability output,
+repository settings, and immutable upstream references.
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | The original Gitleaks action needed pull-request API access that was not granted for private PRs. | Fixed |
+| 2 | major | 10/10 | Event-specific commit ranges could miss one-commit merges and long or non-first-parent PR histories. | Fixed |
+| 3 | major | 10/10 | Movable action tags and an unverified scanner download weakened the CI supply chain. | Fixed |
+| 4 | major | 10/10 | Security checks cannot be made merge-required while branch protection is unavailable on the current private repository plan. | Declined: external limitation documented |
+
+## Changes Made
+Security CI now runs the digest-pinned Gitleaks container against the complete repository history without
+GitHub API or token dependencies. Checkout and Go setup actions use immutable commit SHAs. The approved
+design records that merge enforcement requires upgrading the GitHub plan or making the repository public.
+
+## Verification
+The exact Gitleaks container command, `actionlint`, `make vulncheck`, backend formatting, lint, short tests,
+serialized coverage, module verification, and the backend container build pass. A synthetic leak and a
+known-vulnerable dependency both made their respective checks fail. The resolver found no remaining
+major or critical implementation issue.

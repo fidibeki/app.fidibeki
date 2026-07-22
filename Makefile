@@ -7,7 +7,7 @@ test-short:
 	cd backend && go test -vet=off -short -p=8 ./...
 
 coverage:
-	cd backend && go test ./... -count=1 -coverprofile=coverage.out
+	cd backend && go test -p=1 ./... -count=1 -coverprofile=coverage.out
 	cd backend && sh scripts/check-coverage.sh coverage.out
 
 format-check:

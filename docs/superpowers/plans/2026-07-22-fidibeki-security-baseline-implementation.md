@@ -41,8 +41,8 @@ gates without changing production infrastructure.
 5. **Add Security CI**
    - Create `.github/workflows/security-ci.yml` for pushes to `main`, pull requests, and manual runs.
    - Add independent `govulncheck` and `gitleaks` jobs with read-only permissions.
-   - Pin the Gitleaks action commit and CLI version specified in the design, fetch full history, and
-     disable comments and artifact upload.
+   - Pin checkout/setup actions by commit SHA and the Gitleaks container by digest, then scan full
+     history on every event without a GitHub token, comments, or artifact upload.
    - Check workflow syntax and run both underlying commands locally.
    - Commit the Make target, baseline, and workflow as `ci: enforce repository security baseline`.
 
