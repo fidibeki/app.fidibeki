@@ -24,6 +24,84 @@ Complete the operating loop:
 - Deliver product work as testable vertical slices. Each slice includes compatible migrations,
   backend, backoffice, and widget tests where applicable, plus staging E2E validation.
 
+### Current execution TODO (approved 2026-07-22)
+
+The canonical product design is
+`docs/superpowers/specs/2026-07-22-fidibeki-three-pillar-product-roadmap-design.md` at commit
+`6f9a029` or later. It supersedes the older slice order below where they conflict, without removing
+completed work or compatibility guarantees. Audit each phase against code and staging before
+implementation; extend existing contracts instead of rebuilding them.
+
+#### Phase 0: product quality gate
+
+- [ ] [#8](https://github.com/acidiney/app.fidibeki/issues/8) Verified member domains. The audit
+  found no workspace-domain verification model or invite/activation enforcement. Add the smallest
+  tenant-scoped model and management surface that can prove a domain, then enforce it both when an
+  invitation is created and when its magic link is consumed. Preserve workspaces without verified
+  domains until they opt into the policy.
+- [ ] [#9](https://github.com/acidiney/app.fidibeki/issues/9) Feedback queue selection. Filtering,
+  URL synchronization, and SPA navigation already work. Replace path-only router active matching
+  with one canonical queue matcher so exactly one queue reflects the current filter state.
+- [ ] [#10](https://github.com/acidiney/app.fidibeki/issues/10) Responsive session replay. Replay
+  loading and playback already work. Constrain and scale the recorded viewport plus controls inside
+  the available surface, with no page-level horizontal overflow on desktop, tablet, or mobile.
+- [ ] [#11](https://github.com/acidiney/app.fidibeki/issues/11) Magic-link confirmation alignment.
+  Preserve the existing accessible status message while giving its icon and wrapping copy a stable
+  aligned layout at narrow and wide widths.
+- [ ] [#12](https://github.com/acidiney/app.fidibeki/issues/12) Unknown workspace routing. The API
+  already returns `unknown_tenant`; the web login route currently bypasses that knowledge. Resolve
+  workspace availability before authentication, render a neutral unavailable/not-found state,
+  offer editable prefilled signup only for standard Fidibeki subdomains, and never derive a slug
+  from an unknown custom domain.
+
+Every blocker requires an automated regression test and responsive browser validation where
+applicable. Complete and validate the five items in order without production or infrastructure
+changes.
+
+#### Phase 1: Contextual Feedback Core
+
+- [ ] Re-audit widget configuration, public runtime contracts, targeting, recurrence, analytics,
+  submission, and inbox behavior as complete/partial/missing.
+- [ ] Add one versioned `WidgetDefinition` shared by `launcher`, `inline`, `reaction`, and `prompt`,
+  including lifecycle, placement, objective, supported response blocks, locale variants, controlled
+  theme tokens, and presentation-specific fatigue guardrails.
+- [ ] Preserve the current automatic embed and add declarative `<fidibeki-widget>` plus imperative
+  `Fidibeki.mount()` placement through the same runtime. Keep `Fidibeki.track()` deferred to #7.
+- [ ] Deliver all four presentations end to end: target and render, resolve locale, respect durable
+  recurrence, submit one independent Feedback record with optional consented contact and existing
+  attachments, and expose it in the inbox without creating an Issue.
+
+#### Phase 2: Operations Completion
+
+- [ ] Re-audit inbox, triage, Issues, notifications, outbox, RBAC, and reporter communication as
+  complete/partial/missing; preserve implemented filtering, bulk triage, metadata, linking, merge,
+  status history, and current delivery paths.
+- [ ] Add standalone internal comments, member mentions with internal notifications, and immutable
+  activity coverage for every operational mutation and reporter communication.
+- [ ] Complete reporter communication with receipt, important progress, `needs_info`, and final
+  resolution messages; add secure hashed, scoped, revocable, rate-limited reporter access with
+  tenant/project opt-out enforced at request time and a one-response clarification flow.
+- [ ] Enrich Slack Block Kit, Teams, and additive versioned generic webhooks with complete context,
+  changes, actors, comments, attachments, timestamps, and environment-aware resource links.
+  Interactive Slack/Teams commands remain outside these three phases.
+
+#### Phase 3: Widget Platform
+
+- [ ] Re-audit the shared runtime and configuration hierarchy before adding breadth.
+- [ ] Add controlled colors, logo, localized copy, language defaults, position, and presentation
+  configuration without arbitrary CSS, DOM injection, or a general form builder.
+- [ ] Add deterministic objective policies for continuous feedback, after engagement, content
+  validation, and friction detection using only non-personal public/browser signals. Apply stricter
+  confidence and cooldown rules to more interruptive presentations.
+- [ ] Add `draft`, `active`, `paused`, and `archived` lifecycle behavior while preserving historical
+  Feedback, analytics, and configuration; paused/archived widgets must neither render nor record
+  impressions.
+- [ ] Complete backoffice preview, URL testing, decision explanation, and installation diagnostics.
+
+Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
+web, and widget tests, responsive/accessibility verification, and one real staging journey. The
+three-pillar roadmap does not authorize production rollout or infrastructure expansion.
+
 ### Existing capabilities to preserve and extend
 
 - `feedbacks.issue_id` is already nullable and protected by tenant/project foreign keys. Existing
