@@ -113,7 +113,8 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	session, err := h.options.Store.CreateSession(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID,
 		strings.TrimSpace(request.SessionID), strings.TrimSpace(request.PageURL), h.now(),
-		min(rule.ReplayMaxDurationSeconds, 30*60), min(rule.ReplayMaxEvents, 50000),
+		min(rule.ReplayMaxDurationSeconds, project.MaximumReplayDurationSeconds),
+		min(rule.ReplayMaxEvents, project.MaximumReplayEvents),
 	)
 	if err != nil {
 		h.writeStoreError(w, r, err)

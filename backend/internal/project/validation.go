@@ -218,11 +218,11 @@ func validateReplay(values WidgetRuleValues, fields FieldErrors) {
 	default:
 		fields["replay_mode"] = "must be none, full, or sampling"
 	}
-	if values.ReplayMaxDurationSeconds < 1 || values.ReplayMaxDurationSeconds > 7200 {
-		fields["replay_max_duration_seconds"] = "must be between 1 and 7200"
+	if values.ReplayMaxDurationSeconds < 1 || values.ReplayMaxDurationSeconds > MaximumReplayDurationSeconds {
+		fields["replay_max_duration_seconds"] = "must be between 1 and 1800"
 	}
-	if values.ReplayMaxEvents < 1 || values.ReplayMaxEvents > 200000 {
-		fields["replay_max_events"] = "must be between 1 and 200000"
+	if values.ReplayMaxEvents < 1 || values.ReplayMaxEvents > MaximumReplayEvents {
+		fields["replay_max_events"] = "must be between 1 and 50000"
 	}
 }
 

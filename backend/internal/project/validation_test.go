@@ -181,8 +181,17 @@ func TestValidateWidgetRuleCoversRemainingInvalidVariants(t *testing.T) {
 		{
 			name: "unknown replay", field: "replay_mode",
 			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
-				TriggerType: TriggerExitIntent, ReplayMode: "unknown",
-				ReplayMaxDurationSeconds: 7201, ReplayMaxEvents: 200001},
+				TriggerType: TriggerExitIntent, ReplayMode: "unknown"},
+		},
+		{
+			name: "replay duration above recording cap", field: "replay_max_duration_seconds",
+			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
+				TriggerType: TriggerExitIntent, ReplayMaxDurationSeconds: 1801},
+		},
+		{
+			name: "replay events above recording cap", field: "replay_max_events",
+			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
+				TriggerType: TriggerExitIntent, ReplayMaxEvents: 50001},
 		},
 	}
 	for _, tt := range tests {

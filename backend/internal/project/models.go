@@ -44,6 +44,9 @@ const (
 	ReplayNone     ReplayMode = "none"
 	ReplayFull     ReplayMode = "full"
 	ReplaySampling ReplayMode = "sampling"
+
+	MaximumReplayDurationSeconds = 30 * 60
+	MaximumReplayEvents          = 50000
 )
 
 type Project struct {

@@ -118,7 +118,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Fatalf("create member %s: %v", email, err)
 		}
 	}
-	var projectA, projectB, issueA, issueB, feedbackA, feedbackB, attachmentA, attachmentB string
+	var projectA, projectB, widgetRuleA, issueA, issueB, feedbackA, feedbackB, attachmentA, attachmentB string
 	var sessionA, sessionB string
 	var integrationA, integrationB string
 	if err := root.QueryRow(ctx, `
@@ -132,6 +132,24 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		VALUES ($1, 'B web', 'pk_live_BBBBBBBBBBBBBBBBBBBBBB', '{b.example.com}') RETURNING id
 	`, tenantB).Scan(&projectB); err != nil {
 		t.Fatalf("create tenant B project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds
+		) VALUES ($1, 'Replay limits', 'all_pages', 'delay', 0)
+		RETURNING id
+	`, projectA).Scan(&widgetRuleA); err != nil {
+		t.Fatalf("create tenant A widget rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_max_duration_seconds = 1801 WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("widget replay duration above 1800 seconds succeeded")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_max_events = 50001 WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("widget replay event count above 50000 succeeded")
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO issues (tenant_id, project_id, public_id, title)
@@ -518,6 +536,42 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("admin replay batch count = %d, error = %v, want 2", count, err)
 	}
 
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back replay cap migration: %v", err)
+	}
+	for cycle := 1; cycle <= 2; cycle++ {
+		if _, err := root.Exec(ctx, `
+			UPDATE widget_rules
+			SET replay_max_duration_seconds = 7200, replay_max_events = 200000
+			WHERE id = $1
+		`, widgetRuleA); err != nil {
+			t.Fatalf("write legacy replay caps before migration cycle %d: %v", cycle, err)
+		}
+		if err := migrator.Steps(1); err != nil {
+			t.Fatalf("apply replay cap migration cycle %d: %v", cycle, err)
+		}
+
+		var replayMaxDuration, replayMaxEvents int
+		if err := root.QueryRow(ctx, `
+			SELECT replay_max_duration_seconds, replay_max_events
+			FROM widget_rules
+			WHERE id = $1
+		`, widgetRuleA).Scan(&replayMaxDuration, &replayMaxEvents); err != nil {
+			t.Fatalf("read normalized replay caps after migration cycle %d: %v", cycle, err)
+		}
+		if replayMaxDuration != 1800 || replayMaxEvents != 50000 {
+			t.Fatalf(
+				"replay caps after migration cycle %d = %d seconds/%d events, want 1800/50000",
+				cycle, replayMaxDuration, replayMaxEvents,
+			)
+		}
+		if cycle == 1 {
+			if err := migrator.Steps(-1); err != nil {
+				t.Fatalf("roll back replay cap migration after cycle 1: %v", err)
+			}
+		}
+	}
+
 	pools.Close()
 	if err := migrator.Down(); err != nil {
 		t.Fatalf("migrate down: %v", err)
@@ -529,8 +583,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 42 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 42 clean", version, dirty)
+	if version != 43 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 43 clean", version, dirty)
 	}
 }
 

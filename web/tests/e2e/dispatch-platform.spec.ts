@@ -537,6 +537,23 @@ test('widget rule save enforces browser validation before sending an update', as
 
   await expect(name).toBeFocused()
   expect(updateRequests).toBe(0)
+
+  await name.fill('Checkout feedback')
+  const maxDuration = page.getByLabel('Max duration (seconds)')
+  const maxEvents = page.getByLabel('Max events')
+  await expect(maxDuration).toHaveAttribute('max', '1800')
+  await expect(maxEvents).toHaveAttribute('max', '50000')
+
+  await maxDuration.fill('1801')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(maxDuration).toBeFocused()
+  expect(updateRequests).toBe(0)
+
+  await maxDuration.fill('1800')
+  await maxEvents.fill('50001')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(maxEvents).toBeFocused()
+  expect(updateRequests).toBe(0)
 })
 
 test('widget rule save submits a valid update', async ({ page }, testInfo) => {

@@ -262,3 +262,30 @@ PostgreSQL regressions cover zero-batch and incomplete-only abandonment, renewed
 transient storage errors, bounded terminal state, and late completion rejection. The MinIO integration
 test verifies typed absence. Backend tests, vet, coverage enforcement, web unit tests, typecheck,
 production build, and the full browser suite pass. The final independent review passed.
+
+---
+
+# Replay Configuration Cap Review
+
+**Artifact**: Replay duration and event cap alignment across API, database, widget rules, and backoffice
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 9/10 | Migration 43 left a live-write window between clamping existing rows and installing the narrower constraints. | Fixed |
+| 2 | minor | 10/10 | Migration coverage did not prove legacy values were clamped or that rollback restored the wider limits. | Fixed |
+
+## Changes Made
+Replay rules now share the product limits of 30 minutes and 50,000 events across backend validation,
+session creation, database constraints, and the project settings UI. The migration installs narrow
+`NOT VALID` constraints before normalizing existing rows, validates them, and replaces the old
+constraint names without accepting concurrent out-of-range writes.
+
+## Verification
+The PostgreSQL migration test exercises version 42, upgrade, rollback, and a second upgrade while
+asserting legacy values are accepted before migration and clamped afterward. Backend tests and vet,
+web unit tests, typecheck, production build, the full browser suite, and the final independent review pass.
