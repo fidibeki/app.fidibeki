@@ -809,7 +809,26 @@ test('magic-link login enters the Dispatch workspace', async ({ page }) => {
   await page.waitForLoadState('networkidle')
   await page.getByLabel('Work email').fill('alex@acme.test')
   await page.getByRole('button', { name: 'Send sign-in link' }).click()
-  await expect(page.getByRole('status')).toContainText('Check your inbox')
+  const confirmation = page.getByRole('status')
+  await expect(confirmation).toContainText('Check your inbox')
+  const confirmationLayout = await confirmation.evaluate((element) => {
+    const icon = element.querySelector('svg')?.getBoundingClientRect()
+    const copy = element.querySelector('span')?.getBoundingClientRect()
+    return {
+      display: getComputedStyle(element).display,
+      columnGap: Number.parseFloat(getComputedStyle(element).columnGap),
+      iconCenter: icon ? icon.top + icon.height / 2 : null,
+      copyCenter: copy ? copy.top + copy.height / 2 : null,
+      copyLeft: copy?.left ?? null,
+      iconRight: icon?.right ?? null,
+    }
+  })
+  expect(confirmationLayout.display).toBe('grid')
+  expect(confirmationLayout.columnGap).toBeGreaterThanOrEqual(7)
+  expect(confirmationLayout.copyLeft).not.toBeNull()
+  expect(confirmationLayout.iconRight).not.toBeNull()
+  expect(confirmationLayout.copyLeft!).toBeGreaterThan(confirmationLayout.iconRight!)
+  expect(Math.abs(confirmationLayout.iconCenter! - confirmationLayout.copyCenter!)).toBeLessThanOrEqual(1)
 
   await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
   await expect(page).toHaveURL(`${tenantOrigin}/`)

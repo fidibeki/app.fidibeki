@@ -71,7 +71,7 @@ useHead({ title: 'Sign in · Fidibeki' })
         <button class="app-button app-button--primary" type="submit" :disabled="pending || !email">
           {{ pending ? 'Sending link…' : 'Send sign-in link' }} <ArrowRight v-if="!pending" :size="16" />
         </button>
-        <p v-if="sent" class="auth-message auth-message--success" role="status"><CheckCircle2 :size="15" /> Check your inbox. The link expires in 10 minutes.</p>
+        <p v-if="sent" class="auth-message auth-message--success" role="status"><CheckCircle2 :size="15" aria-hidden="true" /><span>Check your inbox. The link expires in 10 minutes.</span></p>
         <p v-if="errorMessage" class="auth-message auth-message--error" role="alert">{{ errorMessage }}</p>
         <p class="auth-signup-link">New to Fidibeki? <a :href="signupURL">Create a workspace</a></p>
       </form>

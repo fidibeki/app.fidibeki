@@ -51,9 +51,10 @@ implementation; extend existing contracts instead of rebuilding them.
   the available surface, with no page-level horizontal overflow on desktop, tablet, or mobile.
   Implemented with content-width observation, proportional viewport sizing, in-place player updates
   that preserve playback state, and browser geometry coverage at 1440, 1024, and 390 pixels.
-- [ ] [#11](https://github.com/acidiney/app.fidibeki/issues/11) Magic-link confirmation alignment.
+- [x] [#11](https://github.com/acidiney/app.fidibeki/issues/11) Magic-link confirmation alignment.
   Preserve the existing accessible status message while giving its icon and wrapping copy a stable
-  aligned layout at narrow and wide widths.
+  aligned layout at narrow and wide widths. Implemented as an explicit icon/copy grid that retains
+  `role="status"`, with geometric browser assertions in the desktop and mobile login flows.
 - [ ] [#12](https://github.com/acidiney/app.fidibeki/issues/12) Unknown workspace routing. The API
   already returns `unknown_tenant`; the web login route currently bypasses that knowledge. Resolve
   workspace availability before authentication, render a neutral unavailable/not-found state,

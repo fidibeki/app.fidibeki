@@ -647,9 +647,17 @@
 }
 
 .auth-message--success {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
   background: var(--green-soft);
   color: var(--green) !important;
   border-color: #b5d9c6;
+}
+
+.auth-message--success > svg {
+  display: block;
 }
 
 .auth-message--error {
