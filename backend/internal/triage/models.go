@@ -16,6 +16,21 @@ func (priority Priority) Valid() bool {
 		priority == PriorityHigh || priority == PriorityUrgent
 }
 
+func (priority Priority) Rank() int {
+	switch priority {
+	case PriorityLow:
+		return 1
+	case PriorityMedium:
+		return 2
+	case PriorityHigh:
+		return 3
+	case PriorityUrgent:
+		return 4
+	default:
+		return 0
+	}
+}
+
 type Assignee struct {
 	ID    string  `json:"id"`
 	Name  *string `json:"name,omitempty"`

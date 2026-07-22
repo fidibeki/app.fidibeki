@@ -64,7 +64,7 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("enable app role: %v", err)
 	}
 
-	var tenantID, memberID, projectID, issueID, targetID, feedbackID string
+	var tenantID, memberID, triageMemberID, projectID, issueID, targetID, feedbackID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug, plan, status)
 		VALUES ('Acme', 'acme', 'growth', 'active') RETURNING id
@@ -76,6 +76,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		VALUES ($1, 'owner@acme.test', $2) RETURNING id
 	`, tenantID, auth.TenantPermissionStrings()).Scan(&memberID); err != nil {
 		t.Fatalf("create member: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name, permissions)
+		VALUES ($1, 'triage@acme.test', 'Ada Triage', $2) RETURNING id
+	`, tenantID, auth.TenantPermissionStrings()).Scan(&triageMemberID); err != nil {
+		t.Fatalf("create triage member: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
@@ -171,19 +177,23 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 	createdFromFeedback := issueRequest(
 		handler, accessToken, http.MethodPost, "/v1/feedbacks/"+unlinkedFeedbackID+"/issue",
-		`{"title":"Promotion code freezes checkout","description":"Applying a valid promotion code freezes checkout before payment."}`,
+		fmt.Sprintf(`{"title":"Promotion code freezes checkout","description":"Applying a valid promotion code freezes checkout before payment.","priority":"high","assignee_id":%q,"tag_ids":[%q]}`,
+			memberID, checkoutTagID),
 	)
 	if createdFromFeedback.Code != http.StatusCreated ||
 		!strings.Contains(createdFromFeedback.Body.String(), "ACME-2026-0003") ||
 		!strings.Contains(createdFromFeedback.Body.String(), "Applying a valid promotion code") {
 		t.Fatalf("create issue from feedback = %d, body = %s", createdFromFeedback.Code, createdFromFeedback.Body.String())
 	}
-	var createdIssueID, createdTitle, createdDescription, linkedIssueID string
+	var createdIssueID, createdTitle, createdDescription, linkedIssueID, createdPriority string
+	var createdAssigneeID *string
 	var createdNotify bool
 	if err := root.QueryRow(ctx, `
-		SELECT id, title, description, notify_reporter
+		SELECT id, title, description, priority, assignee_id, notify_reporter
 		FROM issues WHERE tenant_id = $1 AND public_id = 'ACME-2026-0003'
-	`, tenantID).Scan(&createdIssueID, &createdTitle, &createdDescription, &createdNotify); err != nil {
+	`, tenantID).Scan(
+		&createdIssueID, &createdTitle, &createdDescription, &createdPriority, &createdAssigneeID, &createdNotify,
+	); err != nil {
 		t.Fatalf("read issue created from feedback: %v", err)
 	}
 	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, unlinkedFeedbackID).
@@ -192,9 +202,17 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 	if createdTitle != "Promotion code freezes checkout" ||
 		createdDescription != "Applying a valid promotion code freezes checkout before payment." ||
+		createdPriority != "high" || createdAssigneeID == nil || *createdAssigneeID != memberID ||
 		!createdNotify || linkedIssueID != createdIssueID {
-		t.Errorf("created issue/link = %q/%q notify=%t linked=%q issue=%q",
-			createdTitle, createdDescription, createdNotify, linkedIssueID, createdIssueID)
+		t.Errorf("created issue/link = %q/%q priority=%q assignee=%v notify=%t linked=%q issue=%q",
+			createdTitle, createdDescription, createdPriority, createdAssigneeID,
+			createdNotify, linkedIssueID, createdIssueID)
+	}
+	var createdTagCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_tags WHERE issue_id = $1 AND tag_id = $2
+	`, createdIssueID, checkoutTagID).Scan(&createdTagCount); err != nil || createdTagCount != 1 {
+		t.Errorf("created issue tag count = %d, error = %v, want 1", createdTagCount, err)
 	}
 	duplicateCreate := issueRequest(
 		handler, accessToken, http.MethodPost, "/v1/feedbacks/"+unlinkedFeedbackID+"/issue",
@@ -202,6 +220,110 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	)
 	if duplicateCreate.Code != http.StatusConflict {
 		t.Errorf("duplicate issue creation = %d, body = %s", duplicateCreate.Code, duplicateCreate.Body.String())
+	}
+	var multiFeedbackA, multiFeedbackB string
+	for publicID, input := range map[string]struct {
+		priority    string
+		destination *string
+	}{
+		"fb_Multi001": {priority: "low", destination: &multiFeedbackA},
+		"fb_Multi002": {priority: "urgent", destination: &multiFeedbackB},
+	} {
+		if err := root.QueryRow(ctx, `
+			INSERT INTO feedbacks (
+				tenant_id, project_id, public_id, client_feedback_id, title, description,
+				priority, assignee_id, reporter_email, notify_reporter, page_url, text_process_status
+			) VALUES (
+				$1, $2, $3, gen_random_uuid(), 'Repeated checkout failure',
+				'The checkout fails after applying a promotion.', $4, $5,
+				'reporter3@example.com', true, 'https://example.com/checkout', 'completed'
+			) RETURNING id
+		`, tenantID, projectID, publicID, input.priority, triageMemberID).Scan(input.destination); err != nil {
+			t.Fatalf("create multi-issue feedback %s: %v", publicID, err)
+		}
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id)
+		VALUES ($1, $2, $4), ($1, $3, $5)
+	`, tenantID, multiFeedbackA, multiFeedbackB, checkoutTagID, customerImpactTagID); err != nil {
+		t.Fatalf("tag multi-issue feedback: %v", err)
+	}
+	multiCreate := issueRequest(
+		handler, accessToken, http.MethodPost, "/v1/issues/from-feedback",
+		fmt.Sprintf(`{"feedback_ids":[%q,%q],"title":"Promotion failures affect checkout","description":"Several customers cannot complete checkout after applying promotions."}`,
+			multiFeedbackA, multiFeedbackB),
+	)
+	if multiCreate.Code != http.StatusCreated {
+		t.Fatalf("create issue from multiple feedback = %d body=%s", multiCreate.Code, multiCreate.Body.String())
+	}
+	var multiEnvelope struct {
+		Issue Issue `json:"issue"`
+	}
+	if err := json.Unmarshal(multiCreate.Body.Bytes(), &multiEnvelope); err != nil {
+		t.Fatalf("decode multi-feedback issue: %v", err)
+	}
+	multiIssue := multiEnvelope.Issue
+	if multiIssue.PublicID != "ACME-2026-0004" || multiIssue.Priority == nil ||
+		string(*multiIssue.Priority) != "urgent" || multiIssue.Assignee == nil ||
+		multiIssue.Assignee.ID != triageMemberID || multiIssue.ReporterEmail == nil ||
+		*multiIssue.ReporterEmail != "reporter3@example.com" || !multiIssue.NotifyReporter ||
+		multiIssue.FeedbackCount != 2 || len(multiIssue.Tags) != 2 ||
+		multiIssue.Tags[0].Name != "Checkout" || multiIssue.Tags[1].Name != "Customer impact" {
+		t.Fatalf("multi-feedback issue copy rules = %#v", multiIssue)
+	}
+	var multiLinkCount, multiEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks
+		WHERE id = ANY($1::uuid[]) AND issue_id = $2
+	`, []string{multiFeedbackA, multiFeedbackB}, multiIssue.ID).Scan(&multiLinkCount); err != nil {
+		t.Fatalf("count multi-feedback issue links: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE resource_id = $1 AND event = 'issue.created'
+	`, multiIssue.ID).Scan(&multiEventCount); err != nil {
+		t.Fatalf("count multi-feedback issue outbox: %v", err)
+	}
+	if multiLinkCount != 2 || multiEventCount != 1 {
+		t.Fatalf("multi-feedback issue links/events = %d/%d, want 2/1", multiLinkCount, multiEventCount)
+	}
+	var rollbackFeedbackID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, title, page_url, text_process_status
+		) VALUES ($1, $2, 'fb_Multi003', gen_random_uuid(), 'Rollback candidate',
+		          'https://example.com/checkout', 'skipped') RETURNING id
+	`, tenantID, projectID).Scan(&rollbackFeedbackID); err != nil {
+		t.Fatalf("create rollback feedback: %v", err)
+	}
+	conflictingMultiCreate := issueRequest(
+		handler, accessToken, http.MethodPost, "/v1/issues/from-feedback",
+		fmt.Sprintf(`{"feedback_ids":[%q,%q],"title":"Must roll back","description":"One feedback is already linked."}`,
+			multiFeedbackA, rollbackFeedbackID),
+	)
+	if conflictingMultiCreate.Code != http.StatusConflict {
+		t.Fatalf("conflicting multi-feedback issue = %d body=%s",
+			conflictingMultiCreate.Code, conflictingMultiCreate.Body.String())
+	}
+	var rollbackIssueID *string
+	var nextSequence, rolledBackIssueCount int
+	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, rollbackFeedbackID).
+		Scan(&rollbackIssueID); err != nil {
+		t.Fatalf("read rollback feedback link: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT next_seq FROM issue_counters WHERE tenant_id = $1 AND year = 2026
+	`, tenantID).Scan(&nextSequence); err != nil {
+		t.Fatalf("read issue counter after rollback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issues WHERE tenant_id = $1 AND public_id = 'ACME-2026-0005'
+	`, tenantID).Scan(&rolledBackIssueCount); err != nil {
+		t.Fatalf("count rolled-back issue: %v", err)
+	}
+	if rollbackIssueID != nil || nextSequence != 5 || rolledBackIssueCount != 0 {
+		t.Fatalf("multi-feedback rollback = link %v next_seq %d issue_count %d",
+			rollbackIssueID, nextSequence, rolledBackIssueCount)
 	}
 
 	list := issueRequest(handler, accessToken, http.MethodGet, "/v1/issues", "")

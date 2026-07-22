@@ -17,6 +17,17 @@ type Store struct {
 	Database db.Querier
 }
 
+type feedbackIssueState struct {
+	ID             string
+	ProjectID      string
+	IssueID        *string
+	ReporterEmail  *string
+	NotifyReporter bool
+	Priority       *triage.Priority
+	AIPriority     *triage.Priority
+	AssigneeID     *string
+}
+
 func (Store) List(ctx context.Context, query db.Querier, tenantID string) ([]Issue, error) {
 	rows, err := query.Query(ctx, issueSelect+`
 		WHERE issue.tenant_id = $1
@@ -88,30 +99,89 @@ func (store Store) CreateFromFeedback(
 	query db.Querier,
 	tenantID string,
 	tenantSlug string,
-	feedbackID string,
-	title string,
-	description string,
+	input CreateFromFeedbackInput,
 	now time.Time,
 ) (Issue, error) {
-	var projectID string
-	var reporterEmail *string
-	var notifyReporter bool
-	var issueID *string
-	err := query.QueryRow(ctx, `
-		SELECT project_id, reporter_email, notify_reporter, issue_id
+	rows, err := query.Query(ctx, `
+		SELECT id, project_id, issue_id, reporter_email, notify_reporter,
+		       priority, ai_priority, assignee_id
 		FROM feedbacks
-		WHERE tenant_id = $1 AND id = $2
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		ORDER BY id
 		FOR UPDATE
-	`, tenantID, feedbackID).Scan(&projectID, &reporterEmail, &notifyReporter, &issueID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Issue{}, ErrNotFound
-	}
+	`, tenantID, input.FeedbackIDs)
 	if err != nil {
 		return Issue{}, fmt.Errorf("lock feedback for issue creation: %w", err)
 	}
-	if issueID != nil {
-		return Issue{}, ErrFeedbackLinked
+	states := make([]feedbackIssueState, 0, len(input.FeedbackIDs))
+	for rows.Next() {
+		var state feedbackIssueState
+		if err := rows.Scan(
+			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
+			&state.NotifyReporter, &state.Priority, &state.AIPriority, &state.AssigneeID,
+		); err != nil {
+			rows.Close()
+			return Issue{}, fmt.Errorf("scan feedback for issue creation: %w", err)
+		}
+		states = append(states, state)
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Issue{}, fmt.Errorf("iterate feedback for issue creation: %w", err)
+	}
+	if len(states) != len(input.FeedbackIDs) {
+		return Issue{}, ErrNotFound
+	}
+	projectID := states[0].ProjectID
+	for _, state := range states {
+		if state.ProjectID != projectID {
+			return Issue{}, ErrProjectMismatch
+		}
+		if state.IssueID != nil {
+			return Issue{}, ErrFeedbackLinked
+		}
+	}
+	priority := input.Priority
+	if !input.SetPriority {
+		priority = highestFeedbackPriority(states, false)
+		if priority == nil {
+			priority = highestFeedbackPriority(states, true)
+		}
+	}
+	assigneeID := input.AssigneeID
+	if !input.SetAssignee {
+		assigneeID = consensusFeedbackAssignee(states)
+	}
+	if assigneeID != nil {
+		var exists bool
+		if err := query.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM tenant_members WHERE tenant_id = $1 AND id = $2)
+		`, tenantID, *assigneeID).Scan(&exists); err != nil {
+			return Issue{}, fmt.Errorf("validate issue assignee: %w", err)
+		}
+		if !exists {
+			return Issue{}, ErrNotFound
+		}
+	}
+	tagIDs := input.TagIDs
+	if !input.SetTags {
+		tagIDs, err = feedbackTagUnion(ctx, query, tenantID, input.FeedbackIDs)
+		if err != nil {
+			return Issue{}, err
+		}
+	}
+	if len(tagIDs) > 0 {
+		var count int
+		if err := query.QueryRow(ctx, `
+			SELECT count(*) FROM tags WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		`, tenantID, tagIDs).Scan(&count); err != nil {
+			return Issue{}, fmt.Errorf("validate issue tags: %w", err)
+		}
+		if count != len(tagIDs) {
+			return Issue{}, ErrNotFound
+		}
+	}
+	reporterEmail, notifyReporter := consensusFeedbackReporter(states)
 	sequence, err := allocateIssueSequence(ctx, query, tenantID, now.Year())
 	if err != nil {
 		return Issue{}, err
@@ -121,20 +191,28 @@ func (store Store) CreateFromFeedback(
 	if _, err := query.Exec(ctx, `
 		INSERT INTO issues (
 			id, tenant_id, project_id, public_id, title, description,
-			reporter_email, notify_reporter
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, createdID, tenantID, projectID, publicID, title, description,
-		reporterEmail, notifyReporter); err != nil {
+			priority, assignee_id, reporter_email, notify_reporter
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, createdID, tenantID, projectID, publicID, input.Title, input.Description,
+		priority, assigneeID, reporterEmail, notifyReporter); err != nil {
 		return Issue{}, fmt.Errorf("create issue from feedback: %w", err)
 	}
-	tag, err := query.Exec(ctx, `
+	if len(tagIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO issue_tags (tenant_id, issue_id, tag_id)
+			SELECT $1, $2, tag_id FROM unnest($3::uuid[]) AS tag_id
+		`, tenantID, createdID, tagIDs); err != nil {
+			return Issue{}, fmt.Errorf("copy feedback tags to issue: %w", err)
+		}
+	}
+	result, err := query.Exec(ctx, `
 		UPDATE feedbacks SET issue_id = $3
-		WHERE tenant_id = $1 AND id = $2 AND issue_id IS NULL
-	`, tenantID, feedbackID, createdID)
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND issue_id IS NULL
+	`, tenantID, input.FeedbackIDs, createdID)
 	if err != nil {
 		return Issue{}, fmt.Errorf("link feedback to created issue: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
+	if int(result.RowsAffected()) != len(input.FeedbackIDs) {
 		return Issue{}, ErrFeedbackLinked
 	}
 	if _, err := query.Exec(ctx, `
@@ -144,6 +222,78 @@ func (store Store) CreateFromFeedback(
 		return Issue{}, fmt.Errorf("create issue outbox event: %w", err)
 	}
 	return store.Get(ctx, query, tenantID, createdID)
+}
+
+func highestFeedbackPriority(states []feedbackIssueState, useAI bool) *triage.Priority {
+	var highest *triage.Priority
+	for _, state := range states {
+		value := state.Priority
+		if useAI {
+			value = state.AIPriority
+		}
+		if value != nil && (highest == nil || value.Rank() > highest.Rank()) {
+			copy := *value
+			highest = &copy
+		}
+	}
+	return highest
+}
+
+func consensusFeedbackAssignee(states []feedbackIssueState) *string {
+	if len(states) == 0 || states[0].AssigneeID == nil {
+		return nil
+	}
+	candidate := *states[0].AssigneeID
+	for _, state := range states[1:] {
+		if state.AssigneeID == nil || *state.AssigneeID != candidate {
+			return nil
+		}
+	}
+	return &candidate
+}
+
+func consensusFeedbackReporter(states []feedbackIssueState) (*string, bool) {
+	if len(states) == 0 || !states[0].NotifyReporter || states[0].ReporterEmail == nil {
+		return nil, false
+	}
+	candidate := *states[0].ReporterEmail
+	for _, state := range states[1:] {
+		if !state.NotifyReporter || state.ReporterEmail == nil ||
+			!strings.EqualFold(*state.ReporterEmail, candidate) {
+			return nil, false
+		}
+	}
+	return &candidate, true
+}
+
+func feedbackTagUnion(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+) ([]string, error) {
+	rows, err := query.Query(ctx, `
+		SELECT DISTINCT tag_id
+		FROM feedback_tags
+		WHERE tenant_id = $1 AND feedback_id = ANY($2::uuid[])
+		ORDER BY tag_id
+	`, tenantID, feedbackIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list feedback tag union: %w", err)
+	}
+	defer rows.Close()
+	tagIDs := make([]string, 0)
+	for rows.Next() {
+		var tagID string
+		if err := rows.Scan(&tagID); err != nil {
+			return nil, fmt.Errorf("scan feedback tag union: %w", err)
+		}
+		tagIDs = append(tagIDs, tagID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate feedback tag union: %w", err)
+	}
+	return tagIDs, nil
 }
 
 func allocateIssueSequence(

@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -37,11 +38,13 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/issues", handler.list)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
 		Get("/v1/issues/{issueID}", handler.get)
-	router.With(append(protected,
+	createPermissions := append(protected,
 		appmiddleware.RequireWritable,
 		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
 		appmiddleware.RequirePermission(auth.PermissionIssueUpdate),
-	)...).Post("/v1/feedbacks/{feedbackID}/issue", handler.createFromFeedback)
+	)
+	router.With(createPermissions...).Post("/v1/feedbacks/{feedbackID}/issue", handler.createFromFeedback)
+	router.With(createPermissions...).Post("/v1/issues/from-feedback", handler.createFromFeedbackMany)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueUpdate))...).
 		Patch("/v1/issues/{issueID}", handler.updateStatus)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueMerge))...).
@@ -56,22 +59,32 @@ func (h *HTTPHandler) createFromFeedback(w http.ResponseWriter, r *http.Request)
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
 		return
 	}
-	var request struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-	}
+	var request createFromFeedbackRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	request.Title = strings.TrimSpace(request.Title)
-	request.Description = strings.TrimSpace(request.Description)
-	fields := make(map[string]string)
-	if length := len([]rune(request.Title)); length < 1 || length > 80 {
-		fields["title"] = "must be between 1 and 80 characters"
+	if request.FeedbackIDs != nil {
+		writeValidation(w, map[string]string{"feedback_ids": "is only valid on /v1/issues/from-feedback"})
+		return
 	}
-	if len([]rune(request.Description)) > 10000 {
-		fields["description"] = "must be at most 10000 characters"
+	h.createIssueFromFeedback(w, r, request, []string{feedbackID})
+}
+
+func (h *HTTPHandler) createFromFeedbackMany(w http.ResponseWriter, r *http.Request) {
+	var request createFromFeedbackRequest
+	if !decodeJSON(w, r, &request) {
+		return
 	}
+	h.createIssueFromFeedback(w, r, request, request.FeedbackIDs)
+}
+
+func (h *HTTPHandler) createIssueFromFeedback(
+	w http.ResponseWriter,
+	r *http.Request,
+	request createFromFeedbackRequest,
+	feedbackIDs []string,
+) {
+	input, fields := validateCreateFromFeedback(request, feedbackIDs)
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
@@ -85,8 +98,7 @@ func (h *HTTPHandler) createFromFeedback(w http.ResponseWriter, r *http.Request)
 		now = h.options.Now().UTC()
 	}
 	created, err := h.options.Store.CreateFromFeedback(
-		r.Context(), query, resolved.ID, resolved.Slug, feedbackID,
-		request.Title, request.Description, now,
+		r.Context(), query, resolved.ID, resolved.Slug, input, now,
 	)
 	if err != nil {
 		writeStoreError(w, err)
@@ -94,6 +106,84 @@ func (h *HTTPHandler) createFromFeedback(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Location", "/v1/issues/"+created.ID)
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"issue": created})
+}
+
+type createFromFeedbackRequest struct {
+	FeedbackIDs []string  `json:"feedback_ids"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Priority    *string   `json:"priority"`
+	AssigneeID  *string   `json:"assignee_id"`
+	Unassign    bool      `json:"unassign"`
+	TagIDs      *[]string `json:"tag_ids"`
+}
+
+func validateCreateFromFeedback(
+	request createFromFeedbackRequest,
+	feedbackIDs []string,
+) (CreateFromFeedbackInput, map[string]string) {
+	fields := make(map[string]string)
+	input := CreateFromFeedbackInput{FeedbackIDs: validateIssueUUIDs("feedback_ids", feedbackIDs, fields)}
+	if len(feedbackIDs) < 1 || len(feedbackIDs) > 100 {
+		fields["feedback_ids"] = "must contain between 1 and 100 UUIDs"
+	}
+	input.Title = strings.TrimSpace(request.Title)
+	input.Description = strings.TrimSpace(request.Description)
+	if length := len([]rune(input.Title)); length < 1 || length > 80 {
+		fields["title"] = "must be between 1 and 80 characters"
+	}
+	if len([]rune(input.Description)) > 10000 {
+		fields["description"] = "must be at most 10000 characters"
+	}
+	if request.Priority != nil {
+		input.SetPriority = true
+		if *request.Priority != "none" {
+			priority := triage.Priority(*request.Priority)
+			if !priority.Valid() {
+				fields["priority"] = "must be low, medium, high, urgent, or none"
+			} else {
+				input.Priority = &priority
+			}
+		}
+	}
+	if request.AssigneeID != nil && request.Unassign {
+		fields["assignee_id"] = "cannot be combined with unassign"
+	} else if request.AssigneeID != nil {
+		if _, err := uuid.Parse(*request.AssigneeID); err != nil {
+			fields["assignee_id"] = "must be a UUID"
+		} else {
+			input.SetAssignee = true
+			input.AssigneeID = request.AssigneeID
+		}
+	} else if request.Unassign {
+		input.SetAssignee = true
+	}
+	if request.TagIDs != nil {
+		input.SetTags = true
+		if len(*request.TagIDs) > 100 {
+			fields["tag_ids"] = "must contain at most 100 UUIDs"
+		}
+		input.TagIDs = validateIssueUUIDs("tag_ids", *request.TagIDs, fields)
+	}
+	return input, fields
+}
+
+func validateIssueUUIDs(field string, values []string, fields map[string]string) []string {
+	seen := make(map[string]struct{}, len(values))
+	validated := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, err := uuid.Parse(value); err != nil {
+			fields[field] = "must contain only UUIDs"
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			fields[field] = "must contain unique UUIDs"
+			continue
+		}
+		seen[value] = struct{}{}
+		validated = append(validated, value)
+	}
+	return validated
 }
 
 func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +373,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "issues cannot be merged", nil)
 	case errors.Is(err, ErrFeedbackLinked):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "feedback is already linked to an issue", nil)
+	case errors.Is(err, ErrProjectMismatch):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback projects do not match", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

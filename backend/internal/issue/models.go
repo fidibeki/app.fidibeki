@@ -8,10 +8,11 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("issue not found")
-	ErrNoStatusChange = errors.New("issue status did not change")
-	ErrInvalidMerge   = errors.New("issues cannot be merged")
-	ErrFeedbackLinked = errors.New("feedback is already linked to an issue")
+	ErrNotFound        = errors.New("issue not found")
+	ErrNoStatusChange  = errors.New("issue status did not change")
+	ErrInvalidMerge    = errors.New("issues cannot be merged")
+	ErrFeedbackLinked  = errors.New("feedback is already linked to an issue")
+	ErrProjectMismatch = errors.New("feedback projects do not match")
 )
 
 type Status string
@@ -46,6 +47,18 @@ type Issue struct {
 	FeedbackCount  int              `json:"feedback_count"`
 	CreatedAt      time.Time        `json:"created_at"`
 	UpdatedAt      time.Time        `json:"updated_at"`
+}
+
+type CreateFromFeedbackInput struct {
+	FeedbackIDs []string
+	Title       string
+	Description string
+	SetPriority bool
+	Priority    *triage.Priority
+	SetAssignee bool
+	AssigneeID  *string
+	SetTags     bool
+	TagIDs      []string
 }
 
 type Update struct {
