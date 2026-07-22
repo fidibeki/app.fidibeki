@@ -7,13 +7,20 @@ import {
   Clipboard,
   Code2,
   FolderPlus,
+  Globe2,
   RefreshCw,
   Radio,
 } from '@lucide/vue'
+import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type { Project, WidgetRule } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
+import {
+  buildTargetingPayload,
+  validateTargeting,
+  type TargetingFormState,
+} from '~/utils/widget-targeting'
 
 const { $apiFetch } = useNuxtApp()
 const { canWrite, tenant, workspaceWritable } = useAuth()
@@ -25,6 +32,8 @@ const domains = ref('')
 const pending = ref(false)
 const errorMessage = ref('')
 const copied = ref(false)
+const showTargetingErrors = ref(false)
+const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
 const connected = computed(() => Boolean(project.value?.widget_last_seen_at))
 const embedCode = computed(() => project.value
   ? widgetEmbedCode(project.value.public_key, String(config.public.baseDomain || 'fidibeki.com'))
@@ -83,18 +92,24 @@ function startPolling() {
 
 async function createRule() {
   if (!canWrite('widget_rule:create') || !project.value || pending.value) return
+  showTargetingErrors.value = true
+  const targetingErrors = validateTargeting(targetingState.value)
+  if (Object.keys(targetingErrors).length > 0) {
+    errorMessage.value = Object.values(targetingErrors)[0] || 'Targeting configuration is invalid.'
+    return
+  }
   pending.value = true
   stage.value = 'rule'
   errorMessage.value = ''
   try {
     await $apiFetch<{ widget_rule: WidgetRule }>(`/v1/projects/${project.value.id}/widget-rules`, {
       method: 'POST',
-      body: defaultWidgetRule(),
+      body: { ...defaultWidgetRule(), ...buildTargetingPayload(targetingState.value) },
     })
     stage.value = 'install'
     startPolling()
   } catch (error) {
-    errorMessage.value = apiErrorMessage(error, 'The default widget rule could not be created.')
+    errorMessage.value = apiErrorMessage(error, 'The widget rule could not be created.')
   } finally {
     pending.value = false
   }
@@ -116,7 +131,7 @@ async function createProject() {
     return
   }
   pending.value = false
-  await createRule()
+  stage.value = 'rule'
 }
 
 async function copyCode() {
@@ -165,18 +180,20 @@ useHead({ title: 'Connect your first project · Fidibeki' })
       </form>
     </section>
 
-    <section v-else-if="stage === 'rule'" class="activation-surface activation-rule-state">
-      <template v-if="pending">
-        <span class="app-spinner" />
-        <h2>Configuring the default rule</h2>
-        <p>Rating and written feedback will be available on every allowed page.</p>
-      </template>
-      <template v-else>
-        <AlertTriangle :size="22" />
-        <h2>Project created, rule not configured</h2>
-        <p class="activation-error" role="alert">{{ errorMessage }}</p>
-        <div><button class="app-button app-button--primary" :disabled="!canWrite('widget_rule:create')" @click="createRule"><RefreshCw :size="15" /> Retry rule</button><NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project</NuxtLink></div>
-      </template>
+    <section v-else-if="stage === 'rule'" class="activation-surface activation-rule-targeting">
+      <header><Globe2 :size="20" /><div><h2>Choose target pages</h2><p>Select where the first feedback rule can appear.</p></div></header>
+      <form @submit.prevent="createRule">
+        <fieldset :disabled="!workspaceWritable || pending">
+          <WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" />
+          <p v-if="errorMessage" class="activation-error" role="alert"><AlertTriangle :size="15" /> {{ errorMessage }}</p>
+          <div class="activation-rule-actions">
+            <NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project</NuxtLink>
+            <button class="app-button app-button--primary" type="submit" :disabled="!canWrite('widget_rule:create') || pending">
+              {{ pending ? 'Creating rule…' : 'Continue to install' }} <ArrowRight v-if="!pending" :size="15" />
+            </button>
+          </div>
+        </fieldset>
+      </form>
     </section>
 
     <section v-else class="activation-install">
@@ -224,9 +241,11 @@ useHead({ title: 'Connect your first project · Fidibeki' })
 .activation-surface form > fieldset > button, .activation-surface form > fieldset > .activation-error { grid-column: 1 / -1; }
 .activation-surface form > fieldset > button { justify-self: end; min-width: 190px; }
 .activation-error { display: flex; align-items: center; gap: 7px; color: var(--red) !important; font-size: 10px !important; }
-.activation-rule-state, .activation-load-error { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; padding: 34px; text-align: center; }
-.activation-rule-state > p, .activation-load-error > p { max-width: 470px; color: var(--muted); font-size: 11px; }
-.activation-rule-state > div { display: flex; gap: 8px; margin-top: 8px; }
+.activation-load-error { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; padding: 34px; text-align: center; }
+.activation-load-error > p { max-width: 470px; color: var(--muted); font-size: 11px; }
+.activation-rule-targeting form { display: block; padding: 20px; }
+.activation-rule-targeting form > fieldset { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; border: 0; }
+.activation-rule-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .activation-install { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, .65fr); gap: 14px; align-items: start; }
 .activation-code > header .app-eyebrow { margin-bottom: 3px; }
 .activation-snippet { display: flex; min-height: 104px; align-items: center; gap: 12px; margin: 20px; padding: 14px; background: #17231f; color: #dff3ef; border: 1px solid #0d1815; border-radius: 5px; }
@@ -242,5 +261,5 @@ useHead({ title: 'Connect your first project · Fidibeki' })
 .activation-connection[data-connected='true'] { background: #fbfefc; border-color: #acd5bf; }
 .activation-connection[data-connected='true'] > svg { color: var(--green); }
 @media (max-width: 800px) { .activation-head { align-items: flex-start; flex-direction: column; } .activation-head ol { width: 100%; min-width: 0; justify-content: flex-start; } .activation-head li { min-width: 0; flex: 1; } .activation-head li:not(:last-child)::after { width: 18px; } .activation-install { grid-template-columns: 1fr; } .activation-connection { min-height: 220px; } }
-@media (max-width: 560px) { .activation-surface form { grid-template-columns: 1fr; padding: 15px; } .activation-surface form > fieldset > button { width: 100%; justify-self: stretch; } .activation-head li { font-size: 0; } .activation-head li > span { font-size: 10px; } .activation-head li:not(:last-child)::after { flex: 1; } .activation-snippet { margin: 14px; } .activation-code footer { padding: 0 14px 14px; } .activation-code footer .app-button { width: 100%; } }
+@media (max-width: 560px) { .activation-surface form { grid-template-columns: 1fr; padding: 15px; } .activation-surface form > fieldset > button { width: 100%; justify-self: stretch; } .activation-head li { font-size: 0; } .activation-head li > span { font-size: 10px; } .activation-head li:not(:last-child)::after { flex: 1; } .activation-snippet { margin: 14px; } .activation-code footer { padding: 0 14px 14px; } .activation-code footer .app-button { width: 100%; } .activation-rule-actions { align-items: stretch; flex-direction: column-reverse; } .activation-rule-actions .app-button { width: 100%; } }
 </style>

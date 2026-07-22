@@ -77,6 +77,18 @@ export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 
+export interface WidgetTargetCondition {
+  id: string
+  matcher_type: MatcherType
+  matcher_value?: string | null
+  position: number
+}
+
+export interface WidgetTargetConditionInput {
+  matcher_type: MatcherType
+  matcher_value: string | null
+}
+
 export interface WidgetRule {
   id: string
   project_id: string
@@ -85,6 +97,8 @@ export interface WidgetRule {
   enabled: boolean
   matcher_type: MatcherType
   matcher_value?: string | null
+  include_conditions?: WidgetTargetCondition[]
+  exclude_conditions?: WidgetTargetCondition[]
   trigger_type: TriggerType
   trigger_delay_seconds?: number | null
   trigger_scroll_percent?: number | null
@@ -110,7 +124,13 @@ export interface WidgetRule {
   updated_at: string
 }
 
-export type WidgetRuleInput = Omit<WidgetRule, 'id' | 'project_id' | 'created_at' | 'updated_at'>
+export type WidgetRuleInput = Omit<
+  WidgetRule,
+  'id' | 'project_id' | 'created_at' | 'updated_at' | 'include_conditions' | 'exclude_conditions'
+> & {
+  include_conditions?: WidgetTargetConditionInput[]
+  exclude_conditions?: WidgetTargetConditionInput[]
+}
 
 export interface DashboardTrendPoint {
   date: string

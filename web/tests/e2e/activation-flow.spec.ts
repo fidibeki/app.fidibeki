@@ -358,9 +358,17 @@ test('magic link activates a project and detects its widget connection', async (
   await expect(page.getByRole('heading', { name: 'Connect your first project' })).toBeVisible()
   await page.getByLabel('Allowed domains').fill('example.com\n*.preview.example.com')
   await page.getByRole('button', { name: 'Create and configure' }).click()
+  await expect(page.getByRole('heading', { name: 'Choose target pages' })).toBeVisible()
+  expect(createdRule).toEqual({})
+  await page.getByRole('radio', { name: 'Specific pages' }).click()
+  await page.getByLabel('Include value 1').fill('https://example.com/chart/?asset=BAI#price')
+  await capture(page, testInfo, 'activation-targeting')
+  await page.getByRole('button', { name: 'Continue to install' }).click()
   await expect(page.getByText('Install loader')).toBeVisible()
   expect(createdRule).toMatchObject({
-    enabled: true, matcher_type: 'all_pages', trigger_delay_seconds: 0,
+    enabled: true, matcher_type: 'url_exact', matcher_value: 'https://example.com/chart',
+    include_conditions: [{ matcher_type: 'url_exact', matcher_value: 'https://example.com/chart' }],
+    exclude_conditions: [], trigger_delay_seconds: 0,
     can_rate: true, can_write_text: true, can_record_audio: false, replay_mode: 'none',
   })
   await expect(page.locator('.activation-snippet')).toContainText('http://widget.localhost:8088/v1/loader.js')

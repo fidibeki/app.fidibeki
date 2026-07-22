@@ -10,10 +10,17 @@ import {
   Settings2,
   Trash2,
 } from '@lucide/vue'
+import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type { Project, WidgetRule, WidgetRuleInput } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
+import {
+  buildTargetingPayload,
+  targetingFromRule,
+  validateTargeting,
+  type TargetingFormState,
+} from '~/utils/widget-targeting'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
@@ -28,6 +35,8 @@ const notice = ref('')
 const projectName = ref('')
 const projectDomains = ref('')
 const copied = ref(false)
+const showTargetingErrors = ref(false)
+const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
 
 const ruleForm = reactive<WidgetRuleInput>(defaultWidgetRule())
 
@@ -70,6 +79,8 @@ const connectedAt = computed(() => data.value?.project.widget_last_seen_at || ''
 function selectRule(rule: WidgetRule) {
   selectedRuleID.value = rule.id
   editingNew.value = false
+  targetingState.value = targetingFromRule(rule)
+  showTargetingErrors.value = false
   Object.assign(ruleForm, {
     name: rule.name, priority: rule.priority, enabled: rule.enabled,
     matcher_type: rule.matcher_type, matcher_value: rule.matcher_value ?? null,
@@ -91,13 +102,15 @@ function selectRule(rule: WidgetRule) {
 function startNewRule() {
   selectedRuleID.value = ''
   editingNew.value = true
+  targetingState.value = { mode: null, includes: [], excludes: [] }
+  showTargetingErrors.value = false
   Object.assign(ruleForm, defaultWidgetRule())
 }
 
 function normalizedRule(): WidgetRuleInput {
   return {
     ...ruleForm,
-    matcher_value: ruleForm.matcher_type === 'all_pages' ? null : ruleForm.matcher_value || null,
+    ...buildTargetingPayload(targetingState.value),
     trigger_delay_seconds: ruleForm.trigger_type === 'delay' ? Number(ruleForm.trigger_delay_seconds || 0) : null,
     trigger_scroll_percent: ruleForm.trigger_type === 'scroll' ? Number(ruleForm.trigger_scroll_percent || 1) : null,
     greeting: ruleForm.greeting?.trim() || null,
@@ -111,8 +124,14 @@ function normalizedRule(): WidgetRuleInput {
 async function saveRule() {
   const permission = editingNew.value ? 'widget_rule:create' : 'widget_rule:update'
   if (!canWrite(permission) || pending.value) return
-  pending.value = true
   formError.value = ''
+  showTargetingErrors.value = true
+  const targetingErrors = validateTargeting(targetingState.value)
+  if (Object.keys(targetingErrors).length > 0) {
+    formError.value = Object.values(targetingErrors)[0] || 'Targeting configuration is invalid.'
+    return
+  }
+  pending.value = true
   try {
     if (editingNew.value) {
       const response = await $apiFetch<{ widget_rule: WidgetRule }>(`/v1/projects/${projectID.value}/widget-rules`, { method: 'POST', body: normalizedRule() })
@@ -216,7 +235,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
           <form id="widget-rule-form" @submit.prevent="saveRule">
             <fieldset :disabled="!workspaceWritable">
             <section><h3>Rule identity</h3><div class="project-form-grid"><label class="wide">Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Enabled</span></label></div></section>
-            <section><h3>Page matching</h3><div class="project-form-grid"><label>Matcher<select v-model="ruleForm.matcher_type" class="app-select"><option value="all_pages">All pages</option><option value="url_exact">Exact URL</option><option value="url_prefix">URL prefix</option><option value="url_regex">URL regular expression</option></select></label><label v-if="ruleForm.matcher_type !== 'all_pages'" class="wide">Matcher value<input v-model="ruleForm.matcher_value" class="app-input" required /></label></div></section>
+            <section><h3>Page matching</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" /></section>
             <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
             <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
             <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>

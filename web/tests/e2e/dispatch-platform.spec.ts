@@ -64,6 +64,16 @@ function createMockState() {
     enabled: true,
     matcher_type: 'url_prefix',
     matcher_value: 'https://shop.acme.test/checkout',
+    include_conditions: [{
+      id: 'target-include-1', matcher_type: 'url_prefix',
+      matcher_value: 'https://shop.acme.test/checkout', position: 0,
+    }],
+    exclude_conditions: [] as Array<{
+      id: string
+      matcher_type: string
+      matcher_value: string | null
+      position: number
+    }>,
     trigger_type: 'delay',
     trigger_delay_seconds: 4,
     trigger_scroll_percent: null,
@@ -365,6 +375,25 @@ async function installMockAPI(page: Page, state: MockState) {
     const projectRulesMatch = path.match(/^\/v1\/projects\/([^/]+)\/widget-rules$/)
     if (projectRulesMatch && method === 'GET') {
       return json(route, { widget_rules: state.widgetRules.filter(rule => rule.project_id === projectRulesMatch[1]) })
+    }
+    if (projectRulesMatch && method === 'POST') {
+      const input = body()
+      const rule = {
+        ...state.widgetRules[0],
+        ...input,
+        id: `rule-${state.widgetRules.length + 1}`,
+        project_id: projectRulesMatch[1],
+        include_conditions: ((input.include_conditions as Array<Record<string, unknown>>) || []).map((condition, index) => ({
+          ...condition, id: `target-include-${index + 10}`, position: index,
+        })),
+        exclude_conditions: ((input.exclude_conditions as Array<Record<string, unknown>>) || []).map((condition, index) => ({
+          ...condition, id: `target-exclude-${index + 10}`, position: index,
+        })),
+        created_at: now,
+        updated_at: now,
+      } as typeof state.widgetRules[number]
+      state.widgetRules.push(rule)
+      return json(route, { widget_rule: rule }, 201)
     }
     const projectRuleMatch = path.match(/^\/v1\/projects\/([^/]+)\/widget-rules\/([^/]+)$/)
     if (projectRuleMatch && method === 'PATCH') {
@@ -827,6 +856,13 @@ test('widget rule save enforces browser validation before sending an update', as
   await page.getByRole('button', { name: 'Save rule' }).click()
   await expect(maxEvents).toBeFocused()
   expect(updateRequests).toBe(0)
+
+  await maxEvents.fill('50000')
+  await page.getByLabel('Include matcher 1').selectOption('url_regex')
+  await page.getByLabel('Include value 1').fill('[')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.locator('#widget-rule-form .targeting-error')).toHaveText('Enter a valid safe regular expression.')
+  expect(updateRequests).toBe(0)
 })
 
 test('widget rule save submits a valid update', async ({ page }, testInfo) => {
@@ -841,6 +877,70 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
+})
+
+test('widget targeting edits include and exclude conditions with a local URL test', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await expect(page.getByRole('radio', { name: 'Specific pages' })).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('button', { name: 'Add include' }).click()
+  await page.getByLabel('Include matcher 2').selectOption('url_exact')
+  await page.getByLabel('Include value 2').fill('https://shop.acme.test/pricing/?campaign=summer')
+  await page.getByRole('button', { name: 'Add exclude' }).click()
+  await page.getByLabel('Exclude matcher 1').selectOption('url_prefix')
+  await page.getByLabel('Exclude value 1').fill('https://shop.acme.test/checkout/private/')
+
+  const testURL = page.getByLabel('Test URL')
+  await testURL.fill('https://shop.acme.test/checkout/private/card?asset=BAI#details')
+  await page.getByRole('button', { name: 'Test', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('Excluded by condition 1.')
+  await testURL.fill('https://shop.acme.test/pricing/?asset=BIC#plans')
+  await page.getByRole('button', { name: 'Test', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('This rule is eligible on the tested page.')
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByText('Widget rule saved.')).toBeVisible()
+  expect(state.widgetRules[0]).toMatchObject({
+    matcher_type: 'url_prefix',
+    matcher_value: 'https://shop.acme.test/checkout',
+    include_conditions: [
+      { matcher_type: 'url_prefix', matcher_value: 'https://shop.acme.test/checkout' },
+      { matcher_type: 'url_exact', matcher_value: 'https://shop.acme.test/pricing' },
+    ],
+    exclude_conditions: [
+      { matcher_type: 'url_prefix', matcher_value: 'https://shop.acme.test/checkout/private' },
+    ],
+  })
+  await page.getByRole('heading', { name: 'Page matching' }).scrollIntoViewIfNeeded()
+  await capture(page, testInfo, 'widget-targeting')
+})
+
+test('new widget rules require an explicit targeting choice', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Creation behavior is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByTitle('New widget rule').click()
+  await expect(page.getByRole('radio', { name: 'All pages' })).toHaveAttribute('aria-checked', 'false')
+  await expect(page.getByRole('radio', { name: 'Specific pages' })).toHaveAttribute('aria-checked', 'false')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.locator('#widget-rule-form .targeting-error').filter({ hasText: 'Choose where this rule should appear.' })).toBeVisible()
+  expect(state.widgetRules).toHaveLength(1)
+
+  await page.getByRole('radio', { name: 'All pages' }).click()
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByText('Widget rule saved.')).toBeVisible()
+  expect(state.widgetRules).toHaveLength(2)
+  expect(state.widgetRules[1]).toMatchObject({
+    matcher_type: 'all_pages', matcher_value: null,
+    include_conditions: [{ matcher_type: 'all_pages', matcher_value: null }],
+    exclude_conditions: [],
+  })
 })
 
 test('widget recurrence controls persist each policy', async ({ page }, testInfo) => {
