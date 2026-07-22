@@ -17,8 +17,8 @@
 | Low | 1 |
 | **Total** | **2** |
 
-Both findings are fixed in the accompanying change and covered by regression tests. Staging
-verification is pending deployment.
+Both findings were fixed in commit `451ba32`, covered by regression tests, and verified on the
+corresponding staging deployment. There are no open findings from this dogfood session.
 
 ## Issues
 
@@ -49,9 +49,9 @@ previous queue.
 
 The same stale-navigation behavior was reproduced from the default Open queue to **Has replay**.
 
-**Resolution:** Fixed locally. Route changes now synchronize every queue filter without a document
-reload while preserving local **All** and **Clear filters** choices. Regression coverage verifies
-queue navigation, clean URLs, result updates, and the absence of document reloads.
+**Resolution:** Fixed and verified on staging. Route changes now synchronize every queue filter
+without a document reload while preserving local **All** and **Clear filters** choices. Regression
+coverage verifies queue navigation, clean URLs, result updates, and the absence of document reloads.
 
 ---
 
@@ -76,7 +76,20 @@ summary read as unfinished copy.
 2. **Observe:** the page shows **1 feedback records** and **1 records** instead of singular forms.
    ![Incorrect singular copy on issue detail](screenshots/issue-singular-copy.png)
 
-**Resolution:** Fixed locally. Both counts now use the singular form when exactly one record is
-linked, with regression coverage for the issue detail view.
+**Resolution:** Fixed and verified on staging. Both counts now use the singular form when exactly
+one record is linked, with regression coverage for the issue detail view.
 
 ---
+
+## Resolution Verification
+
+- Railway web deployment `e376ddc9-c294-4ea9-91da-05b9c41747e4` completed successfully from
+  commit `451ba32`.
+- Web CI, Backend CI, Release Artifacts, and the commit-specific Staging Post-Deploy workflow passed.
+- API readiness, tenant web health, and widget health returned `200`; the widget rejected both
+  `/web-heathz` and `/web-healthz` with `404` as expected.
+- Authenticated queue navigation updated the URL, controls, and results for **Has replay** and
+  **Archived** without a document reload. **All status** survived filter changes and **Clear filters**.
+- The one-record issue detail rendered **1 feedback record** and **1 record**.
+- Previously submitted screenshot and audio attachments remained available; the reported storage
+  failure was not reproducible after the storage CORS correction.
