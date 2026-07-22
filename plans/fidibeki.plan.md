@@ -5,6 +5,92 @@
 > locked; implementation details may be tightened when verification exposes an unsafe or
 > internally inconsistent contract.
 
+## Product direction override (2026-07-22)
+
+This section is the current product goal and overrides earlier MVP decisions where they conflict.
+In particular, feedback no longer auto-creates an issue, reporter text is a description rather than
+the title, and opening the widget is not a reason to suppress it.
+
+### Goal and environment boundary
+
+Complete the operating loop:
+
+`capture feedback -> analyze and triage -> decide action -> track resolution -> communicate outcome`
+
+- Staging is sufficient while this loop is being completed.
+- Do not perform production, deployment, or infrastructure work unless it directly blocks use of
+  the application in staging.
+- Production work resumes only with explicit founder authorization.
+- Deliver product work as testable vertical slices. Each slice includes compatible migrations,
+  backend, backoffice, and widget tests where applicable, plus staging E2E validation.
+
+### Existing capabilities to preserve and extend
+
+- `feedbacks.issue_id` is already nullable and protected by tenant/project foreign keys. Existing
+  links can remain intact while new feedback is stored without an issue.
+- The feedback inbox already exposes linked/unlinked filters; it needs real create/link/unlink
+  actions and broader bulk triage rather than a second filtering implementation.
+- Issues already have public IDs, a status workflow, status history, soft merge, outbox events, and
+  reporter notifications. Extend these contracts instead of replacing them.
+- The Gemini text pipeline already makes one structured call for cleaned text, sentiment, and
+  moderation. Add title, actionability, category, and priority recommendations to that response and
+  persistence contract; do not add another paid call.
+- Widget targeting already supports exact URL, prefix, regex, priorities, and safe invalid-regex
+  failure. Extend it with include/exclude rules, save-time safety checks, and a URL tester.
+- Widget suppression currently uses `sessionStorage` and is written when the trigger opens. Replace
+  this with durable state written only by meaningful transitions such as submit or dismiss.
+- `widget/connected` currently records project activity when a rule matches. Keep it for activation
+  diagnostics, but do not count it as an impression.
+- Transactional outbox fan-out, deterministic delivery tasks, Slack Block Kit, Teams MessageCard,
+  signed generic webhooks, delivery logs, and issue update comments already exist. Enrich them
+  additively instead of building another notification path.
+
+### Vertical slice sequence
+
+1. **Independent feedback and explicit issue creation.** Add feedback `title` and `description`, add
+   issue `description`, preserve and backfill old data, stop auto-creating issues, keep the public
+   submission response backward compatible, and let an operator create an editable issue from one
+   feedback. AI recommendations remain suggestions only.
+2. **Operational inbox triage.** Link and unlink one or many feedback records, then add priority,
+   assignment, tags, and bulk triage with tenant/project/RBAC enforcement.
+3. **Smart widget state and targeting.** Store per-project/rule/page states (`new`, `submitted`,
+   `minimized`, `dismissed`, `snoozed`) in `localStorage`; support cooldown, recurrence, never-show,
+   compact post-submit behavior, include/exclude targeting, and safe URL testing. A reopened widget
+   starts a new submission with a new idempotency ID.
+4. **Widget funnel and dashboard.** Record `matched`, `impression`, `interaction`, `submitted`, and
+   `dismissed` with anonymous visitor, page-view, and event IDs. Provide deduplication, idempotency,
+   batching/`sendBeacon` where appropriate, retention, daily aggregates, and useful project/rule/page
+   and period breakdowns. Report interaction, completion, and submit rates from the correct
+   denominators.
+5. **Rich link-based notifications.** Enrich Slack Block Kit and Teams messages with event/public ID,
+   title, description, project/page, rating/classification/priority, status transition, actor,
+   comment, attachments, timestamp, and environment-aware tenant URLs. Add relevant Open issue,
+   Open feedback, View page, and View attachments links. Add `schema_version`, event/resource URLs,
+   changes, actor, and comment to the generic webhook without removing existing fields.
+6. **Interactive integrations.** Add signed callbacks, Slack/Fidibeki identity mapping, RBAC, audit,
+   idempotency, and explicit success/error handling before offering Assign to me, Create issue,
+   Archive, Close, or Reopen. Incoming webhooks must never pretend to execute these actions.
+7. **Collaboration and resolution communication.** Add comments, mentions, a complete activity log,
+   and a reporter-facing resolution update across the issue lifecycle.
+8. **Onboarding and initial configuration.** Make page targeting an explicit setup decision, explain
+   existing matcher modes in context, and complete useful empty states and first-run configuration.
+
+### Slice 1 acceptance criteria
+
+- A new widget submission creates one feedback and no issue, regardless of rating.
+- Existing feedback/issue relations and issue rows are unchanged by migration/backfill.
+- `feedback.description` contains the original full widget text. `feedback.title` is an editable
+  short summary with a deterministic first-sentence/truncation fallback.
+- Issues own editable `title` and `description` fields.
+- The existing AI text response may recommend actionability, category, priority, and title in the
+  same call. Recommendations never create or link an issue automatically.
+- The feedback detail presents Create issue only when unlinked. The confirmation form is prefilled
+  with editable title and description and creates the issue plus link atomically.
+- The public response no longer requires an issue ID. Existing clients can continue decoding the
+  additive/optional response contract.
+- Backend unit/integration, migration up/down/up, web unit/E2E, and widget contract tests cover both
+  the new unlinked path and preserved legacy links before staging validation.
+
 ## Architectural decisions
 
 - **Runtime & backend**: Go 1.25 (latest supported patch in CI/images), `chi` router, `slog` for
