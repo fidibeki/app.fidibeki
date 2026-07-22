@@ -68,6 +68,39 @@ func TestValidateEventsRejectsUnsafeOrUntrustedFields(t *testing.T) {
 	}
 }
 
+func TestValidateSubmissionEventRequiresTheSubmittedRuleAndCanonicalPage(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	input := EventInput{
+		EventID:   "00000000-0000-4000-8000-000000000001",
+		VisitorID: "00000000-0000-4000-8000-000000000002", PageViewID: "00000000-0000-4000-8000-000000000003",
+		RuleID:  "00000000-0000-4000-8000-000000000004",
+		PageURL: "https://example.com/chart/?asset=BAI#price", OccurredAt: now,
+	}
+	value, fields := ValidateSubmissionEvent(
+		input, analyticsConfiguration(), input.RuleID,
+		"https://example.com/chart?asset=BIC#details", now,
+	)
+	if len(fields) > 0 || value.EventType != EventSubmitted || value.PageURL != "https://example.com/chart" {
+		t.Fatalf("submission event = %#v, fields %#v", value, fields)
+	}
+
+	wrongRule := input
+	wrongRule.RuleID = "00000000-0000-4000-8000-000000000099"
+	if _, fields := ValidateSubmissionEvent(
+		wrongRule, analyticsConfiguration(), input.RuleID, "https://example.com/chart", now,
+	); fields["rule_id"] == "" {
+		t.Fatalf("wrong rule fields = %#v", fields)
+	}
+	wrongPage := input
+	wrongPage.PageURL = "https://example.com/other"
+	if _, fields := ValidateSubmissionEvent(
+		wrongPage, analyticsConfiguration(), input.RuleID, "https://example.com/chart", now,
+	); fields["page_url"] == "" {
+		t.Fatalf("wrong page fields = %#v", fields)
+	}
+}
+
 func analyticsConfiguration() project.PublicConfiguration {
 	return project.PublicConfiguration{
 		TenantID:  "00000000-0000-4000-8000-000000000010",

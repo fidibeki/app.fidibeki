@@ -77,6 +77,48 @@ func ValidateEvents(
 	return values, nil
 }
 
+func ValidateSubmissionEvent(
+	input EventInput,
+	configuration project.PublicConfiguration,
+	expectedRuleID string,
+	expectedPageURL string,
+	now time.Time,
+) (EventValues, FieldErrors) {
+	fields := FieldErrors{}
+	expectedPage, err := project.CanonicalizePage(strings.TrimSpace(expectedPageURL))
+	if err != nil {
+		fields["page_url"] = "must match the submitted metadata page"
+		return EventValues{}, fields
+	}
+	parsedExpected, err := url.Parse(expectedPage.Target)
+	if err != nil {
+		fields["page_url"] = "must match the submitted metadata page"
+		return EventValues{}, fields
+	}
+	candidate := input
+	candidate.EventType = EventMatched
+	values, indexed := ValidateEvents(
+		[]EventInput{candidate}, configuration,
+		parsedExpected.Scheme+"://"+parsedExpected.Host, now,
+	)
+	for name, message := range indexed {
+		fields[strings.TrimPrefix(name, "events[0].")] = message
+	}
+	if input.RuleID != expectedRuleID {
+		fields["rule_id"] = "must match widget_rule_id"
+	}
+	page, pageErr := project.CanonicalizePage(strings.TrimSpace(input.PageURL))
+	if pageErr != nil || page.Target != expectedPage.Target {
+		fields["page_url"] = "must match the submitted metadata page"
+	}
+	if len(fields) > 0 {
+		return EventValues{}, fields
+	}
+	value := values[0]
+	value.EventType = EventSubmitted
+	return value, nil
+}
+
 func targetsShareOrigin(left, right string) bool {
 	leftURL, leftErr := url.Parse(left)
 	rightURL, rightErr := url.Parse(right)

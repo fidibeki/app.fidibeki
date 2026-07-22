@@ -2,6 +2,7 @@ package widgetanalytics
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -138,6 +139,7 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 		t.Fatalf("summary = %#v", summary)
 	}
 	assertEventWithoutMatchedIsRejected(t, ctx, pools, store, configuration, ruleID, now)
+	assertLifecycleDuplicateWithDifferentEventID(t, ctx, pools, store, configuration, inputs[0], now)
 	assertVisibleInteractionStages(t, ctx, pools, store, configuration, inputs[0], now)
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("a", 32), "fidibeki", 10*time.Minute)
@@ -170,6 +172,8 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 		t.Fatalf("denied analytics status = %d, body = %s", denied.Code, denied.Body.String())
 	}
 	assertConcurrentReversedBatches(t, ctx, pools, store, configuration, tenantID, projectID, ruleID, now)
+	assertConcurrentSameEventID(t, ctx, pools, configuration, projectID, ruleID, now)
+	assertCrossTenantEventIDCollision(t, ctx, root, pools, store, configuration, inputs[0], now)
 
 	if _, err := root.Exec(ctx, `DELETE FROM widget_rules WHERE id = $1`, ruleID); err != nil {
 		t.Fatalf("delete source rule: %v", err)
@@ -177,7 +181,7 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	var rawCount int
 	var ruleName string
 	if err := root.QueryRow(ctx, `SELECT count(*), max(rule_name) FROM widget_funnel_events WHERE project_id = $1`, projectID).
-		Scan(&rawCount, &ruleName); err != nil || rawCount != 5 || ruleName != "Checkout" {
+		Scan(&rawCount, &ruleName); err != nil || rawCount != 6 || ruleName != "Checkout" {
 		t.Fatalf("historical event after rule delete = count %d name %q error %v", rawCount, ruleName, err)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID); err != nil {
@@ -187,6 +191,197 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 		if err := root.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&rawCount); err != nil || rawCount != 0 {
 			t.Fatalf("%s after project delete = %d, error %v", table, rawCount, err)
 		}
+	}
+}
+
+func assertCrossTenantEventIDCollision(
+	t *testing.T,
+	ctx context.Context,
+	root *pgx.Conn,
+	pools *db.Pools,
+	store Store,
+	configuration project.PublicConfiguration,
+	localLifecycle EventInput,
+	now time.Time,
+) {
+	t.Helper()
+	var tenantID, projectID, ruleID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Other', 'other', 'growth', 'active') RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create collision tenant: %v", err)
+	}
+	defer func() {
+		if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, tenantID); err != nil {
+			t.Errorf("delete collision tenant: %v", err)
+		}
+	}()
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Other Web', 'pk_live_ZYXWVUTSRQPONMLKJIHGFE', '{other.example.com}') RETURNING id
+	`, tenantID).Scan(&projectID); err != nil {
+		t.Fatalf("create collision project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (project_id, name, matcher_type, trigger_type, trigger_delay_seconds)
+		VALUES ($1, 'Other rule', 'all_pages', 'delay', 0) RETURNING id
+	`, projectID).Scan(&ruleID); err != nil {
+		t.Fatalf("create collision rule: %v", err)
+	}
+	const collisionEventID = "00000000-0000-4000-8000-000000000061"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_events (
+			event_id, tenant_id, project_id, rule_id, rule_name, event_type,
+			visitor_id, page_view_id, page_url, page_key, occurred_at
+		) VALUES (
+			$1, $2, $3, $4, 'Other rule', 'matched', gen_random_uuid(), gen_random_uuid(),
+			'https://other.example.com', decode(repeat('cd', 32), 'hex'), $5
+		)
+	`, collisionEventID, tenantID, projectID, ruleID, now); err != nil {
+		t.Fatalf("seed cross-tenant event ID collision: %v", err)
+	}
+
+	collisionInput := localLifecycle
+	collisionInput.EventID = collisionEventID
+	values, fields := ValidateEvents([]EventInput{collisionInput}, configuration, "https://example.com", now)
+	if len(fields) > 0 {
+		t.Fatalf("validate cross-tenant collision: %#v", fields)
+	}
+	tx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant collision transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
+		t.Fatalf("set cross-tenant collision tenant: %v", err)
+	}
+	if _, err := store.InsertEvents(ctx, tx, values); !errors.Is(err, errEventIDConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("cross-tenant event ID collision error = %v, want %v", err, errEventIDConflict)
+	}
+	_ = tx.Rollback(ctx)
+}
+
+func assertConcurrentSameEventID(
+	t *testing.T,
+	ctx context.Context,
+	pools *db.Pools,
+	configuration project.PublicConfiguration,
+	projectID string,
+	ruleID string,
+	now time.Time,
+) {
+	t.Helper()
+	values, fields := ValidateEvents([]EventInput{{
+		EventID: "00000000-0000-4000-8000-000000000051", EventType: EventMatched,
+		VisitorID: "00000000-0000-4000-8000-000000000052", PageViewID: "00000000-0000-4000-8000-000000000053",
+		RuleID: ruleID, PageURL: "https://example.com/concurrent", OccurredAt: now,
+	}}, configuration, "https://example.com", now)
+	if len(fields) > 0 {
+		t.Fatalf("validate concurrent same-ID event: %#v", fields)
+	}
+
+	txs := make([]pgx.Tx, 2)
+	for index := range txs {
+		tx, err := pools.App.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin concurrent same-ID transaction %d: %v", index, err)
+		}
+		txs[index] = tx
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
+			t.Fatalf("set concurrent same-ID tenant %d: %v", index, err)
+		}
+	}
+
+	type outcome struct {
+		inserted bool
+		err      error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, 2)
+	var group sync.WaitGroup
+	for _, tx := range txs {
+		group.Add(1)
+		go func(tx pgx.Tx) {
+			defer group.Done()
+			<-start
+			inserted, err := insertEvent(ctx, tx, values[0], false)
+			if err == nil {
+				err = tx.Commit(ctx)
+			} else {
+				_ = tx.Rollback(ctx)
+			}
+			outcomes <- outcome{inserted: inserted, err: err}
+		}(tx)
+	}
+	close(start)
+	group.Wait()
+	close(outcomes)
+
+	inserted, duplicate := 0, 0
+	for outcome := range outcomes {
+		if outcome.err != nil {
+			t.Fatalf("concurrent same-ID insertion: %v", outcome.err)
+		}
+		if outcome.inserted {
+			inserted++
+		} else {
+			duplicate++
+		}
+	}
+	if inserted != 1 || duplicate != 1 {
+		t.Fatalf("concurrent same-ID outcomes = inserted %d duplicate %d", inserted, duplicate)
+	}
+
+	var rawCount, matchedCount int
+	if err := pools.Admin.QueryRow(ctx, `
+		SELECT count(*) FROM widget_funnel_events WHERE project_id = $1
+	`, projectID).Scan(&rawCount); err != nil {
+		t.Fatalf("count same-ID raw events: %v", err)
+	}
+	if err := pools.Admin.QueryRow(ctx, `
+		SELECT COALESCE(sum(matched_count), 0) FROM widget_funnel_daily WHERE project_id = $1
+	`, projectID).Scan(&matchedCount); err != nil {
+		t.Fatalf("count same-ID aggregates: %v", err)
+	}
+	if rawCount != 6 || matchedCount != 4 {
+		t.Fatalf("counts after same-ID concurrency = raw %d matched %d, want 6/4", rawCount, matchedCount)
+	}
+}
+
+func assertLifecycleDuplicateWithDifferentEventID(
+	t *testing.T,
+	ctx context.Context,
+	pools *db.Pools,
+	store Store,
+	configuration project.PublicConfiguration,
+	matchedInput EventInput,
+	now time.Time,
+) {
+	t.Helper()
+	duplicateInput := matchedInput
+	duplicateInput.EventID = "00000000-0000-4000-8000-000000000009"
+	values, fields := ValidateEvents([]EventInput{duplicateInput}, configuration, "https://example.com", now)
+	if len(fields) > 0 {
+		t.Fatalf("validate lifecycle duplicate: %#v", fields)
+	}
+	tx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin lifecycle duplicate transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
+		t.Fatalf("set lifecycle duplicate tenant: %v", err)
+	}
+	result, err := store.InsertEvents(ctx, tx, values)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert lifecycle duplicate: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit lifecycle duplicate: %v", err)
+	}
+	if len(result.AcceptedEventIDs) != 0 || len(result.DuplicateEventIDs) != 1 {
+		t.Fatalf("lifecycle duplicate result = %#v", result)
 	}
 }
 

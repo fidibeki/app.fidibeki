@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -114,12 +116,38 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	t.Cleanup(pools.Close)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	analyticsConfiguration := project.PublicConfiguration{
+		TenantID: tenantID, ProjectID: projectID, Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
+		Rules: []project.WidgetRule{{ID: ruleID, Name: "All pages", Enabled: true}},
+	}
+	matchedValues, analyticsFields := widgetanalytics.ValidateEvents([]widgetanalytics.EventInput{{
+		EventID: "00000000-0000-4000-8000-000000000101", EventType: widgetanalytics.EventMatched,
+		VisitorID: "00000000-0000-4000-8000-000000000102", PageViewID: "00000000-0000-4000-8000-000000000103",
+		RuleID: ruleID, PageURL: "https://example.com/checkout", OccurredAt: now,
+	}}, analyticsConfiguration, "https://example.com", now)
+	if len(analyticsFields) > 0 {
+		t.Fatalf("validate feedback matched analytics: %#v", analyticsFields)
+	}
+	analyticsTx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin feedback analytics transaction: %v", err)
+	}
+	if _, err := analyticsTx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID); err != nil {
+		t.Fatalf("set feedback analytics tenant: %v", err)
+	}
+	if _, err := (widgetanalytics.Store{}).InsertEvents(ctx, analyticsTx, matchedValues); err != nil {
+		t.Fatalf("seed feedback matched analytics: %v", err)
+	}
+	if err := analyticsTx.Commit(ctx); err != nil {
+		t.Fatalf("commit feedback matched analytics: %v", err)
+	}
 	storageClient := &feedbackStorageStub{stat: storage.ObjectInfo{Size: 2048, ContentType: "audio/webm"}}
 	scheduler := &attachmentSchedulerStub{}
 	authorizer := widgetapi.Authorizer{Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now }}
 	handler := feedbackHandler(HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
-		Storage: storageClient, Scheduler: scheduler, Now: func() time.Time { return now },
+		Storage: storageClient, Scheduler: scheduler, Analytics: widgetanalytics.Store{},
+		Now: func() time.Time { return now },
 	})
 
 	clientFeedbackID := "57e3ee52-4ebf-43ce-9e31-9f909628634d"
@@ -128,8 +156,9 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		"client_feedback_id":%q,"widget_rule_id":%q,"session_id":%q,"rating":5,
 		"text":"Checkout was clear","element_attachment":{"selector":"#checkout","html":"<section>Checkout</section>","styles":{"display":"grid"}},
 		"attachments":[{"client_attachment_id":%q,"kind":"audio","content_type":"audio/webm","size_bytes":2048}],
-		"metadata":{"url":"https://example.com/checkout","referrer":"https://example.com/","user_agent":"browser","os":"Linux","browser":"Firefox","device":"desktop","viewport_width":1280,"viewport_height":720,"language":"en"}
-	}`, clientFeedbackID, ruleID, replaySessionID, clientAttachmentID)
+		"metadata":{"url":"https://example.com/checkout","referrer":"https://example.com/","user_agent":"browser","os":"Linux","browser":"Firefox","device":"desktop","viewport_width":1280,"viewport_height":720,"language":"en"},
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000104","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout?step=payment#card","occurred_at":"2026-07-21T12:00:00Z"}
+	}`, clientFeedbackID, ruleID, replaySessionID, clientAttachmentID, ruleID)
 
 	created := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
 	if created.Code != http.StatusCreated {
@@ -145,6 +174,18 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		t.Errorf("attachment response = %#v", first.Attachments)
 	}
 	assertFeedbackRows(t, ctx, root, first.FeedbackID, tenantID, projectID)
+	var submittedCount int
+	var submittedFeedbackID string
+	if err := root.QueryRow(ctx, `
+		SELECT count(*), COALESCE(max(feedback_id::text), '')
+		FROM widget_funnel_events
+		WHERE project_id = $1 AND event_type = 'submitted'
+	`, projectID).Scan(&submittedCount, &submittedFeedbackID); err != nil {
+		t.Fatalf("read submitted analytics: %v", err)
+	}
+	if submittedCount != 1 || submittedFeedbackID != first.FeedbackID {
+		t.Fatalf("submitted analytics = count %d feedback %v", submittedCount, submittedFeedbackID)
+	}
 	var feedbackSessionID, sessionFeedbackID *string
 	if err := root.QueryRow(ctx, `SELECT session_id FROM feedbacks WHERE id = $1`, first.FeedbackID).
 		Scan(&feedbackSessionID); err != nil {
@@ -199,6 +240,69 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	if len(second.Attachments) != 1 || second.Attachments[0].CompleteToken == first.Attachments[0].CompleteToken {
 		t.Errorf("idempotent attachment token was not rotated")
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM widget_funnel_events
+		WHERE project_id = $1 AND event_type = 'submitted'
+	`, projectID).Scan(&submittedCount); err != nil || submittedCount != 1 {
+		t.Fatalf("submitted analytics after retry = %d, error %v, want 1", submittedCount, err)
+	}
+
+	rollbackBody := fmt.Sprintf(`{
+		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286399","widget_rule_id":%q,
+		"rating":4,"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720},
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000199","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout","occurred_at":"2026-07-21T12:00:00Z"}
+	}`, ruleID, ruleID)
+	rollbackBody = strings.Replace(rollbackBody, `"session_id":"`+replaySessionID+`"`, `"session_id":null`, 1)
+	analyticsFailure := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Analytics: submissionAnalyticsStoreStub{err: errors.New("analytics unavailable")},
+		Now: func() time.Time { return now },
+	})
+	rolledBack := performFeedbackRequest(analyticsFailure, http.MethodPost,
+		"/v1/feedback?key="+publicKey, rollbackBody, publicKey, "https://example.com")
+	if rolledBack.Code != http.StatusServiceUnavailable {
+		t.Fatalf("analytics failure status = %d, body = %s", rolledBack.Code, rolledBack.Body.String())
+	}
+	var rolledBackFeedbacks int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks WHERE project_id = $1
+	`, projectID).Scan(&rolledBackFeedbacks); err != nil || rolledBackFeedbacks != 1 {
+		t.Fatalf("feedback count after analytics rollback = %d, error %v, want 1", rolledBackFeedbacks, err)
+	}
+
+	eventIDCollisionBody := fmt.Sprintf(`{
+		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286377","widget_rule_id":%q,
+		"rating":3,"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720},
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000101","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout","occurred_at":"2026-07-21T12:00:00Z"}
+	}`, ruleID, ruleID)
+	collision := performFeedbackRequest(handler, http.MethodPost,
+		"/v1/feedback?key="+publicKey, eventIDCollisionBody, publicKey, "https://example.com")
+	if collision.Code != http.StatusServiceUnavailable {
+		t.Fatalf("analytics event ID collision status = %d, body = %s", collision.Code, collision.Body.String())
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks WHERE project_id = $1
+	`, projectID).Scan(&rolledBackFeedbacks); err != nil || rolledBackFeedbacks != 1 {
+		t.Fatalf("feedback count after event ID collision = %d, error %v, want 1", rolledBackFeedbacks, err)
+	}
+
+	legacyBody := fmt.Sprintf(`{
+		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286388","widget_rule_id":%q,
+		"rating":4,"metadata":{"url":"https://example.com/legacy","viewport_width":1280,"viewport_height":720}
+	}`, ruleID)
+	legacyCreated := performFeedbackRequest(handler, http.MethodPost,
+		"/v1/feedback?key="+publicKey, legacyBody, publicKey, "https://example.com")
+	if legacyCreated.Code != http.StatusCreated {
+		t.Fatalf("legacy feedback status = %d, body = %s", legacyCreated.Code, legacyCreated.Body.String())
+	}
+	var legacySubmission SubmissionResponse
+	decodeFeedbackResponse(t, legacyCreated, &legacySubmission)
+	if _, err := root.Exec(ctx, `DELETE FROM outbox_events WHERE resource_id = $1`, legacySubmission.FeedbackID); err != nil {
+		t.Fatalf("clean legacy feedback outbox: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM feedbacks WHERE id = $1`, legacySubmission.FeedbackID); err != nil {
+		t.Fatalf("clean legacy feedback: %v", err)
 	}
 	var retriedStatus string
 	var retriedError *string
@@ -851,6 +955,18 @@ func (s *attachmentStreamStorageStub) OpenObject(_ context.Context, key string) 
 type attachmentSchedulerStub struct {
 	attachmentID string
 	feedbackID   string
+}
+
+type submissionAnalyticsStoreStub struct {
+	err error
+}
+
+func (s submissionAnalyticsStoreStub) InsertSubmittedEvent(
+	context.Context,
+	db.Querier,
+	widgetanalytics.EventValues,
+) (bool, error) {
+	return false, s.err
 }
 
 func (s *attachmentSchedulerStub) ScheduleAttachment(

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 )
 
 type Status string
@@ -67,17 +68,27 @@ type AttachmentInput struct {
 }
 
 type SubmissionRequest struct {
-	ClientFeedbackID string                  `json:"client_feedback_id"`
-	WidgetRuleID     string                  `json:"widget_rule_id"`
-	ReplaySessionID  *string                 `json:"session_id"`
-	Rating           *int                    `json:"rating"`
-	Text             *string                 `json:"text"`
-	ReporterEmail    *string                 `json:"reporter_email"`
-	NotifyReporter   bool                    `json:"notify_reporter"`
-	Element          *ElementAttachmentInput `json:"element_attachment"`
-	Attachments      []AttachmentInput       `json:"attachments"`
-	Metadata         MetadataInput           `json:"metadata"`
-	Honeypot         string                  `json:"company_website"`
+	ClientFeedbackID string                    `json:"client_feedback_id"`
+	WidgetRuleID     string                    `json:"widget_rule_id"`
+	ReplaySessionID  *string                   `json:"session_id"`
+	Rating           *int                      `json:"rating"`
+	Text             *string                   `json:"text"`
+	ReporterEmail    *string                   `json:"reporter_email"`
+	NotifyReporter   bool                      `json:"notify_reporter"`
+	Element          *ElementAttachmentInput   `json:"element_attachment"`
+	Attachments      []AttachmentInput         `json:"attachments"`
+	Metadata         MetadataInput             `json:"metadata"`
+	Analytics        *SubmissionAnalyticsInput `json:"analytics"`
+	Honeypot         string                    `json:"company_website"`
+}
+
+type SubmissionAnalyticsInput struct {
+	EventID    string    `json:"event_id"`
+	VisitorID  string    `json:"visitor_id"`
+	PageViewID string    `json:"page_view_id"`
+	RuleID     string    `json:"rule_id"`
+	PageURL    string    `json:"page_url"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 type SubmissionValues struct {
@@ -100,6 +111,7 @@ type SubmissionValues struct {
 	DOMSnapshotHTML   *string
 	DOMSnapshotStyles *string
 	Attachments       []AttachmentValues
+	Analytics         *widgetanalytics.EventValues
 }
 
 type AttachmentValues struct {

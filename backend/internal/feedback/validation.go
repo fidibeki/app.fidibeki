@@ -6,9 +6,11 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/google/uuid"
 )
 
@@ -31,6 +33,14 @@ var attachmentRules = map[AttachmentKind]struct {
 func ValidateSubmission(
 	input SubmissionRequest,
 	configuration project.PublicConfiguration,
+) (SubmissionValues, []FieldError) {
+	return ValidateSubmissionAt(input, configuration, time.Now().UTC())
+}
+
+func ValidateSubmissionAt(
+	input SubmissionRequest,
+	configuration project.PublicConfiguration,
+	now time.Time,
 ) (SubmissionValues, []FieldError) {
 	values := normalizeSubmission(input)
 	fields := make([]FieldError, 0)
@@ -86,6 +96,22 @@ func ValidateSubmission(
 	}
 	fields = append(fields, validateAttachments(values.Attachments)...)
 	fields = append(fields, validateRuleCapabilities(input, values, configuration)...)
+	if input.Analytics != nil {
+		analytics, analyticsFields := widgetanalytics.ValidateSubmissionEvent(
+			widgetanalytics.EventInput{
+				EventID: input.Analytics.EventID, VisitorID: input.Analytics.VisitorID,
+				PageViewID: input.Analytics.PageViewID, RuleID: input.Analytics.RuleID,
+				PageURL: input.Analytics.PageURL, OccurredAt: input.Analytics.OccurredAt,
+			},
+			configuration, values.WidgetRuleID, values.PageURL, now,
+		)
+		for name, message := range analyticsFields {
+			fields = append(fields, field("analytics."+name, message))
+		}
+		if len(analyticsFields) == 0 {
+			values.Analytics = &analytics
+		}
+	}
 	return values, fields
 }
 

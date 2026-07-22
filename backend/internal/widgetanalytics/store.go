@@ -1,6 +1,7 @@
 package widgetanalytics
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 )
 
 type Store struct{}
+
+var errEventIDConflict = errors.New("widget funnel event ID conflicts with another event")
 
 func (Store) InsertEvents(
 	ctx context.Context,
@@ -39,45 +42,89 @@ func (Store) InsertEvents(
 		return IngestResult{}, fmt.Errorf("lock widget funnel project: %w", err)
 	}
 	for _, event := range events {
-		if event.EventType != EventMatched {
-			var matched bool
-			if err := query.QueryRow(ctx, `
-				SELECT EXISTS (
-					SELECT 1 FROM widget_funnel_events
-					WHERE tenant_id = $1 AND project_id = $2 AND rule_id = $3
-					  AND page_view_id = $4 AND visitor_id = $5
-					  AND page_key = $6 AND event_type = 'matched'
-				)
-			`, event.TenantID, event.ProjectID, event.RuleID, event.PageViewID,
-				event.VisitorID, event.PageKey,
-			).Scan(&matched); err != nil {
-				return IngestResult{}, fmt.Errorf("check widget funnel matched event: %w", err)
-			}
-			if !matched {
-				return IngestResult{}, errors.New("widget funnel event requires a matching matched event")
-			}
+		inserted, err := insertEvent(ctx, query, event, event.EventType != EventMatched)
+		if err != nil {
+			return IngestResult{}, err
 		}
-		var insertedID string
-		err := query.QueryRow(ctx, `
-			INSERT INTO widget_funnel_events (
-				event_id, tenant_id, project_id, rule_id, rule_name, event_type,
-				visitor_id, page_view_id, page_url, page_key, feedback_id,
-				occurred_at, received_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-			ON CONFLICT DO NOTHING
-			RETURNING event_id
-		`, event.EventID, event.TenantID, event.ProjectID, event.RuleID, event.RuleName,
-			event.EventType, event.VisitorID, event.PageViewID, event.PageURL, event.PageKey,
-			event.FeedbackID, event.OccurredAt, event.ReceivedAt,
-		).Scan(&insertedID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if !inserted {
 			result.DuplicateEventIDs = append(result.DuplicateEventIDs, event.EventID)
 			continue
 		}
-		if err != nil {
-			return IngestResult{}, fmt.Errorf("insert widget funnel event: %w", err)
+		result.AcceptedEventIDs = append(result.AcceptedEventIDs, event.EventID)
+	}
+	return result, nil
+}
+
+func (Store) InsertSubmittedEvent(
+	ctx context.Context,
+	query db.Querier,
+	event EventValues,
+) (bool, error) {
+	if event.EventType != EventSubmitted || event.FeedbackID == nil {
+		return false, errors.New("submitted widget funnel event requires feedback context")
+	}
+	return insertEvent(ctx, query, event, false)
+}
+
+func insertEvent(
+	ctx context.Context,
+	query db.Querier,
+	event EventValues,
+	requireMatched bool,
+) (bool, error) {
+	if _, err := query.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, event.EventID,
+	); err != nil {
+		return false, fmt.Errorf("lock widget funnel event ID: %w", err)
+	}
+	var eventIDExists bool
+	if err := query.QueryRow(ctx,
+		`SELECT widget_funnel_event_id_exists($1::uuid)`, event.EventID,
+	).Scan(&eventIDExists); err != nil {
+		return false, fmt.Errorf("check global widget funnel event ID: %w", err)
+	}
+	if eventIDExists {
+		return classifyExistingEventID(ctx, query, event)
+	}
+
+	if requireMatched {
+		var matched bool
+		if err := query.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM widget_funnel_events
+				WHERE tenant_id = $1 AND project_id = $2 AND rule_id = $3
+				  AND page_view_id = $4 AND visitor_id = $5
+				  AND page_key = $6 AND event_type = 'matched'
+			)
+		`, event.TenantID, event.ProjectID, event.RuleID, event.PageViewID,
+			event.VisitorID, event.PageKey,
+		).Scan(&matched); err != nil {
+			return false, fmt.Errorf("check widget funnel matched event: %w", err)
 		}
-		if _, err := query.Exec(ctx, `
+		if !matched {
+			return false, errors.New("widget funnel event requires a matching matched event")
+		}
+	}
+	var insertedID string
+	err := query.QueryRow(ctx, `
+		INSERT INTO widget_funnel_events (
+			event_id, tenant_id, project_id, rule_id, rule_name, event_type,
+			visitor_id, page_view_id, page_url, page_key, feedback_id,
+			occurred_at, received_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT DO NOTHING
+		RETURNING event_id
+	`, event.EventID, event.TenantID, event.ProjectID, event.RuleID, event.RuleName,
+		event.EventType, event.VisitorID, event.PageViewID, event.PageURL, event.PageKey,
+		event.FeedbackID, event.OccurredAt, event.ReceivedAt,
+	).Scan(&insertedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return classifyLifecycleDuplicate(ctx, query, event)
+	}
+	if err != nil {
+		return false, fmt.Errorf("insert widget funnel event: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
 			INSERT INTO widget_funnel_daily (
 				tenant_id, project_id, rule_id, rule_name, page_url, page_key, event_date,
 				matched_count, impression_count, interaction_count, submitted_count, dismissed_count
@@ -98,14 +145,74 @@ func (Store) InsertEvents(
 				submitted_count = widget_funnel_daily.submitted_count + EXCLUDED.submitted_count,
 				dismissed_count = widget_funnel_daily.dismissed_count + EXCLUDED.dismissed_count,
 				updated_at = now()
-		`, event.TenantID, event.ProjectID, event.RuleID, event.RuleName, event.PageURL,
-			event.PageKey, event.OccurredAt, event.EventType,
-		); err != nil {
-			return IngestResult{}, fmt.Errorf("increment widget funnel daily aggregate: %w", err)
-		}
-		result.AcceptedEventIDs = append(result.AcceptedEventIDs, event.EventID)
+	`, event.TenantID, event.ProjectID, event.RuleID, event.RuleName, event.PageURL,
+		event.PageKey, event.OccurredAt, event.EventType,
+	); err != nil {
+		return false, fmt.Errorf("increment widget funnel daily aggregate: %w", err)
 	}
-	return result, nil
+	return true, nil
+}
+
+func classifyExistingEventID(ctx context.Context, query db.Querier, event EventValues) (bool, error) {
+	var existing EventValues
+	err := query.QueryRow(ctx, `
+		SELECT event_id, tenant_id, project_id, rule_id, event_type, visitor_id,
+		       page_view_id, page_url, page_key, feedback_id, occurred_at
+		FROM widget_funnel_events
+		WHERE event_id = $1
+	`, event.EventID).Scan(
+		&existing.EventID, &existing.TenantID, &existing.ProjectID, &existing.RuleID,
+		&existing.EventType, &existing.VisitorID, &existing.PageViewID, &existing.PageURL,
+		&existing.PageKey, &existing.FeedbackID, &existing.OccurredAt,
+	)
+	if err == nil {
+		if sameImmutableEvent(existing, event) {
+			return false, nil
+		}
+		return false, errEventIDConflict
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("classify widget funnel event ID conflict: %w", err)
+	}
+	return false, errEventIDConflict
+}
+
+func classifyLifecycleDuplicate(ctx context.Context, query db.Querier, event EventValues) (bool, error) {
+	var lifecycleExists bool
+	if err := query.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM widget_funnel_events
+			WHERE project_id = $1 AND rule_id = $2
+			  AND page_view_id = $3 AND event_type = $4
+		)
+	`, event.ProjectID, event.RuleID, event.PageViewID, event.EventType).Scan(&lifecycleExists); err != nil {
+		return false, fmt.Errorf("classify widget funnel lifecycle conflict: %w", err)
+	}
+	if lifecycleExists {
+		return false, nil
+	}
+	return false, errEventIDConflict
+}
+
+func sameImmutableEvent(left, right EventValues) bool {
+	return left.EventID == right.EventID &&
+		left.TenantID == right.TenantID &&
+		left.ProjectID == right.ProjectID &&
+		left.RuleID == right.RuleID &&
+		left.EventType == right.EventType &&
+		left.VisitorID == right.VisitorID &&
+		left.PageViewID == right.PageViewID &&
+		left.PageURL == right.PageURL &&
+		bytes.Equal(left.PageKey, right.PageKey) &&
+		sameOptionalString(left.FeedbackID, right.FeedbackID) &&
+		left.OccurredAt.Equal(right.OccurredAt)
+}
+
+func sameOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (Store) Summary(

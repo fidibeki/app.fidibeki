@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -17,6 +18,7 @@ import (
 
 func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	text := "Checkout was clear"
 	request := SubmissionRequest{
 		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
@@ -34,15 +36,22 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 			URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
 			Device: "desktop",
 		},
+		Analytics: &SubmissionAnalyticsInput{
+			EventID:   "00000000-0000-4000-8000-000000000001",
+			VisitorID: "00000000-0000-4000-8000-000000000002", PageViewID: "00000000-0000-4000-8000-000000000003",
+			RuleID: "1341b36b-d02c-4398-ab29-ca935e73539a", PageURL: "https://example.com/checkout/?step=2",
+			OccurredAt: now,
+		},
 	}
 	configuration := project.PublicConfiguration{
+		TenantID: "00000000-0000-4000-8000-000000000010", ProjectID: "00000000-0000-4000-8000-000000000020",
 		Plan: tenant.PlanGrowth,
 		Rules: []project.WidgetRule{{
 			ID: request.WidgetRuleID, CanRate: true, CanWriteText: true,
 			CanAttachElement: true, CanRecordAudio: true,
 		}},
 	}
-	values, fields := ValidateSubmission(request, configuration)
+	values, fields := ValidateSubmissionAt(request, configuration, now)
 	if len(fields) != 0 {
 		t.Fatalf("validation fields = %#v", fields)
 	}
@@ -51,6 +60,35 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 	}
 	if values.DOMSnapshotStyles == nil || *values.DOMSnapshotStyles != `{"display":"grid"}` {
 		t.Errorf("DOM styles = %#v", values.DOMSnapshotStyles)
+	}
+	if values.Analytics == nil || values.Analytics.EventType != "submitted" ||
+		values.Analytics.PageURL != "https://example.com/checkout" {
+		t.Errorf("analytics = %#v", values.Analytics)
+	}
+}
+
+func TestValidateSubmissionRejectsMismatchedAnalyticsContext(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	ruleID := "1341b36b-d02c-4398-ab29-ca935e73539a"
+	request := SubmissionRequest{
+		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d", WidgetRuleID: ruleID,
+		Metadata: MetadataInput{URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720},
+		Analytics: &SubmissionAnalyticsInput{
+			EventID:   "00000000-0000-4000-8000-000000000001",
+			VisitorID: "00000000-0000-4000-8000-000000000002", PageViewID: "00000000-0000-4000-8000-000000000003",
+			RuleID: "00000000-0000-4000-8000-000000000099", PageURL: "https://example.com/other",
+			OccurredAt: now,
+		},
+	}
+	_, fields := ValidateSubmissionAt(request, project.PublicConfiguration{
+		TenantID: "00000000-0000-4000-8000-000000000010", ProjectID: "00000000-0000-4000-8000-000000000020",
+		Plan: tenant.PlanGrowth, Rules: []project.WidgetRule{{ID: ruleID}},
+	}, now)
+	for _, expected := range []string{"analytics.rule_id", "analytics.page_url"} {
+		if !hasField(fields, expected) {
+			t.Fatalf("fields = %#v, missing %s", fields, expected)
+		}
 	}
 }
 

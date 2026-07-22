@@ -21,6 +21,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -40,6 +41,10 @@ type AttachmentScheduler interface {
 	ScheduleAttachment(context.Context, string, string) error
 }
 
+type SubmissionAnalyticsStore interface {
+	InsertSubmittedEvent(context.Context, db.Querier, widgetanalytics.EventValues) (bool, error)
+}
+
 type HTTPOptions struct {
 	Authorizer       widgetapi.ProjectAuthorizer
 	Begin            db.BeginFunc
@@ -47,6 +52,7 @@ type HTTPOptions struct {
 	Limiter          ratelimit.Limiter
 	Storage          ObjectStorage
 	Scheduler        AttachmentScheduler
+	Analytics        SubmissionAnalyticsStore
 	Logger           *slog.Logger
 	Now              func() time.Time
 	GeneratePublicID func() (string, error)
@@ -99,7 +105,7 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, http.StatusOK, map[string]bool{"accepted": true})
 		return
 	}
-	values, fields := ValidateSubmission(request, configuration)
+	values, fields := ValidateSubmissionAt(request, configuration, h.now().UTC())
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback is invalid", fields)
 		return
@@ -184,6 +190,18 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			h.writeStoreError(w, r, err)
 			return
+		}
+		if values.Analytics != nil {
+			if h.options.Analytics == nil {
+				h.writeStoreError(w, r, errors.New("feedback analytics store is not configured"))
+				return
+			}
+			analytics := *values.Analytics
+			analytics.FeedbackID = &feedbackID
+			if _, err := h.options.Analytics.InsertSubmittedEvent(r.Context(), tx, analytics); err != nil {
+				h.writeStoreError(w, r, fmt.Errorf("create submitted widget funnel event: %w", err))
+				return
+			}
 		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
