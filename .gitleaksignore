@@ -13,6 +13,9 @@
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/middleware/proxy_host_test.go:generic-api-key:14
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/server/server_test.go:generic-api-key:212
 
+# Deterministic Nuxt proxy fixture from the SSR Playwright harness; replaced in the active tree.
+aa390e2ccebbc299c7c6015b1c22fa44147c3643:web/tests/e2e/ci-web-server.mjs:generic-api-key:61
+
 # Deterministic stream API-key fixtures used only by integration tests.
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/feedback/http_integration_test.go:generic-api-key:448
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/replay/http_integration_test.go:generic-api-key:315

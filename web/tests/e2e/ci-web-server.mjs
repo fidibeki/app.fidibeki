@@ -58,6 +58,6 @@ process.env.NUXT_API_UPSTREAM = `http://127.0.0.1:${apiPort}`
 process.env.NUXT_BASE_DOMAIN = 'localhost'
 process.env.NUXT_PUBLIC_BASE_DOMAIN = 'localhost'
 process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY = '1x00000000000000000000AA'
-process.env.NUXT_INTERNAL_PROXY_SECRET = '0123456789abcdef0123456789abcdef'
+process.env.NUXT_INTERNAL_PROXY_SECRET = 'local-e2e-proxy-fixture'
 
 await import('../../.output/server/index.mjs')
