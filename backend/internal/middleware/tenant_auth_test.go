@@ -68,3 +68,58 @@ func TestRequireTenantMemberRejectsCrossTenantAndPlatformTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireAnyPermission(t *testing.T) {
+	t.Parallel()
+
+	manager, _ := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", 10*time.Minute)
+	token, _, _ := manager.IssueTenant("member-id", "tenant-id", []string{"project:read"})
+	resolve := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost",
+		Resolver: tenant.ResolverFunc(func(context.Context, string) (tenant.Tenant, error) {
+			return tenant.Tenant{ID: "tenant-id", Slug: "acme", Status: tenant.StatusActive}, nil
+		}),
+		Begin: func(context.Context) (db.Transaction, error) { return &fakeTransaction{}, nil },
+	})
+
+	for _, test := range []struct {
+		name       string
+		required   []auth.Permission
+		wantStatus int
+	}{
+		{
+			name: "one required permission matches", required: []auth.Permission{
+				auth.PermissionProjectUpdate, auth.PermissionProjectRead,
+			}, wantStatus: http.StatusNoContent,
+		},
+		{
+			name: "no required permission matches", required: []auth.Permission{
+				auth.PermissionProjectUpdate, auth.PermissionProjectDelete,
+			}, wantStatus: http.StatusForbidden,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler := resolve(appmiddleware.RequireTenantMember(manager)(
+				appmiddleware.RequireAnyPermission(test.required...)(http.HandlerFunc(
+					func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+				)),
+			))
+			request := httptest.NewRequest(http.MethodGet, "http://acme.localhost/v1/projects", nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Errorf("status = %d, want %d; body = %s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
+	}
+
+	response := httptest.NewRecorder()
+	appmiddleware.RequireAnyPermission(auth.PermissionProjectRead)(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+	)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/projects", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("missing claims status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+}
