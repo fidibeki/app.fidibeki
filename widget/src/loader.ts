@@ -6,6 +6,7 @@ import {
   type ConfigCache,
   type TargetingRegexModule,
 } from './config'
+import { createAnalyticsTracker, reportFunnelEvents } from './analytics'
 import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -54,6 +55,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const assetBase = new URL('.', loaderScript.src)
   const configurationEndpoint = new URL('widget/config', assetBase)
   const connectionEndpoint = new URL('widget/connected', assetBase)
+  const analyticsEndpoint = new URL('widget/events', assetBase)
   let cache: ConfigCache | null = null
   let cleanupTrigger: TriggerCleanup | null = null
   let unmountWidget: WidgetUnmount | null = null
@@ -62,6 +64,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 	let replayTransition = 0
   let evaluation = 0
   const widgetSessionID = currentSessionID()
+  const analytics = createAnalyticsTracker({ storage: localStorageIfAvailable() })
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -87,6 +90,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 
   const evaluate = async (forceRefresh = false) => {
     const currentEvaluation = ++evaluation
+    const evaluationURL = window.location.href
+    analytics.visit(evaluationURL)
     cleanupTrigger?.()
     cleanupTrigger = null
     unmountWidget?.()
@@ -94,13 +99,20 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     try {
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
-      const evaluationURL = window.location.href
       const rule = await matchRule(configuration.rules, evaluationURL, {
         loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
         onError: (error) => void report(error, 'targeting'),
       })
 			if (currentEvaluation !== evaluation) return
 			if (rule) {
+				const matched = analytics.record('matched', rule.id)
+				if (matched) {
+					void reportFunnelEvents({
+						endpoint: analyticsEndpoint,
+						publicKey: key,
+						events: [matched],
+					}).catch((error: unknown) => report(error, 'analytics'))
+				}
 				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
 			}
 			await synchronizeReplay(configuration, rule)
@@ -177,6 +189,14 @@ function currentSessionID(): string {
     return getSessionID(window.sessionStorage)
   } catch {
     return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  }
+}
+
+function localStorageIfAvailable(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
   }
 }
 
