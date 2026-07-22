@@ -186,7 +186,6 @@ useHead({ title: 'Billing - Fidibeki' })
 </template>
 
 <style scoped>
-.billing-page { max-width: 1320px; margin: 0 auto; }
 .billing-notice { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; background: var(--amber-soft); color: var(--amber); border: 1px solid #e8c995; border-radius: 5px; font-size: 11px; }
 .billing-notice--success { background: var(--green-soft); color: var(--green); border-color: #b5d9c6; }
 .billing-notice--error { background: var(--red-soft); color: var(--red); border-color: #e7b5bb; }
