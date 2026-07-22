@@ -1,4 +1,5 @@
-import { createAnalyticsTracker, reportFunnelEvents } from '../../src/analytics'
+import { createAnalyticsTracker } from '../../src/analytics'
+import { reportFunnelEvents } from '../../src/analytics-outbox'
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
@@ -81,7 +82,10 @@ describe('widget funnel identity', () => {
   })
 
   it('reports a bounded event payload without credentials', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 202 }))
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      '{"accepted_event_ids":["00000000-0000-4000-8000-000000000003"],"duplicate_event_ids":[]}',
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
+    ))
     const tracker = createAnalyticsTracker({
       storage: new MemoryStorage(), randomUUID: idSequence(),
       now: () => new Date('2026-07-22T12:00:00Z'),

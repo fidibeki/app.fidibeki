@@ -34,34 +34,6 @@ export interface AnalyticsTracker {
   record(eventType: FunnelEventType, ruleID: string): FunnelEvent | null
 }
 
-export interface FunnelEventRequest {
-  endpoint: URL
-  publicKey: string
-  events: FunnelEvent[]
-  fetchImpl?: typeof fetch
-}
-
-export async function reportFunnelEvents(request: FunnelEventRequest): Promise<void> {
-  if (request.events.length === 0) return
-  const fetchImpl = request.fetchImpl ?? fetch
-  const url = new URL(request.endpoint)
-  url.searchParams.set('key', request.publicKey)
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    mode: 'cors',
-    credentials: 'omit',
-    keepalive: true,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Fidibeki-Public-Key': request.publicKey,
-    },
-    body: JSON.stringify({ events: request.events }),
-  })
-  if (!response.ok) {
-    throw new Error(`Fidibeki analytics report failed with status ${response.status}`)
-  }
-}
-
 const visitorStorageKey = 'fidibeki:visitor:v1'
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 

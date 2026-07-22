@@ -8,9 +8,9 @@ import {
 } from './config'
 import {
   createAnalyticsTracker,
-  reportFunnelEvents,
   type FunnelEventType,
 } from './analytics'
+import { createAnalyticsOutbox } from './analytics-outbox'
 import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -72,7 +72,6 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let evaluation = 0
   const widgetSessionID = currentSessionID()
   const analytics = createAnalyticsTracker({ storage: localStorageIfAvailable() })
-  let analyticsDelivery = Promise.resolve()
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -84,6 +83,15 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       // Error reporting must never interfere with the host page.
     }
   }
+
+  const analyticsOutbox = createAnalyticsOutbox({
+    endpoint: analyticsEndpoint,
+    publicKey: key,
+    ownerID: widgetSessionID,
+    storage: localStorageIfAvailable(),
+    sendBeacon: typeof navigator.sendBeacon === 'function' ? navigator.sendBeacon.bind(navigator) : undefined,
+    onError: (error) => void report(error, 'analytics'),
+  })
 
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
     const now = Date.now()
@@ -99,11 +107,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const recordAnalytics = (eventType: FunnelEventType, rule: WidgetRule) => {
     const event = analytics.record(eventType, rule.id)
     if (!event) return
-    analyticsDelivery = analyticsDelivery
-      .then(() => reportFunnelEvents({ endpoint: analyticsEndpoint, publicKey: key, events: [event] }))
-      .catch((error: unknown) => {
-        void report(error, 'analytics')
-      })
+    analyticsOutbox.enqueue(event)
   }
 
   const evaluate = async (forceRefresh = false) => {
@@ -196,8 +200,14 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   installNavigationEvents()
   window.addEventListener('fidibeki:navigation', () => void evaluate())
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void evaluate(true)
+    if (document.visibilityState === 'hidden') {
+      analyticsOutbox.flushOnHide()
+      return
+    }
+    void analyticsOutbox.flush()
+    void evaluate(true)
   })
+  window.addEventListener('pagehide', () => analyticsOutbox.flushOnHide())
   window.setInterval(() => void evaluate(true), 5 * 60 * 1000)
   await evaluate()
 }

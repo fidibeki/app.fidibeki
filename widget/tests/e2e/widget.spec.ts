@@ -29,11 +29,19 @@ function browserConfiguration(rule: WidgetRule = browserRule): WidgetConfigurati
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/v1/widget/events*', (route) => route.fulfill({
-    status: 202,
-    contentType: 'application/json',
-    body: '{"accepted_event_ids":[],"duplicate_event_ids":[]}',
-  }))
+  await page.addInitScript(() => {
+    const nativeSetTimeout = window.setTimeout.bind(window)
+    window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
+      nativeSetTimeout(handler, timeout === 5_000 ? 0 : timeout, ...args)) as typeof window.setTimeout
+  })
+  await page.route('**/v1/widget/events*', (route) => {
+    const payload = route.request().postDataJSON() as { events: Array<{ event_id: string }> }
+    return route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted_event_ids: payload.events.map(event => event.event_id), duplicate_event_ids: [] }),
+    })
+  })
 })
 
 test('emits matched once per canonical page view before suppression', async ({ page }) => {
@@ -183,7 +191,11 @@ test('does not count an untriggered or recurrence-suppressed widget as visible',
   await page.route('**/v1/widget/events*', async (route) => {
     const payload = route.request().postDataJSON() as { events: Array<{ event_id: string; event_type: string }> }
     events.push(...payload.events.map(event => event.event_type))
-    await route.fulfill({ status: 202, contentType: 'application/json', body: '{"accepted_event_ids":[],"duplicate_event_ids":[]}' })
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted_event_ids: payload.events.map(event => event.event_id), duplicate_event_ids: [] }),
+    })
   })
   await page.route('**/v1/widget/config*', (route) => route.fulfill({
     status: 200,
