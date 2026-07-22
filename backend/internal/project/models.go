@@ -57,6 +57,30 @@ const (
 	RecurrenceNever    RecurrenceMode = "never"
 )
 
+type TargetConditionKind string
+
+const (
+	TargetConditionInclude TargetConditionKind = "include"
+	TargetConditionExclude TargetConditionKind = "exclude"
+)
+
+type WidgetRuleTargetCondition struct {
+	ID           string      `json:"id"`
+	MatcherType  MatcherType `json:"matcher_type"`
+	MatcherValue *string     `json:"matcher_value"`
+	Position     int         `json:"position"`
+}
+
+type WidgetRuleTargetConditionInput struct {
+	MatcherType  MatcherType `json:"matcher_type"`
+	MatcherValue *string     `json:"matcher_value"`
+}
+
+type WidgetRuleTargetConditionValues struct {
+	MatcherType  MatcherType
+	MatcherValue *string
+}
+
 type Project struct {
 	ID               string     `json:"id"`
 	TenantID         string     `json:"tenant_id"`
@@ -69,65 +93,69 @@ type Project struct {
 }
 
 type WidgetRule struct {
-	ID                       string         `json:"id"`
-	ProjectID                string         `json:"project_id"`
-	Name                     string         `json:"name"`
-	Priority                 int            `json:"priority"`
-	Enabled                  bool           `json:"enabled"`
-	MatcherType              MatcherType    `json:"matcher_type"`
-	MatcherValue             *string        `json:"matcher_value"`
-	TriggerType              TriggerType    `json:"trigger_type"`
-	TriggerDelaySeconds      *int           `json:"trigger_delay_seconds"`
-	TriggerScrollPercent     *int           `json:"trigger_scroll_percent"`
-	CanRate                  bool           `json:"can_rate"`
-	CanWriteText             bool           `json:"can_write_text"`
-	CanRecordAudio           bool           `json:"can_record_audio"`
-	CanRecordVideo           bool           `json:"can_record_video"`
-	CanAttachElement         bool           `json:"can_attach_element"`
-	CanAttachScreenshot      bool           `json:"can_attach_screenshot"`
-	Greeting                 *string        `json:"greeting"`
-	Position                 WidgetPosition `json:"position"`
-	Theme                    WidgetTheme    `json:"theme"`
-	AccentColor              *string        `json:"accent_color"`
-	ReplayMode               ReplayMode     `json:"replay_mode"`
-	ReplaySamplingRate       int            `json:"replay_sampling_rate"`
-	ReplayMaxDurationSeconds int            `json:"replay_max_duration_seconds"`
-	ReplayMaxEvents          int            `json:"replay_max_events"`
-	ReplayMaskAllInputs      bool           `json:"replay_mask_all_inputs"`
-	ReplayMaskTextSelector   *string        `json:"replay_mask_text_selector"`
-	RecurrenceMode           RecurrenceMode `json:"recurrence_mode"`
-	RecurrenceDays           *int           `json:"recurrence_days"`
-	CreatedAt                time.Time      `json:"created_at"`
-	UpdatedAt                time.Time      `json:"updated_at"`
+	ID                       string                      `json:"id"`
+	ProjectID                string                      `json:"project_id"`
+	Name                     string                      `json:"name"`
+	Priority                 int                         `json:"priority"`
+	Enabled                  bool                        `json:"enabled"`
+	MatcherType              MatcherType                 `json:"matcher_type"`
+	MatcherValue             *string                     `json:"matcher_value"`
+	IncludeConditions        []WidgetRuleTargetCondition `json:"include_conditions"`
+	ExcludeConditions        []WidgetRuleTargetCondition `json:"exclude_conditions"`
+	TriggerType              TriggerType                 `json:"trigger_type"`
+	TriggerDelaySeconds      *int                        `json:"trigger_delay_seconds"`
+	TriggerScrollPercent     *int                        `json:"trigger_scroll_percent"`
+	CanRate                  bool                        `json:"can_rate"`
+	CanWriteText             bool                        `json:"can_write_text"`
+	CanRecordAudio           bool                        `json:"can_record_audio"`
+	CanRecordVideo           bool                        `json:"can_record_video"`
+	CanAttachElement         bool                        `json:"can_attach_element"`
+	CanAttachScreenshot      bool                        `json:"can_attach_screenshot"`
+	Greeting                 *string                     `json:"greeting"`
+	Position                 WidgetPosition              `json:"position"`
+	Theme                    WidgetTheme                 `json:"theme"`
+	AccentColor              *string                     `json:"accent_color"`
+	ReplayMode               ReplayMode                  `json:"replay_mode"`
+	ReplaySamplingRate       int                         `json:"replay_sampling_rate"`
+	ReplayMaxDurationSeconds int                         `json:"replay_max_duration_seconds"`
+	ReplayMaxEvents          int                         `json:"replay_max_events"`
+	ReplayMaskAllInputs      bool                        `json:"replay_mask_all_inputs"`
+	ReplayMaskTextSelector   *string                     `json:"replay_mask_text_selector"`
+	RecurrenceMode           RecurrenceMode              `json:"recurrence_mode"`
+	RecurrenceDays           *int                        `json:"recurrence_days"`
+	CreatedAt                time.Time                   `json:"created_at"`
+	UpdatedAt                time.Time                   `json:"updated_at"`
 }
 
 type WidgetRuleInput struct {
-	Name                     string         `json:"name"`
-	Priority                 int            `json:"priority"`
-	Enabled                  *bool          `json:"enabled"`
-	MatcherType              MatcherType    `json:"matcher_type"`
-	MatcherValue             *string        `json:"matcher_value"`
-	TriggerType              TriggerType    `json:"trigger_type"`
-	TriggerDelaySeconds      *int           `json:"trigger_delay_seconds"`
-	TriggerScrollPercent     *int           `json:"trigger_scroll_percent"`
-	CanRate                  *bool          `json:"can_rate"`
-	CanWriteText             *bool          `json:"can_write_text"`
-	CanRecordAudio           bool           `json:"can_record_audio"`
-	CanRecordVideo           bool           `json:"can_record_video"`
-	CanAttachElement         bool           `json:"can_attach_element"`
-	CanAttachScreenshot      bool           `json:"can_attach_screenshot"`
-	Greeting                 *string        `json:"greeting"`
-	Position                 WidgetPosition `json:"position"`
-	Theme                    WidgetTheme    `json:"theme"`
-	AccentColor              *string        `json:"accent_color"`
-	ReplayMode               ReplayMode     `json:"replay_mode"`
-	ReplaySamplingRate       int            `json:"replay_sampling_rate"`
-	ReplayMaxDurationSeconds int            `json:"replay_max_duration_seconds"`
-	ReplayMaxEvents          int            `json:"replay_max_events"`
-	ReplayMaskAllInputs      *bool          `json:"replay_mask_all_inputs"`
-	ReplayMaskTextSelector   *string        `json:"replay_mask_text_selector"`
-	RecurrenceMode           RecurrenceMode `json:"recurrence_mode"`
-	RecurrenceDays           *int           `json:"recurrence_days"`
+	Name                     string                           `json:"name"`
+	Priority                 int                              `json:"priority"`
+	Enabled                  *bool                            `json:"enabled"`
+	MatcherType              MatcherType                      `json:"matcher_type"`
+	MatcherValue             *string                          `json:"matcher_value"`
+	IncludeConditions        []WidgetRuleTargetConditionInput `json:"include_conditions"`
+	ExcludeConditions        []WidgetRuleTargetConditionInput `json:"exclude_conditions"`
+	TriggerType              TriggerType                      `json:"trigger_type"`
+	TriggerDelaySeconds      *int                             `json:"trigger_delay_seconds"`
+	TriggerScrollPercent     *int                             `json:"trigger_scroll_percent"`
+	CanRate                  *bool                            `json:"can_rate"`
+	CanWriteText             *bool                            `json:"can_write_text"`
+	CanRecordAudio           bool                             `json:"can_record_audio"`
+	CanRecordVideo           bool                             `json:"can_record_video"`
+	CanAttachElement         bool                             `json:"can_attach_element"`
+	CanAttachScreenshot      bool                             `json:"can_attach_screenshot"`
+	Greeting                 *string                          `json:"greeting"`
+	Position                 WidgetPosition                   `json:"position"`
+	Theme                    WidgetTheme                      `json:"theme"`
+	AccentColor              *string                          `json:"accent_color"`
+	ReplayMode               ReplayMode                       `json:"replay_mode"`
+	ReplaySamplingRate       int                              `json:"replay_sampling_rate"`
+	ReplayMaxDurationSeconds int                              `json:"replay_max_duration_seconds"`
+	ReplayMaxEvents          int                              `json:"replay_max_events"`
+	ReplayMaskAllInputs      *bool                            `json:"replay_mask_all_inputs"`
+	ReplayMaskTextSelector   *string                          `json:"replay_mask_text_selector"`
+	RecurrenceMode           RecurrenceMode                   `json:"recurrence_mode"`
+	RecurrenceDays           *int                             `json:"recurrence_days"`
 }
 
 type WidgetRuleValues struct {
@@ -136,6 +164,9 @@ type WidgetRuleValues struct {
 	Enabled                  bool
 	MatcherType              MatcherType
 	MatcherValue             *string
+	IncludeConditions        []WidgetRuleTargetConditionValues
+	ExcludeConditions        []WidgetRuleTargetConditionValues
+	LegacyTargeting          bool
 	TriggerType              TriggerType
 	TriggerDelaySeconds      *int
 	TriggerScrollPercent     *int

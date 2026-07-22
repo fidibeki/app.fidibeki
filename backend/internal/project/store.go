@@ -154,7 +154,14 @@ func (Store) CreateWidgetRule(
 	if err != nil {
 		return WidgetRule{}, fmt.Errorf("create widget rule: %w", err)
 	}
-	return rule, nil
+	if err := replaceWidgetRuleTargetConditions(ctx, query, rule.ID, values); err != nil {
+		return WidgetRule{}, err
+	}
+	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
+	if err != nil {
+		return WidgetRule{}, err
+	}
+	return rules[0], nil
 }
 
 func (Store) ListWidgetRules(
@@ -185,7 +192,8 @@ func (Store) ListWidgetRules(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate widget rules: %w", err)
 	}
-	return rules, nil
+	rows.Close()
+	return attachWidgetRuleTargetConditions(ctx, query, projectID, rules)
 }
 
 func (Store) GetWidgetRule(
@@ -207,7 +215,11 @@ func (Store) GetWidgetRule(
 	if err != nil {
 		return WidgetRule{}, fmt.Errorf("get widget rule: %w", err)
 	}
-	return rule, nil
+	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
+	if err != nil {
+		return WidgetRule{}, err
+	}
+	return rules[0], nil
 }
 
 func (Store) UpdateWidgetRule(
@@ -240,7 +252,14 @@ func (Store) UpdateWidgetRule(
 	if err != nil {
 		return WidgetRule{}, fmt.Errorf("update widget rule: %w", err)
 	}
-	return rule, nil
+	if err := replaceWidgetRuleTargetConditions(ctx, query, rule.ID, values); err != nil {
+		return WidgetRule{}, err
+	}
+	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
+	if err != nil {
+		return WidgetRule{}, err
+	}
+	return rules[0], nil
 }
 
 func (Store) DeleteWidgetRule(
@@ -322,7 +341,101 @@ func (Store) LoadPublicConfiguration(
 	if err := rows.Err(); err != nil {
 		return PublicConfiguration{}, fmt.Errorf("iterate public widget rules: %w", err)
 	}
+	rows.Close()
+	configuration.Rules, err = attachWidgetRuleTargetConditions(
+		ctx, query, configuration.ProjectID, configuration.Rules,
+	)
+	if err != nil {
+		return PublicConfiguration{}, err
+	}
 	return configuration, nil
+}
+
+func replaceWidgetRuleTargetConditions(
+	ctx context.Context,
+	query db.Querier,
+	ruleID string,
+	values WidgetRuleValues,
+) error {
+	if _, err := query.Exec(ctx,
+		`DELETE FROM widget_rule_target_conditions WHERE widget_rule_id = $1`, ruleID,
+	); err != nil {
+		return fmt.Errorf("replace widget target conditions: %w", err)
+	}
+	collections := []struct {
+		kind       TargetConditionKind
+		conditions []WidgetRuleTargetConditionValues
+	}{
+		{kind: TargetConditionInclude, conditions: values.IncludeConditions},
+		{kind: TargetConditionExclude, conditions: values.ExcludeConditions},
+	}
+	for _, collection := range collections {
+		kind, conditions := collection.kind, collection.conditions
+		for position, condition := range conditions {
+			if _, err := query.Exec(ctx, `
+				INSERT INTO widget_rule_target_conditions (
+					widget_rule_id, kind, matcher_type, matcher_value, position
+				) VALUES ($1, $2, $3, $4, $5)
+			`, ruleID, kind, condition.MatcherType, condition.MatcherValue, position); err != nil {
+				return fmt.Errorf("insert widget target condition: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func attachWidgetRuleTargetConditions(
+	ctx context.Context,
+	query db.Querier,
+	projectID string,
+	rules []WidgetRule,
+) ([]WidgetRule, error) {
+	byID := make(map[string]*WidgetRule, len(rules))
+	for index := range rules {
+		rules[index].IncludeConditions = make([]WidgetRuleTargetCondition, 0)
+		rules[index].ExcludeConditions = make([]WidgetRuleTargetCondition, 0)
+		byID[rules[index].ID] = &rules[index]
+	}
+	if len(rules) == 0 {
+		return rules, nil
+	}
+	rows, err := query.Query(ctx, `
+		SELECT condition.id, condition.widget_rule_id, condition.kind,
+		       condition.matcher_type, condition.matcher_value, condition.position
+		FROM widget_rule_target_conditions AS condition
+		JOIN widget_rules AS rule ON rule.id = condition.widget_rule_id
+		WHERE rule.project_id = $1
+		ORDER BY condition.widget_rule_id, condition.kind, condition.position
+	`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list widget target conditions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var condition WidgetRuleTargetCondition
+		var ruleID string
+		var kind TargetConditionKind
+		if err := rows.Scan(
+			&condition.ID, &ruleID, &kind, &condition.MatcherType,
+			&condition.MatcherValue, &condition.Position,
+		); err != nil {
+			return nil, fmt.Errorf("scan widget target condition: %w", err)
+		}
+		rule := byID[ruleID]
+		if rule == nil {
+			continue
+		}
+		switch kind {
+		case TargetConditionInclude:
+			rule.IncludeConditions = append(rule.IncludeConditions, condition)
+		case TargetConditionExclude:
+			rule.ExcludeConditions = append(rule.ExcludeConditions, condition)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate widget target conditions: %w", err)
+	}
+	return rules, nil
 }
 
 func (Store) MarkWidgetSeen(ctx context.Context, query db.Querier, projectID string, seenAt time.Time) error {

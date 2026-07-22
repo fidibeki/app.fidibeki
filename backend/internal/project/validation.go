@@ -91,7 +91,7 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 	if len(values.Name) < 1 || len(values.Name) > 120 {
 		fields["name"] = "must be between 1 and 120 characters"
 	}
-	validateMatcher(values, fields)
+	validateTargeting(&values, fields)
 	validateTrigger(values, fields)
 	validateAppearance(values, fields)
 	validateReplay(values, fields)
@@ -101,6 +101,7 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 }
 
 func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
+	legacyTargeting := input.IncludeConditions == nil && input.ExcludeConditions == nil
 	values := WidgetRuleValues{
 		Name: strings.TrimSpace(input.Name), Priority: input.Priority,
 		Enabled: valueOr(input.Enabled, true), MatcherType: input.MatcherType,
@@ -118,6 +119,14 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		ReplayMaskTextSelector:   trimOptional(input.ReplayMaskTextSelector),
 		RecurrenceMode:           input.RecurrenceMode,
 		RecurrenceDays:           input.RecurrenceDays,
+		IncludeConditions:        normalizeTargetConditions(input.IncludeConditions),
+		ExcludeConditions:        normalizeTargetConditions(input.ExcludeConditions),
+		LegacyTargeting:          legacyTargeting,
+	}
+	if legacyTargeting {
+		values.IncludeConditions = []WidgetRuleTargetConditionValues{{
+			MatcherType: values.MatcherType, MatcherValue: values.MatcherValue,
+		}}
 	}
 	if values.Position == "" {
 		values.Position = PositionBottomLeft
@@ -144,29 +153,100 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	return values
 }
 
-func validateMatcher(values WidgetRuleValues, fields FieldErrors) {
-	switch values.MatcherType {
+func normalizeTargetConditions(input []WidgetRuleTargetConditionInput) []WidgetRuleTargetConditionValues {
+	if input == nil {
+		return nil
+	}
+	conditions := make([]WidgetRuleTargetConditionValues, len(input))
+	for index, condition := range input {
+		conditions[index] = WidgetRuleTargetConditionValues{
+			MatcherType: condition.MatcherType, MatcherValue: trimOptional(condition.MatcherValue),
+		}
+	}
+	return conditions
+}
+
+func validateTargeting(values *WidgetRuleValues, fields FieldErrors) {
+	includeField := "include_conditions"
+	if values.LegacyTargeting {
+		includeField = "matcher"
+	}
+	if len(values.IncludeConditions) < 1 || len(values.IncludeConditions) > 20 {
+		fields[mapTargetField(values.LegacyTargeting, includeField, -1, "")] = "must contain between 1 and 20 conditions"
+	}
+	if len(values.ExcludeConditions) > 20 {
+		fields["exclude_conditions"] = "must not contain more than 20 conditions"
+	}
+	allPages := 0
+	for index := range values.IncludeConditions {
+		if values.IncludeConditions[index].MatcherType == MatcherAllPages {
+			allPages++
+		}
+		validateTargetCondition(&values.IncludeConditions[index], TargetConditionInclude, index, values.LegacyTargeting, fields)
+	}
+	if allPages > 0 && len(values.IncludeConditions) != 1 {
+		fields[mapTargetField(values.LegacyTargeting, includeField, -1, "")] = "all_pages must be the sole include condition"
+	}
+	for index := range values.ExcludeConditions {
+		validateTargetCondition(&values.ExcludeConditions[index], TargetConditionExclude, index, false, fields)
+	}
+	if len(values.IncludeConditions) > 0 {
+		values.MatcherType = values.IncludeConditions[0].MatcherType
+		values.MatcherValue = values.IncludeConditions[0].MatcherValue
+	}
+}
+
+func validateTargetCondition(
+	condition *WidgetRuleTargetConditionValues,
+	kind TargetConditionKind,
+	index int,
+	legacy bool,
+	fields FieldErrors,
+) {
+	typeField := mapTargetField(legacy, string(kind)+"_conditions", index, "matcher_type")
+	valueField := mapTargetField(legacy, string(kind)+"_conditions", index, "matcher_value")
+	switch condition.MatcherType {
 	case MatcherAllPages:
-		if values.MatcherValue != nil {
-			fields["matcher_value"] = "must be null for all_pages"
+		if kind == TargetConditionExclude {
+			fields[typeField] = "all_pages cannot be an exclude condition"
+		}
+		if condition.MatcherValue != nil {
+			fields[valueField] = "must be null for all_pages"
 		}
 	case MatcherURLExact, MatcherURLPrefix:
-		if values.MatcherValue == nil {
-			fields["matcher_value"] = "is required for this matcher type"
-		} else if len(*values.MatcherValue) > 2048 {
-			fields["matcher_value"] = "must not exceed 2048 characters"
+		if condition.MatcherValue == nil {
+			fields[valueField] = "is required for this matcher type"
+		} else if len(*condition.MatcherValue) > 2048 {
+			fields[valueField] = "must not exceed 2048 characters"
+		} else if page, err := CanonicalizePage(*condition.MatcherValue); err != nil {
+			fields[valueField] = err.Error()
+		} else {
+			condition.MatcherValue = &page.Target
 		}
 	case MatcherURLRegex:
-		if values.MatcherValue == nil {
-			fields["matcher_value"] = "is required for url_regex"
-		} else if len(*values.MatcherValue) > 2048 {
-			fields["matcher_value"] = "must not exceed 2048 characters"
-		} else if _, err := regexp.Compile(*values.MatcherValue); err != nil {
-			fields["matcher_value"] = "must be a valid regular expression"
+		if condition.MatcherValue == nil {
+			fields[valueField] = "is required for url_regex"
+		} else if len(*condition.MatcherValue) > 2048 {
+			fields[valueField] = "must not exceed 2048 characters"
+		} else if _, err := regexp.Compile(*condition.MatcherValue); err != nil {
+			fields[valueField] = "must be a valid regular expression"
 		}
 	default:
-		fields["matcher_type"] = "must be all_pages, url_exact, url_prefix, or url_regex"
+		fields[typeField] = "must be all_pages, url_exact, url_prefix, or url_regex"
 	}
+}
+
+func mapTargetField(legacy bool, collection string, index int, field string) string {
+	if legacy {
+		if field == "matcher_type" || field == "" {
+			return "matcher_type"
+		}
+		return "matcher_value"
+	}
+	if index < 0 || field == "" {
+		return collection
+	}
+	return fmt.Sprintf("%s[%d].%s", collection, index, field)
 }
 
 func validateTrigger(values WidgetRuleValues, fields FieldErrors) {

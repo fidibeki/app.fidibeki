@@ -47,32 +47,34 @@ type ConfigurationResponse struct {
 }
 
 type PublicWidgetRule struct {
-	ID                       string                 `json:"id"`
-	Name                     string                 `json:"name"`
-	Priority                 int                    `json:"priority"`
-	MatcherType              project.MatcherType    `json:"matcher_type"`
-	MatcherValue             *string                `json:"matcher_value"`
-	TriggerType              project.TriggerType    `json:"trigger_type"`
-	TriggerDelaySeconds      *int                   `json:"trigger_delay_seconds"`
-	TriggerScrollPercent     *int                   `json:"trigger_scroll_percent"`
-	CanRate                  bool                   `json:"can_rate"`
-	CanWriteText             bool                   `json:"can_write_text"`
-	CanRecordAudio           bool                   `json:"can_record_audio"`
-	CanRecordVideo           bool                   `json:"can_record_video"`
-	CanAttachElement         bool                   `json:"can_attach_element"`
-	CanAttachScreenshot      bool                   `json:"can_attach_screenshot"`
-	Greeting                 *string                `json:"greeting"`
-	Position                 project.WidgetPosition `json:"position"`
-	Theme                    project.WidgetTheme    `json:"theme"`
-	AccentColor              *string                `json:"accent_color"`
-	ReplayMode               project.ReplayMode     `json:"replay_mode"`
-	ReplaySamplingRate       int                    `json:"replay_sampling_rate"`
-	ReplayMaxDurationSeconds int                    `json:"replay_max_duration_seconds"`
-	ReplayMaxEvents          int                    `json:"replay_max_events"`
-	ReplayMaskAllInputs      bool                   `json:"replay_mask_all_inputs"`
-	ReplayMaskTextSelector   *string                `json:"replay_mask_text_selector"`
-	RecurrenceMode           project.RecurrenceMode `json:"recurrence_mode"`
-	RecurrenceDays           *int                   `json:"recurrence_days"`
+	ID                       string                              `json:"id"`
+	Name                     string                              `json:"name"`
+	Priority                 int                                 `json:"priority"`
+	MatcherType              project.MatcherType                 `json:"matcher_type"`
+	MatcherValue             *string                             `json:"matcher_value"`
+	IncludeConditions        []project.WidgetRuleTargetCondition `json:"include_conditions"`
+	ExcludeConditions        []project.WidgetRuleTargetCondition `json:"exclude_conditions"`
+	TriggerType              project.TriggerType                 `json:"trigger_type"`
+	TriggerDelaySeconds      *int                                `json:"trigger_delay_seconds"`
+	TriggerScrollPercent     *int                                `json:"trigger_scroll_percent"`
+	CanRate                  bool                                `json:"can_rate"`
+	CanWriteText             bool                                `json:"can_write_text"`
+	CanRecordAudio           bool                                `json:"can_record_audio"`
+	CanRecordVideo           bool                                `json:"can_record_video"`
+	CanAttachElement         bool                                `json:"can_attach_element"`
+	CanAttachScreenshot      bool                                `json:"can_attach_screenshot"`
+	Greeting                 *string                             `json:"greeting"`
+	Position                 project.WidgetPosition              `json:"position"`
+	Theme                    project.WidgetTheme                 `json:"theme"`
+	AccentColor              *string                             `json:"accent_color"`
+	ReplayMode               project.ReplayMode                  `json:"replay_mode"`
+	ReplaySamplingRate       int                                 `json:"replay_sampling_rate"`
+	ReplayMaxDurationSeconds int                                 `json:"replay_max_duration_seconds"`
+	ReplayMaxEvents          int                                 `json:"replay_max_events"`
+	ReplayMaskAllInputs      bool                                `json:"replay_mask_all_inputs"`
+	ReplayMaskTextSelector   *string                             `json:"replay_mask_text_selector"`
+	RecurrenceMode           project.RecurrenceMode              `json:"recurrence_mode"`
+	RecurrenceDays           *int                                `json:"recurrence_days"`
 }
 
 func NewHTTPHandler(options HTTPOptions) http.Handler {
@@ -270,6 +272,7 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 	return PublicWidgetRule{
 		ID: rule.ID, Name: rule.Name, Priority: rule.Priority,
 		MatcherType: rule.MatcherType, MatcherValue: rule.MatcherValue,
+		IncludeConditions: rule.IncludeConditions, ExcludeConditions: rule.ExcludeConditions,
 		TriggerType: rule.TriggerType, TriggerDelaySeconds: rule.TriggerDelaySeconds,
 		TriggerScrollPercent: rule.TriggerScrollPercent,
 		CanRate:              rule.CanRate, CanWriteText: rule.CanWriteText,

@@ -54,6 +54,13 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
 		Rules: []project.WidgetRule{{
 			ID: "rule-id", Name: "All pages", Priority: 5, MatcherType: project.MatcherAllPages,
+			IncludeConditions: []project.WidgetRuleTargetCondition{{
+				ID: "condition-include", MatcherType: project.MatcherAllPages, Position: 0,
+			}},
+			ExcludeConditions: []project.WidgetRuleTargetCondition{{
+				ID: "condition-exclude", MatcherType: project.MatcherURLPrefix,
+				MatcherValue: stringPointer("https://example.com/private"), Position: 0,
+			}},
 			TriggerType: project.TriggerDelay, TriggerDelaySeconds: &delay,
 			CanRate: true, CanWriteText: true, CanRecordAudio: true,
 			Position: project.PositionBottomRight, Theme: project.ThemeAuto,
@@ -81,6 +88,8 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		`"project_id":"project-id"`, `"audio":true`, `"video":false`,
 		`"id":"rule-id"`, `"trigger_delay_seconds":3`, `"refresh_after_seconds":300`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
+		`"include_conditions":[{"id":"condition-include"`,
+		`"exclude_conditions":[{"id":"condition-exclude"`,
 	} {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)
@@ -92,6 +101,10 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 	if store.markedProjectID != "" {
 		t.Errorf("configuration fetch marked widget activity for %q", store.markedProjectID)
 	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestConfigurationPreflightIsAuthorizedAgainstProject(t *testing.T) {

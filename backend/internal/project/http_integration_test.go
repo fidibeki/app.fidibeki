@@ -222,11 +222,23 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(badRegex.Body.String(), `"accent_color"`) {
 		t.Errorf("field validation status = %d, body = %s", badRegex.Code, badRegex.Body.String())
 	}
+	invalidConditions := performProjectRequest(
+		handler, "acme", http.MethodPost, "/v1/projects/"+created.Project.ID+"/widget-rules",
+		`{"name":"Invalid targeting","include_conditions":[`+
+			`{"matcher_type":"all_pages","matcher_value":null},`+
+			`{"matcher_type":"url_exact","matcher_value":"/checkout"}],`+
+			`"exclude_conditions":[],"trigger_type":"exit_intent"}`, ownerToken,
+	)
+	if invalidConditions.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidConditions.Body.String(), `"include_conditions"`) ||
+		!strings.Contains(invalidConditions.Body.String(), `"include_conditions[1].matcher_value"`) {
+		t.Errorf("targeting validation status = %d, body = %s", invalidConditions.Code, invalidConditions.Body.String())
+	}
 
 	ruleResponse := performProjectRequest(
 		handler, "acme", http.MethodPost, "/v1/projects/"+created.Project.ID+"/widget-rules",
 		`{"name":"Checkout","priority":10,"matcher_type":"url_prefix",`+
-			`"matcher_value":"https://example.com/checkout","trigger_type":"scroll",`+
+			`"matcher_value":"HTTPS://Example.com:443/checkout/?campaign=x#pay","trigger_type":"scroll",`+
 			`"trigger_scroll_percent":60,"theme":"auto","accent_color":"#12AbEf"}`, ownerToken,
 	)
 	if ruleResponse.Code != http.StatusCreated {
@@ -243,6 +255,11 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		createdRule.WidgetRule.RecurrenceDays == nil || *createdRule.WidgetRule.RecurrenceDays != 30 {
 		t.Errorf("widget recurrence defaults = %#v", createdRule.WidgetRule)
 	}
+	if createdRule.WidgetRule.MatcherValue == nil || *createdRule.WidgetRule.MatcherValue != "https://example.com/checkout" ||
+		len(createdRule.WidgetRule.IncludeConditions) != 1 || len(createdRule.WidgetRule.ExcludeConditions) != 0 ||
+		createdRule.WidgetRule.IncludeConditions[0].MatcherType != MatcherURLPrefix {
+		t.Errorf("legacy targeting projection = %#v", createdRule.WidgetRule)
+	}
 	publicConfiguration, err := (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
 		t.Fatalf("load public configuration: %v", err)
@@ -251,7 +268,9 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		publicConfiguration.Rules[0].ID != createdRule.WidgetRule.ID ||
 		publicConfiguration.Rules[0].RecurrenceMode != RecurrenceCooldown ||
 		publicConfiguration.Rules[0].RecurrenceDays == nil ||
-		*publicConfiguration.Rules[0].RecurrenceDays != 30 {
+		*publicConfiguration.Rules[0].RecurrenceDays != 30 ||
+		len(publicConfiguration.Rules[0].IncludeConditions) != 1 ||
+		len(publicConfiguration.Rules[0].ExcludeConditions) != 0 {
 		t.Errorf("public configuration = %#v", publicConfiguration)
 	}
 	gotRule := performProjectRequest(
@@ -284,14 +303,31 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	updatedRule := performProjectRequest(
 		handler, "acme", http.MethodPatch,
 		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID,
-		`{"name":"Checkout audio","matcher_type":"all_pages","trigger_type":"delay",`+
+		`{"name":"Checkout audio","include_conditions":[`+
+			`{"matcher_type":"url_exact","matcher_value":"https://example.com/checkout/?from=editor"},`+
+			`{"matcher_type":"url_prefix","matcher_value":"https://example.com/docs/"}],`+
+			`"exclude_conditions":[{"matcher_type":"url_prefix","matcher_value":"https://example.com/docs/private/"}],`+
+			`"trigger_type":"delay",`+
 			`"trigger_delay_seconds":3,"can_record_audio":true,"can_attach_screenshot":true,`+
 			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session"}`, ownerToken,
 	)
 	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) ||
 		!strings.Contains(updatedRule.Body.String(), `"recurrence_mode":"session"`) ||
-		!strings.Contains(updatedRule.Body.String(), `"recurrence_days":null`) {
+		!strings.Contains(updatedRule.Body.String(), `"recurrence_days":null`) ||
+		!strings.Contains(updatedRule.Body.String(), `"matcher_type":"url_exact"`) ||
+		!strings.Contains(updatedRule.Body.String(), `"matcher_value":"https://example.com/checkout"`) ||
+		!strings.Contains(updatedRule.Body.String(), `"exclude_conditions":[{"id":`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
+	}
+	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
+	if err != nil {
+		t.Fatalf("reload public configuration: %v", err)
+	}
+	if len(publicConfiguration.Rules) != 1 || len(publicConfiguration.Rules[0].IncludeConditions) != 2 ||
+		len(publicConfiguration.Rules[0].ExcludeConditions) != 1 ||
+		publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue == nil ||
+		*publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue != "https://example.com/docs/private" {
+		t.Errorf("updated public targeting = %#v", publicConfiguration.Rules)
 	}
 	listedRules := performProjectRequest(
 		handler, "acme", http.MethodGet, "/v1/projects/"+created.Project.ID+"/widget-rules", "", ownerToken,
