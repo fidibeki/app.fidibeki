@@ -1,0 +1,4 @@
+title = "Fidibeki Gitleaks configuration"
+
+[extend]
+useDefault = true

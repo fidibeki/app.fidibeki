@@ -1,4 +1,4 @@
-.PHONY: test test-short coverage format-check lint migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
+.PHONY: test test-short coverage format-check lint vulncheck migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
 
 test:
 	cd backend && go test ./...
@@ -15,6 +15,9 @@ format-check:
 
 lint:
 	cd backend && go vet ./...
+
+vulncheck:
+	cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
 migrate-up:
 	cd backend && go run ./cmd/fidibeki-api migrate up

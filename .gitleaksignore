@@ -1,0 +1,18 @@
+# Deterministic local encryption-key example. Duplicate detector matches share this fingerprint.
+86e2126c892a597ffee997d31627afb29b5f1cd8:.env.example:generic-api-key:38
+
+# Configuration and integration encryption fixtures. Duplicate detector matches share fingerprints.
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/config/config_test.go:generic-api-key:57
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/config/config_test.go:generic-api-key:81
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/config/config_test.go:generic-api-key:107
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/config/config_test.go:generic-api-key:153
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/integration/integration_test.go:generic-api-key:21
+
+# Authentication and signature fixtures used only by tests.
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/issue/issue_test.go:generic-api-key:146
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/middleware/proxy_host_test.go:generic-api-key:14
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/server/server_test.go:generic-api-key:212
+
+# Deterministic stream API-key fixtures used only by integration tests.
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/feedback/http_integration_test.go:generic-api-key:448
+86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/replay/http_integration_test.go:generic-api-key:315
