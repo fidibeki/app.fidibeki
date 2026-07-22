@@ -15,7 +15,16 @@ import {
   ShieldAlert,
 } from '@lucide/vue'
 import type { LocationQueryRaw } from 'vue-router'
-import type { FeedbackItem, FeedbackPage, FeedbackStatus, Project, TenantConfiguration } from '~/types/api'
+import type {
+  FeedbackItem,
+  FeedbackPage,
+  FeedbackStatus,
+  Member,
+  Project,
+  TenantConfiguration,
+  TriagePriority,
+  TriageTag,
+} from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 
 const route = useRoute()
@@ -90,6 +99,16 @@ const { data: configuration } = await useAsyncData(
   'tenant-configuration',
   () => $apiFetch<TenantConfiguration>('/v1/config'),
 )
+const { data: tagData } = await useAsyncData(
+  'feedback-triage-tags',
+  () => $apiFetch<{ tags: TriageTag[] }>('/v1/tags'),
+)
+const { data: memberData } = await useAsyncData(
+  'feedback-triage-members',
+  () => can('member:read')
+    ? $apiFetch<{ members: Member[] }>('/v1/members')
+    : Promise.resolve({ members: [] }),
+)
 const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
 
 watch(data, (page) => {
@@ -136,6 +155,21 @@ watch(() => route.fullPath, (fullPath) => {
 }, { flush: 'sync' })
 
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) || items.value[0])
+const triageTags = computed(() => {
+  const options = [...(tagData.value?.tags || [])]
+  for (const tag of selected.value?.tags || []) {
+    if (!options.some(option => option.id === tag.id)) options.push(tag)
+  }
+  return options.sort((left, right) => left.name.localeCompare(right.name))
+})
+const triageMembers = computed(() => {
+  const options = [...(memberData.value?.members || [])]
+  const assignee = selected.value?.assignee
+  if (assignee && !options.some(option => option.id === assignee.id)) {
+    options.push({ id: assignee.id, tenant_id: '', email: assignee.email, name: assignee.name || undefined, permissions: [] })
+  }
+  return options
+})
 
 function selectItem(item: FeedbackItem) {
   selectedId.value = item.id
@@ -188,6 +222,47 @@ async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
   }
+}
+
+async function updateSelectedTriage(body: Record<string, unknown>, success: string) {
+  if (!canWrite('feedback:update') || !selected.value || mutationPending.value) return
+  const feedbackID = selected.value.id
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ feedback: FeedbackItem }>(`/v1/feedbacks/${feedbackID}`, {
+      method: 'PATCH', body,
+    })
+    const index = items.value.findIndex(item => item.id === feedbackID)
+    if (index >= 0) items.value[index] = response.feedback
+    notice.value = success
+  } catch (updateError) {
+    mutationError.value = apiErrorMessage(updateError, 'Triage metadata could not be updated.')
+  } finally {
+    mutationPending.value = false
+    window.setTimeout(() => { notice.value = '' }, 3000)
+  }
+}
+
+function setSelectedPriority(priority: TriagePriority | null) {
+  return updateSelectedTriage({ priority: priority || 'none' }, 'Priority updated.')
+}
+
+function setSelectedAssignee(memberID: string | null) {
+  return updateSelectedTriage(memberID ? { assignee_id: memberID } : { unassign: true }, 'Assignee updated.')
+}
+
+function toggleSelectedTag(tagID: string, checked: boolean) {
+  return updateSelectedTriage(checked ? { add_tag_ids: [tagID] } : { remove_tag_ids: [tagID] }, 'Tags updated.')
+}
+
+function assigneeInitials(item: FeedbackItem) {
+  const value = item.assignee?.name || item.assignee?.email || ''
+  return value.split(/\s+|@/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
+}
+
+function priorityLabel(priority?: TriagePriority | null) {
+  return priority ? priority[0].toUpperCase() + priority.slice(1) : ''
 }
 
 async function reprocess(ids: string[]) {
@@ -282,6 +357,12 @@ useHead({ title: 'Feedback · Fidibeki' })
           <span v-else class="feedback-row-check" aria-hidden="true" />
           <RatingMark v-if="item.rating" :rating="item.rating" compact /><span v-else class="feedback-no-rating">—</span>
           <div class="feedback-row-copy"><strong>{{ copy(item) }}</strong><span>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</span></div>
+          <div class="feedback-triage-markers">
+            <span v-if="item.priority" class="feedback-priority-mark" :data-priority="item.priority">{{ priorityLabel(item.priority) }}</span>
+            <span v-if="item.assignee" class="feedback-assignee-mark" :title="item.assignee.name || item.assignee.email">{{ assigneeInitials(item) }}</span>
+            <span v-if="item.tags?.length" class="feedback-tag-marks" :title="item.tags.map(tag => tag.name).join(', ')"><i v-for="tag in item.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
+            <span v-if="!item.priority && !item.assignee && !item.tags?.length" class="muted">Untriaged</span>
+          </div>
           <AttachmentIcons :attachments="item.attachment_kinds" />
           <span class="status-pill" :class="`status-${item.ai_status}`">{{ item.ai_status }}</span>
           <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">Unlinked</span>
@@ -298,7 +379,22 @@ useHead({ title: 'Feedback · Fidibeki' })
       <header><div><span class="app-eyebrow">{{ selected.project_name }}</span><h2>{{ selected.public_id }}</h2></div><div><button title="Previous feedback" @click="moveSelection(-1)"><ChevronLeft :size="16" /></button><button title="Next feedback" @click="moveSelection(1)"><ChevronRight :size="16" /></button><NuxtLink :to="`/feedback/${selected.id}`" title="Open full detail"><ExternalLink :size="16" /></NuxtLink></div></header>
       <div class="feedback-inspector-summary"><RatingMark v-if="selected.rating" :rating="selected.rating" /><span v-else class="feedback-no-rating">No rating</span><div><b>{{ selected.page_url }}</b><span>{{ formatAge(selected.created_at) }} · {{ selected.browser || 'Unknown browser' }}</span></div><span class="status-pill" :class="`status-${selected.status}`">{{ selected.status }}</span></div>
       <nav aria-label="Feedback detail sections"><button :data-active="inspectorTab === 'feedback'" @click="inspectorTab = 'feedback'">Feedback</button><button :data-active="inspectorTab === 'evidence'" @click="inspectorTab = 'evidence'">Evidence</button><button :data-active="inspectorTab === 'replay'" @click="inspectorTab = 'replay'">Replay</button></nav>
-      <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body"><p class="feedback-quote">{{ selected.description || selected.text || 'No written feedback' }}</p><dl><div><dt>Reporter</dt><dd>{{ selected.reporter_email || 'Anonymous' }}</dd></div><div><dt>Sentiment</dt><dd>{{ selected.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Issue</dt><dd>{{ selected.issue_public_id || 'Not linked' }}</dd></div><div><dt>AI</dt><dd><span class="status-pill" :class="`status-${selected.ai_status}`">{{ selected.ai_status }}</span></dd></div></dl></div>
+      <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body">
+        <p class="feedback-quote">{{ selected.description || selected.text || 'No written feedback' }}</p>
+        <OperationalTriageControls
+          :priority="selected.priority"
+          :assignee="selected.assignee"
+          :tags="selected.tags || []"
+          :tag-options="triageTags"
+          :members="triageMembers"
+          :editable="canWrite('feedback:update')"
+          :pending="mutationPending"
+          @set-priority="setSelectedPriority"
+          @set-assignee="setSelectedAssignee"
+          @toggle-tag="toggleSelectedTag"
+        />
+        <dl><div><dt>Reporter</dt><dd>{{ selected.reporter_email || 'Anonymous' }}</dd></div><div><dt>Sentiment</dt><dd>{{ selected.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Issue</dt><dd>{{ selected.issue_public_id || 'Not linked' }}</dd></div><div><dt>AI</dt><dd><span class="status-pill" :class="`status-${selected.ai_status}`">{{ selected.ai_status }}</span></dd></div></dl>
+      </div>
       <div v-else-if="inspectorTab === 'evidence'" class="feedback-inspector-body feedback-inspector-evidence"><AttachmentIcons :attachments="selected.attachment_kinds" /><p>{{ selected.attachment_kinds.length ? 'Open full detail to inspect captured evidence.' : 'No evidence was attached.' }}</p></div>
       <div v-else class="feedback-inspector-body feedback-inspector-evidence"><PanelRightOpen :size="24" /><p>{{ selected.has_replay ? 'A session replay is attached and available in full detail.' : 'No replay is attached.' }}</p></div>
       <footer><template v-if="canWrite('feedback:update')"><button v-if="selected.status !== 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'open')">Reopen</button><button v-else class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'archived')"><Archive :size="15" /> Archive</button></template><NuxtLink class="app-button app-button--primary" :to="selected.issue_id ? `/issues/${selected.issue_id}` : `/feedback/${selected.id}`"><Link2 :size="15" /> {{ selected.issue_id ? 'Open issue' : 'Triage' }}</NuxtLink></footer>
@@ -334,7 +430,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-bulk-bar button.danger { background: #64323a; border-color: #85505a; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
-.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 82px 70px 94px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 86px 82px 78px 86px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .feedback-stream article:hover { background: #f7faf9; }
 .feedback-stream article[data-selected='true'] { background: #eaf3f0; box-shadow: inset 3px 0 var(--teal); }
 .feedback-row-check { display: grid; place-items: center; }
@@ -343,6 +439,17 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-row-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-row-copy strong { font-size: 11px; }
 .feedback-row-copy span { color: var(--muted); font-size: 9px; }
+.feedback-triage-markers { display: flex; min-width: 0; height: 28px; align-items: center; gap: 4px; overflow: hidden; }
+.feedback-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: #315b52; background: #eaf3f0; border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.feedback-priority-mark[data-priority='high'] { color: #8d4918; background: #fff0e3; }
+.feedback-priority-mark[data-priority='urgent'] { color: #92333f; background: #fbe9eb; }
+.feedback-assignee-mark { display: grid; width: 23px; height: 23px; flex: 0 0 23px; place-items: center; color: #315b52; background: #dce9e6; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; font-weight: 800; }
+.feedback-tag-marks { display: flex; min-width: 10px; gap: 2px; }
+.feedback-tag-marks i { width: 6px; height: 18px; flex: 0 0 6px; border-radius: 2px; }
+.feedback-triage-markers > .muted { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-stream article > .status-pill,
+.feedback-stream article > .issue-label,
+.feedback-stream article > .muted { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-stream time { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
 .feedback-no-rating { display: inline-grid; min-width: 34px; height: 28px; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
 .feedback-mobile-open { display: grid; width: 26px; height: 30px; place-items: center; color: var(--muted); border-radius: 4px; }
@@ -377,7 +484,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 
 @media (max-width: 1240px) {
   .feedback-workspace { grid-template-columns: minmax(500px, 1fr) 340px; }
-  .feedback-stream article { grid-template-columns: 22px 36px minmax(170px, 1fr) 70px 64px 34px 20px; }
+  .feedback-stream article { grid-template-columns: 22px 36px minmax(170px, 1fr) 78px 70px 64px 34px 20px; }
   .feedback-stream article :deep(.attachment-icons) { display: none; }
   .feedback-stream article .issue-label,
   .feedback-stream article > .muted { display: none; }
@@ -396,6 +503,7 @@ useHead({ title: 'Feedback · Fidibeki' })
   .feedback-stream-head { min-height: 72px; padding: 12px 14px; }
   .feedback-filter-bar { top: 56px; padding: 7px 10px; }
   .feedback-stream article { grid-template-columns: 22px 34px minmax(0, 1fr) 34px 20px; gap: 7px; padding: 0 8px; }
+  .feedback-stream article .feedback-triage-markers,
   .feedback-stream article .status-pill,
   .feedback-stream article time { display: none; }
   .feedback-more-filters > div { position: fixed; top: 118px; right: 10px; left: 10px; width: auto; }

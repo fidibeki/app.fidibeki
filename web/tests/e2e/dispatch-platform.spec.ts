@@ -37,6 +37,16 @@ function createMockState() {
     name: 'Alex Morgan',
     permissions: [...allTenantPermissions],
   }
+  const members = [member, {
+    id: 'member-2',
+    tenant_id: tenant.id,
+    email: 'jamie@acme.test',
+    name: 'Jamie Torres',
+    permissions: ['feedback:read', 'feedback:update', 'issue:read', 'issue:update'],
+  }]
+  const tags = [{ id: 'tag-checkout', name: 'Checkout', color: '#167D68' }, {
+    id: 'tag-regression', name: 'Regression', color: '#7C3AED',
+  }]
   const projects = [{
     id: 'project-1',
     tenant_id: tenant.id,
@@ -104,6 +114,9 @@ function createMockState() {
     language: 'en-US',
     status: 'open',
     ai_status: 'completed',
+    priority: 'high' as 'low' | 'medium' | 'high' | 'urgent' | null,
+    assignee: { id: member.id, name: member.name, email: member.email } as { id: string, name?: string, email: string } | null,
+    tags: [tags[0]],
     sentiment_score: -0.74,
     moderation_flags: [],
     attachment_kinds: ['screenshot', 'replay'],
@@ -124,6 +137,9 @@ function createMockState() {
     page_url: 'https://shop.acme.test/checkout/success',
     status: 'open',
     ai_status: 'completed',
+    priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
+    assignee: null as { id: string, name?: string, email: string } | null,
+    tags: [] as typeof tags,
     sentiment_score: 0.86,
     moderation_flags: [],
     attachment_kinds: [],
@@ -163,6 +179,8 @@ function createMockState() {
   return {
     tenant,
     member,
+    members,
+    tags,
     projects,
     widgetRules,
     feedback,
@@ -372,8 +390,25 @@ async function installMockAPI(page: Page, state: MockState) {
     if (feedbackMatch && method === 'GET') return json(route, { feedback: feedbackDetail(state, feedbackMatch[1]) })
     if (feedbackMatch && method === 'PATCH') {
       const item = state.feedback.find(candidate => candidate.id === feedbackMatch[1])
-      if (item && body().status) item.status = String(body().status)
-      if (item && body().title) item.title = String(body().title)
+      const input = body()
+      if (item && input.status) item.status = String(input.status)
+      if (item && input.title) item.title = String(input.title)
+      if (item && input.priority) item.priority = input.priority === 'none' ? null : String(input.priority) as typeof item.priority
+      if (item && input.unassign) item.assignee = null
+      if (item && input.assignee_id) {
+        const assignee = state.members.find(candidate => candidate.id === input.assignee_id)
+        item.assignee = assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null
+      }
+      if (item && Array.isArray(input.remove_tag_ids)) {
+        item.tags = item.tags.filter(tag => !(input.remove_tag_ids as string[]).includes(tag.id))
+      }
+      if (item && Array.isArray(input.add_tag_ids)) {
+        for (const tagID of input.add_tag_ids as string[]) {
+          const tag = state.tags.find(candidate => candidate.id === tagID)
+          if (tag && !item.tags.some(candidate => candidate.id === tag.id)) item.tags.push(tag)
+        }
+        item.tags.sort((left, right) => left.name.localeCompare(right.name))
+      }
       return json(route, { feedback: item })
     }
     const feedbackIssueMatch = path.match(/^\/v1\/feedbacks\/([^/]+)\/issue$/)
@@ -425,7 +460,8 @@ async function installMockAPI(page: Page, state: MockState) {
       tenant: state.tenant,
       plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
     })
-    if (path === '/v1/members' && method === 'GET') return json(route, { members: [state.member] })
+    if (path === '/v1/members' && method === 'GET') return json(route, { members: state.members })
+    if (path === '/v1/tags' && method === 'GET') return json(route, { tags: state.tags })
     if (path === '/auth/invite' && method === 'POST') return json(route, {}, 202)
     if (path === '/v1/api-keys' && method === 'GET') return json(route, { api_keys: state.apiKeys })
     if (path === '/v1/api-keys' && method === 'POST') {
@@ -837,6 +873,35 @@ test('feedback queue links apply their filters without a document reload', async
   expect(documentRequests).toBe(documentRequestsBeforeQueueNavigation)
 })
 
+test('feedback inspector persists operational triage metadata', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The inspector is a desktop workflow')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const inspector = page.locator('.feedback-inspector')
+  await expect(inspector.getByRole('group', { name: 'Priority' })).toBeVisible()
+  await inspector.getByRole('button', { name: 'Urgent priority' }).click()
+  await inspector.getByLabel('Assignee').selectOption('member-2')
+  await inspector.getByLabel('Regression tag').check()
+  await inspector.getByLabel('Checkout tag').uncheck()
+
+  expect(state.feedback[0].priority).toBe('urgent')
+  expect(state.feedback[0].assignee?.id).toBe('member-2')
+  expect(state.feedback[0].tags.map(tag => tag.id)).toEqual(['tag-regression'])
+
+  await page.reload()
+  await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
+  await openPrimary(page, 'Feedback')
+  await expect(inspector.getByRole('button', { name: 'Urgent priority' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(inspector.getByLabel('Assignee')).toHaveValue('member-2')
+  await expect(inspector.getByLabel('Regression tag')).toBeChecked()
+  const row = page.getByRole('listitem').filter({ hasText: 'FB-1048' })
+  await expect(row.locator('.feedback-priority-mark')).toHaveText('Urgent')
+  await expect(row.locator('.feedback-assignee-mark')).toHaveText('JT')
+  await capture(page, testInfo, 'feedback-operational-triage')
+})
+
 test('all-status and clear-filters choices survive route synchronization', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Filter routing is viewport independent')
   const state = createMockState()
@@ -898,6 +963,10 @@ test('read-only members can inspect feedback without mutation controls', async (
   await expect(page.getByRole('button', { name: 'Spam', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Reprocess AI', exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Open issue', exact: true })).toBeVisible()
+  await expect(page.locator('.feedback-inspector').getByText('High', { exact: true })).toBeVisible()
+  await expect(page.locator('.feedback-inspector').getByText('Alex Morgan', { exact: true })).toBeVisible()
+  await expect(page.locator('.feedback-inspector').getByRole('group', { name: 'Priority' })).toHaveCount(0)
+  await expect(page.locator('.feedback-inspector').getByLabel('Assignee')).toHaveCount(0)
 
   await page.getByTitle('Open full detail').click()
   await expect(page).toHaveURL(/\/feedback\/feedback-1$/)

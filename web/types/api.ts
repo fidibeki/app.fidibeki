@@ -3,6 +3,19 @@ export type TenantStatus = 'active' | 'trial' | 'suspended' | 'cancelled'
 export type FeedbackStatus = 'open' | 'spam' | 'archived'
 export type ProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped'
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+export type TriagePriority = 'low' | 'medium' | 'high' | 'urgent'
+
+export interface TriageAssignee {
+  id: string
+  name?: string | null
+  email: string
+}
+
+export interface TriageTag {
+  id: string
+  name: string
+  color: string
+}
 
 export interface Member {
   id: string
@@ -132,6 +145,9 @@ export interface FeedbackItem {
   ai_actionability?: 'actionable' | 'not_actionable' | 'uncertain'
   ai_category?: string
   ai_priority?: 'low' | 'medium' | 'high' | 'urgent'
+  priority?: TriagePriority | null
+  assignee?: TriageAssignee | null
+  tags: TriageTag[]
   reporter_email?: string
   notify_reporter: boolean
   page_url: string
@@ -210,6 +226,9 @@ export interface Issue {
   title: string
   description: string
   status: IssueStatus
+  priority?: TriagePriority | null
+  assignee?: TriageAssignee | null
+  tags: TriageTag[]
   merged_into_id?: string
   merged_at?: string
   reporter_email?: string
