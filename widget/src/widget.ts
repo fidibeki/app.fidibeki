@@ -16,6 +16,8 @@ interface MountOptions {
   apiBase: URL
 	assetBase: URL
 	replaySessionID: string | null
+  onVisible(): void
+  onInteraction(): void
   onSubmitted(): void
   onDismissed(): void
 }
@@ -68,8 +70,24 @@ export function mountWidget(options: MountOptions): () => void {
 	let screenshot: (() => Blob | null) | null = null
 	let pendingAttachments: PendingAttachment[] | null = null
 	let accepted = false
+	let interactionReported = false
 	const clientFeedbackID = randomID()
   const cleanups: Array<() => void> = []
+	const reportInteraction = () => {
+		if (interactionReported) return
+		interactionReported = true
+		try {
+			options.onInteraction()
+		} catch {
+			// Analytics must not interfere with feedback input.
+		}
+	}
+	shadow.addEventListener('click', (event) => {
+		const target = event.target
+		const button = target instanceof Element ? target.closest('button') : null
+		if (button && button !== closeButton) reportInteraction()
+	})
+	text?.addEventListener('input', reportInteraction)
 
   if (options.rule.can_rate) {
     void import(new URL('rating.js', options.assetBase).href).then((module) => {
@@ -130,6 +148,7 @@ export function mountWidget(options: MountOptions): () => void {
   })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
+		reportInteraction()
     submitButton.disabled = true
     message.textContent = 'Sending...'
     try {
@@ -179,6 +198,12 @@ export function mountWidget(options: MountOptions): () => void {
       void reportError(options, error, 'submission')
     }
   })
+
+	try {
+		options.onVisible()
+	} catch {
+		// Analytics must not interfere with the visible widget.
+	}
 
   return destroy
 }

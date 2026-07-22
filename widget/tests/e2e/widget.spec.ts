@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import type { WidgetConfiguration, WidgetRule } from '../../src/types'
 
 const browserRule: WidgetRule = {
@@ -55,24 +56,182 @@ test('emits matched once per canonical page view before suppression', async ({ p
   await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
 
   await page.goto('/sample.html?asset=BAI#price')
-  await expect.poll(() => events.length).toBe(1)
+  await expect.poll(() => events.filter(event => event.event_type === 'matched').length).toBe(1)
   await page.evaluate(() => history.replaceState({}, '', '/sample.html/?asset=BIC#details'))
-  await expect.poll(() => events.length).toBe(1)
+  await expect.poll(() => events.filter(event => event.event_type === 'matched').length).toBe(1)
   await page.evaluate(() => {
     history.pushState({}, '', '/not-targeted?asset=BFA')
     history.pushState({}, '', '/sample.html?asset=ENSA')
   })
-  await expect.poll(() => events.length).toBe(2)
+  await expect.poll(() => events.filter(event => event.event_type === 'matched').length).toBe(2)
 
-  expect(events.map(event => event.event_type)).toEqual(['matched', 'matched'])
-  expect(events.map(event => event.page_url)).toEqual([
+  const matchedEvents = events.filter(event => event.event_type === 'matched')
+  expect(matchedEvents.map(event => event.page_url)).toEqual([
     'http://127.0.0.1:4173/sample.html',
     'http://127.0.0.1:4173/sample.html',
   ])
-  expect(events[1]?.visitor_id).toBe(events[0]?.visitor_id)
-  expect(events[1]?.page_view_id).not.toBe(events[0]?.page_view_id)
-  expect(events[0]?.rule_id).toBe('rule-browser')
+  expect(matchedEvents[1]?.visitor_id).toBe(matchedEvents[0]?.visitor_id)
+  expect(matchedEvents[1]?.page_view_id).not.toBe(matchedEvents[0]?.page_view_id)
+  expect(matchedEvents[0]?.rule_id).toBe('rule-browser')
 })
+
+test('records visibility and only the first meaningful interaction', async ({ page }) => {
+  const eventTypes: string[] = []
+  await page.unroute('**/v1/widget/events*')
+  await page.route('**/v1/widget/events*', async (route) => {
+    const payload = route.request().postDataJSON() as { events: Array<{ event_id: string; event_type: string }> }
+    eventTypes.push(...payload.events.map(event => event.event_type))
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted_event_ids: payload.events.map(event => event.event_id), duplicate_event_ids: [] }),
+    })
+  })
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(browserConfiguration()),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect.poll(() => eventTypes).toEqual(['matched', 'impression'])
+  await page.getByRole('textbox', { name: 'Feedback' }).focus()
+  await page.getByRole('heading', { name: 'How clear was checkout?' }).hover()
+  await page.waitForTimeout(100)
+  expect(eventTypes).toEqual(['matched', 'impression'])
+
+  await page.getByRole('button', { name: '5 out of 5' }).click()
+  await expect.poll(() => eventTypes).toEqual(['matched', 'impression', 'interaction'])
+  await page.getByRole('textbox', { name: 'Feedback' }).fill('Still only one interaction.')
+  await page.getByRole('button', { name: 'Attach page element' }).click()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+  await page.waitForTimeout(100)
+  expect(eventTypes).toEqual(['matched', 'impression', 'interaction'])
+})
+
+const meaningfulInteractions: Array<{ name: string; act(page: Page): Promise<void> }> = [
+  {
+    name: 'rating selection',
+    act: async (page) => page.getByRole('button', { name: '4 out of 5' }).click(),
+  },
+  {
+    name: 'feedback text',
+    act: async (page) => page.getByRole('textbox', { name: 'Feedback' }).fill('A concrete observation.'),
+  },
+  {
+    name: 'attachment start',
+    act: async (page) => {
+      await page.getByRole('button', { name: 'Attach page element' }).click()
+      await page.keyboard.press('Escape')
+    },
+  },
+  {
+    name: 'submission attempt',
+    act: async (page) => page.getByRole('button', { name: 'Send feedback' }).click(),
+  },
+]
+
+for (const interaction of meaningfulInteractions) {
+  test(`counts ${interaction.name} as a meaningful interaction`, async ({ page }) => {
+    const events = await captureAnalytics(page, browserConfiguration())
+    await page.route('**/v1/feedback?*', (route) => route.fulfill({ status: 500, body: '{}' }))
+    await page.goto('/sample.html')
+    await expect.poll(() => events).toEqual(['matched', 'impression'])
+    await interaction.act(page)
+    await expect.poll(() => events).toEqual(['matched', 'impression', 'interaction'])
+  })
+}
+
+for (const trigger of ['scroll', 'exit_intent'] as const) {
+  test(`${trigger} records impression only after the trigger fires`, async ({ page }) => {
+    if (trigger === 'scroll') {
+      await page.addInitScript(() => {
+        window.addEventListener('DOMContentLoaded', () => {
+          document.body.style.minHeight = '4000px'
+        })
+      })
+    }
+    const configuredRule = {
+      ...browserRule,
+      trigger_type: trigger,
+      trigger_delay_seconds: null,
+      trigger_scroll_percent: trigger === 'scroll' ? 50 : null,
+    } satisfies WidgetRule
+    const events = await captureAnalytics(page, browserConfiguration(configuredRule))
+    await page.goto('/sample.html')
+    await expect.poll(() => events).toEqual(['matched'])
+    await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+    if (trigger === 'scroll') {
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    } else {
+      await page.evaluate(() => document.dispatchEvent(new MouseEvent('mouseout', {
+        clientY: 0,
+        relatedTarget: null,
+      })))
+    }
+    await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+    await expect.poll(() => events).toEqual(['matched', 'impression'])
+  })
+}
+
+test('does not count an untriggered or recurrence-suppressed widget as visible', async ({ page }) => {
+  const events: string[] = []
+  const delayedRule = { ...browserRule, trigger_delay_seconds: 60 } satisfies WidgetRule
+  let configuration = browserConfiguration(delayedRule)
+  await page.unroute('**/v1/widget/events*')
+  await page.route('**/v1/widget/events*', async (route) => {
+    const payload = route.request().postDataJSON() as { events: Array<{ event_id: string; event_type: string }> }
+    events.push(...payload.events.map(event => event.event_type))
+    await route.fulfill({ status: 202, contentType: 'application/json', body: '{"accepted_event_ids":[],"duplicate_event_ids":[]}' })
+  })
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/v1/feedback?*', (route) => route.fulfill({
+    status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_suppressed"}',
+  }))
+
+  await page.goto('/sample.html')
+  await expect.poll(() => events).toEqual(['matched'])
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+
+  configuration = browserConfiguration({ ...browserRule, recurrence_mode: 'never', recurrence_days: null })
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+  await expect(page.getByText('Your feedback was sent.')).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+  expect(events.filter(event => event === 'matched')).toHaveLength(3)
+  expect(events.filter(event => event === 'impression')).toHaveLength(1)
+})
+
+async function captureAnalytics(page: Page, configuration: WidgetConfiguration): Promise<string[]> {
+  const events: string[] = []
+  await page.unroute('**/v1/widget/events*')
+  await page.route('**/v1/widget/events*', async (route) => {
+    const payload = route.request().postDataJSON() as { events: Array<{ event_id: string; event_type: string }> }
+    events.push(...payload.events.map(event => event.event_type))
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted_event_ids: payload.events.map(event => event.event_id), duplicate_event_ids: [] }),
+    })
+  })
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+  return events
+}
 
 test('loads the matching rule and serializes feedback through the public contract', async ({ page }) => {
   const loadedScripts: string[] = []

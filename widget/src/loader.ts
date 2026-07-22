@@ -6,7 +6,11 @@ import {
   type ConfigCache,
   type TargetingRegexModule,
 } from './config'
-import { createAnalyticsTracker, reportFunnelEvents } from './analytics'
+import {
+  createAnalyticsTracker,
+  reportFunnelEvents,
+  type FunnelEventType,
+} from './analytics'
 import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -20,7 +24,9 @@ interface WidgetModule {
     publicKey: string
     apiBase: URL
     assetBase: URL
-		replaySessionID: string | null
+    replaySessionID: string | null
+    onVisible(): void
+    onInteraction(): void
     onSubmitted(): void
     onDismissed(): void
   }): WidgetUnmount
@@ -65,6 +71,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let evaluation = 0
   const widgetSessionID = currentSessionID()
   const analytics = createAnalyticsTracker({ storage: localStorageIfAvailable() })
+  let analyticsDelivery = Promise.resolve()
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -88,6 +95,16 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     return value
   }
 
+  const recordAnalytics = (eventType: FunnelEventType, rule: WidgetRule) => {
+    const event = analytics.record(eventType, rule.id)
+    if (!event) return
+    analyticsDelivery = analyticsDelivery
+      .then(() => reportFunnelEvents({ endpoint: analyticsEndpoint, publicKey: key, events: [event] }))
+      .catch((error: unknown) => {
+        void report(error, 'analytics')
+      })
+  }
+
   const evaluate = async (forceRefresh = false) => {
     const currentEvaluation = ++evaluation
     const evaluationURL = window.location.href
@@ -105,14 +122,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       })
 			if (currentEvaluation !== evaluation) return
 			if (rule) {
-				const matched = analytics.record('matched', rule.id)
-				if (matched) {
-					void reportFunnelEvents({
-						endpoint: analyticsEndpoint,
-						publicKey: key,
-						events: [matched],
-					}).catch((error: unknown) => report(error, 'analytics'))
-				}
+				recordAnalytics('matched', rule)
 				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
 			}
 			await synchronizeReplay(configuration, rule)
@@ -121,6 +131,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       cleanupTrigger = armTrigger(rule, () => {
         void import(new URL('widget.js', assetBase).href)
           .then((module) => {
+            if (currentEvaluation !== evaluation) return
             unmountWidget = (module as WidgetModule).mountWidget({
               configuration,
               rule,
@@ -128,6 +139,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               apiBase: assetBase,
               assetBase,
 					replaySessionID: replayCapture?.sessionID ?? null,
+              onVisible: () => recordAnalytics('impression', rule),
+              onInteraction: () => recordAnalytics('interaction', rule),
               onSubmitted: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'dismissed'),
             })
