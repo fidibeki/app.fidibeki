@@ -43,13 +43,14 @@ Update the backend dependency graph to at least these exact versions:
 - `github.com/jackc/pgx/v5 v5.9.2`
 - `golang.org/x/net v0.56.0`
 - `golang.org/x/text v0.39.0`
-- `golang.org/x/crypto v0.52.0`
+- `golang.org/x/crypto v0.53.0`
 - `google.golang.org/grpc v1.79.3`
 
 The first two are direct dependencies. The remaining modules may stay indirect, but they are pinned
-explicitly because the audited graph otherwise resolves to vulnerable versions. Dependency changes
-are produced with Go module tooling, followed by `go mod tidy`; `go.mod` and `go.sum` remain the only
-dependency source of truth.
+explicitly because the audited graph otherwise resolves to vulnerable versions. `x/crypto v0.53.0`
+is required by `x/net v0.56.0` and supersedes the independently safe `v0.52.0` audit floor.
+Dependency changes are produced with Go module tooling, followed by `go mod tidy`; `go.mod` and
+`go.sum` remain the only dependency source of truth.
 
 The implementation must not hide a vulnerability with an analyzer ignore. If a listed version is
 incompatible with the application, the change stops for a code-level compatibility fix or a newly
