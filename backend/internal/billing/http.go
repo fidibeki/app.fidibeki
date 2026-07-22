@@ -38,16 +38,17 @@ func RegisterTenantRoutes(router chi.Router, options HTTPOptions) {
 	handler := &HTTPHandler{options: options}
 	read := []func(http.Handler) http.Handler{
 		appmiddleware.RequireTenantMember(options.JWT),
-		appmiddleware.RequirePermission(auth.PermissionBillingRead),
+		appmiddleware.RequireAnyPermission(auth.PermissionBillingRead, auth.PermissionBillingManage),
 	}
 	manage := []func(http.Handler) http.Handler{
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionBillingManage),
 	}
+	writableManage := append(manage, appmiddleware.RequireWritable)
 	router.With(read...).Get("/v1/billing", handler.getBilling)
-	router.With(manage...).Post("/v1/billing/checkout", handler.checkout)
-	router.With(manage...).Post("/v1/billing/portal", handler.portal)
-	router.With(manage...).Post("/v1/billing/delete-account", handler.deleteAccount)
+	router.With(writableManage...).Post("/v1/billing/checkout", handler.checkout)
+	router.With(writableManage...).Post("/v1/billing/portal", handler.portal)
+	router.With(writableManage...).Post("/v1/billing/delete-account", handler.deleteAccount)
 	router.With(manage...).Post("/v1/billing/cancel-deletion", handler.cancelDeletion)
 }
 

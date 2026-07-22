@@ -1,11 +1,56 @@
 package feedback
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
+
+func TestAttachmentStreamTenantResolutionAllowsDeletionGraceReads(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	expired := now.Add(-time.Hour)
+	deletionRequestedAt := now.Add(-24 * time.Hour)
+	for _, test := range []struct {
+		name     string
+		status   tenant.Status
+		trialEnd *time.Time
+	}{
+		{name: "suspended", status: tenant.StatusSuspended},
+		{name: "expired trial", status: tenant.StatusTrial, trialEnd: &expired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler := &AttachmentStreamHTTPHandler{
+				options: AttachmentStreamHTTPOptions{
+					BaseDomain: "localhost",
+					Resolver: tenant.ResolverFunc(func(context.Context, string) (tenant.Tenant, error) {
+						return tenant.Tenant{
+							ID: "tenant-id", Slug: "acme", Status: test.status,
+							TrialEndsAt: test.trialEnd, DeletionRequestedAt: &deletionRequestedAt,
+						}, nil
+					}),
+					Now: func() time.Time { return now },
+				},
+				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			request := httptest.NewRequest(http.MethodGet, "http://acme.localhost/content", nil)
+			request.Host = "acme.localhost"
+			recorder := httptest.NewRecorder()
+			resolved, ok := handler.resolveTenant(recorder, request)
+			if !ok || resolved.ID != "tenant-id" {
+				t.Fatalf("resolveTenant() = %#v/%t, want pending-deletion tenant", resolved, ok)
+			}
+		})
+	}
+}
 
 func TestParseTenantFeedbackOptions(t *testing.T) {
 	request := httptest.NewRequest("GET", "/v1/feedbacks?"+url.Values{

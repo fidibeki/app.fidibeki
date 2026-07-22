@@ -5,7 +5,7 @@ import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDate } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
-const { can } = useAuth()
+const { canWrite } = useAuth()
 const createOpen = ref(false)
 const name = ref('')
 const domains = ref('')
@@ -22,7 +22,7 @@ function parsedDomains() {
 }
 
 async function createProject() {
-  if (pending.value) return
+  if (!canWrite('project:create') || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -44,10 +44,10 @@ useHead({ title: 'Projects · Fidibeki' })
 
 <template>
   <div class="app-page projects-page">
-    <header class="app-page-head"><div><p class="app-eyebrow">Collection</p><h1>Projects</h1><span>Manage widget origins, rules, and public embed keys.</span></div><button v-if="can('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></header>
+    <header class="app-page-head"><div><p class="app-eyebrow">Collection</p><h1>Projects</h1><span>Manage widget origins, rules, and public embed keys.</span></div><button v-if="canWrite('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></header>
     <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading projects</h2></div></section>
     <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Projects unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
-    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>No projects yet</h2><p>Create a project to receive a scoped public key and configure the feedback widget.</p><button v-if="can('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></section>
+    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>No projects yet</h2><p>Create a project to receive a scoped public key and configure the feedback widget.</p><button v-if="canWrite('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></section>
     <section v-else class="project-list app-surface">
       <header><span>Project</span><span>Allowed origins</span><span>Public key</span><span>Updated</span><span /></header>
       <NuxtLink v-for="project in data.projects" :key="project.id" :to="`/projects/${project.id}`">

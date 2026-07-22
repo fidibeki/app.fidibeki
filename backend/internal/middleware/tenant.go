@@ -157,7 +157,7 @@ func RequireActive(next http.Handler) http.Handler {
 			return
 		}
 
-		active := resolved.Status == tenant.StatusActive
+		active := resolved.Status == tenant.StatusActive || resolved.DeletionRequestedAt != nil
 		validTrial := resolved.Status == tenant.StatusTrial &&
 			resolved.TrialEndsAt != nil && resolved.TrialEndsAt.After(time.Now())
 		if !active && !validTrial {

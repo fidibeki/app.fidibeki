@@ -157,6 +157,25 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if lastUsedAt == nil {
 		t.Error("API key last_used_at was not recorded")
 	}
+	if _, err := root.Exec(ctx, `UPDATE api_keys SET last_used_at = NULL WHERE id = $1`, created.APIKey.ID); err != nil {
+		t.Fatalf("reset API key usage: %v", err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE tenants SET deletion_requested_at = now() WHERE id = $1`, acmeID); err != nil {
+		t.Fatalf("schedule tenant deletion: %v", err)
+	}
+	graceRead := performAPIKeyRequest(handler, "acme", http.MethodGet, "/v1/key-probe", "", raw)
+	if graceRead.Code != http.StatusNoContent {
+		t.Errorf("API key grace-period read status = %d, body = %s", graceRead.Code, graceRead.Body.String())
+	}
+	if err := root.QueryRow(ctx, `SELECT last_used_at FROM api_keys WHERE id = $1`, created.APIKey.ID).Scan(&lastUsedAt); err != nil {
+		t.Fatalf("load grace-period API key usage: %v", err)
+	}
+	if lastUsedAt != nil {
+		t.Errorf("API key grace-period read updated last_used_at to %s", lastUsedAt)
+	}
+	if _, err := root.Exec(ctx, `UPDATE tenants SET deletion_requested_at = NULL WHERE id = $1`, acmeID); err != nil {
+		t.Fatalf("cancel tenant deletion: %v", err)
+	}
 	crossTenantKey := performAPIKeyRequest(handler, "beta", http.MethodGet, "/v1/key-probe", "", raw)
 	if crossTenantKey.Code != http.StatusUnauthorized {
 		t.Errorf("cross-tenant API key status = %d, body = %s", crossTenantKey.Code, crossTenantKey.Body.String())

@@ -146,6 +146,10 @@ func (h *HTTPHandler) connected(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if configuration.DeletionRequestedAt != nil {
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "tenant is pending deletion and is read-only", nil)
+		return
+	}
 	if _, exists := config.PlanFor(configuration.Plan); !exists {
 		h.logger.ErrorContext(r.Context(), "widget connection project has unknown plan", "project_id", configuration.ProjectID)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)

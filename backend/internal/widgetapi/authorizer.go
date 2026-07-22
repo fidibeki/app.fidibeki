@@ -41,7 +41,7 @@ func (a Authorizer) Authorize(
 	if a.Now != nil {
 		now = a.Now()
 	}
-	active := configuration.Status == tenant.StatusActive
+	active := configuration.Status == tenant.StatusActive || configuration.DeletionRequestedAt != nil
 	validTrial := configuration.Status == tenant.StatusTrial && configuration.TrialEndsAt != nil &&
 		configuration.TrialEndsAt.After(now)
 	if (!active && !validTrial) || !OriginAllowed(origin, configuration.AllowedDomains) {

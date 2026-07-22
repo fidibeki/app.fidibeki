@@ -175,6 +175,24 @@ func TestConnectionRecordsActivityOnlyForEnabledConfigurationRule(t *testing.T) 
 	}
 }
 
+func TestConnectionDoesNotRecordActivityDuringDeletionGrace(t *testing.T) {
+	t.Parallel()
+	deletionRequestedAt := time.Now()
+	store := activeStore()
+	store.configuration.DeletionRequestedAt = &deletionRequestedAt
+	recorder := performWidgetRequest(
+		handlerForStore(store), http.MethodPost,
+		"/v1/widget/connected?key=pk_live_key&rule_id=rule-id", "", "https://example.com",
+	)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if store.markCalls != 0 {
+		t.Fatalf("MarkWidgetSeen calls = %d, want 0", store.markCalls)
+	}
+}
+
 func TestConnectionRejectsUnknownPlanWithoutRecordingActivity(t *testing.T) {
 	t.Parallel()
 	store := activeStore()
@@ -280,6 +298,51 @@ func TestConfigurationAllowsUnexpiredTrial(t *testing.T) {
 	}
 }
 
+func TestConfigurationRemainsReadableDuringDeletionGrace(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	expired := now.Add(-time.Hour)
+	deletionRequestedAt := now.Add(-24 * time.Hour)
+	for _, lifecycle := range []struct {
+		name     string
+		status   tenant.Status
+		trialEnd *time.Time
+	}{
+		{name: "suspended", status: tenant.StatusSuspended},
+		{name: "expired trial", status: tenant.StatusTrial, trialEnd: &expired},
+	} {
+		for _, route := range []struct {
+			name       string
+			method     string
+			wantStatus int
+		}{
+			{name: "config", method: http.MethodGet, wantStatus: http.StatusOK},
+			{name: "preflight", method: http.MethodOptions, wantStatus: http.StatusNoContent},
+		} {
+			t.Run(lifecycle.name+" "+route.name, func(t *testing.T) {
+				t.Parallel()
+				store := &configurationStoreStub{configuration: project.PublicConfiguration{
+					ProjectID: "project-id", AllowedDomains: []string{"example.com"},
+					Plan: tenant.PlanStarter, Status: lifecycle.status, TrialEndsAt: lifecycle.trialEnd,
+					DeletionRequestedAt: &deletionRequestedAt,
+					Rules:               []project.WidgetRule{{ID: "rule-id", MatcherType: project.MatcherAllPages}},
+				}}
+				handler := NewHTTPHandler(HTTPOptions{Store: store, Now: func() time.Time { return now }})
+				recorder := performWidgetRequest(
+					handler, route.method, "/v1/widget/config?key=pk_live_key",
+					"pk_live_key", "https://example.com",
+				)
+				if recorder.Code != route.wantStatus {
+					t.Fatalf("status = %d, want %d; body = %s", recorder.Code, route.wantStatus, recorder.Body.String())
+				}
+				if store.markCalls != 0 {
+					t.Fatalf("MarkWidgetSeen calls = %d, want 0", store.markCalls)
+				}
+			})
+		}
+	}
+}
+
 type configurationStoreStub struct {
 	configuration   project.PublicConfiguration
 	err             error
@@ -287,6 +350,7 @@ type configurationStoreStub struct {
 	markErr         error
 	markedProjectID string
 	seenAt          time.Time
+	markCalls       int
 }
 
 func (s *configurationStoreStub) MarkWidgetSeen(
@@ -295,6 +359,7 @@ func (s *configurationStoreStub) MarkWidgetSeen(
 	projectID string,
 	seenAt time.Time,
 ) error {
+	s.markCalls++
 	s.markedProjectID = projectID
 	s.seenAt = seenAt
 	return s.markErr

@@ -91,15 +91,18 @@ func TestRequireActiveBlocksSuspendedCancelledAndExpiredTrials(t *testing.T) {
 
 	now := time.Now()
 	tests := []struct {
-		name       string
-		status     tenant.Status
-		trialEnd   *time.Time
-		wantStatus int
+		name                string
+		status              tenant.Status
+		trialEnd            *time.Time
+		deletionRequestedAt *time.Time
+		wantStatus          int
 	}{
 		{name: "active", status: tenant.StatusActive, wantStatus: http.StatusNoContent},
 		{name: "valid trial", status: tenant.StatusTrial, trialEnd: timePointer(now.Add(time.Hour)), wantStatus: http.StatusNoContent},
 		{name: "expired trial", status: tenant.StatusTrial, trialEnd: timePointer(now.Add(-time.Hour)), wantStatus: http.StatusForbidden},
+		{name: "expired trial pending deletion", status: tenant.StatusTrial, trialEnd: timePointer(now.Add(-time.Hour)), deletionRequestedAt: &now, wantStatus: http.StatusNoContent},
 		{name: "suspended", status: tenant.StatusSuspended, wantStatus: http.StatusForbidden},
+		{name: "suspended pending deletion", status: tenant.StatusSuspended, deletionRequestedAt: &now, wantStatus: http.StatusNoContent},
 		{name: "cancelled", status: tenant.StatusCancelled, wantStatus: http.StatusForbidden},
 	}
 
@@ -111,6 +114,7 @@ func TestRequireActiveBlocksSuspendedCancelledAndExpiredTrials(t *testing.T) {
 				return tenant.Tenant{
 					ID: "0762af3d-01b4-452f-81ad-dabf7652395f", Slug: slug,
 					Status: tt.status, TrialEndsAt: tt.trialEnd,
+					DeletionRequestedAt: tt.deletionRequestedAt,
 				}, nil
 			})
 			resolve := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{

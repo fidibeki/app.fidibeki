@@ -91,6 +91,7 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	}
 	claims, err := appmiddleware.AuthenticateTenantCredential(
 		r.Context(), tx, h.options.JWT, resolved.ID, r.Header.Get("Authorization"),
+		resolved.DeletionRequestedAt == nil,
 	)
 	if errors.Is(err, appmiddleware.ErrTenantCredentialInvalid) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
@@ -178,7 +179,7 @@ func (h *AttachmentStreamHTTPHandler) resolveTenant(w http.ResponseWriter, r *ht
 	if h.options.Now != nil {
 		now = h.options.Now()
 	}
-	if resolved.Status != tenant.StatusActive &&
+	if resolved.DeletionRequestedAt == nil && resolved.Status != tenant.StatusActive &&
 		(resolved.Status != tenant.StatusTrial || resolved.TrialEndsAt == nil || !resolved.TrialEndsAt.After(now)) {
 		api.WriteError(w, http.StatusForbidden, api.CodeTenantSuspended, "tenant is not active", nil)
 		return tenant.Tenant{}, false

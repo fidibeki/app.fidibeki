@@ -211,11 +211,11 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 		Begin: db.BeginFromPool(pool), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})(router)
 
-	request := func(method, path, body string, authenticate bool) *httptest.ResponseRecorder {
+	requestWithToken := func(method, path, body, accessToken string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "http://"+current.Slug+".localhost"+path, bytes.NewBufferString(body))
 		req.Host = current.Slug + ".localhost"
-		if authenticate {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if accessToken != "" {
+			req.Header.Set("Authorization", "Bearer "+accessToken)
 		}
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
@@ -223,6 +223,12 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
 		return response
+	}
+	request := func(method, path, body string, authenticate bool) *httptest.ResponseRecorder {
+		if !authenticate {
+			return requestWithToken(method, path, body, "")
+		}
+		return requestWithToken(method, path, body, token)
 	}
 	if got := request(http.MethodGet, "/v1/billing", "", false); got.Code != http.StatusUnauthorized {
 		t.Fatalf("GET billing without auth status = %d", got.Code)
@@ -248,7 +254,44 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 	if len(emails.messages) == 0 {
 		t.Fatal("delete account did not enqueue member email")
 	}
-	if got := request(http.MethodPost, "/v1/billing/cancel-deletion", "", true); got.Code != http.StatusNoContent {
+	pending, err := store.Get(context.Background(), current.ID)
+	if err != nil || pending.DeletionRequestedAt == nil {
+		t.Fatalf("load pending deletion = %#v, %v", pending, err)
+	}
+	providerCalls := [3]int{provider.createCustomerCalls, provider.createCheckoutCalls, provider.createPortalCalls}
+	emailCount := len(emails.messages)
+	for _, blocked := range []struct {
+		path string
+		body string
+	}{
+		{path: "/v1/billing/checkout", body: `{"plan":"scale"}`},
+		{path: "/v1/billing/portal"},
+		{path: "/v1/billing/delete-account", body: `{"confirmation":"` + current.Slug + `"}`},
+	} {
+		if got := request(http.MethodPost, blocked.path, blocked.body, true); got.Code != http.StatusForbidden {
+			t.Fatalf("POST %s during deletion grace status = %d body = %s", blocked.path, got.Code, got.Body.String())
+		}
+	}
+	afterBlocked, err := store.Get(context.Background(), current.ID)
+	if err != nil || afterBlocked.DeletionRequestedAt == nil ||
+		!afterBlocked.DeletionRequestedAt.Equal(*pending.DeletionRequestedAt) {
+		t.Fatalf("tenant changed after blocked routes = %#v, %v", afterBlocked, err)
+	}
+	if got := [3]int{provider.createCustomerCalls, provider.createCheckoutCalls, provider.createPortalCalls}; got != providerCalls {
+		t.Fatalf("provider calls after blocked routes = %v, want %v", got, providerCalls)
+	}
+	if len(emails.messages) != emailCount {
+		t.Fatalf("email count after blocked routes = %d, want %d", len(emails.messages), emailCount)
+	}
+
+	manageOnlyToken, _, err := jwt.IssueTenant(memberID, current.ID, []string{string(auth.PermissionBillingManage)})
+	if err != nil {
+		t.Fatalf("issue manage-only billing JWT: %v", err)
+	}
+	if got := requestWithToken(http.MethodGet, "/v1/billing", "", manageOnlyToken); got.Code != http.StatusOK {
+		t.Fatalf("GET billing with manage-only token status = %d body = %s", got.Code, got.Body.String())
+	}
+	if got := requestWithToken(http.MethodPost, "/v1/billing/cancel-deletion", "", manageOnlyToken); got.Code != http.StatusNoContent {
 		t.Fatalf("POST cancel deletion status = %d body = %s", got.Code, got.Body.String())
 	}
 }

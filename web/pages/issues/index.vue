@@ -4,7 +4,7 @@ import type { Issue, IssueStatus, Project } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 
 const { $apiFetch } = useNuxtApp()
-const { can } = useAuth()
+const { can, canWrite } = useAuth()
 const search = ref('')
 const statusFilter = ref('')
 const projectFilter = ref('')
@@ -32,7 +32,7 @@ const filteredIssues = computed(() => {
 })
 
 async function changeStatus(issue: Issue, nextStatus: IssueStatus) {
-  if (issue.status === nextStatus || updatingID.value) return
+  if (!canWrite('issue:update') || issue.status === nextStatus || updatingID.value) return
   updatingID.value = issue.id
   mutationError.value = ''
   try {
@@ -73,7 +73,7 @@ useHead({ title: 'Issues · Fidibeki' })
         <span class="issues-title"><CircleDot :size="15" /><span><b>{{ issue.public_id }}</b><small>{{ issue.title }}</small></span></span>
         <span class="issues-project">{{ projectNames.get(issue.project_id) || 'Project' }}</span>
         <span class="issues-feedback">{{ issue.feedback_count }}</span>
-        <select :value="issue.status" :disabled="updatingID === issue.id || !can('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+        <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
         <time>{{ formatAge(issue.created_at) }}</time>
         <ChevronRight :size="16" />
       </div>

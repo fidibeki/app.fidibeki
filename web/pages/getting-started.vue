@@ -16,7 +16,7 @@ import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 
 const { $apiFetch } = useNuxtApp()
-const { tenant } = useAuth()
+const { canWrite, tenant, workspaceWritable } = useAuth()
 const config = useRuntimeConfig()
 const stage = ref<'project' | 'rule' | 'install'>('project')
 const project = ref<Project | null>(null)
@@ -82,7 +82,7 @@ function startPolling() {
 }
 
 async function createRule() {
-  if (!project.value || pending.value) return
+  if (!canWrite('widget_rule:create') || !project.value || pending.value) return
   pending.value = true
   stage.value = 'rule'
   errorMessage.value = ''
@@ -101,7 +101,7 @@ async function createRule() {
 }
 
 async function createProject() {
-  if (pending.value || !parsedDomains().length) return
+  if (!canWrite('project:create') || pending.value || !parsedDomains().length) return
   pending.value = true
   errorMessage.value = ''
   try {
@@ -154,12 +154,14 @@ useHead({ title: 'Connect your first project · Fidibeki' })
     <section v-else-if="stage === 'project'" class="activation-surface">
       <header><FolderPlus :size="20" /><div><h2>Create a project</h2><p>The allowed domains determine where the public widget key can run.</p></div></header>
       <form @submit.prevent="createProject">
+        <fieldset :disabled="!workspaceWritable">
         <label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label>
         <label>Allowed domains<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><small>One exact hostname or leading wildcard per line.</small></label>
         <p v-if="errorMessage" class="activation-error" role="alert"><AlertTriangle :size="15" /> {{ errorMessage }}</p>
-        <button class="app-button app-button--primary" type="submit" :disabled="pending || !projectName || !parsedDomains().length">
+        <button class="app-button app-button--primary" type="submit" :disabled="!canWrite('project:create') || pending || !projectName || !parsedDomains().length">
           {{ pending ? 'Creating project…' : 'Create and configure' }} <ArrowRight v-if="!pending" :size="15" />
         </button>
+        </fieldset>
       </form>
     </section>
 
@@ -173,7 +175,7 @@ useHead({ title: 'Connect your first project · Fidibeki' })
         <AlertTriangle :size="22" />
         <h2>Project created, rule not configured</h2>
         <p class="activation-error" role="alert">{{ errorMessage }}</p>
-        <div><button class="app-button app-button--primary" @click="createRule"><RefreshCw :size="15" /> Retry rule</button><NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project</NuxtLink></div>
+        <div><button class="app-button app-button--primary" :disabled="!canWrite('widget_rule:create')" @click="createRule"><RefreshCw :size="15" /> Retry rule</button><NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project</NuxtLink></div>
       </template>
     </section>
 
@@ -215,11 +217,12 @@ useHead({ title: 'Connect your first project · Fidibeki' })
 .activation-surface h2 { font-size: 15px; }
 .activation-surface header p { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .activation-surface form { display: grid; grid-template-columns: .8fr 1.2fr; gap: 16px; padding: 20px; }
+.activation-surface form > fieldset { display: contents; }
 .activation-surface form label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .activation-surface textarea { min-height: 120px; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; }
 .activation-surface label small { color: var(--muted); font-size: 9px; font-weight: 500; }
-.activation-surface form > button, .activation-surface form > .activation-error { grid-column: 1 / -1; }
-.activation-surface form > button { justify-self: end; min-width: 190px; }
+.activation-surface form > fieldset > button, .activation-surface form > fieldset > .activation-error { grid-column: 1 / -1; }
+.activation-surface form > fieldset > button { justify-self: end; min-width: 190px; }
 .activation-error { display: flex; align-items: center; gap: 7px; color: var(--red) !important; font-size: 10px !important; }
 .activation-rule-state, .activation-load-error { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; padding: 34px; text-align: center; }
 .activation-rule-state > p, .activation-load-error > p { max-width: 470px; color: var(--muted); font-size: 11px; }
@@ -239,5 +242,5 @@ useHead({ title: 'Connect your first project · Fidibeki' })
 .activation-connection[data-connected='true'] { background: #fbfefc; border-color: #acd5bf; }
 .activation-connection[data-connected='true'] > svg { color: var(--green); }
 @media (max-width: 800px) { .activation-head { align-items: flex-start; flex-direction: column; } .activation-head ol { width: 100%; min-width: 0; justify-content: flex-start; } .activation-head li { min-width: 0; flex: 1; } .activation-head li:not(:last-child)::after { width: 18px; } .activation-install { grid-template-columns: 1fr; } .activation-connection { min-height: 220px; } }
-@media (max-width: 560px) { .activation-surface form { grid-template-columns: 1fr; padding: 15px; } .activation-surface form > button { width: 100%; justify-self: stretch; } .activation-head li { font-size: 0; } .activation-head li > span { font-size: 10px; } .activation-head li:not(:last-child)::after { flex: 1; } .activation-snippet { margin: 14px; } .activation-code footer { padding: 0 14px 14px; } .activation-code footer .app-button { width: 100%; } }
+@media (max-width: 560px) { .activation-surface form { grid-template-columns: 1fr; padding: 15px; } .activation-surface form > fieldset > button { width: 100%; justify-self: stretch; } .activation-head li { font-size: 0; } .activation-head li > span { font-size: 10px; } .activation-head li:not(:last-child)::after { flex: 1; } .activation-snippet { margin: 14px; } .activation-code footer { padding: 0 14px 14px; } .activation-code footer .app-button { width: 100%; } }
 </style>

@@ -13,8 +13,14 @@ export function useAuth() {
     () => Boolean(session.value.accessToken && session.value.member && session.value.tenant),
   )
 
+  const workspaceWritable = computed(
+    () => Boolean(session.value.tenant && !session.value.tenant.deletion_requested_at),
+  )
+
   const can = (permission: string) =>
     Boolean(session.value.member?.permissions.includes(permission))
+
+  const canWrite = (permission: string) => workspaceWritable.value && can(permission)
 
   function clear() {
     session.value = emptySession()
@@ -34,7 +40,9 @@ export function useAuth() {
     authenticated,
     member: computed(() => session.value.member),
     tenant: computed(() => session.value.tenant),
+    workspaceWritable,
     can,
+    canWrite,
     apply,
     clear,
   }

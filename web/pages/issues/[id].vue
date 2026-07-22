@@ -6,7 +6,7 @@ import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
-const { can } = useAuth()
+const { can, canWrite } = useAuth()
 const issueID = computed(() => String(route.params.id || ''))
 const nextStatus = ref<IssueStatus>('open')
 const comment = ref('')
@@ -31,7 +31,7 @@ watch(() => data.value?.issue.status, (value) => { if (value) nextStatus.value =
 const mergeCandidates = computed(() => (data.value?.allIssues || []).filter((candidate) => candidate.id !== issueID.value && candidate.project_id === data.value?.issue.project_id && !candidate.merged_into_id))
 
 async function updateIssue() {
-  if (!data.value || pending.value || nextStatus.value === data.value.issue.status) return
+  if (!canWrite('issue:update') || !data.value || pending.value || nextStatus.value === data.value.issue.status) return
   pending.value = true
   mutationError.value = ''
   try {
@@ -44,7 +44,7 @@ async function updateIssue() {
 }
 
 async function mergeIssue() {
-  if (!mergeTarget.value || pending.value) return
+  if (!canWrite('issue:merge') || !mergeTarget.value || pending.value) return
   pending.value = true
   mutationError.value = ''
   try {
@@ -57,7 +57,7 @@ async function mergeIssue() {
 }
 
 async function undoMerge() {
-  if (pending.value) return
+  if (!canWrite('issue:merge') || pending.value) return
   pending.value = true
   mutationError.value = ''
   try {
@@ -85,13 +85,13 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
       <p v-if="mutationError" class="issues-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
       <div class="issue-detail-grid">
         <main>
-          <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" /><button class="app-button app-button--primary" :disabled="pending || !can('issue:update') || nextStatus === data.issue.status" @click="updateIssue">Update issue</button></div></section>
+          <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select" :disabled="!canWrite('issue:update')"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status" @click="updateIssue">Update issue</button></div></section>
           <section class="app-surface issue-feedback"><header><h2>Linked feedback</h2><span>{{ data.feedbacks.length }} records</span></header><div v-if="!data.feedbacks.length" class="issue-empty">No readable feedback is linked.</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>—</span><p><b>{{ feedback.text_cleaned || feedback.text || 'No written feedback' }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></NuxtLink></section>
           <section class="app-surface issue-history"><header><h2>History</h2></header><ol><li v-for="update in [...data.updates].reverse()" :key="update.id"><span /><div><p><b>{{ update.old_status || 'Created' }}</b> → <b>{{ update.new_status }}</b></p><blockquote v-if="update.comment">{{ update.comment }}</blockquote><time>{{ formatDate(update.created_at) }}</time></div></li><li class="issue-created"><span /><div><p>Issue created from feedback</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
         </main>
         <aside>
           <section class="app-surface issue-facts"><h2>Issue facts</h2><dl><div><dt>Public ID</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>Reporter</dt><dd>{{ data.issue.reporter_email || 'Anonymous' }}</dd></div><div><dt>Reporter updates</dt><dd>{{ data.issue.notify_reporter ? 'Enabled' : 'Disabled' }}</dd></div><div><dt>Resolved</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : 'Not resolved' }}</dd></div></dl></section>
-          <section class="app-surface issue-merge"><h2>Merge issue</h2><template v-if="data.issue.merged_into_id"><p>This issue is merged into another issue.</p><button class="app-button" :disabled="pending || !can('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> Undo merge</button></template><template v-else><p>Move this issue under another issue in the same project.</p><select v-model="mergeTarget" class="app-select"><option value="">Choose target issue</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.public_id }} · {{ candidate.title }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !can('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> Merge</button></template></section>
+          <section class="app-surface issue-merge"><h2>Merge issue</h2><template v-if="data.issue.merged_into_id"><p>This issue is merged into another issue.</p><button class="app-button" :disabled="pending || !canWrite('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> Undo merge</button></template><template v-else><p>Move this issue under another issue in the same project.</p><select v-model="mergeTarget" class="app-select" :disabled="!canWrite('issue:merge')"><option value="">Choose target issue</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.public_id }} · {{ candidate.title }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !canWrite('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> Merge</button></template></section>
         </aside>
       </div>
     </template>

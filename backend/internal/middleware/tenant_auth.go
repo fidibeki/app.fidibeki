@@ -35,6 +35,7 @@ func RequireTenantMember(verifier accessTokenVerifier) func(http.Handler) http.H
 			query, _ := QuerierFromContext(r.Context())
 			claims, err := AuthenticateTenantCredential(
 				r.Context(), query, verifier, resolved.ID, r.Header.Get("Authorization"),
+				resolved.DeletionRequestedAt == nil,
 			)
 			if errors.Is(err, ErrTenantCredentialInvalid) {
 				api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
@@ -60,6 +61,7 @@ func AuthenticateTenantCredential(
 	verifier TenantCredentialVerifier,
 	tenantID string,
 	authorization string,
+	recordUsage bool,
 ) (auth.Claims, error) {
 	raw, err := bearerToken(authorization)
 	if err != nil {
@@ -71,12 +73,20 @@ func AuthenticateTenantCredential(
 		}
 		var keyID string
 		var permissions []string
-		err := query.QueryRow(ctx, `
-			UPDATE api_keys SET last_used_at = now()
+		statement := `
+			SELECT id, permissions FROM api_keys
 			WHERE tenant_id = $1 AND token_hash = $2
 			  AND (expires_at IS NULL OR expires_at > now())
-			RETURNING id, permissions
-		`, tenantID, auth.HashToken(raw)).Scan(&keyID, &permissions)
+		`
+		if recordUsage {
+			statement = `
+				UPDATE api_keys SET last_used_at = now()
+				WHERE tenant_id = $1 AND token_hash = $2
+				  AND (expires_at IS NULL OR expires_at > now())
+				RETURNING id, permissions
+			`
+		}
+		err := query.QueryRow(ctx, statement, tenantID, auth.HashToken(raw)).Scan(&keyID, &permissions)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.Claims{}, ErrTenantCredentialInvalid
 		}
@@ -125,6 +135,25 @@ func RequirePermission(required auth.Permission) func(http.Handler) http.Handler
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func RequireAnyPermission(required ...auth.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := TenantClaimsFromContext(r.Context())
+			if !ok {
+				api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+				return
+			}
+			for _, permission := range required {
+				if auth.HasPermission(claims.Permissions, permission) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "permission denied", nil)
 		})
 	}
 }

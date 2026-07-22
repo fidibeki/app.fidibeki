@@ -723,6 +723,120 @@ test('workspace deletion supports the full recovery path', async ({ page }, test
   expect(state.billingDeletionRequestedAt).toBeNull()
 })
 
+test('pending deletion keeps feedback readable and cancellation available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Workspace lifecycle behavior is viewport independent')
+  const state = createMockState()
+  state.tenant.deletion_requested_at = now
+  state.billingDeletionRequestedAt = now
+  const mutationRequests: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if ((request.method() === 'PATCH' && /^\/v1\/feedbacks\/[^/]+$/.test(path)) ||
+      (request.method() === 'POST' && /\/reprocess$/.test(path))) {
+      mutationRequests.push(`${request.method()} ${path}`)
+    }
+  })
+  await authenticate(page, state)
+
+  await openPrimary(page, 'Feedback')
+  await expect(page.getByLabel(/Select FB-/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0)
+  await page.getByTitle('Open full detail').click()
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reprocess all' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Spam' })).toHaveCount(0)
+  expect(mutationRequests).toEqual([])
+
+  await page.getByRole('link', { name: 'Review deletion' }).click()
+  await expect(page.getByRole('button', { name: 'Billing portal' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Cancel deletion' }).click()
+  await expect(page.getByText('This workspace is pending deletion')).toHaveCount(0)
+  expect(state.billingDeletionRequestedAt).toBeNull()
+})
+
+test('manage-only member can reach billing and cancel pending deletion', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Permission routing is viewport independent')
+  const state = createMockState()
+  state.member.permissions = ['billing:manage']
+  state.tenant.deletion_requested_at = now
+  state.billingDeletionRequestedAt = now
+  await installMockAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
+
+  await expect(page).toHaveURL(`${tenantOrigin}/billing`)
+  await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel deletion' }).click()
+  await expect(page.getByText('This workspace is pending deletion')).toHaveCount(0)
+  expect(state.billingDeletionRequestedAt).toBeNull()
+})
+
+test('pending deletion disables mutations across workspace administration', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Workspace lifecycle behavior is viewport independent')
+  const state = createMockState()
+  state.tenant.deletion_requested_at = now
+  state.billingDeletionRequestedAt = now
+  state.apiKeys.push({
+    id: 'key-1', tenant_id: state.tenant.id, name: 'Reporting', token_prefix: 'fk_live_report',
+    permissions: ['feedback:read'], rate_limit_per_min: 100, expires_at: null,
+    last_used_at: null, created_at: now, updated_at: now,
+  })
+  state.integrations.push({
+    id: 'integration-1', kind: 'webhook', name: 'Operations',
+    webhook_url: 'https://hooks.acme.test/fidibeki', channel: null,
+    webhook_secret_fingerprint: 'sha256:demo', custom_header_names: [],
+    events: ['feedback.created'], is_active: true, created_at: now, updated_at: now,
+  })
+  await authenticate(page, state)
+
+  await openPrimary(page, 'Issues')
+  await expect(page.getByLabel('Status for ISS-101')).toBeDisabled()
+  await page.getByRole('link', { name: /Open ISS-101:/ }).click()
+  await expect(page.getByRole('button', { name: 'Update issue' })).toBeDisabled()
+  await expect(page.locator('.issue-update-panel textarea')).toBeDisabled()
+  await expect(page.locator('.issue-merge select')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Merge', exact: true })).toBeDisabled()
+
+  await openPrimary(page, 'Projects')
+  await expect(page.getByRole('button', { name: 'New project' })).toHaveCount(0)
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+  await expect(page.getByTitle('New widget rule')).toHaveCount(0)
+  await expect(page.getByTitle('Delete rule')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Save rule' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Save project' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Delete project' })).toBeDisabled()
+  await expect(page.getByLabel('Name', { exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Project name')).toBeDisabled()
+
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Members' }).click()
+  await expect(page.getByRole('button', { name: 'Invite member' })).toHaveCount(0)
+  await expect(page.getByTitle('Edit permissions')).toHaveCount(0)
+  await page.getByRole('link', { name: 'API keys' }).click()
+  await expect(page.getByRole('button', { name: 'Create key' })).toHaveCount(0)
+  await expect(page.getByTitle('Revoke API key')).toHaveCount(0)
+  await page.getByRole('link', { name: 'Integrations' }).click()
+  await expect(page.getByRole('button', { name: 'Add integration' })).toHaveCount(0)
+  await expect(page.getByTitle('Remove integration')).toHaveCount(0)
+})
+
+test('pending deletion disables first-project activation', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Workspace lifecycle behavior is viewport independent')
+  const state = createMockState()
+  state.projects.splice(0)
+  state.widgetRules.splice(0)
+  state.tenant.deletion_requested_at = now
+  state.billingDeletionRequestedAt = now
+  await installMockAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
+  await expect(page).toHaveURL(`${tenantOrigin}/getting-started`)
+  await expect(page.getByRole('heading', { name: 'Connect your first project' })).toBeVisible()
+  const form = page.locator('.activation-surface form')
+  await expect(form.getByLabel('Project name')).toBeDisabled()
+  await expect(form.locator('button[type="submit"]')).toBeDisabled()
+})
+
 test('Dispatch production surfaces remain responsive and error-free', async ({ page }, testInfo) => {
   const state = createMockState()
   const browserErrors: string[] = []

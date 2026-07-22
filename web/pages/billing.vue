@@ -6,7 +6,7 @@ import { formatDate, formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch, $refreshSession } = useNuxtApp()
-const { can, tenant } = useAuth()
+const { can, canWrite, tenant } = useAuth()
 const pendingAction = ref('')
 const actionError = ref('')
 const deleteOpen = ref(false)
@@ -35,6 +35,7 @@ const deletionDate = computed(() => {
 })
 
 async function checkout(plan: TenantPlan) {
+  if (!canWrite('billing:manage')) return
   if (plan === 'enterprise') {
     window.location.href = 'mailto:sales@fidibeki.com?subject=Fidibeki%20Enterprise'
     return
@@ -53,6 +54,7 @@ async function checkout(plan: TenantPlan) {
 }
 
 async function openPortal() {
+  if (!canWrite('billing:manage')) return
   pendingAction.value = 'portal'
   actionError.value = ''
   try {
@@ -65,6 +67,7 @@ async function openPortal() {
 }
 
 async function requestDeletion() {
+  if (!canWrite('billing:manage') || billing.value?.deletion_requested_at) return
   pendingAction.value = 'delete'
   actionError.value = ''
   try {
@@ -82,6 +85,7 @@ async function requestDeletion() {
 }
 
 async function cancelDeletion() {
+  if (!can('billing:manage') || !billing.value?.deletion_requested_at || pendingAction.value) return
   pendingAction.value = 'cancel-delete'
   actionError.value = ''
   try {
@@ -122,7 +126,7 @@ useHead({ title: 'Billing - Fidibeki' })
         <div><p class="app-eyebrow">Current plan</p><h2 class="capitalize">{{ billing.plan }}</h2><span v-if="billing.pending_plan">Changes to {{ billing.pending_plan }} next period</span><span v-else>{{ billing.status }}</span></div>
         <div><p class="app-eyebrow">Trial</p><h2>{{ trialDays == null ? 'Not active' : `${trialDays} days` }}</h2><span>{{ billing.trial_ends_at ? formatDate(billing.trial_ends_at) : 'No trial end date' }}</span></div>
         <div><p class="app-eyebrow">Payment account</p><h2>{{ billing.has_customer ? 'Connected' : 'Not created' }}</h2><span>{{ billing.has_subscription ? 'Subscription active' : 'No subscription' }}</span></div>
-        <button v-if="can('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? 'Opening...' : 'Billing portal' }}<ArrowUpRight :size="13" /></button>
+        <button v-if="canWrite('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? 'Opening...' : 'Billing portal' }}<ArrowUpRight :size="13" /></button>
       </section>
 
       <section class="billing-plans">
@@ -134,7 +138,7 @@ useHead({ title: 'Billing - Fidibeki' })
             <div><dt>AI and replay</dt><dd>{{ plan.id === 'starter' ? 'No' : 'Included' }}</dd></div>
           </dl>
           <button
-            v-if="can('billing:manage') && billing.plan !== plan.id"
+            v-if="canWrite('billing:manage') && billing.plan !== plan.id"
             class="app-button"
             :class="{ 'app-button--primary': plan.id === 'growth' }"
             :disabled="Boolean(pendingAction) || Boolean(billing.deletion_requested_at)"
@@ -148,7 +152,7 @@ useHead({ title: 'Billing - Fidibeki' })
 
       <section class="billing-danger app-surface">
         <div><p class="app-eyebrow">Danger zone</p><h2>Delete workspace</h2><span>Seven-day recovery window before permanent deletion.</span></div>
-        <button v-if="can('billing:manage') && !billing.deletion_requested_at" class="app-button billing-delete-button" @click="deleteOpen = true"><Trash2 :size="15" /> Schedule deletion</button>
+        <button v-if="canWrite('billing:manage') && !billing.deletion_requested_at" class="app-button billing-delete-button" @click="deleteOpen = true"><Trash2 :size="15" /> Schedule deletion</button>
       </section>
     </template>
 

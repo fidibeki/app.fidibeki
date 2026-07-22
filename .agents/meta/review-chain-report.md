@@ -145,3 +145,35 @@ An inert grid placeholder preserves row placement without exposing a selection c
 Rendered-position coverage exercises read-only rows on desktop and mobile. The final verification
 passed 16 unit tests, Nuxt typecheck, production build, and 49 Playwright tests with 15 expected
 skips. The second independent review found no remaining authorization or layout issues.
+
+---
+
+# Deletion Grace Read-Only Review
+
+**Artifact**: Tenant deletion grace enforcement across backoffice, billing, widget, streams, and API-key authentication
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | critical | 10/10 | Billing checkout, portal, and deletion scheduling bypassed the writable-tenant middleware. | Fixed |
+| 2 | major | 9/10 | A member with only `billing:manage` could not reach billing to cancel deletion. | Fixed |
+| 3 | major | 8/10 | Suspended and expired-trial tenants lost read access during the deletion grace period. | Fixed |
+| 4 | major | 10/10 | Frontend-only tests could not detect direct backend mutation bypasses. | Fixed |
+| 5 | major | 10/10 | Attachment and replay stream handlers duplicated the old active-tenant check. | Fixed |
+| 6 | major | 10/10 | API-key authentication updated `last_used_at` during the read-only period. | Fixed |
+| 7 | major | 10/10 | Widget connection telemetry still updated projects during the read-only period. | Fixed |
+
+## Changes Made
+Workspace mutation controls and handlers now share `canWrite`, while the backend remains the security
+boundary. Billing mutators require writable state; cancellation is the sole exception. Pending-deletion
+tenants retain reads across normal routes, public widget configuration, attachments, and replay streams.
+Widget activity and API-key usage telemetry are suppressed during the grace period.
+
+## Verification
+Route and PostgreSQL integration tests assert blocked billing mutations have no provider or store side
+effects, manage-only cancellation works, API-key reads do not update usage, and public or streamed reads
+remain available for suspended and expired-trial tenants. The final independent security review passed.

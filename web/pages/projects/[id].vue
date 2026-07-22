@@ -17,7 +17,7 @@ import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
-const { can, tenant } = useAuth()
+const { can, canWrite, tenant, workspaceWritable } = useAuth()
 const config = useRuntimeConfig()
 const projectID = computed(() => String(route.params.id || ''))
 const selectedRuleID = ref('')
@@ -106,7 +106,8 @@ function normalizedRule(): WidgetRuleInput {
 }
 
 async function saveRule() {
-  if (pending.value) return
+  const permission = editingNew.value ? 'widget_rule:create' : 'widget_rule:update'
+  if (!canWrite(permission) || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -128,7 +129,7 @@ async function saveRule() {
 }
 
 async function deleteRule() {
-  if (!selectedRule.value || pending.value || !window.confirm(`Delete “${selectedRule.value.name}”?`)) return
+  if (!canWrite('widget_rule:delete') || !selectedRule.value || pending.value || !window.confirm(`Delete “${selectedRule.value.name}”?`)) return
   pending.value = true
   formError.value = ''
   try {
@@ -142,7 +143,7 @@ async function deleteRule() {
 }
 
 async function saveProject() {
-  if (!data.value || pending.value) return
+  if (!canWrite('project:update') || !data.value || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -161,7 +162,7 @@ async function saveProject() {
 }
 
 async function deleteProject() {
-  if (!data.value || pending.value || !window.confirm(`Delete ${data.value.project.name} and all of its feedback?`)) return
+  if (!canWrite('project:delete') || !data.value || pending.value || !window.confirm(`Delete ${data.value.project.name} and all of its feedback?`)) return
   pending.value = true
   try {
     await $apiFetch(`/v1/projects/${projectID.value}`, { method: 'DELETE' })
@@ -201,21 +202,23 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
       <p v-if="formError" class="project-config-error" role="alert"><AlertTriangle :size="15" /> {{ formError }}</p>
       <div class="project-config-grid">
         <aside class="project-rule-list">
-          <header><span>Widget rules</span><button v-if="can('widget_rule:create')" title="New widget rule" @click="startNewRule"><Plus :size="16" /></button></header>
+          <header><span>Widget rules</span><button v-if="canWrite('widget_rule:create')" title="New widget rule" @click="startNewRule"><Plus :size="16" /></button></header>
           <button v-for="rule in data.rules" :key="rule.id" :data-active="rule.id === selectedRuleID" @click="selectRule(rule)"><span :data-enabled="rule.enabled" /><p><b>{{ rule.name }}</b><small>{{ rule.matcher_type.replaceAll('_', ' ') }} · priority {{ rule.priority }}</small></p></button>
           <p v-if="!data.rules.length" class="project-rule-empty">No rules configured.</p>
           <nav><a href="#project-settings"><Settings2 :size="14" /> Project settings</a></nav>
         </aside>
 
         <main class="project-rule-editor">
-          <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && can('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? can('widget_rule:create') : can('widget_rule:update'))"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
+          <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
           <form id="widget-rule-form" @submit.prevent="saveRule">
+            <fieldset :disabled="!workspaceWritable">
             <section><h3>Rule identity</h3><div class="project-form-grid"><label class="wide">Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Enabled</span></label></div></section>
             <section><h3>Page matching</h3><div class="project-form-grid"><label>Matcher<select v-model="ruleForm.matcher_type" class="app-select"><option value="all_pages">All pages</option><option value="url_exact">Exact URL</option><option value="url_prefix">URL prefix</option><option value="url_regex">URL regular expression</option></select></label><label v-if="ruleForm.matcher_type !== 'all_pages'" class="wide">Matcher value<input v-model="ruleForm.matcher_value" class="app-input" required /></label></div></section>
             <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
             <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
             <section><h3>Appearance</h3><div class="project-form-grid"><label class="wide">Greeting<input v-model="ruleForm.greeting" class="app-input" maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
             <section><h3>Session replay</h3><div class="project-form-grid"><label>Replay mode<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">Disabled</option><option value="full">Every session</option><option value="sampling">Sample sessions</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">Sampling percent<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>Max duration (seconds)<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="7200" /></label><label>Max events<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="200000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>Mask all input values</span></label><label class="wide">Additional text mask selector<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
+            </fieldset>
           </form>
         </main>
 
@@ -225,7 +228,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !can('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !can('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
@@ -271,7 +274,8 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-rule-editor > header h2 { margin: 3px 0 0; font-size: 14px; }
 .project-rule-editor > header > div:last-child { display: flex; gap: 6px; }
 .project-delete-button { width: 38px; padding: 0; color: var(--red); }
-.project-rule-editor form > section { padding: 17px 18px; border-bottom: 1px solid var(--line); }
+.project-rule-editor form > fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.project-rule-editor form > fieldset > section { padding: 17px 18px; border-bottom: 1px solid var(--line); }
 .project-rule-editor form h3 { margin: 0 0 13px; font-size: 11px; }
 .project-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .project-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
@@ -307,7 +311,8 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-settings > header { display: flex; min-height: 66px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .project-settings h2 { margin: 0; font-size: 13px; }
 .project-settings header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
-.project-settings > form { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; padding: 16px; }
+.project-settings > form { padding: 16px; }
+.project-settings > form > fieldset { display: grid; min-width: 0; grid-template-columns: 1fr 1.4fr; gap: 14px; margin: 0; padding: 0; border: 0; }
 .project-settings label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .project-settings textarea { min-height: 96px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 10px; }
 .project-settings > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; background: #fff8f8; border-top: 1px solid #efc2c6; }
@@ -317,6 +322,6 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-danger { color: var(--red); border-color: #e4adb4; }
 .project-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 10px; }
 @media (max-width: 1180px) { .project-config-grid { grid-template-columns: 190px minmax(480px, 1fr); } .project-widget-preview { display: none; } }
-@media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > form { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > form > fieldset { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } }
 </style>

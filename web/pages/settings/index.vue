@@ -32,7 +32,7 @@ import { formatDate, formatMonthlyUSD, formatWholeNumber } from '~/utils/format'
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 const { $apiFetch } = useNuxtApp()
-const { can, member: currentMember } = useAuth()
+const { can, canWrite, member: currentMember } = useAuth()
 
 const tabs = [
   { id: 'workspace', label: 'Workspace' },
@@ -125,6 +125,7 @@ function togglePermission(target: 'member' | 'key', permission: string) {
 }
 
 function openMember(member?: Member) {
+  if (!canWrite(member ? 'member:update' : 'member:invite')) return
   formError.value = ''
   selectedMember.value = member || null
   memberMode.value = member ? 'edit' : 'invite'
@@ -138,7 +139,8 @@ function openMember(member?: Member) {
 }
 
 async function saveMember() {
-  if (pending.value) return
+  const permission = memberMode.value === 'invite' ? 'member:invite' : 'member:update'
+  if (!canWrite(permission) || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -161,6 +163,7 @@ async function saveMember() {
 }
 
 function openKey() {
+  if (!canWrite('api_key:create')) return
   formError.value = ''
   revealedToken.value = ''
   keyName.value = ''
@@ -177,7 +180,7 @@ function expiryDate() {
 }
 
 async function createKey() {
-  if (pending.value) return
+  if (!canWrite('api_key:create') || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -210,7 +213,7 @@ async function copySecret() {
 }
 
 async function deleteKey(key: APIKey) {
-  if (!window.confirm(`Revoke ${key.name}? Requests using this key will fail immediately.`)) return
+  if (!canWrite('api_key:delete') || !window.confirm(`Revoke ${key.name}? Requests using this key will fail immediately.`)) return
   try {
     await $apiFetch(`/v1/api-keys/${key.id}`, { method: 'DELETE' })
     await refresh()
@@ -220,6 +223,7 @@ async function deleteKey(key: APIKey) {
 }
 
 function openIntegration() {
+  if (!canWrite('integration:create')) return
   formError.value = ''
   revealedSecret.value = ''
   integrationKind.value = 'webhook'
@@ -237,7 +241,7 @@ function toggleEvent(event: IntegrationEvent) {
 }
 
 async function createIntegration() {
-  if (pending.value) return
+  if (!canWrite('integration:create') || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -264,7 +268,7 @@ async function createIntegration() {
 }
 
 async function deleteIntegration(integration: Integration) {
-  if (!window.confirm(`Remove ${integration.name}?`)) return
+  if (!canWrite('integration:delete') || !window.confirm(`Remove ${integration.name}?`)) return
   try {
     await $apiFetch(`/v1/integrations/${integration.id}`, { method: 'DELETE' })
     await refresh()
@@ -318,7 +322,7 @@ useHead({ title: 'Settings - Fidibeki' })
       </section>
 
       <section v-else-if="activeTab === 'members'" class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Access</p><h2>Members</h2></div><button v-if="can('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> Invite member</button></header>
+        <header><div><p class="app-eyebrow">Access</p><h2>Members</h2></div><button v-if="canWrite('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> Invite member</button></header>
         <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
         <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>No members found</h3></div>
         <div v-else class="settings-table settings-members">
@@ -327,13 +331,13 @@ useHead({ title: 'Settings - Fidibeki' })
             <span class="settings-identity"><i>{{ (member.name || member.email).slice(0, 1).toUpperCase() }}</i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
             <span>{{ member.permissions.length }} granted</span>
             <span>{{ member.id === currentMember?.id ? 'Current session' : 'Member' }}</span>
-            <button v-if="can('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+            <button v-if="canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
           </div>
         </div>
       </section>
 
       <section v-else-if="activeTab === 'keys'" class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Machine access</p><h2>API keys</h2></div><button v-if="can('api_key:create')" class="app-button app-button--primary" @click="openKey"><Plus :size="15" /> Create key</button></header>
+        <header><div><p class="app-eyebrow">Machine access</p><h2>API keys</h2></div><button v-if="canWrite('api_key:create')" class="app-button app-button--primary" @click="openKey"><Plus :size="15" /> Create key</button></header>
         <div v-if="!can('api_key:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>API key access required</h3></div>
         <div v-else-if="!data.keys.length" class="settings-empty"><KeyRound :size="23" /><h3>No API keys</h3></div>
         <div v-else class="settings-table settings-keys">
@@ -343,13 +347,13 @@ useHead({ title: 'Settings - Fidibeki' })
             <span>{{ key.permissions.length }} perms · {{ formatWholeNumber(key.rate_limit_per_min) }}/min</span>
             <span>{{ key.last_used_at ? formatDate(key.last_used_at) : 'Never' }}</span>
             <span>{{ key.expires_at ? formatDate(key.expires_at) : 'Never' }}</span>
-            <button v-if="can('api_key:delete')" class="app-icon-button settings-danger-icon" title="Revoke API key" @click="deleteKey(key)"><Trash2 :size="16" /></button>
+            <button v-if="canWrite('api_key:delete')" class="app-icon-button settings-danger-icon" title="Revoke API key" @click="deleteKey(key)"><Trash2 :size="16" /></button>
           </div>
         </div>
       </section>
 
       <section v-else class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Delivery</p><h2>Integrations</h2></div><button v-if="can('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> Add integration</button></header>
+        <header><div><p class="app-eyebrow">Delivery</p><h2>Integrations</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> Add integration</button></header>
         <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Integration access required</h3></div>
         <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>No integrations</h3></div>
         <div v-else class="settings-table settings-integrations">
@@ -359,7 +363,7 @@ useHead({ title: 'Settings - Fidibeki' })
             <code>{{ integration.webhook_url }}</code>
             <span>{{ integration.events.length }} subscribed</span>
             <span class="settings-state"><i />{{ integration.is_active ? 'Active' : 'Paused' }}</span>
-            <button v-if="can('integration:delete')" class="app-icon-button settings-danger-icon" title="Remove integration" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
+            <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" title="Remove integration" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
           </div>
         </div>
       </section>

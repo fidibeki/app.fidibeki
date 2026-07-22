@@ -517,25 +517,33 @@ func TestMaintenanceFailurePaths(t *testing.T) {
 }
 
 type serviceStoreStub struct {
-	tenant      Tenant
-	signup      SignupResult
-	signupInput SignupInput
-	appliedPlan tenant.Plan
-	deletion    Tenant
-	emails      []string
-	signupErr   error
-	getErr      error
-	applyErr    error
-	requestErr  error
-	emailsErr   error
+	tenant               Tenant
+	signup               SignupResult
+	signupInput          SignupInput
+	appliedPlan          tenant.Plan
+	deletion             Tenant
+	emails               []string
+	signupErr            error
+	getErr               error
+	applyErr             error
+	requestErr           error
+	emailsErr            error
+	getCalls             int
+	saveCustomerCalls    int
+	requestDeletionCalls int
+	cancelDeletionCalls  int
 }
 
 func (s *serviceStoreStub) Signup(_ context.Context, input SignupInput) (SignupResult, error) {
 	s.signupInput = input
 	return s.signup, s.signupErr
 }
-func (s *serviceStoreStub) Get(context.Context, string) (Tenant, error) { return s.tenant, s.getErr }
+func (s *serviceStoreStub) Get(context.Context, string) (Tenant, error) {
+	s.getCalls++
+	return s.tenant, s.getErr
+}
 func (s *serviceStoreStub) SaveCustomer(_ context.Context, _, customer string) (string, error) {
+	s.saveCustomerCalls++
 	s.tenant.StripeCustomerID = customer
 	return customer, nil
 }
@@ -547,32 +555,43 @@ func (s *serviceStoreStub) ApplyEvent(_ context.Context, _ EventSignal, _ Subscr
 	return true, s.applyErr
 }
 func (s *serviceStoreStub) RequestDeletion(context.Context, string, string, string) (Tenant, error) {
+	s.requestDeletionCalls++
 	return s.deletion, s.requestErr
 }
-func (s *serviceStoreStub) CancelDeletion(context.Context, string) error { return nil }
+func (s *serviceStoreStub) CancelDeletion(context.Context, string) error {
+	s.cancelDeletionCalls++
+	s.tenant.DeletionRequestedAt = nil
+	return nil
+}
 func (s *serviceStoreStub) MemberEmails(context.Context, string) ([]string, error) {
 	return s.emails, s.emailsErr
 }
 
 type providerStub struct {
-	customerInput CustomerInput
-	checkoutInput CheckoutInput
-	subscription  Subscription
-	cancelled     string
-	verifyErr     error
-	err           error
-	signal        EventSignal
+	customerInput       CustomerInput
+	checkoutInput       CheckoutInput
+	subscription        Subscription
+	cancelled           string
+	verifyErr           error
+	err                 error
+	signal              EventSignal
+	createCustomerCalls int
+	createCheckoutCalls int
+	createPortalCalls   int
 }
 
 func (p *providerStub) CreateCustomer(_ context.Context, input CustomerInput) (string, error) {
+	p.createCustomerCalls++
 	p.customerInput = input
 	return "cus_1", p.err
 }
 func (p *providerStub) CreateCheckout(_ context.Context, input CheckoutInput) (string, error) {
+	p.createCheckoutCalls++
 	p.checkoutInput = input
 	return "https://checkout.stripe.test/session", p.err
 }
 func (p *providerStub) CreatePortal(context.Context, string, string) (string, error) {
+	p.createPortalCalls++
 	return "https://billing.stripe.test/session", p.err
 }
 func (p *providerStub) RetrieveSubscription(context.Context, string) (Subscription, error) {

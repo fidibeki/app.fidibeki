@@ -19,7 +19,7 @@ import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
-const { can } = useAuth()
+const { canWrite } = useAuth()
 const feedbackID = computed(() => String(route.params.id || ''))
 const tab = ref<'evidence' | 'replay' | 'details'>('evidence')
 const mutationPending = ref(false)
@@ -47,7 +47,7 @@ const safeDOMSnapshot = computed(() => {
 })
 
 async function updateStatus(nextStatus: FeedbackStatus) {
-  if (!can('feedback:update') || !feedback.value || mutationPending.value) return
+  if (!canWrite('feedback:update') || !feedback.value || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -63,7 +63,7 @@ async function updateStatus(nextStatus: FeedbackStatus) {
 }
 
 async function reprocessAll() {
-  if (!can('feedback:update') || !feedback.value || mutationPending.value) return
+  if (!canWrite('feedback:update') || !feedback.value || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -79,7 +79,7 @@ async function reprocessAll() {
 }
 
 async function retryAttachment(id: string) {
-  if (!can('feedback:update') || mutationPending.value) return
+  if (!canWrite('feedback:update') || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -107,7 +107,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
     <header class="feedback-detail-toolbar">
       <NuxtLink class="app-button" to="/feedback"><ArrowLeft :size="15" /> Back to queue</NuxtLink>
       <div v-if="feedback">
-        <template v-if="can('feedback:update')">
+        <template v-if="canWrite('feedback:update')">
           <button v-if="feedback.status === 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus('archived')"><Archive :size="15" /> Archive</button>
           <button v-else class="app-button" :disabled="mutationPending" @click="updateStatus('open')">Reopen</button>
           <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> Spam</button>
@@ -137,13 +137,13 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
         <main class="feedback-detail-canvas">
           <template v-if="tab === 'evidence'">
             <section class="feedback-evidence-section">
-              <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><button v-if="can('feedback:update')" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
+              <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><button v-if="canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
                   <div><b>{{ attachmentItem.kind }}</b><span>{{ attachmentItem.content_type }} · {{ (attachmentItem.size_bytes / 1024).toFixed(1) }} KB</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentItem.error_message }}</p></div>
                   <span class="status-pill" :class="`status-${attachmentItem.processing_status}`">{{ attachmentItem.processing_status }}</span>
-                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && can('feedback:update')" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
+                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
                 </article>
               </div>
               <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>No media was attached to this feedback.</p></div>

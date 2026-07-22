@@ -272,6 +272,9 @@ func TestReplayHTTPErrorMapping(t *testing.T) {
 }
 
 func TestStreamTenantResolutionFailsClosed(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-time.Hour)
+	deletionRequestedAt := now.Add(-24 * time.Hour)
 	active := tenant.Tenant{ID: "tenant-id", Slug: "acme", Status: tenant.StatusActive}
 	tests := []struct {
 		name     string
@@ -285,6 +288,8 @@ func TestStreamTenantResolutionFailsClosed(t *testing.T) {
 		{name: "unknown tenant", host: "missing.localhost", resolve: tenant.ErrUnknownTenant, status: http.StatusNotFound},
 		{name: "resolver unavailable", host: "acme.localhost", resolve: errors.New("database failed"), status: http.StatusServiceUnavailable},
 		{name: "suspended", host: "acme.localhost", resolved: tenant.Tenant{ID: "tenant-id", Status: tenant.StatusSuspended}, status: http.StatusForbidden},
+		{name: "suspended pending deletion", host: "acme.localhost", resolved: tenant.Tenant{ID: "tenant-id", Status: tenant.StatusSuspended, DeletionRequestedAt: &deletionRequestedAt}, status: http.StatusOK, ok: true},
+		{name: "expired trial pending deletion", host: "acme.localhost", resolved: tenant.Tenant{ID: "tenant-id", Status: tenant.StatusTrial, TrialEndsAt: &expired, DeletionRequestedAt: &deletionRequestedAt}, status: http.StatusOK, ok: true},
 		{name: "allowed", host: "acme.localhost", resolved: active, status: http.StatusOK, ok: true},
 	}
 	for _, test := range tests {
@@ -293,6 +298,7 @@ func TestStreamTenantResolutionFailsClosed(t *testing.T) {
 				options: StreamHTTPOptions{
 					BaseDomain: "localhost",
 					Resolver:   tenantResolverStub{resolved: test.resolved, err: test.resolve},
+					Now:        func() time.Time { return now },
 				},
 				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
