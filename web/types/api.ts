@@ -75,6 +75,7 @@ export type TriggerType = 'delay' | 'scroll' | 'exit_intent'
 export type WidgetPosition = 'bottom-left' | 'bottom-right'
 export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
+export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 
 export interface WidgetRule {
   id: string
@@ -103,6 +104,8 @@ export interface WidgetRule {
   replay_max_events: number
   replay_mask_all_inputs: boolean
   replay_mask_text_selector?: string | null
+  recurrence_mode: RecurrenceMode
+  recurrence_days?: number | null
   created_at: string
   updated_at: string
 }

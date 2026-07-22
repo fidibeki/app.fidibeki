@@ -83,6 +83,8 @@ function createMockState() {
     replay_max_events: 50000,
     replay_mask_all_inputs: true,
     replay_mask_text_selector: '.private',
+    recurrence_mode: 'cooldown' as 'cooldown' | 'session' | 'never',
+    recurrence_days: 30 as number | null,
     created_at: now,
     updated_at: now,
   }]
@@ -839,6 +841,37 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
+})
+
+test('widget recurrence controls persist each policy', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const recurrence = page.getByLabel('Show again')
+  const days = page.getByLabel('Cooldown days')
+  await expect(recurrence).toHaveValue('cooldown')
+  await expect(days).toHaveValue('30')
+
+  await recurrence.selectOption('session')
+  await expect(days).toHaveCount(0)
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByText('Widget rule saved.')).toBeVisible()
+  expect(state.widgetRules[0]).toMatchObject({ recurrence_mode: 'session', recurrence_days: null })
+
+  await recurrence.selectOption('never')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByText('Widget rule saved.')).toBeVisible()
+  expect(state.widgetRules[0]).toMatchObject({ recurrence_mode: 'never', recurrence_days: null })
+
+  await recurrence.selectOption('cooldown')
+  await page.getByLabel('Cooldown days').fill('45')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByText('Widget rule saved.')).toBeVisible()
+  expect(state.widgetRules[0]).toMatchObject({ recurrence_mode: 'cooldown', recurrence_days: 45 })
+
+  await capture(page, testInfo, 'widget-recurrence')
 })
 
 test('project settings enforce browser validation before sending an update', async ({ page }, testInfo) => {
