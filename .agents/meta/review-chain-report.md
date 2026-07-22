@@ -116,3 +116,20 @@ Exact immutable retries and lifecycle duplicates remain idempotent. Concurrent s
 raw event and one aggregate increment. The final backend suite, 78 widget unit tests, typecheck, build, and all
 20 Playwright tests pass. The two-round review cap was reached; the final RLS ambiguity was resolved and covered
 by PostgreSQL integration tests rather than opening a third review round.
+
+### Slice 4.4 Recoverable Delivery
+
+**Artifact**: Browser analytics outbox, bounded fetch/beacon delivery, public ingest limits, and trusted client IP resolution
+**Date**: 2026-07-22
+**Rounds**: 2
+
+#### Verdict: PASS
+
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | high | 10/10 | Tabs sharing one mutable localStorage snapshot could overwrite each other's enqueues or acknowledgments. | Fixed with immutable v2 per-event keys, project-wide recovery, exact-key ACK removal, and an interleaving regression. |
+| 2 | medium | 10/10 | A 20-event batch could exceed the 64 KiB API and browser keepalive/beacon budgets. | Fixed with one shared 60 KiB UTF-8 batch builder plus multibyte and oversized-singleton regressions. |
+| 3 | medium | 9/10 | Unconditional trust in `X-Forwarded-For` allowed source-IP rate-limit spoofing. | Fixed with secure-empty `TRUSTED_PROXY_CIDRS`, right-to-left trusted-chain resolution, and centralized use by analytics and feedback. |
+
+The second review passed without further findings. Full backend tests, 88 widget unit tests with coverage,
+typecheck, production build, and all 20 Playwright tests pass.
