@@ -49,7 +49,11 @@ func TestRemoteStorageAllowsBrowserPresignedPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("perform preflight request: %v", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close preflight response: %v", err)
+		}
+	}()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		t.Fatalf("preflight status = %d, want 2xx", response.StatusCode)
@@ -74,7 +78,11 @@ func TestRemoteStorageAllowsBrowserPresignedPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("perform browser-style upload: %v", err)
 	}
-	defer uploadResponse.Body.Close()
+	defer func() {
+		if err := uploadResponse.Body.Close(); err != nil {
+			t.Errorf("close upload response: %v", err)
+		}
+	}()
 	t.Cleanup(func() {
 		if err := client.RemoveObject(context.Background(), key); err != nil {
 			t.Errorf("remove diagnostic object: %v", err)
