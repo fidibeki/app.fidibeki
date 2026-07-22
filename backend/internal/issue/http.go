@@ -227,27 +227,97 @@ func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Status  Status  `json:"status"`
-		Comment *string `json:"comment"`
+		Status       *Status  `json:"status"`
+		Comment      *string  `json:"comment"`
+		Title        *string  `json:"title"`
+		Description  *string  `json:"description"`
+		Priority     *string  `json:"priority"`
+		AssigneeID   *string  `json:"assignee_id"`
+		Unassign     bool     `json:"unassign"`
+		AddTagIDs    []string `json:"add_tag_ids"`
+		RemoveTagIDs []string `json:"remove_tag_ids"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	if !request.Status.Valid() {
-		writeValidation(w, map[string]string{"status": "must be open, in_progress, resolved, or closed"})
-		return
+	fields := make(map[string]string)
+	mutation := Mutation{Status: request.Status}
+	if request.Status != nil && !request.Status.Valid() {
+		fields["status"] = "must be open, in_progress, resolved, or closed"
 	}
 	if request.Comment != nil {
 		trimmed := strings.TrimSpace(*request.Comment)
 		if len(trimmed) > 2000 {
-			writeValidation(w, map[string]string{"comment": "must be at most 2000 characters"})
-			return
+			fields["comment"] = "must be at most 2000 characters"
+		} else if request.Status == nil {
+			fields["comment"] = "requires a status transition"
+		} else if trimmed != "" {
+			mutation.Comment = &trimmed
 		}
-		if trimmed == "" {
-			request.Comment = nil
+	}
+	if request.Title != nil {
+		trimmed := strings.TrimSpace(*request.Title)
+		if length := len([]rune(trimmed)); length < 1 || length > 80 {
+			fields["title"] = "must be between 1 and 80 characters"
 		} else {
-			request.Comment = &trimmed
+			mutation.Title = &trimmed
 		}
+	}
+	if request.Description != nil {
+		trimmed := strings.TrimSpace(*request.Description)
+		if len([]rune(trimmed)) > 10000 {
+			fields["description"] = "must be at most 10000 characters"
+		} else {
+			mutation.Description = &trimmed
+		}
+	}
+	if request.Priority != nil {
+		mutation.SetPriority = true
+		if *request.Priority != "none" {
+			priority := triage.Priority(*request.Priority)
+			if !priority.Valid() {
+				fields["priority"] = "must be low, medium, high, urgent, or none"
+			} else {
+				mutation.Priority = &priority
+			}
+		}
+	}
+	if request.AssigneeID != nil && request.Unassign {
+		fields["assignee_id"] = "cannot be combined with unassign"
+	} else if request.AssigneeID != nil {
+		if _, err := uuid.Parse(*request.AssigneeID); err != nil {
+			fields["assignee_id"] = "must be a UUID"
+		} else {
+			mutation.SetAssignee = true
+			mutation.AssigneeID = request.AssigneeID
+		}
+	} else if request.Unassign {
+		mutation.SetAssignee = true
+	}
+	if len(request.AddTagIDs) > 100 {
+		fields["add_tag_ids"] = "must contain at most 100 UUIDs"
+	}
+	if len(request.RemoveTagIDs) > 100 {
+		fields["remove_tag_ids"] = "must contain at most 100 UUIDs"
+	}
+	mutation.AddTagIDs = validateIssueUUIDs("add_tag_ids", request.AddTagIDs, fields)
+	mutation.RemoveTagIDs = validateIssueUUIDs("remove_tag_ids", request.RemoveTagIDs, fields)
+	removeSet := make(map[string]struct{}, len(mutation.RemoveTagIDs))
+	for _, tagID := range mutation.RemoveTagIDs {
+		removeSet[tagID] = struct{}{}
+	}
+	for _, tagID := range mutation.AddTagIDs {
+		if _, exists := removeSet[tagID]; exists {
+			fields["add_tag_ids"] = "must be disjoint from remove_tag_ids"
+			break
+		}
+	}
+	if mutation.Status == nil && !mutation.HasMetadata() {
+		fields["request"] = "must include at least one operation"
+	}
+	if len(fields) > 0 {
+		writeValidation(w, fields)
+		return
 	}
 	resolved, query, ok := requestState(w, r)
 	if !ok {
@@ -262,9 +332,9 @@ func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if h.options.Now != nil {
 		now = h.options.Now().UTC()
 	}
-	found, update, err := h.options.Store.UpdateStatus(
+	found, update, err := h.options.Store.UpdateIssue(
 		r.Context(), query, resolved.ID, issueID, claims.Subject,
-		request.Status, request.Comment, now,
+		mutation, now,
 	)
 	if err != nil {
 		writeStoreError(w, err)

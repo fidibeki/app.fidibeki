@@ -315,16 +315,15 @@ func allocateIssueSequence(
 	return sequence, nil
 }
 
-func (store Store) UpdateStatus(
+func (store Store) UpdateIssue(
 	ctx context.Context,
 	query db.Querier,
 	tenantID string,
 	issueID string,
 	memberID string,
-	status Status,
-	comment *string,
+	mutation Mutation,
 	now time.Time,
-) (Issue, Update, error) {
+) (Issue, *Update, error) {
 	var oldStatus Status
 	err := query.QueryRow(ctx, `
 		SELECT status FROM issues
@@ -332,52 +331,133 @@ func (store Store) UpdateStatus(
 		FOR UPDATE
 	`, tenantID, issueID).Scan(&oldStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Issue{}, Update{}, ErrNotFound
+		return Issue{}, nil, ErrNotFound
 	}
 	if err != nil {
-		return Issue{}, Update{}, fmt.Errorf("lock issue for status update: %w", err)
+		return Issue{}, nil, fmt.Errorf("lock issue for update: %w", err)
 	}
-	if oldStatus == status {
-		return Issue{}, Update{}, ErrNoStatusChange
+	if mutation.Status != nil && oldStatus == *mutation.Status {
+		return Issue{}, nil, ErrNoStatusChange
+	}
+	if mutation.SetAssignee && mutation.AssigneeID != nil {
+		var exists bool
+		if err := query.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM tenant_members WHERE tenant_id = $1 AND id = $2)
+		`, tenantID, *mutation.AssigneeID).Scan(&exists); err != nil {
+			return Issue{}, nil, fmt.Errorf("validate issue assignee: %w", err)
+		}
+		if !exists {
+			return Issue{}, nil, ErrNotFound
+		}
+	}
+	tagIDs := uniqueIssueMutationIDs(mutation.AddTagIDs, mutation.RemoveTagIDs)
+	if len(tagIDs) > 0 {
+		var count int
+		if err := query.QueryRow(ctx, `
+			SELECT count(*) FROM tags WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		`, tenantID, tagIDs).Scan(&count); err != nil {
+			return Issue{}, nil, fmt.Errorf("validate issue tags: %w", err)
+		}
+		if count != len(tagIDs) {
+			return Issue{}, nil, ErrNotFound
+		}
+	}
+	var status, priority, assignee any
+	if mutation.Status != nil {
+		status = string(*mutation.Status)
+	}
+	if mutation.Priority != nil {
+		priority = string(*mutation.Priority)
+	}
+	if mutation.AssigneeID != nil {
+		assignee = *mutation.AssigneeID
 	}
 	if _, err := query.Exec(ctx, `
 		UPDATE issues
-		SET status = $3::issue_status,
+		SET status = CASE WHEN $3 THEN $4::issue_status ELSE status END,
+		    title = CASE WHEN $5 THEN $6 ELSE title END,
+		    description = CASE WHEN $7 THEN $8 ELSE description END,
+		    priority = CASE WHEN $9 THEN $10 ELSE priority END,
+		    assignee_id = CASE WHEN $11 THEN $12::uuid ELSE assignee_id END,
 		    resolved_at = CASE
-		        WHEN $3::issue_status = 'resolved' THEN $4
-		        WHEN $3::issue_status IN ('open', 'in_progress') THEN NULL
+		        WHEN $3 AND $4::issue_status = 'resolved' THEN $13
+		        WHEN $3 AND $4::issue_status IN ('open', 'in_progress') THEN NULL
 		        ELSE resolved_at
 		    END
 		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, issueID, status, now.UTC()); err != nil {
-		return Issue{}, Update{}, fmt.Errorf("update issue status: %w", err)
+	`, tenantID, issueID,
+		mutation.Status != nil, status,
+		mutation.Title != nil, mutation.Title,
+		mutation.Description != nil, mutation.Description,
+		mutation.SetPriority, priority,
+		mutation.SetAssignee, assignee,
+		now.UTC(),
+	); err != nil {
+		return Issue{}, nil, fmt.Errorf("update issue: %w", err)
+	}
+	if len(mutation.RemoveTagIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			DELETE FROM issue_tags
+			WHERE tenant_id = $1 AND issue_id = $2 AND tag_id = ANY($3::uuid[])
+		`, tenantID, issueID, mutation.RemoveTagIDs); err != nil {
+			return Issue{}, nil, fmt.Errorf("remove issue tags: %w", err)
+		}
+	}
+	if len(mutation.AddTagIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO issue_tags (tenant_id, issue_id, tag_id)
+			SELECT $1, $2, tag_id FROM unnest($3::uuid[]) AS tag_id
+			ON CONFLICT DO NOTHING
+		`, tenantID, issueID, mutation.AddTagIDs); err != nil {
+			return Issue{}, nil, fmt.Errorf("add issue tags: %w", err)
+		}
+	}
+	found, err := store.Get(ctx, query, tenantID, issueID)
+	if err != nil {
+		return Issue{}, nil, err
+	}
+	if mutation.Status == nil {
+		return found, nil, nil
 	}
 	updateID := uuid.NewString()
 	if _, err := query.Exec(ctx, `
 		INSERT INTO issue_updates (
 			id, tenant_id, issue_id, member_id, old_status, new_status, comment, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, updateID, tenantID, issueID, memberID, oldStatus, status, comment, now.UTC()); err != nil {
-		return Issue{}, Update{}, fmt.Errorf("record issue status update: %w", err)
+	`, updateID, tenantID, issueID, memberID, oldStatus, *mutation.Status, mutation.Comment, now.UTC()); err != nil {
+		return Issue{}, nil, fmt.Errorf("record issue status update: %w", err)
 	}
 	event := "issue.updated"
-	if status == StatusResolved {
+	if *mutation.Status == StatusResolved {
 		event = "issue.resolved"
 	}
 	if _, err := query.Exec(ctx, `
 		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key)
 		VALUES ($1, $2, 'issue', $3, $4)
 	`, tenantID, event, issueID, updateID); err != nil {
-		return Issue{}, Update{}, fmt.Errorf("create issue update outbox event: %w", err)
+		return Issue{}, nil, fmt.Errorf("create issue update outbox event: %w", err)
 	}
-	found, err := store.Get(ctx, query, tenantID, issueID)
-	if err != nil {
-		return Issue{}, Update{}, err
-	}
-	return found, Update{
+	update := &Update{
 		ID: updateID, IssueID: issueID, MemberID: &memberID,
-		OldStatus: &oldStatus, NewStatus: status, Comment: comment, CreatedAt: now.UTC(),
-	}, nil
+		OldStatus: &oldStatus, NewStatus: *mutation.Status,
+		Comment: mutation.Comment, CreatedAt: now.UTC(),
+	}
+	return found, update, nil
+}
+
+func uniqueIssueMutationIDs(groups ...[]string) []string {
+	seen := make(map[string]struct{})
+	values := make([]string, 0)
+	for _, group := range groups {
+		for _, value := range group {
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func (store Store) Merge(

@@ -352,6 +352,82 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if listedLegacy.Priority != nil || listedLegacy.Assignee != nil || len(listedLegacy.Tags) != 0 {
 		t.Fatalf("legacy issue triage metadata = %#v", *listedLegacy)
 	}
+	var regressionTagID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color)
+		VALUES ($1, 'Regression', '#7C3AED') RETURNING id
+	`, tenantID).Scan(&regressionTagID); err != nil {
+		t.Fatalf("create issue metadata tag: %v", err)
+	}
+	metadataUpdate := issueRequest(
+		handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
+		fmt.Sprintf(`{"title":"Checkout total is unclear","description":"Customers cannot verify the final total before payment.","priority":"urgent","assignee_id":%q,"add_tag_ids":[%q],"remove_tag_ids":[%q]}`,
+			triageMemberID, regressionTagID, customerImpactTagID),
+	)
+	if metadataUpdate.Code != http.StatusOK {
+		t.Fatalf("update issue metadata = %d body=%s", metadataUpdate.Code, metadataUpdate.Body.String())
+	}
+	var metadataEnvelope struct {
+		Issue  Issue   `json:"issue"`
+		Update *Update `json:"update"`
+	}
+	if err := json.Unmarshal(metadataUpdate.Body.Bytes(), &metadataEnvelope); err != nil {
+		t.Fatalf("decode issue metadata update: %v", err)
+	}
+	if metadataEnvelope.Update != nil || metadataEnvelope.Issue.Title != "Checkout total is unclear" ||
+		metadataEnvelope.Issue.Description != "Customers cannot verify the final total before payment." ||
+		metadataEnvelope.Issue.Priority == nil || string(*metadataEnvelope.Issue.Priority) != "urgent" ||
+		metadataEnvelope.Issue.Assignee == nil || metadataEnvelope.Issue.Assignee.ID != triageMemberID ||
+		len(metadataEnvelope.Issue.Tags) != 2 || metadataEnvelope.Issue.Tags[0].Name != "Checkout" ||
+		metadataEnvelope.Issue.Tags[1].Name != "Regression" {
+		t.Fatalf("updated issue metadata = %#v", metadataEnvelope)
+	}
+	var metadataHistoryCount int
+	if err := root.QueryRow(ctx, `SELECT count(*) FROM issue_updates WHERE issue_id = $1`, issueID).
+		Scan(&metadataHistoryCount); err != nil {
+		t.Fatalf("count metadata-only issue updates: %v", err)
+	}
+	if metadataHistoryCount != 0 {
+		t.Fatalf("metadata-only issue history count = %d, want 0", metadataHistoryCount)
+	}
+	var otherTenantID, otherMemberID, otherTagID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Other', 'other-issue', 'growth', 'active') RETURNING id
+	`).Scan(&otherTenantID); err != nil {
+		t.Fatalf("create other issue tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email)
+		VALUES ($1, 'owner@other.test') RETURNING id
+	`, otherTenantID).Scan(&otherMemberID); err != nil {
+		t.Fatalf("create other issue member: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color)
+		VALUES ($1, 'Private', '#111827') RETURNING id
+	`, otherTenantID).Scan(&otherTagID); err != nil {
+		t.Fatalf("create other issue tag: %v", err)
+	}
+	invalidMetadata := issueRequest(
+		handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
+		fmt.Sprintf(`{"title":"Must not persist","priority":"low","assignee_id":%q,"add_tag_ids":[%q]}`,
+			otherMemberID, otherTagID),
+	)
+	if invalidMetadata.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant issue metadata = %d body=%s", invalidMetadata.Code, invalidMetadata.Body.String())
+	}
+	var persistedTitle, persistedPriority, persistedAssignee string
+	if err := root.QueryRow(ctx, `
+		SELECT title, priority, assignee_id FROM issues WHERE id = $1
+	`, issueID).Scan(&persistedTitle, &persistedPriority, &persistedAssignee); err != nil {
+		t.Fatalf("read issue after invalid metadata: %v", err)
+	}
+	if persistedTitle != "Checkout total is unclear" || persistedPriority != "urgent" ||
+		persistedAssignee != triageMemberID {
+		t.Fatalf("issue changed after invalid metadata = %q/%q/%q",
+			persistedTitle, persistedPriority, persistedAssignee)
+	}
 	updated := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
 		`{"status":"in_progress","comment":"We are investigating"}`)
 	if updated.Code != http.StatusOK {
@@ -388,7 +464,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if err := json.Unmarshal(detail.Body.Bytes(), &detailEnvelope); err != nil {
 		t.Fatalf("decode issue detail: %v", err)
 	}
-	assertIssueTriageRead(t, detailEnvelope.Issue, memberID)
+	if detailEnvelope.Issue.Priority == nil || string(*detailEnvelope.Issue.Priority) != "urgent" ||
+		detailEnvelope.Issue.Assignee == nil || detailEnvelope.Issue.Assignee.ID != triageMemberID ||
+		len(detailEnvelope.Issue.Tags) != 2 || detailEnvelope.Issue.Tags[0].Name != "Checkout" ||
+		detailEnvelope.Issue.Tags[1].Name != "Regression" {
+		t.Fatalf("updated issue detail metadata = %#v", detailEnvelope.Issue)
+	}
 	invalidStatus := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
 		`{"status":"invalid"}`)
 	if invalidStatus.Code != http.StatusUnprocessableEntity {

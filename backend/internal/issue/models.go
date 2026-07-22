@@ -61,6 +61,24 @@ type CreateFromFeedbackInput struct {
 	TagIDs      []string
 }
 
+type Mutation struct {
+	Status       *Status
+	Comment      *string
+	Title        *string
+	Description  *string
+	SetPriority  bool
+	Priority     *triage.Priority
+	SetAssignee  bool
+	AssigneeID   *string
+	AddTagIDs    []string
+	RemoveTagIDs []string
+}
+
+func (mutation Mutation) HasMetadata() bool {
+	return mutation.Title != nil || mutation.Description != nil || mutation.SetPriority ||
+		mutation.SetAssignee || len(mutation.AddTagIDs) > 0 || len(mutation.RemoveTagIDs) > 0
+}
+
 type Update struct {
 	ID        string    `json:"id"`
 	IssueID   string    `json:"issue_id"`
