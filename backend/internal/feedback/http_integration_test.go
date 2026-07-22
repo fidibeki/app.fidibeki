@@ -451,6 +451,12 @@ func assertTenantFeedbackReadFlow(
 	if err != nil {
 		t.Fatalf("issue denied tenant feedback token: %v", err)
 	}
+	feedbackOnlyToken, _, err := jwtManager.IssueTenant("feedback-writer-id", tenantID, []string{
+		string(auth.PermissionFeedbackRead), string(auth.PermissionFeedbackUpdate),
+	})
+	if err != nil {
+		t.Fatalf("issue feedback-only tenant token: %v", err)
+	}
 
 	routes := chi.NewRouter()
 	RegisterTenantRoutes(routes, TenantHTTPOptions{
@@ -702,6 +708,107 @@ func assertTenantFeedbackReadFlow(
 	)
 	if duplicateBulk.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("duplicate bulk feedback IDs = %d body=%s", duplicateBulk.Code, duplicateBulk.Body.String())
+	}
+	var linkTargetID, conflictIssueID, mergeTargetID, mergedIssueID string
+	for publicID, destination := range map[string]*string{
+		"ACME-2026-0100": &linkTargetID,
+		"ACME-2026-0101": &conflictIssueID,
+		"ACME-2026-0102": &mergeTargetID,
+		"ACME-2026-0103": &mergedIssueID,
+	} {
+		if err := root.QueryRow(ctx, `
+			INSERT INTO issues (tenant_id, project_id, public_id, title)
+			VALUES ($1, $2, $3, 'Feedback link test') RETURNING id
+		`, tenantID, projectID, publicID).Scan(destination); err != nil {
+			t.Fatalf("create feedback link issue %s: %v", publicID, err)
+		}
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issues SET merged_into_id = $2, merged_at = $3 WHERE id = $1
+	`, mergedIssueID, mergeTargetID, now); err != nil {
+		t.Fatalf("prepare merged feedback link issue: %v", err)
+	}
+	linkBody := fmt.Sprintf(`{"feedback_ids":[%q,%q],"issue_id":%q}`,
+		feedbackID, secondFeedbackID, linkTargetID)
+	linked := performTenantFeedbackRequest(handler, http.MethodPost, "/v1/feedbacks/link", linkBody, ownerToken)
+	if linked.Code != http.StatusOK || !strings.Contains(linked.Body.String(), `"updated_count":2`) {
+		t.Fatalf("link feedback = %d body=%s", linked.Code, linked.Body.String())
+	}
+	idempotentLink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/link", linkBody, ownerToken,
+	)
+	if idempotentLink.Code != http.StatusOK {
+		t.Fatalf("idempotent feedback link = %d body=%s", idempotentLink.Code, idempotentLink.Body.String())
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET issue_id = $2 WHERE id = $1`, secondFeedbackID, conflictIssueID); err != nil {
+		t.Fatalf("prepare conflicting feedback link: %v", err)
+	}
+	conflictingLink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/link", linkBody, ownerToken,
+	)
+	if conflictingLink.Code != http.StatusConflict {
+		t.Fatalf("conflicting feedback link = %d body=%s", conflictingLink.Code, conflictingLink.Body.String())
+	}
+	var firstIssueID, secondIssueID *string
+	if err := root.QueryRow(ctx, `
+		SELECT
+			(SELECT issue_id FROM feedbacks WHERE id = $1),
+			(SELECT issue_id FROM feedbacks WHERE id = $2)
+	`, feedbackID, secondFeedbackID).Scan(&firstIssueID, &secondIssueID); err != nil {
+		t.Fatalf("read feedback links after conflict: %v", err)
+	}
+	if firstIssueID == nil || *firstIssueID != linkTargetID || secondIssueID == nil || *secondIssueID != conflictIssueID {
+		t.Fatalf("feedback links after conflict = %v/%v", firstIssueID, secondIssueID)
+	}
+	unlinkBody := fmt.Sprintf(`{"feedback_ids":[%q,%q]}`, feedbackID, secondFeedbackID)
+	unlinked := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/unlink", unlinkBody, ownerToken,
+	)
+	if unlinked.Code != http.StatusOK || !strings.Contains(unlinked.Body.String(), `"updated_count":2`) {
+		t.Fatalf("unlink feedback = %d body=%s", unlinked.Code, unlinked.Body.String())
+	}
+	idempotentUnlink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/unlink", unlinkBody, ownerToken,
+	)
+	if idempotentUnlink.Code != http.StatusOK {
+		t.Fatalf("idempotent feedback unlink = %d body=%s", idempotentUnlink.Code, idempotentUnlink.Body.String())
+	}
+	var otherProjectID, otherProjectFeedbackID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Other project', 'pk_live_ZYXWVUTSRQPONMLKJIHGFE', '{other.example.com}') RETURNING id
+	`, tenantID).Scan(&otherProjectID); err != nil {
+		t.Fatalf("create other feedback project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, page_url, text_process_status
+		) VALUES ($1, $2, 'fb_Other001', gen_random_uuid(), 'https://other.example.com', 'skipped')
+		RETURNING id
+	`, tenantID, otherProjectID).Scan(&otherProjectFeedbackID); err != nil {
+		t.Fatalf("create other project feedback: %v", err)
+	}
+	mixedProjectLink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/link",
+		fmt.Sprintf(`{"feedback_ids":[%q,%q],"issue_id":%q}`,
+			feedbackID, otherProjectFeedbackID, linkTargetID), ownerToken,
+	)
+	if mixedProjectLink.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("mixed-project feedback link = %d body=%s", mixedProjectLink.Code, mixedProjectLink.Body.String())
+	}
+	mergedLink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/link",
+		fmt.Sprintf(`{"feedback_ids":[%q],"issue_id":%q}`, feedbackID, mergedIssueID), ownerToken,
+	)
+	if mergedLink.Code != http.StatusConflict {
+		t.Fatalf("merged issue feedback link = %d body=%s", mergedLink.Code, mergedLink.Body.String())
+	}
+	deniedLink := performTenantFeedbackRequest(
+		handler, http.MethodPost, "/v1/feedbacks/link",
+		fmt.Sprintf(`{"feedback_ids":[%q],"issue_id":%q}`, feedbackID, linkTargetID), feedbackOnlyToken,
+	)
+	if deniedLink.Code != http.StatusForbidden {
+		t.Fatalf("feedback link without issue:update = %d body=%s", deniedLink.Code, deniedLink.Body.String())
 	}
 	invalidFilter := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/feedbacks?rating=9", "", ownerToken)
 	if invalidFilter.Code != http.StatusUnprocessableEntity {

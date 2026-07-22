@@ -25,6 +25,8 @@ type TenantReadStore interface {
 	GetTenantFeedback(context.Context, db.Querier, string, string) (Detail, error)
 	UpdateTenantFeedback(context.Context, db.Querier, string, string, TenantMutation) (Detail, error)
 	BulkUpdateTenantFeedback(context.Context, db.Querier, string, []string, TenantMutation) ([]Item, error)
+	LinkTenantFeedback(context.Context, db.Querier, string, []string, string) ([]Item, error)
+	UnlinkTenantFeedback(context.Context, db.Querier, string, []string) ([]Item, error)
 	TenantDashboard(context.Context, db.Querier, string, string, int, time.Time) (Dashboard, error)
 }
 
@@ -54,6 +56,13 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		appmiddleware.RequireWritable,
 		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
 	)...).Patch("/v1/feedbacks/bulk", handler.bulkUpdate)
+	linkPermissions := append(protected,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
+		appmiddleware.RequirePermission(auth.PermissionIssueUpdate),
+	)
+	router.With(linkPermissions...).Post("/v1/feedbacks/link", handler.link)
+	router.With(linkPermissions...).Post("/v1/feedbacks/unlink", handler.unlink)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionFeedbackRead))...).
 		Get("/v1/feedbacks/{feedbackID}", handler.get)
 	router.With(append(protected,
@@ -188,6 +197,68 @@ func (h *TenantHTTPHandler) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		writeTenantStoreError(w, err)
 		return
 	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"updated_count": len(updated),
+		"feedbacks":     updated,
+	})
+}
+
+func (h *TenantHTTPHandler) link(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		FeedbackIDs []string `json:"feedback_ids"`
+		IssueID     string   `json:"issue_id"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	fields := validateTenantFeedbackIDs(request.FeedbackIDs)
+	if _, err := uuid.Parse(request.IssueID); err != nil {
+		fields["issue_id"] = "must be a UUID"
+	}
+	if len(fields) > 0 {
+		writeTenantValidation(w, fields)
+		return
+	}
+	resolved, query, ok := tenantFeedbackRequestState(w, r)
+	if !ok {
+		return
+	}
+	updated, err := h.options.Store.LinkTenantFeedback(
+		r.Context(), query, resolved.ID, request.FeedbackIDs, request.IssueID,
+	)
+	if err != nil {
+		writeTenantStoreError(w, err)
+		return
+	}
+	writeTenantFeedbackMutationResult(w, updated)
+}
+
+func (h *TenantHTTPHandler) unlink(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		FeedbackIDs []string `json:"feedback_ids"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if fields := validateTenantFeedbackIDs(request.FeedbackIDs); len(fields) > 0 {
+		writeTenantValidation(w, fields)
+		return
+	}
+	resolved, query, ok := tenantFeedbackRequestState(w, r)
+	if !ok {
+		return
+	}
+	updated, err := h.options.Store.UnlinkTenantFeedback(
+		r.Context(), query, resolved.ID, request.FeedbackIDs,
+	)
+	if err != nil {
+		writeTenantStoreError(w, err)
+		return
+	}
+	writeTenantFeedbackMutationResult(w, updated)
+}
+
+func writeTenantFeedbackMutationResult(w http.ResponseWriter, updated []Item) {
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"updated_count": len(updated),
 		"feedbacks":     updated,
@@ -541,9 +612,16 @@ func writeTenantValidation(w http.ResponseWriter, fields map[string]string) {
 }
 
 func writeTenantStoreError(w http.ResponseWriter, err error) {
-	if errors.Is(err, ErrNotFound) {
+	switch {
+	case errors.Is(err, ErrNotFound):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
-		return
+	case errors.Is(err, ErrLinkConflict):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "feedback is linked to another issue", nil)
+	case errors.Is(err, ErrMergedIssue):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "merged issue cannot receive feedback", nil)
+	case errors.Is(err, ErrProjectMismatch):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback and issue projects do not match", nil)
+	default:
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}
-	api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 }

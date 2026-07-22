@@ -20,6 +20,9 @@ var (
 	ErrNotFound          = errors.New("feedback resource not found")
 	ErrPublicIDCollision = errors.New("feedback public ID collision")
 	ErrInvalidReplay     = errors.New("replay session cannot be linked to feedback")
+	ErrLinkConflict      = errors.New("feedback is linked to another issue")
+	ErrProjectMismatch   = errors.New("feedback and issue projects do not match")
+	ErrMergedIssue       = errors.New("merged issue cannot receive feedback")
 )
 
 type PreparedAttachment struct {

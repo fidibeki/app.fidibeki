@@ -281,26 +281,8 @@ func (Store) BulkUpdateTenantFeedback(
 	feedbackIDs []string,
 	mutation TenantMutation,
 ) ([]Item, error) {
-	rows, err := query.Query(ctx, `
-		SELECT id
-		FROM feedbacks
-		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
-		ORDER BY id
-		FOR UPDATE
-	`, tenantID, feedbackIDs)
-	if err != nil {
-		return nil, fmt.Errorf("lock feedback for bulk update: %w", err)
-	}
-	locked := 0
-	for rows.Next() {
-		locked++
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate locked feedback: %w", err)
-	}
-	if locked != len(feedbackIDs) {
-		return nil, ErrNotFound
+	if _, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs); err != nil {
+		return nil, err
 	}
 	if mutation.SetAssignee && mutation.AssigneeID != nil {
 		var exists bool
@@ -374,6 +356,120 @@ func (Store) BulkUpdateTenantFeedback(
 			return nil, fmt.Errorf("add feedback tags: %w", err)
 		}
 	}
+	return listTenantFeedbackByIDs(ctx, query, tenantID, feedbackIDs)
+}
+
+func (Store) LinkTenantFeedback(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+	issueID string,
+) ([]Item, error) {
+	states, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs)
+	if err != nil {
+		return nil, err
+	}
+	var issueProjectID string
+	var mergedIntoID *string
+	err = query.QueryRow(ctx, `
+		SELECT project_id, merged_into_id
+		FROM issues
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, issueID).Scan(&issueProjectID, &mergedIntoID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock issue for feedback link: %w", err)
+	}
+	if mergedIntoID != nil {
+		return nil, ErrMergedIssue
+	}
+	for _, state := range states {
+		if state.ProjectID != issueProjectID {
+			return nil, ErrProjectMismatch
+		}
+		if state.IssueID != nil && *state.IssueID != issueID {
+			return nil, ErrLinkConflict
+		}
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks
+		SET issue_id = $3
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND issue_id IS NULL
+	`, tenantID, feedbackIDs, issueID); err != nil {
+		return nil, fmt.Errorf("link feedback to issue: %w", err)
+	}
+	return listTenantFeedbackByIDs(ctx, query, tenantID, feedbackIDs)
+}
+
+func (Store) UnlinkTenantFeedback(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+) ([]Item, error) {
+	if _, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs); err != nil {
+		return nil, err
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks SET issue_id = NULL
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+	`, tenantID, feedbackIDs); err != nil {
+		return nil, fmt.Errorf("unlink feedback from issue: %w", err)
+	}
+	return listTenantFeedbackByIDs(ctx, query, tenantID, feedbackIDs)
+}
+
+type tenantFeedbackLinkState struct {
+	ID        string
+	ProjectID string
+	IssueID   *string
+}
+
+func lockTenantFeedbackStates(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+) ([]tenantFeedbackLinkState, error) {
+	rows, err := query.Query(ctx, `
+		SELECT id, project_id, issue_id
+		FROM feedbacks
+		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+		ORDER BY id
+		FOR UPDATE
+	`, tenantID, feedbackIDs)
+	if err != nil {
+		return nil, fmt.Errorf("lock feedback: %w", err)
+	}
+	states := make([]tenantFeedbackLinkState, 0, len(feedbackIDs))
+	for rows.Next() {
+		var state tenantFeedbackLinkState
+		if err := rows.Scan(&state.ID, &state.ProjectID, &state.IssueID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan locked feedback: %w", err)
+		}
+		states = append(states, state)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate locked feedback: %w", err)
+	}
+	if len(states) != len(feedbackIDs) {
+		return nil, ErrNotFound
+	}
+	return states, nil
+}
+
+func listTenantFeedbackByIDs(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	feedbackIDs []string,
+) ([]Item, error) {
 	return (Store{}).ListTenantFeedback(ctx, query, tenantID, ListOptions{
 		IDs: feedbackIDs, Sort: SortNewest, Limit: len(feedbackIDs),
 	})
