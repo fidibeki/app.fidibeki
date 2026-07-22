@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 54
+	const latestMigrationVersion = 55
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -931,6 +931,11 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, widgetRuleA); err != nil {
 		t.Fatalf("prepare legacy widget definition: %v", err)
 	}
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET rating = 4, text = 'Legacy structured response' WHERE id = $1
+	`, feedbackA); err != nil {
+		t.Fatalf("prepare legacy feedback response: %v", err)
+	}
 	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
 		t.Fatalf("reapply widget definition migration: %v", err)
 	}
@@ -950,6 +955,17 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			"backfilled widget definition = %q/%d/%q/%q/%q",
 			definitionKey, definitionVersion, definitionStatus, presentation, localizedPrompt,
 		)
+	}
+	var responseRating *int
+	var responseText *string
+	if err := root.QueryRow(ctx, `
+		SELECT (responses->>'rating')::integer, responses->>'feedback'
+		FROM feedbacks WHERE id = $1
+	`, feedbackA).Scan(&responseRating, &responseText); err != nil {
+		t.Fatalf("read backfilled structured feedback responses: %v", err)
+	}
+	if responseRating == nil || *responseRating != 4 || responseText == nil || *responseText != "Legacy structured response" {
+		t.Fatalf("structured feedback response backfill = rating %v text %v", responseRating, responseText)
 	}
 
 	if err := migrateToVersion(migrator, 48); err != nil {

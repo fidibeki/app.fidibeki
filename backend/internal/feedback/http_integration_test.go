@@ -155,6 +155,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	body := fmt.Sprintf(`{
 		"client_feedback_id":%q,"widget_rule_id":%q,"session_id":%q,"rating":5,
 		"text":"Checkout was clear","element_attachment":{"selector":"#checkout","html":"<section>Checkout</section>","styles":{"display":"grid"}},
+		"responses":{"rating":5,"feedback":"Checkout was clear"},
 		"attachments":[{"client_attachment_id":%q,"kind":"audio","content_type":"audio/webm","size_bytes":2048}],
 		"metadata":{"url":"https://example.com/checkout","referrer":"https://example.com/","user_agent":"browser","os":"Linux","browser":"Firefox","device":"desktop","viewport_width":1280,"viewport_height":720,"language":"en"},
 		"analytics":{"event_id":"00000000-0000-4000-8000-000000000104","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout?step=payment#card","occurred_at":"2026-07-21T12:00:00Z"}
@@ -1106,14 +1107,19 @@ func assertFeedbackRows(
 	`, tenantID, projectID).Scan(&issueEvents); err != nil {
 		t.Fatalf("count issue-created outbox events: %v", err)
 	}
-	var title string
+	var title, responses string
 	var description *string
-	if err := root.QueryRow(ctx, `SELECT title, description FROM feedbacks WHERE id = $1`, feedbackID).
-		Scan(&title, &description); err != nil {
+	var definitionVersion *int
+	if err := root.QueryRow(ctx, `SELECT title, description, responses::text, widget_definition_version FROM feedbacks WHERE id = $1`, feedbackID).
+		Scan(&title, &description, &responses, &definitionVersion); err != nil {
 		t.Fatalf("read feedback copy: %v", err)
 	}
 	if title != "Checkout was clear" || description == nil || *description != "Checkout was clear" {
 		t.Errorf("feedback title/description = %q/%v", title, description)
+	}
+	if !strings.Contains(responses, `"rating": 5`) || !strings.Contains(responses, `"feedback": "Checkout was clear"`) ||
+		definitionVersion == nil || *definitionVersion != 1 {
+		t.Errorf("feedback response context = %s version %v", responses, definitionVersion)
 	}
 	if issues != 0 || feedbacks != 1 || attachments != 1 || events != 1 || issueEvents != 0 {
 		t.Fatalf("row counts: issues=%d feedbacks=%d attachments=%d events=%d issue_events=%d",

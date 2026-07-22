@@ -95,6 +95,7 @@ func ValidateSubmissionAt(
 		}
 	}
 	fields = append(fields, validateAttachments(values.Attachments)...)
+	fields = append(fields, validateResponses(input, &values, configuration)...)
 	fields = append(fields, validateRuleCapabilities(input, values, configuration)...)
 	if input.Analytics != nil {
 		analytics, analyticsFields := widgetanalytics.ValidateSubmissionEvent(
@@ -120,7 +121,8 @@ func normalizeSubmission(input SubmissionRequest) SubmissionValues {
 		ClientFeedbackID: strings.TrimSpace(input.ClientFeedbackID),
 		WidgetRuleID:     strings.TrimSpace(input.WidgetRuleID), Rating: input.Rating,
 		ReplaySessionID: trimStringPointer(input.ReplaySessionID),
-		Text:            trimOptional(input.Text), ReporterEmail: lowerOptional(input.ReporterEmail),
+		Text:            trimOptional(input.Text), Comment: trimOptional(input.Comment),
+		Responses: "{}", ReporterEmail: lowerOptional(input.ReporterEmail),
 		NotifyReporter: input.NotifyReporter, PageURL: strings.TrimSpace(input.Metadata.URL),
 		Referrer: trimString(input.Metadata.Referrer), UserAgent: trimString(input.Metadata.UserAgent),
 		OS: trimString(input.Metadata.OS), Browser: trimString(input.Metadata.Browser),
@@ -148,6 +150,172 @@ func normalizeSubmission(input SubmissionRequest) SubmissionValues {
 		}
 	}
 	return values
+}
+
+func validateResponses(
+	input SubmissionRequest,
+	values *SubmissionValues,
+	configuration project.PublicConfiguration,
+) []FieldError {
+	var selected *project.WidgetRule
+	for index := range configuration.Rules {
+		if configuration.Rules[index].ID == values.WidgetRuleID {
+			selected = &configuration.Rules[index]
+			break
+		}
+	}
+	if selected == nil {
+		return nil
+	}
+	blocks := selected.ResponseBlocks
+	if len(blocks) == 0 {
+		blocks = legacyResponseBlocks(selected.CanRate, selected.CanWriteText)
+	}
+	if selected.DefinitionVersion >= 1 {
+		version := selected.DefinitionVersion
+		values.DefinitionVersion = &version
+	}
+
+	fields := make([]FieldError, 0)
+	responses := make(map[string]any, len(blocks))
+	known := make(map[string]project.WidgetResponseBlock, len(blocks))
+	for _, block := range blocks {
+		known[block.Key] = block
+		raw, provided := input.Responses[block.Key]
+		if !provided {
+			switch block.Type {
+			case project.ResponseRating:
+				if values.Rating != nil {
+					responses[block.Key] = *values.Rating
+					provided = true
+				}
+			case project.ResponseFreeText:
+				if values.Text != nil {
+					responses[block.Key] = *values.Text
+					provided = true
+				}
+			}
+		} else {
+			value, valid := validateResponseValue(block, raw)
+			if !valid {
+				fields = append(fields, field("responses."+block.Key, responseValueMessage(block.Type)))
+			} else if value != nil {
+				responses[block.Key] = value
+				provided = true
+				synchronizeLegacyResponse(values, block.Type, value, &fields, block.Key)
+			} else {
+				provided = false
+			}
+		}
+		if block.Required && !provided {
+			fields = append(fields, field("responses."+block.Key, "is required"))
+		}
+	}
+	for key := range input.Responses {
+		if _, exists := known[key]; !exists {
+			fields = append(fields, field("responses."+key, "is not defined by this widget"))
+		}
+	}
+	if values.Comment != nil && !selected.AllowComment {
+		fields = append(fields, field("comment", "is not enabled by this widget"))
+	}
+	if values.Comment != nil && len(*values.Comment) > maxTextLength {
+		fields = append(fields, field("comment", fmt.Sprintf("must not exceed %d characters", maxTextLength)))
+	}
+	if (values.ReporterEmail != nil || values.NotifyReporter) && !selected.CollectContact {
+		fields = append(fields, field("reporter_email", "is not enabled by this widget"))
+	}
+	encoded, err := json.Marshal(responses)
+	if err != nil {
+		fields = append(fields, field("responses", "could not be encoded"))
+	} else {
+		values.Responses = string(encoded)
+	}
+	return fields
+}
+
+func legacyResponseBlocks(canRate, canWriteText bool) []project.WidgetResponseBlock {
+	blocks := make([]project.WidgetResponseBlock, 0, 2)
+	if canRate {
+		blocks = append(blocks, project.WidgetResponseBlock{Key: "rating", Type: project.ResponseRating})
+	}
+	if canWriteText {
+		blocks = append(blocks, project.WidgetResponseBlock{Key: "feedback", Type: project.ResponseFreeText})
+	}
+	return blocks
+}
+
+func validateResponseValue(block project.WidgetResponseBlock, raw json.RawMessage) (any, bool) {
+	switch block.Type {
+	case project.ResponseRating:
+		var value int
+		if err := json.Unmarshal(raw, &value); err != nil || value < 1 || value > 5 {
+			return nil, false
+		}
+		return value, true
+	case project.ResponseFreeText:
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, false
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, true
+		}
+		if len(value) > maxTextLength {
+			return nil, false
+		}
+		return value, true
+	case project.ResponseReaction, project.ResponseSingleChoice:
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return nil, false
+		}
+		for _, option := range block.Options {
+			if value == option.Value {
+				return value, true
+			}
+		}
+		return nil, false
+	default:
+		return nil, false
+	}
+}
+
+func synchronizeLegacyResponse(
+	values *SubmissionValues,
+	typeOf project.WidgetResponseBlockType,
+	value any,
+	fields *[]FieldError,
+	key string,
+) {
+	switch typeOf {
+	case project.ResponseRating:
+		rating := value.(int)
+		if values.Rating != nil && *values.Rating != rating {
+			*fields = append(*fields, field("responses."+key, "must match rating"))
+			return
+		}
+		values.Rating = &rating
+	case project.ResponseFreeText:
+		text := value.(string)
+		if values.Text != nil && *values.Text != text {
+			*fields = append(*fields, field("responses."+key, "must match text"))
+			return
+		}
+		values.Text = &text
+	}
+}
+
+func responseValueMessage(blockType project.WidgetResponseBlockType) string {
+	switch blockType {
+	case project.ResponseRating:
+		return "must be an integer between 1 and 5"
+	case project.ResponseFreeText:
+		return fmt.Sprintf("must be text not exceeding %d characters", maxTextLength)
+	default:
+		return "must be one of the configured options"
+	}
 }
 
 func validateAttachments(attachments []AttachmentValues) []FieldError {

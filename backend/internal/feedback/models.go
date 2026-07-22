@@ -1,6 +1,7 @@
 package feedback
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
@@ -68,18 +69,20 @@ type AttachmentInput struct {
 }
 
 type SubmissionRequest struct {
-	ClientFeedbackID string                    `json:"client_feedback_id"`
-	WidgetRuleID     string                    `json:"widget_rule_id"`
-	ReplaySessionID  *string                   `json:"session_id"`
-	Rating           *int                      `json:"rating"`
-	Text             *string                   `json:"text"`
-	ReporterEmail    *string                   `json:"reporter_email"`
-	NotifyReporter   bool                      `json:"notify_reporter"`
-	Element          *ElementAttachmentInput   `json:"element_attachment"`
-	Attachments      []AttachmentInput         `json:"attachments"`
-	Metadata         MetadataInput             `json:"metadata"`
-	Analytics        *SubmissionAnalyticsInput `json:"analytics"`
-	Honeypot         string                    `json:"company_website"`
+	ClientFeedbackID string                     `json:"client_feedback_id"`
+	WidgetRuleID     string                     `json:"widget_rule_id"`
+	ReplaySessionID  *string                    `json:"session_id"`
+	Rating           *int                       `json:"rating"`
+	Text             *string                    `json:"text"`
+	Responses        map[string]json.RawMessage `json:"responses"`
+	Comment          *string                    `json:"comment"`
+	ReporterEmail    *string                    `json:"reporter_email"`
+	NotifyReporter   bool                       `json:"notify_reporter"`
+	Element          *ElementAttachmentInput    `json:"element_attachment"`
+	Attachments      []AttachmentInput          `json:"attachments"`
+	Metadata         MetadataInput              `json:"metadata"`
+	Analytics        *SubmissionAnalyticsInput  `json:"analytics"`
+	Honeypot         string                     `json:"company_website"`
 }
 
 type SubmissionAnalyticsInput struct {
@@ -97,6 +100,9 @@ type SubmissionValues struct {
 	ReplaySessionID   *string
 	Rating            *int
 	Text              *string
+	Responses         string
+	Comment           *string
+	DefinitionVersion *int
 	ReporterEmail     *string
 	NotifyReporter    bool
 	PageURL           string
@@ -178,46 +184,49 @@ type SessionDetail struct {
 }
 
 type Item struct {
-	ID               string           `json:"id"`
-	PublicID         string           `json:"public_id"`
-	ProjectID        string           `json:"project_id"`
-	ProjectName      string           `json:"project_name"`
-	WidgetRuleID     *string          `json:"widget_rule_id,omitempty"`
-	SessionID        *string          `json:"session_id,omitempty"`
-	IssueID          *string          `json:"issue_id,omitempty"`
-	IssuePublicID    *string          `json:"issue_public_id,omitempty"`
-	IssueStatus      *string          `json:"issue_status,omitempty"`
-	Rating           *int             `json:"rating,omitempty"`
-	Title            string           `json:"title"`
-	Description      *string          `json:"description,omitempty"`
-	Text             *string          `json:"text,omitempty"`
-	TextCleaned      *string          `json:"text_cleaned,omitempty"`
-	AISuggestedTitle *string          `json:"ai_suggested_title,omitempty"`
-	AIActionability  *string          `json:"ai_actionability,omitempty"`
-	AICategory       *string          `json:"ai_category,omitempty"`
-	AIPriority       *string          `json:"ai_priority,omitempty"`
-	Priority         *triage.Priority `json:"priority"`
-	Assignee         *triage.Assignee `json:"assignee"`
-	Tags             []triage.Tag     `json:"tags"`
-	ReporterEmail    *string          `json:"reporter_email,omitempty"`
-	NotifyReporter   bool             `json:"notify_reporter"`
-	PageURL          string           `json:"page_url"`
-	Referrer         *string          `json:"referrer,omitempty"`
-	UserAgent        *string          `json:"user_agent,omitempty"`
-	OS               *string          `json:"os,omitempty"`
-	Browser          *string          `json:"browser,omitempty"`
-	Device           *string          `json:"device,omitempty"`
-	ViewportWidth    *int             `json:"viewport_width,omitempty"`
-	ViewportHeight   *int             `json:"viewport_height,omitempty"`
-	Language         *string          `json:"language,omitempty"`
-	Status           Status           `json:"status"`
-	AIStatus         string           `json:"ai_status"`
-	SentimentScore   *float64         `json:"sentiment_score,omitempty"`
-	ModerationFlags  []string         `json:"moderation_flags"`
-	AttachmentKinds  []AttachmentKind `json:"attachment_kinds"`
-	HasReplay        bool             `json:"has_replay"`
-	CreatedAt        time.Time        `json:"created_at"`
-	UpdatedAt        time.Time        `json:"updated_at"`
+	ID                string           `json:"id"`
+	PublicID          string           `json:"public_id"`
+	ProjectID         string           `json:"project_id"`
+	ProjectName       string           `json:"project_name"`
+	WidgetRuleID      *string          `json:"widget_rule_id,omitempty"`
+	SessionID         *string          `json:"session_id,omitempty"`
+	IssueID           *string          `json:"issue_id,omitempty"`
+	IssuePublicID     *string          `json:"issue_public_id,omitempty"`
+	IssueStatus       *string          `json:"issue_status,omitempty"`
+	Rating            *int             `json:"rating,omitempty"`
+	Responses         map[string]any   `json:"responses"`
+	Comment           *string          `json:"comment,omitempty"`
+	DefinitionVersion *int             `json:"widget_definition_version,omitempty"`
+	Title             string           `json:"title"`
+	Description       *string          `json:"description,omitempty"`
+	Text              *string          `json:"text,omitempty"`
+	TextCleaned       *string          `json:"text_cleaned,omitempty"`
+	AISuggestedTitle  *string          `json:"ai_suggested_title,omitempty"`
+	AIActionability   *string          `json:"ai_actionability,omitempty"`
+	AICategory        *string          `json:"ai_category,omitempty"`
+	AIPriority        *string          `json:"ai_priority,omitempty"`
+	Priority          *triage.Priority `json:"priority"`
+	Assignee          *triage.Assignee `json:"assignee"`
+	Tags              []triage.Tag     `json:"tags"`
+	ReporterEmail     *string          `json:"reporter_email,omitempty"`
+	NotifyReporter    bool             `json:"notify_reporter"`
+	PageURL           string           `json:"page_url"`
+	Referrer          *string          `json:"referrer,omitempty"`
+	UserAgent         *string          `json:"user_agent,omitempty"`
+	OS                *string          `json:"os,omitempty"`
+	Browser           *string          `json:"browser,omitempty"`
+	Device            *string          `json:"device,omitempty"`
+	ViewportWidth     *int             `json:"viewport_width,omitempty"`
+	ViewportHeight    *int             `json:"viewport_height,omitempty"`
+	Language          *string          `json:"language,omitempty"`
+	Status            Status           `json:"status"`
+	AIStatus          string           `json:"ai_status"`
+	SentimentScore    *float64         `json:"sentiment_score,omitempty"`
+	ModerationFlags   []string         `json:"moderation_flags"`
+	AttachmentKinds   []AttachmentKind `json:"attachment_kinds"`
+	HasReplay         bool             `json:"has_replay"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
 type Detail struct {

@@ -130,20 +130,21 @@ func (Store) CreateSubmission(
 	for _, candidate := range publicIDCandidates {
 		err := query.QueryRow(ctx, `
 			INSERT INTO feedbacks (
-				id, tenant_id, project_id, widget_rule_id, public_id,
-				client_feedback_id, rating, title, description, text, reporter_email, notify_reporter,
+				id, tenant_id, project_id, widget_rule_id, widget_definition_version, public_id,
+				client_feedback_id, rating, title, description, text, responses, comment,
+				reporter_email, notify_reporter,
 				page_url, referrer, user_agent, os, browser, device,
 				viewport_width, viewport_height, language, dom_snapshot_html, dom_snapshot_styles,
 				text_process_status, session_id
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11,
-				$12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14,
+				$15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
 			)
 			ON CONFLICT (tenant_id, public_id) DO NOTHING
 			RETURNING public_id
 		`, feedbackID, configuration.TenantID, configuration.ProjectID, values.WidgetRuleID,
-			candidate, values.ClientFeedbackID, values.Rating, title, values.Text,
-			values.ReporterEmail, values.NotifyReporter, values.PageURL, values.Referrer,
+			values.DefinitionVersion, candidate, values.ClientFeedbackID, values.Rating, title, values.Text,
+			values.Responses, values.Comment, values.ReporterEmail, values.NotifyReporter, values.PageURL, values.Referrer,
 			values.UserAgent, values.OS, values.Browser, values.Device, values.ViewportWidth,
 			values.ViewportHeight, values.Language, values.DOMSnapshotHTML, values.DOMSnapshotStyles,
 			textProcessingStatus(values.Text, configuration.Plan), values.ReplaySessionID,

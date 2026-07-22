@@ -2,6 +2,7 @@ package feedback
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -42,7 +43,8 @@ END`
 const tenantFeedbackColumns = `
 	feedback.id, feedback.public_id, feedback.project_id, project.name,
 	feedback.widget_rule_id, feedback.session_id, feedback.issue_id,
-	issue.public_id, issue.status::text, feedback.rating, feedback.title, feedback.description,
+	issue.public_id, issue.status::text, feedback.rating, feedback.responses, feedback.comment,
+	feedback.widget_definition_version, feedback.title, feedback.description,
 	feedback.text, feedback.text_cleaned, feedback.ai_suggested_title,
 	feedback.ai_actionability, feedback.ai_category, feedback.ai_priority,
 	feedback.priority, assignee.id, assignee.name, assignee.email::text,
@@ -601,8 +603,9 @@ func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 	var attachmentKinds []string
 	var assigneeID, assigneeName, assigneeEmail *string
 	var tagPayload []byte
+	var responsesPayload []byte
 	if err := row.Scan(tenantFeedbackScanTargets(
-		&item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+		&item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload, &responsesPayload,
 	)...); err != nil {
 		return Item{}, err
 	}
@@ -610,6 +613,9 @@ func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 		&item, assigneeID, assigneeName, assigneeEmail, tagPayload,
 	); err != nil {
 		return Item{}, err
+	}
+	if err := json.Unmarshal(responsesPayload, &item.Responses); err != nil {
+		return Item{}, fmt.Errorf("decode feedback responses: %w", err)
 	}
 	finalizeTenantFeedback(&item, attachmentKinds)
 	return item, nil
@@ -620,8 +626,9 @@ func scanTenantFeedbackDetail(row tenantRowScanner) (Detail, error) {
 	var attachmentKinds []string
 	var assigneeID, assigneeName, assigneeEmail *string
 	var tagPayload []byte
+	var responsesPayload []byte
 	targets := tenantFeedbackScanTargets(
-		&detail.Item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+		&detail.Item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload, &responsesPayload,
 	)
 	targets = append(targets, &detail.DOMSnapshotHTML, &detail.DOMSnapshotStyles, &detail.AIProcessedAt)
 	if err := row.Scan(targets...); err != nil {
@@ -631,6 +638,9 @@ func scanTenantFeedbackDetail(row tenantRowScanner) (Detail, error) {
 		&detail.Item, assigneeID, assigneeName, assigneeEmail, tagPayload,
 	); err != nil {
 		return Detail{}, err
+	}
+	if err := json.Unmarshal(responsesPayload, &detail.Responses); err != nil {
+		return Detail{}, fmt.Errorf("decode feedback responses: %w", err)
 	}
 	finalizeTenantFeedback(&detail.Item, attachmentKinds)
 	return detail, nil
@@ -643,11 +653,13 @@ func tenantFeedbackScanTargets(
 	assigneeName **string,
 	assigneeEmail **string,
 	tagPayload *[]byte,
+	responsesPayload *[]byte,
 ) []any {
 	return []any{
 		&item.ID, &item.PublicID, &item.ProjectID, &item.ProjectName,
 		&item.WidgetRuleID, &item.SessionID, &item.IssueID, &item.IssuePublicID,
-		&item.IssueStatus, &item.Rating, &item.Title, &item.Description,
+		&item.IssueStatus, &item.Rating, responsesPayload, &item.Comment,
+		&item.DefinitionVersion, &item.Title, &item.Description,
 		&item.Text, &item.TextCleaned, &item.AISuggestedTitle,
 		&item.AIActionability, &item.AICategory, &item.AIPriority,
 		&item.Priority, assigneeID, assigneeName, assigneeEmail, tagPayload,

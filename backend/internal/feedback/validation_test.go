@@ -2,6 +2,7 @@ package feedback
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +65,92 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 	if values.Analytics == nil || values.Analytics.EventType != "submitted" ||
 		values.Analytics.PageURL != "https://example.com/checkout" {
 		t.Errorf("analytics = %#v", values.Analytics)
+	}
+}
+
+func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
+	t.Parallel()
+	comment := "The labels could be clearer"
+	email := "CUSTOMER@EXAMPLE.COM"
+	request := SubmissionRequest{
+		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
+		WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
+		Responses: map[string]json.RawMessage{
+			"score":    json.RawMessage(`4`),
+			"reaction": json.RawMessage(`"helpful"`),
+			"reason":   json.RawMessage(`"fast"`),
+			"details":  json.RawMessage(`"The checkout was clear"`),
+		},
+		Comment: &comment, ReporterEmail: &email, NotifyReporter: true,
+		Metadata: MetadataInput{
+			URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
+		},
+	}
+	configuration := project.PublicConfiguration{
+		Plan: tenant.PlanGrowth,
+		Rules: []project.WidgetRule{{
+			ID: request.WidgetRuleID, DefinitionVersion: 3, AllowComment: true, CollectContact: true,
+			CanRate: true, CanWriteText: true,
+			ResponseBlocks: []project.WidgetResponseBlock{
+				{Key: "score", Type: project.ResponseRating, Required: true},
+				{Key: "reaction", Type: project.ResponseReaction, Required: true, Options: []project.WidgetResponseOption{{Value: "helpful"}, {Value: "not_helpful"}}},
+				{Key: "reason", Type: project.ResponseSingleChoice, Options: []project.WidgetResponseOption{{Value: "fast"}, {Value: "clear"}}},
+				{Key: "details", Type: project.ResponseFreeText},
+			},
+		}},
+	}
+	values, fields := ValidateSubmission(request, configuration)
+	if len(fields) != 0 {
+		t.Fatalf("validation fields = %#v", fields)
+	}
+	if values.Rating == nil || *values.Rating != 4 || values.Text == nil || *values.Text != "The checkout was clear" {
+		t.Errorf("legacy response values = rating %v text %v", values.Rating, values.Text)
+	}
+	if values.DefinitionVersion == nil || *values.DefinitionVersion != 3 || values.Comment == nil || *values.Comment != comment {
+		t.Errorf("definition context = version %v comment %v", values.DefinitionVersion, values.Comment)
+	}
+	if values.ReporterEmail == nil || *values.ReporterEmail != "customer@example.com" {
+		t.Errorf("reporter email = %v", values.ReporterEmail)
+	}
+	var responses map[string]any
+	if err := json.Unmarshal([]byte(values.Responses), &responses); err != nil {
+		t.Fatalf("decode normalized responses: %v", err)
+	}
+	if len(responses) != 4 || responses["reaction"] != "helpful" || responses["reason"] != "fast" {
+		t.Errorf("normalized responses = %#v", responses)
+	}
+}
+
+func TestValidateSubmissionRejectsResponsesOutsidePublishedDefinition(t *testing.T) {
+	t.Parallel()
+	comment := "Unexpected comment"
+	email := "customer@example.com"
+	request := SubmissionRequest{
+		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
+		WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
+		Responses: map[string]json.RawMessage{
+			"reaction": json.RawMessage(`"unknown"`),
+			"extra":    json.RawMessage(`"value"`),
+		},
+		Comment: &comment, ReporterEmail: &email,
+		Metadata: MetadataInput{
+			URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
+		},
+	}
+	_, fields := ValidateSubmission(request, project.PublicConfiguration{
+		Plan: tenant.PlanGrowth,
+		Rules: []project.WidgetRule{{
+			ID: request.WidgetRuleID,
+			ResponseBlocks: []project.WidgetResponseBlock{
+				{Key: "reaction", Type: project.ResponseReaction, Required: true, Options: []project.WidgetResponseOption{{Value: "helpful"}, {Value: "not_helpful"}}},
+				{Key: "details", Type: project.ResponseFreeText, Required: true},
+			},
+		}},
+	})
+	for _, expected := range []string{"responses.reaction", "responses.details", "responses.extra", "comment", "reporter_email"} {
+		if !hasField(fields, expected) {
+			t.Errorf("fields = %#v, missing %q", fields, expected)
+		}
 	}
 }
 
