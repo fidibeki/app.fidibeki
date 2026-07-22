@@ -418,6 +418,32 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       return json(route, { updated_count: updated.length, feedbacks: updated })
     }
+    if (path === '/v1/feedbacks/unlink' && method === 'POST') {
+      const input = body()
+      const feedbackIDs = Array.isArray(input.feedback_ids) ? input.feedback_ids as string[] : []
+      const updated = state.feedback.filter(item => feedbackIDs.includes(item.id))
+      for (const item of updated) {
+        const previous = state.issues.find(issue => issue.id === item.issue_id)
+        if (previous) previous.feedback_count = Math.max(0, previous.feedback_count - 1)
+        item.issue_id = undefined
+        item.issue_public_id = undefined
+        item.issue_status = undefined
+      }
+      return json(route, { updated_count: updated.length, feedbacks: updated })
+    }
+    if (path === '/v1/feedbacks/link' && method === 'POST') {
+      const input = body()
+      const feedbackIDs = Array.isArray(input.feedback_ids) ? input.feedback_ids as string[] : []
+      const issue = state.issues.find(candidate => candidate.id === input.issue_id)
+      const updated = state.feedback.filter(item => feedbackIDs.includes(item.id))
+      for (const item of updated) {
+        item.issue_id = issue?.id
+        item.issue_public_id = issue?.public_id
+        item.issue_status = issue?.status
+      }
+      if (issue) issue.feedback_count += updated.length
+      return json(route, { updated_count: updated.length, feedbacks: updated })
+    }
     const feedbackMatch = path.match(/^\/v1\/feedbacks\/([^/]+)$/)
     if (feedbackMatch && method === 'GET') return json(route, { feedback: feedbackDetail(state, feedbackMatch[1]) })
     if (feedbackMatch && method === 'PATCH') {
@@ -465,6 +491,33 @@ async function installMockAPI(page: Page, state: MockState) {
     if (/^\/v1\/attachments\/[^/]+\/retry$/.test(path) && method === 'POST') return json(route, {}, 202)
     if (path === '/v1/sessions/session-1/replay' && method === 'GET') return json(route, replayEvents)
 
+    if (path === '/v1/issues/from-feedback' && method === 'POST') {
+      const input = body()
+      const feedbackIDs = Array.isArray(input.feedback_ids) ? input.feedback_ids as string[] : []
+      const selectedFeedback = state.feedback.filter(item => feedbackIDs.includes(item.id))
+      const issue = {
+        id: `issue-${state.issues.length + 1}`,
+        tenant_id: state.tenant.id,
+        project_id: selectedFeedback[0]?.project_id || 'project-1',
+        public_id: `ISS-${100 + state.issues.length}`,
+        title: String(input.title),
+        description: String(input.description || ''),
+        status: 'open',
+        reporter_email: selectedFeedback[0]?.reporter_email || '',
+        notify_reporter: selectedFeedback.some(item => item.notify_reporter),
+        feedback_count: selectedFeedback.length,
+        created_at: now,
+        updated_at: now,
+        merged_into_id: undefined as string | undefined,
+      }
+      state.issues.push(issue)
+      for (const item of selectedFeedback) {
+        item.issue_id = issue.id
+        item.issue_public_id = issue.public_id
+        item.issue_status = 'open'
+      }
+      return json(route, { issue }, 201)
+    }
     if (path === '/v1/issues' && method === 'GET') return json(route, { issues: state.issues })
     const issueMergeMatch = path.match(/^\/v1\/issues\/([^/]+)\/merge$/)
     if (issueMergeMatch && method === 'POST') {
@@ -959,6 +1012,11 @@ test('bulk feedback triage is atomic and responsive', async ({ page }, testInfo)
   const initialRowHeight = (await rows.first().boundingBox())?.height
   await selectBoth()
   expect((await rows.first().boundingBox())?.height).toBe(initialRowHeight)
+  if (testInfo.project.name === 'mobile') {
+    await openCompactActions()
+    await capture(page, testInfo, 'dispatch-bulk-actions-menu-mobile')
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+  }
 
   state.failNextBulkFeedbackUpdate = true
   await selectBulkOption('Bulk priority', 'urgent')
@@ -996,6 +1054,71 @@ test('bulk feedback triage is atomic and responsive', async ({ page }, testInfo)
   expect(state.feedback.map(item => item.status)).toEqual(['spam', 'spam'])
   expect(state.bulkFeedbackRequests).toHaveLength(6)
   expect(state.bulkFeedbackRequests.every(request => (request.feedback_ids as string[]).length === 2)).toBe(true)
+})
+
+test('selected feedback can create, unlink, and link issues within one project', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The complete dialog journey is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const selectBoth = async () => {
+    await page.getByLabel('Select FB-1048').check()
+    await page.getByLabel('Select FB-1047').check()
+    await expect(page.locator('.feedback-bulk-bar')).toContainText('2 selected')
+  }
+  const openIssueActions = async () => {
+    await page.locator('.bulk-issue-popover summary').click()
+  }
+
+  await selectBoth()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Unlink', exact: true }).click()
+  expect(state.feedback.map(item => item.issue_id)).toEqual([undefined, undefined])
+
+  await selectBoth()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Create issue', exact: true }).click()
+  const createDialog = page.getByRole('dialog', { name: 'Create issue from 2 feedback records' })
+  await expect(createDialog.getByLabel('Issue title')).toHaveValue('Checkout froze after I applied a promotion code.')
+  await capture(page, testInfo, 'feedback-create-issue-dialog')
+  await createDialog.getByLabel('Issue title').fill('Checkout promotion failures')
+  await createDialog.getByLabel('Issue description').fill('Two reports confirm the checkout promotion failure.')
+  await createDialog.getByRole('button', { name: 'Create issue', exact: true }).click()
+  await expect(page).toHaveURL(`${tenantOrigin}/issues/issue-3`)
+  expect(state.issues.at(-1)).toMatchObject({ title: 'Checkout promotion failures', feedback_count: 2 })
+  expect(state.feedback.map(item => item.issue_id)).toEqual(['issue-3', 'issue-3'])
+
+  await openPrimary(page, 'Feedback')
+  await selectBoth()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Unlink', exact: true }).click()
+
+  await selectBoth()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Link issue', exact: true }).click()
+  const linkDialog = page.getByRole('dialog', { name: 'Link 2 feedback records to an issue' })
+  await linkDialog.getByLabel('Issue').selectOption('issue-2')
+  await linkDialog.getByRole('button', { name: 'Link feedback', exact: true }).click()
+  await expect(page).toHaveURL(`${tenantOrigin}/issues/issue-2`)
+  expect(state.feedback.map(item => item.issue_id)).toEqual(['issue-2', 'issue-2'])
+
+  state.projects.push({ ...state.projects[0], id: 'project-2', name: 'Documentation', public_key: 'pk_live_docs' })
+  state.feedback[0].issue_id = undefined
+  state.feedback[0].issue_public_id = undefined
+  state.feedback[0].issue_status = undefined
+  state.feedback[1].issue_id = undefined
+  state.feedback[1].issue_public_id = undefined
+  state.feedback[1].issue_status = undefined
+  state.feedback[1].project_id = 'project-2'
+  state.feedback[1].project_name = 'Documentation'
+  await openPrimary(page, 'Feedback')
+  await selectBoth()
+  await openIssueActions()
+  await expect(page.locator('.bulk-issue-popover')).toContainText('Create and link require feedback from one project.')
+  await expect(page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Create issue', exact: true })).toBeDisabled()
+  await expect(page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Link issue', exact: true })).toBeDisabled()
+  await capture(page, testInfo, 'feedback-mixed-project-actions')
 })
 
 test('all-status and clear-filters choices survive route synchronization', async ({ page }, testInfo) => {

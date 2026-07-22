@@ -9,13 +9,16 @@ import {
   Link2,
   LoaderCircle,
   PanelRightOpen,
+  Plus,
   Search,
+  X,
 } from '@lucide/vue'
 import type { LocationQueryRaw } from 'vue-router'
 import type {
   FeedbackItem,
   FeedbackPage,
   FeedbackStatus,
+  Issue,
   Member,
   Project,
   TenantConfiguration,
@@ -52,6 +55,11 @@ const mutationPending = ref(false)
 const notice = ref('')
 const mutationError = ref('')
 const localQueryTargets = new Set<string>()
+const createIssueOpen = ref(false)
+const linkIssueOpen = ref(false)
+const issueTitle = ref('')
+const issueDescription = ref('')
+const linkTargetID = ref('')
 
 function replaceLocalQuery(query: LocationQueryRaw) {
   const target = router.resolve({ query }).fullPath
@@ -105,6 +113,12 @@ const { data: memberData } = await useAsyncData(
   () => can('member:read')
     ? $apiFetch<{ members: Member[] }>('/v1/members')
     : Promise.resolve({ members: [] }),
+)
+const { data: issueData } = await useAsyncData(
+  'feedback-issue-options',
+  () => can('issue:read')
+    ? $apiFetch<{ issues: Issue[] }>('/v1/issues')
+    : Promise.resolve({ issues: [] }),
 )
 const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
 
@@ -168,6 +182,21 @@ const triageMembers = computed(() => {
   return options
 })
 const selectedItems = computed(() => items.value.filter(item => selectedIds.value.includes(item.id)))
+const selectedProjectIDs = computed(() => new Set(selectedItems.value.map(item => item.project_id)))
+const selectedProjectID = computed(() => selectedProjectIDs.value.size === 1 ? selectedItems.value[0]?.project_id : undefined)
+const selectedHasLinkedFeedback = computed(() => selectedItems.value.some(item => Boolean(item.issue_id)))
+const issueActionReason = computed(() => {
+  if (selectedProjectIDs.value.size > 1) return 'Create and link require feedback from one project.'
+  if (selectedHasLinkedFeedback.value) return 'Unlink selected feedback before creating or linking another issue.'
+  return ''
+})
+const canCreateOrLinkIssue = computed(() => Boolean(
+  selectedItems.value.length && selectedProjectID.value && !selectedHasLinkedFeedback.value,
+))
+const canUnlinkIssue = computed(() => selectedHasLinkedFeedback.value)
+const linkIssueOptions = computed(() => (issueData.value?.issues || []).filter(issue => (
+  issue.project_id === selectedProjectID.value && !issue.merged_into_id
+)))
 
 function selectItem(item: FeedbackItem) {
   selectedId.value = item.id
@@ -232,6 +261,83 @@ function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
 
 function updateSelectedFeedbacks(body: Record<string, unknown>, action: string) {
   return updateFeedbacks([...selectedIds.value], body, action)
+}
+
+function openCreateIssue() {
+  if (!canCreateOrLinkIssue.value) return
+  const first = selectedItems.value[0]
+  issueTitle.value = first?.ai_suggested_title || first?.title || ''
+  issueDescription.value = selectedItems.value.map(item => (
+    `${item.public_id}: ${item.description || item.text || item.title}`
+  )).join('\n\n')
+  mutationError.value = ''
+  createIssueOpen.value = true
+}
+
+function openLinkIssue() {
+  if (!canCreateOrLinkIssue.value) return
+  linkTargetID.value = ''
+  mutationError.value = ''
+  linkIssueOpen.value = true
+}
+
+async function createIssueFromSelection() {
+  const feedbackIDs = [...selectedIds.value]
+  const title = issueTitle.value.trim()
+  if (!canWrite('issue:update') || !feedbackIDs.length || !title || mutationPending.value) return
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ issue: Issue }>('/v1/issues/from-feedback', {
+      method: 'POST',
+      body: { feedback_ids: feedbackIDs, title, description: issueDescription.value.trim() },
+    })
+    createIssueOpen.value = false
+    selectedIds.value = []
+    await router.push(`/issues/${response.issue.id}`)
+  } catch (createError) {
+    mutationError.value = apiErrorMessage(createError, 'Issue could not be created.')
+  } finally {
+    mutationPending.value = false
+  }
+}
+
+async function mutateFeedbackLinks(path: '/v1/feedbacks/link' | '/v1/feedbacks/unlink', issueID?: string) {
+  const feedbackIDs = [...selectedIds.value]
+  if (!canWrite('issue:update') || !feedbackIDs.length || mutationPending.value) return
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ updated_count: number, feedbacks: FeedbackItem[] }>(path, {
+      method: 'POST', body: { feedback_ids: feedbackIDs, ...(issueID ? { issue_id: issueID } : {}) },
+    })
+    for (const updated of response.feedbacks) {
+      const index = items.value.findIndex(item => item.id === updated.id)
+      if (index >= 0) items.value[index] = updated
+    }
+    selectedIds.value = []
+    if (issueID) {
+      linkIssueOpen.value = false
+      await router.push(`/issues/${issueID}`)
+    } else {
+      notice.value = `${response.updated_count} feedback item${response.updated_count === 1 ? '' : 's'} unlinked.`
+      await refresh()
+    }
+  } catch (linkError) {
+    mutationError.value = apiErrorMessage(linkError, 'Feedback links could not be updated.')
+  } finally {
+    mutationPending.value = false
+    window.setTimeout(() => { notice.value = '' }, 3000)
+  }
+}
+
+function linkSelectedFeedback() {
+  if (!linkTargetID.value) return
+  return mutateFeedbackLinks('/v1/feedbacks/link', linkTargetID.value)
+}
+
+function unlinkSelectedFeedback() {
+  return mutateFeedbackLinks('/v1/feedbacks/unlink')
 }
 
 async function updateSelectedTriage(body: Record<string, unknown>, success: string) {
@@ -358,8 +464,15 @@ useHead({ title: 'Feedback · Fidibeki' })
         :pending="mutationPending"
         :ai-enabled="aiEnabled"
         :show-a-i-upgrade="Boolean(configuration && !aiEnabled)"
+        :issue-actions-available="canWrite('issue:update') && can('issue:read')"
+        :can-create-or-link="canCreateOrLinkIssue"
+        :can-unlink="canUnlinkIssue"
+        :issue-action-reason="issueActionReason"
         @mutate="updateSelectedFeedbacks"
         @reprocess="reprocess([...selectedIds])"
+        @create-issue="openCreateIssue"
+        @link-issue="openLinkIssue"
+        @unlink-issue="unlinkSelectedFeedback"
       />
 
       <p v-if="mutationError" class="feedback-inline-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
@@ -414,6 +527,30 @@ useHead({ title: 'Feedback · Fidibeki' })
       <div v-else class="feedback-inspector-body feedback-inspector-evidence"><PanelRightOpen :size="24" /><p>{{ selected.has_replay ? 'A session replay is attached and available in full detail.' : 'No replay is attached.' }}</p></div>
       <footer><template v-if="canWrite('feedback:update')"><button v-if="selected.status !== 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'open')">Reopen</button><button v-else class="app-button" :disabled="mutationPending" @click="updateStatus([selected.id], 'archived')"><Archive :size="15" /> Archive</button></template><NuxtLink class="app-button app-button--primary" :to="selected.issue_id ? `/issues/${selected.issue_id}` : `/feedback/${selected.id}`"><Link2 :size="15" /> {{ selected.issue_id ? 'Open issue' : 'Triage' }}</NuxtLink></footer>
     </aside>
+
+    <AppDialog :open="createIssueOpen" aria-labelledby="bulk-create-issue-title" @close="createIssueOpen = false">
+      <form class="feedback-issue-dialog" @submit.prevent="createIssueFromSelection">
+        <header><div><p class="app-eyebrow">Create actionable work</p><h2 id="bulk-create-issue-title">Create issue from {{ selectedIds.length }} feedback records</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="createIssueOpen = false"><X :size="16" /></button></header>
+        <div class="feedback-issue-dialog-body">
+          <label><span>Title</span><input v-model="issueTitle" class="app-input" aria-label="Issue title" required maxlength="80" autofocus /></label>
+          <label><span>Description</span><textarea v-model="issueDescription" class="app-input" aria-label="Issue description" rows="6" maxlength="10000" /></label>
+          <p v-if="mutationError" class="feedback-dialog-error" role="alert">{{ mutationError }}</p>
+        </div>
+        <footer><button type="button" class="app-button" :disabled="mutationPending" @click="createIssueOpen = false">Cancel</button><button class="app-button app-button--primary" :disabled="mutationPending || !issueTitle.trim()" type="submit"><Plus :size="14" /> {{ mutationPending ? 'Creating...' : 'Create issue' }}</button></footer>
+      </form>
+    </AppDialog>
+
+    <AppDialog :open="linkIssueOpen" aria-labelledby="bulk-link-issue-title" @close="linkIssueOpen = false">
+      <form class="feedback-issue-dialog feedback-link-dialog" @submit.prevent="linkSelectedFeedback">
+        <header><div><p class="app-eyebrow">Existing actionable work</p><h2 id="bulk-link-issue-title">Link {{ selectedIds.length }} feedback records to an issue</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="linkIssueOpen = false"><X :size="16" /></button></header>
+        <div class="feedback-issue-dialog-body">
+          <label><span>Issue</span><select v-model="linkTargetID" class="app-select" aria-label="Issue" required><option value="">Choose an issue</option><option v-for="issueOption in linkIssueOptions" :key="issueOption.id" :value="issueOption.id">{{ issueOption.public_id }} · {{ issueOption.title }}</option></select></label>
+          <p v-if="linkIssueOptions.length === 0" class="feedback-dialog-note">No target issue is available in this project.</p>
+          <p v-if="mutationError" class="feedback-dialog-error" role="alert">{{ mutationError }}</p>
+        </div>
+        <footer><button type="button" class="app-button" :disabled="mutationPending" @click="linkIssueOpen = false">Cancel</button><button class="app-button app-button--primary" :disabled="mutationPending || !linkTargetID" type="submit"><Link2 :size="14" /> {{ mutationPending ? 'Linking...' : 'Link feedback' }}</button></footer>
+      </form>
+    </AppDialog>
 
     <p v-if="notice" class="feedback-toast" role="status">{{ notice }}</p>
   </div>
@@ -491,6 +628,16 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-inspector-evidence p { max-width: 260px; font-size: 11px; line-height: 1.5; }
 .feedback-inspector > footer { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: 7px; padding: 10px 14px; border-top: 1px solid var(--line); }
 .feedback-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 11px; }
+.feedback-issue-dialog { width: min(580px, calc(100vw - 32px)); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.feedback-issue-dialog > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.feedback-issue-dialog h2 { margin: 4px 0 0; font-size: 15px; }
+.feedback-issue-dialog-body { display: grid; gap: 13px; padding: 16px; }
+.feedback-issue-dialog label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.feedback-issue-dialog textarea { min-height: 130px; padding: 10px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
+.feedback-issue-dialog select { width: 100%; }
+.feedback-issue-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 16px; }
+.feedback-dialog-error { margin: 0; padding: 9px 10px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 4px; font-size: 10px; }
+.feedback-dialog-note { margin: 0; color: var(--muted); font-size: 10px; }
 
 @media (max-width: 1240px) {
   .feedback-workspace { grid-template-columns: minmax(500px, 1fr) 340px; }
