@@ -66,6 +66,10 @@ Before starting the three product pillars, resolve these independently testable 
    ([#11](https://github.com/acidiney/app.fidibeki/issues/11)).** The success icon and copy must
    remain vertically aligned with stable spacing, including when the message wraps on narrow
    viewports.
+5. **Unknown workspace routing ([#12](https://github.com/acidiney/app.fidibeki/issues/12)).** An
+   unknown tenant host must show a neutral unavailable state instead of a tenant login. Standard
+   Fidibeki subdomains may offer an explicit signup action with an editable prefilled slug; custom
+   domains must not be converted into slug suggestions.
 
 Each blocker requires an automated regression test and responsive browser validation where
 applicable. Completing this gate changes no production or infrastructure configuration.
