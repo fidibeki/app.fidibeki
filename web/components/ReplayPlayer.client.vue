@@ -12,8 +12,36 @@ const target = ref<HTMLElement | null>(null)
 const state = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
 const eventCount = ref(0)
-let player: { $destroy?: () => void, triggerResize?: () => void } | null = null
+type ReplayPlayerInstance = {
+  $destroy: () => void
+  $set: (props: { width: number, height: number }) => void
+  triggerResize: () => void
+}
+let player: ReplayPlayerInstance | null = null
 let resizeObserver: ResizeObserver | null = null
+let renderedWidth = 0
+let resizeFrame = 0
+
+function dimensionsForWidth(width: number) {
+  const sourceWidth = props.viewportWidth && props.viewportWidth > 0 ? props.viewportWidth : 1280
+  const sourceHeight = props.viewportHeight && props.viewportHeight > 0
+    ? props.viewportHeight
+    : Math.round(sourceWidth * 0.5625)
+  const playerWidth = Math.max(1, Math.floor(width))
+  return {
+    width: playerWidth,
+    height: Math.max(1, Math.round(playerWidth * sourceHeight / sourceWidth)),
+  }
+}
+
+function resizePlayer(width: number) {
+  const dimensions = dimensionsForWidth(width)
+  if (!player || Math.abs(dimensions.width - renderedWidth) < 1) return
+  renderedWidth = dimensions.width
+  player.$set(dimensions)
+  cancelAnimationFrame(resizeFrame)
+  resizeFrame = requestAnimationFrame(() => player?.triggerResize())
+}
 
 function labelReplayControls() {
   if (!target.value) return
@@ -38,27 +66,30 @@ async function loadReplay() {
       throw new Error('Replay stream did not contain rrweb events.')
     }
     eventCount.value = payload.length
+    const { default: RRWebPlayer } = await import('rrweb-player')
+    state.value = 'ready'
     await nextTick()
     if (!target.value) return
-    const { default: RRWebPlayer } = await import('rrweb-player')
-    const width = Math.max(320, props.viewportWidth || 1280)
-    const height = Math.max(240, props.viewportHeight || Math.round(width * 0.5625))
+    const styles = getComputedStyle(target.value)
+    const availableWidth = target.value.clientWidth
+      - Number.parseFloat(styles.paddingLeft)
+      - Number.parseFloat(styles.paddingRight)
+    const dimensions = dimensionsForWidth(availableWidth)
+    renderedWidth = dimensions.width
     player = new RRWebPlayer({
       target: target.value,
       props: {
         events: payload as never[],
-        width,
-        height,
+        ...dimensions,
         autoPlay: false,
         showController: true,
         skipInactive: true,
         maxScale: 1,
       },
-    })
+    }) as unknown as ReplayPlayerInstance
     labelReplayControls()
-    state.value = 'ready'
     resizeObserver?.disconnect()
-    resizeObserver = new ResizeObserver(() => player?.triggerResize?.())
+    resizeObserver = new ResizeObserver(entries => resizePlayer(entries[0]?.contentRect.width || 0))
     resizeObserver.observe(target.value)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Replay could not be loaded.'
@@ -70,6 +101,7 @@ onMounted(loadReplay)
 watch(() => props.url, loadReplay)
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  cancelAnimationFrame(resizeFrame)
   player?.$destroy?.()
 })
 </script>
@@ -84,13 +116,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.replay-player { position: relative; min-height: 430px; overflow: hidden; background: #edf2f0; }
+.replay-player { position: relative; min-width: 0; min-height: 430px; overflow: hidden; background: #edf2f0; }
 .replay-player-state { display: grid; min-height: 430px; place-items: center; align-content: center; gap: 9px; padding: 28px; color: var(--muted); text-align: center; }
 .replay-player-state h3, .replay-player-state p { margin: 0; }
 .replay-player-state h3 { color: var(--ink); font-size: 13px; }
 .replay-player-state p { max-width: 480px; font-size: 10px; line-height: 1.5; }
-.replay-player-target { display: grid; min-height: 430px; place-items: center; padding: 14px; overflow: auto; }
+.replay-player-target { display: grid; min-width: 0; min-height: 430px; place-items: center; padding: 14px; overflow: hidden; }
 .replay-player-count { position: absolute; top: 9px; right: 9px; z-index: 3; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; background: rgb(255 255 255 / 90%); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
-.replay-player-target :deep(.rr-player) { max-width: 100%; box-shadow: none; }
+.replay-player-target :deep(.rr-player) { float: none; box-shadow: none; }
 .replay-player-target :deep(.rr-controller) { background: #fff; }
 </style>

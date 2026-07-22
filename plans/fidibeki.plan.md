@@ -46,9 +46,11 @@ implementation; extend existing contracts instead of rebuilding them.
   with one canonical queue matcher so exactly one queue reflects the current filter state.
   Implemented with a pure query classifier, explicit `aria-current`, and unit/browser regression
   coverage for default, special, archived, and ambiguous filter combinations.
-- [ ] [#10](https://github.com/acidiney/app.fidibeki/issues/10) Responsive session replay. Replay
+- [x] [#10](https://github.com/acidiney/app.fidibeki/issues/10) Responsive session replay. Replay
   loading and playback already work. Constrain and scale the recorded viewport plus controls inside
   the available surface, with no page-level horizontal overflow on desktop, tablet, or mobile.
+  Implemented with content-width observation, proportional viewport sizing, in-place player updates
+  that preserve playback state, and browser geometry coverage at 1440, 1024, and 390 pixels.
 - [ ] [#11](https://github.com/acidiney/app.fidibeki/issues/11) Magic-link confirmation alignment.
   Preserve the existing accessible status message while giving its icon and wrapping copy a stable
   aligned layout at narrow and wide widths.

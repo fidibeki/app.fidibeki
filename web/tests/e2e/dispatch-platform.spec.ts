@@ -1271,6 +1271,54 @@ test('terminal replay failures are shown as unavailable', async ({ page }, testI
   await expect(page.locator('.feedback-replay-surface .status-pill')).toHaveText('failed')
 })
 
+test('session replay fits its surface across responsive viewports', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This test exercises all target viewports explicitly')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await page.getByTitle('Open full detail').click()
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
+  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Play or pause replay' })).toBeVisible()
+
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 1024, height: 768 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport)
+    const geometry = await page.locator('.feedback-replay-surface').evaluate((surface) => {
+      const target = surface.querySelector<HTMLElement>('.replay-player-target')
+      const player = surface.querySelector<HTMLElement>('.rr-player')
+      const frame = surface.querySelector<HTMLElement>('.rr-player__frame')
+      const controller = surface.querySelector<HTMLElement>('.rr-controller')
+      if (!target || !player || !frame || !controller) return null
+      const targetRect = target.getBoundingClientRect()
+      const playerRect = player.getBoundingClientRect()
+      const frameRect = frame.getBoundingClientRect()
+      const controllerRect = controller.getBoundingClientRect()
+      return {
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        playerLeft: playerRect.left,
+        playerRight: playerRect.right,
+        targetLeft: targetRect.left,
+        targetRight: targetRect.right,
+        controllerLeft: controllerRect.left,
+        controllerRight: controllerRect.right,
+        frameRatio: frameRect.width / frameRect.height,
+      }
+    })
+
+    expect(geometry, `${viewport.width}px replay geometry`).not.toBeNull()
+    expect(geometry!.documentOverflow, `${viewport.width}px document overflow`).toBeLessThanOrEqual(1)
+    expect(geometry!.playerLeft, `${viewport.width}px player left edge`).toBeGreaterThanOrEqual(geometry!.targetLeft - 1)
+    expect(geometry!.playerRight, `${viewport.width}px player right edge`).toBeLessThanOrEqual(geometry!.targetRight + 1)
+    expect(geometry!.controllerLeft, `${viewport.width}px controls left edge`).toBeGreaterThanOrEqual(geometry!.targetLeft - 1)
+    expect(geometry!.controllerRight, `${viewport.width}px controls right edge`).toBeLessThanOrEqual(geometry!.targetRight + 1)
+    expect(geometry!.frameRatio, `${viewport.width}px recorded aspect ratio`).toBeCloseTo(16 / 9, 1)
+  }
+})
+
 test('feedback queue links apply their filters without a document reload', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Queue routing is viewport independent')
   const state = createMockState()
@@ -1866,6 +1914,7 @@ test('Dispatch production surfaces remain responsive and error-free', async ({ p
 
   await page.getByRole('link', { name: 'Back to queue' }).click()
   await expect(page).toHaveURL(/\/feedback(?:\?|$)/)
+  await expect(page.getByRole('heading', { name: 'Feedback', exact: true })).toBeVisible()
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
   await expect(page).toHaveURL(/\/projects\/project-1$/)
