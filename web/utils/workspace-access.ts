@@ -2,6 +2,7 @@ const workspaceDestinations = [
   { path: '/', permissions: ['feedback:read', 'issue:read'] },
   { path: '/feedback', permissions: ['feedback:read'] },
   { path: '/issues', permissions: ['issue:read'] },
+  { path: '/analytics', permissions: ['project:read'] },
   { path: '/projects', permissions: ['project:read'] },
   { path: '/settings', permissions: ['tenant:read'] },
   { path: '/billing', permissions: ['billing:read', 'billing:manage'], requireAny: true },

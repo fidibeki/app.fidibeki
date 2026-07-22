@@ -218,6 +218,71 @@ function createMockState() {
     failedReplayFeedbackIDs: new Set<string>(),
     failNextBulkFeedbackUpdate: false,
     bulkFeedbackRequests: [] as Array<Record<string, unknown>>,
+    analyticsMode: 'data' as 'data' | 'empty' | 'error',
+    analyticsDelayMs: 0,
+    analyticsPagesTotal: 2,
+    analyticsRequests: [] as string[],
+  }
+}
+
+function analyticsResponse(state: MockState, url: URL) {
+  const empty = state.analyticsMode === 'empty'
+  const range = (url.searchParams.get('range') || '30d') as '7d' | '30d' | '90d'
+  const rangeDays = Number(range.slice(0, -1))
+  const projectId = url.searchParams.get('project_id') || ''
+  const ruleId = url.searchParams.get('rule_id') || ''
+  const page = url.searchParams.get('page') || ''
+  const dates = Array.from({ length: rangeDays }, (_, index) => {
+    const date = new Date('2026-07-21T00:00:00.000Z')
+    date.setUTCDate(date.getUTCDate() - (rangeDays - index - 1))
+    return date.toISOString().slice(0, 10)
+  })
+  const counts = empty
+    ? { matched: 0, impressions: 0, interactions: 0, submissions: 0, dismissals: 0, impression_rate: null, interaction_rate: null, completion_rate: null, submit_rate: null }
+    : { matched: 1840, impressions: 1240, interactions: 496, submissions: 186, dismissals: 94, impression_rate: 0.674, interaction_rate: 0.4, completion_rate: 0.375, submit_rate: 0.15 }
+  const row = <T extends Record<string, unknown>>(overrides: T) => ({ ...counts, ...overrides })
+  const projects = empty ? [] : [row({ project_id: 'project-1', project_name: 'Storefront' })]
+  const rules = empty ? [] : [
+    row({ rule_id: 'rule-1', rule_name: 'Checkout pulse', project_id: 'project-1', project_name: 'Storefront', deleted: false }),
+    row({ rule_id: 'rule-deleted', rule_name: 'Spring launch', project_id: 'project-1', project_name: 'Storefront', deleted: true, impressions: 310, interactions: 93, submissions: 21, interaction_rate: 0.3, completion_rate: 0.226, submit_rate: 0.068 }),
+  ].filter(candidate => !ruleId || candidate.rule_id === ruleId)
+  const pages = empty ? [] : [
+    row({ page_url: 'https://shop.acme.test/checkout' }),
+    row({ page_url: 'https://shop.acme.test/checkout/success', impressions: 280, interactions: 168, submissions: 126, interaction_rate: 0.6, completion_rate: 0.75, submit_rate: 0.45 }),
+  ].filter(candidate => !page || candidate.page_url === page)
+  return {
+    range,
+    period: { start_date: dates[0], end_date: dates.at(-1), timezone: 'UTC' },
+    filters: { project_id: projectId || undefined, rule_id: ruleId || undefined, page: page || undefined },
+    summary: counts,
+    trend: dates.map((date, index) => ({
+      date,
+      impressions: empty ? 0 : 22 + (index % 6) * 9,
+      interactions: empty ? 0 : 8 + (index % 5) * 4,
+      submissions: empty ? 0 : 2 + (index % 4) * 2,
+    })),
+    projects,
+    rules,
+    pages,
+    options: {
+      projects: [{ id: 'project-1', name: 'Storefront' }],
+      rules: [
+        { id: 'rule-1', project_id: 'project-1', name: 'Checkout pulse', deleted: false },
+        { id: 'rule-deleted', project_id: 'project-1', name: 'Spring launch', deleted: true },
+      ],
+      pages: [
+        { url: 'https://shop.acme.test/checkout' },
+        { url: 'https://shop.acme.test/checkout/success' },
+      ],
+    },
+    metadata: {
+      projects: { total: projects.length, returned: projects.length, limit: 100, truncated: false },
+      rules: { total: rules.length, returned: rules.length, limit: 100, truncated: false },
+      pages: { total: state.analyticsPagesTotal, returned: pages.length, limit: 100, truncated: state.analyticsPagesTotal > pages.length },
+      project_options: { total: 1, returned: 1, limit: 200, truncated: false },
+      rule_options: { total: 2, returned: 2, limit: 200, truncated: false },
+      page_options: { total: 2, returned: 2, limit: 200, truncated: false },
+    },
   }
 }
 
@@ -355,6 +420,13 @@ async function installMockAPI(page: Page, state: MockState) {
           { date: '2026-07-21', feedback_count: 21, satisfaction: 4.4 },
         ],
       } })
+    }
+
+    if (path === '/v1/analytics/widget' && method === 'GET') {
+      state.analyticsRequests.push(url.search)
+      if (state.analyticsDelayMs) await new Promise(resolve => setTimeout(resolve, state.analyticsDelayMs))
+      if (state.analyticsMode === 'error') return json(route, { error: { code: 'service_unavailable', message: 'Analytics are temporarily unavailable.' } }, 503)
+      return json(route, analyticsResponse(state, url))
     }
 
     if (path === '/v1/projects' && method === 'GET') return json(route, { projects: state.projects })
@@ -685,11 +757,11 @@ async function authenticate(page: Page, state: MockState) {
   await expect(page.getByRole('heading', { name: /Good afternoon/ })).toBeVisible()
 }
 
-async function openPrimary(page: Page, label: 'Feedback' | 'Issues' | 'Projects' | 'Settings') {
+async function openPrimary(page: Page, label: 'Feedback' | 'Issues' | 'Analytics' | 'Projects' | 'Settings') {
   const link = page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: label, exact: true })
   if ((page.viewportSize()?.width || 0) <= 700) await page.getByTitle('Open navigation').click()
   await link.click()
-  const path = { Feedback: '/feedback', Issues: '/issues', Projects: '/projects', Settings: '/settings' }[label]
+  const path = { Feedback: '/feedback', Issues: '/issues', Analytics: '/analytics', Projects: '/projects', Settings: '/settings' }[label]
   await expect(page).toHaveURL(new RegExp(`${path}(?:\\?|$)`))
   await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
 }
@@ -734,6 +806,57 @@ test('dashboard distinguishes unrated feedback from a zero rating', async ({ pag
   await expect(unratedRow.locator('.rating-mark > [aria-hidden="true"]')).toHaveText('—')
   await expect(page.getByTitle('0 out of 5')).toHaveCount(0)
   await capture(page, testInfo, 'dispatch-dashboard-unrated')
+})
+
+test('analytics exposes the widget funnel across breakdowns and filters', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.analyticsDelayMs = 800
+  state.analyticsPagesTotal = 210
+  await authenticate(page, state)
+
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' })
+  if (testInfo.project.name === 'mobile') await page.getByTitle('Open navigation').click()
+  await navigation.getByRole('link', { name: 'Analytics', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Loading analytics' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Analytics', exact: true })).toBeVisible()
+
+  const impressionMetric = page.locator('.analytics-ledger article').filter({ hasText: 'Impressions' })
+  await expect(impressionMetric).toContainText('1,240')
+  await expect(page.getByRole('img', { name: 'Daily widget funnel trend' })).toBeVisible()
+  await expect(page.getByRole('rowheader', { name: 'Storefront', exact: true })).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Rules' }).click()
+  await expect(page.getByRole('rowheader', { name: /Spring launch/ })).toContainText('deleted')
+  await page.getByRole('tab', { name: 'Pages' }).click()
+  await expect(page.locator('.analytics-breakdown > header')).toContainText('2 of 210 pages')
+  await expect(page.getByRole('rowheader', { name: 'https://shop.acme.test/checkout', exact: true })).toBeVisible()
+
+  await page.getByLabel('Project').selectOption('project-1')
+  await page.getByLabel('Rule').selectOption('rule-1')
+  await page.getByRole('combobox', { name: 'Page', exact: true }).selectOption('https://shop.acme.test/checkout')
+  await page.getByRole('button', { name: '7d' }).click()
+  await expect(page).toHaveURL(/range=7d/)
+  await expect.poll(() => state.analyticsRequests.at(-1) || '').toContain('range=7d')
+  expect(state.analyticsRequests.at(-1)).toContain('project_id=project-1')
+  expect(state.analyticsRequests.at(-1)).toContain('rule_id=rule-1')
+  expect(state.analyticsRequests.at(-1)).toContain('page=https%3A%2F%2Fshop.acme.test%2Fcheckout')
+  await capture(page, testInfo, 'dispatch-widget-analytics')
+})
+
+test('analytics keeps empty and retry states operational', async ({ page }) => {
+  const state = createMockState()
+  state.analyticsMode = 'empty'
+  await authenticate(page, state)
+  await openPrimary(page, 'Analytics')
+  await expect(page.getByText('No widget activity in this period')).toBeVisible()
+  await expect(page.locator('.analytics-ledger article').filter({ hasText: 'Interaction rate' })).toContainText('—')
+
+  state.analyticsMode = 'error'
+  await page.getByRole('button', { name: '7d' }).click()
+  await expect(page.getByRole('heading', { name: 'Analytics unavailable' })).toBeVisible()
+  state.analyticsMode = 'data'
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.locator('.analytics-ledger article').filter({ hasText: 'Impressions' })).toContainText('1,240')
 })
 
 test('restricted members enter their first permitted workspace section', async ({ page }, testInfo) => {

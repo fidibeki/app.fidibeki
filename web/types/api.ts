@@ -149,6 +149,73 @@ export interface DashboardSummary {
   trend: DashboardTrendPoint[]
 }
 
+export interface WidgetAnalyticsSummary {
+  matched: number
+  impressions: number
+  interactions: number
+  submissions: number
+  dismissals: number
+  impression_rate: number | null
+  interaction_rate: number | null
+  completion_rate: number | null
+  submit_rate: number | null
+}
+
+export interface WidgetAnalyticsTrendPoint {
+  date: string
+  impressions: number
+  interactions: number
+  submissions: number
+}
+
+export interface WidgetAnalyticsBreakdown extends WidgetAnalyticsSummary {
+  project_id?: string
+  project_name?: string
+  rule_id?: string
+  rule_name?: string
+  page_url?: string
+  deleted?: boolean
+}
+
+export interface WidgetAnalyticsResponse {
+  range: '7d' | '30d' | '90d'
+  period: {
+    start_date: string
+    end_date: string
+    timezone: 'UTC'
+  }
+  filters: {
+    project_id?: string
+    rule_id?: string
+    page?: string
+  }
+  summary: WidgetAnalyticsSummary
+  trend: WidgetAnalyticsTrendPoint[]
+  projects: WidgetAnalyticsBreakdown[]
+  rules: WidgetAnalyticsBreakdown[]
+  pages: WidgetAnalyticsBreakdown[]
+  options: {
+    projects: Array<{ id: string, name: string }>
+    rules: Array<{ id: string, project_id: string, name: string, deleted: boolean }>
+    pages: Array<{ url: string }>
+  }
+  metadata: {
+    projects: WidgetAnalyticsResultMetadata
+    rules: WidgetAnalyticsResultMetadata
+    pages: WidgetAnalyticsResultMetadata
+    project_options: WidgetAnalyticsResultMetadata
+    rule_options: WidgetAnalyticsResultMetadata
+    page_options: WidgetAnalyticsResultMetadata
+  }
+}
+
+export interface WidgetAnalyticsResultMetadata {
+  total: number
+  returned: number
+  limit: number
+  truncated: boolean
+}
+
 export interface FeedbackItem {
   id: string
   public_id: string
