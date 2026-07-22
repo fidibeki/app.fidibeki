@@ -44,13 +44,8 @@ func (Store) InsertEvents(
 			return IngestResult{}, errors.New("widget funnel batch must belong to one tenant and project")
 		}
 	}
-	var lockedProjectID string
-	if err := query.QueryRow(ctx, `
-		SELECT id FROM projects
-		WHERE tenant_id = $1 AND id = $2
-		FOR UPDATE
-	`, tenantID, projectID).Scan(&lockedProjectID); err != nil {
-		return IngestResult{}, fmt.Errorf("lock widget funnel project: %w", err)
+	if err := lockAnalyticsProject(ctx, query, tenantID, projectID); err != nil {
+		return IngestResult{}, err
 	}
 	for _, event := range events {
 		inserted, err := insertEvent(ctx, query, event, event.EventType != EventMatched)
@@ -74,7 +69,27 @@ func (Store) InsertSubmittedEvent(
 	if event.EventType != EventSubmitted || event.FeedbackID == nil {
 		return false, errors.New("submitted widget funnel event requires feedback context")
 	}
+	if err := lockAnalyticsProject(ctx, query, event.TenantID, event.ProjectID); err != nil {
+		return false, err
+	}
 	return insertEvent(ctx, query, event, false)
+}
+
+func lockAnalyticsProject(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+) error {
+	var lockedProjectID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM projects
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, projectID).Scan(&lockedProjectID); err != nil {
+		return fmt.Errorf("lock widget funnel project: %w", err)
+	}
+	return nil
 }
 
 func insertEvent(

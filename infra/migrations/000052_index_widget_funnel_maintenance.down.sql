@@ -1,0 +1,3 @@
+DROP TABLE widget_funnel_maintenance;
+DROP INDEX idx_widget_funnel_daily_retention;
+DROP INDEX idx_widget_funnel_events_project_page_occurred;

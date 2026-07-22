@@ -525,6 +525,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	replayScheduler := replay.Scheduler{Store: replayStore, Queue: replayQueue, Logger: logger}
 	replayProcessor := replay.Processor{Store: replayStore, Storage: objectStorage}
 	replayCleaner := replay.Cleaner{Store: replayStore, Storage: objectStorage, Logger: logger}
+	analyticsMaintainer := widgetanalytics.Maintainer{
+		Store: widgetanalytics.MaintenanceStore{Database: pools.Admin}, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -584,11 +587,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 6)
+	backgroundDone := make(chan error, 7)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- replayCleaner.Run(workerCtx, 24*time.Hour) }()
+	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -596,7 +600,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	return errors.Join(
 		workerErr,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 	)
 }
 

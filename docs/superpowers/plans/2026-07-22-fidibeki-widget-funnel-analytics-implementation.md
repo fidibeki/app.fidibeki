@@ -6,10 +6,9 @@
 
 ## Progress
 
-- Tasks 1-5 are complete and locally verified.
-- Task 6, reconciliation and retention, is in progress.
-- Task 7 staging validation remains pending. No deployment occurs before Task 6 is complete, and production
-  remains out of scope until explicitly authorized.
+- Tasks 1-6 are complete and locally verified.
+- Task 7 full regression and staging validation is in progress. Staging deployment starts only after the local
+  regression passes, and production remains out of scope until explicitly authorized.
 
 ## Architectural Decisions
 
@@ -141,7 +140,7 @@ staging Analytics page, with no residual QA data and no production change.
 agree across deployed services.
 
 **Acceptance:** Full backend, widget, and web unit/type/build/E2E suites pass. Migration up/down/up
-ends clean at version 51. Staging deploys API/migration and worker, then widget, then web. A controlled
+ends clean at version 52. Staging deploys API/migration and worker, then widget, then web. A controlled
 QA journey covers matched-but-suppressed, visible, interacted, dismissed, submitted, equivalent
 query/hash/trailing-slash URLs, and a distinct path; it verifies API/dashboard counts, restores the
 rule/domains, deletes smoke raw/aggregate rows, and confirms every staging healthcheck. Production

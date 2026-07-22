@@ -160,3 +160,26 @@ The final suite covers 7/30/90-day boundaries, zero denominators, deleted and do
 cross-tenant and same-tenant filter mismatches, deterministic high-cardinality limits, timeout logging, desktop
 and mobile loading/data/empty/error/retry states, and the complete responsive Dispatch journey. Backend tests,
 web unit tests, typecheck, local production build, and focused Playwright runs pass. No deployment was performed.
+
+### Slice 4.6 Reconciliation And Retention
+
+**Artifact**: Worker reconciliation, bounded raw/daily retention, migration 000052, and replica-safe cadence
+**Date**: 2026-07-22
+**Rounds**: 2
+
+#### Verdict: FIXED
+
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | Retention deleted only one 1,000-row batch per hour, allowing normal event volume to grow the backlog. | Fixed with independently bounded multi-batch drains and explicit budget-exhaustion telemetry. |
+| 2 | major | 9/10 | Reconciliation and cleanup had no execution deadline and a raw cleanup failure prevented daily cleanup. | Fixed with separate two-minute phase deadlines, independent cleanup stages, joined errors, and continuation tests. |
+| 3 | major | 10/10 | Multiple worker replicas could reconcile concurrently and overwrite inline aggregate updates. | Fixed with a global advisory lease, project-row serialization shared with both ingestion paths, and deterministic concurrent PostgreSQL coverage. |
+| 4 | major | 10/10 | A staggered replica could repeat the full cadence immediately after the first replica released its advisory lock. | Fixed with a persisted admin-only singleton cadence marker in migration 000052. |
+| 5 | major | 9/10 | Global candidate discovery and long project/day transactions could scan broadly and block foreground ingestion. | Fixed by enumerating project/day scopes, reconciling indexed page chunks, and enforcing a five-second chunk deadline. |
+| 6 | major | 10/10 | Session time zones could shift daily retention boundaries. | Fixed by passing explicit UTC calendar dates, verified with a non-UTC PostgreSQL session and exact-boundary tests. |
+| 7 | minor | 9/10 | Rollback cleanup could outlive a cancelled request, and partial cleanup logs could claim completion. | Fixed with bounded rollback/connection disposal and accurate partial/budget log fields. |
+
+Correctness and security reviewers approved the second round. The performance reviewer identified the final
+candidate-scan, lock-duration, persisted-cadence, rollback, and observability gaps; these were resolved within
+the two-round cap and covered by the final test run. Full backend tests and the widget analytics race suite pass.
+No deployment was performed.
