@@ -1,0 +1,2 @@
+DROP TABLE widget_rule_target_conditions;
+DROP TYPE widget_target_condition_kind;

@@ -142,7 +142,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, tenantB).Scan(&assigneeB); err != nil {
 		t.Fatalf("create tenant B assignee: %v", err)
 	}
-	var projectA, projectB, widgetRuleA, issueA, issueB, feedbackA, feedbackB, attachmentA, attachmentB string
+	var projectA, projectB, widgetRuleA, widgetRuleB, issueA, issueB, feedbackA, feedbackB, attachmentA, attachmentB string
 	var sessionA, sessionB string
 	var integrationA, integrationB string
 	if err := root.QueryRow(ctx, `
@@ -204,6 +204,70 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		UPDATE widget_rules SET replay_max_events = 50001 WHERE id = $1
 	`, widgetRuleA); err == nil {
 		t.Fatal("widget replay event count above 50000 succeeded")
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds
+		) VALUES ($1, 'Beta targeting', 'all_pages', 'delay', 0)
+		RETURNING id
+	`, projectB).Scan(&widgetRuleB); err != nil {
+		t.Fatalf("create tenant B widget rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_rule_target_conditions (
+			widget_rule_id, kind, matcher_type, matcher_value, position
+		) VALUES
+			($1, 'include', 'all_pages', NULL, 0),
+			($2, 'include', 'all_pages', NULL, 0)
+	`, widgetRuleA, widgetRuleB); err != nil {
+		t.Fatalf("seed widget target conditions: %v", err)
+	}
+	for name, statement := range map[string]string{
+		"all pages with value": `
+			INSERT INTO widget_rule_target_conditions (
+				widget_rule_id, kind, matcher_type, matcher_value, position
+			) VALUES ($1, 'exclude', 'all_pages', 'unexpected', 0)`,
+		"matcher without value": `
+			INSERT INTO widget_rule_target_conditions (
+				widget_rule_id, kind, matcher_type, matcher_value, position
+			) VALUES ($1, 'exclude', 'url_exact', NULL, 0)`,
+		"negative position": `
+			INSERT INTO widget_rule_target_conditions (
+				widget_rule_id, kind, matcher_type, matcher_value, position
+			) VALUES ($1, 'exclude', 'url_exact', 'https://a.example.com', -1)`,
+		"duplicate position": `
+			INSERT INTO widget_rule_target_conditions (
+				widget_rule_id, kind, matcher_type, matcher_value, position
+			) VALUES ($1, 'include', 'all_pages', NULL, 0)`,
+	} {
+		if _, err := root.Exec(ctx, statement, widgetRuleA); err == nil {
+			t.Fatalf("invalid widget target condition %s succeeded", name)
+		}
+	}
+	var disposableRule string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds
+		) VALUES ($1, 'Disposable targeting', 'all_pages', 'delay', 0)
+		RETURNING id
+	`, projectA).Scan(&disposableRule); err != nil {
+		t.Fatalf("create disposable widget rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_rule_target_conditions (
+			widget_rule_id, kind, matcher_type, matcher_value, position
+		) VALUES ($1, 'include', 'all_pages', NULL, 0)
+	`, disposableRule); err != nil {
+		t.Fatalf("create disposable widget target condition: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM widget_rules WHERE id = $1`, disposableRule); err != nil {
+		t.Fatalf("delete disposable widget rule: %v", err)
+	}
+	var disposableConditions int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM widget_rule_target_conditions WHERE widget_rule_id = $1
+	`, disposableRule).Scan(&disposableConditions); err != nil || disposableConditions != 0 {
+		t.Fatalf("conditions after widget rule deletion = %d, error = %v, want 0", disposableConditions, err)
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO issues (tenant_id, project_id, public_id, title)
@@ -442,6 +506,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("app role without tenant context read %d tags, want 0", count)
 	}
+	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM widget_rule_target_conditions`).Scan(&count); err != nil {
+		t.Fatalf("query widget target conditions without tenant context: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app role without tenant context read %d widget target conditions, want 0", count)
+	}
 
 	tx, err := appPool.Begin(ctx)
 	if err != nil {
@@ -490,6 +560,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Fatalf("tenant A %s count = %d, error = %v, want %d", table, count, err, want)
 		}
 	}
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM widget_rule_target_conditions`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("tenant A widget target condition count = %d, error = %v, want 1", count, err)
+	}
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM tenant_members WHERE tenant_id = $1`, tenantB,
 	).Scan(&count); err != nil {
@@ -511,6 +584,20 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		`INSERT INTO tenant_members (tenant_id, email) VALUES ($1, 'intruder@beta.test')`, tenantB,
 	); err == nil {
 		t.Fatal("cross-tenant insert succeeded, want RLS rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant widget target condition transaction: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO widget_rule_target_conditions (
+			widget_rule_id, kind, matcher_type, matcher_value, position
+		) VALUES ($1, 'exclude', 'url_exact', 'https://b.example.com/private', 0)
+	`, widgetRuleB); err == nil {
+		t.Fatal("cross-tenant widget target condition insert succeeded, want RLS rejection")
 	}
 	_ = tx.Rollback(ctx)
 
@@ -637,6 +724,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 4 {
 		t.Fatalf("admin member count = %d, want 4", count)
 	}
+	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM widget_rule_target_conditions`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("admin widget target condition count = %d, error = %v, want 2", count, err)
+	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM ai_daily_usage`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin AI usage count = %d, error = %v, want 2", count, err)
 	}
@@ -689,17 +779,46 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 
 	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back widget recurrence migration: %v", err)
+		t.Fatalf("roll back widget target conditions migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET matcher_type = 'url_exact', matcher_value = 'HTTPS://A.EXAMPLE.COM:443/chart///?asset=BAI#price'
+		WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("prepare legacy widget matcher before targeting replay: %v", err)
 	}
 	var preservedIssueID string
 	if err := root.QueryRow(ctx, `SELECT issue_id FROM feedbacks WHERE id = $1`, feedbackA).Scan(&preservedIssueID); err != nil {
-		t.Fatalf("read feedback link after recurrence rollback: %v", err)
+		t.Fatalf("read feedback link after targeting rollback: %v", err)
 	}
 	if preservedIssueID != issueA {
-		t.Fatalf("feedback issue after recurrence rollback = %q, want %q", preservedIssueID, issueA)
+		t.Fatalf("feedback issue after targeting rollback = %q, want %q", preservedIssueID, issueA)
 	}
 	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("reapply widget recurrence migration: %v", err)
+		t.Fatalf("reapply widget target conditions migration: %v", err)
+	}
+	var targetKind, targetMatcherType, targetMatcherValue string
+	var targetPosition int
+	if err := root.QueryRow(ctx, `
+		SELECT kind, matcher_type, matcher_value, position
+		FROM widget_rule_target_conditions
+		WHERE widget_rule_id = $1
+	`, widgetRuleA).Scan(&targetKind, &targetMatcherType, &targetMatcherValue, &targetPosition); err != nil {
+		t.Fatalf("read backfilled widget target condition: %v", err)
+	}
+	if targetKind != "include" || targetMatcherType != "url_exact" ||
+		targetMatcherValue != "https://a.example.com/chart" || targetPosition != 0 {
+		t.Fatalf(
+			"backfilled widget target = %q/%q/%q/%d, want include/url_exact/https://a.example.com/chart/0",
+			targetKind, targetMatcherType, targetMatcherValue, targetPosition,
+		)
+	}
+	if err := migrator.Steps(-2); err != nil {
+		t.Fatalf("roll back targeting and widget recurrence migrations: %v", err)
+	}
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("reapply widget recurrence and targeting migrations: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT feedback.issue_id, rule.recurrence_mode, rule.recurrence_days
@@ -714,15 +833,15 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("state after recurrence replay = issue %q recurrence %q/%v", preservedIssueID, recurrenceMode, recurrenceDays)
 	}
 
-	if err := migrator.Steps(-3); err != nil {
-		t.Fatalf("roll back recurrence, triage, and feedback/issue decoupling migrations: %v", err)
+	if err := migrator.Steps(-4); err != nil {
+		t.Fatalf("roll back targeting, recurrence, triage, and feedback/issue decoupling migrations: %v", err)
 	}
 	legacyDescription := "Legacy feedback keeps its complete description after migration. More detail follows."
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET text = $2 WHERE id = $1`, feedbackA, legacyDescription); err != nil {
 		t.Fatalf("prepare legacy feedback before migration replay: %v", err)
 	}
-	if err := migrator.Steps(3); err != nil {
-		t.Fatalf("reapply feedback/issue decoupling, triage, and recurrence migrations: %v", err)
+	if err := migrator.Steps(4); err != nil {
+		t.Fatalf("reapply feedback/issue decoupling, triage, recurrence, and targeting migrations: %v", err)
 	}
 	var migratedTitle, migratedDescription, migratedIssueDescription, migratedIssueID string
 	if err := root.QueryRow(ctx, `
@@ -742,8 +861,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			migratedTitle, migratedDescription, migratedIssueID, migratedIssueDescription)
 	}
 
-	if err := migrator.Steps(-5); err != nil {
-		t.Fatalf("roll back recurrence, triage, product fields, session rotation marker, and replay cap migrations: %v", err)
+	if err := migrator.Steps(-6); err != nil {
+		t.Fatalf("roll back targeting, recurrence, triage, product fields, session rotation marker, and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
 		if _, err := root.Exec(ctx, `
@@ -789,8 +908,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 47 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 47 clean", version, dirty)
+	if version != 48 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 48 clean", version, dirty)
 	}
 }
 
