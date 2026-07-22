@@ -1,9 +1,10 @@
 import type { AuthResponse, AuthSession } from '~/types/api'
 import type { ApiFetch, ApiFetchOptions } from '~/utils/api-fetch'
+import { authForwardedHeaderNames } from '~/utils/auth-request-headers'
 
 export default defineNuxtPlugin(() => {
   const session = useState<AuthSession>('auth:session')
-  const forwardedHeaders = import.meta.server ? useRequestHeaders(['cookie', 'host']) : undefined
+  const forwardedHeaders = import.meta.server ? useRequestHeaders([...authForwardedHeaderNames]) : undefined
   const requestEvent = import.meta.server ? useRequestEvent() : undefined
   const rawFetch = $fetch as unknown as <T>(request: string, options?: Record<string, unknown>) => Promise<T>
   const rawFetchResponse = $fetch.raw as unknown as <T>(request: string, options?: Record<string, unknown>) => Promise<{
