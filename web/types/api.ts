@@ -276,6 +276,9 @@ export interface FeedbackItem {
   issue_public_id?: string
   issue_status?: IssueStatus
   rating?: number
+  responses?: Record<string, string | number>
+  comment?: string
+  widget_definition_version?: number
   title: string
   description?: string
   text?: string

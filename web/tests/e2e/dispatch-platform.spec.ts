@@ -1113,6 +1113,34 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
 })
 
+test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByRole('checkbox', { name: /^Reaction/ }).check()
+  const reactionRow = page.locator('.response-block-row').filter({ hasText: 'reaction' })
+  await reactionRow.getByLabel('Required').check()
+  await reactionRow.getByLabel('Label (en)').fill('Was this useful?')
+  await page.getByLabel('New language').fill('pt-ao')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByLabel('Editing language')).toHaveValue('pt-ao')
+  await page.getByLabel('Prompt', { exact: true }).fill('Como foi o checkout?')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  const saved = state.widgetRules[0] as unknown as {
+    response_blocks: Array<{ type: string; required: boolean }>
+    localizations: Record<string, { prompt: string }>
+  }
+  expect(saved.response_blocks.find(block => block.type === 'reaction')).toMatchObject({ required: true })
+  expect(saved.localizations['pt-ao']?.prompt).toBe('Como foi o checkout?')
+  await expect(page.getByText('Loading project')).toHaveCount(0)
+  await expect(page.locator('.response-block-row').filter({ hasText: 'reaction' })).toBeVisible()
+  await capture(page, testInfo, 'widget-definition-blocks')
+})
+
 test('widget targeting edits include and exclude conditions with a local URL test', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)

@@ -42,6 +42,8 @@ const projectName = ref('')
 const projectDomains = ref('')
 const projectDefaultLocale = ref('en')
 const copied = ref(false)
+const editingLocale = ref('en')
+const newLocale = ref('')
 const showTargetingErrors = ref(false)
 const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
 
@@ -114,6 +116,7 @@ function selectRule(rule: WidgetRule) {
     response_blocks: rule.response_blocks || legacyResponseBlocks(rule), localizations,
     allow_comment: rule.allow_comment || false, collect_contact: rule.collect_contact || false,
   })
+  editingLocale.value = locale
 }
 
 function startNewRule() {
@@ -122,14 +125,17 @@ function startNewRule() {
   targetingState.value = { mode: null, includes: [], excludes: [] }
   showTargetingErrors.value = false
   Object.assign(ruleForm, defaultWidgetRule())
+  editingLocale.value = projectDefaultLocale.value || 'en'
 }
 
 function normalizedRule(): WidgetRuleInput {
   const locale = projectDefaultLocale.value.trim().toLowerCase() || 'en'
+  const defaultPrompt = ruleForm.localizations[locale]?.prompt?.trim()
+    || ruleForm.greeting?.trim() || 'How was your experience?'
   const localized = {
-    ...fallbackLocalization(ruleForm.greeting?.trim() || 'How was your experience?'),
+    ...fallbackLocalization(defaultPrompt),
     ...(ruleForm.localizations[locale] || {}),
-    prompt: ruleForm.greeting?.trim() || 'How was your experience?',
+    prompt: defaultPrompt,
   }
   const responseBlocks = synchronizedResponseBlocks(ruleForm)
   return {
@@ -137,7 +143,7 @@ function normalizedRule(): WidgetRuleInput {
     ...buildTargetingPayload(targetingState.value),
     trigger_delay_seconds: ruleForm.trigger_type === 'delay' ? Number(ruleForm.trigger_delay_seconds || 0) : null,
     trigger_scroll_percent: ruleForm.trigger_type === 'scroll' ? Number(ruleForm.trigger_scroll_percent || 1) : null,
-    greeting: ruleForm.greeting?.trim() || null,
+    greeting: defaultPrompt,
     accent_color: ruleForm.accent_color?.trim() || null,
     replay_sampling_rate: ruleForm.replay_mode === 'sampling' ? Number(ruleForm.replay_sampling_rate || 1) : 0,
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
@@ -156,6 +162,7 @@ function fallbackLocalization(prompt: string): WidgetLocalization {
     launcher_label: 'Feedback', prompt, comment_placeholder: 'Tell us more',
     contact_label: 'Email address', consent_label: 'Email me about this feedback',
     submit_label: 'Send feedback', success_message: 'Your feedback was sent.',
+    block_labels: {}, option_labels: {},
   }
 }
 
@@ -167,8 +174,114 @@ function legacyResponseBlocks(rule: Pick<WidgetRule, 'can_rate' | 'can_write_tex
 }
 
 function synchronizedResponseBlocks(rule: WidgetRuleInput): WidgetResponseBlock[] {
+  const rating = rule.response_blocks.find(block => block.type === 'rating')
+  const freeText = rule.response_blocks.find(block => block.type === 'free_text')
   const extended = rule.response_blocks.filter(block => block.type !== 'rating' && block.type !== 'free_text')
-  return [...legacyResponseBlocks(rule), ...extended]
+  return [
+    ...(rule.can_rate ? [rating || { key: 'rating', type: 'rating' as const, required: false }] : []),
+    ...(rule.can_write_text ? [freeText || { key: 'feedback', type: 'free_text' as const, required: false }] : []),
+    ...extended,
+  ].slice(0, 4)
+}
+
+watch(() => [ruleForm.can_rate, ruleForm.can_write_text], () => {
+  ruleForm.response_blocks = synchronizedResponseBlocks(ruleForm)
+})
+
+const editingLocalization = computed(() => {
+  const locale = editingLocale.value || projectDefaultLocale.value || 'en'
+  if (!ruleForm.localizations[locale]) {
+    ruleForm.localizations[locale] = fallbackLocalization(ruleForm.greeting || 'How was your experience?')
+  }
+  return ruleForm.localizations[locale]!
+})
+const previewLocalization = computed(() => ruleForm.localizations[projectDefaultLocale.value]
+  || editingLocalization.value)
+
+function hasResponseType(type: WidgetResponseBlock['type']) {
+  return ruleForm.response_blocks.some(block => block.type === type)
+}
+
+function setResponseType(type: WidgetResponseBlock['type'], enabled: boolean) {
+  if (!enabled) {
+    ruleForm.response_blocks = ruleForm.response_blocks.filter(block => block.type !== type)
+    return
+  }
+  if (hasResponseType(type) || ruleForm.response_blocks.length >= 4) return
+  if (type === 'reaction') {
+    ruleForm.response_blocks.push({
+      key: 'reaction', type, required: false,
+      options: [{ value: 'helpful' }, { value: 'not_helpful' }],
+    })
+  } else if (type === 'single_choice') {
+    ruleForm.response_blocks.push({
+      key: 'choice', type, required: false,
+      options: [{ value: 'yes' }, { value: 'no' }],
+    })
+  }
+}
+
+function removeResponseBlock(type: WidgetResponseBlock['type']) {
+  if (type === 'rating') ruleForm.can_rate = false
+  else if (type === 'free_text') ruleForm.can_write_text = false
+  else setResponseType(type, false)
+}
+
+function addResponseOption(block: WidgetResponseBlock) {
+  const maximum = block.type === 'reaction' ? 5 : 10
+  block.options ||= []
+  if (block.options.length >= maximum) return
+  let index = block.options.length + 1
+  while (block.options.some(option => option.value === `option_${index}`)) index++
+  block.options.push({ value: `option_${index}` })
+}
+
+function removeResponseOption(block: WidgetResponseBlock, index: number) {
+  if ((block.options?.length || 0) <= 2) return
+  block.options?.splice(index, 1)
+}
+
+function addLocalization() {
+  const locale = newLocale.value.trim().replaceAll('_', '-').toLowerCase()
+  if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(locale)) {
+    formError.value = 'Language must use a tag such as pt or pt-ao.'
+    return
+  }
+  if (!ruleForm.localizations[locale]) {
+    ruleForm.localizations[locale] = cloneLocalization(
+      ruleForm.localizations[projectDefaultLocale.value] || fallbackLocalization(ruleForm.greeting || 'How was your experience?'),
+    )
+  }
+  editingLocale.value = locale
+  newLocale.value = ''
+  formError.value = ''
+}
+
+function cloneLocalization(source: WidgetLocalization): WidgetLocalization {
+  return {
+    ...source,
+    block_labels: { ...(source.block_labels || {}) },
+    option_labels: Object.fromEntries(
+      Object.entries(source.option_labels || {}).map(([key, labels]) => [key, { ...labels }]),
+    ),
+  }
+}
+
+function removeLocalization() {
+  if (editingLocale.value === projectDefaultLocale.value) return
+  delete ruleForm.localizations[editingLocale.value]
+  editingLocale.value = projectDefaultLocale.value
+}
+
+function setBlockLabel(key: string, value: string) {
+  editingLocalization.value.block_labels ||= {}
+  editingLocalization.value.block_labels[key] = value
+}
+
+function setOptionLabel(blockKey: string, option: string, value: string) {
+  editingLocalization.value.option_labels ||= {}
+  editingLocalization.value.option_labels[blockKey] ||= {}
+  editingLocalization.value.option_labels[blockKey]![option] = value
 }
 
 async function saveRule() {
@@ -289,8 +402,9 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
             <section><h3>Page matching</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" /></section>
             <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
             <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
-            <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>Optional comment</b><small>Add context to compact responses</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>Contact with consent</b><small>Offer optional reporter email</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
-            <section><h3>Appearance</h3><div class="project-form-grid"><label class="wide">Prompt ({{ projectDefaultLocale }})<input v-model="ruleForm.greeting" class="app-input" maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
+            <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>Reaction</b><small>Collect a compact sentiment</small></span></label><label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>Single choice</b><small>Offer configured options</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>Optional comment</b><small>Add context to compact responses</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>Contact with consent</b><small>Offer optional reporter email</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
+            <section><h3>Response blocks</h3><div class="response-block-list"><div v-for="block in ruleForm.response_blocks" :key="block.type" class="response-block-row"><div class="response-block-head"><span>{{ block.type.replaceAll('_', ' ') }}</span><label><input v-model="block.required" type="checkbox" /> Required</label><button type="button" title="Remove response block" :aria-label="`Remove ${block.type} block`" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>Response key<input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" /></label><label>Label ({{ editingLocale }})<input class="app-input" maxlength="240" :value="editingLocalization.block_labels?.[block.key] || ''" @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)" /></label></div><div v-if="block.options" class="response-option-list"><div v-for="(option, optionIndex) in block.options" :key="optionIndex"><input v-model.trim="option.value" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" aria-label="Option key" /><input class="app-input" maxlength="120" aria-label="Localized option label" :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''" @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)" /><button type="button" title="Remove option" aria-label="Remove option" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button></div><button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> Add option</button></div></div></div></section>
+            <section><h3>Content and appearance</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" aria-label="Editing language"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale }}{{ locale === projectDefaultLocale ? ' · default' : '' }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" placeholder="pt-ao" aria-label="New language" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> Add</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" title="Remove language" aria-label="Remove language" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>Launcher label<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">Prompt<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>Comment placeholder<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>Contact label<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">Consent label<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>Submit label<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>Success message<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
             <section><h3>Session replay</h3><div class="project-form-grid"><label>Replay mode<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">Disabled</option><option value="full">Every session</option><option value="sampling">Sample sessions</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">Sampling percent<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>Max duration (seconds)<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>Max events<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>Mask all input values</span></label><label class="wide">Additional text mask selector<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
             </fieldset>
           </form>
@@ -298,7 +412,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 
         <aside class="project-widget-preview">
           <header><span>Live preview</span><small>{{ ruleForm.theme }} · {{ ruleForm.position }}</small></header>
-          <div class="widget-preview-page" :data-theme="ruleForm.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>Checkout</b><span>Review your order before payment.</span><div /></div><button class="widget-preview-trigger" :style="{ background: ruleForm.accent_color || '#087f73' }">Feedback</button><section class="widget-preview-modal"><p>{{ ruleForm.greeting || 'How was your experience?' }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><textarea v-if="ruleForm.can_write_text" placeholder="Tell us more" /><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">Screenshot</span><span v-if="ruleForm.can_record_audio">Audio</span><button :style="{ background: ruleForm.accent_color || '#087f73' }">Send</button></div></section></div>
+          <div class="widget-preview-page" :data-theme="ruleForm.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>Checkout</b><span>Review your order before payment.</span><div /></div><button v-if="ruleForm.presentation === 'launcher'" class="widget-preview-trigger" :style="{ background: ruleForm.accent_color || '#087f73' }">{{ previewLocalization.launcher_label }}</button><section class="widget-preview-modal" :data-presentation="ruleForm.presentation"><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || 'Tell us more'" /><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">Screenshot</span><span v-if="ruleForm.can_record_audio">Audio</span><button :style="{ background: ruleForm.accent_color || '#087f73' }">{{ previewLocalization.submit_label }}</button></div></section></div>
         </aside>
       </div>
 
@@ -361,6 +475,18 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-capability-grid label span { display: flex; flex-direction: column; gap: 3px; }
 .project-capability-grid b { font-size: 10px; }
 .project-capability-grid small { color: var(--muted); font-size: 8px; }
+.response-block-list { display: grid; gap: 14px; }
+.response-block-row { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.response-block-row:last-child { padding-bottom: 0; border-bottom: 0; }
+.response-block-head { display: flex; min-height: 32px; align-items: center; gap: 10px; margin-bottom: 8px; }
+.response-block-head > span { color: var(--ink-soft); font-size: 9px; font-weight: 800; text-transform: capitalize; }
+.response-block-head label { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-size: 8px; font-weight: 700; }
+.response-block-head button,
+.response-option-list button:not(.app-button) { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; background: transparent; color: var(--muted); border: 0; border-radius: 4px; }
+.response-option-list { display: grid; gap: 7px; margin-top: 10px; }
+.response-option-list > div { display: grid; grid-template-columns: minmax(100px, .7fr) minmax(140px, 1.3fr) 30px; gap: 7px; }
+.response-option-list > .app-button { justify-self: start; }
+.localization-toolbar { display: grid; grid-template-columns: minmax(100px, .8fr) minmax(100px, 1fr) auto 34px; gap: 7px; margin-bottom: 13px; }
 .project-widget-preview { position: sticky; top: 56px; height: calc(100vh - 56px); min-height: 620px; background: #edf2f0; }
 .project-widget-preview > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 0 14px; background: #f8faf9; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .project-widget-preview header small { font-size: 8px; font-weight: 500; }

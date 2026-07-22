@@ -62,6 +62,11 @@ const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some
 )) === true)
 const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.value && hasReprocessableEvidence.value)
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
+const structuredResponses = computed(() => Object.entries(feedback.value?.responses || {}))
+
+function responseLabel(key: string) {
+  return key.replace(/_/g, ' ').replace(/^./, (character) => character.toUpperCase())
+}
 
 const safeDOMSnapshot = computed(() => {
   if (!feedback.value?.dom_snapshot_html) return ''
@@ -211,6 +216,11 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
       <div class="feedback-detail-grid">
         <main class="feedback-detail-canvas">
           <template v-if="tab === 'evidence'">
+            <section v-if="structuredResponses.length || feedback.comment" class="feedback-response-section">
+              <header><div><h2>Submitted response</h2><p v-if="feedback.widget_definition_version">Widget definition v{{ feedback.widget_definition_version }}</p></div></header>
+              <dl v-if="structuredResponses.length"><div v-for="[key, value] in structuredResponses" :key="key"><dt>{{ responseLabel(key) }}</dt><dd>{{ value }}</dd></div></dl>
+              <div v-if="feedback.comment" class="feedback-response-comment"><b>Additional context</b><p>{{ feedback.comment }}</p></div>
+            </section>
             <section class="feedback-evidence-section">
               <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">Upgrade for AI <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
@@ -294,6 +304,15 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 .feedback-detail-canvas h2,
 .feedback-case-facts h2 { margin: 0; font-size: 13px; }
 .feedback-detail-canvas header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+.feedback-response-section > header { min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.feedback-response-section dl { margin: 0; padding: 4px 16px; }
+.feedback-response-section dl div { display: grid; min-height: 42px; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 14px; border-bottom: 1px solid var(--line); }
+.feedback-response-section dl div:last-child { border-bottom: 0; }
+.feedback-response-section dt { color: var(--muted); font-size: 9px; font-weight: 700; }
+.feedback-response-section dd { margin: 0; overflow-wrap: anywhere; font-size: 11px; }
+.feedback-response-comment { padding: 14px 16px; border-top: 1px solid var(--line); }
+.feedback-response-comment b { font-size: 9px; }
+.feedback-response-comment p { margin: 6px 0 0; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
 .feedback-attachment-list article { display: grid; min-height: 72px; grid-template-columns: 38px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .feedback-attachment-list article:last-child { border-bottom: 0; }
 .feedback-evidence-icon { display: grid; width: 36px; height: 36px; place-items: center; background: var(--surface-soft); color: var(--teal); border: 1px solid var(--line); border-radius: 5px; }
