@@ -2,7 +2,6 @@
 import {
   AlertTriangle,
   Archive,
-  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -10,9 +9,7 @@ import {
   Link2,
   LoaderCircle,
   PanelRightOpen,
-  RotateCcw,
   Search,
-  ShieldAlert,
 } from '@lucide/vue'
 import type { LocationQueryRaw } from 'vue-router'
 import type {
@@ -170,6 +167,7 @@ const triageMembers = computed(() => {
   }
   return options
 })
+const selectedItems = computed(() => items.value.filter(item => selectedIds.value.includes(item.id)))
 
 function selectItem(item: FeedbackItem) {
   selectedId.value = item.id
@@ -205,15 +203,19 @@ async function loadMore() {
   }
 }
 
-async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
+async function updateFeedbacks(ids: string[], body: Record<string, unknown>, action: string) {
   if (!canWrite('feedback:update') || !ids.length || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
-    await Promise.all(ids.map((id) => $apiFetch(`/v1/feedbacks/${id}`, {
-      method: 'PATCH', body: { status: nextStatus },
-    })))
-    notice.value = `${ids.length} feedback item${ids.length === 1 ? '' : 's'} updated.`
+    const response = await $apiFetch<{ updated_count: number, feedbacks: FeedbackItem[] }>('/v1/feedbacks/bulk', {
+      method: 'PATCH', body: { feedback_ids: ids, ...body },
+    })
+    for (const updated of response.feedbacks) {
+      const index = items.value.findIndex(item => item.id === updated.id)
+      if (index >= 0) items.value[index] = updated
+    }
+    notice.value = `${response.updated_count} feedback item${response.updated_count === 1 ? '' : 's'} ${action}.`
     selectedIds.value = []
     await refresh()
   } catch (updateError) {
@@ -222,6 +224,14 @@ async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
   }
+}
+
+function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
+  return updateFeedbacks(ids, { status: nextStatus }, nextStatus === 'spam' ? 'marked as spam' : nextStatus)
+}
+
+function updateSelectedFeedbacks(body: Record<string, unknown>, action: string) {
+  return updateFeedbacks([...selectedIds.value], body, action)
 }
 
 async function updateSelectedTriage(body: Record<string, unknown>, success: string) {
@@ -339,13 +349,18 @@ useHead({ title: 'Feedback · Fidibeki' })
         </details>
       </div>
 
-      <div v-if="selectedIds.length && canWrite('feedback:update')" class="feedback-bulk-bar">
-        <b>{{ selectedIds.length }} selected</b>
-        <button type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'archived')"><Archive :size="14" /> Archive</button>
-        <button v-if="aiEnabled" type="button" :disabled="mutationPending" @click="reprocess(selectedIds)"><RotateCcw :size="14" /> Reprocess AI</button>
-        <NuxtLink v-else-if="configuration" to="/billing">Upgrade for AI <ArrowUpRight :size="13" /></NuxtLink>
-        <button class="danger" type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'spam')"><ShieldAlert :size="14" /> Spam</button>
-      </div>
+      <FeedbackBulkToolbar
+        v-if="selectedIds.length && canWrite('feedback:update')"
+        :count="selectedIds.length"
+        :selected-items="selectedItems"
+        :members="triageMembers"
+        :tags="tagData?.tags || []"
+        :pending="mutationPending"
+        :ai-enabled="aiEnabled"
+        :show-a-i-upgrade="Boolean(configuration && !aiEnabled)"
+        @mutate="updateSelectedFeedbacks"
+        @reprocess="reprocess([...selectedIds])"
+      />
 
       <p v-if="mutationError" class="feedback-inline-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
       <div v-if="status === 'pending'" class="feedback-list-state"><span class="app-spinner" /><p>Loading feedback</p></div>
@@ -423,11 +438,6 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-more-filters label select,
 .feedback-more-filters label input { width: 100%; }
 .feedback-more-filters button { min-height: 34px; grid-column: 1 / -1; background: var(--surface-soft); border: 0; border-radius: 4px; color: var(--teal); font-size: 10px; font-weight: 750; }
-.feedback-bulk-bar { display: flex; min-height: 45px; align-items: center; gap: 6px; padding: 6px 12px; background: #17342f; color: #fff; }
-.feedback-bulk-bar b { margin-right: auto; font-size: 11px; }
-.feedback-bulk-bar button { display: inline-flex; height: 31px; align-items: center; gap: 5px; padding: 0 8px; background: #274b44; color: #fff; border: 1px solid #42635d; border-radius: 4px; font-size: 10px; }
-.feedback-bulk-bar a { display: inline-flex; height: 31px; align-items: center; gap: 5px; padding: 0 8px; color: #fff; border: 1px solid #42635d; border-radius: 4px; font-size: 10px; font-weight: 700; text-decoration: none; }
-.feedback-bulk-bar button.danger { background: #64323a; border-color: #85505a; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
 .feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 86px 82px 78px 86px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -507,6 +517,5 @@ useHead({ title: 'Feedback · Fidibeki' })
   .feedback-stream article .status-pill,
   .feedback-stream article time { display: none; }
   .feedback-more-filters > div { position: fixed; top: 118px; right: 10px; left: 10px; width: auto; }
-  .feedback-bulk-bar b { display: none; }
 }
 </style>

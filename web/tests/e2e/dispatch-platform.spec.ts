@@ -189,6 +189,8 @@ function createMockState() {
     integrations: [] as Array<Record<string, unknown>>,
     billingDeletionRequestedAt: null as string | null,
     failedReplayFeedbackIDs: new Set<string>(),
+    failNextBulkFeedbackUpdate: false,
+    bulkFeedbackRequests: [] as Array<Record<string, unknown>>,
   }
 }
 
@@ -385,6 +387,36 @@ async function installMockAPI(page: Page, state: MockState) {
         contentType: 'image/png',
         body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p7iWQAAAABJRU5ErkJggg==', 'base64'),
       })
+    }
+    if (path === '/v1/feedbacks/bulk' && method === 'PATCH') {
+      const input = body()
+      state.bulkFeedbackRequests.push(input)
+      if (state.failNextBulkFeedbackUpdate) {
+        state.failNextBulkFeedbackUpdate = false
+        return json(route, { error: { message: 'Bulk update rejected.' } }, 422)
+      }
+      const feedbackIDs = Array.isArray(input.feedback_ids) ? input.feedback_ids as string[] : []
+      const updated = state.feedback.filter(item => feedbackIDs.includes(item.id))
+      for (const item of updated) {
+        if (input.status) item.status = String(input.status)
+        if (input.priority) item.priority = input.priority === 'none' ? null : String(input.priority) as typeof item.priority
+        if (input.unassign) item.assignee = null
+        if (input.assignee_id) {
+          const assignee = state.members.find(candidate => candidate.id === input.assignee_id)
+          item.assignee = assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null
+        }
+        if (Array.isArray(input.remove_tag_ids)) {
+          item.tags = item.tags.filter(tag => !(input.remove_tag_ids as string[]).includes(tag.id))
+        }
+        if (Array.isArray(input.add_tag_ids)) {
+          for (const tagID of input.add_tag_ids as string[]) {
+            const tag = state.tags.find(candidate => candidate.id === tagID)
+            if (tag && !item.tags.some(candidate => candidate.id === tag.id)) item.tags.push(tag)
+          }
+          item.tags.sort((left, right) => left.name.localeCompare(right.name))
+        }
+      }
+      return json(route, { updated_count: updated.length, feedbacks: updated })
     }
     const feedbackMatch = path.match(/^\/v1\/feedbacks\/([^/]+)$/)
     if (feedbackMatch && method === 'GET') return json(route, { feedback: feedbackDetail(state, feedbackMatch[1]) })
@@ -900,6 +932,70 @@ test('feedback inspector persists operational triage metadata', async ({ page },
   await expect(row.locator('.feedback-priority-mark')).toHaveText('Urgent')
   await expect(row.locator('.feedback-assignee-mark')).toHaveText('JT')
   await capture(page, testInfo, 'feedback-operational-triage')
+})
+
+test('bulk feedback triage is atomic and responsive', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const rows = page.getByRole('listitem')
+  const selectBoth = async () => {
+    await page.getByLabel('Select FB-1048').check()
+    await page.getByLabel('Select FB-1047').check()
+    await expect(page.locator('.feedback-bulk-bar')).toContainText('2 selected')
+  }
+  const openCompactActions = async () => {
+    if (testInfo.project.name === 'mobile') {
+      const actions = page.getByRole('button', { name: 'Bulk actions' })
+      if (await actions.getAttribute('aria-expanded') !== 'true') await actions.click()
+    }
+  }
+  const selectBulkOption = async (label: string, value: string) => {
+    await openCompactActions()
+    await page.locator('.feedback-bulk-bar').getByLabel(label).selectOption(value)
+  }
+
+  const initialRowHeight = (await rows.first().boundingBox())?.height
+  await selectBoth()
+  expect((await rows.first().boundingBox())?.height).toBe(initialRowHeight)
+
+  state.failNextBulkFeedbackUpdate = true
+  await selectBulkOption('Bulk priority', 'urgent')
+  await expect(page.getByRole('alert')).toContainText('Bulk update rejected.')
+  await expect(page.getByLabel('Select FB-1048')).toBeChecked()
+  await expect(page.getByLabel('Select FB-1047')).toBeChecked()
+  await expect(page.locator('.feedback-bulk-bar')).toBeVisible()
+  expect(state.feedback.map(item => item.priority)).toEqual(['high', null])
+  await capture(page, testInfo, `dispatch-bulk-triage-${testInfo.project.name}`)
+
+  await selectBulkOption('Bulk priority', 'urgent')
+  await expect(page.locator('.feedback-bulk-bar')).toHaveCount(0)
+  expect(state.feedback.map(item => item.priority)).toEqual(['urgent', 'urgent'])
+
+  await selectBoth()
+  await selectBulkOption('Bulk assignee', 'member-2')
+  expect(state.feedback.map(item => item.assignee?.id)).toEqual(['member-2', 'member-2'])
+
+  await selectBoth()
+  await openCompactActions()
+  if (testInfo.project.name === 'desktop') await page.locator('.bulk-tag-popover summary').click()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Add Regression tag' }).click()
+  expect(state.feedback.map(item => item.tags.some(tag => tag.id === 'tag-regression'))).toEqual([true, true])
+
+  await selectBoth()
+  await openCompactActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Archive', exact: true }).click()
+  await page.getByLabel('Status filter').selectOption('')
+  await expect(rows).toHaveCount(2)
+  expect(state.feedback.map(item => item.status)).toEqual(['archived', 'archived'])
+
+  await selectBoth()
+  await openCompactActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Spam', exact: true }).click()
+  expect(state.feedback.map(item => item.status)).toEqual(['spam', 'spam'])
+  expect(state.bulkFeedbackRequests).toHaveLength(6)
+  expect(state.bulkFeedbackRequests.every(request => (request.feedback_ids as string[]).length === 2)).toBe(true)
 })
 
 test('all-status and clear-filters choices survive route synchronization', async ({ page }, testInfo) => {
