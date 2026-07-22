@@ -62,6 +62,10 @@ Before starting the three product pillars, resolve these independently testable 
 3. **Responsive session replay ([#10](https://github.com/acidiney/app.fidibeki/issues/10)).** The
    replay viewport and controls must remain inside their container without clipping adjacent
    content or introducing page-level horizontal overflow.
+4. **Magic-link confirmation alignment
+   ([#11](https://github.com/acidiney/app.fidibeki/issues/11)).** The success icon and copy must
+   remain vertically aligned with stable spacing, including when the message wraps on narrow
+   viewports.
 
 Each blocker requires an automated regression test and responsive browser validation where
 applicable. Completing this gate changes no production or infrastructure configuration.
