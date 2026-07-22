@@ -1,4 +1,5 @@
 import { collectMetadata } from './metadata'
+import type { FunnelEvent } from './analytics'
 import type {
 	AttachmentDeclaration,
 	AttachmentKind,
@@ -18,6 +19,7 @@ interface MountOptions {
 	replaySessionID: string | null
   onVisible(): void
   onInteraction(): void
+  submissionAnalytics(): FunnelEvent | null
   onSubmitted(): void
   onDismissed(): void
 }
@@ -70,7 +72,10 @@ export function mountWidget(options: MountOptions): () => void {
 	let screenshot: (() => Blob | null) | null = null
 	let pendingAttachments: PendingAttachment[] | null = null
 	let accepted = false
+	let submitting = false
 	let interactionReported = false
+	let analyticsPrepared = false
+	let submissionAnalytics: Omit<FunnelEvent, 'event_type'> | null = null
 	const clientFeedbackID = randomID()
   const cleanups: Array<() => void> = []
 	const reportInteraction = () => {
@@ -143,12 +148,28 @@ export function mountWidget(options: MountOptions): () => void {
     host.remove()
   }
   closeButton.addEventListener('click', () => {
-    if (!accepted) options.onDismissed()
+		if (submitting || accepted) return
+		options.onDismissed()
     destroy()
   })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
+		if (submitting || accepted) return
+		submitting = true
+		closeButton.disabled = true
 		reportInteraction()
+		if (!analyticsPrepared) {
+			analyticsPrepared = true
+			try {
+				const analytics = options.submissionAnalytics()
+				if (analytics) {
+					const { event_type: _eventType, ...context } = analytics
+					submissionAnalytics = context
+				}
+			} catch {
+				// Analytics identity failures must not block feedback submission.
+			}
+		}
     submitButton.disabled = true
     message.textContent = 'Sending...'
     try {
@@ -172,10 +193,12 @@ export function mountWidget(options: MountOptions): () => void {
           company_website: honeypot.value,
           metadata: collectMetadata(),
 				attachments: pendingAttachments.map(declarationFor),
+				analytics: submissionAnalytics,
         }),
       })
       if (!response.ok) throw new Error(`feedback submission failed with status ${response.status}`)
       accepted = true
+		submitting = false
       try {
         options.onSubmitted()
       } catch {
@@ -193,8 +216,10 @@ export function mountWidget(options: MountOptions): () => void {
         void reportError(options, error, 'attachments')
       }
     } catch (error) {
+		submitting = false
       message.textContent = 'Could not send feedback. Please try again.'
       submitButton.disabled = false
+		closeButton.disabled = false
       void reportError(options, error, 'submission')
     }
   })
@@ -309,7 +334,7 @@ function styles(accent: string, side: 'left' | 'right', theme: WidgetRule['theme
   const automatic = theme === 'auto'
   return `:host{--fb-accent:${accent};--fb-bg:${dark ? '#171918' : '#fff'};--fb-fg:${dark ? '#f5f7f6' : '#171a19'};--fb-muted:${dark ? '#aeb8b4' : '#63706b'};--fb-line:${dark ? '#3b413e' : '#d9dfdc'};all:initial;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
   .panel{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;width:min(368px,calc(100vw - 32px));box-sizing:border-box;background:var(--fb-bg);color:var(--fb-fg);border:1px solid var(--fb-line);border-top:4px solid var(--fb-accent);border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.2);overflow:hidden}
-  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}label>span{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:92px;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.optional{display:grid;gap:10px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:92px;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.optional{display:grid;gap:10px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
   ${automatic ? '@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}' : ''}
   @media(max-width:480px){.panel{bottom:12px;left:12px;right:12px;width:auto}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`

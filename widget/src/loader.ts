@@ -27,6 +27,7 @@ interface WidgetModule {
     replaySessionID: string | null
     onVisible(): void
     onInteraction(): void
+    submissionAnalytics(): import('./analytics').FunnelEvent | null
     onSubmitted(): void
     onDismissed(): void
   }): WidgetUnmount
@@ -141,8 +142,12 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 					replaySessionID: replayCapture?.sessionID ?? null,
               onVisible: () => recordAnalytics('impression', rule),
               onInteraction: () => recordAnalytics('interaction', rule),
+              submissionAnalytics: () => analytics.record('submitted', rule.id),
               onSubmitted: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
-              onDismissed: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'dismissed'),
+              onDismissed: () => {
+					recordAnalytics('dismissed', rule)
+					persistState(configuration, rule, evaluationURL, widgetSessionID, 'dismissed')
+				},
             })
           })
           .catch((error: unknown) => report(error, 'mount'))

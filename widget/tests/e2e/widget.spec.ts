@@ -105,8 +105,6 @@ test('records visibility and only the first meaningful interaction', async ({ pa
   await page.getByRole('button', { name: '5 out of 5' }).click()
   await expect.poll(() => eventTypes).toEqual(['matched', 'impression', 'interaction'])
   await page.getByRole('textbox', { name: 'Feedback' }).fill('Still only one interaction.')
-  await page.getByRole('button', { name: 'Attach page element' }).click()
-  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Send feedback' }).click()
   await page.waitForTimeout(100)
   expect(eventTypes).toEqual(['matched', 'impression', 'interaction'])
@@ -294,6 +292,7 @@ test('loads the matching rule and serializes feedback through the public contrac
 
   const submission = submissions[0]
 	expect(submissions[1]?.client_feedback_id).toBe(submission?.client_feedback_id)
+	expect(submissions[1]?.analytics).toEqual(submission?.analytics)
   expect(submission).toMatchObject({
     widget_rule_id: 'rule-browser',
     rating: 5,
@@ -305,7 +304,16 @@ test('loads the matching rule and serializes feedback through the public contrac
       viewport_height: 720,
     },
     element_attachment: { selector: '#checkout-summary' },
+		analytics: {
+			event_id: expect.any(String),
+			visitor_id: expect.any(String),
+			page_view_id: expect.any(String),
+			rule_id: 'rule-browser',
+			page_url: 'http://127.0.0.1:4173/sample.html',
+			occurred_at: expect.any(String),
+		},
   })
+  expect((submission?.analytics as Record<string, unknown>).event_type).toBeUndefined()
   expect(String((submission?.element_attachment as { html?: string }).html)).toContain('Checkout summary')
   expect(loadedScripts.some((url) => url.endsWith('/v1/widget.js'))).toBe(true)
   expect(loadedScripts.some((url) => url.endsWith('/v1/rating.js'))).toBe(true)
@@ -318,6 +326,68 @@ test('loads the matching rule and serializes feedback through the public contrac
   await page.goto('/sample.html?asset=BIC')
   await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
   expect(submissions).toHaveLength(2)
+})
+
+test('dismissal records explicit close without manufacturing interaction', async ({ page }) => {
+  const events = await captureAnalytics(page, browserConfiguration())
+  await page.goto('/sample.html')
+  await expect.poll(() => events).toEqual(['matched', 'impression'])
+  await page.getByRole('button', { name: 'Close feedback' }).click()
+  await expect.poll(() => events).toEqual(['matched', 'impression', 'dismissed'])
+})
+
+test('failed submission can be dismissed but accepted submission cannot', async ({ page }) => {
+  const events = await captureAnalytics(page, browserConfiguration())
+  let attempts = 0
+  let resolveAttempt: ((status: number) => void) | undefined
+  const releaseResponse = (status: number) => {
+    const resolve = resolveAttempt
+    if (!resolve) throw new Error('feedback request is not pending')
+    resolveAttempt = undefined
+    resolve(status)
+  }
+  await page.route('**/v1/feedback?*', async (route) => {
+    attempts++
+    const status = await new Promise<number>((resolve) => {
+      resolveAttempt = resolve
+    })
+    return route.fulfill({
+      status,
+      contentType: 'application/json',
+      body: status === 500 ? '{}' : '{"feedback_id":"fb_accepted"}',
+    })
+  })
+
+  await page.goto('/sample.html')
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+  await expect.poll(() => resolveAttempt).toBeDefined()
+  const failedClose = page.getByRole('button', { name: 'Close feedback' })
+  await expect(failedClose).toBeDisabled()
+  await failedClose.dispatchEvent('click')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  expect(events).not.toContain('dismissed')
+  releaseResponse(500)
+  await expect(page.getByText('Could not send feedback. Please try again.')).toBeVisible()
+  await expect(failedClose).toBeEnabled()
+  await failedClose.click()
+  await expect.poll(() => events).toEqual(['matched', 'impression', 'interaction', 'dismissed'])
+
+  await page.evaluate(() => sessionStorage.clear())
+  await page.goto('/sample.html')
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+  await expect.poll(() => resolveAttempt).toBeDefined()
+  const acceptedClose = page.getByRole('button', { name: 'Close feedback' })
+  await expect(acceptedClose).toBeDisabled()
+  await acceptedClose.dispatchEvent('click')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  releaseResponse(201)
+  await expect(page.getByText('Your feedback was sent.')).toBeVisible()
+  await expect(acceptedClose).toBeDisabled()
+  await acceptedClose.dispatchEvent('click')
+  await page.waitForTimeout(100)
+  expect(attempts).toBe(2)
+  expect(events.filter(event => event === 'dismissed')).toHaveLength(1)
+  expect(events).not.toContain('submitted')
 })
 
 test('uses additive targeting conditions and normalized page URLs', async ({ page }) => {
