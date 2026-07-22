@@ -17,6 +17,7 @@ type Options struct {
 	RedisURL           string
 	EmailConcurrency   int
 	AIConcurrency      int
+	Logger             asynq.Logger
 	Sender             email.Sender
 	PipelineHandler    asynq.HandlerFunc
 	TextHandler        asynq.HandlerFunc
@@ -50,6 +51,9 @@ func New(options Options) (*Worker, error) {
 		options.IntegrationHandler == nil {
 		return nil, fmt.Errorf("all domain and AI handlers are required")
 	}
+	if options.Logger == nil {
+		return nil, fmt.Errorf("worker logger is required")
+	}
 	redisOptions, err := asynq.ParseRedisURI(options.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse worker Redis URL: %w", err)
@@ -70,13 +74,15 @@ func New(options Options) (*Worker, error) {
 	return &Worker{
 		emailServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.EmailConcurrency, Queues: map[string]int{email.QueueName: 1},
+			Logger: options.Logger,
 		}),
 		domainServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: 1, Queues: map[string]int{outbox.QueueName: 1},
+			Logger: options.Logger,
 		}),
 		aiServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.AIConcurrency, Queues: map[string]int{ai.QueueName: 1},
-			ErrorHandler: options.AIErrorHandler,
+			ErrorHandler: options.AIErrorHandler, Logger: options.Logger,
 		}),
 		emailMux: emailMux, domainMux: domainMux, aiMux: aiMux,
 	}, nil

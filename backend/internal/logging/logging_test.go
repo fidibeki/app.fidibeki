@@ -35,3 +35,40 @@ func TestLoggerRedactsPIIAndSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestAsynqLoggerWritesStructuredLevels(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	logger := logging.NewAsynq(logging.New(&output, slog.LevelDebug))
+	logger.Debug("worker ", 1)
+	logger.Info("started")
+	logger.Warn("delayed")
+	logger.Error("failed")
+
+	want := []struct {
+		level   string
+		message string
+	}{
+		{level: "DEBUG", message: "worker 1"},
+		{level: "INFO", message: "started"},
+		{level: "WARN", message: "delayed"},
+		{level: "ERROR", message: "failed"},
+	}
+	decoder := json.NewDecoder(&output)
+	for index, expected := range want {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatalf("decode log entry %d: %v", index, err)
+		}
+		if entry["level"] != expected.level {
+			t.Errorf("entry %d level = %v, want %s", index, entry["level"], expected.level)
+		}
+		if entry["msg"] != expected.message {
+			t.Errorf("entry %d msg = %v, want %s", index, entry["msg"], expected.message)
+		}
+		if entry["component"] != "asynq" {
+			t.Errorf("entry %d component = %v, want asynq", index, entry["component"])
+		}
+	}
+}

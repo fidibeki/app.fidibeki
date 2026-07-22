@@ -556,7 +556,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	worker, err := jobworker.New(jobworker.Options{
 		RedisURL: settings.RedisURL, EmailConcurrency: settings.EmailConcurrency,
-		AIConcurrency: settings.AIConcurrency, Sender: sender,
+		AIConcurrency: settings.AIConcurrency, Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
 		AIErrorHandler:     processor.ErrorHandler(),

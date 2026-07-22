@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	handler := func(context.Context, *asynq.Task) error { return nil }
 	valid := Options{
 		RedisURL: "redis://localhost:6379/0", EmailConcurrency: 2, AIConcurrency: 3,
+		Logger: &testAsynqLogger{},
 		Sender: testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, ReplayMergeHandler: handler, IntegrationHandler: handler,
@@ -44,6 +47,11 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	if _, err := New(invalid); err == nil {
 		t.Error("New(invalid Redis URL) error = nil")
 	}
+	invalid = valid
+	invalid.Logger = nil
+	if _, err := New(invalid); err == nil {
+		t.Error("New(nil logger) error = nil")
+	}
 }
 
 func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
@@ -69,9 +77,11 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		t.Fatalf("resolve Redis port: %v", err)
 	}
 	handler := func(context.Context, *asynq.Task) error { return nil }
+	logger := &testAsynqLogger{}
 	worker, err := New(Options{
 		RedisURL:         fmt.Sprintf("redis://%s:%s/0", host, port.Port()),
 		EmailConcurrency: 1, AIConcurrency: 1, Sender: testSender{},
+		Logger:          logger,
 		PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, ReplayMergeHandler: handler, IntegrationHandler: handler,
@@ -84,10 +94,41 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 	if err := worker.Run(runCtx); err != nil {
 		t.Errorf("Run(cancelled) error = %v", err)
 	}
+	if !logger.contains("info:Starting processing") {
+		t.Errorf("worker logs = %v, want structured logger to receive Asynq startup", logger.entries)
+	}
 }
 
 type testSender struct{}
 
 func (testSender) Send(context.Context, email.Message) (string, error) {
 	return "message", nil
+}
+
+type testAsynqLogger struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (l *testAsynqLogger) Debug(args ...interface{}) { l.add("debug", args...) }
+func (l *testAsynqLogger) Info(args ...interface{})  { l.add("info", args...) }
+func (l *testAsynqLogger) Warn(args ...interface{})  { l.add("warn", args...) }
+func (l *testAsynqLogger) Error(args ...interface{}) { l.add("error", args...) }
+func (l *testAsynqLogger) Fatal(args ...interface{}) { l.add("fatal", args...) }
+
+func (l *testAsynqLogger) add(level string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, level+":"+fmt.Sprint(args...))
+}
+
+func (l *testAsynqLogger) contains(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, entry := range l.entries {
+		if strings.Contains(entry, value) {
+			return true
+		}
+	}
+	return false
 }
