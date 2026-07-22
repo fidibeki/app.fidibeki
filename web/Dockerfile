@@ -7,6 +7,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json web/package.json
 RUN pnpm install --frozen-lockfile --filter @fidibeki/web...
 
+COPY contracts contracts
 COPY web web
 RUN pnpm --filter @fidibeki/web build
 
