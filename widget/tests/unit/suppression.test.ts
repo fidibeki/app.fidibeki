@@ -2,6 +2,7 @@ import {
   getSessionID,
   isSuppressed,
   pageIdentity,
+  presentationRecurrencePolicy,
   recordWidgetState,
   widgetStateKey,
   type StorageLike,
@@ -131,5 +132,14 @@ describe('widget state suppression', () => {
     const store = new MemoryStore()
     expect(getSessionID(store, () => 'generated-one')).toBe('generated-one')
     expect(getSessionID(store, () => 'generated-two')).toBe('generated-one')
+  })
+
+  it('applies stricter fatigue floors only to interruptive presentations', () => {
+    expect(presentationRecurrencePolicy('prompt', 'session', null)).toEqual({ mode: 'cooldown', days: 30 })
+    expect(presentationRecurrencePolicy('prompt', 'cooldown', 7)).toEqual({ mode: 'cooldown', days: 30 })
+    expect(presentationRecurrencePolicy('reaction', 'session', null)).toEqual({ mode: 'cooldown', days: 7 })
+    expect(presentationRecurrencePolicy('reaction', 'cooldown', 3)).toEqual({ mode: 'cooldown', days: 7 })
+    expect(presentationRecurrencePolicy('launcher', 'session', null)).toEqual({ mode: 'session', days: null })
+    expect(presentationRecurrencePolicy('prompt', 'never', null)).toEqual({ mode: 'never', days: null })
   })
 })

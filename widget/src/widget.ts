@@ -1,5 +1,6 @@
 import { collectMetadata } from './metadata'
 import type { FunnelEvent } from './analytics'
+import { resolveWidgetLocalization, type ResolvedWidgetLocalization } from './localization'
 import type {
 	AttachmentDeclaration,
 	AttachmentKind,
@@ -7,6 +8,7 @@ import type {
 	PendingAttachment,
 	SubmissionResponse,
 	WidgetConfiguration,
+	WidgetResponseBlock,
 	WidgetRule,
 } from './types'
 
@@ -22,6 +24,8 @@ interface MountOptions {
   submissionAnalytics(): FunnelEvent | null
   onSubmitted(): void
   onDismissed(): void
+  target?: HTMLElement
+  hostID?: string
 }
 
 interface RatingModule {
@@ -49,14 +53,24 @@ interface ErrorModule {
 }
 
 export function mountWidget(options: MountOptions): () => void {
-  document.getElementById('fidibeki-widget-host')?.remove()
+  const hostID = options.hostID ?? 'fidibeki-widget-host'
+  document.getElementById(hostID)?.remove()
   const host = document.createElement('div')
-  host.id = 'fidibeki-widget-host'
+  host.id = hostID
   const shadow = host.attachShadow({ mode: 'open' })
   const accent = options.rule.accent_color ?? '#147d64'
   const side = options.rule.position === 'bottom-right' ? 'right' : 'left'
-  shadow.innerHTML = `<style>${styles(accent, side, options.rule.theme)}</style>${markup(options.rule)}`
-  document.body.append(host)
+  const localization = resolveWidgetLocalization(
+    options.rule,
+    options.configuration.default_locale,
+    navigator.languages.length > 0 ? navigator.languages : [navigator.language],
+  )
+  const presentation = options.rule.presentation ?? 'prompt'
+  const structured = options.rule.presentation !== undefined && (options.rule.response_blocks?.length ?? 0) > 0
+  shadow.innerHTML = `<style>${styles(accent, side, options.rule.theme)}</style>${markup(
+    options.rule, localization, presentation, structured,
+  )}`
+  ;(options.target ?? document.body).append(host)
 
   const form = requiredElement<HTMLFormElement>(shadow, 'form')
   const closeButton = requiredElement<HTMLButtonElement>(shadow, '[data-close]')
@@ -64,6 +78,11 @@ export function mountWidget(options: MountOptions): () => void {
   const message = requiredElement<HTMLElement>(shadow, '[data-message]')
   const optional = requiredElement<HTMLElement>(shadow, '[data-optional]')
   const text = shadow.querySelector<HTMLTextAreaElement>('textarea[name="text"]')
+  const comment = shadow.querySelector<HTMLTextAreaElement>('textarea[name="comment"]')
+  const reporterEmail = shadow.querySelector<HTMLInputElement>('input[name="reporter_email"]')
+  const notifyReporter = shadow.querySelector<HTMLInputElement>('input[name="notify_reporter"]')
+  const launcher = shadow.querySelector<HTMLButtonElement>('[data-launcher]')
+  const panel = requiredElement<HTMLElement>(shadow, '[data-panel]')
   const honeypot = requiredElement<HTMLInputElement>(shadow, 'input[name="company_website"]')
   let attachment: ElementAttachment | null = null
   let ratingValue: (() => number | null) | null = null
@@ -78,6 +97,14 @@ export function mountWidget(options: MountOptions): () => void {
 	let submissionAnalytics: Omit<FunnelEvent, 'event_type'> | null = null
 	const clientFeedbackID = randomID()
   const cleanups: Array<() => void> = []
+	const responseControls = structured
+		? createResponseControls(optional, options.rule, localization)
+		: null
+	if (reporterEmail && notifyReporter) {
+		const synchronizeContactRequirement = () => { reporterEmail.required = notifyReporter.checked }
+		notifyReporter.addEventListener('change', synchronizeContactRequirement)
+		synchronizeContactRequirement()
+	}
 	const reportInteraction = () => {
 		if (interactionReported) return
 		interactionReported = true
@@ -92,15 +119,22 @@ export function mountWidget(options: MountOptions): () => void {
 		const button = target instanceof Element ? target.closest('button') : null
 		if (button && button !== closeButton) reportInteraction()
 	})
-	text?.addEventListener('input', reportInteraction)
+	form.addEventListener('input', reportInteraction)
 
-  if (options.rule.can_rate) {
+  if (!structured && options.rule.can_rate) {
     void import(new URL('rating.js', options.assetBase).href).then((module) => {
       const control = (module as RatingModule).createRatingControl()
       optional.prepend(control.element)
       ratingValue = control.value
     })
   }
+
+  launcher?.addEventListener('click', () => {
+		reportInteraction()
+		launcher.hidden = true
+		panel.hidden = false
+		panel.querySelector<HTMLElement>('button,textarea,select,input')?.focus()
+	})
 
   if (options.rule.can_attach_element && options.configuration.features.dom_capture) {
     const button = document.createElement('button')
@@ -155,6 +189,11 @@ export function mountWidget(options: MountOptions): () => void {
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
 		if (submitting || accepted) return
+		if (responseControls && !responseControls.valid()) {
+			message.textContent = localization.system.required
+			responseControls.focusInvalid()
+			return
+		}
 		submitting = true
 		closeButton.disabled = true
 		reportInteraction()
@@ -171,9 +210,12 @@ export function mountWidget(options: MountOptions): () => void {
 			}
 		}
     submitButton.disabled = true
-    message.textContent = 'Sending...'
+    message.textContent = localization.system.sending
     try {
 			pendingAttachments ??= await collectAttachments({ audioRecording, videoRecording, screenshot })
+			const legacyRating = responseControls?.rating() ?? ratingValue?.() ?? null
+			const legacyText = (responseControls?.text() ?? text?.value.trim()) || null
+			const responses = responseControls?.values() ?? legacyResponses(legacyRating, legacyText)
 			const feedbackURL = endpointURL(options, 'feedback')
 			const response = await fetch(feedbackURL, {
         method: 'POST',
@@ -187,8 +229,12 @@ export function mountWidget(options: MountOptions): () => void {
 				client_feedback_id: clientFeedbackID,
           widget_rule_id: options.rule.id,
 			session_id: options.replaySessionID,
-          rating: ratingValue?.() ?? null,
-          text: text?.value.trim() || null,
+          rating: legacyRating,
+          text: legacyText,
+			responses,
+			comment: comment?.value.trim() || null,
+			reporter_email: reporterEmail?.value.trim() || null,
+			notify_reporter: notifyReporter?.checked ?? false,
           element_attachment: attachment,
           company_website: honeypot.value,
           metadata: collectMetadata(),
@@ -206,18 +252,18 @@ export function mountWidget(options: MountOptions): () => void {
       }
       try {
 			  const submission = await response.json() as SubmissionResponse
-			  message.textContent = pendingAttachments.length > 0 ? 'Uploading attachments...' : ''
+			  message.textContent = pendingAttachments.length > 0 ? localization.system.sending : ''
 			  await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
-        form.innerHTML = '<div class="success" role="status"><strong>Thank you.</strong><span>Your feedback was sent.</span></div>'
+        form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong></div>`
         window.setTimeout(destroy, 1800)
       } catch (error) {
-        form.innerHTML = '<div class="success" role="status"><strong>Feedback received.</strong><span>One or more attachments could not be uploaded.</span></div>'
+        form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(structured ? localization.content.success_message : 'Feedback received.')}</strong><span>${escapeHTML(localization.system.attachmentError)}</span></div>`
         window.setTimeout(destroy, 3200)
         void reportError(options, error, 'attachments')
       }
     } catch (error) {
 		submitting = false
-      message.textContent = 'Could not send feedback. Please try again.'
+      message.textContent = localization.system.sendError
       submitButton.disabled = false
 		closeButton.disabled = false
       void reportError(options, error, 'submission')
@@ -316,15 +362,182 @@ async function reportError(options: MountOptions, error: unknown, phase: string)
   }
 }
 
-function markup(rule: WidgetRule): string {
-  return `<section class="panel" aria-label="Feedback form">
-    <header><div><span class="eyebrow">FIDIBEKI</span><h2>${escapeHTML(rule.greeting ?? 'How was this page?')}</h2></div>
-      <button class="icon" type="button" data-close aria-label="Close feedback" title="Close">&#215;</button></header>
+interface ResponseControls {
+  values(): Record<string, string | number>
+  rating(): number | null
+  text(): string | null
+  valid(): boolean
+  focusInvalid(): void
+}
+
+interface ResponseControl {
+  block: WidgetResponseBlock
+  focus: HTMLElement
+  container: HTMLElement
+  value(): string | number | null
+}
+
+function createResponseControls(
+  container: HTMLElement,
+  rule: WidgetRule,
+  localization: ResolvedWidgetLocalization,
+): ResponseControls {
+  const controls = (rule.response_blocks ?? []).map((block) => {
+    const control = responseControl(block, localization)
+    container.append(control.container)
+    return control
+  })
+  const invalidControls = () => controls.filter(({ block, value }) => block.required && emptyResponse(value()))
+  return {
+    values() {
+      return Object.fromEntries(controls.flatMap(({ block, value }) => {
+        const response = value()
+        return emptyResponse(response) ? [] : [[block.key, response as string | number]]
+      }))
+    },
+    rating() {
+      const value = controls.find(control => control.block.type === 'rating')?.value()
+      return typeof value === 'number' ? value : null
+    },
+    text() {
+      const value = controls.find(control => control.block.type === 'free_text')?.value()
+      return typeof value === 'string' && value.trim() ? value.trim() : null
+    },
+    valid() {
+      for (const control of controls) control.container.removeAttribute('data-invalid')
+      const invalid = invalidControls()
+      for (const control of invalid) control.container.setAttribute('data-invalid', 'true')
+      return invalid.length === 0
+    },
+    focusInvalid() { invalidControls()[0]?.focus.focus() },
+  }
+}
+
+function responseControl(
+  block: WidgetResponseBlock,
+  localization: ResolvedWidgetLocalization,
+): ResponseControl {
+  const label = localization.content.block_labels?.[block.key] ?? defaultBlockLabel(block, localization)
+  if (block.type === 'free_text') {
+    const wrapper = document.createElement('label')
+    const caption = document.createElement('span')
+    caption.textContent = label
+    const textarea = document.createElement('textarea')
+    textarea.rows = 4
+    textarea.maxLength = 10000
+    textarea.required = block.required
+    textarea.name = `response_${block.key}`
+    wrapper.append(caption, textarea)
+    return { block, container: wrapper, focus: textarea, value: () => textarea.value.trim() || null }
+  }
+  if (block.type === 'single_choice') {
+    const wrapper = document.createElement('label')
+    const caption = document.createElement('span')
+    caption.textContent = label
+    const select = document.createElement('select')
+    select.name = `response_${block.key}`
+    select.required = block.required
+    const placeholder = document.createElement('option')
+    placeholder.value = ''
+    placeholder.textContent = '—'
+    select.append(placeholder)
+    for (const option of block.options ?? []) {
+      const element = document.createElement('option')
+      element.value = option.value
+      element.textContent = optionLabel(localization, block.key, option.value)
+      select.append(element)
+    }
+    wrapper.append(caption, select)
+    return { block, container: wrapper, focus: select, value: () => select.value || null }
+  }
+
+  let selected: string | number | null = null
+  const fieldset = document.createElement('fieldset')
+  const legend = document.createElement('legend')
+  legend.textContent = label
+  const row = document.createElement('div')
+  row.className = block.type === 'rating' ? 'scale' : 'choices reactions'
+  const options = block.type === 'rating'
+    ? [1, 2, 3, 4, 5].map(value => ({ value: String(value), label: '★', title: `${value} out of 5` }))
+    : (block.options ?? []).map(option => ({
+        value: option.value,
+        label: optionLabel(localization, block.key, option.value),
+        title: optionLabel(localization, block.key, option.value),
+      }))
+  for (const option of options) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'choice'
+    button.textContent = option.label
+    button.title = option.title
+    button.setAttribute('aria-label', option.title)
+    button.setAttribute('aria-pressed', 'false')
+    button.addEventListener('click', () => {
+      selected = block.type === 'rating' ? Number(option.value) : option.value
+      for (const candidate of Array.from(row.querySelectorAll<HTMLButtonElement>('button'))) {
+        candidate.setAttribute('aria-pressed', String(candidate === button))
+      }
+    })
+    row.append(button)
+  }
+  fieldset.append(legend, row)
+  return {
+    block, container: fieldset, focus: row.querySelector('button') ?? fieldset, value: () => selected,
+  }
+}
+
+function defaultBlockLabel(block: WidgetResponseBlock, localization: ResolvedWidgetLocalization): string {
+  if (block.type === 'rating') return 'Rating'
+  if (block.type === 'free_text') return localization.system.feedback
+  if (block.type === 'reaction') return localization.content.prompt
+  return localization.system.feedback
+}
+
+function optionLabel(localization: ResolvedWidgetLocalization, blockKey: string, value: string): string {
+  return localization.content.option_labels?.[blockKey]?.[value]
+    ?? value.replace(/_/g, ' ').replace(/^./, first => first.toUpperCase())
+}
+
+function emptyResponse(value: string | number | null): boolean {
+  return value === null || value === ''
+}
+
+function legacyResponses(rating: number | null, text: string | null): Record<string, string | number> {
+  return {
+    ...(rating === null ? {} : { rating }),
+    ...(text === null ? {} : { feedback: text }),
+  }
+}
+
+function markup(
+  rule: WidgetRule,
+  localization: ResolvedWidgetLocalization,
+  presentation: NonNullable<WidgetRule['presentation']>,
+  structured: boolean,
+): string {
+  const content = localization.content
+  const launcher = presentation === 'launcher'
+    ? `<button class="launcher" type="button" data-launcher>${escapeHTML(content.launcher_label)}</button>`
+    : ''
+  const panelHidden = presentation === 'launcher' ? ' hidden' : ''
+  const legacyText = !structured && rule.can_write_text
+    ? `<label><span>${escapeHTML(localization.system.feedback)}</span><textarea name="text" rows="4" maxlength="4000" placeholder="Tell us what worked or what got in the way"></textarea></label>`
+    : ''
+  const comment = structured && rule.allow_comment
+    ? `<label><span>${escapeHTML(content.comment_placeholder)}</span><textarea name="comment" rows="3" maxlength="10000" placeholder="${escapeHTML(content.comment_placeholder)}"></textarea></label>`
+    : ''
+  const contact = structured && rule.collect_contact
+    ? `<label><span>${escapeHTML(content.contact_label)}</span><input type="email" name="reporter_email" maxlength="320" autocomplete="email" placeholder="${escapeHTML(localization.system.emailPlaceholder)}"></label>
+       <label class="consent"><input type="checkbox" name="notify_reporter"><span>${escapeHTML(content.consent_label)}</span></label>`
+    : ''
+  return `${launcher}<section class="panel ${presentation}" data-panel aria-label="Feedback form"${panelHidden}>
+    <header><div><span class="eyebrow">FIDIBEKI</span><h2>${escapeHTML(content.prompt)}</h2></div>
+      <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
     <form>
       <div data-optional class="optional"></div>
-      ${rule.can_write_text ? '<label><span>Feedback</span><textarea name="text" rows="4" maxlength="4000" placeholder="Tell us what worked or what got in the way"></textarea></label>' : ''}
+      ${legacyText}${comment}${contact}
       <label class="honeypot" aria-hidden="true">Website<input name="company_website" tabindex="-1" autocomplete="off"></label>
-      <footer><span data-message aria-live="polite"></span><button class="primary" type="submit" data-submit>Send feedback</button></footer>
+      <footer><span data-message aria-live="polite"></span><button class="primary" type="submit" data-submit>${escapeHTML(content.submit_label)}</button></footer>
     </form>
   </section>`
 }
@@ -332,11 +545,13 @@ function markup(rule: WidgetRule): string {
 function styles(accent: string, side: 'left' | 'right', theme: WidgetRule['theme']): string {
   const dark = theme === 'dark'
   const automatic = theme === 'auto'
-  return `:host{--fb-accent:${accent};--fb-bg:${dark ? '#171918' : '#fff'};--fb-fg:${dark ? '#f5f7f6' : '#171a19'};--fb-muted:${dark ? '#aeb8b4' : '#63706b'};--fb-line:${dark ? '#3b413e' : '#d9dfdc'};all:initial;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
+  return `:host{--fb-accent:${accent};--fb-bg:${dark ? '#171918' : '#fff'};--fb-fg:${dark ? '#f5f7f6' : '#171a19'};--fb-muted:${dark ? '#aeb8b4' : '#63706b'};--fb-line:${dark ? '#3b413e' : '#d9dfdc'};all:initial;display:block;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
+  [hidden]{display:none!important}.launcher{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;min-height:44px;padding:0 16px;border:1px solid var(--fb-accent);border-radius:6px;background:var(--fb-accent);color:#fff;font:700 13px/1 sans-serif;letter-spacing:0;box-shadow:0 10px 28px rgba(0,0,0,.18);cursor:pointer}
   .panel{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;width:min(368px,calc(100vw - 32px));box-sizing:border-box;background:var(--fb-bg);color:var(--fb-fg);border:1px solid var(--fb-line);border-top:4px solid var(--fb-accent);border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.2);overflow:hidden}
-  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:92px;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.optional{display:grid;gap:10px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
+  .panel.inline{position:relative;inset:auto;width:100%;max-width:720px;box-shadow:none}.panel.reaction{width:min(420px,calc(100vw - 32px))}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
   ${automatic ? '@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}' : ''}
-  @media(max-width:480px){.panel{bottom:12px;left:12px;right:12px;width:auto}}
+  @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:12px}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`
 }
 

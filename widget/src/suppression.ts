@@ -1,4 +1,4 @@
-import type { RecurrenceMode } from './types'
+import type { RecurrenceMode, WidgetPresentation } from './types'
 import { canonicalPage } from './targeting'
 import type { StorageLike } from './storage'
 
@@ -32,6 +32,11 @@ export interface SuppressionOptions extends WidgetStateIdentity {
   recurrenceMode: RecurrenceMode
   recurrenceDays: number | null
   now?: number
+}
+
+export interface RecurrencePolicy {
+  mode: RecurrenceMode
+  days: number | null
 }
 
 const sessionKey = 'fidibeki:session:v1'
@@ -103,6 +108,24 @@ export function isSuppressed(store: StorageLike, options: SuppressionOptions): b
   if (now < occurredAt + days * dayMilliseconds) return true
   removeRecord(store, key)
   return false
+}
+
+export function presentationRecurrencePolicy(
+  presentation: WidgetPresentation | undefined,
+  mode: RecurrenceMode,
+  days: number | null,
+): RecurrencePolicy {
+  if (mode === 'never' || presentation === undefined || presentation === 'launcher' || presentation === 'inline') {
+    return { mode, days }
+  }
+  const minimumDays = presentation === 'prompt' ? 30 : 7
+  const configuredDays = days !== null && Number.isInteger(days) && days >= 1 && days <= 3650
+    ? days
+    : minimumDays
+  return {
+    mode: 'cooldown',
+    days: Math.max(minimumDays, configuredDays),
+  }
 }
 
 function migrateLegacyRecord(

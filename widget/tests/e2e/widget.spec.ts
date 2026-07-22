@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import type { WidgetConfiguration, WidgetRule } from '../../src/types'
+import type { WidgetConfiguration, WidgetPresentation, WidgetRule } from '../../src/types'
 
 const browserRule: WidgetRule = {
   id: 'rule-browser', name: 'Checkout', priority: 10,
@@ -25,6 +25,45 @@ function browserConfiguration(rule: WidgetRule = browserRule): WidgetConfigurati
       audio: false, dom_capture: true, custom_domain: false,
     },
     rules: [rule],
+  }
+}
+
+function definitionConfiguration(presentation: WidgetPresentation, key = 'inline-checkout'): WidgetConfiguration {
+  return {
+    ...browserConfiguration(),
+    schema_version: 2,
+    default_locale: 'en',
+    rules: [],
+    definitions: [{
+      ...browserRule,
+      id: `definition-${presentation}`,
+      definition_key: key,
+      definition_version: 2,
+      definition_status: 'active',
+      presentation,
+      objective: 'continuous_feedback',
+      response_blocks: [
+        { key: 'score', type: 'rating', required: true },
+        { key: 'reaction', type: 'reaction', required: true, options: [{ value: 'helpful' }, { value: 'not_helpful' }] },
+        { key: 'reason', type: 'single_choice', required: false, options: [{ value: 'fast' }, { value: 'clear' }] },
+        { key: 'details', type: 'free_text', required: true },
+      ],
+      localizations: {
+        en: {
+          launcher_label: 'Share feedback', prompt: 'How was checkout?',
+          comment_placeholder: 'Add context', contact_label: 'Email address',
+          consent_label: 'Email me about this feedback', submit_label: 'Send response',
+          success_message: 'Response received.',
+          block_labels: { score: 'Score', reaction: 'Was this helpful?', reason: 'Reason', details: 'Details' },
+          option_labels: {
+            reaction: { helpful: 'Helpful', not_helpful: 'Not helpful' },
+            reason: { fast: 'Fast', clear: 'Clear' },
+          },
+        },
+      },
+      allow_comment: true,
+      collect_contact: true,
+    }],
   }
 }
 
@@ -242,6 +281,81 @@ async function captureAnalytics(page: Page, configuration: WidgetConfiguration):
   await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
   return events
 }
+
+for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const) {
+  test(`${presentation} definition collects structured feedback through declarative placement`, async ({ page }) => {
+    const submissions: Array<Record<string, unknown>> = []
+    await page.route('**/v1/widget/config*', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify(definitionConfiguration(presentation)),
+    }))
+    await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+    await page.route('**/v1/feedback?*', route => {
+      submissions.push(route.request().postDataJSON() as Record<string, unknown>)
+      return route.fulfill({
+        status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_structured"}',
+      })
+    })
+
+    await page.goto('/sample.html')
+    if (presentation === 'launcher') {
+      await expect(page.getByRole('heading', { name: 'How was checkout?' })).toHaveCount(0)
+      await page.getByRole('button', { name: 'Share feedback' }).click()
+    }
+    await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
+    if (presentation === 'inline') {
+      await expect(page.locator('fidibeki-widget[rule="inline-checkout"] > div[id^="fidibeki-widget-host-"]')).toHaveCount(1)
+    }
+    await page.getByRole('button', { name: '4 out of 5' }).click()
+    await page.getByRole('button', { name: 'Helpful', exact: true }).click()
+    await page.getByRole('combobox', { name: 'Reason' }).selectOption('fast')
+    await page.getByRole('textbox', { name: 'Details' }).fill('The checkout was clear.')
+    await page.getByRole('textbox', { name: 'Add context' }).fill('No blockers.')
+    await page.getByRole('textbox', { name: 'Email address' }).fill('customer@example.com')
+    await page.getByRole('checkbox', { name: 'Email me about this feedback' }).check()
+    await page.getByRole('button', { name: 'Send response' }).click()
+    await expect(page.getByText('Response received.')).toBeVisible()
+
+    expect(submissions).toHaveLength(1)
+    expect(submissions[0]).toMatchObject({
+      widget_rule_id: `definition-${presentation}`,
+      rating: 4,
+      text: 'The checkout was clear.',
+      responses: { score: 4, reaction: 'helpful', reason: 'fast', details: 'The checkout was clear.' },
+      comment: 'No blockers.',
+      reporter_email: 'customer@example.com',
+      notify_reporter: true,
+    })
+  })
+}
+
+test('imperative mount resolves a definition key and safely rejects inactive definitions', async ({ page }) => {
+  const active = definitionConfiguration('inline', 'imperative-checkout').definitions![0]!
+  const inactive = { ...active, id: 'definition-paused', definition_key: 'paused-checkout', definition_status: 'paused' as const }
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ...definitionConfiguration('inline', 'imperative-checkout'), definitions: [active, inactive] }),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html')
+  const results = await page.evaluate(async () => {
+    const api = (window as unknown as {
+      Fidibeki: { mount(element: HTMLElement, options: { rule: string }): Promise<{ mounted: boolean; reason?: string }> }
+    }).Fidibeki
+    const target = document.querySelector<HTMLElement>('#imperative-widget')!
+    const activeResult = await api.mount(target, { rule: 'imperative-checkout' })
+    const pausedResult = await api.mount(document.createElement('div'), { rule: 'paused-checkout' })
+    return {
+      active: { mounted: activeResult.mounted, reason: activeResult.reason },
+      paused: { mounted: pausedResult.mounted, reason: pausedResult.reason },
+    }
+  })
+  expect(results.active.mounted).toBe(true)
+  expect(results.paused).toMatchObject({ mounted: false, reason: 'inactive' })
+  await expect(page.locator('#imperative-widget > div[id^="fidibeki-widget-host-"]')).toHaveCount(1)
+  await expect(page.locator('#imperative-widget').getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
+})
 
 test('loads the matching rule and serializes feedback through the public contract', async ({ page }) => {
   const loadedScripts: string[] = []

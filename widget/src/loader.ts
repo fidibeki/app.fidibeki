@@ -11,7 +11,7 @@ import {
   type FunnelEventType,
 } from './analytics'
 import { createAnalyticsOutbox } from './analytics-outbox'
-import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
+import { getSessionID, isSuppressed, presentationRecurrencePolicy, recordWidgetState } from './suppression'
 import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -31,7 +31,15 @@ interface WidgetModule {
     submissionAnalytics(): import('./analytics').FunnelEvent | null
     onSubmitted(): void
     onDismissed(): void
+    target?: HTMLElement
+    hostID?: string
   }): WidgetUnmount
+}
+
+interface ExplicitMountResult {
+  mounted: boolean
+  reason?: 'not_found' | 'inactive' | 'not_targeted' | 'suppressed'
+  unmount(): void
 }
 
 interface ReplayCapture {
@@ -71,6 +79,11 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let replayFingerprint = ''
   let replayTransition = 0
   let evaluation = 0
+  let automaticRuleID: string | null = null
+  let configurationRequest: Promise<WidgetConfiguration> | null = null
+  const explicitRuleIDs = new Set<string>()
+  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null }>()
+  const explicitGenerations = new WeakMap<HTMLElement, number>()
   const durableStorage = storageOrMemory(() => window.localStorage)
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
   const widgetSessionID = getSessionID(sessionStorage)
@@ -99,12 +112,16 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
     const now = Date.now()
     if (!force && cacheIsFresh(cache, now)) return cache.value
-    const value = await fetchConfiguration({
-      endpoint: configurationEndpoint,
-      publicKey: key,
-    })
-    cache = { value, fetchedAt: now }
-    return value
+    if (!force && configurationRequest) return configurationRequest
+    const request = fetchConfiguration({ endpoint: configurationEndpoint, publicKey: key })
+    configurationRequest = request
+    try {
+      const value = await request
+      cache = { value, fetchedAt: now }
+      return value
+    } finally {
+      if (configurationRequest === request) configurationRequest = null
+    }
   }
 
   const recordAnalytics = (eventType: FunnelEventType, rule: WidgetRule) => {
@@ -121,10 +138,18 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     cleanupTrigger = null
     unmountWidget?.()
     unmountWidget = null
+    automaticRuleID = null
     try {
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
-      const rule = await matchRule(configuration.definitions ?? configuration.rules, evaluationURL, {
+      const declaredReferences = new Set(Array.from(
+        document.querySelectorAll<HTMLElement>('fidibeki-widget[rule]'),
+        element => element.getAttribute('rule')?.trim() ?? '',
+      ))
+      const definitions = (configuration.definitions ?? configuration.rules).filter(rule =>
+        definitionIsActive(rule) && !explicitRuleIDs.has(rule.id) && !explicitRuleIDs.has(rule.definition_key ?? '') &&
+        !declaredReferences.has(rule.id) && !declaredReferences.has(rule.definition_key ?? ''))
+      const rule = await matchRule(definitions, evaluationURL, {
         loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
         onError: (error) => void report(error, 'targeting'),
       })
@@ -140,6 +165,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         void import(new URL('widget.js', assetBase).href)
           .then((module) => {
             if (currentEvaluation !== evaluation) return
+            automaticRuleID = rule.id
             unmountWidget = (module as WidgetModule).mountWidget({
               configuration,
               rule,
@@ -163,6 +189,76 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       void report(error, 'configuration')
     }
   }
+
+  const mountExplicit = async (target: HTMLElement, reference: string): Promise<ExplicitMountResult> => {
+    const generation = (explicitGenerations.get(target) ?? 0) + 1
+    explicitGenerations.set(target, generation)
+    const normalizedReference = reference.trim()
+    const previous = explicitTargets.get(target)
+    previous?.unmount?.()
+    explicitTargets.set(target, { reference: normalizedReference, unmount: null })
+    if (!normalizedReference) return explicitResult(false, 'not_found')
+    try {
+      const configuration = await loadConfiguration(false)
+      if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
+      const definitions = configuration.definitions ?? configuration.rules
+      const rule = definitions.find(candidate =>
+        candidate.id === normalizedReference || candidate.definition_key === normalizedReference)
+      if (!rule) return explicitResult(false, 'not_found')
+      if (!definitionIsActive(rule)) return explicitResult(false, 'inactive')
+      explicitRuleIDs.add(rule.id)
+      if (rule.definition_key) explicitRuleIDs.add(rule.definition_key)
+      if (automaticRuleID === rule.id) {
+        unmountWidget?.()
+        unmountWidget = null
+        automaticRuleID = null
+      }
+      const currentURL = window.location.href
+      analytics.visit(currentURL)
+      const targeted = await matchRule([rule], currentURL, {
+        loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
+        onError: (error) => void report(error, 'targeting'),
+      })
+      if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
+      if (!targeted) return explicitResult(false, 'not_targeted')
+      await synchronizeReplay(configuration, rule)
+      if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
+      recordAnalytics('matched', rule)
+      void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
+      if (ruleIsSuppressed(durableStorage, configuration, rule, currentURL, widgetSessionID)) {
+        return explicitResult(false, 'suppressed')
+      }
+      const module = (await import(new URL('widget.js', assetBase).href)) as WidgetModule
+      if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
+      const hostID = `fidibeki-widget-host-${randomID()}`
+      const unmount = module.mountWidget({
+        configuration, rule, publicKey: key, apiBase: assetBase, assetBase,
+        replaySessionID: replayCapture?.sessionID ?? null,
+        target, hostID,
+        onVisible: () => recordAnalytics('impression', rule),
+        onInteraction: () => recordAnalytics('interaction', rule),
+        submissionAnalytics: () => analytics.record('submitted', rule.id),
+        onSubmitted: () => persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'submitted'),
+        onDismissed: () => {
+          recordAnalytics('dismissed', rule)
+          persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'dismissed')
+        },
+      })
+      explicitTargets.set(target, { reference: normalizedReference, unmount })
+      return { mounted: true, unmount: () => unmountExplicitTarget(target) }
+    } catch (error) {
+      void report(error, 'mount')
+      return explicitResult(false, 'not_found')
+    }
+  }
+
+  const unmountExplicitTarget = (target: HTMLElement) => {
+    explicitGenerations.set(target, (explicitGenerations.get(target) ?? 0) + 1)
+    explicitTargets.get(target)?.unmount?.()
+    explicitTargets.delete(target)
+  }
+
+  installExplicitMounting(mountExplicit, unmountExplicitTarget)
 
 	const synchronizeReplay = async (configuration: WidgetConfiguration, rule: WidgetRule | null) => {
 		const enabled = rule !== null && rule.replay_mode !== 'none' && configuration.features.session_replay
@@ -201,7 +297,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 	}
 
   installNavigationEvents()
-  window.addEventListener('fidibeki:navigation', () => void evaluate())
+  window.addEventListener('fidibeki:navigation', () => {
+    void evaluate()
+    for (const [target, mounted] of explicitTargets) {
+      if (target.isConnected) void mountExplicit(target, mounted.reference)
+      else unmountExplicitTarget(target)
+    }
+  })
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       analyticsOutbox.flushOnHide()
@@ -215,6 +317,45 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   await evaluate()
 }
 
+function explicitResult(mounted: false, reason: NonNullable<ExplicitMountResult['reason']>): ExplicitMountResult {
+  return { mounted, reason, unmount() {} }
+}
+
+function definitionIsActive(rule: WidgetRule): boolean {
+  return rule.definition_status === undefined || rule.definition_status === 'active'
+}
+
+function installExplicitMounting(
+  mount: (target: HTMLElement, reference: string) => Promise<ExplicitMountResult>,
+  unmount: (target: HTMLElement) => void,
+): void {
+  const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
+  namespace.mount = (target: HTMLElement, options: { rule: string }) => mount(target, options.rule)
+  ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
+  if (customElements.get('fidibeki-widget')) return
+  customElements.define('fidibeki-widget', class extends HTMLElement {
+    static observedAttributes = ['rule']
+    private scheduledMount = 0
+    connectedCallback() { this.scheduleMount() }
+    disconnectedCallback() { unmount(this) }
+    attributeChangedCallback() {
+      if (this.isConnected) this.scheduleMount()
+    }
+    private scheduleMount() {
+      const scheduled = ++this.scheduledMount
+      queueMicrotask(() => {
+        if (this.isConnected && scheduled === this.scheduledMount) {
+          void mount(this, this.getAttribute('rule') ?? '')
+        }
+      })
+    }
+  })
+}
+
+function randomID(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
 function ruleIsSuppressed(
   store: StorageLike,
   configuration: WidgetConfiguration,
@@ -222,13 +363,18 @@ function ruleIsSuppressed(
   rawURL: string,
   sessionID: string,
 ): boolean {
+  const recurrence = presentationRecurrencePolicy(
+    rule.presentation,
+    rule.recurrence_mode ?? 'cooldown',
+    rule.recurrence_days ?? 30,
+  )
   return isSuppressed(store, {
     projectID: configuration.project_id,
     ruleID: rule.id,
     rawURL,
     sessionID,
-    recurrenceMode: rule.recurrence_mode ?? 'cooldown',
-    recurrenceDays: rule.recurrence_days ?? 30,
+    recurrenceMode: recurrence.mode,
+    recurrenceDays: recurrence.days,
   })
 }
 
