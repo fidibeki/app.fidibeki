@@ -3,6 +3,8 @@ package issue
 import (
 	"errors"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 )
 
 var (
@@ -26,21 +28,24 @@ func (s Status) Valid() bool {
 }
 
 type Issue struct {
-	ID             string     `json:"id"`
-	TenantID       string     `json:"tenant_id"`
-	ProjectID      string     `json:"project_id"`
-	PublicID       string     `json:"public_id"`
-	Title          string     `json:"title"`
-	Description    string     `json:"description"`
-	Status         Status     `json:"status"`
-	MergedIntoID   *string    `json:"merged_into_id,omitempty"`
-	MergedAt       *time.Time `json:"merged_at,omitempty"`
-	ReporterEmail  *string    `json:"reporter_email,omitempty"`
-	NotifyReporter bool       `json:"notify_reporter"`
-	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
-	FeedbackCount  int        `json:"feedback_count"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             string           `json:"id"`
+	TenantID       string           `json:"tenant_id"`
+	ProjectID      string           `json:"project_id"`
+	PublicID       string           `json:"public_id"`
+	Title          string           `json:"title"`
+	Description    string           `json:"description"`
+	Status         Status           `json:"status"`
+	Priority       *triage.Priority `json:"priority"`
+	Assignee       *triage.Assignee `json:"assignee"`
+	Tags           []triage.Tag     `json:"tags"`
+	MergedIntoID   *string          `json:"merged_into_id,omitempty"`
+	MergedAt       *time.Time       `json:"merged_at,omitempty"`
+	ReporterEmail  *string          `json:"reporter_email,omitempty"`
+	NotifyReporter bool             `json:"notify_reporter"`
+	ResolvedAt     *time.Time       `json:"resolved_at,omitempty"`
+	FeedbackCount  int              `json:"feedback_count"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
 }
 
 type Update struct {

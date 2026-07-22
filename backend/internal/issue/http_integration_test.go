@@ -107,6 +107,30 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	`, tenantID, projectID, issueID).Scan(&feedbackID); err != nil {
 		t.Fatalf("create feedback: %v", err)
 	}
+	if _, err := root.Exec(ctx,
+		`UPDATE issues SET priority = 'high', assignee_id = $2 WHERE id = $1`, issueID, memberID,
+	); err != nil {
+		t.Fatalf("add readable issue triage metadata: %v", err)
+	}
+	var customerImpactTagID, checkoutTagID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color)
+		VALUES ($1, 'Customer impact', '#DC6B2F') RETURNING id
+	`, tenantID).Scan(&customerImpactTagID); err != nil {
+		t.Fatalf("create customer impact issue tag: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'Checkout', '#167D68') RETURNING id
+	`, tenantID).Scan(&checkoutTagID); err != nil {
+		t.Fatalf("create checkout issue tag: %v", err)
+	}
+	for _, tagID := range []string{customerImpactTagID, checkoutTagID} {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO issue_tags (tenant_id, issue_id, tag_id) VALUES ($1, $2, $3)
+		`, tenantID, issueID, tagID); err != nil {
+			t.Fatalf("assign readable issue tag: %v", err)
+		}
+	}
 
 	pools, err := db.OpenPools(ctx, issueRoleURL(t, directURL), directURL, 4, 2)
 	if err != nil {
@@ -184,6 +208,28 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "ACME-2026-0001") {
 		t.Fatalf("list status = %d, body = %s", list.Code, list.Body.String())
 	}
+	var listEnvelope struct {
+		Issues []Issue `json:"issues"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("decode issue list: %v", err)
+	}
+	var listedIssue, listedLegacy *Issue
+	for index := range listEnvelope.Issues {
+		switch listEnvelope.Issues[index].ID {
+		case issueID:
+			listedIssue = &listEnvelope.Issues[index]
+		case targetID:
+			listedLegacy = &listEnvelope.Issues[index]
+		}
+	}
+	if listedIssue == nil || listedLegacy == nil {
+		t.Fatalf("issue list did not contain seeded records: %#v", listEnvelope.Issues)
+	}
+	assertIssueTriageRead(t, *listedIssue, memberID)
+	if listedLegacy.Priority != nil || listedLegacy.Assignee != nil || len(listedLegacy.Tags) != 0 {
+		t.Fatalf("legacy issue triage metadata = %#v", *listedLegacy)
+	}
 	updated := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
 		`{"status":"in_progress","comment":"We are investigating"}`)
 	if updated.Code != http.StatusOK {
@@ -214,6 +260,13 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "We are investigating") {
 		t.Fatalf("issue detail status = %d, body = %s", detail.Code, detail.Body.String())
 	}
+	var detailEnvelope struct {
+		Issue Issue `json:"issue"`
+	}
+	if err := json.Unmarshal(detail.Body.Bytes(), &detailEnvelope); err != nil {
+		t.Fatalf("decode issue detail: %v", err)
+	}
+	assertIssueTriageRead(t, detailEnvelope.Issue, memberID)
 	invalidStatus := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
 		`{"status":"invalid"}`)
 	if invalidStatus.Code != http.StatusUnprocessableEntity {
@@ -403,6 +456,16 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	)
 	if err := reporter.Handler()(ctx, missingTask); !errors.Is(err, asynq.SkipRetry) {
 		t.Errorf("missing reporter event error = %v, want SkipRetry", err)
+	}
+}
+
+func assertIssueTriageRead(t *testing.T, found Issue, assigneeID string) {
+	t.Helper()
+	if found.Priority == nil || string(*found.Priority) != "high" || found.Assignee == nil ||
+		found.Assignee.ID != assigneeID || found.Assignee.Email != "owner@acme.test" ||
+		len(found.Tags) != 2 || found.Tags[0].Name != "Checkout" ||
+		found.Tags[1].Name != "Customer impact" {
+		t.Fatalf("issue triage metadata = %#v", found)
 	}
 }
 

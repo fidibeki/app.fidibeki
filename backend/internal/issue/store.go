@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -312,11 +313,24 @@ func (store Store) Unmerge(
 
 const issueSelect = `
 	SELECT issue.id, issue.tenant_id, issue.project_id, issue.public_id, issue.title, issue.description,
-	       issue.status, issue.merged_into_id, issue.merged_at, issue.reporter_email,
+	       issue.status, issue.priority, assignee.id, assignee.name, assignee.email::text,
+	       COALESCE((
+	           SELECT jsonb_agg(
+	               jsonb_build_object('id', tag.id, 'name', tag.name::text, 'color', tag.color)
+	               ORDER BY lower(tag.name::text), tag.id
+	           )
+	           FROM issue_tags AS issue_tag
+	           JOIN tags AS tag
+	             ON tag.tenant_id = issue_tag.tenant_id AND tag.id = issue_tag.tag_id
+	           WHERE issue_tag.tenant_id = issue.tenant_id AND issue_tag.issue_id = issue.id
+	       ), '[]'::jsonb),
+	       issue.merged_into_id, issue.merged_at, issue.reporter_email,
 	       issue.notify_reporter, issue.resolved_at,
 	       (SELECT count(*) FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id),
 	       issue.created_at, issue.updated_at
 	FROM issues AS issue
+	LEFT JOIN tenant_members AS assignee
+	  ON assignee.tenant_id = issue.tenant_id AND assignee.id = issue.assignee_id
 `
 
 type rowScanner interface {
@@ -325,13 +339,24 @@ type rowScanner interface {
 
 func scanIssue(row rowScanner) (Issue, error) {
 	var found Issue
+	var assigneeID, assigneeName, assigneeEmail *string
+	var tagPayload []byte
 	if err := row.Scan(
 		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title, &found.Description,
-		&found.Status, &found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
+		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+		&found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
 		&found.NotifyReporter, &found.ResolvedAt, &found.FeedbackCount,
 		&found.CreatedAt, &found.UpdatedAt,
 	); err != nil {
 		return Issue{}, err
 	}
+	if assigneeID != nil && assigneeEmail != nil {
+		found.Assignee = &triage.Assignee{ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail}
+	}
+	tags, err := triage.DecodeTags(tagPayload)
+	if err != nil {
+		return Issue{}, fmt.Errorf("decode issue tags: %w", err)
+	}
+	found.Tags = tags
 	return found, nil
 }

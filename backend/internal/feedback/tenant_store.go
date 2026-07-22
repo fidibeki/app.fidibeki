@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -44,6 +45,18 @@ const tenantFeedbackColumns = `
 	issue.public_id, issue.status::text, feedback.rating, feedback.title, feedback.description,
 	feedback.text, feedback.text_cleaned, feedback.ai_suggested_title,
 	feedback.ai_actionability, feedback.ai_category, feedback.ai_priority,
+	feedback.priority, assignee.id, assignee.name, assignee.email::text,
+	COALESCE((
+		SELECT jsonb_agg(
+			jsonb_build_object('id', tag.id, 'name', tag.name::text, 'color', tag.color)
+			ORDER BY lower(tag.name::text), tag.id
+		)
+		FROM feedback_tags AS feedback_tag
+		JOIN tags AS tag
+		  ON tag.tenant_id = feedback_tag.tenant_id AND tag.id = feedback_tag.tag_id
+		WHERE feedback_tag.tenant_id = feedback.tenant_id
+		  AND feedback_tag.feedback_id = feedback.id
+	), '[]'::jsonb),
 	feedback.reporter_email, feedback.notify_reporter,
 	feedback.page_url, feedback.referrer, feedback.user_agent, feedback.os,
 	feedback.browser, feedback.device, feedback.viewport_width,
@@ -75,6 +88,8 @@ const tenantFeedbackFrom = `
 	FROM feedbacks AS feedback
 	JOIN projects AS project ON project.id = feedback.project_id
 	LEFT JOIN issues AS issue ON issue.id = feedback.issue_id
+	LEFT JOIN tenant_members AS assignee
+	  ON assignee.tenant_id = feedback.tenant_id AND assignee.id = feedback.assignee_id
 `
 
 func (Store) ListTenantFeedback(
@@ -372,7 +387,16 @@ type tenantRowScanner interface {
 func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 	var item Item
 	var attachmentKinds []string
-	if err := row.Scan(tenantFeedbackScanTargets(&item, &attachmentKinds)...); err != nil {
+	var assigneeID, assigneeName, assigneeEmail *string
+	var tagPayload []byte
+	if err := row.Scan(tenantFeedbackScanTargets(
+		&item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+	)...); err != nil {
+		return Item{}, err
+	}
+	if err := finalizeTenantFeedbackTriage(
+		&item, assigneeID, assigneeName, assigneeEmail, tagPayload,
+	); err != nil {
 		return Item{}, err
 	}
 	finalizeTenantFeedback(&item, attachmentKinds)
@@ -382,28 +406,63 @@ func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 func scanTenantFeedbackDetail(row tenantRowScanner) (Detail, error) {
 	var detail Detail
 	var attachmentKinds []string
-	targets := tenantFeedbackScanTargets(&detail.Item, &attachmentKinds)
+	var assigneeID, assigneeName, assigneeEmail *string
+	var tagPayload []byte
+	targets := tenantFeedbackScanTargets(
+		&detail.Item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+	)
 	targets = append(targets, &detail.DOMSnapshotHTML, &detail.DOMSnapshotStyles, &detail.AIProcessedAt)
 	if err := row.Scan(targets...); err != nil {
+		return Detail{}, err
+	}
+	if err := finalizeTenantFeedbackTriage(
+		&detail.Item, assigneeID, assigneeName, assigneeEmail, tagPayload,
+	); err != nil {
 		return Detail{}, err
 	}
 	finalizeTenantFeedback(&detail.Item, attachmentKinds)
 	return detail, nil
 }
 
-func tenantFeedbackScanTargets(item *Item, attachmentKinds *[]string) []any {
+func tenantFeedbackScanTargets(
+	item *Item,
+	attachmentKinds *[]string,
+	assigneeID **string,
+	assigneeName **string,
+	assigneeEmail **string,
+	tagPayload *[]byte,
+) []any {
 	return []any{
 		&item.ID, &item.PublicID, &item.ProjectID, &item.ProjectName,
 		&item.WidgetRuleID, &item.SessionID, &item.IssueID, &item.IssuePublicID,
 		&item.IssueStatus, &item.Rating, &item.Title, &item.Description,
 		&item.Text, &item.TextCleaned, &item.AISuggestedTitle,
 		&item.AIActionability, &item.AICategory, &item.AIPriority,
+		&item.Priority, assigneeID, assigneeName, assigneeEmail, tagPayload,
 		&item.ReporterEmail, &item.NotifyReporter, &item.PageURL, &item.Referrer,
 		&item.UserAgent, &item.OS, &item.Browser, &item.Device, &item.ViewportWidth,
 		&item.ViewportHeight, &item.Language, &item.Status, &item.AIStatus,
 		&item.SentimentScore, &item.ModerationFlags, attachmentKinds,
 		&item.CreatedAt, &item.UpdatedAt,
 	}
+}
+
+func finalizeTenantFeedbackTriage(
+	item *Item,
+	assigneeID *string,
+	assigneeName *string,
+	assigneeEmail *string,
+	tagPayload []byte,
+) error {
+	if assigneeID != nil && assigneeEmail != nil {
+		item.Assignee = &triage.Assignee{ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail}
+	}
+	tags, err := triage.DecodeTags(tagPayload)
+	if err != nil {
+		return fmt.Errorf("decode feedback tags: %w", err)
+	}
+	item.Tags = tags
+	return nil
 }
 
 func finalizeTenantFeedback(item *Item, attachmentKinds []string) {

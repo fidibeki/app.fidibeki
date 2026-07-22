@@ -408,6 +408,36 @@ func assertTenantFeedbackReadFlow(
 	); err != nil {
 		t.Fatalf("link unavailable feedback replay: %v", err)
 	}
+	var assigneeID, checkoutTagID, accessibilityTagID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name)
+		VALUES ($1, 'triage@acme.test', 'Ada Triage') RETURNING id
+	`, tenantID).Scan(&assigneeID); err != nil {
+		t.Fatalf("create feedback assignee: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`UPDATE feedbacks SET priority = 'urgent', assignee_id = $2 WHERE id = $1`,
+		feedbackID, assigneeID,
+	); err != nil {
+		t.Fatalf("add readable feedback triage metadata: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'Checkout', '#167D68') RETURNING id
+	`, tenantID).Scan(&checkoutTagID); err != nil {
+		t.Fatalf("create checkout feedback tag: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'Accessibility', '#3B82F6') RETURNING id
+	`, tenantID).Scan(&accessibilityTagID); err != nil {
+		t.Fatalf("create accessibility feedback tag: %v", err)
+	}
+	for _, tagID := range []string{checkoutTagID, accessibilityTagID} {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO feedback_tags (tenant_id, feedback_id, tag_id) VALUES ($1, $2, $3)
+		`, tenantID, feedbackID, tagID); err != nil {
+			t.Fatalf("assign readable feedback tag: %v", err)
+		}
+	}
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("f", 32), "fidibeki", 10*time.Minute)
 	if err != nil {
@@ -447,6 +477,7 @@ func assertTenantFeedbackReadFlow(
 		!firstPage.Pagination.HasMore || firstPage.Pagination.NextCursor == nil {
 		t.Fatalf("first tenant feedback page = %#v", firstPage)
 	}
+	assertFeedbackTriageRead(t, firstPage.Feedbacks[0], assigneeID)
 	secondPageResponse := performTenantFeedbackRequest(
 		handler, http.MethodGet, "/v1/feedbacks?limit=1&cursor="+url.QueryEscape(*firstPage.Pagination.NextCursor),
 		"", ownerToken,
@@ -458,6 +489,10 @@ func assertTenantFeedbackReadFlow(
 	if secondPageResponse.Code != http.StatusOK || len(secondPage.Feedbacks) != 1 ||
 		secondPage.Feedbacks[0].ID != secondFeedbackID {
 		t.Fatalf("second tenant feedback page = %d %#v", secondPageResponse.Code, secondPage)
+	}
+	if secondPage.Feedbacks[0].Priority != nil || secondPage.Feedbacks[0].Assignee != nil ||
+		len(secondPage.Feedbacks[0].Tags) != 0 {
+		t.Fatalf("legacy feedback triage metadata = %#v", secondPage.Feedbacks[0])
 	}
 
 	filters := url.Values{
@@ -489,6 +524,7 @@ func assertTenantFeedbackReadFlow(
 		detailEnvelope.Feedback.Session.Status != "ready" || detailEnvelope.Feedback.Session.ReplayURL == nil {
 		t.Fatalf("tenant feedback detail = %d %#v", detailResponse.Code, detailEnvelope.Feedback)
 	}
+	assertFeedbackTriageRead(t, detailEnvelope.Feedback.Item, assigneeID)
 	unavailableDetailResponse := performTenantFeedbackRequest(
 		handler, http.MethodGet, "/v1/feedbacks/"+secondFeedbackID, "", ownerToken,
 	)
@@ -580,6 +616,16 @@ func assertTenantFeedbackReadFlow(
 	denied := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/feedbacks", "", deniedToken)
 	if denied.Code != http.StatusForbidden {
 		t.Errorf("denied tenant feedback status = %d", denied.Code)
+	}
+}
+
+func assertFeedbackTriageRead(t *testing.T, item Item, assigneeID string) {
+	t.Helper()
+	if item.Priority == nil || string(*item.Priority) != "urgent" || item.Assignee == nil ||
+		item.Assignee.ID != assigneeID || item.Assignee.Name == nil || *item.Assignee.Name != "Ada Triage" ||
+		item.Assignee.Email != "triage@acme.test" || len(item.Tags) != 2 ||
+		item.Tags[0].Name != "Accessibility" || item.Tags[1].Name != "Checkout" {
+		t.Fatalf("feedback triage metadata = %#v", item)
 	}
 }
 

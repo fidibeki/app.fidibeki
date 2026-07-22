@@ -1,6 +1,10 @@
 package feedback
 
-import "time"
+import (
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+)
 
 type Status string
 
@@ -180,6 +184,9 @@ type Item struct {
 	AIActionability  *string          `json:"ai_actionability,omitempty"`
 	AICategory       *string          `json:"ai_category,omitempty"`
 	AIPriority       *string          `json:"ai_priority,omitempty"`
+	Priority         *triage.Priority `json:"priority"`
+	Assignee         *triage.Assignee `json:"assignee"`
+	Tags             []triage.Tag     `json:"tags"`
 	ReporterEmail    *string          `json:"reporter_email,omitempty"`
 	NotifyReporter   bool             `json:"notify_reporter"`
 	PageURL          string           `json:"page_url"`
