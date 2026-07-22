@@ -51,8 +51,11 @@ func TestParseAnalyticsQueryNormalizesAcceptedUUIDForms(t *testing.T) {
 func TestAnalyticsTenantConcurrencyIsBoundedAndReleased(t *testing.T) {
 	t.Parallel()
 	limiter := newAnalyticsTenantConcurrency()
-	if !limiter.acquire("tenant-a") || !limiter.acquire("tenant-a") {
-		t.Fatal("first two tenant analytics slots were not acquired")
+	if !limiter.acquire("tenant-a") {
+		t.Fatal("first tenant analytics slot was not acquired")
+	}
+	if !limiter.acquire("tenant-a") {
+		t.Fatal("second tenant analytics slot was not acquired")
 	}
 	if limiter.acquire("tenant-a") {
 		t.Fatal("third tenant analytics slot was acquired")

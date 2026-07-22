@@ -155,13 +155,13 @@ type Workspace struct {
 func (workspace *Workspace) CalculateRates() {
 	workspace.Summary.CalculateRates()
 	for index := range workspace.Projects {
-		workspace.Projects[index].Summary.CalculateRates()
+		workspace.Projects[index].CalculateRates()
 	}
 	for index := range workspace.Rules {
-		workspace.Rules[index].Summary.CalculateRates()
+		workspace.Rules[index].CalculateRates()
 	}
 	for index := range workspace.Pages {
-		workspace.Pages[index].Summary.CalculateRates()
+		workspace.Pages[index].CalculateRates()
 	}
 }
 
