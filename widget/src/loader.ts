@@ -1,5 +1,5 @@
 import { cacheIsFresh, fetchConfiguration, matchRule, reportConnection, type ConfigCache } from './config'
-import { isSuppressed, suppress } from './suppression'
+import { getSessionID, isSuppressed, recordWidgetState } from './suppression'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
 
@@ -13,6 +13,8 @@ interface WidgetModule {
     apiBase: URL
     assetBase: URL
 		replaySessionID: string | null
+    onSubmitted(): void
+    onDismissed(): void
   }): WidgetUnmount
 }
 
@@ -52,6 +54,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 	let replayFingerprint = ''
 	let replayTransition = 0
   let evaluation = 0
+  const widgetSessionID = currentSessionID()
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -84,15 +87,15 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     try {
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
-      const rule = matchRule(configuration.rules, window.location.href)
+      const evaluationURL = window.location.href
+      const rule = matchRule(configuration.rules, evaluationURL)
 			if (rule) {
 				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
 			}
 			await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
-      if (!rule || isSuppressed(sessionStorage, configuration.project_id, rule.id, window.location.href)) return
+      if (!rule || ruleIsSuppressed(configuration, rule, evaluationURL, widgetSessionID)) return
       cleanupTrigger = armTrigger(rule, () => {
-        suppress(sessionStorage, configuration.project_id, rule.id, window.location.href)
         void import(new URL('widget.js', assetBase).href)
           .then((module) => {
             unmountWidget = (module as WidgetModule).mountWidget({
@@ -102,6 +105,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               apiBase: assetBase,
               assetBase,
 					replaySessionID: replayCapture?.sessionID ?? null,
+              onSubmitted: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
+              onDismissed: () => persistState(configuration, rule, evaluationURL, widgetSessionID, 'dismissed'),
             })
           })
           .catch((error: unknown) => report(error, 'mount'))
@@ -154,6 +159,54 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   })
   window.setInterval(() => void evaluate(true), 5 * 60 * 1000)
   await evaluate()
+}
+
+function currentSessionID(): string {
+  try {
+    return getSessionID(window.sessionStorage)
+  } catch {
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  }
+}
+
+function ruleIsSuppressed(
+  configuration: WidgetConfiguration,
+  rule: WidgetRule,
+  rawURL: string,
+  sessionID: string,
+): boolean {
+  try {
+    return isSuppressed(window.localStorage, {
+      projectID: configuration.project_id,
+      ruleID: rule.id,
+      rawURL,
+      sessionID,
+      recurrenceMode: rule.recurrence_mode ?? 'cooldown',
+      recurrenceDays: rule.recurrence_days ?? 30,
+    })
+  } catch {
+    return false
+  }
+}
+
+function persistState(
+  configuration: WidgetConfiguration,
+  rule: WidgetRule,
+  rawURL: string,
+  sessionID: string,
+  state: 'submitted' | 'dismissed',
+): void {
+  try {
+    recordWidgetState(window.localStorage, {
+      projectID: configuration.project_id,
+      ruleID: rule.id,
+      rawURL,
+      sessionID,
+      state,
+    })
+  } catch {
+    // Storage restrictions must not interfere with feedback collection.
+  }
 }
 
 function findLoaderScript(): HTMLScriptElement | null {

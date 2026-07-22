@@ -14,8 +14,10 @@ interface MountOptions {
   rule: WidgetRule
   publicKey: string
   apiBase: URL
-  assetBase: URL
+	assetBase: URL
 	replaySessionID: string | null
+  onSubmitted(): void
+  onDismissed(): void
 }
 
 interface RatingModule {
@@ -65,6 +67,7 @@ export function mountWidget(options: MountOptions): () => void {
 	let videoRecording: (() => Promise<Blob | null>) | null = null
 	let screenshot: (() => Blob | null) | null = null
 	let pendingAttachments: PendingAttachment[] | null = null
+	let accepted = false
 	const clientFeedbackID = randomID()
   const cleanups: Array<() => void> = []
 
@@ -121,7 +124,10 @@ export function mountWidget(options: MountOptions): () => void {
     for (const cleanup of cleanups) cleanup()
     host.remove()
   }
-  closeButton.addEventListener('click', destroy)
+  closeButton.addEventListener('click', () => {
+    if (!accepted) options.onDismissed()
+    destroy()
+  })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
     submitButton.disabled = true
@@ -150,11 +156,23 @@ export function mountWidget(options: MountOptions): () => void {
         }),
       })
       if (!response.ok) throw new Error(`feedback submission failed with status ${response.status}`)
-			const submission = await response.json() as SubmissionResponse
-			message.textContent = 'Uploading attachments...'
-			await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
-      form.innerHTML = '<div class="success" role="status"><strong>Thank you.</strong><span>Your feedback was sent.</span></div>'
-      window.setTimeout(destroy, 1800)
+      accepted = true
+      try {
+        options.onSubmitted()
+      } catch {
+        // Host storage failures must not turn an accepted submission into an error.
+      }
+      try {
+			  const submission = await response.json() as SubmissionResponse
+			  message.textContent = pendingAttachments.length > 0 ? 'Uploading attachments...' : ''
+			  await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
+        form.innerHTML = '<div class="success" role="status"><strong>Thank you.</strong><span>Your feedback was sent.</span></div>'
+        window.setTimeout(destroy, 1800)
+      } catch (error) {
+        form.innerHTML = '<div class="success" role="status"><strong>Feedback received.</strong><span>One or more attachments could not be uploaded.</span></div>'
+        window.setTimeout(destroy, 3200)
+        void reportError(options, error, 'attachments')
+      }
     } catch (error) {
       message.textContent = 'Could not send feedback. Please try again.'
       submitButton.disabled = false
