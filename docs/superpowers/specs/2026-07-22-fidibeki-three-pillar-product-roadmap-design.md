@@ -48,6 +48,24 @@ Capabilities that remain partial:
   progress view.
 - Slack, Teams, and generic webhook messages do not yet carry the complete operational context.
 
+## Phase 0: Product Quality Gate
+
+Before starting the three product pillars, resolve these independently testable blockers in order:
+
+1. **Verified member domains ([#8](https://github.com/acidiney/app.fidibeki/issues/8)).** Once a
+   workspace has verified company domains, member invitation and activation must reject email
+   addresses from unverified domains. An additional domain must be verified before its users can
+   join the workspace.
+2. **Feedback queue selection ([#9](https://github.com/acidiney/app.fidibeki/issues/9)).** Applying
+   a queue filter must give the active visual state to that queue alone. The URL, filters, and
+   navigation state must agree.
+3. **Responsive session replay ([#10](https://github.com/acidiney/app.fidibeki/issues/10)).** The
+   replay viewport and controls must remain inside their container without clipping adjacent
+   content or introducing page-level horizontal overflow.
+
+Each blocker requires an automated regression test and responsive browser validation where
+applicable. Completing this gate changes no production or infrastructure configuration.
+
 ## Phase 1: Contextual Feedback Core
 
 ### Outcome
