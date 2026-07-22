@@ -133,3 +133,30 @@ by PostgreSQL integration tests rather than opening a third review round.
 
 The second review passed without further findings. Full backend tests, 88 widget unit tests with coverage,
 typecheck, production build, and all 20 Playwright tests pass.
+
+### Slice 4.5 Analytics Workspace
+
+**Artifact**: Bounded tenant analytics API, migration 000051, and Dispatch `/analytics` workspace
+**Date**: 2026-07-22
+**Rounds**: 2
+
+#### Verdict: FIXED
+
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | Rule rows used non-unique Vue keys. | Fixed with dimension-specific project, rule, and canonical-page identities. |
+| 2 | major | 9/10 | Selected deleted rules and historical pages could disappear when the period changed. | Fixed with indexed selected-history lookups and retained selected options. |
+| 3 | major | 10/10 | Page breakdowns/options were unbounded across API memory, JSON, and DOM rendering. | Fixed with deterministic 100/200 limits, totals, and truncation metadata shown in Dispatch. |
+| 4 | major | 9/10 | Rule/page filters lacked selective aggregate indexes. | Fixed by migration 000051 and canonical page SHA-256 plus URL filtering. |
+| 5 | major | 9/10 | Superseded Nuxt requests did not cancel their backend work. | Fixed by propagating the `useAsyncData` abort signal through `$apiFetch`. |
+| 6 | major | 8/10 | Analytics queries had no execution deadline or useful operational diagnostics. | Fixed with a 10-second context deadline, per-tenant concurrency bound, and structured duration/cardinality logs. |
+| 7 | major | 10/10 | Rule options scanned and grouped the complete retained history on every request. | Fixed by period-bounding normal history and using the rule index only for the selected out-of-period rule. |
+| 8 | major | 10/10 | Ordered `array_agg` retained every row merely to choose the latest rule name. | Fixed with a narrow `DISTINCT ON` latest-name relation joined to count aggregates. |
+| 9 | major | 9/10 | Page populations were grouped twice for breakdowns and options. | Fixed with one shared page-total aggregate derived from the range scope. |
+| 10 | major | 10/10 | An arbitrary page URL was fabricated as a valid option and returned `200`. | Fixed with all-history tenant/project/rule/page validation and `404` for absent or mismatched filters. |
+| 11 | minor | 9/10 | Accepted noncanonical UUID forms could reach PostgreSQL unchanged. | Fixed by normalizing parsed UUIDs before query construction. |
+
+The final suite covers 7/30/90-day boundaries, zero denominators, deleted and dormant rules, historical pages,
+cross-tenant and same-tenant filter mismatches, deterministic high-cardinality limits, timeout logging, desktop
+and mobile loading/data/empty/error/retry states, and the complete responsive Dispatch journey. Backend tests,
+web unit tests, typecheck, local production build, and focused Playwright runs pass. No deployment was performed.
