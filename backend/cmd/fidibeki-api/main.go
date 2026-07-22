@@ -37,6 +37,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
+	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	jobworker "github.com/acidiney/app.fidibeki/backend/internal/worker"
 	"github.com/go-chi/chi/v5"
@@ -320,6 +321,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	feedback.RegisterTenantRoutes(tenantRoutes, feedback.TenantHTTPOptions{
 		Store: feedback.Store{}, JWT: jwtManager,
 	})
+	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
 	})
