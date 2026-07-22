@@ -867,11 +867,13 @@ test('inaccessible workspace uses the same neutral unavailable state', async ({ 
   const state = createMockState()
   state.workspaceAccess = 'suspended'
   await installMockAPI(page, state)
+  const suspendedOrigin = `http://suspended.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 
-  await page.goto(`${tenantOrigin}/login`)
+  await page.goto(`${suspendedOrigin}/login`)
 
   await expect(page.getByRole('heading', { name: 'Workspace unavailable' })).toBeVisible()
-  await expect(page.locator('body')).not.toContainText(/suspended|tenant is not active/i)
+  await expect(page.locator('body')).not.toContainText('tenant is not active')
+  await expect(page.getByRole('heading', { name: 'Workspace suspended' })).toHaveCount(0)
   await expect(page.getByLabel('Work email')).toHaveCount(0)
 })
 
@@ -880,8 +882,9 @@ test('temporary workspace lookup failure can be retried', async ({ page }, testI
   const state = createMockState()
   state.workspaceAccess = 'error'
   await installMockAPI(page, state)
+  const errorOrigin = `http://error.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 
-  await page.goto(`${tenantOrigin}/login`)
+  await page.goto(`${errorOrigin}/login`)
   await expect(page.getByRole('heading', { name: 'Workspace check unavailable' })).toBeVisible()
 
   state.workspaceAccess = 'available'

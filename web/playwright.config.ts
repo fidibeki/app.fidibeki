@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const port = process.env.PLAYWRIGHT_PORT || '4321'
 const serverCommand = process.env.CI
-  ? `HOST=127.0.0.1 PORT=${port} NUXT_BASE_DOMAIN=localhost NUXT_PUBLIC_BASE_DOMAIN=localhost NUXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA node .output/server/index.mjs`
+  ? 'node tests/e2e/ci-web-server.mjs'
   : `NUXT_IGNORE_LOCK=1 NUXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA ./node_modules/.bin/nuxt dev --host 127.0.0.1 --port ${port}`
 
 export default defineConfig({
