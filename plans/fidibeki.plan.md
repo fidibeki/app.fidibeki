@@ -40,7 +40,8 @@ implementation; extend existing contracts instead of rebuilding them.
   invitation is created and when its magic link is consumed. Preserve workspaces without verified
   domains until they opt into the policy. Implemented with tenant-scoped RLS storage, hashed
   one-time email verification, serialized invite/activation enforcement, Settings management, and
-  backend/web regression coverage. Real staging verification remains part of the Phase 0 exit gate.
+  backend/web regression coverage. Migration `000053` and preserved tenant data were verified in
+  staging.
 - [x] [#9](https://github.com/acidiney/app.fidibeki/issues/9) Feedback queue selection. Filtering,
   URL synchronization, and SPA navigation already work. Replace path-only router active matching
   with one canonical queue matcher so exactly one queue reflects the current filter state.
@@ -63,9 +64,12 @@ implementation; extend existing contracts instead of rebuilding them.
   mapping inaccessible tenant states to one neutral SSR 404, preserving temporary-error retry, and
   carrying a validated direct-subdomain slug only through an explicit signup action.
 
-Every blocker requires an automated regression test and responsive browser validation where
-applicable. Complete and validate the five items in order without production or infrastructure
-changes.
+Phase 0 exit gate passed on 2026-07-22: all backend, web, security, and release checks were green;
+API, worker, and web were promoted only to staging at commit `655f3b4`; the database was clean at
+migration `000053`; and the real staging Playwright smoke passed against an existing tenant. The
+unknown-workspace journey returned a neutral SSR `404` with an explicit editable-slug signup action,
+while the existing tenant login and service health checks remained available. No production
+environment was changed.
 
 #### Phase 1: Contextual Feedback Core
 
