@@ -155,6 +155,9 @@ function createMockState() {
     title: 'Promotion code can freeze checkout',
     description: 'Customers cannot complete payment after applying some promotion codes.',
     status: 'open',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent' | null,
+    assignee: { id: member.id, name: member.name, email: member.email } as { id: string, name?: string, email: string } | null,
+    tags: [tags[0]],
     reporter_email: 'customer@example.test',
     notify_reporter: true,
     feedback_count: 3,
@@ -169,6 +172,9 @@ function createMockState() {
     title: 'Checkout stalls during promotion validation',
     description: 'Promotion validation can leave the checkout waiting indefinitely.',
     status: 'in_progress',
+    priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
+    assignee: null as { id: string, name?: string, email: string } | null,
+    tags: [] as typeof tags,
     reporter_email: 'ops@acme.test',
     notify_reporter: false,
     feedback_count: 7,
@@ -185,6 +191,15 @@ function createMockState() {
     widgetRules,
     feedback,
     issues,
+    issueUpdates: [] as Array<{
+      id: string
+      issue_id: string
+      member_id?: string
+      old_status?: string
+      new_status: string
+      comment?: string
+      created_at: string
+    }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
     billingDeletionRequestedAt: null as string | null,
@@ -476,7 +491,9 @@ async function installMockAPI(page: Page, state: MockState) {
       const issue = {
         id: 'issue-created', tenant_id: state.tenant.id, project_id: feedbackItem?.project_id || 'project-1',
         public_id: 'ISS-102', title: String(input.title), description: String(input.description || ''),
-        status: 'open', reporter_email: feedbackItem?.reporter_email || '', notify_reporter: feedbackItem?.notify_reporter || false,
+        status: 'open', priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
+        assignee: null as { id: string, name?: string, email: string } | null, tags: [] as typeof state.tags,
+        reporter_email: feedbackItem?.reporter_email || '', notify_reporter: feedbackItem?.notify_reporter || false,
         feedback_count: 1, created_at: now, updated_at: now, merged_into_id: undefined as string | undefined,
       }
       state.issues.push(issue)
@@ -503,6 +520,9 @@ async function installMockAPI(page: Page, state: MockState) {
         title: String(input.title),
         description: String(input.description || ''),
         status: 'open',
+        priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
+        assignee: null as { id: string, name?: string, email: string } | null,
+        tags: [] as typeof state.tags,
         reporter_email: selectedFeedback[0]?.reporter_email || '',
         notify_reporter: selectedFeedback.some(item => item.notify_reporter),
         feedback_count: selectedFeedback.length,
@@ -532,11 +552,44 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     const issueMatch = path.match(/^\/v1\/issues\/([^/]+)$/)
     if (issueMatch && method === 'GET') {
-      return json(route, { issue: state.issues.find(issue => issue.id === issueMatch[1]), updates: [] })
+      return json(route, {
+        issue: state.issues.find(issue => issue.id === issueMatch[1]),
+        updates: state.issueUpdates.filter(update => update.issue_id === issueMatch[1]),
+      })
     }
     if (issueMatch && method === 'PATCH') {
       const issue = state.issues.find(candidate => candidate.id === issueMatch[1])
-      if (issue && body().status) issue.status = String(body().status)
+      const input = body()
+      if (issue && input.title) issue.title = String(input.title)
+      if (issue && typeof input.description === 'string') issue.description = input.description
+      if (issue && input.priority) issue.priority = input.priority === 'none' ? null : String(input.priority) as typeof issue.priority
+      if (issue && input.unassign) issue.assignee = null
+      if (issue && input.assignee_id) {
+        const assignee = state.members.find(candidate => candidate.id === input.assignee_id)
+        issue.assignee = assignee ? { id: assignee.id, name: assignee.name, email: assignee.email } : null
+      }
+      if (issue && Array.isArray(input.remove_tag_ids)) {
+        issue.tags = issue.tags.filter(tag => !(input.remove_tag_ids as string[]).includes(tag.id))
+      }
+      if (issue && Array.isArray(input.add_tag_ids)) {
+        for (const tagID of input.add_tag_ids as string[]) {
+          const tag = state.tags.find(candidate => candidate.id === tagID)
+          if (tag && !issue.tags.some(candidate => candidate.id === tag.id)) issue.tags.push(tag)
+        }
+        issue.tags.sort((left, right) => left.name.localeCompare(right.name))
+      }
+      if (issue && input.status && input.status !== issue.status) {
+        state.issueUpdates.push({
+          id: `update-${state.issueUpdates.length + 1}`,
+          issue_id: issue.id,
+          member_id: state.member.id,
+          old_status: issue.status,
+          new_status: String(input.status),
+          comment: typeof input.comment === 'string' ? input.comment : undefined,
+          created_at: now,
+        })
+        issue.status = String(input.status)
+      }
       return json(route, { issue })
     }
 
@@ -1233,6 +1286,55 @@ test('issue status can change without nesting the control inside its detail link
   await expect(page).toHaveURL(`${tenantOrigin}/issues`)
   await expect(page.getByLabel('Status for ISS-101')).toHaveValue('resolved')
   expect(state.issues[0].status).toBe('resolved')
+})
+
+test('issue operational metadata stays independent from linked feedback', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The complete issue editor is covered once')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Issues')
+
+  const issueRow = page.locator('.issues-row').filter({ hasText: 'ISS-101' })
+  await expect(issueRow.locator('.issue-priority-mark')).toHaveText('Medium')
+  await expect(issueRow.locator('.issue-assignee-mark')).toHaveText('AM')
+  await issueRow.getByRole('link').click()
+
+  await page.getByRole('button', { name: 'Edit issue details' }).click()
+  await page.getByLabel('Issue title').fill('Promotion code blocks checkout')
+  await page.getByLabel('Issue description').fill('The checkout blocks while promotion validation is running.')
+  await page.getByRole('button', { name: 'Save details' }).click()
+
+  const triage = page.locator('.issue-operational-triage')
+  await triage.getByRole('button', { name: 'Urgent priority' }).click()
+  await triage.getByLabel('Assignee').selectOption('member-2')
+  await triage.getByLabel('Regression tag').check()
+  await triage.getByLabel('Checkout tag').uncheck()
+
+  expect(state.issues[0]).toMatchObject({
+    title: 'Promotion code blocks checkout',
+    description: 'The checkout blocks while promotion validation is running.',
+    priority: 'urgent',
+    assignee: { id: 'member-2' },
+  })
+  expect(state.issues[0].tags.map(tag => tag.id)).toEqual(['tag-regression'])
+  expect(state.feedback[0].priority).toBe('high')
+  expect(state.feedback[0].assignee?.id).toBe('member-1')
+  expect(state.feedback[0].tags.map(tag => tag.id)).toEqual(['tag-checkout'])
+  expect(state.issueUpdates).toHaveLength(0)
+
+  await page.locator('.issue-update-panel').getByRole('combobox').selectOption('in_progress')
+  await page.locator('.issue-update-panel').getByRole('textbox').fill('Jamie is investigating the checkout path.')
+  await page.getByRole('button', { name: 'Update issue' }).click()
+  await expect(page.locator('.issue-history li:not(.issue-created)')).toHaveCount(1)
+  expect(state.issueUpdates).toHaveLength(1)
+  await capture(page, testInfo, 'issue-operational-triage')
+
+  await openPrimary(page, 'Issues')
+  const updatedRow = page.locator('.issues-row').filter({ hasText: 'ISS-101' })
+  await expect(updatedRow).toContainText('Promotion code blocks checkout')
+  await expect(updatedRow.locator('.issue-priority-mark')).toHaveText('Urgent')
+  await expect(updatedRow.locator('.issue-assignee-mark')).toHaveText('JT')
+  await capture(page, testInfo, 'issues-operational-markers')
 })
 
 test('settings creates one-time credentials and delivery secrets', async ({ page }, testInfo) => {

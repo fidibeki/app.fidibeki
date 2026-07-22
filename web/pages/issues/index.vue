@@ -50,6 +50,15 @@ function formatAge(value: string) {
   return days < 1 ? 'Today' : days === 1 ? '1 day' : `${days} days`
 }
 
+function assigneeInitials(issue: Issue) {
+  const value = issue.assignee?.name || issue.assignee?.email || ''
+  return value.split(/\s+|@/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
+}
+
+function priorityLabel(issue: Issue) {
+  return issue.priority ? issue.priority[0].toUpperCase() + issue.priority.slice(1) : ''
+}
+
 useHead({ title: 'Issues · Fidibeki' })
 </script>
 
@@ -65,13 +74,19 @@ useHead({ title: 'Issues · Fidibeki' })
     <p v-if="mutationError" class="issues-error" role="alert"><AlertTriangle :size="15" />{{ mutationError }}</p>
     <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading issues</h2></div></section>
     <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Issues unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
-    <section v-else-if="filteredIssues.length === 0" class="app-surface app-state"><div><LayoutList :size="25" /><h2>No issues found</h2><p>Issue records are created as feedback enters the workspace.</p></div></section>
+    <section v-else-if="filteredIssues.length === 0" class="app-surface app-state"><div><LayoutList :size="25" /><h2>No issues found</h2><p>Issues appear when feedback is promoted into actionable work.</p></div></section>
     <section v-else class="issues-table app-surface">
-      <header><span>Issue</span><span>Project</span><span>Feedback</span><span>Status</span><span>Age</span><span /></header>
+      <header><span>Issue</span><span>Project</span><span>Triage</span><span>Feedback</span><span>Status</span><span>Age</span><span /></header>
       <div v-for="issue in filteredIssues" :key="issue.id" class="issues-row">
         <NuxtLink class="issues-row-link" :to="`/issues/${issue.id}`" :aria-label="`Open ${issue.public_id}: ${issue.title}`" />
         <span class="issues-title"><CircleDot :size="15" /><span><b>{{ issue.public_id }}</b><small>{{ issue.title }}</small></span></span>
         <span class="issues-project">{{ projectNames.get(issue.project_id) || 'Project' }}</span>
+        <span class="issues-triage">
+          <span v-if="issue.priority" class="issue-priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue) }}</span>
+          <span v-if="issue.assignee" class="issue-assignee-mark" :title="issue.assignee.name || issue.assignee.email">{{ assigneeInitials(issue) }}</span>
+          <span v-if="issue.tags?.length" class="issue-tag-marks" :title="issue.tags.map(tag => tag.name).join(', ')"><i v-for="tag in issue.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
+          <span v-if="!issue.priority && !issue.assignee && !issue.tags?.length" class="issue-untriaged">Untriaged</span>
+        </span>
         <span class="issues-feedback">{{ issue.feedback_count }}</span>
         <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
         <time>{{ formatAge(issue.created_at) }}</time>
@@ -89,7 +104,7 @@ useHead({ title: 'Issues · Fidibeki' })
 .issues-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 5px; font-size: 11px; }
 .issues-table { overflow: hidden; }
 .issues-table > header,
-.issues-row { display: grid; min-height: 58px; grid-template-columns: minmax(260px, 1.4fr) minmax(120px, .7fr) 80px 130px 70px 18px; position: relative; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.issues-row { display: grid; min-height: 58px; grid-template-columns: minmax(240px, 1.4fr) minmax(110px, .65fr) 120px 70px 130px 70px 18px; position: relative; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
 .issues-table > header { min-height: 38px; background: #f8faf9; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .issues-row { color: var(--ink-soft); font-size: 10px; }
 .issues-row:last-child { border-bottom: 0; }
@@ -105,12 +120,21 @@ useHead({ title: 'Issues · Fidibeki' })
 .issues-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .issues-title b { font-size: 11px; }
 .issues-title small { color: var(--muted); font-size: 9px; }
+.issues-triage { display: flex; min-width: 0; align-items: center; gap: 5px; overflow: hidden; }
+.issue-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: #315b52; background: #eaf3f0; border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.issue-priority-mark[data-priority='high'] { color: #8d4918; background: #fff0e3; }
+.issue-priority-mark[data-priority='urgent'] { color: #92333f; background: #fbe9eb; }
+.issue-assignee-mark { display: grid; width: 23px; height: 23px; flex: 0 0 23px; place-items: center; color: #315b52; background: #dce9e6; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; font-weight: 800; }
+.issue-tag-marks { display: flex; min-width: 8px; gap: 2px; }
+.issue-tag-marks i { width: 6px; height: 18px; flex: 0 0 6px; border-radius: 2px; }
+.issue-untriaged { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .issues-table select { width: 100%; height: 32px; padding: 0 6px; background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
 .issues-table time { color: var(--muted); font-size: 9px; }
 @media (max-width: 850px) {
   .issues-table > header { display: none; }
   .issues-row { grid-template-columns: minmax(0, 1fr) 110px 50px 18px; gap: 8px; padding: 8px 12px; }
   .issues-project,
+  .issues-triage,
   .issues-feedback { display: none; }
   .issues-toolbar { align-items: stretch; flex-wrap: wrap; }
   .issues-toolbar label { width: 100%; }
