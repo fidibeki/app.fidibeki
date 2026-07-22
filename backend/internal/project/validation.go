@@ -95,6 +95,7 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 	validateTrigger(values, fields)
 	validateAppearance(values, fields)
 	validateReplay(values, fields)
+	validateRecurrence(values, fields)
 	validatePlanFeatures(values, resolved, fields)
 	return values, fields
 }
@@ -115,6 +116,8 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		ReplayMaxEvents:          input.ReplayMaxEvents,
 		ReplayMaskAllInputs:      valueOr(input.ReplayMaskAllInputs, true),
 		ReplayMaskTextSelector:   trimOptional(input.ReplayMaskTextSelector),
+		RecurrenceMode:           input.RecurrenceMode,
+		RecurrenceDays:           input.RecurrenceDays,
 	}
 	if values.Position == "" {
 		values.Position = PositionBottomLeft
@@ -130,6 +133,13 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	}
 	if values.ReplayMaxEvents == 0 {
 		values.ReplayMaxEvents = 50000
+	}
+	if values.RecurrenceMode == "" {
+		values.RecurrenceMode = RecurrenceCooldown
+	}
+	if values.RecurrenceMode == RecurrenceCooldown && values.RecurrenceDays == nil {
+		defaultDays := 30
+		values.RecurrenceDays = &defaultDays
 	}
 	return values
 }
@@ -223,6 +233,21 @@ func validateReplay(values WidgetRuleValues, fields FieldErrors) {
 	}
 	if values.ReplayMaxEvents < 1 || values.ReplayMaxEvents > MaximumReplayEvents {
 		fields["replay_max_events"] = "must be between 1 and 50000"
+	}
+}
+
+func validateRecurrence(values WidgetRuleValues, fields FieldErrors) {
+	switch values.RecurrenceMode {
+	case RecurrenceCooldown:
+		if values.RecurrenceDays == nil || *values.RecurrenceDays < 1 || *values.RecurrenceDays > 3650 {
+			fields["recurrence_days"] = "must be between 1 and 3650 for cooldown recurrence"
+		}
+	case RecurrenceSession, RecurrenceNever:
+		if values.RecurrenceDays != nil {
+			fields["recurrence_days"] = "must be null unless recurrence_mode is cooldown"
+		}
+	default:
+		fields["recurrence_mode"] = "must be cooldown, session, or never"
 	}
 }
 

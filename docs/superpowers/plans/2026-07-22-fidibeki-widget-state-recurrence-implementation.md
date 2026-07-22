@@ -34,7 +34,7 @@ widget rule, backfilling existing rules to a 30-day cooldown without modifying a
 **Depends on:** Task 1
 
 **Outcome:** Tenant widget-rule CRUD and public widget configuration return the additive recurrence
-fields; create/update validation normalizes unused days to null and defaults omitted values to a
+fields; create/update validation requires unused days to be null and defaults omitted values to a
 30-day cooldown.
 
 **Acceptance:** Focused Go unit and HTTP integration tests create, read, update, list, and publicly

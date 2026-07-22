@@ -49,6 +49,14 @@ const (
 	MaximumReplayEvents          = 50000
 )
 
+type RecurrenceMode string
+
+const (
+	RecurrenceCooldown RecurrenceMode = "cooldown"
+	RecurrenceSession  RecurrenceMode = "session"
+	RecurrenceNever    RecurrenceMode = "never"
+)
+
 type Project struct {
 	ID               string     `json:"id"`
 	TenantID         string     `json:"tenant_id"`
@@ -87,6 +95,8 @@ type WidgetRule struct {
 	ReplayMaxEvents          int            `json:"replay_max_events"`
 	ReplayMaskAllInputs      bool           `json:"replay_mask_all_inputs"`
 	ReplayMaskTextSelector   *string        `json:"replay_mask_text_selector"`
+	RecurrenceMode           RecurrenceMode `json:"recurrence_mode"`
+	RecurrenceDays           *int           `json:"recurrence_days"`
 	CreatedAt                time.Time      `json:"created_at"`
 	UpdatedAt                time.Time      `json:"updated_at"`
 }
@@ -116,6 +126,8 @@ type WidgetRuleInput struct {
 	ReplayMaxEvents          int            `json:"replay_max_events"`
 	ReplayMaskAllInputs      *bool          `json:"replay_mask_all_inputs"`
 	ReplayMaskTextSelector   *string        `json:"replay_mask_text_selector"`
+	RecurrenceMode           RecurrenceMode `json:"recurrence_mode"`
+	RecurrenceDays           *int           `json:"recurrence_days"`
 }
 
 type WidgetRuleValues struct {
@@ -143,6 +155,8 @@ type WidgetRuleValues struct {
 	ReplayMaxEvents          int
 	ReplayMaskAllInputs      bool
 	ReplayMaskTextSelector   *string
+	RecurrenceMode           RecurrenceMode
+	RecurrenceDays           *int
 }
 
 type PublicConfiguration struct {

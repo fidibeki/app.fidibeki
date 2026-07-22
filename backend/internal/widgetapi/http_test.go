@@ -47,6 +47,7 @@ func TestOriginAllowedUsesExactAndLeadingWildcardMatches(t *testing.T) {
 func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 	t.Parallel()
 	delay := 3
+	recurrenceDays := 30
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	store := &configurationStoreStub{configuration: project.PublicConfiguration{
 		ProjectID: "project-id", AllowedDomains: []string{"example.com"},
@@ -58,6 +59,7 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 			Position: project.PositionBottomRight, Theme: project.ThemeAuto,
 			ReplayMode: project.ReplaySampling, ReplaySamplingRate: 25,
 			ReplayMaxDurationSeconds: 1800, ReplayMaxEvents: 50000, ReplayMaskAllInputs: true,
+			RecurrenceMode: project.RecurrenceCooldown, RecurrenceDays: &recurrenceDays,
 		}},
 	}}
 	handler := NewHTTPHandler(HTTPOptions{Store: store, Now: func() time.Time { return now }})
@@ -78,6 +80,7 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 	for _, fragment := range []string{
 		`"project_id":"project-id"`, `"audio":true`, `"video":false`,
 		`"id":"rule-id"`, `"trigger_delay_seconds":3`, `"refresh_after_seconds":300`,
+		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 	} {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)

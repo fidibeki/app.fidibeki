@@ -138,11 +138,13 @@ func (Store) CreateWidgetRule(
 			trigger_type, trigger_delay_seconds, trigger_scroll_percent,
 			can_rate, can_write_text, can_record_audio, can_record_video,
 			can_attach_element, can_attach_screenshot, greeting, position, theme,
-			accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
-			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector
-		)
-		SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-		       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+				accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
+				replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
+				recurrence_mode, recurrence_days
+			)
+			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+			       $27, $28
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, widgetRuleArguments(tenantID, projectID, values)...))
@@ -224,8 +226,9 @@ func (Store) UpdateWidgetRule(
 			can_rate = $12, can_write_text = $13, can_record_audio = $14, can_record_video = $15,
 			can_attach_element = $16, can_attach_screenshot = $17, greeting = $18,
 			position = $19, theme = $20, accent_color = $21, replay_mode = $22,
-			replay_sampling_rate = $23, replay_max_duration_seconds = $24,
-			replay_max_events = $25, replay_mask_all_inputs = $26, replay_mask_text_selector = $27
+				replay_sampling_rate = $23, replay_max_duration_seconds = $24,
+				replay_max_events = $25, replay_mask_all_inputs = $26, replay_mask_text_selector = $27,
+				recurrence_mode = $28, recurrence_days = $29
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
 		  AND project.id = rule.project_id AND project.tenant_id = $1
@@ -340,8 +343,9 @@ const widgetRuleColumns = `
 	trigger_type, trigger_delay_seconds, trigger_scroll_percent,
 	can_rate, can_write_text, can_record_audio, can_record_video,
 	can_attach_element, can_attach_screenshot, greeting, position, theme, accent_color,
-	replay_mode, replay_sampling_rate, replay_max_duration_seconds, replay_max_events,
-	replay_mask_all_inputs, replay_mask_text_selector, created_at, updated_at`
+		replay_mode, replay_sampling_rate, replay_max_duration_seconds, replay_max_events,
+		replay_mask_all_inputs, replay_mask_text_selector, recurrence_mode, recurrence_days,
+		created_at, updated_at`
 
 func prefixedWidgetRuleColumns(alias string) string {
 	columns := []string{
@@ -350,7 +354,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"can_record_audio", "can_record_video", "can_attach_element", "can_attach_screenshot", "greeting",
 		"position", "theme", "accent_color", "replay_mode", "replay_sampling_rate",
 		"replay_max_duration_seconds", "replay_max_events", "replay_mask_all_inputs",
-		"replay_mask_text_selector", "created_at", "updated_at",
+		"replay_mask_text_selector", "recurrence_mode", "recurrence_days", "created_at", "updated_at",
 	}
 	for index := range columns {
 		columns[index] = alias + "." + columns[index]
@@ -381,7 +385,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) []any {
 		values.CanAttachElement, values.CanAttachScreenshot, values.Greeting, values.Position,
 		values.Theme, values.AccentColor, values.ReplayMode, values.ReplaySamplingRate,
 		values.ReplayMaxDurationSeconds, values.ReplayMaxEvents, values.ReplayMaskAllInputs,
-		values.ReplayMaskTextSelector,
+		values.ReplayMaskTextSelector, values.RecurrenceMode, values.RecurrenceDays,
 	}
 }
 
@@ -411,7 +415,8 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.CanRecordVideo, &rule.CanAttachElement, &rule.CanAttachScreenshot, &rule.Greeting,
 		&rule.Position, &rule.Theme, &rule.AccentColor, &rule.ReplayMode, &rule.ReplaySamplingRate,
 		&rule.ReplayMaxDurationSeconds, &rule.ReplayMaxEvents, &rule.ReplayMaskAllInputs,
-		&rule.ReplayMaskTextSelector, &rule.CreatedAt, &rule.UpdatedAt,
+		&rule.ReplayMaskTextSelector, &rule.RecurrenceMode, &rule.RecurrenceDays,
+		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	return rule, err
 }

@@ -86,6 +86,53 @@ func TestValidateWidgetRuleNormalizesDefaults(t *testing.T) {
 	if values.ReplayMaxDurationSeconds != 1800 || values.ReplayMaxEvents != 50000 || !values.ReplayMaskAllInputs {
 		t.Errorf("replay defaults = %#v", values)
 	}
+	if values.RecurrenceMode != RecurrenceCooldown || values.RecurrenceDays == nil || *values.RecurrenceDays != 30 {
+		t.Errorf("recurrence defaults = %#v", values)
+	}
+}
+
+func TestValidateWidgetRuleAcceptsRecurrenceModes(t *testing.T) {
+	t.Parallel()
+	days := 45
+	for _, input := range []WidgetRuleInput{
+		{Name: "Cooldown", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceCooldown, RecurrenceDays: &days},
+		{Name: "Session", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceSession},
+		{Name: "Never", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceNever},
+	} {
+		values, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
+		if len(fields) != 0 {
+			t.Errorf("%s recurrence fields = %#v", input.RecurrenceMode, fields)
+		}
+		if values.RecurrenceMode != input.RecurrenceMode {
+			t.Errorf("recurrence mode = %q, want %q", values.RecurrenceMode, input.RecurrenceMode)
+		}
+	}
+}
+
+func TestValidateWidgetRuleRejectsInvalidRecurrence(t *testing.T) {
+	t.Parallel()
+	zero, aboveMaximum, unused := 0, 3651, 30
+	tests := []WidgetRuleInput{
+		{Name: "Low", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceCooldown, RecurrenceDays: &zero},
+		{Name: "High", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceCooldown, RecurrenceDays: &aboveMaximum},
+		{Name: "Session", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceSession, RecurrenceDays: &unused},
+		{Name: "Never", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: RecurrenceNever, RecurrenceDays: &unused},
+		{Name: "Unknown", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+			RecurrenceMode: "sometimes"},
+	}
+	for _, input := range tests {
+		_, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
+		if fields["recurrence_mode"] == "" && fields["recurrence_days"] == "" {
+			t.Errorf("invalid recurrence %q/%v was accepted", input.RecurrenceMode, input.RecurrenceDays)
+		}
+	}
 }
 
 func TestValidateWidgetRuleReportsConsistencyAndPlanErrors(t *testing.T) {

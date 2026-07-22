@@ -239,12 +239,19 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if !createdRule.WidgetRule.Enabled || !createdRule.WidgetRule.CanRate || !createdRule.WidgetRule.CanWriteText {
 		t.Errorf("widget defaults = %#v", createdRule.WidgetRule)
 	}
+	if createdRule.WidgetRule.RecurrenceMode != RecurrenceCooldown ||
+		createdRule.WidgetRule.RecurrenceDays == nil || *createdRule.WidgetRule.RecurrenceDays != 30 {
+		t.Errorf("widget recurrence defaults = %#v", createdRule.WidgetRule)
+	}
 	publicConfiguration, err := (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
 		t.Fatalf("load public configuration: %v", err)
 	}
 	if publicConfiguration.ProjectID != created.Project.ID || len(publicConfiguration.Rules) != 1 ||
-		publicConfiguration.Rules[0].ID != createdRule.WidgetRule.ID {
+		publicConfiguration.Rules[0].ID != createdRule.WidgetRule.ID ||
+		publicConfiguration.Rules[0].RecurrenceMode != RecurrenceCooldown ||
+		publicConfiguration.Rules[0].RecurrenceDays == nil ||
+		*publicConfiguration.Rules[0].RecurrenceDays != 30 {
 		t.Errorf("public configuration = %#v", publicConfiguration)
 	}
 	gotRule := performProjectRequest(
@@ -264,14 +271,26 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `UPDATE tenants SET plan = 'growth' WHERE id = $1`, acmeID); err != nil {
 		t.Fatalf("upgrade Acme plan: %v", err)
 	}
+	invalidRecurrence := performProjectRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID,
+		`{"name":"Invalid recurrence","matcher_type":"all_pages","trigger_type":"exit_intent",`+
+			`"recurrence_mode":"session","recurrence_days":30}`, ownerToken,
+	)
+	if invalidRecurrence.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidRecurrence.Body.String(), `"recurrence_days"`) {
+		t.Errorf("recurrence validation status = %d, body = %s", invalidRecurrence.Code, invalidRecurrence.Body.String())
+	}
 	updatedRule := performProjectRequest(
 		handler, "acme", http.MethodPatch,
 		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID,
 		`{"name":"Checkout audio","matcher_type":"all_pages","trigger_type":"delay",`+
 			`"trigger_delay_seconds":3,"can_record_audio":true,"can_attach_screenshot":true,`+
-			`"replay_mode":"sampling","replay_sampling_rate":20}`, ownerToken,
+			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session"}`, ownerToken,
 	)
-	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) {
+	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"recurrence_mode":"session"`) ||
+		!strings.Contains(updatedRule.Body.String(), `"recurrence_days":null`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
 	}
 	listedRules := performProjectRequest(
