@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { AlertTriangle, ChevronRight, FolderKanban, Plus, X } from '@lucide/vue'
-import type { Project } from '~/types/api'
+import { AlertTriangle, ArrowUpRight, ChevronRight, FolderKanban, Plus, X } from '@lucide/vue'
+import type { Project, TenantConfiguration } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDate } from '~/utils/format'
 
@@ -14,15 +14,25 @@ const formError = ref('')
 
 const { data, status, error, refresh } = await useAsyncData(
   'projects-list',
-  () => $apiFetch<{ projects: Project[] }>('/v1/projects'),
+  async () => {
+    const [projects, configuration] = await Promise.all([
+      $apiFetch<{ projects: Project[] }>('/v1/projects'),
+      $apiFetch<TenantConfiguration>('/v1/config'),
+    ])
+    return { projects: projects.projects, configuration }
+  },
 )
+
+const projectLimit = computed(() => data.value?.configuration.plan.limits.projects ?? -1)
+const projectLimitReached = computed(() => projectLimit.value >= 0 && (data.value?.projects.length || 0) >= projectLimit.value)
+const projectUsage = computed(() => `${data.value?.projects.length || 0} of ${projectLimit.value} projects used`)
 
 function parsedDomains() {
   return domains.value.split(/[\n,]+/).map((domain) => domain.trim()).filter(Boolean)
 }
 
 async function createProject() {
-  if (!canWrite('project:create') || pending.value) return
+  if (!canWrite('project:create') || projectLimitReached.value || pending.value) return
   pending.value = true
   formError.value = ''
   try {
@@ -44,10 +54,10 @@ useHead({ title: 'Projects · Fidibeki' })
 
 <template>
   <div class="app-page projects-page">
-    <header class="app-page-head"><div><p class="app-eyebrow">Collection</p><h1>Projects</h1><span>Manage widget origins, rules, and public embed keys.</span></div><button v-if="canWrite('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></header>
+    <header class="app-page-head"><div><p class="app-eyebrow">Collection</p><h1>Projects</h1><span>Manage widget origins, rules, and public embed keys.</span></div><div v-if="canWrite('project:create') && data" class="project-create-action"><template v-if="projectLimitReached"><span>{{ projectUsage }}</span><NuxtLink class="app-button" to="/billing">Upgrade plan <ArrowUpRight :size="14" /></NuxtLink></template><button v-else class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></header>
     <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading projects</h2></div></section>
     <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Projects unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
-    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>No projects yet</h2><p>Create a project to receive a scoped public key and configure the feedback widget.</p><button v-if="canWrite('project:create')" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></section>
+    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>No projects yet</h2><p>Create a project to receive a scoped public key and configure the feedback widget.</p><button v-if="canWrite('project:create') && !projectLimitReached" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></section>
     <section v-else class="project-list app-surface">
       <header><span>Project</span><span>Allowed origins</span><span>Public key</span><span>Updated</span><span /></header>
       <NuxtLink v-for="project in data.projects" :key="project.id" :to="`/projects/${project.id}`">
@@ -66,6 +76,8 @@ useHead({ title: 'Projects · Fidibeki' })
 </template>
 
 <style scoped>
+.project-create-action { display: flex; align-items: center; gap: 10px; }
+.project-create-action > span { color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
 .project-list { overflow: hidden; }
 .project-list > header,
 .project-list > a { display: grid; min-height: 62px; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1fr) 90px 18px; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
@@ -87,5 +99,5 @@ useHead({ title: 'Projects · Fidibeki' })
 .app-modal label span { color: var(--muted); font-size: 9px; font-weight: 500; }
 .app-modal footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
 .project-form-error { padding: 9px 10px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; }
-@media (max-width: 850px) { .project-list > header { display: none; } .project-list > a { grid-template-columns: minmax(0, 1fr) 18px; padding: 10px 12px; } .project-list > a > span:not(.project-list-name), .project-list code, .project-list time { display: none; } }
+@media (max-width: 850px) { .project-create-action { align-items: flex-end; flex-direction: column; } .project-list > header { display: none; } .project-list > a { grid-template-columns: minmax(0, 1fr) 18px; padding: 10px 12px; } .project-list > a > span:not(.project-list-name), .project-list code, .project-list time { display: none; } }
 </style>

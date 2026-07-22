@@ -2,6 +2,7 @@
 import {
   AlertTriangle,
   Archive,
+  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -14,7 +15,7 @@ import {
   ShieldAlert,
 } from '@lucide/vue'
 import type { LocationQueryRaw } from 'vue-router'
-import type { FeedbackItem, FeedbackPage, FeedbackStatus, Project } from '~/types/api'
+import type { FeedbackItem, FeedbackPage, FeedbackStatus, Project, TenantConfiguration } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 
 const route = useRoute()
@@ -85,6 +86,11 @@ const { data: projectData } = await useAsyncData(
     ? $apiFetch<{ projects: Project[] }>('/v1/projects')
     : Promise.resolve({ projects: [] }),
 )
+const { data: configuration } = await useAsyncData(
+  'tenant-configuration',
+  () => $apiFetch<TenantConfiguration>('/v1/config'),
+)
+const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
 
 watch(data, (page) => {
   items.value = page?.feedbacks || []
@@ -185,7 +191,7 @@ async function updateStatus(ids: string[], nextStatus: FeedbackStatus) {
 }
 
 async function reprocess(ids: string[]) {
-  if (!canWrite('feedback:update') || !ids.length || mutationPending.value) return
+  if (!canWrite('feedback:update') || !aiEnabled.value || !ids.length || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -261,7 +267,8 @@ useHead({ title: 'Feedback · Fidibeki' })
       <div v-if="selectedIds.length && canWrite('feedback:update')" class="feedback-bulk-bar">
         <b>{{ selectedIds.length }} selected</b>
         <button type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'archived')"><Archive :size="14" /> Archive</button>
-        <button type="button" :disabled="mutationPending" @click="reprocess(selectedIds)"><RotateCcw :size="14" /> Reprocess AI</button>
+        <button v-if="aiEnabled" type="button" :disabled="mutationPending" @click="reprocess(selectedIds)"><RotateCcw :size="14" /> Reprocess AI</button>
+        <NuxtLink v-else-if="configuration" to="/billing">Upgrade for AI <ArrowUpRight :size="13" /></NuxtLink>
         <button class="danger" type="button" :disabled="mutationPending" @click="updateStatus(selectedIds, 'spam')"><ShieldAlert :size="14" /> Spam</button>
       </div>
 
@@ -323,6 +330,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-bulk-bar { display: flex; min-height: 45px; align-items: center; gap: 6px; padding: 6px 12px; background: #17342f; color: #fff; }
 .feedback-bulk-bar b { margin-right: auto; font-size: 11px; }
 .feedback-bulk-bar button { display: inline-flex; height: 31px; align-items: center; gap: 5px; padding: 0 8px; background: #274b44; color: #fff; border: 1px solid #42635d; border-radius: 4px; font-size: 10px; }
+.feedback-bulk-bar a { display: inline-flex; height: 31px; align-items: center; gap: 5px; padding: 0 8px; color: #fff; border: 1px solid #42635d; border-radius: 4px; font-size: 10px; font-weight: 700; text-decoration: none; }
 .feedback-bulk-bar button.danger { background: #64323a; border-color: #85505a; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }

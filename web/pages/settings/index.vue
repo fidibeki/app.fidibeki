@@ -27,7 +27,7 @@ import {
   type PermissionPreset,
 } from '~/data/permissions'
 import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate, formatMonthlyUSD, formatWholeNumber } from '~/utils/format'
+import { formatDate, formatMonthlyEuro, formatWholeNumber } from '~/utils/format'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -102,8 +102,18 @@ const availablePermissionGroups = computed(() => tenantPermissionGroups.map((gro
 
 const planPrice = computed(() => {
   const cents = data.value?.configuration.plan.monthly_price_cents
-  return formatMonthlyUSD(cents)
+  return formatMonthlyEuro(cents)
 })
+
+const featureLabels: Record<string, string> = {
+  ai: 'AI',
+  session_replay: 'Session Replay',
+  slack: 'Slack',
+  video: 'Video',
+  audio: 'Audio',
+  dom_capture: 'DOM Capture',
+  custom_domain: 'Custom Domain',
+}
 
 function applyPreset(target: 'member' | 'key', preset: PermissionPreset) {
   const allowed = new Set(currentMember.value?.permissions || [])
@@ -316,7 +326,7 @@ useHead({ title: 'Settings - Fidibeki' })
             <div><b>{{ data.configuration.plan.limits.users < 0 ? 'Unlimited' : data.configuration.plan.limits.users }}</b><span>Members</span></div>
           </div>
           <ul class="settings-features">
-            <li v-for="(enabled, feature) in data.configuration.plan.features" :key="feature" :data-enabled="enabled"><Check :size="13" />{{ String(feature).replaceAll('_', ' ') }}</li>
+            <li v-for="(enabled, feature) in data.configuration.plan.features" :key="feature" :data-enabled="enabled"><component :is="enabled ? Check : X" :size="13" />{{ featureLabels[String(feature)] || String(feature).replaceAll('_', ' ') }}</li>
           </ul>
         </div>
       </section>

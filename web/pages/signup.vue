@@ -2,7 +2,7 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, RefreshCw } from '@lucide/vue'
 import type { PlanCatalogResponse, SignupResponse, TenantPlan } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatWholeNumber } from '~/utils/format'
+import { formatEuro, formatWholeNumber } from '~/utils/format'
 import {
   baseDomainURL,
   normalizeWorkspaceSlug,
@@ -54,7 +54,7 @@ function planName(plan: TenantPlan) {
 
 function planPrice(cents?: number | null) {
   if (cents == null) return ''
-  return new Intl.NumberFormat('en', { style: 'currency', currency: 'EUR' }).format(cents / 100)
+  return formatEuro(cents)
 }
 
 function editSlug(event: Event) {

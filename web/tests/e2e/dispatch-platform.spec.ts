@@ -4,6 +4,20 @@ import { allTenantPermissions } from '../../data/permissions'
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
 
+const planCatalog = [{
+  plan: 'starter', monthly_price_cents: 499, yearly_discount_percent: 7,
+  limits: { projects: 1, feedback_per_month: 500, users: 1, storage_days: 30 },
+  features: { ai: false, session_replay: false, slack: false, video: false, audio: false, dom_capture: false, custom_domain: false },
+}, {
+  plan: 'growth', monthly_price_cents: 999, yearly_discount_percent: 14,
+  limits: { projects: 4, feedback_per_month: 2500, users: 3, storage_days: 90 },
+  features: { ai: true, session_replay: true, slack: false, video: false, audio: true, dom_capture: true, custom_domain: false },
+}, {
+  plan: 'scale', monthly_price_cents: 2799, yearly_discount_percent: 14,
+  limits: { projects: 10, feedback_per_month: 10000, users: 10, storage_days: 365 },
+  features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: false },
+}]
+
 type MockState = ReturnType<typeof createMockState>
 
 function createMockState() {
@@ -378,15 +392,10 @@ async function installMockAPI(page: Page, state: MockState) {
       return json(route, { issue })
     }
 
+    if (path === '/v1/plans' && method === 'GET') return json(route, { plans: planCatalog })
     if (path === '/v1/config' && method === 'GET') return json(route, {
       tenant: state.tenant,
-      plan: {
-        plan: state.tenant.plan,
-        monthly_price_cents: 999,
-        yearly_discount_percent: 15,
-        limits: { projects: 4, feedback_per_month: 5000, users: 3, storage_days: 90 },
-        features: { ai: true, session_replay: true, slack: true, video: false, audio: true, dom_capture: true, custom_domain: false },
-      },
+      plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
     })
     if (path === '/v1/members' && method === 'GET') return json(route, { members: [state.member] })
     if (path === '/auth/invite' && method === 'POST') return json(route, {}, 202)
@@ -532,6 +541,52 @@ test('project creation opens the new collection workspace', async ({ page }, tes
   await expect(page).toHaveURL(/\/projects\/project-2$/)
   await expect(page.getByText('Documentation', { exact: true }).first()).toBeVisible()
   expect(state.projects).toHaveLength(2)
+})
+
+test('starter plan exposes exhausted project capacity before form entry', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.tenant.plan = 'starter'
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+
+  await expect(page.getByRole('button', { name: 'New project' })).toHaveCount(0)
+  await expect(page.getByText('1 of 1 projects used')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Upgrade plan' })).toHaveAttribute('href', '/billing')
+  await capture(page, testInfo, 'starter-project-limit')
+})
+
+test('starter plan shows unavailable features and euro-denominated prices', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.tenant.plan = 'starter'
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+
+  await expect(page.getByText('€4.99/month')).toBeVisible()
+  const aiFeature = page.locator('.settings-features li').filter({ hasText: /^ai$/i })
+  await expect(aiFeature.locator('svg')).toHaveClass(/lucide-x/)
+  await expect(page.locator('.settings-features .lucide-check')).toHaveCount(0)
+  await capture(page, testInfo, 'starter-entitlements')
+
+  await page.getByRole('link', { name: 'Manage billing' }).click()
+  await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible()
+  await expect(page.locator('.billing-plan').filter({ hasText: 'Starter' })).toContainText('€4.99')
+  await expect(page.locator('.billing-plans')).not.toContainText('$')
+  await capture(page, testInfo, 'billing-euro-catalog')
+})
+
+test('starter feedback without evidence does not offer invalid AI reprocessing', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.tenant.plan = 'starter'
+  state.feedback.splice(0, 1)
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  if (testInfo.project.name === 'mobile') await page.getByRole('link', { name: 'Open FB-1047' }).click()
+  else await page.getByTitle('Open full detail').click()
+
+  await expect(page.getByText('No media was attached to this feedback.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reprocess all' })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Upgrade for AI' })).toHaveAttribute('href', '/billing')
+  await capture(page, testInfo, 'starter-empty-evidence')
 })
 
 test('widget rule save enforces browser validation before sending an update', async ({ page }, testInfo) => {
@@ -684,6 +739,7 @@ test('terminal replay failures are shown as unavailable', async ({ page }, testI
   await authenticate(page, state)
   await openPrimary(page, 'Feedback')
   await page.getByTitle('Open full detail').click()
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
   await page.getByRole('button', { name: 'Replay', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: 'Session replay unavailable' })).toBeVisible()

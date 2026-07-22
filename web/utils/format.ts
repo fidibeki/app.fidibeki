@@ -1,13 +1,19 @@
 const productLocale = 'en-US'
 const productTimeZone = 'UTC'
 
-export function formatMonthlyUSD(cents: number | null | undefined): string {
+export function formatEuro(cents: number | null | undefined): string {
   if (cents == null) return 'Managed contract'
   return new Intl.NumberFormat(productLocale, {
     style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(cents / 100) + '/month'
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(cents / 100)
+}
+
+export function formatMonthlyEuro(cents: number | null | undefined): string {
+  const price = formatEuro(cents)
+  return cents == null ? price : `${price}/month`
 }
 
 export function formatWholeNumber(value: number): string {

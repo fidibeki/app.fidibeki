@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  ArrowUpRight,
   Camera,
   CheckCircle2,
   ExternalLink,
@@ -13,7 +14,7 @@ import {
   ShieldAlert,
   Video,
 } from '@lucide/vue'
-import type { FeedbackDetail, FeedbackStatus } from '~/types/api'
+import type { FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 
@@ -28,17 +29,29 @@ const notice = ref('')
 
 const { data, status, error, refresh } = await useAsyncData(
   () => `feedback-detail:${feedbackID.value}`,
-  () => $apiFetch<{ feedback: FeedbackDetail }>(`/v1/feedbacks/${feedbackID.value}`),
+  async () => {
+    const [feedbackResponse, configuration] = await Promise.all([
+      $apiFetch<{ feedback: FeedbackDetail }>(`/v1/feedbacks/${feedbackID.value}`),
+      $apiFetch<TenantConfiguration>('/v1/config'),
+    ])
+    return { feedback: feedbackResponse.feedback, configuration }
+  },
   { watch: [feedbackID] },
 )
 
 const feedback = computed(() => data.value?.feedback)
+const configuration = computed(() => data.value?.configuration)
 const copy = computed(() => feedback.value?.text_cleaned || feedback.value?.text || 'Feedback without written detail')
 const transcript = computed(() => feedback.value?.attachments.find((item) => item.transcription)?.transcription)
 const retryableAttachments = computed(() => feedback.value?.attachments.filter((item) => (
   item.processing_status === 'failed' && Boolean(item.completed_at)
 )) || [])
 const replayStatus = computed(() => feedback.value?.session?.status || 'processing')
+const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
+const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some((item) => (
+  item.kind !== 'replay' && Boolean(item.completed_at)
+)) === true)
+const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.value && hasReprocessableEvidence.value)
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 
 const safeDOMSnapshot = computed(() => {
@@ -66,7 +79,7 @@ async function updateStatus(nextStatus: FeedbackStatus) {
 }
 
 async function reprocessAll() {
-  if (!canWrite('feedback:update') || !feedback.value || mutationPending.value) return
+  if (!canReprocessAll.value || !feedback.value || mutationPending.value) return
   mutationPending.value = true
   mutationError.value = ''
   try {
@@ -140,13 +153,13 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
         <main class="feedback-detail-canvas">
           <template v-if="tab === 'evidence'">
             <section class="feedback-evidence-section">
-              <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><button v-if="canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
+              <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">Upgrade for AI <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
                   <div><b>{{ attachmentItem.kind }}</b><span>{{ attachmentItem.content_type }} · {{ (attachmentItem.size_bytes / 1024).toFixed(1) }} KB</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentItem.error_message }}</p></div>
                   <span class="status-pill" :class="`status-${attachmentItem.processing_status}`">{{ attachmentItem.processing_status }}</span>
-                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update')" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
+                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
                 </article>
               </div>
               <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>No media was attached to this feedback.</p></div>

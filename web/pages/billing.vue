@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowUpRight, Check, Clock3, CreditCard, ShieldAlert, Trash2, X } from '@lucide/vue'
-import type { BillingSummary, TenantPlan } from '~/types/api'
+import type { BillingSummary, PlanCatalogResponse, PlanDefinition, TenantPlan } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate, formatDateTime } from '~/utils/format'
+import { formatDate, formatDateTime, formatEuro } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch, $refreshSession } = useNuxtApp()
@@ -12,19 +12,27 @@ const actionError = ref('')
 const deleteOpen = ref(false)
 const confirmation = ref('')
 
-const plans: Array<{ id: TenantPlan, price: string, label: string }> = [
-  { id: 'starter', price: '$4.99', label: 'Starter' },
-  { id: 'growth', price: '$9.99', label: 'Growth' },
-  { id: 'scale', price: '$27.99', label: 'Scale' },
-  { id: 'enterprise', price: 'Custom', label: 'Enterprise' },
-]
+const enterprisePlan: PlanDefinition = {
+  plan: 'enterprise',
+  monthly_price_cents: null,
+  yearly_discount_percent: null,
+  limits: { projects: -1, feedback_per_month: -1, users: -1, storage_days: -1 },
+  features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: true },
+}
 
 const { data, status, error, refresh } = await useAsyncData(
   'billing-summary',
-  () => $apiFetch<{ billing: BillingSummary }>('/v1/billing'),
+  async () => {
+    const [billingResponse, catalog] = await Promise.all([
+      $apiFetch<{ billing: BillingSummary }>('/v1/billing'),
+      $apiFetch<PlanCatalogResponse>('/v1/plans', { auth: false, retryAuth: false }),
+    ])
+    return { billing: billingResponse.billing, plans: [...catalog.plans, enterprisePlan] }
+  },
 )
 
 const billing = computed(() => data.value?.billing)
+const plans = computed(() => data.value?.plans || [])
 const trialDays = computed(() => {
   if (!billing.value?.trial_ends_at) return null
   return Math.max(0, Math.ceil((new Date(billing.value.trial_ends_at).getTime() - Date.now()) / 86_400_000))
@@ -33,6 +41,14 @@ const deletionDate = computed(() => {
   if (!billing.value?.deletion_requested_at) return null
   return new Date(new Date(billing.value.deletion_requested_at).getTime() + 7 * 86_400_000)
 })
+
+function planLabel(plan: TenantPlan) {
+  return plan.charAt(0).toUpperCase() + plan.slice(1)
+}
+
+function planLimit(value: number) {
+  return value < 0 ? 'Custom' : String(value)
+}
 
 async function checkout(plan: TenantPlan) {
   if (!canWrite('billing:manage')) return
@@ -130,23 +146,23 @@ useHead({ title: 'Billing - Fidibeki' })
       </section>
 
       <section class="billing-plans">
-        <article v-for="plan in plans" :key="plan.id" class="billing-plan app-surface" :data-current="billing.plan === plan.id">
-          <header><span v-if="billing.plan === plan.id">Current</span><p>{{ plan.label }}</p><h2>{{ plan.price }}<small v-if="plan.id !== 'enterprise'"> / month</small></h2></header>
+        <article v-for="plan in plans" :key="plan.plan" class="billing-plan app-surface" :data-current="billing.plan === plan.plan">
+          <header><span v-if="billing.plan === plan.plan">Current</span><p>{{ planLabel(plan.plan) }}</p><h2>{{ plan.monthly_price_cents == null ? 'Custom' : formatEuro(plan.monthly_price_cents) }}<small v-if="plan.plan !== 'enterprise'"> / month</small></h2></header>
           <dl>
-            <div><dt>Projects</dt><dd>{{ plan.id === 'starter' ? '1' : plan.id === 'growth' ? '4' : plan.id === 'scale' ? '10' : 'Custom' }}</dd></div>
-            <div><dt>Members</dt><dd>{{ plan.id === 'starter' ? '1' : plan.id === 'growth' ? '3' : plan.id === 'scale' ? '10' : 'Custom' }}</dd></div>
-            <div><dt>AI and replay</dt><dd>{{ plan.id === 'starter' ? 'No' : 'Included' }}</dd></div>
+            <div><dt>Projects</dt><dd>{{ planLimit(plan.limits.projects) }}</dd></div>
+            <div><dt>Members</dt><dd>{{ planLimit(plan.limits.users) }}</dd></div>
+            <div><dt>AI and replay</dt><dd>{{ plan.features.ai && plan.features.session_replay ? 'Included' : 'No' }}</dd></div>
           </dl>
           <button
-            v-if="canWrite('billing:manage') && billing.plan !== plan.id"
+            v-if="canWrite('billing:manage') && billing.plan !== plan.plan"
             class="app-button"
-            :class="{ 'app-button--primary': plan.id === 'growth' }"
+            :class="{ 'app-button--primary': plan.plan === 'growth' }"
             :disabled="Boolean(pendingAction) || Boolean(billing.deletion_requested_at)"
-            @click="billing.has_subscription && plan.id !== 'enterprise' ? openPortal() : checkout(plan.id)"
+            @click="billing.has_subscription && plan.plan !== 'enterprise' ? openPortal() : checkout(plan.plan)"
           >
-            {{ pendingAction === `checkout:${plan.id}` ? 'Opening...' : plan.id === 'enterprise' ? 'Contact sales' : billing.has_subscription ? 'Change in portal' : 'Choose plan' }}
+            {{ pendingAction === `checkout:${plan.plan}` ? 'Opening...' : plan.plan === 'enterprise' ? 'Contact sales' : billing.has_subscription ? 'Change in portal' : 'Choose plan' }}
           </button>
-          <span v-else-if="billing.plan === plan.id" class="billing-current"><Check :size="14" /> Active plan</span>
+          <span v-else-if="billing.plan === plan.plan" class="billing-current"><Check :size="14" /> Active plan</span>
         </article>
       </section>
 
