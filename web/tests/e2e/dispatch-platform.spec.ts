@@ -150,6 +150,7 @@ function createMockState() {
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
     billingDeletionRequestedAt: null as string | null,
+    failedReplayFeedbackIDs: new Set<string>(),
   }
 }
 
@@ -165,6 +166,7 @@ function authResponse(state: MockState) {
 
 function feedbackDetail(state: MockState, id: string) {
   const item = state.feedback.find(candidate => candidate.id === id) || state.feedback[0]
+  const replayFailed = state.failedReplayFeedbackIDs.has(id)
   return {
     ...item,
     dom_snapshot_html: undefined,
@@ -196,14 +198,16 @@ function feedbackDetail(state: MockState, id: string) {
     }] : [],
     session: id === 'feedback-1' ? {
       id: 'session-1',
+      status: replayFailed ? 'failed' : 'ready',
       page_url: item.page_url,
       started_at: '2026-07-21T09:58:00.000Z',
       ended_at: '2026-07-21T10:00:00.000Z',
-      events_count: 3,
-      batches_count: 1,
+      events_count: replayFailed ? 0 : 3,
+      batches_count: replayFailed ? 0 : 1,
       rrweb_version: '2.0',
-      replay_ready: true,
-      replay_url: '/v1/sessions/session-1/replay',
+      replay_ready: !replayFailed,
+      replay_url: replayFailed ? undefined : '/v1/sessions/session-1/replay',
+      merge_error: replayFailed ? 'No replay events were uploaded before the recording ended.' : undefined,
     } : undefined,
     ai_processed_at: now,
   }
@@ -640,6 +644,20 @@ test('expired uploads are not offered an AI processing retry', async ({ page }, 
   await page.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect(page.getByRole('status')).toHaveText('Attachment retry queued.')
   expect(retryRequests).toEqual(['/v1/attachments/attachment-1/retry'])
+})
+
+test('terminal replay failures are shown as unavailable', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Replay terminal-state behavior is viewport independent')
+  const state = createMockState()
+  state.failedReplayFeedbackIDs.add('feedback-1')
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await page.getByTitle('Open full detail').click()
+  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'Session replay unavailable' })).toBeVisible()
+  await expect(page.getByText('No replay events were uploaded before the recording ended.')).toBeVisible()
+  await expect(page.locator('.feedback-replay-surface .status-pill')).toHaveText('failed')
 })
 
 test('feedback queue links apply their filters without a document reload', async ({ page }, testInfo) => {

@@ -149,6 +149,7 @@ type AttachmentObject struct {
 
 type SessionDetail struct {
 	ID           string     `json:"id"`
+	Status       string     `json:"status"`
 	PageURL      *string    `json:"page_url,omitempty"`
 	StartedAt    time.Time  `json:"started_at"`
 	EndedAt      *time.Time `json:"ended_at,omitempty"`

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
+
+var ErrObjectNotFound = errors.New("storage object not found")
 
 type Config struct {
 	Endpoint         string
@@ -98,6 +101,9 @@ func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration)
 func (s *Storage) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
+		if minio.ToErrorResponse(err).Code == minio.NoSuchKey {
+			return ObjectInfo{}, fmt.Errorf("stat S3 object: %w (%v)", ErrObjectNotFound, err)
+		}
 		return ObjectInfo{}, fmt.Errorf("stat S3 object: %w", err)
 	}
 	return ObjectInfo{Size: info.Size, ContentType: info.ContentType}, nil

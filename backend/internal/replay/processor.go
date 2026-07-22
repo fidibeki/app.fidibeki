@@ -45,12 +45,14 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 		if session.MergedAt == nil {
 			completedBatches, recoverErr := p.recoverUploadedBatches(ctx, session, batches)
 			if recoverErr != nil {
-				return recoverErr
+				markErr := p.Store.MarkMergeFailed(ctx, session.ID, recoverErr.Error())
+				return errors.Join(recoverErr, markErr)
 			}
 			if len(completedBatches) == 0 {
-				err = errors.New("replay merge has no completed batches")
-				_ = p.Store.MarkMergeFailed(ctx, session.ID, err.Error())
-				return err
+				if err := p.Store.MarkUnavailable(ctx, session.ID); err != nil {
+					return err
+				}
+				return fmt.Errorf("replay unavailable: %w", asynq.SkipRetry)
 			}
 			key := fmt.Sprintf("tenants/%s/sessions/%s/replay.json", session.TenantID, session.ID)
 			eventsCount, mergeErr := p.mergeBatches(ctx, key, completedBatches)
@@ -87,7 +89,13 @@ func (p Processor) recoverUploadedBatches(
 			continue
 		}
 		object, err := p.Storage.Stat(ctx, batch.StorageKey)
-		if err != nil || object.Size != batch.SizeBytes ||
+		if errors.Is(err, storage.ErrObjectNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("stat replay batch %d: %w", batch.Index, err)
+		}
+		if object.Size != batch.SizeBytes ||
 			normalizeReplayContentType(object.ContentType) != batch.ContentType {
 			continue
 		}

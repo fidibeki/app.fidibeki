@@ -233,3 +233,32 @@ different attachments, then proves the final feedback completion is recorded. Ba
 coverage enforcement, migration tests, web unit tests, typecheck, production build, and the full browser
 suite pass. The second review's focused index finding was fixed and revalidated without starting a third
 review round.
+
+---
+
+# Abandoned Replay Recovery Review
+
+**Artifact**: Terminal replay recovery, merge retry bounds, migration, and feedback-detail UI
+**Date**: 2026-07-22
+**Rounds**: 2
+
+## Verdict: FIXED
+
+## Issues Found
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | major | 10/10 | Transient storage failures were treated as missing objects and could permanently discard recoverable replay data. | Fixed |
+| 2 | major | 8/10 | Redeclaring an incomplete batch did not refresh recovery activity, so a valid renewed upload could be terminalized. | Fixed |
+
+## Changes Made
+Abandoned zero-batch sessions now become explicitly unavailable, while incomplete uploads receive one
+storage recovery pass before terminalization. Typed object absence is distinguished from retryable
+storage failures, which increment bounded merge attempts. Batch declarations refresh upload activity,
+preventing a renewed upload URL from being expired during its validity window. Terminal sessions are
+excluded from reconciliation and exposed consistently through the API and feedback UI.
+
+## Verification
+PostgreSQL regressions cover zero-batch and incomplete-only abandonment, renewed upload activity,
+transient storage errors, bounded terminal state, and late completion rejection. The MinIO integration
+test verifies typed absence. Backend tests, vet, coverage enforcement, web unit tests, typecheck,
+production build, and the full browser suite pass. The final independent review passed.

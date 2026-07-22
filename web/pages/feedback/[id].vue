@@ -38,6 +38,7 @@ const transcript = computed(() => feedback.value?.attachments.find((item) => ite
 const retryableAttachments = computed(() => feedback.value?.attachments.filter((item) => (
   item.processing_status === 'failed' && Boolean(item.completed_at)
 )) || [])
+const replayStatus = computed(() => feedback.value?.session?.status || 'processing')
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 
 const safeDOMSnapshot = computed(() => {
@@ -161,9 +162,9 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 
           <template v-else-if="tab === 'replay'">
             <section v-if="feedback.session" class="feedback-replay-surface">
-              <header><div><h2>Session replay</h2><p>{{ feedback.session.events_count }} events · rrweb {{ feedback.session.rrweb_version }}</p></div><span class="status-pill" :class="feedback.session.replay_ready ? 'status-completed' : 'status-processing'">{{ feedback.session.replay_ready ? 'ready' : 'processing' }}</span></header>
+              <header><div><h2>Session replay</h2><p>{{ feedback.session.events_count }} events · rrweb {{ feedback.session.rrweb_version }}</p></div><span class="status-pill" :class="replayStatus === 'ready' ? 'status-completed' : `status-${replayStatus === 'recording' ? 'processing' : replayStatus}`">{{ replayStatus }}</span></header>
               <ReplayPlayer v-if="feedback.session.replay_ready && feedback.session.replay_url" :url="feedback.session.replay_url" :viewport-width="feedback.viewport_width" :viewport-height="feedback.viewport_height" />
-              <div v-else class="feedback-replay-placeholder"><MonitorPlay :size="34" /><h3>Replay is still processing</h3><p>{{ feedback.session.merge_error || 'The replay will appear after its batches are merged.' }}</p></div>
+              <div v-else class="feedback-replay-placeholder"><MonitorPlay :size="34" /><h3>{{ replayStatus === 'failed' ? 'Session replay unavailable' : 'Replay is still processing' }}</h3><p>{{ feedback.session.merge_error || 'The replay will appear after its batches are merged.' }}</p></div>
             </section>
             <section v-else class="feedback-evidence-empty"><MonitorPlay :size="28" /><h2>No session replay</h2><p>This feedback was captured without replay enabled.</p></section>
           </template>

@@ -167,6 +167,7 @@ export interface FeedbackAttachment {
 
 export interface FeedbackSession {
   id: string
+  status: 'recording' | 'processing' | 'ready' | 'failed'
   page_url?: string
   started_at: string
   ended_at?: string

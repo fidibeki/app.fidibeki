@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -111,8 +112,8 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	if err := client.RemoveObject(ctx, "tenants/test/attachment.webm"); err != nil {
 		t.Fatalf("remove uploaded object: %v", err)
 	}
-	if _, err := client.Stat(ctx, "tenants/test/attachment.webm"); err == nil {
-		t.Fatal("removed upload still exists")
+	if _, err := client.Stat(ctx, "tenants/test/attachment.webm"); !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Fatalf("removed upload stat error = %v, want ErrObjectNotFound", err)
 	}
 	if err := client.RemovePrefix(ctx, "tenants/test/cleanup/"); err != nil {
 		t.Fatalf("remove prefix: %v", err)

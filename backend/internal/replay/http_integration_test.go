@@ -99,7 +99,9 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	t.Cleanup(pools.Close)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	storageClient := &replayStorageStub{objects: map[string][]byte{}, contentTypes: map[string]string{}}
+	storageClient := &replayStorageStub{
+		objects: map[string][]byte{}, contentTypes: map[string]string{}, statErrors: map[string]error{},
+	}
 	mergeQueue := &replayMergeQueueStub{}
 	scheduler := Scheduler{
 		Store: Store{Database: pools.Admin}, Queue: mergeQueue, Now: func() time.Time { return now },
@@ -395,7 +397,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("delete expired session: %v", err)
 	}
 
-	var abandonedSessionID, activeSessionID string
+	var abandonedSessionID, activeSessionID, renewedSessionID, emptySessionID, incompleteSessionID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, session_id, started_at, events_count, batches_count,
@@ -414,42 +416,151 @@ func TestReplayHTTPFlow(t *testing.T) {
 	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&activeSessionID); err != nil {
 		t.Fatalf("create active replay: %v", err)
 	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at, events_count, batches_count,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&renewedSessionID); err != nil {
+		t.Fatalf("create renewed replay: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&emptySessionID); err != nil {
+		t.Fatalf("create empty abandoned replay: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&incompleteSessionID); err != nil {
+		t.Fatalf("create incomplete abandoned replay: %v", err)
+	}
 	abandonedCompletedKey := "abandoned/completed.json"
 	abandonedIncompleteKey := "abandoned/incomplete.json"
 	activeKey := "active/completed.json"
+	renewedKey := "active/renewed.json"
+	missingIncompleteKey := "abandoned/missing.json"
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, complete_token_hash, completed_at, created_at
+			events_count, size_bytes, complete_token_hash, completed_at, created_at, upload_refreshed_at
 		) VALUES
-			($1, $2, $3, 0, $4, 1, 4, NULL, $5, $5),
-			($1, $2, $3, 1, $6, 1, 4, 'hash', NULL, $5),
-			($1, $2, $7, 0, $8, 1, 4, NULL, $9, $9)
+			($1, $2, $3, 0, $4, 1, 4, NULL, $5, $5, $5),
+			($1, $2, $3, 1, $6, 1, 4, 'hash', NULL, $5, $5),
+			($1, $2, $7, 0, $8, 1, 4, NULL, $9, $9, $9),
+			($1, $2, $10, 0, $11, 1, 4, 'hash', NULL, $5, $5)
 	`, tenantID, projectID, abandonedSessionID, abandonedCompletedKey,
 		now.Add(-16*time.Minute), abandonedIncompleteKey, activeSessionID, activeKey,
-		now.Add(-time.Minute)); err != nil {
+		now.Add(-time.Minute), incompleteSessionID, missingIncompleteKey); err != nil {
 		t.Fatalf("create replay recovery batches: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, complete_token_hash, created_at, upload_refreshed_at
+		) VALUES ($1, $2, $3, 0, $4, 1, 4, 'old-hash', $5, $5)
+	`, tenantID, projectID, renewedSessionID, renewedKey, now.Add(-16*time.Minute)); err != nil {
+		t.Fatalf("create renewed replay batch: %v", err)
+	}
+	if _, _, err := (Store{}).DeclareBatch(
+		ctx, root, tenantID, projectID, renewedSessionID, 0, 1, 4, now.Add(-time.Minute),
+	); err != nil {
+		t.Fatalf("renew replay batch: %v", err)
 	}
 	queuedBeforeRecovery := len(mergeQueue.sessionIDs)
 	if err := scheduler.ReconcileOnce(ctx); err != nil {
 		t.Fatalf("recover abandoned replay: %v", err)
 	}
-	if got := mergeQueue.sessionIDs[queuedBeforeRecovery:]; len(got) != 1 || got[0] != abandonedSessionID {
-		t.Fatalf("recovered replay queue = %#v, want %q", got, abandonedSessionID)
+	got := mergeQueue.sessionIDs[queuedBeforeRecovery:]
+	queued := make(map[string]bool, len(got))
+	for _, sessionID := range got {
+		queued[sessionID] = true
 	}
-	var abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt *time.Time
+	if len(got) != 2 || !queued[abandonedSessionID] || !queued[incompleteSessionID] {
+		t.Fatalf("recovered replay queue = %#v", got)
+	}
+	var abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt, renewedEndedAt *time.Time
+	var emptyEndedAt, emptyMergeRequestedAt, incompleteEndedAt, incompleteMergeRequestedAt *time.Time
+	var emptyMergeError *string
+	var emptyMergeAttempts int
 	if err := root.QueryRow(ctx, `
-		SELECT abandoned.ended_at, abandoned.merge_requested_at, active.ended_at
+		SELECT abandoned.ended_at, abandoned.merge_requested_at, active.ended_at, renewed.ended_at,
+		       empty.ended_at, empty.merge_requested_at, empty.merge_error, empty.merge_attempts,
+		       incomplete.ended_at, incomplete.merge_requested_at
 		FROM sessions AS abandoned
 		JOIN sessions AS active ON active.id = $2
+		JOIN sessions AS renewed ON renewed.id = $3
+		JOIN sessions AS empty ON empty.id = $4
+		JOIN sessions AS incomplete ON incomplete.id = $5
 		WHERE abandoned.id = $1
-	`, abandonedSessionID, activeSessionID).Scan(
-		&abandonedEndedAt, &abandonedMergeRequestedAt, &activeEndedAt,
+	`, abandonedSessionID, activeSessionID, renewedSessionID, emptySessionID, incompleteSessionID).Scan(
+		&abandonedEndedAt, &abandonedMergeRequestedAt, &activeEndedAt, &renewedEndedAt,
+		&emptyEndedAt, &emptyMergeRequestedAt, &emptyMergeError, &emptyMergeAttempts,
+		&incompleteEndedAt, &incompleteMergeRequestedAt,
 	); err != nil {
 		t.Fatalf("read recovered replay state: %v", err)
 	}
-	if abandonedEndedAt == nil || abandonedMergeRequestedAt == nil || activeEndedAt != nil {
-		t.Errorf("recovered/active replay state = %v/%v/%v", abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt)
+	if abandonedEndedAt == nil || abandonedMergeRequestedAt == nil || activeEndedAt != nil || renewedEndedAt != nil ||
+		emptyEndedAt == nil || emptyMergeRequestedAt != nil || emptyMergeError == nil ||
+		*emptyMergeError != unavailableReplayMessage || emptyMergeAttempts != terminalMergeAttempts ||
+		incompleteEndedAt == nil || incompleteMergeRequestedAt == nil {
+		t.Errorf("recovered replay state = abandoned %v/%v active %v renewed %v empty %v/%v/%v/%d incomplete %v/%v",
+			abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt, renewedEndedAt, emptyEndedAt,
+			emptyMergeRequestedAt, emptyMergeError, emptyMergeAttempts,
+			incompleteEndedAt, incompleteMergeRequestedAt)
+	}
+	if _, err := (Store{}).LockBatch(
+		ctx, root, tenantID, projectID, incompleteSessionID, 0,
+	); !errors.Is(err, ErrSessionFinalized) {
+		t.Errorf("LockBatch(terminal replay) error = %v, want ErrSessionFinalized", err)
+	}
+	incompleteTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, incompleteSessionID)))
+	storageFailure := errors.New("storage unavailable")
+	storageClient.statErrors[missingIncompleteKey] = storageFailure
+	if err := processor.MergeHandler()(ctx, incompleteTask); !errors.Is(err, storageFailure) || errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("transient replay recovery error = %v, want retryable storage failure", err)
+	}
+	var retryMergeError *string
+	var retryMergeAttempts int
+	if err := root.QueryRow(ctx, `
+		SELECT merge_error, merge_attempts FROM sessions WHERE id = $1
+	`, incompleteSessionID).Scan(&retryMergeError, &retryMergeAttempts); err != nil {
+		t.Fatalf("read retryable replay state: %v", err)
+	}
+	if retryMergeError == nil || !strings.Contains(*retryMergeError, storageFailure.Error()) || retryMergeAttempts != 1 {
+		t.Fatalf("retryable replay state = %v/%d", retryMergeError, retryMergeAttempts)
+	}
+	delete(storageClient.statErrors, missingIncompleteKey)
+	if err := processor.MergeHandler()(ctx, incompleteTask); !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("unavailable replay merge error = %v, want SkipRetry", err)
+	}
+	var incompleteMergeError *string
+	var incompleteMergeAttempts int
+	if err := root.QueryRow(ctx, `
+		SELECT merge_error, merge_attempts FROM sessions WHERE id = $1
+	`, incompleteSessionID).Scan(&incompleteMergeError, &incompleteMergeAttempts); err != nil {
+		t.Fatalf("read unavailable replay state: %v", err)
+	}
+	if incompleteMergeError == nil || *incompleteMergeError != unavailableReplayMessage ||
+		incompleteMergeAttempts != terminalMergeAttempts {
+		t.Errorf("unavailable replay state = %v/%d", incompleteMergeError, incompleteMergeAttempts)
+	}
+	pendingAfterTerminal, err := retentionStore.PendingMerges(ctx, 100, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("list pending merges after terminal replay: %v", err)
+	}
+	for _, pending := range pendingAfterTerminal {
+		if pending.ID == incompleteSessionID {
+			t.Errorf("terminal replay remained pending: %#v", pending)
+		}
 	}
 	storageClient.objects[abandonedCompletedKey] = []byte(`[{}]`)
 	storageClient.contentTypes[abandonedCompletedKey] = "application/json"
@@ -543,8 +654,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("run canceled merge reconciler: %v", err)
 	}
 	pendingTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, pendingSessionID)))
-	if err := processor.MergeHandler()(ctx, pendingTask); err == nil ||
-		!strings.Contains(err.Error(), "no completed batches") {
+	if err := processor.MergeHandler()(ctx, pendingTask); !errors.Is(err, asynq.SkipRetry) ||
+		!strings.Contains(err.Error(), "replay unavailable") {
 		t.Errorf("empty merge task error = %v", err)
 	}
 	if err := retentionStore.MarkMergeFailed(ctx, pendingSessionID, strings.Repeat("x", 2100)); err != nil {
@@ -575,6 +686,7 @@ type replayStorageStub struct {
 	presignedKeys []string
 	removedKeys   []string
 	removeErrors  map[string]error
+	statErrors    map[string]error
 }
 
 func (s *replayStorageStub) PresignPut(_ context.Context, key string, _ time.Duration) (string, error) {
@@ -583,9 +695,12 @@ func (s *replayStorageStub) PresignPut(_ context.Context, key string, _ time.Dur
 }
 
 func (s *replayStorageStub) Stat(_ context.Context, key string) (storage.ObjectInfo, error) {
+	if err := s.statErrors[key]; err != nil {
+		return storage.ObjectInfo{}, err
+	}
 	value, exists := s.objects[key]
 	if !exists {
-		return storage.ObjectInfo{}, fmt.Errorf("object %q not found", key)
+		return storage.ObjectInfo{}, fmt.Errorf("object %q: %w", key, storage.ErrObjectNotFound)
 	}
 	return storage.ObjectInfo{Size: int64(len(value)), ContentType: s.contentTypes[key]}, nil
 }

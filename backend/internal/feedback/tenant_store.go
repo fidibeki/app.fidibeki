@@ -481,12 +481,18 @@ func getTenantSession(
 	var mergedAt *time.Time
 	err := query.QueryRow(ctx, `
 		SELECT id, page_url, started_at, ended_at, events_count, batches_count,
-		       rrweb_version, merged_at, merge_error
+		       rrweb_version, merged_at, merge_error,
+		       CASE
+		           WHEN merged_at IS NOT NULL THEN 'ready'
+		           WHEN merge_error IS NOT NULL AND merge_attempts >= 12 THEN 'failed'
+		           WHEN ended_at IS NOT NULL THEN 'processing'
+		           ELSE 'recording'
+		       END
 		FROM sessions WHERE tenant_id = $1 AND id = $2
 	`, tenantID, sessionID).Scan(
 		&session.ID, &session.PageURL, &session.StartedAt, &session.EndedAt,
 		&session.EventsCount, &session.BatchesCount, &session.RRWebVersion,
-		&mergedAt, &session.MergeError,
+		&mergedAt, &session.MergeError, &session.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionDetail{}, ErrNotFound
@@ -494,6 +500,6 @@ func getTenantSession(
 	if err != nil {
 		return SessionDetail{}, fmt.Errorf("get tenant feedback session: %w", err)
 	}
-	session.ReplayReady = mergedAt != nil
+	session.ReplayReady = session.Status == "ready"
 	return session, nil
 }

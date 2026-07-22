@@ -176,7 +176,7 @@ func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
 	}()
 	batch, token, err := h.options.Store.DeclareBatch(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID,
-		request.BatchIndex, request.EventsCount, request.SizeBytes,
+		request.BatchIndex, request.EventsCount, request.SizeBytes, h.now(),
 	)
 	if err != nil {
 		h.writeDomainError(w, r, err)

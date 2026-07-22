@@ -124,6 +124,7 @@ func (Store) DeclareBatch(
 	batchIndex int,
 	eventsCount int,
 	sizeBytes int64,
+	now time.Time,
 ) (Batch, string, error) {
 	var endedAt *time.Time
 	var maxEvents int
@@ -160,17 +161,18 @@ func (Store) DeclareBatch(
 	err = query.QueryRow(ctx, `
 		INSERT INTO session_batches (
 			id, tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, content_type, complete_token_hash
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'application/json', $9)
+			events_count, size_bytes, content_type, complete_token_hash, upload_refreshed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'application/json', $9, $10)
 		ON CONFLICT (session_id, batch_index) DO UPDATE
 		SET events_count = EXCLUDED.events_count,
 		    size_bytes = EXCLUDED.size_bytes,
-		    complete_token_hash = EXCLUDED.complete_token_hash
+		    complete_token_hash = EXCLUDED.complete_token_hash,
+		    upload_refreshed_at = EXCLUDED.upload_refreshed_at
 		WHERE session_batches.completed_at IS NULL
 		RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
 		          events_count, size_bytes, content_type, complete_token_hash, completed_at
 	`, uuid.NewString(), tenantID, projectID, sessionID, batchIndex, key,
-		eventsCount, sizeBytes, tokenHash).Scan(
+		eventsCount, sizeBytes, tokenHash, now.UTC()).Scan(
 		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
 		&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
 		&batch.CompleteTokenHash, &batch.CompletedAt,
@@ -193,22 +195,29 @@ func (Store) LockBatch(
 	batchIndex int,
 ) (Batch, error) {
 	var batch Batch
+	var endedAt *time.Time
 	err := query.QueryRow(ctx, `
-		SELECT id, tenant_id, project_id, session_id, batch_index, storage_key,
-		       events_count, size_bytes, content_type, complete_token_hash, completed_at
-		FROM session_batches
-		WHERE tenant_id = $1 AND project_id = $2 AND session_id = $3 AND batch_index = $4
-		FOR UPDATE
+		SELECT batch.id, batch.tenant_id, batch.project_id, batch.session_id,
+		       batch.batch_index, batch.storage_key, batch.events_count, batch.size_bytes,
+		       batch.content_type, batch.complete_token_hash, batch.completed_at, session.ended_at
+		FROM session_batches AS batch
+		JOIN sessions AS session ON session.id = batch.session_id
+		WHERE batch.tenant_id = $1 AND batch.project_id = $2
+		  AND batch.session_id = $3 AND batch.batch_index = $4
+		FOR UPDATE OF batch
 	`, tenantID, projectID, sessionID, batchIndex).Scan(
 		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
 		&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
-		&batch.CompleteTokenHash, &batch.CompletedAt,
+		&batch.CompleteTokenHash, &batch.CompletedAt, &endedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Batch{}, ErrNotFound
 	}
 	if err != nil {
 		return Batch{}, fmt.Errorf("lock replay batch: %w", err)
+	}
+	if endedAt != nil {
+		return Batch{}, ErrSessionFinalized
 	}
 	return batch, nil
 }
@@ -316,28 +325,33 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 			           GREATEST(session.started_at, activity.last_activity_at),
 			           session.started_at + session.max_duration_seconds * interval '1 second'
 			       ) AS ended_at,
-			       activity.last_activity_at
+			       activity.last_activity_at,
+			       activity.batch_count
 			FROM sessions AS session
 			CROSS JOIN LATERAL (
-				SELECT count(*) FILTER (WHERE batch.completed_at IS NOT NULL) AS completed_count,
-				       max(GREATEST(batch.created_at, COALESCE(batch.completed_at, batch.created_at))) AS last_activity_at
+				SELECT count(*) AS batch_count,
+				       COALESCE(
+				           max(GREATEST(batch.upload_refreshed_at, COALESCE(batch.completed_at, batch.upload_refreshed_at))),
+				           session.started_at
+				       ) AS last_activity_at
 				FROM session_batches AS batch
 				WHERE batch.session_id = session.id
 			) AS activity
 			WHERE session.ended_at IS NULL AND session.started_at < $1
-			  AND activity.completed_count > 0 AND activity.last_activity_at < $1
+			  AND activity.last_activity_at < $1
 			ORDER BY activity.last_activity_at, session.id
 			LIMIT $2
 			FOR UPDATE OF session SKIP LOCKED
 		)
 		UPDATE sessions AS session
 		SET ended_at = candidates.ended_at,
-		    merge_requested_at = $3,
+		    merge_requested_at = CASE WHEN candidates.batch_count > 0 THEN $3::timestamptz ELSE NULL END,
 		    merge_enqueued_at = NULL,
-		    merge_error = NULL
+		    merge_error = CASE WHEN candidates.batch_count = 0 THEN $4 ELSE NULL END,
+		    merge_attempts = CASE WHEN candidates.batch_count = 0 THEN $5 ELSE session.merge_attempts END
 		FROM candidates
 		WHERE session.id = candidates.id AND session.ended_at IS NULL
-	`, staleBefore.UTC(), limit, now.UTC()); err != nil {
+	`, staleBefore.UTC(), limit, now.UTC(), unavailableReplayMessage, terminalMergeAttempts); err != nil {
 		return fmt.Errorf("recover abandoned replay sessions: %w", err)
 	}
 	return nil
@@ -346,6 +360,7 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 func (s Store) PendingMerges(ctx context.Context, limit int, staleBefore time.Time) ([]Session, error) {
 	rows, err := s.Database.Query(ctx, sessionSelect+`
 		WHERE session.merge_requested_at IS NOT NULL AND session.merged_at IS NULL
+		  AND session.merge_attempts < 12
 		  AND (session.merge_enqueued_at IS NULL OR session.merge_enqueued_at < $1)
 		ORDER BY session.merge_requested_at, session.id
 		LIMIT $2
@@ -443,6 +458,17 @@ func (s Store) MarkMergeFailed(ctx context.Context, sessionID string, message st
 		WHERE id = $1 AND merged_at IS NULL
 	`, sessionID, message); err != nil {
 		return fmt.Errorf("mark replay merge failed: %w", err)
+	}
+	return nil
+}
+
+func (s Store) MarkUnavailable(ctx context.Context, sessionID string) error {
+	if _, err := s.Database.Exec(ctx, `
+		UPDATE sessions
+		SET merge_error = $2, merge_attempts = $3, merge_enqueued_at = NULL
+		WHERE id = $1 AND merged_at IS NULL
+	`, sessionID, unavailableReplayMessage, terminalMergeAttempts); err != nil {
+		return fmt.Errorf("mark replay unavailable: %w", err)
 	}
 	return nil
 }

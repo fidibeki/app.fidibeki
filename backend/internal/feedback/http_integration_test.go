@@ -391,6 +391,23 @@ func assertTenantFeedbackReadFlow(
 	`, tenantID, projectID, ruleID, now.Add(-time.Hour)).Scan(&secondFeedbackID); err != nil {
 		t.Fatalf("create second readable feedback: %v", err)
 	}
+	var unavailableSessionID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, feedback_id, session_id, started_at, ended_at,
+			rrweb_version, merge_attempts, merge_error, max_duration_seconds, max_events
+		) VALUES (
+			$1, $2, $3, gen_random_uuid(), $4, $4, '2.1.1', 12,
+			'No replay events were uploaded before the recording ended.', 1800, 50000
+		) RETURNING id
+	`, tenantID, projectID, secondFeedbackID, now.Add(-time.Hour)).Scan(&unavailableSessionID); err != nil {
+		t.Fatalf("create unavailable feedback replay: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`UPDATE feedbacks SET session_id = $2 WHERE id = $1`, secondFeedbackID, unavailableSessionID,
+	); err != nil {
+		t.Fatalf("link unavailable feedback replay: %v", err)
+	}
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("f", 32), "fidibeki", 10*time.Minute)
 	if err != nil {
@@ -469,8 +486,22 @@ func assertTenantFeedbackReadFlow(
 		detailEnvelope.Feedback.Attachments[0].Transcription == nil ||
 		detailEnvelope.Feedback.Attachments[0].ContentURL == nil ||
 		detailEnvelope.Feedback.Session == nil || !detailEnvelope.Feedback.Session.ReplayReady ||
-		detailEnvelope.Feedback.Session.ReplayURL == nil {
+		detailEnvelope.Feedback.Session.Status != "ready" || detailEnvelope.Feedback.Session.ReplayURL == nil {
 		t.Fatalf("tenant feedback detail = %d %#v", detailResponse.Code, detailEnvelope.Feedback)
+	}
+	unavailableDetailResponse := performTenantFeedbackRequest(
+		handler, http.MethodGet, "/v1/feedbacks/"+secondFeedbackID, "", ownerToken,
+	)
+	var unavailableDetailEnvelope struct {
+		Feedback Detail `json:"feedback"`
+	}
+	decodeFeedbackResponse(t, unavailableDetailResponse, &unavailableDetailEnvelope)
+	unavailableSession := unavailableDetailEnvelope.Feedback.Session
+	if unavailableDetailResponse.Code != http.StatusOK || unavailableSession == nil ||
+		unavailableSession.Status != "failed" || unavailableSession.ReplayReady ||
+		unavailableSession.MergeError == nil || unavailableSession.ReplayURL != nil {
+		t.Fatalf("unavailable tenant feedback replay = %d %#v",
+			unavailableDetailResponse.Code, unavailableSession)
 	}
 
 	streamStorage := &attachmentStreamStorageStub{data: []byte("audio-evidence")}

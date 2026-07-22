@@ -48,7 +48,7 @@ func (q *Queue) EnqueueMerge(ctx context.Context, sessionID string) error {
 		asynq.NewTask(TaskMerge, payload),
 		asynq.TaskID("replay:merge:"+sessionID),
 		asynq.Queue(outbox.QueueName),
-		asynq.MaxRetry(12),
+		asynq.MaxRetry(terminalMergeAttempts),
 		asynq.Timeout(10*time.Minute),
 		asynq.Retention(24*time.Hour),
 	)

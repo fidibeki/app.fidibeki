@@ -92,6 +92,20 @@ func TestMergeBatchesReportsOutputFailure(t *testing.T) {
 	}
 }
 
+func TestRecoverUploadedBatchesPropagatesIndeterminateStorageFailure(t *testing.T) {
+	want := errors.New("storage unavailable")
+	processor := Processor{
+		Storage: &memoryReplayStorage{objects: map[string][]byte{}, statErr: want},
+		Now:     func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) },
+	}
+	_, err := processor.recoverUploadedBatches(context.Background(), Session{}, []Batch{{
+		Index: 0, StorageKey: "batch", SizeBytes: 2, ContentType: "application/json",
+	}})
+	if !errors.Is(err, want) {
+		t.Fatalf("recoverUploadedBatches() error = %v, want %v", err, want)
+	}
+}
+
 func TestCleanerRemovesObjectsBeforeRecords(t *testing.T) {
 	store := &retentionStoreStub{candidates: []RetentionCandidate{
 		{ID: "one", ObjectKeys: []string{"one-final", "one-batch"}},
@@ -346,12 +360,16 @@ type memoryReplayStorage struct {
 	contentTypes map[string]string
 	removed      []string
 	putErr       error
+	statErr      error
 }
 
 func (s *memoryReplayStorage) Stat(_ context.Context, key string) (storage.ObjectInfo, error) {
+	if s.statErr != nil {
+		return storage.ObjectInfo{}, s.statErr
+	}
 	value, exists := s.objects[key]
 	if !exists {
-		return storage.ObjectInfo{}, errors.New("object not found")
+		return storage.ObjectInfo{}, storage.ErrObjectNotFound
 	}
 	return storage.ObjectInfo{Size: int64(len(value)), ContentType: s.contentTypes[key]}, nil
 }

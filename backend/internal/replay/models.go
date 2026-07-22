@@ -7,6 +7,11 @@ import (
 
 const RRWebVersion = "2.1.1"
 
+const (
+	terminalMergeAttempts    = 12
+	unavailableReplayMessage = "No replay events were uploaded before the recording ended."
+)
+
 var (
 	ErrNotFound          = errors.New("replay session not found")
 	ErrBatchComplete     = errors.New("replay batch is already complete")
@@ -42,7 +47,7 @@ func (s Session) Status() string {
 	if s.MergedAt != nil && s.StorageKey != nil {
 		return "ready"
 	}
-	if s.MergeError != nil && s.MergeAttempts >= 12 {
+	if s.MergeError != nil && s.MergeAttempts >= terminalMergeAttempts {
 		return "failed"
 	}
 	if s.EndedAt != nil {
