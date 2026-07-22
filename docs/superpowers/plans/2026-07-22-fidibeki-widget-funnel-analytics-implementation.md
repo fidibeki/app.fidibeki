@@ -6,11 +6,11 @@
 
 ## Progress
 
-- Tasks 1-6 are complete and locally verified.
-- Task 7 local regression is complete: backend, widget, and web suites pass, including the production SSR build,
-  constrained-memory upstream failure probes, and all applicable desktop/mobile Playwright scenarios.
-- Task 7 staging deployment and controlled QA remain in progress. Production remains out of scope until
-  explicitly authorized.
+- Tasks 1-7 are complete and verified locally and in staging.
+- The final staging deployment completed in API/worker/widget/web order. A controlled real-widget journey
+  verified canonical-page recurrence and all five funnel stages in the Dispatch Analytics workspace, then
+  removed its feedback, raw events, daily aggregates, authentication link, and session.
+- Production remains out of scope until explicitly authorized.
 
 ## Architectural Decisions
 
@@ -147,3 +147,10 @@ QA journey covers matched-but-suppressed, visible, interacted, dismissed, submit
 query/hash/trailing-slash URLs, and a distinct path; it verifies API/dashboard counts, restores the
 rule/domains, deletes smoke raw/aggregate rows, and confirms every staging healthcheck. Production
 services and configuration remain untouched.
+
+**Completed 2026-07-22:** Staging deployments `e982c2ca` (API), `653b3529` (worker), `de03e8be`
+(widget), and `fcd87018` (web) reached `SUCCESS`. The canonical-page check produced three matches but
+one impression for query/hash/trailing-slash variants; a distinct path produced one dismissal. Dispatch
+showed 7 matched, 5 impressions, 4 interactions, 4 submissions, and 1 dismissal. Cleanup removed four
+QA feedbacks, 21 raw events, five daily rows, and temporary authentication records; residual counts were
+all zero. API, widget, and web healthchecks returned 200, and production retained zero service instances.
