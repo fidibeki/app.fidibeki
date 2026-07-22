@@ -28,6 +28,39 @@ func TestOpaqueTokensAreRandomAndStoredAsHashes(t *testing.T) {
 	}
 }
 
+func TestJWTManagerDerivesStableSecretBoundRefreshSuccessor(t *testing.T) {
+	t.Parallel()
+
+	manager, _ := NewJWTManager(strings.Repeat("s", 32), "fidibeki", time.Minute)
+	first, firstHash, err := manager.DeriveRefreshToken(AudienceTenant, "current-token")
+	if err != nil {
+		t.Fatalf("DeriveRefreshToken() error = %v", err)
+	}
+	retry, retryHash, err := manager.DeriveRefreshToken(AudienceTenant, "current-token")
+	if err != nil || retry != first || retryHash != firstHash {
+		t.Fatalf("retry token/hash = %q/%q, error = %v", retry, retryHash, err)
+	}
+	if len(first) != 43 || firstHash != HashToken(first) {
+		t.Fatalf("derived token/hash = %q/%q", first, firstHash)
+	}
+	next, _, _ := manager.DeriveRefreshToken(AudienceTenant, "other-token")
+	otherManager, _ := NewJWTManager(strings.Repeat("o", 32), "fidibeki", time.Minute)
+	otherSecret, _, _ := otherManager.DeriveRefreshToken(AudienceTenant, "current-token")
+	if next == first || otherSecret == first {
+		t.Fatal("derived refresh token is not bound to both the current token and server secret")
+	}
+	platform, _, _ := manager.DeriveRefreshToken(AudiencePlatform, "current-token")
+	if platform == first {
+		t.Fatal("derived refresh token is not domain separated")
+	}
+	if _, _, err := manager.DeriveRefreshToken(AudienceTenant, ""); err == nil {
+		t.Error("DeriveRefreshToken(empty) error = nil")
+	}
+	if _, _, err := manager.DeriveRefreshToken("other", "current-token"); err == nil {
+		t.Error("DeriveRefreshToken(other domain) error = nil")
+	}
+}
+
 func TestJWTManagerIssuesAndVerifiesAudienceBoundTokens(t *testing.T) {
 	t.Parallel()
 

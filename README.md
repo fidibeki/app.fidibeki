@@ -60,7 +60,10 @@ docker compose -f infra/docker-compose.yml run --rm api admin bootstrap --email 
 Platform authentication is served from `api.localhost:8088` under `/admin/auth/*`. Tenant-member
 authentication is served from `<tenant>.localhost:8088` under `/auth/*`. Both flows return a
 10-minute audience-bound access token and set a hashed, rotating 30-day refresh-token cookie.
-Reusing a revoked refresh token revokes that administrator or member's active session family.
+Concurrent refreshes from the same user-agent and IP have a 10-second rotation grace period so
+multiple browser tabs remain signed in. Retries return one HMAC-derived successor instead of creating
+additional sessions. Reuse outside that window, from a different fingerprint, or after the successor
+has rotated revokes that administrator or member's active session family.
 
 Request a platform magic link with `POST /admin/auth/login`, then open the captured or delivered
 link and confirm the sign-in. The confirmation sets a short-lived, HTTP-only cookie scoped to the

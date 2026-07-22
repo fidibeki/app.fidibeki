@@ -871,7 +871,9 @@ users (magic link with `member_id=null` until consumed). Refresh token rotation 
 
 - [x] `POST /auth/login` sends a magic link email (async via asynq `email-pool`).
 - [x] `POST /auth/verify` validates the magic link token, issues access + refresh, sets refresh cookie.
-- [x] `POST /auth/refresh` rotates the refresh token (revoke old, issue new); reuse-of-revoked revokes all sessions.
+- [x] `POST /auth/refresh` rotates the refresh token (revoke old, issue new); same-fingerprint concurrent
+  refreshes have a 10-second idempotent grace window, while later, mismatched, or stale-successor reuse
+  revokes all sessions.
 - [x] `POST /auth/logout` revokes the session, clears the refresh cookie.
 - [x] Admins have full permissions; custom permission sets assignable to members.
 - [x] Backoffice routes require `tenant` context + `RequireTenantMember` + `RequirePerm(perm)`.

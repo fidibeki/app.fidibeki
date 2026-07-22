@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -29,6 +30,7 @@ type HTTPOptions struct {
 	Email         email.Enqueuer
 	SecureCookies bool
 	RefreshTTL    time.Duration
+	Logger        *slog.Logger
 }
 
 type HTTPHandler struct {
@@ -36,6 +38,9 @@ type HTTPHandler struct {
 }
 
 func RegisterRoutes(router chi.Router, options HTTPOptions) {
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
 	handler := &HTTPHandler{options: options}
 	router.Post("/auth/login", handler.login)
 	router.Post("/auth/verify", handler.verify)
@@ -158,8 +163,17 @@ func (h *HTTPHandler) refresh(w http.ResponseWriter, r *http.Request) {
 		r.Context(), query, resolved.ID, cookie.Value, r.UserAgent(), remoteIP(r.RemoteAddr),
 	)
 	if err != nil {
+		if errors.Is(err, ErrRefreshExpired) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		}
 		if errors.Is(err, ErrRefreshReuse) {
 			appmiddleware.CommitTenantTransactionOnError(r.Context())
+			appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
+				h.options.Logger.WarnContext(
+					ctx, "tenant refresh token reuse detected; sessions revoked", "tenant_id", resolved.ID,
+				)
+				return nil
+			})
 		}
 		h.clearCookie(w)
 		writeError(w, err)
@@ -278,7 +292,8 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrMagicLinkInvalid), errors.Is(err, ErrRefreshInvalid), errors.Is(err, ErrRefreshReuse):
+	case errors.Is(err, ErrMagicLinkInvalid), errors.Is(err, ErrRefreshInvalid),
+		errors.Is(err, ErrRefreshExpired), errors.Is(err, ErrRefreshReuse):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)
 	case errors.Is(err, ErrMemberExists):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member already exists", nil)

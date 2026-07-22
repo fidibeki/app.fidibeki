@@ -14,6 +14,10 @@ customer evidence into chat or tickets.
 5. Fix forward with a new migration. Use `migrate down` only when that exact down migration was
    rehearsed against a restored production snapshot.
 6. Run up-down-up CI, deploy staging, check `/readyz`, then promote.
+7. For refresh-session metadata migrations, apply the schema before a drained application swap; do not
+   serve old and new authentication binaries concurrently. Roll back the application before the schema.
+   Keep Railway API overlap and draining at zero until the refresh protocol has a version-compatible
+   rolling upgrade path; revisit graceful zero-downtime deploys before production launch.
 
 ## 2. Stripe webhook replay
 

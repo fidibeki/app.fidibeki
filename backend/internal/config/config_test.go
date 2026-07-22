@@ -55,6 +55,7 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTERNAL_PROXY_SECRET":      "abcdef0123456789abcdef0123456789",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 		"SENTRY_DSN":                 "https://public:private@sentry.example.test/1",
 		"GEMINI_API_KEY":             "gemini-secret",
 	}
@@ -106,6 +107,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"S3_VIRTUAL_HOST_STYLE":      "true",
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 	}
 
 	got, err := config.FromLookup(func(name string) (string, bool) {
@@ -131,6 +133,9 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.ReporterTokenTTL != 90*24*time.Hour {
 		t.Errorf("ReporterTokenTTL = %s, want 2160h", got.ReporterTokenTTL)
+	}
+	if got.RefreshRetryGrace != 10*time.Second {
+		t.Errorf("RefreshRetryGrace = %s, want 10s", got.RefreshRetryGrace)
 	}
 	if !got.S3VirtualHostStyle {
 		t.Error("S3VirtualHostStyle = false, want true")
@@ -195,6 +200,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"AUTH_ACCESS_TOKEN_TTL":      "later",
 		"AUTH_MAGIC_LINK_TTL":        "0s",
 		"AUTH_REFRESH_TOKEN_TTL":     "never",
+		"AUTH_REFRESH_RETRY_GRACE":   "31s",
 		"REPORTER_UNSUBSCRIBE_TTL":   "never",
 		"EMAIL_DRIVER":               "smtp",
 		"EMAIL_QUEUE_CONCURRENCY":    "many",
@@ -218,6 +224,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"READINESS_TIMEOUT", "SHUTDOWN_TIMEOUT", "DATABASE_APP_MAX_CONNS",
 		"DATABASE_ADMIN_MAX_CONNS", "S3_AUTO_CREATE_BUCKET", "LOG_LEVEL",
 		"AUTH_ACCESS_TOKEN_TTL", "AUTH_MAGIC_LINK_TTL", "AUTH_REFRESH_TOKEN_TTL",
+		"AUTH_REFRESH_RETRY_GRACE",
 		"REPORTER_UNSUBSCRIBE_TTL",
 		"EMAIL_DRIVER", "EMAIL_QUEUE_CONCURRENCY",
 		"AI_QUEUE_CONCURRENCY", "GEMINI_RPM", "AI_DAILY_REQUEST_LIMIT", "AI_RECONCILE_INTERVAL",

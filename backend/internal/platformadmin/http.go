@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -41,6 +42,7 @@ type HTTPOptions struct {
 	RefreshTTL    time.Duration
 	Now           func() time.Time
 	Deleter       TenantDeleter
+	Logger        *slog.Logger
 }
 
 type TenantDeleter interface {
@@ -52,6 +54,9 @@ type HTTPHandler struct {
 }
 
 func NewHTTPHandler(options HTTPOptions) http.Handler {
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
 	handler := &HTTPHandler{options: options}
 	router := chi.NewRouter()
 	router.Post("/admin/auth/login", handler.login)
@@ -149,6 +154,9 @@ func (h *HTTPHandler) refresh(w http.ResponseWriter, r *http.Request) {
 		r.Context(), cookie.Value, r.UserAgent(), clientIP(r.RemoteAddr),
 	)
 	if err != nil {
+		if errors.Is(err, ErrRefreshReuse) {
+			h.options.Logger.WarnContext(r.Context(), "platform refresh token reuse detected; sessions revoked")
+		}
 		h.clearRefreshCookie(w)
 		h.clearQueueAccessCookie(w)
 		writeAuthError(w, err)
@@ -408,7 +416,8 @@ func writeSession(w http.ResponseWriter, tokens SessionTokens) {
 }
 
 func writeAuthError(w http.ResponseWriter, err error) {
-	if errors.Is(err, ErrMagicLinkInvalid) || errors.Is(err, ErrRefreshInvalid) || errors.Is(err, ErrRefreshReuse) {
+	if errors.Is(err, ErrMagicLinkInvalid) || errors.Is(err, ErrRefreshInvalid) ||
+		errors.Is(err, ErrRefreshExpired) || errors.Is(err, ErrRefreshReuse) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)
 		return
 	}

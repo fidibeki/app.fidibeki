@@ -155,7 +155,7 @@ func (s Service) Refresh(
 	if currentToken == "" {
 		return SessionTokens{}, ErrRefreshInvalid
 	}
-	nextToken, nextHash, err := auth.NewOpaqueToken()
+	nextToken, nextHash, err := s.JWT.DeriveRefreshToken(auth.AudienceTenant, currentToken)
 	if err != nil {
 		return SessionTokens{}, err
 	}

@@ -234,6 +234,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	replayScheduler := replay.Scheduler{Store: replayStore, Queue: replayQueue, Logger: logger}
 	adminStore := platformadmin.Store{
 		Database: pools.Admin, RefreshTTL: settings.RefreshTokenTTL,
+		RefreshRetryGrace: settings.RefreshRetryGrace,
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
@@ -264,7 +265,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	platformHandler := platformadmin.NewHTTPHandler(platformadmin.HTTPOptions{
 		Auth: adminAuth, Tenants: adminStore, JWT: jwtManager, Deleter: deletionExecutor,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
-		RefreshTTL:    settings.RefreshTokenTTL,
+		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
 	var resendVerifier issue.WebhookVerifier
 	if settings.ResendWebhookSecret != "" {
@@ -295,7 +296,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: issue.Store{Database: pools.Admin}, Tokens: reporterTokens, Verifier: resendVerifier,
 	})
 	platformRoutes.Mount("/", platformHandler)
-	tenantStore := tenantmember.Store{RefreshTTL: settings.RefreshTokenTTL}
+	tenantStore := tenantmember.Store{
+		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,
+	}
 	tenantService := tenantmember.Service{
 		Store: tenantStore, JWT: jwtManager, PublicBaseURL: settings.PublicBaseURL,
 		BaseDomain: settings.BaseDomain, AuthFrom: settings.ResendAuthFrom, MagicLinkTTL: settings.MagicLinkTTL,
@@ -305,7 +308,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	tenantmember.RegisterRoutes(tenantRoutes, tenantmember.HTTPOptions{
 		Service: tenantService, Store: tenantStore, JWT: jwtManager, Email: emailQueue,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
-		RefreshTTL:    settings.RefreshTokenTTL,
+		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
 	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: project.Store{}, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})

@@ -18,6 +18,7 @@ var (
 	ErrAdminNotFound    = errors.New("platform admin not found")
 	ErrMagicLinkInvalid = errors.New("magic link is invalid or expired")
 	ErrRefreshInvalid   = errors.New("refresh token is invalid or expired")
+	ErrRefreshExpired   = errors.New("refresh token is expired")
 	ErrRefreshReuse     = errors.New("revoked refresh token was reused")
 	ErrTenantNotFound   = errors.New("tenant not found")
 	ErrSlugConflict     = errors.New("tenant slug already exists")

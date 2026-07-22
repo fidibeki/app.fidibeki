@@ -12,8 +12,9 @@ import (
 )
 
 type Store struct {
-	Now        func() time.Time
-	RefreshTTL time.Duration
+	Now               func() time.Time
+	RefreshTTL        time.Duration
+	RefreshRetryGrace time.Duration
 }
 
 func (s Store) now() time.Time {
@@ -28,6 +29,13 @@ func (s Store) refreshTTL() time.Duration {
 		return s.RefreshTTL
 	}
 	return 30 * 24 * time.Hour
+}
+
+func (s Store) refreshRetryGrace() time.Duration {
+	if s.RefreshRetryGrace > 0 {
+		return s.RefreshRetryGrace
+	}
+	return 0
 }
 
 func (s Store) FindMemberByEmail(
@@ -125,6 +133,9 @@ func (s Store) ConsumeMagicLink(
 	`, linkID, s.now(), member.ID); err != nil {
 		return Member{}, fmt.Errorf("consume tenant magic link: %w", err)
 	}
+	if err := lockTenantMember(ctx, query, tenantID, member.ID); err != nil {
+		return Member{}, err
+	}
 	if _, err := query.Exec(ctx,
 		`UPDATE tenant_members SET last_login_at = $3 WHERE tenant_id = $1 AND id = $2`,
 		tenantID, member.ID, s.now(),
@@ -149,47 +160,75 @@ func (s Store) RotateSession(
 	userAgent string,
 	ip string,
 ) (Member, error) {
+	checkedAt := s.now()
+	retryGrace := s.refreshRetryGrace()
+	if _, err := lockTenantMemberForSession(ctx, query, tenantID, currentHash); err != nil {
+		return Member{}, err
+	}
 	var sessionID string
 	var issuedAt time.Time
 	var revokedAt pgtype.Timestamptz
+	var retryAllowed bool
 	member, err := scanSessionMember(query.QueryRow(ctx, `
 		SELECT session.id, session.issued_at, session.revoked_at,
+		       session.rotated_at IS NOT NULL
+		         AND session.rotated_at >= $4
+		         AND $8
+		         AND session.replacement_hash = $3
+		         AND session.user_agent IS NOT DISTINCT FROM NULLIF($5, '')
+		         AND session.ip IS NOT DISTINCT FROM NULLIF($6, '')::inet
+		         AND EXISTS (
+		           SELECT 1 FROM tenant_member_sessions AS replacement
+		           WHERE replacement.tenant_id = session.tenant_id
+		             AND replacement.refresh_hash = session.replacement_hash
+		             AND replacement.revoked_at IS NULL
+		             AND replacement.issued_at > $7
+		         ),
 		       member.id, member.tenant_id, member.email, member.name, member.permissions
 		FROM tenant_member_sessions AS session
 		JOIN tenant_members AS member
 		  ON member.tenant_id = session.tenant_id AND member.id = session.member_id
 		WHERE session.tenant_id = $1 AND session.refresh_hash = $2
 		FOR UPDATE OF session
-	`, tenantID, currentHash), &sessionID, &issuedAt, &revokedAt)
+	`, tenantID, currentHash, nextHash, checkedAt.Add(-retryGrace), userAgent, ip,
+		checkedAt.Add(-s.refreshTTL()), retryGrace > 0),
+		&sessionID, &issuedAt, &revokedAt, &retryAllowed,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Member{}, ErrRefreshInvalid
 	}
 	if err != nil {
 		return Member{}, fmt.Errorf("lock tenant member session: %w", err)
 	}
-	if revokedAt.Valid {
+	if revokedAt.Valid && !retryAllowed {
 		if _, err := query.Exec(ctx, `
 			UPDATE tenant_member_sessions
-			SET revoked_at = COALESCE(revoked_at, $3)
+			SET revoked_at = COALESCE(revoked_at, $3), rotated_at = NULL, replacement_hash = NULL
 			WHERE tenant_id = $1 AND member_id = $2
-		`, tenantID, member.ID, s.now()); err != nil {
+		`, tenantID, member.ID, checkedAt); err != nil {
 			return Member{}, fmt.Errorf("revoke reused tenant member sessions: %w", err)
 		}
 		return Member{}, ErrRefreshReuse
 	}
-	if issuedAt.Add(s.refreshTTL()).Before(s.now()) {
+	if revokedAt.Valid {
+		return member, nil
+	}
+	if !issuedAt.Add(s.refreshTTL()).After(checkedAt) {
 		if _, err := query.Exec(ctx,
-			`UPDATE tenant_member_sessions SET revoked_at = $3 WHERE tenant_id = $1 AND id = $2`,
-			tenantID, sessionID, s.now(),
+			`UPDATE tenant_member_sessions
+			 SET revoked_at = $3, rotated_at = NULL, replacement_hash = NULL
+			 WHERE tenant_id = $1 AND id = $2`,
+			tenantID, sessionID, checkedAt,
 		); err != nil {
 			return Member{}, fmt.Errorf("revoke expired tenant member session: %w", err)
 		}
-		return Member{}, ErrRefreshInvalid
+		return Member{}, ErrRefreshExpired
 	}
 	if _, err := query.Exec(ctx, `
-		UPDATE tenant_member_sessions SET revoked_at = $3, last_used_at = $3
+		UPDATE tenant_member_sessions
+		SET revoked_at = $3, last_used_at = $3, rotated_at = $3, replacement_hash = $4
 		WHERE tenant_id = $1 AND id = $2
-	`, tenantID, sessionID, s.now()); err != nil {
+	`, tenantID, sessionID, checkedAt, nextHash); err != nil {
 		return Member{}, fmt.Errorf("rotate old tenant member session: %w", err)
 	}
 	if _, err := query.Exec(ctx, `
@@ -207,11 +246,63 @@ func (s Store) RevokeSession(
 	tenantID string,
 	refreshHash string,
 ) error {
+	if _, err := lockTenantMemberForSession(ctx, query, tenantID, refreshHash); err != nil {
+		if errors.Is(err, ErrRefreshInvalid) {
+			return nil
+		}
+		return err
+	}
+	checkedAt := s.now()
 	if _, err := query.Exec(ctx, `
-		UPDATE tenant_member_sessions SET revoked_at = COALESCE(revoked_at, $3), last_used_at = $3
-		WHERE tenant_id = $1 AND refresh_hash = $2
-	`, tenantID, refreshHash, s.now()); err != nil {
+		WITH RECURSIVE session_chain AS (
+			SELECT id, replacement_hash
+			FROM tenant_member_sessions
+			WHERE tenant_id = $1 AND refresh_hash = $2
+			UNION
+			SELECT successor.id, successor.replacement_hash
+			FROM tenant_member_sessions AS successor
+			JOIN session_chain AS predecessor
+			  ON successor.refresh_hash = predecessor.replacement_hash
+			WHERE successor.tenant_id = $1
+		)
+		UPDATE tenant_member_sessions AS session
+		SET revoked_at = COALESCE(session.revoked_at, $3), last_used_at = $3,
+		    rotated_at = NULL, replacement_hash = NULL
+		WHERE session.tenant_id = $1
+		  AND session.id IN (SELECT id FROM session_chain)
+	`, tenantID, refreshHash, checkedAt); err != nil {
 		return fmt.Errorf("revoke tenant member session: %w", err)
+	}
+	return nil
+}
+
+func lockTenantMemberForSession(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	refreshHash string,
+) (string, error) {
+	var memberID string
+	if err := query.QueryRow(ctx, `
+		SELECT member_id FROM tenant_member_sessions
+		WHERE tenant_id = $1 AND refresh_hash = $2
+	`, tenantID, refreshHash).Scan(&memberID); errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrRefreshInvalid
+	} else if err != nil {
+		return "", fmt.Errorf("find tenant member session owner: %w", err)
+	}
+	if err := lockTenantMember(ctx, query, tenantID, memberID); err != nil {
+		return "", err
+	}
+	return memberID, nil
+}
+
+func lockTenantMember(ctx context.Context, query db.Querier, tenantID, memberID string) error {
+	var lockedID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM tenant_members WHERE tenant_id = $1 AND id = $2 FOR UPDATE
+	`, tenantID, memberID).Scan(&lockedID); err != nil {
+		return fmt.Errorf("lock tenant member session owner: %w", err)
 	}
 	return nil
 }
@@ -285,10 +376,11 @@ func scanSessionMember(
 	sessionID *string,
 	issuedAt *time.Time,
 	revokedAt *pgtype.Timestamptz,
+	retryAllowed *bool,
 ) (Member, error) {
 	var member Member
 	err := row.Scan(
-		sessionID, issuedAt, revokedAt,
+		sessionID, issuedAt, revokedAt, retryAllowed,
 		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.Permissions,
 	)
 	return member, err

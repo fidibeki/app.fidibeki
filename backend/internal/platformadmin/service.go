@@ -125,7 +125,7 @@ func (s Service) Refresh(
 	if strings.TrimSpace(currentToken) == "" {
 		return SessionTokens{}, ErrRefreshInvalid
 	}
-	nextToken, nextHash, err := auth.NewOpaqueToken()
+	nextToken, nextHash, err := s.JWT.DeriveRefreshToken(auth.AudiencePlatform, currentToken)
 	if err != nil {
 		return SessionTokens{}, err
 	}

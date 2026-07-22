@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -65,6 +68,22 @@ func (m *JWTManager) IssueReporterUnsubscribe(
 		return "", time.Time{}, errors.New("JWT tenant ID is required")
 	}
 	return m.issue(issueID, AudienceReporterUnsubscribe, tenantID, nil)
+}
+
+func (m *JWTManager) DeriveRefreshToken(domain, current string) (string, string, error) {
+	if domain != AudiencePlatform && domain != AudienceTenant {
+		return "", "", errors.New("refresh token domain is invalid")
+	}
+	if current == "" {
+		return "", "", errors.New("current refresh token is required")
+	}
+	mac := hmac.New(sha256.New, m.secret)
+	_, _ = mac.Write([]byte("fidibeki-refresh-v1\x00"))
+	_, _ = mac.Write([]byte(domain))
+	_, _ = mac.Write([]byte{'\x00'})
+	_, _ = mac.Write([]byte(current))
+	raw := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return raw, HashToken(raw), nil
 }
 
 func (m *JWTManager) issue(

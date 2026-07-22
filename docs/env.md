@@ -40,6 +40,7 @@ for both services because configuration is validated before the command starts.
 | `AUTH_ACCESS_TOKEN_TTL` | no | Access-token lifetime; default `10m`. |
 | `AUTH_MAGIC_LINK_TTL` | no | Magic-link lifetime; default `10m`. |
 | `AUTH_REFRESH_TOKEN_TTL` | no | Refresh lifetime; default `720h`. |
+| `AUTH_REFRESH_RETRY_GRACE` | no | Idempotent same-client retry window; default `0s` for two-phase rollout, maximum `30s`. |
 | `REPORTER_UNSUBSCRIBE_TTL` | no | Reporter unsubscribe JWT lifetime; default `2160h`. |
 | `EMAIL_DRIVER` | yes | `capture` locally or `resend` in production. |
 | `EMAIL_CAPTURE_DIR` | capture | Local captured-email directory. |

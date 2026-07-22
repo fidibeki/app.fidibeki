@@ -44,6 +44,7 @@ type Config struct {
 	AccessTokenTTL           time.Duration
 	MagicLinkTTL             time.Duration
 	RefreshTokenTTL          time.Duration
+	RefreshRetryGrace        time.Duration
 	ReporterTokenTTL         time.Duration
 	EmailDriver              string
 	EmailCaptureDir          string
@@ -88,6 +89,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	accessTokenTTL, accessTokenTTLErr := time.ParseDuration(get("AUTH_ACCESS_TOKEN_TTL", "10m"))
 	magicLinkTTL, magicLinkTTLErr := time.ParseDuration(get("AUTH_MAGIC_LINK_TTL", "10m"))
 	refreshTokenTTL, refreshTokenTTLErr := time.ParseDuration(get("AUTH_REFRESH_TOKEN_TTL", "720h"))
+	refreshRetryGrace, refreshRetryGraceErr := time.ParseDuration(get("AUTH_REFRESH_RETRY_GRACE", "0s"))
 	reporterTokenTTL, reporterTokenTTLErr := time.ParseDuration(get("REPORTER_UNSUBSCRIBE_TTL", "2160h"))
 	appDBMaxConns, appDBMaxConnsErr := strconv.ParseInt(get("DATABASE_APP_MAX_CONNS", "10"), 10, 32)
 	adminDBMaxConns, adminDBMaxConnsErr := strconv.ParseInt(get("DATABASE_ADMIN_MAX_CONNS", "5"), 10, 32)
@@ -134,6 +136,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		AccessTokenTTL:           accessTokenTTL,
 		MagicLinkTTL:             magicLinkTTL,
 		RefreshTokenTTL:          refreshTokenTTL,
+		RefreshRetryGrace:        refreshRetryGrace,
 		ReporterTokenTTL:         reporterTokenTTL,
 		EmailDriver:              get("EMAIL_DRIVER", "capture"),
 		EmailCaptureDir:          get("EMAIL_CAPTURE_DIR", "/tmp/fidibeki-emails"),
@@ -173,6 +176,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if refreshTokenTTLErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_REFRESH_TOKEN_TTL: %w", refreshTokenTTLErr))
+	}
+	if refreshRetryGraceErr != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("AUTH_REFRESH_RETRY_GRACE: %w", refreshRetryGraceErr))
 	}
 	if reporterTokenTTLErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("REPORTER_UNSUBSCRIBE_TTL: %w", reporterTokenTTLErr))
@@ -286,6 +292,12 @@ func (c Config) validate() []error {
 	if c.RefreshTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_REFRESH_TOKEN_TTL must be positive"))
 	}
+	if c.RefreshRetryGrace < 0 || c.RefreshRetryGrace > 30*time.Second {
+		validationErrors = append(validationErrors, fmt.Errorf("AUTH_REFRESH_RETRY_GRACE must be between 0s and 30s"))
+	}
+	if c.RefreshRetryGrace > c.RefreshTokenTTL {
+		validationErrors = append(validationErrors, fmt.Errorf("AUTH_REFRESH_RETRY_GRACE must not exceed AUTH_REFRESH_TOKEN_TTL"))
+	}
 	if c.ReporterTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("REPORTER_UNSUBSCRIBE_TTL must be positive"))
 	}
@@ -391,6 +403,7 @@ func (c Config) Redacted() map[string]any {
 		"access_token_ttl":           c.AccessTokenTTL.String(),
 		"magic_link_ttl":             c.MagicLinkTTL.String(),
 		"refresh_token_ttl":          c.RefreshTokenTTL.String(),
+		"refresh_retry_grace":        c.RefreshRetryGrace.String(),
 		"reporter_token_ttl":         c.ReporterTokenTTL.String(),
 		"email_driver":               c.EmailDriver,
 		"email_capture_dir":          c.EmailCaptureDir,

@@ -19,9 +19,10 @@ type AdminDatabase interface {
 }
 
 type Store struct {
-	Database   AdminDatabase
-	Now        func() time.Time
-	RefreshTTL time.Duration
+	Database          AdminDatabase
+	Now               func() time.Time
+	RefreshTTL        time.Duration
+	RefreshRetryGrace time.Duration
 }
 
 func (s Store) refreshTTL() time.Duration {
@@ -36,6 +37,13 @@ func (s Store) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+func (s Store) refreshRetryGrace() time.Duration {
+	if s.RefreshRetryGrace > 0 {
+		return s.RefreshRetryGrace
+	}
+	return 0
 }
 
 func (s Store) FindAdminByEmail(ctx context.Context, email string) (Admin, error) {
@@ -113,6 +121,9 @@ func (s Store) ConsumeMagicLink(
 	); err != nil {
 		return Admin{}, fmt.Errorf("consume platform admin magic link: %w", err)
 	}
+	if err := lockPlatformAdmin(ctx, tx, admin.ID); err != nil {
+		return Admin{}, err
+	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE platform_admins SET last_login_at = $2 WHERE id = $1`, admin.ID, s.now(),
 	); err != nil {
@@ -143,17 +154,38 @@ func (s Store) RotateSession(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	checkedAt := s.now()
+	retryGrace := s.refreshRetryGrace()
+	if _, err := lockPlatformAdminForSession(ctx, tx, currentHash); err != nil {
+		return Admin{}, err
+	}
 	var sessionID string
 	var issuedAt time.Time
 	var revokedAt pgtype.Timestamptz
+	var retryAllowed bool
 	admin, err := scanSessionAdmin(tx.QueryRow(ctx, `
 		SELECT session.id, session.issued_at, session.revoked_at,
+		       session.rotated_at IS NOT NULL
+		         AND session.rotated_at >= $3
+		         AND $7
+		         AND session.replacement_hash = $2
+		         AND session.user_agent IS NOT DISTINCT FROM NULLIF($4, '')
+		         AND session.ip IS NOT DISTINCT FROM NULLIF($5, '')::inet
+		         AND EXISTS (
+		           SELECT 1 FROM platform_admin_sessions AS replacement
+		           WHERE replacement.refresh_hash = session.replacement_hash
+		             AND replacement.revoked_at IS NULL
+		             AND replacement.issued_at > $6
+		         ),
 		       admin.id, admin.email, admin.name, admin.permissions
 		FROM platform_admin_sessions AS session
 		JOIN platform_admins AS admin ON admin.id = session.admin_id
 		WHERE session.refresh_hash = $1
 		FOR UPDATE OF session
-	`, currentHash), &sessionID, &issuedAt, &revokedAt)
+	`, currentHash, nextHash, checkedAt.Add(-retryGrace), userAgent, ip,
+		checkedAt.Add(-s.refreshTTL()), retryGrace > 0),
+		&sessionID, &issuedAt, &revokedAt, &retryAllowed,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Admin{}, ErrRefreshInvalid
 	}
@@ -161,10 +193,12 @@ func (s Store) RotateSession(
 		return Admin{}, fmt.Errorf("lock platform admin session: %w", err)
 	}
 
-	if revokedAt.Valid {
+	if revokedAt.Valid && !retryAllowed {
 		if _, err := tx.Exec(ctx,
-			`UPDATE platform_admin_sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE admin_id = $1`,
-			admin.ID, s.now(),
+			`UPDATE platform_admin_sessions
+			 SET revoked_at = COALESCE(revoked_at, $2), rotated_at = NULL, replacement_hash = NULL
+			 WHERE admin_id = $1`,
+			admin.ID, checkedAt,
 		); err != nil {
 			return Admin{}, fmt.Errorf("revoke reused platform admin sessions: %w", err)
 		}
@@ -173,20 +207,27 @@ func (s Store) RotateSession(
 		}
 		return Admin{}, ErrRefreshReuse
 	}
-	if issuedAt.Add(s.refreshTTL()).Before(s.now()) {
+	if revokedAt.Valid {
+		return admin, nil
+	}
+	if !issuedAt.Add(s.refreshTTL()).After(checkedAt) {
 		if _, err := tx.Exec(ctx,
-			`UPDATE platform_admin_sessions SET revoked_at = $2 WHERE id = $1`, sessionID, s.now(),
+			`UPDATE platform_admin_sessions
+			 SET revoked_at = $2, rotated_at = NULL, replacement_hash = NULL
+			 WHERE id = $1`, sessionID, checkedAt,
 		); err != nil {
 			return Admin{}, fmt.Errorf("revoke expired platform admin session: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Admin{}, fmt.Errorf("commit expired refresh revocation: %w", err)
 		}
-		return Admin{}, ErrRefreshInvalid
+		return Admin{}, ErrRefreshExpired
 	}
 
 	if _, err := tx.Exec(ctx,
-		`UPDATE platform_admin_sessions SET revoked_at = $2, last_used_at = $2 WHERE id = $1`, sessionID, s.now(),
+		`UPDATE platform_admin_sessions
+		 SET revoked_at = $2, last_used_at = $2, rotated_at = $2, replacement_hash = $3
+		 WHERE id = $1`, sessionID, checkedAt, nextHash,
 	); err != nil {
 		return Admin{}, fmt.Errorf("rotate old platform admin session: %w", err)
 	}
@@ -203,12 +244,67 @@ func (s Store) RotateSession(
 }
 
 func (s Store) RevokeSession(ctx context.Context, refreshHash string) error {
-	if _, err := s.Database.Exec(ctx, `
-		UPDATE platform_admin_sessions
-		SET revoked_at = COALESCE(revoked_at, $2), last_used_at = $2
-		WHERE refresh_hash = $1
-	`, refreshHash, s.now()); err != nil {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin revoke session transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := lockPlatformAdminForSession(ctx, tx, refreshHash); err != nil {
+		if errors.Is(err, ErrRefreshInvalid) {
+			return nil
+		}
+		return err
+	}
+	checkedAt := s.now()
+	if _, err := tx.Exec(ctx, `
+		WITH RECURSIVE session_chain AS (
+			SELECT id, replacement_hash
+			FROM platform_admin_sessions
+			WHERE refresh_hash = $1
+			UNION
+			SELECT successor.id, successor.replacement_hash
+			FROM platform_admin_sessions AS successor
+			JOIN session_chain AS predecessor
+			  ON successor.refresh_hash = predecessor.replacement_hash
+		)
+		UPDATE platform_admin_sessions AS session
+		SET revoked_at = COALESCE(session.revoked_at, $2), last_used_at = $2,
+		    rotated_at = NULL, replacement_hash = NULL
+		WHERE session.id IN (SELECT id FROM session_chain)
+	`, refreshHash, checkedAt); err != nil {
 		return fmt.Errorf("revoke platform admin session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit revoke session transaction: %w", err)
+	}
+	return nil
+}
+
+func lockPlatformAdminForSession(
+	ctx context.Context,
+	query db.Querier,
+	refreshHash string,
+) (string, error) {
+	var adminID string
+	if err := query.QueryRow(ctx, `
+		SELECT admin_id FROM platform_admin_sessions WHERE refresh_hash = $1
+	`, refreshHash).Scan(&adminID); errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrRefreshInvalid
+	} else if err != nil {
+		return "", fmt.Errorf("find platform admin session owner: %w", err)
+	}
+	if err := lockPlatformAdmin(ctx, query, adminID); err != nil {
+		return "", err
+	}
+	return adminID, nil
+}
+
+func lockPlatformAdmin(ctx context.Context, query db.Querier, adminID string) error {
+	var lockedID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM platform_admins WHERE id = $1 FOR UPDATE
+	`, adminID).Scan(&lockedID); err != nil {
+		return fmt.Errorf("lock platform admin session owner: %w", err)
 	}
 	return nil
 }
@@ -339,8 +435,9 @@ func scanSessionAdmin(
 	sessionID *string,
 	issuedAt *time.Time,
 	revokedAt *pgtype.Timestamptz,
+	retryAllowed *bool,
 ) (Admin, error) {
-	return scanAdminWithPrefix(row, sessionID, issuedAt, revokedAt)
+	return scanAdminWithPrefix(row, sessionID, issuedAt, revokedAt, retryAllowed)
 }
 
 func scanTenant(row rowScanner) (TenantRecord, error) {

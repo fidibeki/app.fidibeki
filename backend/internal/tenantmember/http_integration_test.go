@@ -93,10 +93,14 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	t.Cleanup(pools.Close)
 	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", 10*time.Minute)
 	queue := &messageCapture{}
-	store := Store{RefreshTTL: 30 * 24 * time.Hour}
+	now := time.Now().UTC().Truncate(time.Second)
+	store := Store{
+		RefreshTTL: 30 * 24 * time.Hour, RefreshRetryGrace: 10 * time.Second,
+		Now: func() time.Time { return now },
+	}
 	service := Service{
 		Store: store, JWT: jwtManager, PublicBaseURL: "http://api.localhost:8088",
-		BaseDomain: "localhost", AuthFrom: "Fidibeki <auth@fidibeki.com>",
+		BaseDomain: "localhost", AuthFrom: "Fidibeki <auth@fidibeki.com>", Now: func() time.Time { return now },
 	}
 	probe, err := pools.App.Begin(ctx)
 	if err != nil {
@@ -191,18 +195,119 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		t.Errorf("invalid login status = %d", invalidLogin.Code)
 	}
 
-	refreshed := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", ownerCookie)
-	if refreshed.Code != http.StatusOK {
-		t.Fatalf("refresh status = %d, body = %s", refreshed.Code, refreshed.Body.String())
+	startRefresh := make(chan struct{})
+	refreshResponses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			<-startRefresh
+			refreshResponses <- performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", ownerCookie)
+		}()
+	}
+	close(startRefresh)
+	refreshed := <-refreshResponses
+	reused := <-refreshResponses
+	if refreshed.Code != http.StatusOK || reused.Code != http.StatusOK {
+		t.Fatalf(
+			"concurrent refresh statuses = %d/%d, bodies = %s / %s",
+			refreshed.Code, reused.Code, refreshed.Body.String(), reused.Body.String(),
+		)
 	}
 	rotatedCookie := responseCookie(t, refreshed, tenantRefreshCookie)
-	reused := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", ownerCookie)
-	if reused.Code != http.StatusUnauthorized {
-		t.Errorf("reused refresh status = %d", reused.Code)
+	retryCookie := responseCookie(t, reused, tenantRefreshCookie)
+	if rotatedCookie.Value != retryCookie.Value {
+		t.Fatal("concurrent refreshes returned different successor cookies")
+	}
+	var ownerSessionCount int
+	if err := pools.Admin.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_member_sessions WHERE tenant_id = $1 AND member_id = $2
+	`, tenantID, ownerSession.Member.ID).Scan(&ownerSessionCount); err != nil || ownerSessionCount != 2 {
+		t.Fatalf("owner session count = %d, error = %v, want 2", ownerSessionCount, err)
+	}
+
+	now = now.Add(time.Minute)
+	lateReuse := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", ownerCookie)
+	if lateReuse.Code != http.StatusUnauthorized {
+		t.Errorf("late reused refresh status = %d", lateReuse.Code)
 	}
 	revokedFamily := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", rotatedCookie)
 	if revokedFamily.Code != http.StatusUnauthorized {
 		t.Errorf("revoked family refresh status = %d", revokedFamily.Code)
+	}
+	revokedRetry := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", retryCookie)
+	if revokedRetry.Code != http.StatusUnauthorized {
+		t.Errorf("revoked retry refresh status = %d", revokedRetry.Code)
+	}
+
+	relogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
+	if relogin.Code != http.StatusAccepted || len(queue.messages) != 3 {
+		t.Fatalf("relogin status = %d, messages = %d", relogin.Code, len(queue.messages))
+	}
+	reverified := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+messageToken(t, queue.messages[2])+`"}`, "", nil,
+	)
+	fingerprintCookie := responseCookie(t, reverified, tenantRefreshCookie)
+	fingerprintRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", fingerprintCookie)
+	if fingerprintRefresh.Code != http.StatusOK {
+		t.Fatalf("fingerprint refresh status = %d", fingerprintRefresh.Code)
+	}
+	fingerprintRotatedCookie := responseCookie(t, fingerprintRefresh, tenantRefreshCookie)
+	mismatchedRetry := performTenantRequestWithUserAgent(
+		handler, http.MethodPost, "/auth/refresh", "", "", fingerprintCookie, "different-agent",
+	)
+	if mismatchedRetry.Code != http.StatusUnauthorized {
+		t.Errorf("mismatched fingerprint refresh status = %d", mismatchedRetry.Code)
+	}
+	mismatchedRevokedFamily := performTenantRequest(
+		handler, http.MethodPost, "/auth/refresh", "", "", fingerprintRotatedCookie,
+	)
+	if mismatchedRevokedFamily.Code != http.StatusUnauthorized {
+		t.Errorf("mismatched fingerprint family status = %d", mismatchedRevokedFamily.Code)
+	}
+
+	logoutLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
+	if logoutLogin.Code != http.StatusAccepted || len(queue.messages) != 4 {
+		t.Fatalf("logout login status = %d, messages = %d", logoutLogin.Code, len(queue.messages))
+	}
+	logoutVerified := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+messageToken(t, queue.messages[3])+`"}`, "", nil,
+	)
+	logoutParentCookie := responseCookie(t, logoutVerified, tenantRefreshCookie)
+	logoutRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", logoutParentCookie)
+	if logoutRefresh.Code != http.StatusOK {
+		t.Fatalf("logout setup refresh status = %d", logoutRefresh.Code)
+	}
+	logoutChildCookie := responseCookie(t, logoutRefresh, tenantRefreshCookie)
+	logoutResponse := performTenantRequest(handler, http.MethodPost, "/auth/logout", "", "", logoutParentCookie)
+	if logoutResponse.Code != http.StatusNoContent {
+		t.Fatalf("predecessor logout status = %d", logoutResponse.Code)
+	}
+	logoutChildRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", logoutChildCookie)
+	if logoutChildRefresh.Code != http.StatusUnauthorized {
+		t.Errorf("logged-out successor refresh status = %d", logoutChildRefresh.Code)
+	}
+
+	expiryLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
+	if expiryLogin.Code != http.StatusAccepted || len(queue.messages) != 5 {
+		t.Fatalf("expiry login status = %d, messages = %d", expiryLogin.Code, len(queue.messages))
+	}
+	expiryVerified := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+messageToken(t, queue.messages[4])+`"}`, "", nil,
+	)
+	expiryCookie := responseCookie(t, expiryVerified, tenantRefreshCookie)
+	now = now.Add(31 * 24 * time.Hour)
+	expiredRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", expiryCookie)
+	if expiredRefresh.Code != http.StatusUnauthorized {
+		t.Fatalf("expired refresh status = %d", expiredRefresh.Code)
+	}
+	var expiryPersisted bool
+	if err := pools.Admin.QueryRow(ctx, `
+		SELECT revoked_at IS NOT NULL FROM tenant_member_sessions
+		WHERE tenant_id = $1 AND refresh_hash = $2
+	`, tenantID, auth.HashToken(expiryCookie.Value)).Scan(&expiryPersisted); err != nil || !expiryPersisted {
+		t.Fatalf("expired session revocation persisted = %t, error = %v", expiryPersisted, err)
 	}
 }
 
@@ -231,6 +336,18 @@ func performTenantRequest(
 	accessToken string,
 	cookie *http.Cookie,
 ) *httptest.ResponseRecorder {
+	return performTenantRequestWithUserAgent(handler, method, path, body, accessToken, cookie, "")
+}
+
+func performTenantRequestWithUserAgent(
+	handler http.Handler,
+	method string,
+	path string,
+	body string,
+	accessToken string,
+	cookie *http.Cookie,
+	userAgent string,
+) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, "http://acme.localhost"+path, strings.NewReader(body))
 	if body != "" {
@@ -242,6 +359,7 @@ func performTenantRequest(
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}
+	request.Header.Set("User-Agent", userAgent)
 	handler.ServeHTTP(recorder, request)
 	return recorder
 }

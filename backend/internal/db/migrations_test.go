@@ -536,8 +536,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("admin replay batch count = %d, error = %v, want 2", count, err)
 	}
 
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back replay cap migration: %v", err)
+	if err := migrator.Steps(-2); err != nil {
+		t.Fatalf("roll back session rotation marker and replay cap migrations: %v", err)
 	}
 	for cycle := 1; cycle <= 2; cycle++ {
 		if _, err := root.Exec(ctx, `
@@ -583,8 +583,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final migration version: %v", err)
 	}
-	if version != 43 || dirty {
-		t.Fatalf("migration state = version %d dirty %t, want version 43 clean", version, dirty)
+	if version != 44 || dirty {
+		t.Fatalf("migration state = version %d dirty %t, want version 44 clean", version, dirty)
 	}
 }
 
