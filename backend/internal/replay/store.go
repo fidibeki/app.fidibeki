@@ -305,6 +305,44 @@ func (store Store) Finalize(
 	return found, true, err
 }
 
+func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now time.Time, limit int) error {
+	if limit <= 0 {
+		limit = 100
+	}
+	if _, err := s.Database.Exec(ctx, `
+		WITH candidates AS (
+			SELECT session.id,
+			       LEAST(
+			           GREATEST(session.started_at, activity.last_activity_at),
+			           session.started_at + session.max_duration_seconds * interval '1 second'
+			       ) AS ended_at,
+			       activity.last_activity_at
+			FROM sessions AS session
+			CROSS JOIN LATERAL (
+				SELECT count(*) FILTER (WHERE batch.completed_at IS NOT NULL) AS completed_count,
+				       max(GREATEST(batch.created_at, COALESCE(batch.completed_at, batch.created_at))) AS last_activity_at
+				FROM session_batches AS batch
+				WHERE batch.session_id = session.id
+			) AS activity
+			WHERE session.ended_at IS NULL AND session.started_at < $1
+			  AND activity.completed_count > 0 AND activity.last_activity_at < $1
+			ORDER BY activity.last_activity_at, session.id
+			LIMIT $2
+			FOR UPDATE OF session SKIP LOCKED
+		)
+		UPDATE sessions AS session
+		SET ended_at = candidates.ended_at,
+		    merge_requested_at = $3,
+		    merge_enqueued_at = NULL,
+		    merge_error = NULL
+		FROM candidates
+		WHERE session.id = candidates.id AND session.ended_at IS NULL
+	`, staleBefore.UTC(), limit, now.UTC()); err != nil {
+		return fmt.Errorf("recover abandoned replay sessions: %w", err)
+	}
+	return nil
+}
+
 func (s Store) PendingMerges(ctx context.Context, limit int, staleBefore time.Time) ([]Session, error) {
 	rows, err := s.Database.Query(ctx, sessionSelect+`
 		WHERE session.merge_requested_at IS NOT NULL AND session.merged_at IS NULL
@@ -351,7 +389,7 @@ func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batc
 		SELECT id, tenant_id, project_id, session_id, batch_index, storage_key,
 		       events_count, size_bytes, content_type, complete_token_hash, completed_at
 		FROM session_batches
-		WHERE session_id = $1 AND completed_at IS NOT NULL
+		WHERE session_id = $1
 		ORDER BY batch_index
 	`, sessionID)
 	if err != nil {

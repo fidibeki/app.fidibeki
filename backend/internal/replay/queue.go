@@ -15,6 +15,8 @@ import (
 
 const TaskMerge = "replay:merge"
 
+const abandonedSessionGrace = replayUploadTTL + 5*time.Minute
+
 type taskClient interface {
 	EnqueueContext(context.Context, *asynq.Task, ...asynq.Option) (*asynq.TaskInfo, error)
 	Close() error
@@ -85,7 +87,11 @@ func (s Scheduler) Schedule(ctx context.Context, sessionID string) error {
 }
 
 func (s Scheduler) ReconcileOnce(ctx context.Context) error {
-	sessions, err := s.Store.PendingMerges(ctx, 100, s.now().Add(-5*time.Minute))
+	now := s.now()
+	if err := s.Store.RecoverAbandoned(ctx, now.Add(-abandonedSessionGrace), now, 100); err != nil {
+		return err
+	}
+	sessions, err := s.Store.PendingMerges(ctx, 100, now.Add(-5*time.Minute))
 	if err != nil {
 		return err
 	}

@@ -10,10 +10,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/hibiken/asynq"
 )
 
 type MergeStorage interface {
+	Stat(context.Context, string) (storage.ObjectInfo, error)
 	OpenObject(context.Context, string) (io.ReadCloser, error)
 	PutObject(context.Context, string, io.Reader, int64, string) error
 	RemoveObject(context.Context, string) error
@@ -41,13 +43,17 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 			return err
 		}
 		if session.MergedAt == nil {
-			if len(batches) == 0 {
+			completedBatches, recoverErr := p.recoverUploadedBatches(ctx, session, batches)
+			if recoverErr != nil {
+				return recoverErr
+			}
+			if len(completedBatches) == 0 {
 				err = errors.New("replay merge has no completed batches")
 				_ = p.Store.MarkMergeFailed(ctx, session.ID, err.Error())
 				return err
 			}
 			key := fmt.Sprintf("tenants/%s/sessions/%s/replay.json", session.TenantID, session.ID)
-			eventsCount, mergeErr := p.mergeBatches(ctx, key, batches)
+			eventsCount, mergeErr := p.mergeBatches(ctx, key, completedBatches)
 			if mergeErr != nil {
 				markErr := p.Store.MarkMergeFailed(ctx, session.ID, mergeErr.Error())
 				return errors.Join(mergeErr, markErr)
@@ -66,6 +72,33 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 		}
 		return nil
 	}
+}
+
+func (p Processor) recoverUploadedBatches(
+	ctx context.Context,
+	session Session,
+	batches []Batch,
+) ([]Batch, error) {
+	completed := make([]Batch, 0, len(batches))
+	now := p.now()
+	for _, batch := range batches {
+		if batch.CompletedAt != nil {
+			completed = append(completed, batch)
+			continue
+		}
+		object, err := p.Storage.Stat(ctx, batch.StorageKey)
+		if err != nil || object.Size != batch.SizeBytes ||
+			normalizeReplayContentType(object.ContentType) != batch.ContentType {
+			continue
+		}
+		if err := p.Store.CompleteBatch(ctx, p.Store.Database, session.ID, batch.ID, now); err != nil &&
+			!errors.Is(err, ErrBatchComplete) {
+			return nil, fmt.Errorf("recover uploaded replay batch %d: %w", batch.Index, err)
+		}
+		batch.CompletedAt = &now
+		completed = append(completed, batch)
+	}
+	return completed, nil
 }
 
 func (p Processor) mergeBatches(ctx context.Context, key string, batches []Batch) (int, error) {

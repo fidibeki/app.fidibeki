@@ -84,6 +84,41 @@ describe('rrweb replay capture', () => {
 		expect(requests[requests.length - 1]?.url).toContain('/finalize?key=pk_live_test')
   })
 
+  it('uploads active replay events before the browser lifecycle ends', async () => {
+    vi.useFakeTimers()
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo, init: RequestInit = {}) => {
+      const url = input.toString()
+      requests.push(url)
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({
+          id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000,
+        }, 201)
+      }
+      if (url.endsWith('/batches?key=key')) {
+        const declaration = JSON.parse(String(init.body)) as { batch_index: number }
+        return jsonResponse({
+          presigned_url: `https://storage.example/batch-${declaration.batch_index}`,
+          method: 'PUT', headers: {}, complete_token: `token-${declaration.batch_index}`,
+        }, 201)
+      }
+      if (url.startsWith('https://storage.example/')) return new Response(null, { status: 200 })
+      if (url.includes('/complete?')) return new Response(null, { status: 204 })
+      if (url.includes('/finalize?')) return jsonResponse({}, 202)
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    emit({ type: 2, timestamp: 1, data: {} })
+
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    expect(requests.filter((url) => url.endsWith('/batches?key=key'))).toHaveLength(1)
+    await capture?.stop()
+  })
+
   it('retries a failed upload and treats an already-complete response as success', async () => {
     let declarations = 0
     let uploads = 0

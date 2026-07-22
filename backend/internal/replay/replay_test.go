@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/hibiken/asynq"
@@ -345,6 +346,14 @@ type memoryReplayStorage struct {
 	contentTypes map[string]string
 	removed      []string
 	putErr       error
+}
+
+func (s *memoryReplayStorage) Stat(_ context.Context, key string) (storage.ObjectInfo, error) {
+	value, exists := s.objects[key]
+	if !exists {
+		return storage.ObjectInfo{}, errors.New("object not found")
+	}
+	return storage.ObjectInfo{Size: int64(len(value)), ContentType: s.contentTypes[key]}, nil
 }
 
 func (s *memoryReplayStorage) OpenObject(_ context.Context, key string) (io.ReadCloser, error) {

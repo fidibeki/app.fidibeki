@@ -395,6 +395,86 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("delete expired session: %v", err)
 	}
 
+	var abandonedSessionID, activeSessionID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at, events_count, batches_count,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&abandonedSessionID); err != nil {
+		t.Fatalf("create abandoned replay: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at, events_count, batches_count,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&activeSessionID); err != nil {
+		t.Fatalf("create active replay: %v", err)
+	}
+	abandonedCompletedKey := "abandoned/completed.json"
+	abandonedIncompleteKey := "abandoned/incomplete.json"
+	activeKey := "active/completed.json"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, complete_token_hash, completed_at, created_at
+		) VALUES
+			($1, $2, $3, 0, $4, 1, 4, NULL, $5, $5),
+			($1, $2, $3, 1, $6, 1, 4, 'hash', NULL, $5),
+			($1, $2, $7, 0, $8, 1, 4, NULL, $9, $9)
+	`, tenantID, projectID, abandonedSessionID, abandonedCompletedKey,
+		now.Add(-16*time.Minute), abandonedIncompleteKey, activeSessionID, activeKey,
+		now.Add(-time.Minute)); err != nil {
+		t.Fatalf("create replay recovery batches: %v", err)
+	}
+	queuedBeforeRecovery := len(mergeQueue.sessionIDs)
+	if err := scheduler.ReconcileOnce(ctx); err != nil {
+		t.Fatalf("recover abandoned replay: %v", err)
+	}
+	if got := mergeQueue.sessionIDs[queuedBeforeRecovery:]; len(got) != 1 || got[0] != abandonedSessionID {
+		t.Fatalf("recovered replay queue = %#v, want %q", got, abandonedSessionID)
+	}
+	var abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT abandoned.ended_at, abandoned.merge_requested_at, active.ended_at
+		FROM sessions AS abandoned
+		JOIN sessions AS active ON active.id = $2
+		WHERE abandoned.id = $1
+	`, abandonedSessionID, activeSessionID).Scan(
+		&abandonedEndedAt, &abandonedMergeRequestedAt, &activeEndedAt,
+	); err != nil {
+		t.Fatalf("read recovered replay state: %v", err)
+	}
+	if abandonedEndedAt == nil || abandonedMergeRequestedAt == nil || activeEndedAt != nil {
+		t.Errorf("recovered/active replay state = %v/%v/%v", abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt)
+	}
+	storageClient.objects[abandonedCompletedKey] = []byte(`[{}]`)
+	storageClient.contentTypes[abandonedCompletedKey] = "application/json"
+	storageClient.objects[abandonedIncompleteKey] = []byte(`[{}]`)
+	storageClient.contentTypes[abandonedIncompleteKey] = "application/json"
+	abandonedTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, abandonedSessionID)))
+	if err := processor.MergeHandler()(ctx, abandonedTask); err != nil {
+		t.Fatalf("merge recovered replay: %v", err)
+	}
+	if _, exists := storageClient.objects[abandonedIncompleteKey]; exists {
+		t.Error("incomplete recovered replay object was not removed")
+	}
+	recoveredKey := "tenants/" + tenantID + "/sessions/" + abandonedSessionID + "/replay.json"
+	if got := string(storageClient.objects[recoveredKey]); got != `[{},{}]` {
+		t.Errorf("recovered replay = %s, want two uploaded batches", got)
+	}
+	if err := root.QueryRow(ctx, `SELECT count(*) FROM session_batches WHERE session_id = $1`, abandonedSessionID).
+		Scan(&batchRows); err != nil || batchRows != 0 {
+		t.Fatalf("recovered replay batch rows = %d, error = %v", batchRows, err)
+	}
+	if err := root.QueryRow(ctx, `SELECT events_count, batches_count FROM sessions WHERE id = $1`, abandonedSessionID).
+		Scan(&events, &batches); err != nil || events != 2 || batches != 2 {
+		t.Errorf("recovered replay aggregates = %d/%d, error = %v", events, batches, err)
+	}
+
 	var failedSessionID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (

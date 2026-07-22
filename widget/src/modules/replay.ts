@@ -3,6 +3,7 @@ import type { WidgetRule } from '../types'
 
 const batchEventLimit = 50
 const batchTargetBytes = 200 * 1024
+const batchFlushMilliseconds = 15 * 1000
 const idleTimeoutMilliseconds = 5 * 60 * 1000
 const maximumDurationSeconds = 30 * 60
 const maximumEvents = 50_000
@@ -57,6 +58,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   let serializedEvents: string[] = []
   let serializedBytes = 2
   let uploadChain = Promise.resolve()
+  let flushTimer = 0
   let idleTimer = 0
   let durationTimer = 0
 
@@ -118,11 +120,13 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   for (const event of activityEvents) window.addEventListener(event, resetIdleTimer, { passive: true })
   window.addEventListener('fidibeki:navigation', onNavigation)
   window.addEventListener('pagehide', onPageHide, { once: true })
+  flushTimer = window.setInterval(enqueueBatch, batchFlushMilliseconds)
   resetIdleTimer()
   durationTimer = window.setTimeout(() => void stop(), Math.max(1, maxDuration) * 1000)
 
   const cleanup = () => {
     stopRecording?.()
+    window.clearInterval(flushTimer)
     window.clearTimeout(idleTimer)
     window.clearTimeout(durationTimer)
     for (const event of activityEvents) window.removeEventListener(event, resetIdleTimer)
