@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22  
 **Status:** Approved  
-**Scope:** First testable delivery of product Slice 3
+**Scope:** Widget state and recurrence vertical slice within product Slice 3
 
 ## Problem
 
@@ -37,25 +37,44 @@ targeting continues to evaluate the full current URL so teams can intentionally 
 ### Storage model
 
 State is stored as versioned JSON in `localStorage`, keyed by project, rule, and normalized page.
-A session identifier from `sessionStorage` limits immediate suppression to the current top-level
-browsing session while leaving a durable record that later Slice 3 work can use for cooldown and
-recurrence.
+A random session identifier in `sessionStorage` distinguishes the current top-level browsing
+session. The record stores when the transition occurred; the current rule configuration determines
+whether that record still suppresses the widget.
 
 ```json
 {
   "version": 1,
   "state": "submitted",
   "session_id": "anonymous-random-id",
-  "updated_at": "2026-07-22T12:00:00.000Z"
+  "occurred_at": "2026-07-22T12:00:00.000Z"
 }
 ```
 
 The state vocabulary is `new`, `submitted`, `minimized`, `dismissed`, and `snoozed`. This delivery
 actively writes `submitted` and `dismissed`; `new` is represented by no record. The remaining states
-are reserved for the compact launcher, cooldown, and recurrence work in the rest of Slice 3.
+are reserved for the compact launcher and snooze work in the rest of Slice 3.
 
 Malformed, unavailable, or blocked storage fails open: the widget may appear, but it must never
 break the host page. State IDs are anonymous and contain no reporter or device identity.
+
+### Recurrence configuration
+
+Each widget rule exposes a `recurrence_mode` and optional `recurrence_days`:
+
+- `cooldown` is the default and suppresses a submitted page across sessions for the configured
+  number of days. Existing and new rules default to 30 days.
+- `session` suppresses only during the top-level browsing session that submitted the feedback.
+- `never` keeps the submitted page suppressed until storage is cleared or the rule identity changes.
+
+`recurrence_days` is required only for `cooldown` and accepts 1 through 3650 days. The project rule
+editor presents these choices as **After a period**, **Next browser session**, and **Never show
+again**, with a numeric days input for the first choice.
+
+The browser stores `occurred_at`, not a fixed expiry. On every evaluation the widget applies the
+latest rule configuration. Changing a rule from 30 to 7 days, or from `never` to `session`, therefore
+affects existing browser records as soon as the refreshed configuration is loaded. An expired record
+is removed and the page becomes eligible again. The next mount creates a fresh
+`client_feedback_id`, so a changed opinion is a new feedback record rather than a retry.
 
 ### State transitions
 
@@ -65,8 +84,11 @@ break the host page. State IDs are anonymous and contain no reporter or device i
 - The first successful feedback response writes `submitted` immediately, before attachment uploads.
 - Refreshing or changing only query/hash on that page in the same session does not mount the widget.
 - A different pathname remains eligible for its own matching rule and state.
-- A new top-level tab or later browser session remains eligible until configurable recurrence is
-  implemented.
+- Under the default policy, a new tab or later browser session remains suppressed until 30 days
+  after submission, then becomes eligible again.
+- Under `session`, a new top-level tab is eligible; under `never`, no time-based expiry applies.
+- Explicit dismissal suppresses only the current session; submission recurrence does not apply to a
+  user who closed the form without sending feedback.
 
 The loader owns persistence and passes explicit `onSubmitted` and `onDismissed` callbacks into the
 widget UI. This keeps the form independent from storage details and makes state transitions directly
@@ -84,9 +106,13 @@ future `submitted` funnel event.
 
 ## Compatibility
 
-No backend, database, configuration, or targeting contract changes are required. Existing storage
-booleans use a different key and are ignored. The new key includes a schema version, allowing later
-cooldown and recurrence fields to be added without guessing old value shapes.
+A compatible migration adds recurrence fields to `widget_rules`. Project CRUD and public widget
+configuration expose the fields additively, while existing rules receive the 30-day default. The
+backoffice editor can change the policy with the existing widget-rule update permission. Existing
+targeting behavior and stored feedback are unchanged.
+
+Existing storage booleans use a different key and are ignored. The new key includes a schema
+version, allowing later state fields to be added without guessing old value shapes.
 
 Production remains untouched. Staging deployment is permitted only after local widget verification.
 
@@ -96,8 +122,17 @@ Unit tests cover:
 
 - page identity ignores query and hash while preserving pathname and trailing slash;
 - state isolation by project, rule, and pathname;
-- current-session suppression for `submitted` and `dismissed`;
-- no suppression for missing, stale-session, malformed, or unavailable storage records.
+- `session`, `cooldown`, and `never` recurrence semantics at time boundaries;
+- current-session suppression for `dismissed`;
+- expired record cleanup;
+- no suppression for missing, malformed, or unavailable storage records, or for stale-session
+  records when the rule uses `session` recurrence.
+
+Backend and backoffice tests cover:
+
+- migration defaults and up/down/up compatibility;
+- recurrence validation and additive project/public configuration responses;
+- editing all three recurrence modes and the conditional days input.
 
 Widget browser tests cover:
 
@@ -105,7 +140,8 @@ Widget browser tests cover:
 - a failed feedback request remains retryable and does not suppress;
 - `/chart?asset=BAI` submission followed by refresh/navigation to `/chart?asset=BIC` does not show
   the widget again and creates only one feedback request;
-- opening the same page directly in a new top-level tab starts a new eligible session;
+- the default 30-day cooldown suppresses a new tab, then allows a new submission after expiry;
+- session recurrence allows the same page in a new top-level tab;
 - a different pathname remains eligible;
 - accepted feedback followed by attachment failure shows partial success and remains suppressed.
 
