@@ -229,6 +229,7 @@ function createMockState() {
     analyticsDelayMs: 0,
     analyticsPagesTotal: 2,
     analyticsRequests: [] as string[],
+    workspaceAccess: 'available' as 'available' | 'unknown' | 'suspended' | 'error',
   }
 }
 
@@ -707,10 +708,15 @@ async function installMockAPI(page: Page, state: MockState) {
     }
 
     if (path === '/v1/plans' && method === 'GET') return json(route, { plans: planCatalog })
-    if (path === '/v1/config' && method === 'GET') return json(route, {
-      tenant: state.tenant,
-      plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
-    })
+    if (path === '/v1/config' && method === 'GET') {
+      if (state.workspaceAccess === 'unknown') return json(route, { error: { code: 'unknown_tenant', message: 'unknown tenant' } }, 404)
+      if (state.workspaceAccess === 'suspended') return json(route, { error: { code: 'tenant_suspended', message: 'tenant is not active' } }, 403)
+      if (state.workspaceAccess === 'error') return json(route, { error: { code: 'service_unavailable', message: 'service unavailable' } }, 503)
+      return json(route, {
+        tenant: state.tenant,
+        plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
+      })
+    }
     if (path === '/v1/members' && method === 'GET') return json(route, { members: state.members })
     if (path === '/v1/member-domains' && method === 'GET') return json(route, { member_domains: state.memberDomains })
     if (path === '/v1/member-domains' && method === 'POST') {
@@ -833,6 +839,55 @@ test('magic-link login enters the Dispatch workspace', async ({ page }) => {
   await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
   await expect(page).toHaveURL(`${tenantOrigin}/`)
   await expect(page.getByRole('heading', { name: 'Good afternoon, Alex' })).toBeVisible()
+})
+
+test('unknown standard workspace offers explicit signup with an editable slug', async ({ page }) => {
+  const state = createMockState()
+  state.workspaceAccess = 'unknown'
+  await installMockAPI(page, state)
+  const unknownOrigin = `http://missing.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
+
+  await page.goto(`${unknownOrigin}/login`)
+
+  await expect(page).toHaveURL(`${unknownOrigin}/login`)
+  await expect(page.getByRole('heading', { name: 'Workspace unavailable' })).toBeVisible()
+  await expect(page.getByLabel('Work email')).toHaveCount(0)
+  const signup = page.getByRole('link', { name: 'Create missing workspace' })
+  await expect(signup).toHaveAttribute('href', /\/signup\?slug=missing$/)
+  await signup.click()
+
+  await expect(page).toHaveURL(new RegExp(`http://localhost:${process.env.PLAYWRIGHT_PORT || '4321'}/signup\\?slug=missing$`))
+  await expect(page.getByLabel('Workspace URL')).toHaveValue('missing')
+  await page.getByLabel('Workspace URL').fill('another-workspace')
+  await expect(page.getByLabel('Workspace URL')).toHaveValue('another-workspace')
+})
+
+test('inaccessible workspace uses the same neutral unavailable state', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The unavailable layout is responsive in the signup-prefill test')
+  const state = createMockState()
+  state.workspaceAccess = 'suspended'
+  await installMockAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/login`)
+
+  await expect(page.getByRole('heading', { name: 'Workspace unavailable' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText(/suspended|tenant is not active/i)
+  await expect(page.getByLabel('Work email')).toHaveCount(0)
+})
+
+test('temporary workspace lookup failure can be retried', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Retry behavior is viewport independent')
+  const state = createMockState()
+  state.workspaceAccess = 'error'
+  await installMockAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/login`)
+  await expect(page.getByRole('heading', { name: 'Workspace check unavailable' })).toBeVisible()
+
+  state.workspaceAccess = 'available'
+  await page.getByRole('button', { name: 'Retry' }).click()
+  await expect(page.getByRole('heading', { name: 'Sign in to Fidibeki' })).toBeVisible()
+  await expect(page.getByLabel('Work email')).toBeVisible()
 })
 
 test('member domain verification consumes the fragment before confirming access', async ({ page }, testInfo) => {

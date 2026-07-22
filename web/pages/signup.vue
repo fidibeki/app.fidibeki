@@ -13,17 +13,20 @@ import {
 definePageMeta({ layout: false })
 
 const config = useRuntimeConfig()
+const route = useRoute()
 const requestURL = useRequestURL()
 const { $apiFetch } = useNuxtApp()
 const baseDomain = String(config.public.baseDomain || requestURL.hostname)
 const siteKey = String(config.public.turnstileSiteKey || '')
 const name = ref('')
-const slug = ref('')
+const requestedSlug = typeof route.query.slug === 'string' ? normalizeWorkspaceSlug(route.query.slug) : ''
+const initialSlug = requestedSlug && !workspaceSlugError(requestedSlug) ? requestedSlug : ''
+const slug = ref(initialSlug)
 const email = ref('')
 const selectedPlan = ref<TenantPlan>('growth')
 const turnstileToken = ref('')
 const challengeFailed = ref(false)
-const slugTouched = ref(false)
+const slugTouched = ref(Boolean(initialSlug))
 const pending = ref(false)
 const errorMessage = ref('')
 const created = ref<SignupResponse['tenant'] | null>(null)

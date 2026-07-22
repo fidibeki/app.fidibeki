@@ -4,6 +4,7 @@ import {
   isBaseDomainHost,
   normalizeWorkspaceSlug,
   workspaceLoginURL,
+  workspaceSlugFromStandardHost,
   workspaceSlugError,
 } from '../../utils/workspace-url'
 
@@ -31,5 +32,14 @@ describe('workspace URL helpers', () => {
   it('distinguishes the environment root from tenant hosts', () => {
     expect(isBaseDomainHost('staging.fidibeki.com', 'staging.fidibeki.com')).toBe(true)
     expect(isBaseDomainHost('acme.staging.fidibeki.com', 'staging.fidibeki.com')).toBe(false)
+  })
+
+  it('suggests a slug only for a valid direct subdomain of the configured base domain', () => {
+    expect(workspaceSlugFromStandardHost('acme.staging.fidibeki.com', 'staging.fidibeki.com')).toBe('acme')
+    expect(workspaceSlugFromStandardHost('acme.localhost', 'localhost')).toBe('acme')
+    expect(workspaceSlugFromStandardHost('custom.example.com', 'staging.fidibeki.com')).toBeNull()
+    expect(workspaceSlugFromStandardHost('one.two.staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
+    expect(workspaceSlugFromStandardHost('api.staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
+    expect(workspaceSlugFromStandardHost('staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
   })
 })

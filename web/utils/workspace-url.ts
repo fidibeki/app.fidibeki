@@ -38,3 +38,14 @@ export function workspaceLoginURL(slug: string, baseDomain: string, currentURL: 
 export function isBaseDomainHost(hostname: string, baseDomain: string) {
   return hostname.toLowerCase().replace(/\.$/, '') === baseDomain.toLowerCase().replace(/\.$/, '')
 }
+
+export function workspaceSlugFromStandardHost(hostname: string, baseDomain: string) {
+  const normalizedHost = hostname.toLowerCase().replace(/\.$/, '')
+  const normalizedBase = baseDomain.toLowerCase().replace(/\.$/, '')
+  if (!normalizedBase) return null
+  const suffix = `.${normalizedBase}`
+  if (!normalizedHost.endsWith(suffix)) return null
+  const slug = normalizedHost.slice(0, -suffix.length)
+  if (!slug || slug.includes('.') || workspaceSlugError(slug)) return null
+  return slug
+}

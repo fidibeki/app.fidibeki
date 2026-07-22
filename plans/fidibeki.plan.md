@@ -55,11 +55,13 @@ implementation; extend existing contracts instead of rebuilding them.
   Preserve the existing accessible status message while giving its icon and wrapping copy a stable
   aligned layout at narrow and wide widths. Implemented as an explicit icon/copy grid that retains
   `role="status"`, with geometric browser assertions in the desktop and mobile login flows.
-- [ ] [#12](https://github.com/acidiney/app.fidibeki/issues/12) Unknown workspace routing. The API
+- [x] [#12](https://github.com/acidiney/app.fidibeki/issues/12) Unknown workspace routing. The API
   already returns `unknown_tenant`; the web login route currently bypasses that knowledge. Resolve
   workspace availability before authentication, render a neutral unavailable/not-found state,
   offer editable prefilled signup only for standard Fidibeki subdomains, and never derive a slug
-  from an unknown custom domain.
+  from an unknown custom domain. Implemented by reusing the public tenant configuration endpoint,
+  mapping inaccessible tenant states to one neutral SSR 404, preserving temporary-error retry, and
+  carrying a validated direct-subdomain slug only through an explicit signup action.
 
 Every blocker requires an automated regression test and responsive browser validation where
 applicable. Complete and validate the five items in order without production or infrastructure
