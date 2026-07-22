@@ -145,15 +145,69 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		t.Errorf("second verify status = %d", secondVerify.Code)
 	}
 
+	legacyInvite := performTenantRequest(
+		handler, http.MethodPost, "/auth/invite",
+		`{"email":"legacy@other.test","permissions":["project:read"]}`,
+		ownerSession.AccessToken, nil,
+	)
+	if legacyInvite.Code != http.StatusAccepted || len(queue.messages) != 2 {
+		t.Fatalf("pre-policy invite status = %d, messages = %d, body = %s", legacyInvite.Code, len(queue.messages), legacyInvite.Body.String())
+	}
+	legacyMagicToken := messageToken(t, queue.messages[1])
+
+	domainRequest := performTenantRequest(
+		handler, http.MethodPost, "/v1/member-domains",
+		`{"email":"security@acme.test"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if domainRequest.Code != http.StatusAccepted || len(queue.messages) != 3 {
+		t.Fatalf("domain verification request status = %d, messages = %d, body = %s", domainRequest.Code, len(queue.messages), domainRequest.Body.String())
+	}
+	pendingDomains := performTenantRequest(handler, http.MethodGet, "/v1/member-domains", "", ownerSession.AccessToken, nil)
+	if pendingDomains.Code != http.StatusOK || !strings.Contains(pendingDomains.Body.String(), `"domain":"acme.test"`) ||
+		!strings.Contains(pendingDomains.Body.String(), `"status":"pending"`) {
+		t.Fatalf("pending member domains status = %d, body = %s", pendingDomains.Code, pendingDomains.Body.String())
+	}
+	domainVerified := performTenantRequest(
+		handler, http.MethodPost, "/auth/member-domains/verify",
+		`{"token":"`+messageToken(t, queue.messages[2])+`"}`, "", nil,
+	)
+	if domainVerified.Code != http.StatusOK || !strings.Contains(domainVerified.Body.String(), `"status":"verified"`) {
+		t.Fatalf("domain verify status = %d, body = %s", domainVerified.Code, domainVerified.Body.String())
+	}
+	domainVerifyReplay := performTenantRequest(
+		handler, http.MethodPost, "/auth/member-domains/verify",
+		`{"token":"`+messageToken(t, queue.messages[2])+`"}`, "", nil,
+	)
+	if domainVerifyReplay.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed domain verification status = %d, body = %s", domainVerifyReplay.Code, domainVerifyReplay.Body.String())
+	}
+
+	legacyActivation := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify", `{"token":"`+legacyMagicToken+`"}`, "", nil,
+	)
+	if legacyActivation.Code != http.StatusUnprocessableEntity || !strings.Contains(legacyActivation.Body.String(), "not verified") {
+		t.Fatalf("pre-policy invitation activation status = %d, body = %s", legacyActivation.Code, legacyActivation.Body.String())
+	}
+	blockedInvite := performTenantRequest(
+		handler, http.MethodPost, "/auth/invite",
+		`{"email":"blocked@other.test","permissions":["project:read"]}`,
+		ownerSession.AccessToken, nil,
+	)
+	if blockedInvite.Code != http.StatusUnprocessableEntity || len(queue.messages) != 3 ||
+		!strings.Contains(blockedInvite.Body.String(), "not verified") {
+		t.Fatalf("unverified-domain invite status = %d, messages = %d, body = %s", blockedInvite.Code, len(queue.messages), blockedInvite.Body.String())
+	}
+
 	invite := performTenantRequest(
 		handler, http.MethodPost, "/auth/invite",
 		`{"email":"viewer@acme.test","permissions":["project:read"]}`,
 		ownerSession.AccessToken, nil,
 	)
-	if invite.Code != http.StatusAccepted || len(queue.messages) != 2 {
+	if invite.Code != http.StatusAccepted || len(queue.messages) != 4 {
 		t.Fatalf("invite status = %d, messages = %d, body = %s", invite.Code, len(queue.messages), invite.Body.String())
 	}
-	viewerMagicToken := messageToken(t, queue.messages[1])
+	viewerMagicToken := messageToken(t, queue.messages[3])
 	viewerVerified := performTenantRequest(handler, http.MethodPost, "/auth/verify", `{"token":"`+viewerMagicToken+`"}`, "", nil)
 	viewerSession := decodeTenantSession(t, viewerVerified)
 	viewerCookie := responseCookie(t, viewerVerified, tenantRefreshCookie)
@@ -185,6 +239,36 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	)
 	if duplicateInvite.Code != http.StatusConflict {
 		t.Errorf("duplicate invite status = %d, body = %s", duplicateInvite.Code, duplicateInvite.Body.String())
+	}
+	additionalDomainRequest := performTenantRequest(
+		handler, http.MethodPost, "/v1/member-domains",
+		`{"email":"security@other.test"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if additionalDomainRequest.Code != http.StatusAccepted || len(queue.messages) != 5 {
+		t.Fatalf("additional domain request status = %d, messages = %d, body = %s", additionalDomainRequest.Code, len(queue.messages), additionalDomainRequest.Body.String())
+	}
+	additionalDomainVerified := performTenantRequest(
+		handler, http.MethodPost, "/auth/member-domains/verify",
+		`{"token":"`+messageToken(t, queue.messages[4])+`"}`, "", nil,
+	)
+	if additionalDomainVerified.Code != http.StatusOK || !strings.Contains(additionalDomainVerified.Body.String(), `"domain":"other.test"`) {
+		t.Fatalf("additional domain verify status = %d, body = %s", additionalDomainVerified.Code, additionalDomainVerified.Body.String())
+	}
+	additionalInvite := performTenantRequest(
+		handler, http.MethodPost, "/auth/invite",
+		`{"email":"allowed@other.test","permissions":["project:read"]}`,
+		ownerSession.AccessToken, nil,
+	)
+	if additionalInvite.Code != http.StatusAccepted || len(queue.messages) != 6 {
+		t.Fatalf("verified additional-domain invite status = %d, messages = %d, body = %s", additionalInvite.Code, len(queue.messages), additionalInvite.Body.String())
+	}
+	additionalActivation := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+messageToken(t, queue.messages[5])+`"}`, "", nil,
+	)
+	if additionalActivation.Code != http.StatusOK {
+		t.Fatalf("verified additional-domain activation status = %d, body = %s", additionalActivation.Code, additionalActivation.Body.String())
 	}
 	viewerLogout := performTenantRequest(handler, http.MethodPost, "/auth/logout", "", "", viewerCookie)
 	if viewerLogout.Code != http.StatusNoContent {
@@ -239,12 +323,12 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	}
 
 	relogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
-	if relogin.Code != http.StatusAccepted || len(queue.messages) != 3 {
+	if relogin.Code != http.StatusAccepted || len(queue.messages) != 7 {
 		t.Fatalf("relogin status = %d, messages = %d", relogin.Code, len(queue.messages))
 	}
 	reverified := performTenantRequest(
 		handler, http.MethodPost, "/auth/verify",
-		`{"token":"`+messageToken(t, queue.messages[2])+`"}`, "", nil,
+		`{"token":"`+messageToken(t, queue.messages[6])+`"}`, "", nil,
 	)
 	fingerprintCookie := responseCookie(t, reverified, tenantRefreshCookie)
 	fingerprintRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", fingerprintCookie)
@@ -266,12 +350,12 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	}
 
 	logoutLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
-	if logoutLogin.Code != http.StatusAccepted || len(queue.messages) != 4 {
+	if logoutLogin.Code != http.StatusAccepted || len(queue.messages) != 8 {
 		t.Fatalf("logout login status = %d, messages = %d", logoutLogin.Code, len(queue.messages))
 	}
 	logoutVerified := performTenantRequest(
 		handler, http.MethodPost, "/auth/verify",
-		`{"token":"`+messageToken(t, queue.messages[3])+`"}`, "", nil,
+		`{"token":"`+messageToken(t, queue.messages[7])+`"}`, "", nil,
 	)
 	logoutParentCookie := responseCookie(t, logoutVerified, tenantRefreshCookie)
 	logoutRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", logoutParentCookie)
@@ -289,12 +373,12 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	}
 
 	expiryLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
-	if expiryLogin.Code != http.StatusAccepted || len(queue.messages) != 5 {
+	if expiryLogin.Code != http.StatusAccepted || len(queue.messages) != 9 {
 		t.Fatalf("expiry login status = %d, messages = %d", expiryLogin.Code, len(queue.messages))
 	}
 	expiryVerified := performTenantRequest(
 		handler, http.MethodPost, "/auth/verify",
-		`{"token":"`+messageToken(t, queue.messages[4])+`"}`, "", nil,
+		`{"token":"`+messageToken(t, queue.messages[8])+`"}`, "", nil,
 	)
 	expiryCookie := responseCookie(t, expiryVerified, tenantRefreshCookie)
 	now = now.Add(31 * 24 * time.Hour)

@@ -34,11 +34,13 @@ implementation; extend existing contracts instead of rebuilding them.
 
 #### Phase 0: product quality gate
 
-- [ ] [#8](https://github.com/acidiney/app.fidibeki/issues/8) Verified member domains. The audit
+- [x] [#8](https://github.com/acidiney/app.fidibeki/issues/8) Verified member domains. The audit
   found no workspace-domain verification model or invite/activation enforcement. Add the smallest
   tenant-scoped model and management surface that can prove a domain, then enforce it both when an
   invitation is created and when its magic link is consumed. Preserve workspaces without verified
-  domains until they opt into the policy.
+  domains until they opt into the policy. Implemented with tenant-scoped RLS storage, hashed
+  one-time email verification, serialized invite/activation enforcement, Settings management, and
+  backend/web regression coverage. Real staging verification remains part of the Phase 0 exit gate.
 - [ ] [#9](https://github.com/acidiney/app.fidibeki/issues/9) Feedback queue selection. Filtering,
   URL synchronization, and SPA navigation already work. Replace path-only router active matching
   with one canonical queue matcher so exactly one queue reflects the current filter state.

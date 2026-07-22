@@ -18,6 +18,7 @@ export default defineNuxtConfig({
     '/login': { ssr: true },
     '/signup': { ssr: true },
     '/auth/verify': { ssr: false },
+    '/auth/domain-verify': { ssr: false },
     '/designs/**': { ssr: false },
   },
   runtimeConfig: {

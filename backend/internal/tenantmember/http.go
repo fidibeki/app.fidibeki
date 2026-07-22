@@ -44,6 +44,7 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	handler := &HTTPHandler{options: options}
 	router.Post("/auth/login", handler.login)
 	router.Post("/auth/verify", handler.verify)
+	router.Post("/auth/member-domains/verify", handler.verifyMemberDomain)
 	router.Post("/auth/refresh", handler.refresh)
 	router.Post("/auth/logout", handler.logout)
 
@@ -55,8 +56,71 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/auth/invite", handler.invite)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
 		Get("/v1/members", handler.listMembers)
+	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
+		Get("/v1/member-domains", handler.listMemberDomains)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberInvite))...).
+		Post("/v1/member-domains", handler.requestMemberDomainVerification)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberUpdate))...).
 		Patch("/v1/members/{memberID}", handler.updateMember)
+}
+
+func (h *HTTPHandler) listMemberDomains(w http.ResponseWriter, r *http.Request) {
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	domains, err := h.options.Store.ListMemberDomains(r.Context(), query, resolved.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member_domains": domains})
+}
+
+func (h *HTTPHandler) requestMemberDomainVerification(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Email string `json:"email"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	memberDomain, message, err := h.options.Service.RequestMemberDomainVerification(
+		r.Context(), query, resolved, request.Email,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
+		return h.options.Email.Enqueue(ctx, *message)
+	}) {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusAccepted, map[string]any{"member_domain": memberDomain})
+}
+
+func (h *HTTPHandler) verifyMemberDomain(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	memberDomain, err := h.options.Service.VerifyMemberDomain(r.Context(), query, resolved.ID, request.Token)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member_domain": memberDomain})
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +361,12 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)
 	case errors.Is(err, ErrMemberExists):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member already exists", nil)
+	case errors.Is(err, ErrMemberDomainAlreadyVerified):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member domain is already verified", nil)
+	case errors.Is(err, ErrMemberDomainNotVerified):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "email domain is not verified for this workspace", nil)
+	case errors.Is(err, ErrDomainVerificationInvalid):
+		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "domain verification failed", nil)
 	case errors.Is(err, ErrMemberNotFound):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "member not found", nil)
 	case strings.Contains(err.Error(), "email is invalid"):

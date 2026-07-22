@@ -57,6 +57,122 @@ func (s Store) FindMemberByEmail(
 	return member, nil
 }
 
+func (s Store) IsMemberEmailDomainAllowed(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	email string,
+) (bool, error) {
+	var lockedTenantID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM tenants WHERE id = $1 FOR UPDATE
+	`, tenantID).Scan(&lockedTenantID); err != nil {
+		return false, fmt.Errorf("lock tenant member domain policy: %w", err)
+	}
+	var allowed bool
+	err := query.QueryRow(ctx, `
+		SELECT NOT EXISTS (
+		         SELECT 1 FROM tenant_member_domains
+		         WHERE tenant_id = $1 AND verified_at IS NOT NULL
+		       ) OR EXISTS (
+		         SELECT 1 FROM tenant_member_domains
+		         WHERE tenant_id = $1 AND verified_at IS NOT NULL
+		           AND domain = split_part($2, '@', 2)
+		       )
+	`, tenantID, email).Scan(&allowed)
+	if err != nil {
+		return false, fmt.Errorf("check member email domain: %w", err)
+	}
+	return allowed, nil
+}
+
+func (s Store) ListMemberDomains(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+) ([]MemberDomain, error) {
+	rows, err := query.Query(ctx, `
+		SELECT id, tenant_id, domain, verification_email, verification_expires_at,
+		       verified_at, CASE WHEN verified_at IS NULL THEN 'pending' ELSE 'verified' END,
+		       created_at, updated_at
+		FROM tenant_member_domains
+		WHERE tenant_id = $1
+		ORDER BY verified_at NULLS LAST, domain
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list member domains: %w", err)
+	}
+	defer rows.Close()
+	domains := make([]MemberDomain, 0)
+	for rows.Next() {
+		domain, err := scanMemberDomain(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan member domain: %w", err)
+		}
+		domains = append(domains, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list member domains: %w", err)
+	}
+	return domains, nil
+}
+
+func (s Store) RequestMemberDomainVerification(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, domain, verificationEmail, tokenHash string,
+	expiresAt time.Time,
+) (MemberDomain, error) {
+	memberDomain, err := scanMemberDomain(query.QueryRow(ctx, `
+		INSERT INTO tenant_member_domains (
+			tenant_id, domain, verification_email, verification_token_hash, verification_expires_at
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (tenant_id, domain) DO UPDATE
+		SET verification_email = EXCLUDED.verification_email,
+		    verification_token_hash = EXCLUDED.verification_token_hash,
+		    verification_expires_at = EXCLUDED.verification_expires_at
+		WHERE tenant_member_domains.verified_at IS NULL
+		RETURNING id, tenant_id, domain, verification_email, verification_expires_at,
+		          verified_at, CASE WHEN verified_at IS NULL THEN 'pending' ELSE 'verified' END,
+		          created_at, updated_at
+	`, tenantID, domain, verificationEmail, tokenHash, expiresAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MemberDomain{}, ErrMemberDomainAlreadyVerified
+	}
+	if err != nil {
+		return MemberDomain{}, fmt.Errorf("request member domain verification: %w", err)
+	}
+	return memberDomain, nil
+}
+
+func (s Store) VerifyMemberDomain(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, tokenHash string,
+) (MemberDomain, error) {
+	var lockedTenantID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM tenants WHERE id = $1 FOR UPDATE
+	`, tenantID).Scan(&lockedTenantID); err != nil {
+		return MemberDomain{}, fmt.Errorf("lock tenant member domain policy: %w", err)
+	}
+	memberDomain, err := scanMemberDomain(query.QueryRow(ctx, `
+		UPDATE tenant_member_domains
+		SET verified_at = $3
+		WHERE tenant_id = $1 AND verification_token_hash = $2
+		  AND verified_at IS NULL AND verification_expires_at > $3
+		RETURNING id, tenant_id, domain, verification_email, verification_expires_at,
+		          verified_at, 'verified', created_at, updated_at
+	`, tenantID, tokenHash, s.now()))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MemberDomain{}, ErrDomainVerificationInvalid
+	}
+	if err != nil {
+		return MemberDomain{}, fmt.Errorf("verify member domain: %w", err)
+	}
+	return memberDomain, nil
+}
+
 func (s Store) CreateMagicLink(
 	ctx context.Context,
 	query db.Querier,
@@ -110,6 +226,13 @@ func (s Store) ConsumeMagicLink(
 
 	var member Member
 	if memberID == nil {
+		allowed, err := s.IsMemberEmailDomainAllowed(ctx, query, tenantID, email)
+		if err != nil {
+			return Member{}, err
+		}
+		if !allowed {
+			return Member{}, ErrMemberDomainNotVerified
+		}
 		member, err = scanMember(query.QueryRow(ctx, `
 			INSERT INTO tenant_members (tenant_id, email, permissions)
 			VALUES ($1, $2, $3)
@@ -149,6 +272,20 @@ func (s Store) ConsumeMagicLink(
 		return Member{}, fmt.Errorf("create tenant member session: %w", err)
 	}
 	return member, nil
+}
+
+type memberDomainScanner interface {
+	Scan(...any) error
+}
+
+func scanMemberDomain(row memberDomainScanner) (MemberDomain, error) {
+	var domain MemberDomain
+	err := row.Scan(
+		&domain.ID, &domain.TenantID, &domain.Domain, &domain.VerificationEmail,
+		&domain.VerificationExpiresAt, &domain.VerifiedAt, &domain.Status,
+		&domain.CreatedAt, &domain.UpdatedAt,
+	)
+	return domain, err
 }
 
 func (s Store) RotateSession(

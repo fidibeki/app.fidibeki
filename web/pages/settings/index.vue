@@ -5,6 +5,7 @@ import {
   Copy,
   KeyRound,
   Link2,
+  MailCheck,
   Plus,
   ShieldCheck,
   Trash2,
@@ -24,6 +25,7 @@ import type {
   IntegrationEvent,
   IntegrationKind,
   Member,
+  MemberDomain,
   TenantConfiguration,
 } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
@@ -48,11 +50,14 @@ const activeTab = computed<SettingsTab>(() => {
 })
 
 const { data, status, error, refresh } = await useAsyncData('settings-data', async () => {
-  const [configuration, members, keys, integrations] = await Promise.all([
+  const [configuration, members, memberDomains, keys, integrations] = await Promise.all([
     $apiFetch<TenantConfiguration>('/v1/config'),
     can('member:read')
       ? $apiFetch<{ members: Member[] }>('/v1/members')
       : Promise.resolve({ members: [] }),
+    can('member:read')
+      ? $apiFetch<{ member_domains: MemberDomain[] }>('/v1/member-domains')
+      : Promise.resolve({ member_domains: [] }),
     can('api_key:read')
       ? $apiFetch<{ api_keys: APIKey[] }>('/v1/api-keys')
       : Promise.resolve({ api_keys: [] }),
@@ -63,6 +68,7 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
   return {
     configuration,
     members: members.members,
+    memberDomains: memberDomains.member_domains,
     keys: keys.api_keys,
     integrations: integrations.integrations,
   }
@@ -76,6 +82,10 @@ const selectedMember = ref<Member | null>(null)
 const memberEmail = ref('')
 const memberPreset = ref<PermissionPreset>('viewer')
 const memberPermissions = ref<string[]>([])
+const domainVerificationEmail = ref('')
+const domainVerificationPending = ref(false)
+const domainVerificationError = ref('')
+const domainVerificationNotice = ref('')
 const keyName = ref('')
 const keyRateLimit = ref(1000)
 const keyExpiry = ref('never')
@@ -94,6 +104,7 @@ const workspaceHost = computed(() => {
   if (!slug) return ''
   return `${slug}.${String(runtimeConfig.public.baseDomain || 'fidibeki.com')}`
 })
+const hasVerifiedMemberDomains = computed(() => data.value?.memberDomains.some(domain => domain.status === 'verified') === true)
 
 const availablePermissionGroups = computed(() => tenantPermissionGroups.map((group) => ({
   ...group,
@@ -169,6 +180,25 @@ async function saveMember() {
     formError.value = apiErrorMessage(saveError, 'Member settings could not be saved.')
   } finally {
     pending.value = false
+  }
+}
+
+async function requestDomainVerification() {
+  if (!canWrite('member:invite') || domainVerificationPending.value || !domainVerificationEmail.value) return
+  domainVerificationPending.value = true
+  domainVerificationError.value = ''
+  domainVerificationNotice.value = ''
+  try {
+    await $apiFetch('/v1/member-domains', {
+      method: 'POST', body: { email: domainVerificationEmail.value },
+    })
+    domainVerificationNotice.value = `Verification sent to ${domainVerificationEmail.value}.`
+    domainVerificationEmail.value = ''
+    await refresh()
+  } catch (requestError) {
+    domainVerificationError.value = apiErrorMessage(requestError, 'Domain verification could not be started.')
+  } finally {
+    domainVerificationPending.value = false
   }
 }
 
@@ -331,20 +361,42 @@ useHead({ title: 'Settings - Fidibeki' })
         </div>
       </section>
 
-      <section v-else-if="activeTab === 'members'" class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Access</p><h2>Members</h2></div><button v-if="canWrite('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> Invite member</button></header>
-        <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
-        <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>No members found</h3></div>
-        <div v-else class="settings-table settings-members">
-          <div class="settings-row settings-row--head"><span>Member</span><span>Permissions</span><span>Access</span><span /></div>
-          <div v-for="member in data.members" :key="member.id" class="settings-row">
-            <span class="settings-identity"><i>{{ (member.name || member.email).slice(0, 1).toUpperCase() }}</i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
-            <span>{{ member.permissions.length }} granted</span>
-            <span>{{ member.id === currentMember?.id ? 'Current session' : 'Member' }}</span>
-            <button v-if="canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+      <div v-else-if="activeTab === 'members'" class="settings-members-page">
+        <section class="app-surface settings-section settings-domain-policy">
+          <header><div><p class="app-eyebrow">Membership policy</p><h2>Allowed email domains</h2></div><span class="settings-domain-mode" :data-enforced="hasVerifiedMemberDomains">{{ hasVerifiedMemberDomains ? 'Enforced' : 'Open policy' }}</span></header>
+          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
+          <template v-else>
+            <ul v-if="data.memberDomains.length" class="settings-domain-list">
+              <li v-for="domain in data.memberDomains" :key="domain.id">
+                <MailCheck :size="16" />
+                <span><b>{{ domain.domain }}</b><small>{{ domain.status === 'verified' ? `Verified ${formatDate(domain.verified_at!)}` : `Verification sent to ${domain.verification_email}` }}</small></span>
+                <span class="status-pill" :class="domain.status === 'verified' ? 'status-completed' : 'status-pending'">{{ domain.status }}</span>
+              </li>
+            </ul>
+            <form v-if="canWrite('member:invite')" class="settings-domain-form" @submit.prevent="requestDomainVerification">
+              <label>Verification email<input v-model.trim="domainVerificationEmail" class="app-input" type="email" required placeholder="security@company.com" /></label>
+              <button class="app-button" type="submit" :disabled="domainVerificationPending || !domainVerificationEmail"><MailCheck :size="15" /> {{ domainVerificationPending ? 'Sending...' : 'Verify domain' }}</button>
+            </form>
+            <p v-if="domainVerificationNotice" class="settings-domain-notice" role="status">{{ domainVerificationNotice }}</p>
+            <p v-if="domainVerificationError" class="settings-form-error" role="alert">{{ domainVerificationError }}</p>
+          </template>
+        </section>
+
+        <section class="app-surface settings-section">
+          <header><div><p class="app-eyebrow">Access</p><h2>Members</h2></div><button v-if="canWrite('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> Invite member</button></header>
+          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
+          <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>No members found</h3></div>
+          <div v-else class="settings-table settings-members">
+            <div class="settings-row settings-row--head"><span>Member</span><span>Permissions</span><span>Access</span><span /></div>
+            <div v-for="member in data.members" :key="member.id" class="settings-row">
+              <span class="settings-identity"><i>{{ (member.name || member.email).slice(0, 1).toUpperCase() }}</i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
+              <span>{{ member.permissions.length }} granted</span>
+              <span>{{ member.id === currentMember?.id ? 'Current session' : 'Member' }}</span>
+              <button v-if="canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <section v-else-if="activeTab === 'keys'" class="app-surface settings-section">
         <header><div><p class="app-eyebrow">Machine access</p><h2>API keys</h2></div><button v-if="canWrite('api_key:create')" class="app-button app-button--primary" @click="openKey"><Plus :size="15" /> Create key</button></header>
@@ -422,6 +474,7 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-tabs a[data-active='true'] { color: var(--teal); }
 .settings-tabs a[data-active='true']::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--teal); content: ''; }
 .settings-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
+.settings-members-page { display: grid; gap: 16px; }
 .settings-section { overflow: hidden; }
 .settings-section > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
 .settings-section h2 { margin: 3px 0 0; font-size: 14px; }
@@ -440,6 +493,17 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; margin: 0; padding: 8px 16px; list-style: none; }
 .settings-features li { display: flex; min-height: 32px; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; text-transform: capitalize; }
 .settings-features li[data-enabled='true'] { color: var(--green); }
+.settings-domain-mode { padding: 5px 7px; background: var(--surface-soft); color: var(--muted); border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.settings-domain-mode[data-enforced='true'] { background: var(--green-soft); color: var(--green); }
+.settings-domain-list { margin: 0; padding: 0; list-style: none; }
+.settings-domain-list li { display: grid; min-height: 56px; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--teal); }
+.settings-domain-list li > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.settings-domain-list b { color: var(--ink-soft); font-size: 11px; }
+.settings-domain-list small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-domain-form { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 9px; padding: 14px 16px; }
+.settings-domain-form label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
+.settings-domain-form .app-button { min-height: 38px; }
+.settings-domain-notice, .settings-domain-policy > .settings-form-error { margin: 0 16px 14px; }
 .settings-table { width: 100%; }
 .settings-row { display: grid; min-height: 62px; align-items: center; gap: 14px; padding: 7px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .settings-row:last-child { border-bottom: 0; }
@@ -483,5 +547,5 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-secret code { width: 100%; padding: 10px; overflow-wrap: anywhere; background: #f3f6f5; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; }
 .capitalize { text-transform: capitalize; }
 @media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row, .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) 38px; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } }
-@media (max-width: 650px) { .settings-tabs { gap: 15px; overflow-x: auto; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .permission-grid, .settings-form-grid, .settings-events { grid-template-columns: 1fr; } .permission-grid fieldset, .permission-grid fieldset:nth-child(3n) { border-right: 0; } }
+@media (max-width: 650px) { .settings-tabs { gap: 15px; overflow-x: auto; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .permission-grid, .settings-form-grid, .settings-events, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } .permission-grid fieldset, .permission-grid fieldset:nth-child(3n) { border-right: 0; } }
 </style>

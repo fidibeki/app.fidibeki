@@ -3,6 +3,7 @@ import { proxyHostForRequest } from '../utils/proxy-host'
 import { proxyTargetForRequest } from '../utils/proxy-target'
 
 const apiPrefixes = ['/auth/', '/v1/', '/healthz', '/readyz']
+const authPagePaths = new Set(['/auth/verify', '/auth/domain-verify'])
 
 function unavailable(event: H3Event, message: string) {
   setResponseStatus(event, 503, 'Service Unavailable')
@@ -12,7 +13,7 @@ function unavailable(event: H3Event, message: string) {
 export default defineEventHandler(async (event) => {
   const requestURL = getRequestURL(event)
   const path = requestURL.pathname
-  if (path === '/auth/verify' && (event.method === 'GET' || event.method === 'HEAD')) return
+  if (authPagePaths.has(path) && (event.method === 'GET' || event.method === 'HEAD')) return
   if (!apiPrefixes.some((prefix) => path === prefix || path.startsWith(prefix))) return
 
   const config = useRuntimeConfig(event)

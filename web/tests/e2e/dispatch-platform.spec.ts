@@ -44,6 +44,12 @@ function createMockState() {
     name: 'Jamie Torres',
     permissions: ['feedback:read', 'feedback:update', 'issue:read', 'issue:update'],
   }]
+  const memberDomains = [{
+    id: 'member-domain-1', tenant_id: tenant.id, domain: 'acme.test',
+    verification_email: 'security@acme.test', verification_expires_at: '2026-07-21T12:10:00.000Z',
+    verified_at: '2026-07-21T12:00:00.000Z' as string | undefined, status: 'verified' as 'pending' | 'verified',
+    created_at: now, updated_at: now,
+  }]
   const tags = [{ id: 'tag-checkout', name: 'Checkout', color: '#167D68' }, {
     id: 'tag-regression', name: 'Regression', color: '#7C3AED',
   }]
@@ -198,6 +204,7 @@ function createMockState() {
     tenant,
     member,
     members,
+    memberDomains,
     tags,
     projects,
     widgetRules,
@@ -401,6 +408,9 @@ async function installMockAPI(page: Page, state: MockState) {
 
     if (path === '/auth/login' && method === 'POST') return json(route, {}, 202)
     if ((path === '/auth/verify' || path === '/auth/refresh') && method === 'POST') return json(route, authResponse(state))
+    if (path === '/auth/member-domains/verify' && method === 'POST') return json(route, {
+      member_domain: state.memberDomains[0],
+    })
     if (path === '/auth/logout' && method === 'POST') return json(route, {})
 
     if (path === '/v1/dashboard' && method === 'GET') {
@@ -702,6 +712,18 @@ async function installMockAPI(page: Page, state: MockState) {
       plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
     })
     if (path === '/v1/members' && method === 'GET') return json(route, { members: state.members })
+    if (path === '/v1/member-domains' && method === 'GET') return json(route, { member_domains: state.memberDomains })
+    if (path === '/v1/member-domains' && method === 'POST') {
+      const input = body()
+      const domain = String(input.email).split('@').at(-1) || ''
+      const memberDomain = {
+        id: `member-domain-${state.memberDomains.length + 1}`, tenant_id: state.tenant.id, domain,
+        verification_email: String(input.email), verification_expires_at: '2026-07-21T12:10:00.000Z',
+        verified_at: undefined, status: 'pending' as const, created_at: now, updated_at: now,
+      }
+      state.memberDomains.push(memberDomain)
+      return json(route, { member_domain: memberDomain }, 202)
+    }
     if (path === '/v1/tags' && method === 'GET') return json(route, { tags: state.tags })
     if (path === '/auth/invite' && method === 'POST') return json(route, {}, 202)
     if (path === '/v1/api-keys' && method === 'GET') return json(route, { api_keys: state.apiKeys })
@@ -792,6 +814,18 @@ test('magic-link login enters the Dispatch workspace', async ({ page }) => {
   await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
   await expect(page).toHaveURL(`${tenantOrigin}/`)
   await expect(page.getByRole('heading', { name: 'Good afternoon, Alex' })).toBeVisible()
+})
+
+test('member domain verification consumes the fragment before confirming access', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The public verification flow is viewport independent')
+  const state = createMockState()
+  await installMockAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/auth/domain-verify#token=member-domain-token`)
+
+  await expect(page).toHaveURL(`${tenantOrigin}/auth/domain-verify`)
+  await expect(page.getByRole('heading', { name: 'acme.test is verified' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Continue to sign in' })).toBeVisible()
 })
 
 test('dashboard distinguishes unrated feedback from a zero rating', async ({ page }, testInfo) => {
@@ -1626,6 +1660,25 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('settings verifies additional member email domains before invitations', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+
+  await page.getByRole('link', { name: 'Members' }).click()
+  await expect(page.getByRole('heading', { name: 'Allowed email domains' })).toBeVisible()
+  await expect(page.getByText('acme.test', { exact: true })).toBeVisible()
+  await expect(page.getByText('Enforced', { exact: true })).toBeVisible()
+
+  await page.getByLabel('Verification email').fill('security@other.test')
+  await page.getByRole('button', { name: 'Verify domain' }).click()
+
+  await expect(page.getByRole('status')).toContainText('Verification sent to security@other.test')
+  await expect(page.getByText('other.test', { exact: true })).toBeVisible()
+  await expect(page.getByText('pending', { exact: true })).toBeVisible()
+  await capture(page, testInfo, 'settings-member-domains')
 })
 
 test('workspace deletion supports the full recovery path', async ({ page }, testInfo) => {

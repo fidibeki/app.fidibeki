@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 52
+	const latestMigrationVersion = 53
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -117,6 +117,19 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			tenantID, email,
 		); err != nil {
 			t.Fatalf("create member %s: %v", email, err)
+		}
+	}
+	for tenantID, domain := range map[string]string{
+		tenantA: "acme.test",
+		tenantB: "beta.test",
+	} {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO tenant_member_domains (
+				tenant_id, domain, verification_email, verification_token_hash,
+				verification_expires_at, verified_at
+			) VALUES ($1::uuid, $2::text, 'security@' || $2::text, encode(sha256(($1::text || $2::text)::bytea), 'hex'), now() + interval '10 minutes', now())
+		`, tenantID, domain); err != nil {
+			t.Fatalf("create tenant member domain %s: %v", domain, err)
 		}
 	}
 	var memberA, memberB string
@@ -550,6 +563,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("app role without tenant context read %d rows, want 0", count)
 	}
+	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM tenant_member_domains`).Scan(&count); err != nil {
+		t.Fatalf("query member domains without tenant context: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app role without tenant context read %d member domains, want 0", count)
+	}
 	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM tags`).Scan(&count); err != nil {
 		t.Fatalf("query tags without tenant context: %v", err)
 	}
@@ -582,6 +601,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("tenant A member count = %d, want 2", count)
+	}
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM tenant_member_domains`).Scan(&count); err != nil {
+		t.Fatalf("query tenant A member domains: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("tenant A member domain count = %d, want 1", count)
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM ai_daily_usage`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A AI usage: %v", err)

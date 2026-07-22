@@ -25,6 +25,18 @@ export interface Member {
   permissions: string[]
 }
 
+export interface MemberDomain {
+  id: string
+  tenant_id: string
+  domain: string
+  verification_email: string
+  verification_expires_at: string
+  verified_at?: string
+  status: 'pending' | 'verified'
+  created_at: string
+  updated_at: string
+}
+
 export interface TenantSummary {
   id: string
   name: string

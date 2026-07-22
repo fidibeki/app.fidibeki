@@ -4,7 +4,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
     isBaseDomainHost(useRequestURL().hostname, String(config.public.baseDomain || ''))) {
     return navigateTo('/signup')
   }
-  if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' || to.path === '/auth/verify') return
+  if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' ||
+    to.path === '/auth/verify' || to.path === '/auth/domain-verify') return
 
   const { authenticated, member } = useAuth()
 

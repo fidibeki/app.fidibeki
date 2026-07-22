@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/mail"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,10 +17,15 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
+var memberDomainLabelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
 type MemberStore interface {
 	FindMemberByEmail(context.Context, db.Querier, string, string) (Member, error)
+	IsMemberEmailDomainAllowed(context.Context, db.Querier, string, string) (bool, error)
 	CreateMagicLink(context.Context, db.Querier, string, *string, string, []string, string, time.Time) error
 	ConsumeMagicLink(context.Context, db.Querier, string, string, string, string, string) (Member, error)
+	RequestMemberDomainVerification(context.Context, db.Querier, string, string, string, string, time.Time) (MemberDomain, error)
+	VerifyMemberDomain(context.Context, db.Querier, string, string) (MemberDomain, error)
 	RotateSession(context.Context, db.Querier, string, string, string, string, string) (Member, error)
 	RevokeSession(context.Context, db.Querier, string, string) error
 }
@@ -79,12 +85,67 @@ func (s Service) Invite(
 	if err != nil {
 		return nil, err
 	}
+	allowed, err := s.Store.IsMemberEmailDomainAllowed(ctx, query, resolved.ID, emailAddress)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrMemberDomainNotVerified
+	}
 	if _, err := s.Store.FindMemberByEmail(ctx, query, resolved.ID, emailAddress); err == nil {
 		return nil, ErrMemberExists
 	} else if !errors.Is(err, ErrMemberNotFound) {
 		return nil, err
 	}
 	return s.createLink(ctx, query, resolved, nil, emailAddress, permissions)
+}
+
+func (s Service) RequestMemberDomainVerification(
+	ctx context.Context,
+	query db.Querier,
+	resolved tenant.Tenant,
+	rawEmail string,
+) (MemberDomain, *email.Message, error) {
+	emailAddress, err := normalizeEmail(rawEmail)
+	if err != nil {
+		return MemberDomain{}, nil, err
+	}
+	domain, err := memberEmailDomain(emailAddress)
+	if err != nil {
+		return MemberDomain{}, nil, err
+	}
+	rawToken, tokenHash, err := auth.NewOpaqueToken()
+	if err != nil {
+		return MemberDomain{}, nil, err
+	}
+	memberDomain, err := s.Store.RequestMemberDomainVerification(
+		ctx, query, resolved.ID, domain, emailAddress, tokenHash, s.now().Add(s.magicTTL()),
+	)
+	if err != nil {
+		return MemberDomain{}, nil, err
+	}
+	link, err := s.tokenURL(resolved.Slug, "/auth/domain-verify", rawToken)
+	if err != nil {
+		return MemberDomain{}, nil, err
+	}
+	message := email.Message{
+		From: s.AuthFrom, To: emailAddress, Subject: "Verify " + domain + " for " + resolved.Name,
+		Text: fmt.Sprintf("Open this link to verify %s for your Fidibeki workspace: %s\n\nThis link expires in 10 minutes and can only be used once.", domain, link),
+		HTML: fmt.Sprintf(`<p>Open this link to verify <strong>%s</strong> for your Fidibeki workspace:</p><p><a href="%s">Verify member domain</a></p><p>This link expires in 10 minutes and can only be used once.</p>`, domain, link),
+	}
+	return memberDomain, &message, nil
+}
+
+func (s Service) VerifyMemberDomain(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	rawToken string,
+) (MemberDomain, error) {
+	if rawToken == "" {
+		return MemberDomain{}, ErrDomainVerificationInvalid
+	}
+	return s.Store.VerifyMemberDomain(ctx, query, tenantID, auth.HashToken(rawToken))
 }
 
 func (s Service) createLink(
@@ -104,7 +165,7 @@ func (s Service) createLink(
 	); err != nil {
 		return nil, err
 	}
-	link, err := s.loginURL(resolved.Slug, rawToken)
+	link, err := s.tokenURL(resolved.Slug, "/auth/verify", rawToken)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +240,7 @@ func (s Service) Logout(ctx context.Context, query db.Querier, tenantID, token s
 	return s.Store.RevokeSession(ctx, query, tenantID, auth.HashToken(token))
 }
 
-func (s Service) loginURL(slug, token string) (string, error) {
+func (s Service) tokenURL(slug, path, token string) (string, error) {
 	base, err := url.Parse(s.PublicBaseURL)
 	if err != nil || !base.IsAbs() || base.Host == "" {
 		return "", errors.New("public base URL is invalid")
@@ -190,10 +251,31 @@ func (s Service) loginURL(slug, token string) (string, error) {
 		host = net.JoinHostPort(host, port)
 	}
 	base.Host = host
-	base.Path = "/auth/verify"
+	base.Path = path
 	base.RawQuery = ""
 	base.Fragment = url.Values{"token": []string{token}}.Encode()
 	return base.String(), nil
+}
+
+func memberEmailDomain(emailAddress string) (string, error) {
+	separator := strings.LastIndexByte(emailAddress, '@')
+	if separator <= 0 || separator == len(emailAddress)-1 {
+		return "", errors.New("email is invalid")
+	}
+	domain := emailAddress[separator+1:]
+	if len(domain) > 253 {
+		return "", errors.New("email is invalid")
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return "", errors.New("email is invalid")
+	}
+	for _, label := range labels {
+		if !memberDomainLabelPattern.MatchString(label) {
+			return "", errors.New("email is invalid")
+		}
+	}
+	return domain, nil
 }
 
 func normalizeEmail(value string) (string, error) {
@@ -201,6 +283,9 @@ func normalizeEmail(value string) (string, error) {
 	parsed, err := mail.ParseAddress(value)
 	if err != nil || parsed.Address != value {
 		return "", errors.New("email is invalid")
+	}
+	if _, err := memberEmailDomain(value); err != nil {
+		return "", err
 	}
 	return value, nil
 }
