@@ -1,20 +1,34 @@
-import { getRequestHost, getRequestURL, proxyRequest } from 'h3'
+import { getRequestHost, getRequestURL, proxyRequest, setResponseStatus, type H3Event } from 'h3'
 import { proxyHostForRequest } from '../utils/proxy-host'
+import { proxyTargetForRequest } from '../utils/proxy-target'
 
 const apiPrefixes = ['/auth/', '/v1/', '/healthz', '/readyz']
 
+function unavailable(event: H3Event, message: string) {
+  setResponseStatus(event, 503, 'Service Unavailable')
+  return { error: { code: 'service_unavailable', message } }
+}
+
 export default defineEventHandler(async (event) => {
-  const path = getRequestURL(event).pathname
+  const requestURL = getRequestURL(event)
+  const path = requestURL.pathname
   if (path === '/auth/verify' && (event.method === 'GET' || event.method === 'HEAD')) return
   if (!apiPrefixes.some((prefix) => path === prefix || path.startsWith(prefix))) return
 
   const config = useRuntimeConfig(event)
-  if (!config.apiUpstream) return
+  if (!config.apiUpstream) {
+    return unavailable(event, 'API upstream is not configured')
+  }
 
-  const target = new URL(event.node.req.url || '/', String(config.apiUpstream))
+  let target: URL
+  try {
+    target = proxyTargetForRequest(String(config.apiUpstream), requestURL)
+  } catch {
+    return unavailable(event, 'API upstream is not configured')
+  }
   const proxySecret = String(config.internalProxySecret || '')
   if (!proxySecret) {
-    throw createError({ statusCode: 503, statusMessage: 'API proxy is not configured' })
+    return unavailable(event, 'API proxy is not configured')
   }
   let proxyHost = ''
   try {
@@ -25,12 +39,16 @@ export default defineEventHandler(async (event) => {
       String(config.baseDomain || ''),
     )
   } catch {
-    throw createError({ statusCode: 503, statusMessage: 'Base domain is not configured' })
+    return unavailable(event, 'Base domain is not configured')
   }
-  return proxyRequest(event, target.toString(), {
-    headers: {
-      'x-fidibeki-proxy-host': proxyHost,
-      'x-fidibeki-proxy-secret': proxySecret,
-    },
-  })
+  try {
+    return await proxyRequest(event, target.toString(), {
+      headers: {
+        'x-fidibeki-proxy-host': proxyHost,
+        'x-fidibeki-proxy-secret': proxySecret,
+      },
+    })
+  } catch {
+    return unavailable(event, 'API upstream is unavailable')
+  }
 })

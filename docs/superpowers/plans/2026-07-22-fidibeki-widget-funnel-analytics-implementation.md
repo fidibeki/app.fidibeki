@@ -7,8 +7,10 @@
 ## Progress
 
 - Tasks 1-6 are complete and locally verified.
-- Task 7 full regression and staging validation is in progress. Staging deployment starts only after the local
-  regression passes, and production remains out of scope until explicitly authorized.
+- Task 7 local regression is complete: backend, widget, and web suites pass, including the production SSR build,
+  constrained-memory upstream failure probes, and all applicable desktop/mobile Playwright scenarios.
+- Task 7 staging deployment and controlled QA remain in progress. Production remains out of scope until
+  explicitly authorized.
 
 ## Architectural Decisions
 

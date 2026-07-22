@@ -67,7 +67,9 @@ customer evidence into chat or tickets.
    `Cache-Control: public, max-age=31536000, immutable`.
 2. Check the script `data-fidibeki-key`, request Origin, project allowed domains, and active rule.
 3. Verify `/v1/widget/config` through the widget host and inspect CORS and CSP console errors.
-4. Test in a clean browser session because trigger suppression is stored in `sessionStorage`.
+4. Inspect the versioned suppression record in `localStorage`, scoped by project, rule, and canonical
+   pathname. Query strings, fragments, and a trailing slash do not create a new page identity; verify
+   the rule's session, cooldown, or never recurrence policy before clearing the record for a clean test.
 5. Roll back the widget edge service if stable entry shims reference missing hashed assets.
 
 ## 8. S3 storage full or unavailable

@@ -9,6 +9,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const { authenticated, member } = useAuth()
 
   if (!authenticated.value) {
+    if (import.meta.server && !config.apiUpstream) {
+      return navigateTo({ path: '/login', query: { return_to: to.fullPath } })
+    }
     const { $refreshSession } = useNuxtApp()
     try {
       await $refreshSession()

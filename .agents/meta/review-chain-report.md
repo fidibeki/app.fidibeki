@@ -183,3 +183,22 @@ Correctness and security reviewers approved the second round. The performance re
 candidate-scan, lock-duration, persisted-cadence, rollback, and observability gaps; these were resolved within
 the two-round cap and covered by the final test run. Full backend tests and the widget analytics race suite pass.
 No deployment was performed.
+
+### Task 7 Web SSR And API Proxy Hardening
+
+**Artifact**: Nuxt SSR authentication fallback, API proxy failure handling, and trusted target construction
+**Date**: 2026-07-22
+**Rounds**: 2
+
+#### Verdict: FIXED
+
+| # | Severity | Confidence | Problem | Status |
+|---|----------|------------|---------|--------|
+| 1 | critical | 10/10 | An HTTP absolute-form request target could replace the configured upstream while the proxy still forwarded its internal authentication secret. | Fixed by rebuilding the target solely from the validated configured HTTP(S) origin plus the parsed request pathname and query, with a regression covering an attacker-controlled absolute URL. |
+| 2 | major | 10/10 | A malformed truthy upstream was parsed outside failure handling and could enter Nitro's SSR error renderer. | Fixed with validated target construction inside the structured `503` boundary. |
+| 3 | major | 9/10 | Missing or unreachable API configuration during browser SSR could repeatedly enter the renderer and exhaust the Node process. | Fixed with structured proxy responses and a server-side authentication redirect when no upstream is configured. |
+
+Both missing and unreachable upstream cases were exercised through a real browser against the production build
+with a 128 MB heap; each redirected to login and left the process healthy. Web unit tests, typecheck, build, and
+the full applicable desktop/mobile Playwright suite pass. The two-round cap was reached; the final absolute-form
+finding was resolved with a focused regression and no production deployment was performed.
