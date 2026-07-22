@@ -73,8 +73,24 @@ environment was changed.
 
 #### Phase 1: Contextual Feedback Core
 
-- [ ] Re-audit widget configuration, public runtime contracts, targeting, recurrence, analytics,
+- [x] Re-audit widget configuration, public runtime contracts, targeting, recurrence, analytics,
   submission, and inbox behavior as complete/partial/missing.
+  - Complete and preserved: independent Feedback creation; editable Feedback title/description;
+    attachment declaration/upload/completion; exact, prefix, and safe-regex include/exclude
+    targeting plus URL testing; canonical query/hash/trailing-slash handling; durable recurrence;
+    funnel boundaries and dashboard; automatic script installation; inbox visibility.
+  - Partial and extended in place: `widget_rules` already stores the configuration aggregate and
+    public endpoint, but only exposes legacy capability booleans, one greeting, one fixed form,
+    trigger timing, and limited theme tokens. Reporter contact/consent exists in the submission
+    backend but has no widget UI. Browser state falls back to eligibility rather than an in-memory
+    page-lifetime state, and its storage key omits the origin.
+  - Missing: a stable definition key and revision, typed presentation/objective/response blocks,
+    locale variants and project default locale, declarative and imperative mounts, launcher,
+    inline, reaction, and guarded prompt views, and presentation-specific fatigue policy.
+  - Implementation path: evolve `widget_rules` additively as the persisted `WidgetDefinition`, keep
+    legacy fields and response keys decodable, expose a versioned public definition contract, then
+    route automatic/declarative/imperative placement through one runtime before completing the four
+    presentations and consented contact end to end.
 - [ ] Add one versioned `WidgetDefinition` shared by `launcher`, `inline`, `reaction`, and `prompt`,
   including lifecycle, placement, objective, supported response blocks, locale variants, controlled
   theme tokens, and presentation-specific fatigue guardrails.
@@ -110,6 +126,13 @@ environment was changed.
   Feedback, analytics, and configuration; paused/archived widgets must neither render nor record
   impressions.
 - [ ] Complete backoffice preview, URL testing, decision explanation, and installation diagnostics.
+
+#### Post-roadmap issue sweep
+
+- [ ] After the three pillars are complete, audit every open GitHub issue against code, tests, and
+  staging behavior. Close issues that are already materially complete, then implement the remaining
+  issues that do not carry the `postpone` label. Recommended planning decisions are pre-approved;
+  the staging-only and no-production boundary still applies.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
 web, and widget tests, responsive/accessibility verification, and one real staging journey. The

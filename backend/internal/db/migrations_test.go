@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 53
+	const latestMigrationVersion = 54
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -188,6 +188,31 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if recurrenceMode != "cooldown" || recurrenceDays == nil || *recurrenceDays != 30 {
 		t.Fatalf("widget recurrence defaults = %q/%v, want cooldown/30", recurrenceMode, recurrenceDays)
+	}
+	var definitionKey, definitionStatus, presentation, objective, defaultLocale string
+	var definitionVersion, responseBlockCount, localizationCount int
+	if err := root.QueryRow(ctx, `
+		SELECT rule.definition_key, rule.definition_version, rule.definition_status,
+		       rule.presentation, rule.objective, jsonb_array_length(rule.response_blocks),
+		       (SELECT count(*)::integer FROM jsonb_object_keys(rule.localizations)),
+		       project.default_locale
+		FROM widget_rules AS rule
+		JOIN projects AS project ON project.id = rule.project_id
+		WHERE rule.id = $1
+	`, widgetRuleA).Scan(
+		&definitionKey, &definitionVersion, &definitionStatus, &presentation, &objective,
+		&responseBlockCount, &localizationCount, &defaultLocale,
+	); err != nil {
+		t.Fatalf("read widget definition defaults: %v", err)
+	}
+	if definitionKey == "" || definitionVersion != 1 || definitionStatus != "active" ||
+		presentation != "launcher" || objective != "continuous_feedback" ||
+		responseBlockCount != 2 || localizationCount != 1 || defaultLocale != "en" {
+		t.Fatalf(
+			"widget definition defaults = %q/%d/%q/%q/%q blocks=%d locales=%d default=%q",
+			definitionKey, definitionVersion, definitionStatus, presentation, objective,
+			responseBlockCount, localizationCount, defaultLocale,
+		)
 	}
 	for name, statement := range map[string]string{
 		"cooldown below minimum": `UPDATE widget_rules SET recurrence_days = 0 WHERE id = $1`,
@@ -896,6 +921,35 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		if err := root.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE tenant_id = $1`, tenantA).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("tenant A %s after tag deletion = %d, error = %v, want 0", table, count, err)
 		}
+	}
+
+	if err := migrateToVersion(migrator, 53); err != nil {
+		t.Fatalf("roll back widget definition migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET enabled = false, greeting = 'Legacy localized prompt' WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("prepare legacy widget definition: %v", err)
+	}
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
+		t.Fatalf("reapply widget definition migration: %v", err)
+	}
+	var localizedPrompt string
+	if err := root.QueryRow(ctx, `
+		SELECT definition_key, definition_version, definition_status, presentation,
+		       localizations->'en'->>'prompt'
+		FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(
+		&definitionKey, &definitionVersion, &definitionStatus, &presentation, &localizedPrompt,
+	); err != nil {
+		t.Fatalf("read backfilled widget definition: %v", err)
+	}
+	if definitionKey == "" || definitionVersion != 1 || definitionStatus != "paused" ||
+		presentation != "prompt" || localizedPrompt != "Legacy localized prompt" {
+		t.Fatalf(
+			"backfilled widget definition = %q/%d/%q/%q/%q",
+			definitionKey, definitionVersion, definitionStatus, presentation, localizedPrompt,
+		)
 	}
 
 	if err := migrateToVersion(migrator, 48); err != nil {

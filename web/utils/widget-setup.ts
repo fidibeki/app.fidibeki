@@ -10,6 +10,21 @@ export function defaultWidgetRule(): WidgetRuleInput {
     replay_sampling_rate: 0, replay_max_duration_seconds: 1800, replay_max_events: 50000,
     replay_mask_all_inputs: true, replay_mask_text_selector: null,
     recurrence_mode: 'cooldown', recurrence_days: 30,
+    definition_key: 'all-pages-feedback', definition_status: 'active', presentation: 'launcher',
+    objective: 'continuous_feedback',
+    response_blocks: [
+      { key: 'rating', type: 'rating', required: false },
+      { key: 'feedback', type: 'free_text', required: false },
+    ],
+    localizations: {
+      en: {
+        launcher_label: 'Feedback', prompt: 'How was your experience?',
+        comment_placeholder: 'Tell us more', contact_label: 'Email address',
+        consent_label: 'Email me about this feedback', submit_label: 'Send feedback',
+        success_message: 'Your feedback was sent.',
+      },
+    },
+    allow_comment: false, collect_contact: false,
   }
 }
 

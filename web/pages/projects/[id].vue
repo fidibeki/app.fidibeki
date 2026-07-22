@@ -11,7 +11,13 @@ import {
   Trash2,
 } from '@lucide/vue'
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
-import type { Project, WidgetRule, WidgetRuleInput } from '~/types/api'
+import type {
+  Project,
+  WidgetLocalization,
+  WidgetResponseBlock,
+  WidgetRule,
+  WidgetRuleInput,
+} from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
@@ -34,6 +40,7 @@ const formError = ref('')
 const notice = ref('')
 const projectName = ref('')
 const projectDomains = ref('')
+const projectDefaultLocale = ref('en')
 const copied = ref(false)
 const showTargetingErrors = ref(false)
 const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
@@ -58,6 +65,7 @@ watch(data, (value) => {
   if (!value) return
   projectName.value = value.project.name
   projectDomains.value = value.project.allowed_domains.join('\n')
+  projectDefaultLocale.value = value.project.default_locale || 'en'
   if (!editingNew.value) {
     const selected = value.rules.find((rule) => rule.id === selectedRuleID.value) || value.rules[0]
     if (selected) selectRule(selected)
@@ -81,6 +89,10 @@ function selectRule(rule: WidgetRule) {
   editingNew.value = false
   targetingState.value = targetingFromRule(rule)
   showTargetingErrors.value = false
+  const locale = data.value?.project.default_locale || 'en'
+  const localizations = structuredClone(rule.localizations || {})
+  const localized = localizations[locale] || fallbackLocalization(rule.greeting || 'How was your experience?')
+  localizations[locale] = localized
   Object.assign(ruleForm, {
     name: rule.name, priority: rule.priority, enabled: rule.enabled,
     matcher_type: rule.matcher_type, matcher_value: rule.matcher_value ?? null,
@@ -88,7 +100,7 @@ function selectRule(rule: WidgetRule) {
     trigger_scroll_percent: rule.trigger_scroll_percent ?? null, can_rate: rule.can_rate,
     can_write_text: rule.can_write_text, can_record_audio: rule.can_record_audio,
     can_record_video: rule.can_record_video, can_attach_element: rule.can_attach_element,
-    can_attach_screenshot: rule.can_attach_screenshot, greeting: rule.greeting ?? null,
+    can_attach_screenshot: rule.can_attach_screenshot, greeting: localized.prompt,
     position: rule.position, theme: rule.theme, accent_color: rule.accent_color ?? null,
     replay_mode: rule.replay_mode, replay_sampling_rate: rule.replay_sampling_rate,
     replay_max_duration_seconds: rule.replay_max_duration_seconds,
@@ -96,6 +108,11 @@ function selectRule(rule: WidgetRule) {
     replay_mask_text_selector: rule.replay_mask_text_selector ?? null,
     recurrence_mode: rule.recurrence_mode || 'cooldown',
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
+    definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
+    definition_status: rule.definition_status || (rule.enabled ? 'active' : 'paused'),
+    presentation: rule.presentation || 'prompt', objective: rule.objective || 'continuous_feedback',
+    response_blocks: rule.response_blocks || legacyResponseBlocks(rule), localizations,
+    allow_comment: rule.allow_comment || false, collect_contact: rule.collect_contact || false,
   })
 }
 
@@ -108,6 +125,13 @@ function startNewRule() {
 }
 
 function normalizedRule(): WidgetRuleInput {
+  const locale = projectDefaultLocale.value.trim().toLowerCase() || 'en'
+  const localized = {
+    ...fallbackLocalization(ruleForm.greeting?.trim() || 'How was your experience?'),
+    ...(ruleForm.localizations[locale] || {}),
+    prompt: ruleForm.greeting?.trim() || 'How was your experience?',
+  }
+  const responseBlocks = synchronizedResponseBlocks(ruleForm)
   return {
     ...ruleForm,
     ...buildTargetingPayload(targetingState.value),
@@ -118,7 +142,33 @@ function normalizedRule(): WidgetRuleInput {
     replay_sampling_rate: ruleForm.replay_mode === 'sampling' ? Number(ruleForm.replay_sampling_rate || 1) : 0,
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
+    definition_key: ruleForm.definition_key.trim().toLowerCase(),
+    definition_status: ruleForm.enabled
+      ? 'active'
+      : ['draft', 'archived'].includes(ruleForm.definition_status) ? ruleForm.definition_status : 'paused',
+    response_blocks: responseBlocks,
+    localizations: { ...ruleForm.localizations, [locale]: localized },
   }
+}
+
+function fallbackLocalization(prompt: string): WidgetLocalization {
+  return {
+    launcher_label: 'Feedback', prompt, comment_placeholder: 'Tell us more',
+    contact_label: 'Email address', consent_label: 'Email me about this feedback',
+    submit_label: 'Send feedback', success_message: 'Your feedback was sent.',
+  }
+}
+
+function legacyResponseBlocks(rule: Pick<WidgetRule, 'can_rate' | 'can_write_text'>): WidgetResponseBlock[] {
+  return [
+    ...(rule.can_rate ? [{ key: 'rating', type: 'rating', required: false } as WidgetResponseBlock] : []),
+    ...(rule.can_write_text ? [{ key: 'feedback', type: 'free_text', required: false } as WidgetResponseBlock] : []),
+  ]
+}
+
+function synchronizedResponseBlocks(rule: WidgetRuleInput): WidgetResponseBlock[] {
+  const extended = rule.response_blocks.filter(block => block.type !== 'rating' && block.type !== 'free_text')
+  return [...legacyResponseBlocks(rule), ...extended]
 }
 
 async function saveRule() {
@@ -172,6 +222,7 @@ async function saveProject() {
     await $apiFetch(`/v1/projects/${projectID.value}`, { method: 'PATCH', body: {
       name: projectName.value,
       allowed_domains: projectDomains.value.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean),
+      default_locale: projectDefaultLocale.value.trim(),
     } })
     notice.value = 'Project settings saved.'
     await refresh()
@@ -234,12 +285,12 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
           <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
           <form id="widget-rule-form" @submit.prevent="saveRule">
             <fieldset :disabled="!workspaceWritable">
-            <section><h3>Rule identity</h3><div class="project-form-grid"><label class="wide">Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Enabled</span></label></div></section>
+            <section><h3>Rule identity</h3><div class="project-form-grid"><label>Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Definition key<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>Presentation<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">Launcher</option><option value="inline">Inline</option><option value="reaction">Reaction</option><option value="prompt">Prompt</option></select></label><label>Objective<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">Continuous feedback</option><option value="after_engagement">After engagement</option><option value="validate_content">Validate content</option><option value="detect_friction">Detect friction</option></select></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Active</span></label></div></section>
             <section><h3>Page matching</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" /></section>
             <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
             <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
-            <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
-            <section><h3>Appearance</h3><div class="project-form-grid"><label class="wide">Greeting<input v-model="ruleForm.greeting" class="app-input" maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
+            <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>Optional comment</b><small>Add context to compact responses</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>Contact with consent</b><small>Offer optional reporter email</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
+            <section><h3>Appearance</h3><div class="project-form-grid"><label class="wide">Prompt ({{ projectDefaultLocale }})<input v-model="ruleForm.greeting" class="app-input" maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
             <section><h3>Session replay</h3><div class="project-form-grid"><label>Replay mode<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">Disabled</option><option value="full">Every session</option><option value="sampling">Sample sessions</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">Sampling percent<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>Max duration (seconds)<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>Max events<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>Mask all input values</span></label><label class="wide">Additional text mask selector<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
             </fieldset>
           </form>
@@ -251,7 +302,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>

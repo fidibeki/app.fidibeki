@@ -15,6 +15,14 @@ describe('widget setup helpers', () => {
       replay_mode: 'none',
       recurrence_mode: 'cooldown',
       recurrence_days: 30,
+      definition_status: 'active',
+      presentation: 'launcher',
+      objective: 'continuous_feedback',
+      response_blocks: [
+        { key: 'rating', type: 'rating', required: false },
+        { key: 'feedback', type: 'free_text', required: false },
+      ],
+      collect_contact: false,
     })
   })
 

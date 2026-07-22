@@ -121,7 +121,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     try {
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
-      const rule = await matchRule(configuration.rules, evaluationURL, {
+      const rule = await matchRule(configuration.definitions ?? configuration.rules, evaluationURL, {
         loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
         onError: (error) => void report(error, 'targeting'),
       })

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
@@ -15,8 +16,11 @@ import (
 const publicKeyAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 var (
-	domainLabelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-	accentColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	domainLabelPattern   = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	accentColorPattern   = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	definitionKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}[a-z0-9]$`)
+	responseKeyPattern   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	localePattern        = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$`)
 )
 
 type FieldErrors map[string]string
@@ -45,6 +49,17 @@ func ValidateProject(name string, domains []string) (string, []string, FieldErro
 		fields["allowed_domains"] = err.Error()
 	}
 	return name, normalized, fields
+}
+
+func ValidateDefaultLocale(candidate string) (string, string) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return "en", ""
+	}
+	if !localePattern.MatchString(candidate) {
+		return "", "must use a valid language tag"
+	}
+	return strings.ToLower(candidate), ""
 }
 
 func NormalizeAllowedDomains(domains []string) ([]string, error) {
@@ -96,12 +111,14 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 	validateAppearance(values, fields)
 	validateReplay(values, fields)
 	validateRecurrence(values, fields)
+	validateDefinition(values, fields)
 	validatePlanFeatures(values, resolved, fields)
 	return values, fields
 }
 
 func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	legacyTargeting := input.IncludeConditions == nil && input.ExcludeConditions == nil
+	explicitBlocks := input.ResponseBlocks != nil
 	values := WidgetRuleValues{
 		Name: strings.TrimSpace(input.Name), Priority: input.Priority,
 		Enabled: valueOr(input.Enabled, true), MatcherType: input.MatcherType,
@@ -122,6 +139,14 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		IncludeConditions:        normalizeTargetConditions(input.IncludeConditions),
 		ExcludeConditions:        normalizeTargetConditions(input.ExcludeConditions),
 		LegacyTargeting:          legacyTargeting,
+		DefinitionKey:            strings.ToLower(strings.TrimSpace(input.DefinitionKey)),
+		DefinitionStatus:         input.DefinitionStatus,
+		Presentation:             input.Presentation,
+		Objective:                input.Objective,
+		ResponseBlocks:           normalizeResponseBlocks(input.ResponseBlocks),
+		Localizations:            normalizeLocalizations(input.Localizations),
+		AllowComment:             valueOr(input.AllowComment, false),
+		CollectContact:           input.CollectContact,
 	}
 	if legacyTargeting {
 		values.IncludeConditions = []WidgetRuleTargetConditionValues{{
@@ -150,7 +175,138 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		defaultDays := 30
 		values.RecurrenceDays = &defaultDays
 	}
+	if values.DefinitionStatus == "" {
+		if values.Enabled {
+			values.DefinitionStatus = DefinitionActive
+		} else {
+			values.DefinitionStatus = DefinitionPaused
+		}
+	}
+	values.Enabled = values.DefinitionStatus == DefinitionActive
+	if values.Presentation == "" {
+		values.Presentation = PresentationPrompt
+	}
+	if values.Objective == "" {
+		values.Objective = ObjectiveContinuousFeedback
+	}
+	if !explicitBlocks {
+		values.ResponseBlocks = legacyResponseBlocks(values.CanRate, values.CanWriteText)
+	} else {
+		values.CanRate = hasResponseBlock(values.ResponseBlocks, ResponseRating)
+		values.CanWriteText = hasResponseBlock(values.ResponseBlocks, ResponseFreeText)
+	}
+	if len(values.Localizations) == 0 {
+		prompt := "How was your experience?"
+		if values.Greeting != nil {
+			prompt = *values.Greeting
+		}
+		values.Localizations = map[string]WidgetLocalization{"en": defaultLocalization(prompt)}
+	} else if prompt := preferredPrompt(values.Localizations); prompt != "" {
+		values.Greeting = &prompt
+	}
 	return values
+}
+
+func normalizeResponseBlocks(blocks []WidgetResponseBlock) []WidgetResponseBlock {
+	if blocks == nil {
+		return nil
+	}
+	normalized := make([]WidgetResponseBlock, len(blocks))
+	for index, block := range blocks {
+		normalized[index] = WidgetResponseBlock{
+			Key: strings.ToLower(strings.TrimSpace(block.Key)), Type: block.Type,
+			Required: block.Required, Options: make([]WidgetResponseOption, len(block.Options)),
+		}
+		for optionIndex, option := range block.Options {
+			normalized[index].Options[optionIndex].Value = strings.ToLower(strings.TrimSpace(option.Value))
+		}
+	}
+	return normalized
+}
+
+func normalizeLocalizations(localizations map[string]WidgetLocalization) map[string]WidgetLocalization {
+	if localizations == nil {
+		return nil
+	}
+	normalized := make(map[string]WidgetLocalization, len(localizations))
+	for locale, content := range localizations {
+		content.LauncherLabel = strings.TrimSpace(content.LauncherLabel)
+		content.Prompt = strings.TrimSpace(content.Prompt)
+		content.CommentPlaceholder = strings.TrimSpace(content.CommentPlaceholder)
+		content.ContactLabel = strings.TrimSpace(content.ContactLabel)
+		content.ConsentLabel = strings.TrimSpace(content.ConsentLabel)
+		content.SubmitLabel = strings.TrimSpace(content.SubmitLabel)
+		content.SuccessMessage = strings.TrimSpace(content.SuccessMessage)
+		content.BlockLabels = normalizeLabels(content.BlockLabels)
+		content.OptionLabels = normalizeOptionLabels(content.OptionLabels)
+		normalized[strings.ToLower(strings.TrimSpace(locale))] = content
+	}
+	return normalized
+}
+
+func normalizeLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+	normalized := make(map[string]string, len(labels))
+	for key, label := range labels {
+		normalized[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(label)
+	}
+	return normalized
+}
+
+func normalizeOptionLabels(labels map[string]map[string]string) map[string]map[string]string {
+	if labels == nil {
+		return nil
+	}
+	normalized := make(map[string]map[string]string, len(labels))
+	for blockKey, options := range labels {
+		normalized[strings.ToLower(strings.TrimSpace(blockKey))] = normalizeLabels(options)
+	}
+	return normalized
+}
+
+func legacyResponseBlocks(canRate, canWriteText bool) []WidgetResponseBlock {
+	blocks := make([]WidgetResponseBlock, 0, 2)
+	if canRate {
+		blocks = append(blocks, WidgetResponseBlock{Key: "rating", Type: ResponseRating})
+	}
+	if canWriteText {
+		blocks = append(blocks, WidgetResponseBlock{Key: "feedback", Type: ResponseFreeText})
+	}
+	return blocks
+}
+
+func hasResponseBlock(blocks []WidgetResponseBlock, blockType WidgetResponseBlockType) bool {
+	for _, block := range blocks {
+		if block.Type == blockType {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultLocalization(prompt string) WidgetLocalization {
+	return WidgetLocalization{
+		LauncherLabel: "Feedback", Prompt: prompt, CommentPlaceholder: "Tell us more",
+		ContactLabel: "Email address", ConsentLabel: "Email me about this feedback",
+		SubmitLabel: "Send feedback", SuccessMessage: "Your feedback was sent.",
+	}
+}
+
+func preferredPrompt(localizations map[string]WidgetLocalization) string {
+	if content, exists := localizations["en"]; exists {
+		return content.Prompt
+	}
+	locales := make([]string, 0, len(localizations))
+	for locale := range localizations {
+		locales = append(locales, locale)
+	}
+	sort.Strings(locales)
+	if len(locales) == 0 {
+		return ""
+	}
+	return localizations[locales[0]].Prompt
 }
 
 func normalizeTargetConditions(input []WidgetRuleTargetConditionInput) []WidgetRuleTargetConditionValues {
@@ -328,6 +484,125 @@ func validateRecurrence(values WidgetRuleValues, fields FieldErrors) {
 		}
 	default:
 		fields["recurrence_mode"] = "must be cooldown, session, or never"
+	}
+}
+
+func validateDefinition(values WidgetRuleValues, fields FieldErrors) {
+	if values.DefinitionKey != "" && !definitionKeyPattern.MatchString(values.DefinitionKey) {
+		fields["definition_key"] = "must contain 3-64 lowercase letters, numbers, or hyphens"
+	}
+	switch values.DefinitionStatus {
+	case DefinitionDraft, DefinitionActive, DefinitionPaused, DefinitionArchived:
+	default:
+		fields["definition_status"] = "must be draft, active, paused, or archived"
+	}
+	switch values.Presentation {
+	case PresentationLauncher, PresentationInline, PresentationReaction, PresentationPrompt:
+	default:
+		fields["presentation"] = "must be launcher, inline, reaction, or prompt"
+	}
+	switch values.Objective {
+	case ObjectiveContinuousFeedback, ObjectiveAfterEngagement, ObjectiveValidateContent, ObjectiveDetectFriction:
+	default:
+		fields["objective"] = "must be continuous_feedback, after_engagement, validate_content, or detect_friction"
+	}
+	validateResponseBlocks(values.ResponseBlocks, fields)
+	validateLocalizations(values.Localizations, fields)
+}
+
+func validateResponseBlocks(blocks []WidgetResponseBlock, fields FieldErrors) {
+	if len(blocks) < 1 || len(blocks) > 4 {
+		fields["response_blocks"] = "must contain between 1 and 4 blocks"
+	}
+	keys := make(map[string]struct{}, len(blocks))
+	types := make(map[WidgetResponseBlockType]struct{}, len(blocks))
+	for index, block := range blocks {
+		prefix := fmt.Sprintf("response_blocks[%d]", index)
+		if !responseKeyPattern.MatchString(block.Key) {
+			fields[prefix+".key"] = "must contain 1-32 lowercase letters, numbers, or underscores"
+		} else if _, exists := keys[block.Key]; exists {
+			fields[prefix+".key"] = "must be unique"
+		}
+		keys[block.Key] = struct{}{}
+		if _, exists := types[block.Type]; exists {
+			fields[prefix+".type"] = "must be unique within a definition"
+		}
+		types[block.Type] = struct{}{}
+		switch block.Type {
+		case ResponseFreeText, ResponseRating:
+			if len(block.Options) != 0 {
+				fields[prefix+".options"] = "must be empty for this block type"
+			}
+		case ResponseReaction:
+			validateResponseOptions(prefix, block.Options, 2, 5, fields)
+		case ResponseSingleChoice:
+			validateResponseOptions(prefix, block.Options, 2, 10, fields)
+		default:
+			fields[prefix+".type"] = "must be free_text, rating, reaction, or single_choice"
+		}
+	}
+}
+
+func validateResponseOptions(
+	prefix string,
+	options []WidgetResponseOption,
+	minimum int,
+	maximum int,
+	fields FieldErrors,
+) {
+	if len(options) < minimum || len(options) > maximum {
+		fields[prefix+".options"] = fmt.Sprintf("must contain between %d and %d options", minimum, maximum)
+	}
+	seen := make(map[string]struct{}, len(options))
+	for index, option := range options {
+		field := fmt.Sprintf("%s.options[%d].value", prefix, index)
+		if !responseKeyPattern.MatchString(option.Value) {
+			fields[field] = "must contain 1-32 lowercase letters, numbers, or underscores"
+		} else if _, exists := seen[option.Value]; exists {
+			fields[field] = "must be unique"
+		}
+		seen[option.Value] = struct{}{}
+	}
+}
+
+func validateLocalizations(localizations map[string]WidgetLocalization, fields FieldErrors) {
+	if len(localizations) < 1 || len(localizations) > 20 {
+		fields["localizations"] = "must contain between 1 and 20 locales"
+	}
+	for locale, content := range localizations {
+		prefix := "localizations." + locale
+		if !localePattern.MatchString(locale) {
+			fields[prefix] = "must use a valid language tag"
+		}
+		validateLocalizedText(prefix+".launcher_label", content.LauncherLabel, 120, fields)
+		validateLocalizedText(prefix+".prompt", content.Prompt, 500, fields)
+		validateLocalizedText(prefix+".comment_placeholder", content.CommentPlaceholder, 240, fields)
+		validateLocalizedText(prefix+".contact_label", content.ContactLabel, 120, fields)
+		validateLocalizedText(prefix+".consent_label", content.ConsentLabel, 240, fields)
+		validateLocalizedText(prefix+".submit_label", content.SubmitLabel, 120, fields)
+		validateLocalizedText(prefix+".success_message", content.SuccessMessage, 500, fields)
+		for key, label := range content.BlockLabels {
+			if !responseKeyPattern.MatchString(key) || len(label) < 1 || len(label) > 240 {
+				fields[prefix+".block_labels."+key] = "must identify a block and contain 1-240 characters"
+			}
+		}
+		for blockKey, labels := range content.OptionLabels {
+			if !responseKeyPattern.MatchString(blockKey) {
+				fields[prefix+".option_labels."+blockKey] = "must identify a response block"
+			}
+			for option, label := range labels {
+				if !responseKeyPattern.MatchString(option) || len(label) < 1 || len(label) > 120 {
+					fields[prefix+".option_labels."+blockKey+"."+option] =
+						"must identify an option and contain 1-120 characters"
+				}
+			}
+		}
+	}
+}
+
+func validateLocalizedText(field string, value string, maximum int, fields FieldErrors) {
+	if len(value) < 1 || len(value) > maximum {
+		fields[field] = fmt.Sprintf("must contain between 1 and %d characters", maximum)
 	}
 }
 

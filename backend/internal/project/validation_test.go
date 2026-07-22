@@ -89,6 +89,83 @@ func TestValidateWidgetRuleNormalizesDefaults(t *testing.T) {
 	if values.RecurrenceMode != RecurrenceCooldown || values.RecurrenceDays == nil || *values.RecurrenceDays != 30 {
 		t.Errorf("recurrence defaults = %#v", values)
 	}
+	if values.DefinitionStatus != DefinitionActive || values.Presentation != PresentationPrompt ||
+		values.Objective != ObjectiveContinuousFeedback || len(values.ResponseBlocks) != 2 ||
+		values.Localizations["en"].Prompt != "How was your experience?" {
+		t.Errorf("definition compatibility defaults = %#v", values)
+	}
+}
+
+func TestValidateDefaultLocale(t *testing.T) {
+	t.Parallel()
+	if locale, message := ValidateDefaultLocale(""); locale != "en" || message != "" {
+		t.Fatalf("empty locale = %q/%q", locale, message)
+	}
+	if locale, message := ValidateDefaultLocale(" pt-AO "); locale != "pt-ao" || message != "" {
+		t.Fatalf("normalized locale = %q/%q", locale, message)
+	}
+	if locale, message := ValidateDefaultLocale("not_a_locale"); locale != "" || message == "" {
+		t.Fatalf("invalid locale = %q/%q", locale, message)
+	}
+}
+
+func TestValidateWidgetDefinitionAcceptsTypedLocalizedContract(t *testing.T) {
+	t.Parallel()
+	allowComment := true
+	input := WidgetRuleInput{
+		Name: "Checkout reaction", DefinitionKey: "checkout-reaction",
+		DefinitionStatus: DefinitionActive, Presentation: PresentationReaction,
+		Objective: ObjectiveAfterEngagement, MatcherType: MatcherAllPages,
+		TriggerType: TriggerExitIntent,
+		ResponseBlocks: []WidgetResponseBlock{{
+			Key: "reaction", Type: ResponseReaction, Required: true,
+			Options: []WidgetResponseOption{{Value: "helpful"}, {Value: "unclear"}},
+		}},
+		Localizations: map[string]WidgetLocalization{
+			"pt-AO": {
+				LauncherLabel: "Opinião", Prompt: "Isto foi útil?", CommentPlaceholder: "Conta-nos mais",
+				ContactLabel: "Email", ConsentLabel: "Contactem-me", SubmitLabel: "Enviar",
+				SuccessMessage: "Recebido.", BlockLabels: map[string]string{"reaction": "Escolhe uma opção"},
+				OptionLabels: map[string]map[string]string{
+					"reaction": {"helpful": "Útil", "unclear": "Pouco claro"},
+				},
+			},
+		},
+		AllowComment: &allowComment, CollectContact: true,
+	}
+	values, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
+	if len(fields) != 0 {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if values.DefinitionKey != "checkout-reaction" || values.Presentation != PresentationReaction ||
+		values.CanRate || values.CanWriteText || !values.AllowComment || !values.CollectContact ||
+		values.Localizations["pt-ao"].Prompt != "Isto foi útil?" {
+		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestValidateWidgetDefinitionRejectsInvalidContract(t *testing.T) {
+	t.Parallel()
+	input := WidgetRuleInput{
+		Name: "Invalid", DefinitionKey: "Bad key", DefinitionStatus: "deleted",
+		Presentation: "modal", Objective: "sell_more", MatcherType: MatcherAllPages,
+		TriggerType: TriggerExitIntent,
+		ResponseBlocks: []WidgetResponseBlock{
+			{Key: "Choice!", Type: ResponseSingleChoice, Options: []WidgetResponseOption{{Value: "one"}}},
+			{Key: "Choice!", Type: ResponseSingleChoice},
+		},
+		Localizations: map[string]WidgetLocalization{"invalid_locale": {}},
+	}
+	_, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
+	for _, field := range []string{
+		"definition_key", "definition_status", "presentation", "objective",
+		"response_blocks[0].key", "response_blocks[0].options", "response_blocks[1].type",
+		"localizations.invalid_locale", "localizations.invalid_locale.prompt",
+	} {
+		if fields[field] == "" {
+			t.Errorf("fields[%q] missing from %#v", field, fields)
+		}
+	}
 }
 
 func TestValidateWidgetRuleAcceptsRecurrenceModes(t *testing.T) {

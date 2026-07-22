@@ -39,42 +39,54 @@ type HTTPHandler struct {
 }
 
 type ConfigurationResponse struct {
+	SchemaVersion       int                 `json:"schema_version"`
 	ProjectID           string              `json:"project_id"`
+	DefaultLocale       string              `json:"default_locale"`
 	Features            config.PlanFeatures `json:"features"`
 	Rules               []PublicWidgetRule  `json:"rules"`
+	Definitions         []PublicWidgetRule  `json:"definitions"`
 	RefreshAfterSeconds int                 `json:"refresh_after_seconds"`
 	ErrorReportingDSN   string              `json:"error_reporting_dsn,omitempty"`
 }
 
 type PublicWidgetRule struct {
-	ID                       string                              `json:"id"`
-	Name                     string                              `json:"name"`
-	Priority                 int                                 `json:"priority"`
-	MatcherType              project.MatcherType                 `json:"matcher_type"`
-	MatcherValue             *string                             `json:"matcher_value"`
-	IncludeConditions        []project.WidgetRuleTargetCondition `json:"include_conditions"`
-	ExcludeConditions        []project.WidgetRuleTargetCondition `json:"exclude_conditions"`
-	TriggerType              project.TriggerType                 `json:"trigger_type"`
-	TriggerDelaySeconds      *int                                `json:"trigger_delay_seconds"`
-	TriggerScrollPercent     *int                                `json:"trigger_scroll_percent"`
-	CanRate                  bool                                `json:"can_rate"`
-	CanWriteText             bool                                `json:"can_write_text"`
-	CanRecordAudio           bool                                `json:"can_record_audio"`
-	CanRecordVideo           bool                                `json:"can_record_video"`
-	CanAttachElement         bool                                `json:"can_attach_element"`
-	CanAttachScreenshot      bool                                `json:"can_attach_screenshot"`
-	Greeting                 *string                             `json:"greeting"`
-	Position                 project.WidgetPosition              `json:"position"`
-	Theme                    project.WidgetTheme                 `json:"theme"`
-	AccentColor              *string                             `json:"accent_color"`
-	ReplayMode               project.ReplayMode                  `json:"replay_mode"`
-	ReplaySamplingRate       int                                 `json:"replay_sampling_rate"`
-	ReplayMaxDurationSeconds int                                 `json:"replay_max_duration_seconds"`
-	ReplayMaxEvents          int                                 `json:"replay_max_events"`
-	ReplayMaskAllInputs      bool                                `json:"replay_mask_all_inputs"`
-	ReplayMaskTextSelector   *string                             `json:"replay_mask_text_selector"`
-	RecurrenceMode           project.RecurrenceMode              `json:"recurrence_mode"`
-	RecurrenceDays           *int                                `json:"recurrence_days"`
+	ID                       string                                `json:"id"`
+	Name                     string                                `json:"name"`
+	Priority                 int                                   `json:"priority"`
+	MatcherType              project.MatcherType                   `json:"matcher_type"`
+	MatcherValue             *string                               `json:"matcher_value"`
+	IncludeConditions        []project.WidgetRuleTargetCondition   `json:"include_conditions"`
+	ExcludeConditions        []project.WidgetRuleTargetCondition   `json:"exclude_conditions"`
+	TriggerType              project.TriggerType                   `json:"trigger_type"`
+	TriggerDelaySeconds      *int                                  `json:"trigger_delay_seconds"`
+	TriggerScrollPercent     *int                                  `json:"trigger_scroll_percent"`
+	CanRate                  bool                                  `json:"can_rate"`
+	CanWriteText             bool                                  `json:"can_write_text"`
+	CanRecordAudio           bool                                  `json:"can_record_audio"`
+	CanRecordVideo           bool                                  `json:"can_record_video"`
+	CanAttachElement         bool                                  `json:"can_attach_element"`
+	CanAttachScreenshot      bool                                  `json:"can_attach_screenshot"`
+	Greeting                 *string                               `json:"greeting"`
+	Position                 project.WidgetPosition                `json:"position"`
+	Theme                    project.WidgetTheme                   `json:"theme"`
+	AccentColor              *string                               `json:"accent_color"`
+	ReplayMode               project.ReplayMode                    `json:"replay_mode"`
+	ReplaySamplingRate       int                                   `json:"replay_sampling_rate"`
+	ReplayMaxDurationSeconds int                                   `json:"replay_max_duration_seconds"`
+	ReplayMaxEvents          int                                   `json:"replay_max_events"`
+	ReplayMaskAllInputs      bool                                  `json:"replay_mask_all_inputs"`
+	ReplayMaskTextSelector   *string                               `json:"replay_mask_text_selector"`
+	RecurrenceMode           project.RecurrenceMode                `json:"recurrence_mode"`
+	RecurrenceDays           *int                                  `json:"recurrence_days"`
+	DefinitionKey            string                                `json:"definition_key"`
+	DefinitionVersion        int                                   `json:"definition_version"`
+	DefinitionStatus         project.WidgetDefinitionStatus        `json:"definition_status"`
+	Presentation             project.WidgetPresentation            `json:"presentation"`
+	Objective                project.WidgetObjective               `json:"objective"`
+	ResponseBlocks           []project.WidgetResponseBlock         `json:"response_blocks"`
+	Localizations            map[string]project.WidgetLocalization `json:"localizations"`
+	AllowComment             bool                                  `json:"allow_comment"`
+	CollectContact           bool                                  `json:"collect_contact"`
 }
 
 func NewHTTPHandler(options HTTPOptions) http.Handler {
@@ -140,8 +152,10 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 	SetCORSHeaders(w, origin)
 	w.Header().Set("Cache-Control", "no-store")
 	api.WriteJSON(w, http.StatusOK, ConfigurationResponse{
-		ProjectID: configuration.ProjectID, Features: definition.Features,
-		Rules: rules, RefreshAfterSeconds: 300, ErrorReportingDSN: h.options.SentryDSN,
+		SchemaVersion: 2, ProjectID: configuration.ProjectID,
+		DefaultLocale: configuration.DefaultLocale, Features: definition.Features,
+		Rules: rules, Definitions: rules, RefreshAfterSeconds: 300,
+		ErrorReportingDSN: h.options.SentryDSN,
 	})
 }
 
@@ -283,5 +297,10 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		ReplayMaxDurationSeconds: rule.ReplayMaxDurationSeconds, ReplayMaxEvents: rule.ReplayMaxEvents,
 		ReplayMaskAllInputs: rule.ReplayMaskAllInputs, ReplayMaskTextSelector: rule.ReplayMaskTextSelector,
 		RecurrenceMode: rule.RecurrenceMode, RecurrenceDays: rule.RecurrenceDays,
+		DefinitionKey: rule.DefinitionKey, DefinitionVersion: rule.DefinitionVersion,
+		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
+		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,
+		Localizations: rule.Localizations, AllowComment: rule.AllowComment,
+		CollectContact: rule.CollectContact,
 	}
 }

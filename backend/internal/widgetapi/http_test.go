@@ -50,7 +50,7 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 	recurrenceDays := 30
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	store := &configurationStoreStub{configuration: project.PublicConfiguration{
-		ProjectID: "project-id", AllowedDomains: []string{"example.com"},
+		ProjectID: "project-id", DefaultLocale: "pt-ao", AllowedDomains: []string{"example.com"},
 		Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
 		Rules: []project.WidgetRule{{
 			ID: "rule-id", Name: "All pages", Priority: 5, MatcherType: project.MatcherAllPages,
@@ -67,6 +67,14 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 			ReplayMode: project.ReplaySampling, ReplaySamplingRate: 25,
 			ReplayMaxDurationSeconds: 1800, ReplayMaxEvents: 50000, ReplayMaskAllInputs: true,
 			RecurrenceMode: project.RecurrenceCooldown, RecurrenceDays: &recurrenceDays,
+			DefinitionKey: "checkout-feedback", DefinitionVersion: 3,
+			DefinitionStatus: project.DefinitionActive, Presentation: project.PresentationLauncher,
+			Objective:      project.ObjectiveContinuousFeedback,
+			ResponseBlocks: []project.WidgetResponseBlock{{Key: "rating", Type: project.ResponseRating}},
+			Localizations: map[string]project.WidgetLocalization{
+				"pt-ao": {LauncherLabel: "Opinião", Prompt: "Como correu?"},
+			},
+			AllowComment: true, CollectContact: true,
 		}},
 	}}
 	handler := NewHTTPHandler(HTTPOptions{Store: store, Now: func() time.Time { return now }})
@@ -85,8 +93,13 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		t.Errorf("Access-Control-Allow-Credentials = %q", got)
 	}
 	for _, fragment := range []string{
-		`"project_id":"project-id"`, `"audio":true`, `"video":false`,
+		`"schema_version":2`, `"project_id":"project-id"`, `"default_locale":"pt-ao"`,
+		`"audio":true`, `"video":false`,
 		`"id":"rule-id"`, `"trigger_delay_seconds":3`, `"refresh_after_seconds":300`,
+		`"definition_key":"checkout-feedback"`, `"definition_version":3`,
+		`"presentation":"launcher"`, `"objective":"continuous_feedback"`,
+		`"response_blocks":[{"key":"rating"`, `"collect_contact":true`,
+		`"definitions":[{"id":"rule-id"`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,

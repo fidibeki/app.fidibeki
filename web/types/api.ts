@@ -77,6 +77,7 @@ export interface Project {
   name: string
   public_key: string
   allowed_domains: string[]
+  default_locale: string
   widget_last_seen_at?: string | null
   created_at: string
   updated_at: string
@@ -88,6 +89,33 @@ export type WidgetPosition = 'bottom-left' | 'bottom-right'
 export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
+export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
+export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
+export type WidgetObjective = 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
+export type WidgetResponseBlockType = 'free_text' | 'rating' | 'reaction' | 'single_choice'
+
+export interface WidgetResponseOption {
+  value: string
+}
+
+export interface WidgetResponseBlock {
+  key: string
+  type: WidgetResponseBlockType
+  required: boolean
+  options?: WidgetResponseOption[]
+}
+
+export interface WidgetLocalization {
+  launcher_label: string
+  prompt: string
+  comment_placeholder: string
+  contact_label: string
+  consent_label: string
+  submit_label: string
+  success_message: string
+  block_labels?: Record<string, string>
+  option_labels?: Record<string, Record<string, string>>
+}
 
 export interface WidgetTargetCondition {
   id: string
@@ -132,13 +160,22 @@ export interface WidgetRule {
   replay_mask_text_selector?: string | null
   recurrence_mode: RecurrenceMode
   recurrence_days?: number | null
+  definition_key: string
+  definition_version: number
+  definition_status: WidgetDefinitionStatus
+  presentation: WidgetPresentation
+  objective: WidgetObjective
+  response_blocks: WidgetResponseBlock[]
+  localizations: Record<string, WidgetLocalization>
+  allow_comment: boolean
+  collect_contact: boolean
   created_at: string
   updated_at: string
 }
 
 export type WidgetRuleInput = Omit<
   WidgetRule,
-  'id' | 'project_id' | 'created_at' | 'updated_at' | 'include_conditions' | 'exclude_conditions'
+  'id' | 'project_id' | 'definition_version' | 'created_at' | 'updated_at' | 'include_conditions' | 'exclude_conditions'
 > & {
   include_conditions?: WidgetTargetConditionInput[]
   exclude_conditions?: WidgetTargetConditionInput[]

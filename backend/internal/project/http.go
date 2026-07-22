@@ -72,11 +72,16 @@ func (h *HTTPHandler) createProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name           string   `json:"name"`
 		AllowedDomains []string `json:"allowed_domains"`
+		DefaultLocale  string   `json:"default_locale"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
 	name, domains, fields := ValidateProject(request.Name, request.AllowedDomains)
+	defaultLocale, localeError := ValidateDefaultLocale(request.DefaultLocale)
+	if localeError != "" {
+		fields["default_locale"] = localeError
+	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
@@ -95,7 +100,9 @@ func (h *HTTPHandler) createProject(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
-		created, err := h.options.Store.CreateProject(r.Context(), query, resolved.ID, name, publicKey, domains)
+		created, err := h.options.Store.CreateProject(
+			r.Context(), query, resolved.ID, name, publicKey, domains, defaultLocale,
+		)
 		if errors.Is(err, ErrPublicKeyConflict) {
 			continue
 		}
@@ -147,11 +154,16 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name           string   `json:"name"`
 		AllowedDomains []string `json:"allowed_domains"`
+		DefaultLocale  string   `json:"default_locale"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
 	name, domains, fields := ValidateProject(request.Name, request.AllowedDomains)
+	defaultLocale, localeError := ValidateDefaultLocale(request.DefaultLocale)
+	if localeError != "" {
+		fields["default_locale"] = localeError
+	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
@@ -160,7 +172,9 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	updated, err := h.options.Store.UpdateProject(r.Context(), query, resolved.ID, projectID, name, domains)
+	updated, err := h.options.Store.UpdateProject(
+		r.Context(), query, resolved.ID, projectID, name, domains, defaultLocale,
+	)
 	if err != nil {
 		writeStoreError(w, err)
 		return

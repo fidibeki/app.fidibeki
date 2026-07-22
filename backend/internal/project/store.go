@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,13 +35,15 @@ func (Store) CreateProject(
 	name string,
 	publicKey string,
 	allowedDomains []string,
+	defaultLocale string,
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
-		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains, default_locale)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (public_key) DO NOTHING
-		RETURNING id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
-	`, tenantID, name, publicKey, allowedDomains))
+		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
+		          widget_last_seen_at, created_at, updated_at
+	`, tenantID, name, publicKey, allowedDomains, defaultLocale))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrPublicKeyConflict
 	}
@@ -52,7 +55,8 @@ func (Store) CreateProject(
 
 func (Store) ListProjects(ctx context.Context, query db.Querier, tenantID string) ([]Project, error) {
 	rows, err := query.Query(ctx, `
-		SELECT id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
+		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
+		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 ORDER BY created_at, id
 	`, tenantID)
 	if err != nil {
@@ -80,7 +84,8 @@ func (Store) GetProject(
 	projectID string,
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
-		SELECT id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
+		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
+		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 AND id = $2
 	`, tenantID, projectID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -99,12 +104,14 @@ func (Store) UpdateProject(
 	projectID string,
 	name string,
 	allowedDomains []string,
+	defaultLocale string,
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
-		UPDATE projects SET name = $3, allowed_domains = $4
+		UPDATE projects SET name = $3, allowed_domains = $4, default_locale = $5
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, name, public_key, allowed_domains, widget_last_seen_at, created_at, updated_at
-	`, tenantID, projectID, name, allowedDomains))
+		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
+		          widget_last_seen_at, created_at, updated_at
+	`, tenantID, projectID, name, allowedDomains, defaultLocale))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -132,6 +139,10 @@ func (Store) CreateWidgetRule(
 	projectID string,
 	values WidgetRuleValues,
 ) (WidgetRule, error) {
+	arguments, err := widgetRuleArguments(tenantID, projectID, values)
+	if err != nil {
+		return WidgetRule{}, err
+	}
 	rule, err := scanWidgetRule(query.QueryRow(ctx, `
 		INSERT INTO widget_rules (
 			project_id, name, priority, enabled, matcher_type, matcher_value,
@@ -140,14 +151,17 @@ func (Store) CreateWidgetRule(
 			can_attach_element, can_attach_screenshot, greeting, position, theme,
 				accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
 				replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
-				recurrence_mode, recurrence_days
+				recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
+				response_blocks, localizations, allow_comment, collect_contact
 			)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-			       $27, $28
+			       $27, $28,
+			       COALESCE(NULLIF($29, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+			       $30, $31, $32, $33::jsonb, $34::jsonb, $35, $36
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
-	`, widgetRuleArguments(tenantID, projectID, values)...))
+	`, arguments...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WidgetRule{}, ErrNotFound
 	}
@@ -230,7 +244,11 @@ func (Store) UpdateWidgetRule(
 	ruleID string,
 	values WidgetRuleValues,
 ) (WidgetRule, error) {
-	arguments := append([]any{tenantID, projectID, ruleID}, widgetRuleValueArguments(values)...)
+	valueArguments, err := widgetRuleValueArguments(values)
+	if err != nil {
+		return WidgetRule{}, err
+	}
+	arguments := append([]any{tenantID, projectID, ruleID}, valueArguments...)
 	rule, err := scanWidgetRule(query.QueryRow(ctx, `
 		UPDATE widget_rules AS rule SET
 			name = $4, priority = $5, enabled = $6, matcher_type = $7, matcher_value = $8,
@@ -240,7 +258,12 @@ func (Store) UpdateWidgetRule(
 			position = $19, theme = $20, accent_color = $21, replay_mode = $22,
 				replay_sampling_rate = $23, replay_max_duration_seconds = $24,
 				replay_max_events = $25, replay_mask_all_inputs = $26, replay_mask_text_selector = $27,
-				recurrence_mode = $28, recurrence_days = $29
+				recurrence_mode = $28, recurrence_days = $29,
+				definition_key = COALESCE(NULLIF($30, ''), rule.definition_key),
+				definition_version = rule.definition_version + 1,
+				definition_status = $31, presentation = $32, objective = $33,
+				response_blocks = $34::jsonb, localizations = $35::jsonb,
+				allow_comment = $36, collect_contact = $37
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
 		  AND project.id = rule.project_id AND project.tenant_id = $1
@@ -295,14 +318,15 @@ func (Store) LoadPublicConfiguration(
 	var trialEndsAt pgtype.Timestamptz
 	var deletionRequestedAt pgtype.Timestamptz
 	err := query.QueryRow(ctx, `
-		SELECT tenant.id, tenant.slug, project.id, project.allowed_domains,
+		SELECT tenant.id, tenant.slug, project.id, project.default_locale, project.allowed_domains,
 		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at
 		FROM projects AS project
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
 		WHERE project.public_key = $1
 	`, publicKey).Scan(
 		&configuration.TenantID, &configuration.TenantSlug,
-		&configuration.ProjectID, &configuration.AllowedDomains, &plan, &status, &trialEndsAt,
+		&configuration.ProjectID, &configuration.DefaultLocale, &configuration.AllowedDomains,
+		&plan, &status, &trialEndsAt,
 		&deletionRequestedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -323,7 +347,7 @@ func (Store) LoadPublicConfiguration(
 	rows, err := query.Query(ctx, `
 		SELECT `+prefixedWidgetRuleColumns("rule")+`
 		FROM widget_rules AS rule
-		WHERE rule.project_id = $1 AND rule.enabled = true
+		WHERE rule.project_id = $1 AND rule.enabled = true AND rule.definition_status = 'active'
 		ORDER BY rule.priority DESC, rule.created_at, rule.id
 	`, configuration.ProjectID)
 	if err != nil {
@@ -458,6 +482,8 @@ const widgetRuleColumns = `
 	can_attach_element, can_attach_screenshot, greeting, position, theme, accent_color,
 		replay_mode, replay_sampling_rate, replay_max_duration_seconds, replay_max_events,
 		replay_mask_all_inputs, replay_mask_text_selector, recurrence_mode, recurrence_days,
+		definition_key, definition_version, definition_status, presentation, objective,
+		response_blocks, localizations, allow_comment, collect_contact,
 		created_at, updated_at`
 
 func prefixedWidgetRuleColumns(alias string) string {
@@ -467,7 +493,10 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"can_record_audio", "can_record_video", "can_attach_element", "can_attach_screenshot", "greeting",
 		"position", "theme", "accent_color", "replay_mode", "replay_sampling_rate",
 		"replay_max_duration_seconds", "replay_max_events", "replay_mask_all_inputs",
-		"replay_mask_text_selector", "recurrence_mode", "recurrence_days", "created_at", "updated_at",
+		"replay_mask_text_selector", "recurrence_mode", "recurrence_days",
+		"definition_key", "definition_version", "definition_status", "presentation", "objective",
+		"response_blocks", "localizations", "allow_comment", "collect_contact",
+		"created_at", "updated_at",
 	}
 	for index := range columns {
 		columns[index] = alias + "." + columns[index]
@@ -486,11 +515,23 @@ func joinColumns(columns []string) string {
 	return result
 }
 
-func widgetRuleArguments(tenantID string, projectID string, values WidgetRuleValues) []any {
-	return append([]any{tenantID, projectID}, widgetRuleValueArguments(values)...)
+func widgetRuleArguments(tenantID string, projectID string, values WidgetRuleValues) ([]any, error) {
+	valueArguments, err := widgetRuleValueArguments(values)
+	if err != nil {
+		return nil, err
+	}
+	return append([]any{tenantID, projectID}, valueArguments...), nil
 }
 
-func widgetRuleValueArguments(values WidgetRuleValues) []any {
+func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
+	responseBlocks, err := json.Marshal(values.ResponseBlocks)
+	if err != nil {
+		return nil, fmt.Errorf("encode widget response blocks: %w", err)
+	}
+	localizations, err := json.Marshal(values.Localizations)
+	if err != nil {
+		return nil, fmt.Errorf("encode widget localizations: %w", err)
+	}
 	return []any{
 		values.Name, values.Priority, values.Enabled, values.MatcherType, values.MatcherValue,
 		values.TriggerType, values.TriggerDelaySeconds, values.TriggerScrollPercent,
@@ -499,7 +540,9 @@ func widgetRuleValueArguments(values WidgetRuleValues) []any {
 		values.Theme, values.AccentColor, values.ReplayMode, values.ReplaySamplingRate,
 		values.ReplayMaxDurationSeconds, values.ReplayMaxEvents, values.ReplayMaskAllInputs,
 		values.ReplayMaskTextSelector, values.RecurrenceMode, values.RecurrenceDays,
-	}
+		values.DefinitionKey, values.DefinitionStatus, values.Presentation, values.Objective,
+		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
+	}, nil
 }
 
 type rowScanner interface {
@@ -511,7 +554,8 @@ func scanProject(row rowScanner) (Project, error) {
 	var widgetLastSeenAt pgtype.Timestamptz
 	err := row.Scan(
 		&project.ID, &project.TenantID, &project.Name, &project.PublicKey,
-		&project.AllowedDomains, &widgetLastSeenAt, &project.CreatedAt, &project.UpdatedAt,
+		&project.AllowedDomains, &project.DefaultLocale, &widgetLastSeenAt,
+		&project.CreatedAt, &project.UpdatedAt,
 	)
 	if widgetLastSeenAt.Valid {
 		project.WidgetLastSeenAt = &widgetLastSeenAt.Time
@@ -529,6 +573,9 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.Position, &rule.Theme, &rule.AccentColor, &rule.ReplayMode, &rule.ReplaySamplingRate,
 		&rule.ReplayMaxDurationSeconds, &rule.ReplayMaxEvents, &rule.ReplayMaskAllInputs,
 		&rule.ReplayMaskTextSelector, &rule.RecurrenceMode, &rule.RecurrenceDays,
+		&rule.DefinitionKey, &rule.DefinitionVersion, &rule.DefinitionStatus,
+		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
+		&rule.AllowComment, &rule.CollectContact,
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	return rule, err

@@ -109,7 +109,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	})(routes)
 
 	createdResponse := performProjectRequest(handler, "acme", http.MethodPost, "/v1/projects", `{
-		"name":"Acme Web","allowed_domains":["Example.com","*.preview.example.com"]
+		"name":"Acme Web","allowed_domains":["Example.com","*.preview.example.com"],
+		"default_locale":"pt-AO"
 	}`, ownerToken)
 	if createdResponse.Code != http.StatusCreated {
 		t.Fatalf("create project status = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
@@ -123,6 +124,9 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	}
 	if len(created.Project.AllowedDomains) != 2 || created.Project.AllowedDomains[0] != "example.com" {
 		t.Errorf("allowed domains = %#v", created.Project.AllowedDomains)
+	}
+	if created.Project.DefaultLocale != "pt-ao" {
+		t.Errorf("default locale = %q", created.Project.DefaultLocale)
 	}
 	if created.Project.WidgetLastSeenAt != nil {
 		t.Errorf("new project widget activity = %s, want nil", created.Project.WidgetLastSeenAt)
@@ -255,6 +259,14 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		createdRule.WidgetRule.RecurrenceDays == nil || *createdRule.WidgetRule.RecurrenceDays != 30 {
 		t.Errorf("widget recurrence defaults = %#v", createdRule.WidgetRule)
 	}
+	if createdRule.WidgetRule.DefinitionKey == "" || createdRule.WidgetRule.DefinitionVersion != 1 ||
+		createdRule.WidgetRule.DefinitionStatus != DefinitionActive ||
+		createdRule.WidgetRule.Presentation != PresentationPrompt ||
+		createdRule.WidgetRule.Objective != ObjectiveContinuousFeedback ||
+		len(createdRule.WidgetRule.ResponseBlocks) != 2 ||
+		createdRule.WidgetRule.Localizations["en"].Prompt != "How was your experience?" {
+		t.Errorf("legacy widget definition projection = %#v", createdRule.WidgetRule)
+	}
 	if createdRule.WidgetRule.MatcherValue == nil || *createdRule.WidgetRule.MatcherValue != "https://example.com/checkout" ||
 		len(createdRule.WidgetRule.IncludeConditions) != 1 || len(createdRule.WidgetRule.ExcludeConditions) != 0 ||
 		createdRule.WidgetRule.IncludeConditions[0].MatcherType != MatcherURLPrefix {
@@ -264,7 +276,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load public configuration: %v", err)
 	}
-	if publicConfiguration.ProjectID != created.Project.ID || len(publicConfiguration.Rules) != 1 ||
+	if publicConfiguration.ProjectID != created.Project.ID || publicConfiguration.DefaultLocale != "pt-ao" ||
+		len(publicConfiguration.Rules) != 1 ||
 		publicConfiguration.Rules[0].ID != createdRule.WidgetRule.ID ||
 		publicConfiguration.Rules[0].RecurrenceMode != RecurrenceCooldown ||
 		publicConfiguration.Rules[0].RecurrenceDays == nil ||
@@ -309,14 +322,26 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"exclude_conditions":[{"matcher_type":"url_prefix","matcher_value":"https://example.com/docs/private/"}],`+
 			`"trigger_type":"delay",`+
 			`"trigger_delay_seconds":3,"can_record_audio":true,"can_attach_screenshot":true,`+
-			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session"}`, ownerToken,
+			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session",`+
+			`"definition_key":"checkout-reaction","definition_status":"active",`+
+			`"presentation":"reaction","objective":"after_engagement",`+
+			`"response_blocks":[{"key":"reaction","type":"reaction","required":true,`+
+			`"options":[{"value":"helpful"},{"value":"unclear"}]}],`+
+			`"localizations":{"en":{"launcher_label":"Feedback","prompt":"Was this useful?",`+
+			`"comment_placeholder":"Tell us more","contact_label":"Email",`+
+			`"consent_label":"Email me about this feedback","submit_label":"Send",`+
+			`"success_message":"Feedback received."}},`+
+			`"allow_comment":true,"collect_contact":true}`, ownerToken,
 	)
 	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) ||
 		!strings.Contains(updatedRule.Body.String(), `"recurrence_mode":"session"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"recurrence_days":null`) ||
 		!strings.Contains(updatedRule.Body.String(), `"matcher_type":"url_exact"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"matcher_value":"https://example.com/checkout"`) ||
-		!strings.Contains(updatedRule.Body.String(), `"exclude_conditions":[{"id":`) {
+		!strings.Contains(updatedRule.Body.String(), `"exclude_conditions":[{"id":`) ||
+		!strings.Contains(updatedRule.Body.String(), `"definition_version":2`) ||
+		!strings.Contains(updatedRule.Body.String(), `"presentation":"reaction"`) ||
+		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
 	}
 	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
@@ -326,7 +351,10 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if len(publicConfiguration.Rules) != 1 || len(publicConfiguration.Rules[0].IncludeConditions) != 2 ||
 		len(publicConfiguration.Rules[0].ExcludeConditions) != 1 ||
 		publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue == nil ||
-		*publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue != "https://example.com/docs/private" {
+		*publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue != "https://example.com/docs/private" ||
+		publicConfiguration.Rules[0].DefinitionKey != "checkout-reaction" ||
+		publicConfiguration.Rules[0].DefinitionVersion != 2 ||
+		publicConfiguration.Rules[0].Presentation != PresentationReaction {
 		t.Errorf("updated public targeting = %#v", publicConfiguration.Rules)
 	}
 	listedRules := performProjectRequest(
@@ -338,7 +366,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 
 	updatedProject := performProjectRequest(
 		handler, "acme", http.MethodPatch, "/v1/projects/"+created.Project.ID,
-		`{"name":"Acme App","allowed_domains":["app.example.com"]}`, ownerToken,
+		`{"name":"Acme App","allowed_domains":["app.example.com"],"default_locale":"pt-AO"}`, ownerToken,
 	)
 	if updatedProject.Code != http.StatusOK || !strings.Contains(updatedProject.Body.String(), "app.example.com") {
 		t.Errorf("update project status = %d, body = %s", updatedProject.Code, updatedProject.Body.String())
