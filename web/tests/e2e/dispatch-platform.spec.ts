@@ -1290,6 +1290,9 @@ test('feedback queue links apply their filters without a document reload', async
   await expect(page.getByLabel('Evidence filter')).toHaveValue('replay')
   await expect(page.getByLabel('Status filter')).toHaveValue('open')
   await expect(page.getByText('1 loaded')).toBeVisible()
+  await expect(queues.locator('a[data-active="true"]')).toHaveCount(1)
+  await expect(queues.locator('a[data-active="true"]')).toHaveText('Has replay')
+  await expect(queues.getByRole('link', { name: 'Has replay' })).toHaveAttribute('aria-current', 'page')
 
   await queues.getByRole('link', { name: 'Archived' }).click()
 
@@ -1298,6 +1301,8 @@ test('feedback queue links apply their filters without a document reload', async
   await expect(page.getByLabel('Evidence filter')).toHaveValue('')
   await expect(page.getByText('1 loaded')).toBeVisible()
   await expect(page.locator('.feedback-stream')).toContainText('FB-1047')
+  await expect(queues.locator('a[data-active="true"]')).toHaveCount(1)
+  await expect(queues.locator('a[data-active="true"]')).toHaveText('Archived')
   expect(documentRequests).toBe(documentRequestsBeforeQueueNavigation)
 })
 

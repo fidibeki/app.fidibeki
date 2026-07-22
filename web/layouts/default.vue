@@ -19,6 +19,7 @@ import {
   ShieldAlert,
   X,
 } from '@lucide/vue'
+import { feedbackQueueFromQuery, type FeedbackQueueID } from '~/utils/feedback-queue'
 
 const route = useRoute()
 const router = useRouter()
@@ -57,14 +58,15 @@ const primaryNavigation = [
 ]
 const availablePrimaryNavigation = computed(() => primaryNavigation.filter(item => item.permissions.every(can)))
 
-const queueNavigation = [
-  { label: 'Open', to: '/feedback?status=open', icon: Inbox },
-  { label: 'Moderation', to: '/feedback?moderation=flagged', icon: ShieldAlert },
-  { label: 'AI failed', to: '/feedback?processing=failed', icon: CircleAlert },
-  { label: 'Has replay', to: '/feedback?attachment=replay', icon: PanelRightOpen },
-  { label: 'Unlinked', to: '/feedback?issue=unlinked', icon: Link2 },
-  { label: 'Archived', to: '/feedback?status=archived', icon: Archive },
+const queueNavigation: Array<{ id: FeedbackQueueID, label: string, to: string, icon: typeof Inbox }> = [
+  { id: 'open', label: 'Open', to: '/feedback?status=open', icon: Inbox },
+  { id: 'moderation', label: 'Moderation', to: '/feedback?moderation=flagged', icon: ShieldAlert },
+  { id: 'ai_failed', label: 'AI failed', to: '/feedback?processing=failed', icon: CircleAlert },
+  { id: 'replay', label: 'Has replay', to: '/feedback?attachment=replay', icon: PanelRightOpen },
+  { id: 'unlinked', label: 'Unlinked', to: '/feedback?issue=unlinked', icon: Link2 },
+  { id: 'archived', label: 'Archived', to: '/feedback?status=archived', icon: Archive },
 ]
+const activeQueue = computed(() => route.path.startsWith('/feedback') ? feedbackQueueFromQuery(route.query) : null)
 
 function isPrimaryActive(to: string) {
   if (to === '/') return route.path === '/'
@@ -174,7 +176,13 @@ watch(
     <aside v-if="showQueueRail" class="app-queue-rail" :inert="mobileNavOpen">
       <div class="app-queue-heading"><span>Feedback queues</span></div>
       <nav aria-label="Feedback queues">
-        <NuxtLink v-for="item in queueNavigation" :key="item.label" :to="item.to">
+        <NuxtLink
+          v-for="item in queueNavigation"
+          :key="item.id"
+          :to="item.to"
+          :data-active="activeQueue === item.id"
+          :aria-current="activeQueue === item.id ? 'page' : undefined"
+        >
           <component :is="item.icon" :size="15" />
           <span>{{ item.label }}</span>
         </NuxtLink>

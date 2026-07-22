@@ -350,7 +350,7 @@
 }
 
 .app-queue-rail nav a:hover,
-.app-queue-rail nav a.router-link-exact-active {
+.app-queue-rail nav a[data-active='true'] {
   background: #e6efec;
   color: var(--teal);
 }

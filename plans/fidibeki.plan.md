@@ -41,9 +41,11 @@ implementation; extend existing contracts instead of rebuilding them.
   domains until they opt into the policy. Implemented with tenant-scoped RLS storage, hashed
   one-time email verification, serialized invite/activation enforcement, Settings management, and
   backend/web regression coverage. Real staging verification remains part of the Phase 0 exit gate.
-- [ ] [#9](https://github.com/acidiney/app.fidibeki/issues/9) Feedback queue selection. Filtering,
+- [x] [#9](https://github.com/acidiney/app.fidibeki/issues/9) Feedback queue selection. Filtering,
   URL synchronization, and SPA navigation already work. Replace path-only router active matching
   with one canonical queue matcher so exactly one queue reflects the current filter state.
+  Implemented with a pure query classifier, explicit `aria-current`, and unit/browser regression
+  coverage for default, special, archived, and ambiguous filter combinations.
 - [ ] [#10](https://github.com/acidiney/app.fidibeki/issues/10) Responsive session replay. Replay
   loading and playback already work. Constrain and scale the recorded viewport plus controls inside
   the available surface, with no page-level horizontal overflow on desktop, tablet, or mobile.
