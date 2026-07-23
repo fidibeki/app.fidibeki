@@ -16,7 +16,17 @@ test.use({
 
 const clarificationPrompt = 'Can you confirm your Safari version and iOS build number?'
 
-function progressFixture() {
+interface ProgressFixture {
+  public_id: string
+  title: string
+  status: string
+  created_at: string
+  resolved_at: string | null
+  events: Array<{ from_status: string | null, to_status: string, created_at: string }>
+  clarification: { prompt: string, responded: boolean, responded_at: string | null } | null
+}
+
+function progressFixture(): ProgressFixture {
   return {
     public_id: 'ISS-1042',
     title: 'Checkout button does nothing on Safari',
@@ -34,10 +44,26 @@ function progressFixture() {
   }
 }
 
+function progressFixtureWithoutEvents(): ProgressFixture {
+  return {
+    public_id: 'ISS-1099',
+    title: 'Onboarding wizard skips the second step',
+    status: 'open',
+    created_at: createdAt,
+    resolved_at: null,
+    events: [],
+    clarification: null,
+  }
+}
+
 interface State {
-  progress: ReturnType<typeof progressFixture>
+  progress: ProgressFixture
   lastResponseBody: Record<string, unknown> | null
   forceResponseError: { code: string } | null
+  // `times` must survive ofetch's built-in single automatic retry for 503s
+  // (see plugins/api-fetch.ts, which does not disable ofetch's default retry),
+  // otherwise the transient error never becomes visible to the page.
+  forceProgressError: { code: string, times: number } | null
 }
 
 async function json(route: Route, body: unknown, status = 200) {
@@ -60,6 +86,12 @@ async function installAPI(page: Page, state: State, token: string) {
     const method = request.method()
 
     if (path === `/v1/reporter/progress/${token}` && method === 'GET') {
+      if (state.forceProgressError) {
+        const failure = state.forceProgressError
+        failure.times -= 1
+        if (failure.times <= 0) state.forceProgressError = null
+        return json(route, { error: { code: failure.code, message: 'raw upstream provider detail' } }, 503)
+      }
       return json(route, { progress: state.progress })
     }
     if (path === `/v1/reporter/progress/${token}/response` && method === 'POST') {
@@ -80,11 +112,12 @@ async function installAPI(page: Page, state: State, token: string) {
 test('Portuguese reporter progress page preserves the clarification text and sends exact response payloads', async ({ page }, testInfo) => {
   test.setTimeout(60_000)
   const token = 'reporter-token-pt'
-  const state: State = { progress: progressFixture(), lastResponseBody: null, forceResponseError: null }
+  const state: State = { progress: progressFixture(), lastResponseBody: null, forceResponseError: null, forceProgressError: null }
   await installAPI(page, state, token)
 
   await page.goto(`${baseOrigin}/reporter/${token}`)
   await expect(page).toHaveTitle(`Progresso de ${state.progress.public_id} - Fidibeki`)
+  await expect(page.getByAltText('Fidibeki')).toBeVisible()
   await expect(page.getByText(state.progress.public_id)).toBeVisible()
   await expect(page.getByRole('heading', { name: state.progress.title, level: 1 })).toBeVisible()
   await expect(page.getByText('Precisa de informação', { exact: true })).toBeVisible()
@@ -109,7 +142,7 @@ test('Portuguese reporter progress page preserves the clarification text and sen
 test('Portuguese reporter progress page surfaces safe localized errors for failed responses and invalid links', async ({ page }) => {
   test.setTimeout(60_000)
   const token = 'reporter-token-error'
-  const state: State = { progress: progressFixture(), lastResponseBody: null, forceResponseError: { code: 'not_a_known_code' } }
+  const state: State = { progress: progressFixture(), lastResponseBody: null, forceResponseError: { code: 'not_a_known_code' }, forceProgressError: null }
   await installAPI(page, state, token)
 
   await page.goto(`${baseOrigin}/reporter/${token}`)
@@ -125,4 +158,44 @@ test('Portuguese reporter progress page surfaces safe localized errors for faile
   await expect(page.getByRole('heading', { name: 'Progresso indisponível' })).toBeVisible()
   await expect(page.getByText('Esta ligação é inválida, expirou ou já não está disponível.')).toBeVisible()
   await expect(page.getByText('raw upstream provider detail')).toHaveCount(0)
+})
+
+test('Portuguese reporter progress page distinguishes a transient load error from an invalid link and recovers on retry', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const token = 'reporter-token-transient-error'
+  const state: State = {
+    progress: progressFixture(),
+    lastResponseBody: null,
+    forceResponseError: null,
+    forceProgressError: { code: 'service_unavailable', times: 2 },
+  }
+  await installAPI(page, state, token)
+
+  await page.goto(`${baseOrigin}/reporter/${token}`)
+  await expect(page.getByRole('heading', { name: 'Ocorreu um erro' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Progresso indisponível' })).toHaveCount(0)
+  await expect(page.getByText('raw upstream provider detail')).toHaveCount(0)
+  await capture(page, testInfo, 'reporter-progress-error-pt')
+
+  await page.getByRole('button', { name: 'Tentar novamente' }).click()
+  await expect(page.getByRole('heading', { name: state.progress.title, level: 1 })).toBeVisible()
+})
+
+test('Portuguese reporter progress page shows an explicit empty-progress state before any status change', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const token = 'reporter-token-empty'
+  const state: State = {
+    progress: progressFixtureWithoutEvents(),
+    lastResponseBody: null,
+    forceResponseError: null,
+    forceProgressError: null,
+  }
+  await installAPI(page, state, token)
+
+  await page.goto(`${baseOrigin}/reporter/${token}`)
+  await expect(page.getByRole('heading', { name: state.progress.title, level: 1 })).toBeVisible()
+  await expect(page.getByText('Feedback recebido')).toBeVisible()
+  await expect(page.getByText('Aqui aparecerão atualizações à medida que o seu reporte avançar.')).toBeVisible()
+  await expect(page.getByText('1 atualização', { exact: true })).toBeVisible()
+  await capture(page, testInfo, 'reporter-progress-empty-pt')
 })

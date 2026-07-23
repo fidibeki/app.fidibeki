@@ -910,8 +910,13 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("earlier reporter progress link = %d, body = %s",
 			previousProgress.Code, previousProgress.Body.String())
 	}
+	reporterResponseText := "PROMO-25\nOrder placed on the café terrace kiosk."
+	responseRequestBody, err := json.Marshal(map[string]string{"response": reporterResponseText})
+	if err != nil {
+		t.Fatalf("encode reporter response body: %v", err)
+	}
 	responseRequest := httptest.NewRequest(
-		http.MethodPost, progressAPIURL+"/response", strings.NewReader(`{"response":"PROMO-25"}`),
+		http.MethodPost, progressAPIURL+"/response", strings.NewReader(string(responseRequestBody)),
 	)
 	responseRequest.Header.Set("Content-Type", "application/json")
 	responseRecorder := httptest.NewRecorder()
@@ -935,6 +940,33 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	`, tenantID, issueID).Scan(&reporterResponseActivityCount); err != nil || reporterResponseActivityCount != 1 {
 		t.Fatalf("reporter response activity count = %d, error = %v, want 1",
 			reporterResponseActivityCount, err)
+	}
+	issueDetail := issueRequest(handler, accessToken, http.MethodGet, "/v1/issues/"+issueID, "")
+	if issueDetail.Code != http.StatusOK {
+		t.Fatalf("issue detail after reporter response = %d, body = %s",
+			issueDetail.Code, issueDetail.Body.String())
+	}
+	var issueDetailBody struct {
+		Activities []struct {
+			Kind string         `json:"kind"`
+			Data map[string]any `json:"data"`
+		} `json:"activities"`
+	}
+	if err := json.Unmarshal(issueDetail.Body.Bytes(), &issueDetailBody); err != nil {
+		t.Fatalf("decode issue detail body: %v", err)
+	}
+	var reporterResponseActivities int
+	for _, entry := range issueDetailBody.Activities {
+		if entry.Kind != "reporter.responded" {
+			continue
+		}
+		reporterResponseActivities++
+		if text, _ := entry.Data["response"].(string); text != reporterResponseText {
+			t.Fatalf("issue detail reporter response text = %q, want %q", text, reporterResponseText)
+		}
+	}
+	if reporterResponseActivities != 1 {
+		t.Fatalf("issue detail reporter.responded activities = %d, want 1", reporterResponseActivities)
 	}
 	revoked := issueRequest(handler, accessToken, http.MethodPatch,
 		"/v1/issues/"+issueID+"/reporter-access", `{"enabled":false}`)

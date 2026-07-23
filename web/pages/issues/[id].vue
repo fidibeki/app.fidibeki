@@ -5,6 +5,7 @@ import {
   issueActivityChanges,
   issueActivityFeedbackCount,
   issueActivityReporterAccess,
+  issueActivityReporterResponse,
   issueActivitySummaryKey,
   issueStatusKey,
   issueTransitionComment,
@@ -276,6 +277,10 @@ function transitionComment(activity: IssueActivity) {
   return issueTransitionComment(activity)
 }
 
+function reporterResponse(activity: IssueActivity) {
+  return issueActivityReporterResponse(activity)
+}
+
 useHead(() => ({
   title: t('issues.detail.pageTitle', {
     publicId: data.value?.issue.public_id || t('issues.detail.fallbackTitle'),
@@ -324,7 +329,7 @@ useHead(() => ({
             </form>
           </section>
           <section class="app-surface issue-feedback"><header><h2>{{ t('issues.detail.linkedFeedback.title') }}</h2><span>{{ plural('issues.detail.linkedFeedback.count', data.feedbacks.length) }}</span></header><div v-if="!data.feedbacks.length" class="issue-empty">{{ t('issues.detail.linkedFeedback.empty') }}</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>-</span><p><b>{{ feedback.title || t('issues.detail.linkedFeedback.withoutDetail') }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ aiStatusLabel(feedback.ai_status) }}</span></NuxtLink></section>
-          <section class="app-surface issue-history"><header><h2>{{ t('issues.detail.activity.title') }}</h2><span>{{ plural('issues.detail.activity.count', data.activities.length) }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span class="issue-activity-avatar" :data-actor="Boolean(activity.actor)"><MemberAvatar v-if="activity.actor" :member-id="activity.actor.id" :name="activity.actor.name" :email="activity.actor.email" :avatar-version="activity.actor.avatar_version" /></span><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>{{ t('issues.detail.activity.created') }}</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
+          <section class="app-surface issue-history"><header><h2>{{ t('issues.detail.activity.title') }}</h2><span>{{ plural('issues.detail.activity.count', data.activities.length) }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span class="issue-activity-avatar" :data-actor="Boolean(activity.actor)"><MemberAvatar v-if="activity.actor" :member-id="activity.actor.id" :name="activity.actor.name" :email="activity.actor.email" :avatar-version="activity.actor.avatar_version" /></span><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><blockquote v-if="reporterResponse(activity)" class="issue-activity-response"><span class="sr-only">{{ t('issues.detail.activity.reporterResponseLabel') }}: </span>{{ reporterResponse(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>{{ t('issues.detail.activity.created') }}</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
         </main>
         <aside>
           <OperationalTriageControls
@@ -405,7 +410,8 @@ useHead(() => ({
 .issue-history p,
 .issue-history blockquote { margin: 0 0 5px; font-size: 10px; }
 .issue-history small { display: block; margin: 0 0 5px; color: var(--muted); font-size: 9px; line-height: 1.5; }
-.issue-history blockquote { padding: 7px 9px; background: var(--surface-soft); border-left: 2px solid var(--line-strong); }
+.issue-history blockquote { padding: 7px 9px; overflow-wrap: anywhere; white-space: pre-wrap; background: var(--surface-soft); border-left: 2px solid var(--line-strong); }
+.issue-history blockquote.issue-activity-response { border-left-color: var(--teal); }
 .issue-history time { color: var(--muted); font-size: 9px; }
 .issue-facts,
 .issue-merge { padding: 15px; }

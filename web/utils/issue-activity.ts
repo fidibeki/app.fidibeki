@@ -155,3 +155,10 @@ export function issueTransitionComment(activity: IssueActivity): string {
     ? activity.data.transition_comment
     : ''
 }
+
+/** The reporter's complete clarification response body, or '' for other activity kinds. */
+export function issueActivityReporterResponse(activity: IssueActivity): string {
+  return activity.kind === 'reporter.responded' && typeof activity.data.response === 'string'
+    ? activity.data.response
+    : ''
+}
