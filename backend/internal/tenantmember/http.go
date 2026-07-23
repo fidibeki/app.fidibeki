@@ -376,15 +376,33 @@ func (h *HTTPHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) updateProfile(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Name *string `json:"name"`
+		Name     optionalStringPatch `json:"name"`
+		Locale   optionalStringPatch `json:"locale"`
+		Timezone optionalStringPatch `json:"timezone"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	name, fieldError := NormalizeMemberName(request.Name)
-	if fieldError != "" {
-		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed",
-			map[string]string{"name": fieldError})
+	patch := MemberProfilePatch{
+		SetName: request.Name.Set, SetLocale: request.Locale.Set, SetTimezone: request.Timezone.Set,
+	}
+	fields := map[string]string{}
+	if patch.SetName {
+		patch.Name, fields["name"] = NormalizeMemberName(request.Name.Value)
+	}
+	if patch.SetLocale {
+		patch.Locale, fields["locale"] = NormalizeMemberLocale(request.Locale.Value)
+	}
+	if patch.SetTimezone {
+		patch.Timezone, fields["timezone"] = NormalizeMemberTimezone(request.Timezone.Value)
+	}
+	for field, message := range fields {
+		if message == "" {
+			delete(fields, field)
+		}
+	}
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed", fields)
 		return
 	}
 	resolved, query, ok := requestState(w, r)
@@ -393,13 +411,23 @@ func (h *HTTPHandler) updateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
 	member, err := h.options.Store.UpdateOwnProfile(
-		r.Context(), query, resolved.ID, claims.Subject, name,
+		r.Context(), query, resolved.ID, claims.Subject, patch,
 	)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+type optionalStringPatch struct {
+	Set   bool
+	Value *string
+}
+
+func (field *optionalStringPatch) UnmarshalJSON(data []byte) error {
+	field.Set = true
+	return json.Unmarshal(data, &field.Value)
 }
 
 func (h *HTTPHandler) updateMember(w http.ResponseWriter, r *http.Request) {

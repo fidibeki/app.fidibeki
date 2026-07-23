@@ -6,6 +6,71 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
+func TestNormalizeMemberLocale(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		input   *string
+		want    *string
+		wantErr bool
+	}{
+		"inherit nil":    {input: nil, want: nil},
+		"inherit blank":  {input: stringPointer("  "), want: nil},
+		"English":        {input: stringPointer(" EN "), want: stringPointer("en")},
+		"Portuguese":     {input: stringPointer("pt"), want: stringPointer("pt")},
+		"Angola":         {input: stringPointer(" pt_ao "), want: stringPointer("pt-AO")},
+		"Portugal":       {input: stringPointer("PT-pt"), want: stringPointer("pt-PT")},
+		"pseudo":         {input: stringPointer("en_xa"), want: stringPointer("en-XA")},
+		"unsupported":    {input: stringPointer("fr-FR"), wantErr: true},
+		"invalid syntax": {input: stringPointer("not a locale"), wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, message := NormalizeMemberLocale(test.input)
+			if test.wantErr {
+				if message == "" {
+					t.Fatalf("NormalizeMemberLocale(%v) = %v, want error", test.input, got)
+				}
+				return
+			}
+			if message != "" || !optionalStringsEqual(got, test.want) {
+				t.Fatalf("NormalizeMemberLocale(%v) = %v/%q, want %v", test.input, got, message, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeMemberTimezone(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		input   *string
+		want    *string
+		wantErr bool
+	}{
+		"inherit nil":   {input: nil, want: nil},
+		"inherit blank": {input: stringPointer("  "), want: nil},
+		"UTC":           {input: stringPointer(" UTC "), want: stringPointer("UTC")},
+		"Angola":        {input: stringPointer(" Africa/Luanda "), want: stringPointer("Africa/Luanda")},
+		"Portugal":      {input: stringPointer("Europe/Lisbon"), want: stringPointer("Europe/Lisbon")},
+		"local alias":   {input: stringPointer("Local"), wantErr: true},
+		"unknown":       {input: stringPointer("Nowhere/Unknown"), wantErr: true},
+		"unsafe":        {input: stringPointer("../UTC"), wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, message := NormalizeMemberTimezone(test.input)
+			if test.wantErr {
+				if message == "" {
+					t.Fatalf("NormalizeMemberTimezone(%v) = %v, want error", test.input, got)
+				}
+				return
+			}
+			if message != "" || !optionalStringsEqual(got, test.want) {
+				t.Fatalf("NormalizeMemberTimezone(%v) = %v/%q, want %v", test.input, got, message, test.want)
+			}
+		})
+	}
+}
+
 func TestValidateOrganizationProfileNormalizesSupportedValues(t *testing.T) {
 	t.Parallel()
 
@@ -35,6 +100,10 @@ func TestValidateOrganizationProfileNormalizesSupportedValues(t *testing.T) {
 		profile.TermsURL == nil || *profile.TermsURL != "https://acme.test/terms" {
 		t.Fatalf("profile = %#v", profile)
 	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestValidateOrganizationProfileClearsEmptyOptionalValues(t *testing.T) {

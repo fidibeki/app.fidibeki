@@ -88,7 +88,8 @@ func (s Store) FindMemberByEmail(
 	email string,
 ) (Member, error) {
 	member, err := scanMemberWithRole(query.QueryRow(ctx, `
-		SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version, member.permissions,
+		SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version,
+		       member.locale, member.timezone, member.permissions,
 		       member.status, member.authorization_version,
 		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
 		FROM tenant_members AS member
@@ -283,7 +284,8 @@ func (s Store) ConsumeMagicLink(
 		member, err = scanMember(query.QueryRow(ctx, `
 			INSERT INTO tenant_members (tenant_id, email, permissions)
 			VALUES ($1, $2, $3)
-			RETURNING id, tenant_id, email, name, avatar_version, permissions, status, authorization_version
+			RETURNING id, tenant_id, email, name, avatar_version, locale, timezone,
+			          permissions, status, authorization_version
 		`, tenantID, email, invitedPermissions))
 		if err != nil {
 			return Member{}, fmt.Errorf("accept tenant invitation: %w", err)
@@ -291,7 +293,8 @@ func (s Store) ConsumeMagicLink(
 		memberID = &member.ID
 	} else {
 		member, err = scanMemberWithRole(query.QueryRow(ctx, `
-				SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version, member.permissions,
+				SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version,
+				       member.locale, member.timezone, member.permissions,
 				       member.status, member.authorization_version,
 				       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
 			FROM tenant_members AS member
@@ -387,7 +390,8 @@ func (s Store) RotateSession(
 		             AND replacement.revoked_at IS NULL
 		             AND replacement.issued_at > $7
 		         ),
-		       member.id, member.tenant_id, member.email, member.name, member.avatar_version, member.permissions,
+		       member.id, member.tenant_id, member.email, member.name, member.avatar_version,
+		       member.locale, member.timezone, member.permissions,
 		       member.status, member.authorization_version,
 		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
 		FROM tenant_member_sessions AS session
@@ -526,7 +530,8 @@ func (s Store) CountMembers(ctx context.Context, query db.Querier, tenantID stri
 
 func (s Store) ListMembers(ctx context.Context, query db.Querier, tenantID string) ([]Member, error) {
 	rows, err := query.Query(ctx, `
-		SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version, member.permissions,
+		SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version,
+		       member.locale, member.timezone, member.permissions,
 		       member.status, member.authorization_version,
 		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
 		FROM tenant_members AS member
@@ -611,7 +616,8 @@ func (s Store) UpdatePermissions(
 		UPDATE tenant_members
 		SET permissions = $3, authorization_version = authorization_version + 1
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, email, name, avatar_version, permissions, status, authorization_version
+		RETURNING id, tenant_id, email, name, avatar_version, locale, timezone,
+		          permissions, status, authorization_version
 	`, tenantID, memberID, permissions))
 	if err != nil {
 		return Member{}, fmt.Errorf("update tenant member permissions: %w", err)
@@ -714,7 +720,8 @@ func (s Store) changeMemberLifecycle(
 		    permissions = CASE WHEN $3 = 'active'::member_status THEN permissions ELSE '{}'::text[] END,
 		    authorization_version = authorization_version + 1
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, email, name, avatar_version, permissions, status, authorization_version
+		RETURNING id, tenant_id, email, name, avatar_version, locale, timezone,
+		          permissions, status, authorization_version
 	`, tenantID, memberID, status))
 	if err != nil {
 		return Member{}, fmt.Errorf("update tenant member lifecycle: %w", err)
@@ -764,7 +771,8 @@ func lockWorkspaceMember(
 		return nil, Member{}, fmt.Errorf("lock workspace owner: %w", err)
 	}
 	member, err := scanMember(query.QueryRow(ctx, `
-		SELECT id, tenant_id, email, name, avatar_version, permissions, status, authorization_version
+		SELECT id, tenant_id, email, name, avatar_version, locale, timezone,
+		       permissions, status, authorization_version
 		FROM tenant_members WHERE tenant_id = $1 AND id = $2 FOR UPDATE
 	`, tenantID, memberID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -902,7 +910,8 @@ func (s Store) TransferOwnership(
 		UPDATE tenant_members
 		SET permissions = $3, authorization_version = authorization_version + 1
 		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
-		RETURNING id, tenant_id, email, name, avatar_version, permissions, status, authorization_version
+		RETURNING id, tenant_id, email, name, avatar_version, locale, timezone,
+		          permissions, status, authorization_version
 	`, tenantID, targetMemberID, auth.TenantPermissionStrings()))
 	if err != nil {
 		return Member{}, fmt.Errorf("elevate workspace owner: %w", err)
@@ -986,7 +995,8 @@ type rowScanner interface {
 func scanMember(row rowScanner) (Member, error) {
 	var member Member
 	err := row.Scan(
-		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion, &member.Permissions,
+		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion,
+		&member.Locale, &member.Timezone, &member.Permissions,
 		&member.Status, &member.AuthorizationVersion,
 	)
 	member.Role = "member"
@@ -997,7 +1007,8 @@ func scanMemberWithRole(row rowScanner) (Member, error) {
 	var member Member
 	var owner bool
 	err := row.Scan(
-		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion, &member.Permissions,
+		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion,
+		&member.Locale, &member.Timezone, &member.Permissions,
 		&member.Status, &member.AuthorizationVersion, &owner, &member.Verified,
 	)
 	member.Role = "member"
@@ -1018,7 +1029,8 @@ func scanSessionMember(
 	var owner bool
 	err := row.Scan(
 		sessionID, issuedAt, revokedAt, retryAllowed,
-		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion, &member.Permissions,
+		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion,
+		&member.Locale, &member.Timezone, &member.Permissions,
 		&member.Status, &member.AuthorizationVersion, &owner, &member.Verified,
 	)
 	member.Role = "member"

@@ -411,8 +411,13 @@ was removed from the staging test tenant.
       API errors, message catalogs, and extraction enforcement are missing.
     - Approved design:
       `docs/superpowers/specs/2026-07-23-fidibeki-member-aware-localization-design.md`.
-    - [ ] Slice 1: additive member locale/timezone schema, self-service profile updates, session
+    - [x] Slice 1: additive member locale/timezone schema, self-service profile updates, session
       propagation, normalization, audit, and clear-to-inherit behavior.
+      Migration 72 preserves existing members and enforces nullable regional preferences. The
+      profile API now supports true partial updates, explicit inheritance clears, normalized
+      supported locales, IANA timezone validation, one audit per real change, and preference
+      propagation through member/session reads. Migration and tenant-member integration coverage,
+      the full package test, and `go vet` pass locally.
     - [ ] Slice 2: no-prefix Nuxt i18n runtime, SSR-safe precedence, Portuguese regional fallback,
       reactive document language/direction, and centralized regional/error formatting.
     - [ ] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate

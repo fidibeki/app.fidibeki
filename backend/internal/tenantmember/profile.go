@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	_ "time/tzdata"
 	"unicode/utf8"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -25,46 +26,106 @@ func NormalizeMemberName(input *string) (*string, string) {
 	return name, ""
 }
 
+func NormalizeMemberLocale(input *string) (*string, string) {
+	locale := optionalTrim(input)
+	if locale == nil {
+		return nil, ""
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(*locale, "_", "-"))
+	value, supported := map[string]string{
+		"en": "en", "pt": "pt", "pt-ao": "pt-AO", "pt-pt": "pt-PT", "en-xa": "en-XA",
+	}[normalized]
+	if !supported {
+		return nil, "must be a supported English or Portuguese locale"
+	}
+	return &value, ""
+}
+
+func NormalizeMemberTimezone(input *string) (*string, string) {
+	timezone := optionalTrim(input)
+	if timezone == nil {
+		return nil, ""
+	}
+	if len(*timezone) > 100 || *timezone == "Local" {
+		return nil, "must be a valid IANA timezone"
+	}
+	if _, err := time.LoadLocation(*timezone); err != nil {
+		return nil, "must be a valid IANA timezone"
+	}
+	return timezone, ""
+}
+
 func (s Store) UpdateOwnProfile(
 	ctx context.Context,
 	query db.Querier,
 	tenantID, memberID string,
-	name *string,
+	patch MemberProfilePatch,
 ) (Member, error) {
-	var previous *string
+	var previousName, previousLocale, previousTimezone *string
 	if err := query.QueryRow(ctx, `
-		SELECT name
+		SELECT name, locale, timezone
 		FROM tenant_members
 		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
 		FOR UPDATE
-	`, tenantID, memberID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
+	`, tenantID, memberID).Scan(
+		&previousName, &previousLocale, &previousTimezone,
+	); errors.Is(err, pgx.ErrNoRows) {
 		return Member{}, ErrMemberActorInvalid
 	} else if err != nil {
 		return Member{}, fmt.Errorf("lock member profile: %w", err)
 	}
+	name, locale, timezone := previousName, previousLocale, previousTimezone
+	if patch.SetName {
+		name = patch.Name
+	}
+	if patch.SetLocale {
+		locale = patch.Locale
+	}
+	if patch.SetTimezone {
+		timezone = patch.Timezone
+	}
+	if optionalStringsEqual(previousName, name) &&
+		optionalStringsEqual(previousLocale, locale) &&
+		optionalStringsEqual(previousTimezone, timezone) {
+		member, err := scanMemberWithRole(query.QueryRow(ctx, `
+			SELECT member.id, member.tenant_id, member.email, member.name,
+			       member.avatar_version, member.locale, member.timezone, member.permissions,
+			       member.status, member.authorization_version,
+			       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
+			FROM tenant_members AS member
+			JOIN tenants AS tenant ON tenant.id = member.tenant_id
+			WHERE member.tenant_id = $1 AND member.id = $2 AND member.status = 'active'
+		`, tenantID, memberID))
+		if err != nil {
+			return Member{}, fmt.Errorf("read unchanged member profile: %w", err)
+		}
+		return member, nil
+	}
 	member, err := scanMemberWithRole(query.QueryRow(ctx, `
 		WITH updated AS (
 			UPDATE tenant_members
-			SET name = $3
+			SET name = $3, locale = $4, timezone = $5
 			WHERE tenant_id = $1 AND id = $2 AND status = 'active'
 			RETURNING *
 		)
 		SELECT updated.id, updated.tenant_id, updated.email, updated.name,
-		       updated.avatar_version, updated.permissions, updated.status,
+		       updated.avatar_version, updated.locale, updated.timezone,
+		       updated.permissions, updated.status,
 		       updated.authorization_version, updated.id = tenant.owner_member_id,
 		       updated.last_login_at IS NOT NULL
 		FROM updated
 		JOIN tenants AS tenant ON tenant.id = updated.tenant_id
-	`, tenantID, memberID, name))
+	`, tenantID, memberID, name, locale, timezone))
 	if err != nil {
 		return Member{}, fmt.Errorf("update member profile: %w", err)
 	}
-	if optionalStringsEqual(previous, member.Name) {
-		return member, nil
-	}
 	if err := recordTenantAccessEvent(
 		ctx, query, tenantID, "member.profile_updated", &memberID, &memberID,
-		map[string]any{"previous_name": previous, "name": member.Name},
+		map[string]any{
+			"previous_name": previousName, "name": member.Name,
+			"previous_locale": previousLocale, "locale": member.Locale,
+			"previous_timezone": previousTimezone, "timezone": member.Timezone,
+		},
 	); err != nil {
 		return Member{}, err
 	}

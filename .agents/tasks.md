@@ -315,13 +315,20 @@ rollback, and clean reapplication.
 ## Task 20: Profile And Session Regional Contract
 
 **Depends on:** Task 19
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Self-service profile updates and every member/session read expose validated regional
 preferences.
 
 **Acceptance:** Tenant-member integration tests prove partial update, inherit, validation, audit,
 isolation, and refresh propagation.
+
+**Completion:** `PATCH /v1/profile` now distinguishes omitted fields from explicit clears, validates
+and normalizes the supported locale set and IANA timezones, and updates name, locale, and timezone
+atomically with a single audit event only when values change. Authentication refresh and member
+listing return the nullable preferences without changing JWT claims. Focused normalization and
+tenant-member integration tests prove update, inherit, invalid input, no-op, audit, cross-tenant
+isolation, and refresh propagation; the full package test and `go vet` pass.
 
 **Autonomy:** AFK
 
