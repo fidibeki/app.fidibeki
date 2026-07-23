@@ -7,18 +7,48 @@ import {
   UserRound,
 } from '@lucide/vue'
 import type { Member } from '~/types/api'
-import { apiErrorMessage, apiFieldErrors } from '~/utils/api-fetch'
 
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
 const { member, session, tenant, workspaceWritable } = useAuth()
+const regional = useRegionalContext()
+const localizedError = useLocalizedAPIError()
 const fileInput = ref<HTMLInputElement | null>(null)
 const name = ref(member.value?.name || '')
+const locale = ref(member.value?.locale || '')
+const timezone = ref(member.value?.timezone || '')
+const inheritTimezone = ref(!member.value?.timezone)
 const saving = ref(false)
 const uploading = ref(false)
 const removing = ref(false)
 const notice = ref('')
 const failure = ref('')
 const fields = ref<Record<string, string>>({})
+const timezoneSuggestions = [
+  'UTC',
+  'Africa/Luanda',
+  'Africa/Maputo',
+  'Africa/Johannesburg',
+  'Europe/Lisbon',
+  'Europe/London',
+  'America/Sao_Paulo',
+  'America/New_York',
+]
+
+function languageLabel(value: string) {
+  const key = {
+    en: 'en',
+    pt: 'pt',
+    'pt-AO': 'ptAO',
+    'pt-PT': 'ptPT',
+    'en-XA': 'pseudo',
+  }[value] || 'en'
+  return t(`profile.languages.${key}`)
+}
+
+function sourceLabel(source: string) {
+  return t(`profile.preferenceSources.${source}`)
+}
 
 function applyMember(next: Member) {
   if (!session.value.member) return
@@ -27,6 +57,15 @@ function applyMember(next: Member) {
     ...next,
   }
   name.value = session.value.member.name || ''
+  locale.value = session.value.member.locale || ''
+  timezone.value = session.value.member.timezone || ''
+  inheritTimezone.value = !session.value.member.timezone
+}
+
+function updateTimezoneMode() {
+  if (!inheritTimezone.value && !timezone.value.trim()) {
+    timezone.value = regional.timezone.value
+  }
 }
 
 async function saveProfile() {
@@ -38,15 +77,20 @@ async function saveProfile() {
   try {
     const response = await $apiFetch<{ member: Member }>('/v1/profile', {
       method: 'PATCH',
-      body: { name: name.value.trim() || null },
+      body: {
+        name: name.value.trim() || null,
+        locale: locale.value || null,
+        timezone: inheritTimezone.value ? null : timezone.value.trim() || null,
+      },
     })
     applyMember(response.member)
-    notice.value = 'Profile saved.'
+    await regional.apply()
+    notice.value = 'profile.saved'
   } catch (saveError) {
-    fields.value = apiFieldErrors(saveError)
+    fields.value = localizedError.fields(saveError)
     failure.value = Object.keys(fields.value).length
       ? ''
-      : apiErrorMessage(saveError, 'Profile could not be saved.')
+      : localizedError.message(saveError, 'profile.errors.save')
   } finally {
     saving.value = false
   }
@@ -69,12 +113,12 @@ async function uploadAvatar(event: Event) {
       body,
     })
     applyMember({ ...member.value, avatar_version: response.avatar_version })
-    notice.value = 'Profile photo updated.'
+    notice.value = 'profile.photoUpdated'
   } catch (uploadError) {
-    fields.value = apiFieldErrors(uploadError)
+    fields.value = localizedError.fields(uploadError)
     failure.value = Object.keys(fields.value).length
       ? ''
-      : apiErrorMessage(uploadError, 'Profile photo could not be uploaded.')
+      : localizedError.message(uploadError, 'profile.errors.upload')
   } finally {
     uploading.value = false
   }
@@ -88,34 +132,34 @@ async function removeAvatar() {
   try {
     await $apiFetch('/v1/profile/avatar', { method: 'DELETE' })
     applyMember({ ...member.value, avatar_version: null })
-    notice.value = 'Profile photo removed.'
+    notice.value = 'profile.photoRemoved'
   } catch (removeError) {
-    failure.value = apiErrorMessage(removeError, 'Profile photo could not be removed.')
+    failure.value = localizedError.message(removeError, 'profile.errors.remove')
   } finally {
     removing.value = false
   }
 }
 
-useHead({ title: 'Profile - Fidibeki' })
+useHead({ title: computed(() => t('profile.pageTitle')) })
 </script>
 
 <template>
   <div class="app-page profile-page">
     <header class="app-page-head">
       <div>
-        <p class="app-eyebrow">Account</p>
-        <h1>Profile</h1>
-        <span>Your identity across {{ tenant?.name || 'this workspace' }}.</span>
+        <p class="app-eyebrow">{{ t('profile.eyebrow') }}</p>
+        <h1>{{ t('profile.title') }}</h1>
+        <span>{{ t('profile.subtitle', { workspace: tenant?.name || t('profile.workspaceFallback') }) }}</span>
       </div>
     </header>
 
     <section v-if="member" class="app-surface profile-surface">
       <header>
         <div>
-          <p class="app-eyebrow">Member identity</p>
+          <p class="app-eyebrow">{{ t('profile.memberIdentity') }}</p>
           <h2>{{ member.name || member.email.split('@')[0] }}</h2>
         </div>
-        <span class="profile-access"><ShieldCheck :size="13" /> {{ member.role }}</span>
+        <span class="profile-access"><ShieldCheck :size="13" /> {{ t(`profile.roles.${member.role}`) }}</span>
       </header>
 
       <div class="profile-body">
@@ -136,7 +180,7 @@ useHead({ title: 'Profile - Fidibeki' })
               type="file"
               accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
               :disabled="!workspaceWritable || uploading"
-              aria-label="Profile photo file"
+              :aria-label="t('profile.photoFile')"
               @change="uploadAvatar"
             />
             <button
@@ -145,13 +189,13 @@ useHead({ title: 'Profile - Fidibeki' })
               :disabled="!workspaceWritable || uploading"
               @click="fileInput?.click()"
             >
-              <ImagePlus :size="14" /> {{ uploading ? 'Uploading...' : member.avatar_version ? 'Replace photo' : 'Upload photo' }}
+              <ImagePlus :size="14" /> {{ uploading ? t('profile.uploading') : member.avatar_version ? t('profile.replacePhoto') : t('profile.uploadPhoto') }}
             </button>
             <button
               v-if="member.avatar_version"
               class="app-icon-button profile-remove"
               type="button"
-              title="Remove profile photo"
+              :title="t('profile.removePhoto')"
               :disabled="!workspaceWritable || removing"
               @click="removeAvatar"
             >
@@ -164,26 +208,71 @@ useHead({ title: 'Profile - Fidibeki' })
         <form @submit.prevent="saveProfile">
           <fieldset :disabled="!workspaceWritable || saving">
             <label>
-              Display name
-              <input v-model="name" class="app-input" maxlength="120" placeholder="Your name" />
+              {{ t('profile.displayName') }}
+              <input v-model="name" class="app-input" maxlength="120" :placeholder="t('profile.namePlaceholder')" />
               <small v-if="fields.name" class="profile-field-error">{{ fields.name }}</small>
             </label>
             <label>
-              Email
+              {{ t('profile.email') }}
               <input class="app-input" :value="member.email" type="email" disabled />
             </label>
             <dl>
-              <div><dt>Workspace</dt><dd>{{ tenant?.name }}</dd></div>
-              <div><dt>Role</dt><dd class="capitalize">{{ member.role }}</dd></div>
-              <div><dt>Access</dt><dd class="capitalize">{{ member.status }}</dd></div>
+              <div><dt>{{ t('profile.workspace') }}</dt><dd>{{ tenant?.name }}</dd></div>
+              <div><dt>{{ t('profile.role') }}</dt><dd>{{ t(`profile.roles.${member.role}`) }}</dd></div>
+              <div><dt>{{ t('profile.access') }}</dt><dd>{{ t(`profile.statuses.${member.status}`) }}</dd></div>
             </dl>
+            <div class="profile-section-heading">
+              <h3>{{ t('profile.regionalTitle') }}</h3>
+              <p>{{ t('profile.regionalDescription') }}</p>
+            </div>
+            <div class="profile-field">
+              <label for="profile-language">{{ t('profile.language') }}</label>
+              <select id="profile-language" v-model="locale" class="app-select">
+                <option value="">{{ t('profile.languageInherit') }}</option>
+                <option value="en">{{ t('profile.languages.en') }}</option>
+                <option value="pt">{{ t('profile.languages.pt') }}</option>
+                <option value="pt-AO">{{ t('profile.languages.ptAO') }}</option>
+                <option value="pt-PT">{{ t('profile.languages.ptPT') }}</option>
+                <option v-if="locale === 'en-XA'" value="en-XA">{{ t('profile.languages.pseudo') }}</option>
+              </select>
+              <small>{{ t('profile.effectivePreference', {
+                value: languageLabel(regional.effectiveLocale.value),
+                source: sourceLabel(regional.localeSource.value),
+              }) }}</small>
+              <small v-if="fields.locale" class="profile-field-error">{{ fields.locale }}</small>
+            </div>
+            <div class="profile-field">
+              <label for="profile-timezone">{{ t('profile.timezone') }}</label>
+              <label class="profile-checkbox">
+                <input v-model="inheritTimezone" type="checkbox" @change="updateTimezoneMode" />
+                <span>{{ t('profile.timezoneInherit') }}</span>
+              </label>
+              <input
+                id="profile-timezone"
+                v-model="timezone"
+                class="app-input"
+                list="profile-timezones"
+                maxlength="100"
+                :required="!inheritTimezone"
+                :disabled="inheritTimezone"
+                :placeholder="t('profile.timezonePlaceholder')"
+              />
+              <datalist id="profile-timezones">
+                <option v-for="suggestion in timezoneSuggestions" :key="suggestion" :value="suggestion" />
+              </datalist>
+              <small>{{ t('profile.effectivePreference', {
+                value: regional.timezone.value,
+                source: sourceLabel(regional.timezoneSource.value),
+              }) }}</small>
+              <small v-if="fields.timezone" class="profile-field-error">{{ fields.timezone }}</small>
+            </div>
           </fieldset>
           <div class="profile-form-footer">
-            <p v-if="!workspaceWritable">Profile changes are unavailable while this workspace is read-only.</p>
+            <p v-if="!workspaceWritable">{{ t('profile.readonly') }}</p>
             <p v-else-if="failure" class="profile-failure" role="alert">{{ failure }}</p>
-            <p v-else-if="notice" class="profile-notice" role="status">{{ notice }}</p>
+            <p v-else-if="notice" class="profile-notice" role="status">{{ t(notice) }}</p>
             <button class="app-button app-button--primary" type="submit" :disabled="!workspaceWritable || saving">
-              <Save :size="14" /> {{ saving ? 'Saving...' : 'Save profile' }}
+              <Save :size="14" /> {{ saving ? t('profile.saving') : t('profile.save') }}
             </button>
           </div>
         </form>
@@ -191,7 +280,7 @@ useHead({ title: 'Profile - Fidibeki' })
     </section>
 
     <section v-else class="app-surface app-state">
-      <div><UserRound :size="24" /><h2>Profile unavailable</h2></div>
+      <div><UserRound :size="24" /><h2>{{ t('profile.unavailable') }}</h2></div>
     </section>
   </div>
 </template>
@@ -271,6 +360,57 @@ useHead({ title: 'Profile - Fidibeki' })
   color: var(--ink-soft);
   font-size: 10px;
   font-weight: 750;
+}
+.profile-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+.profile-field > label:first-child {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 750;
+}
+.profile-body .profile-checkbox {
+  display: flex;
+  min-height: 22px;
+  align-items: center;
+  flex-direction: row;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+.profile-checkbox input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--teal);
+}
+.profile-body label > small,
+.profile-field > small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.profile-section-heading {
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.profile-section-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+}
+.profile-section-heading p {
+  max-width: 560px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
 }
 .profile-body dl {
   grid-column: 1 / -1;

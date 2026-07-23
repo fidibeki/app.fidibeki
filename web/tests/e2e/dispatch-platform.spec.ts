@@ -46,6 +46,8 @@ function createMockState() {
     email: 'alex@acme.test',
     name: 'Alex Morgan',
     avatar_version: null as string | null,
+    locale: null as string | null,
+    timezone: null as string | null,
     permissions: [...allTenantPermissions],
     status: 'active' as 'active' | 'deactivated' | 'removed',
     role: 'owner' as 'owner' | 'member',
@@ -629,9 +631,17 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (path === '/v1/profile' && method === 'PATCH') {
       const input = body()
-      state.member.name = typeof input.name === 'string' && input.name.trim()
-        ? input.name.trim()
-        : ''
+      if ('name' in input) {
+        state.member.name = typeof input.name === 'string' && input.name.trim()
+          ? input.name.trim()
+          : ''
+      }
+      if ('locale' in input) {
+        state.member.locale = typeof input.locale === 'string' ? input.locale : null
+      }
+      if ('timezone' in input) {
+        state.member.timezone = typeof input.timezone === 'string' ? input.timezone : null
+      }
       return json(route, { member: state.member })
     }
     if (path === '/v1/profile/avatar' && method === 'PUT') {
@@ -1754,6 +1764,55 @@ test('member profile updates display name and self avatar without a new session'
   await expect(page.getByRole('status')).toHaveText('Profile photo removed.')
   await expect(page.locator('.profile-avatar img')).toHaveCount(0)
   expect(state.member.avatar_version).toBeNull()
+})
+
+test('member profile switches regional preferences immediately and persists inheritance', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await page.locator('.app-account-menu summary').click()
+  await page.getByRole('link', { name: 'Profile', exact: true }).click()
+
+  await page.getByLabel('Language', { exact: true }).selectOption('pt-AO')
+  await page.getByLabel('Inherit workspace/browser timezone').uncheck()
+  await page.getByLabel('Timezone', { exact: true }).fill('Africa/Luanda')
+  await page.getByRole('button', { name: 'Save profile' }).click()
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'pt-AO')
+  await expect(page).toHaveTitle('Perfil - Fidibeki')
+  await expect(page.getByRole('status')).toHaveText('Perfil guardado.')
+  await expect(page.getByRole('heading', { name: 'Perfil', exact: true })).toBeVisible()
+  expect(state.member).toMatchObject({
+    locale: 'pt-AO',
+    timezone: 'Africa/Luanda',
+  })
+
+  if (testInfo.project.name === 'mobile') {
+    await page.getByTitle('Abrir navegação').click()
+  }
+  const portugueseNavigation = page.getByRole('navigation', { name: 'Navegação principal' })
+  await expect(portugueseNavigation.getByRole('link', { name: 'Projetos', exact: true })).toBeVisible()
+  if (testInfo.project.name === 'mobile') {
+    await page.getByTitle('Fechar navegação').click()
+  }
+  await capture(page, testInfo, `regional-profile-${testInfo.project.name}`)
+
+  await page.getByLabel('Idioma', { exact: true }).selectOption('')
+  await page.getByLabel('Herdar o fuso do workspace/browser').check()
+  await page.getByRole('button', { name: 'Guardar perfil' }).click()
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(page).toHaveTitle('Profile - Fidibeki')
+  await expect(page.getByRole('status')).toHaveText('Profile saved.')
+  expect(state.member).toMatchObject({ locale: null, timezone: null })
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=fresh-session-token`)
+  await expect(page.getByRole('heading', { name: /Good afternoon/ })).toBeVisible()
+  await page.locator('.app-account-menu summary').click()
+  await page.getByRole('link', { name: 'Profile', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible()
+  await expect(page.getByLabel('Language', { exact: true })).toHaveValue('')
+  await expect(page.getByLabel('Inherit workspace/browser timezone')).toBeChecked()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 })
 
 test('widget appearance controls fit the mobile editor', async ({ page }, testInfo) => {

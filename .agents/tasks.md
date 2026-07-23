@@ -379,13 +379,23 @@ typecheck, production build, and four responsive regional-runtime browser tests 
 ## Task 23: Profile And Shared Navigation Localization
 
 **Depends on:** Tasks 20, 21, and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Members switch preferences without logout and shared shell/account surfaces update
 immediately.
 
 **Acceptance:** Responsive browser tests prove switching, inheritance, accessible copy, and
 identity regression safety.
+
+**Completion:** English and Portuguese `common`, `navigation`, and `profile` catalogs now drive
+the shared shell, queue rail, account menu, trial/deletion states, profile title, labels, controls,
+notices, tooltips, and accessible names. Members can save a personal language and IANA timezone or
+explicitly inherit workspace/browser values; the returned session member is applied immediately
+without logout, and profile errors use the safe localized mapper. Desktop/mobile browser coverage
+proves immediate `pt-AO`/Luanda switching, localized navigation and title, clear-to-inherit behavior
+through a fresh session, and unchanged display-name/avatar workflows. Visual checks show no
+overflow or overlap. The 93-test unit suite, typecheck, production build, and full 141-pass browser
+suite succeed.
 
 **Autonomy:** AFK
 
