@@ -46,7 +46,7 @@ func (Store) CreateWorkspaceExport(
 			id, tenant_id, kind, status, actor_member_id, created_at, updated_at
 		) VALUES ($1, $2, 'workspace_export', 'pending', $3, $4, $4)
 		ON CONFLICT DO NOTHING
-		RETURNING id, tenant_id, kind, status, actor_member_id, generation, attempts,
+		RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
 		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
 		          object_key, object_size_bytes, error_message, created_at, updated_at
 	`, jobID, tenantID, actorMemberID, now.UTC()))
@@ -80,7 +80,7 @@ func (Store) ListJobs(
 		limit = 50
 	}
 	rows, err := query.Query(ctx, jobSelect+`
-		WHERE job.tenant_id = $1
+		WHERE job.tenant_id = $1 AND job.kind = 'workspace_export'
 		ORDER BY job.created_at DESC, job.id DESC
 		LIMIT $2
 	`, tenantID, limit)
@@ -125,19 +125,41 @@ func (Store) RetryJob(
 		return Job{}, err
 	}
 	job, err := scanJob(query.QueryRow(ctx, `
-		UPDATE privacy_jobs
-		SET status = 'pending', generation = generation + 1, attempts = 0,
-		    enqueued_at = NULL, started_at = NULL, heartbeat_at = NULL,
-		    error_message = NULL, updated_at = $3
-		WHERE tenant_id = $1 AND id = $2 AND status = 'failed'
-		  AND NOT EXISTS (
-		      SELECT 1 FROM privacy_jobs AS active
-		      WHERE active.tenant_id = $1 AND active.kind = 'workspace_export'
-		        AND active.status IN ('pending', 'processing')
-		  )
-		RETURNING id, tenant_id, kind, status, actor_member_id, generation, attempts,
+		WITH target AS (
+			SELECT id, tenant_id, kind, reporter_request_id
+			FROM privacy_jobs
+			WHERE tenant_id = $1 AND id = $2 AND status = 'failed'
+			FOR UPDATE
+		), updated_job AS (
+			UPDATE privacy_jobs AS job
+			SET status = 'pending', generation = job.generation + 1, attempts = 0,
+			    enqueued_at = NULL, started_at = NULL, heartbeat_at = NULL,
+			    error_message = NULL, updated_at = $3
+			FROM target
+			WHERE job.id = target.id AND NOT EXISTS (
+				SELECT 1 FROM privacy_jobs AS active
+				WHERE active.tenant_id = target.tenant_id
+				  AND active.id <> target.id
+				  AND active.status IN ('pending', 'processing')
+				  AND (
+					(target.kind = 'workspace_export' AND active.kind = 'workspace_export')
+					OR (target.reporter_request_id IS NOT NULL
+					    AND active.reporter_request_id = target.reporter_request_id)
+				  )
+			)
+			RETURNING job.*
+		), updated_request AS (
+			UPDATE reporter_privacy_requests AS request
+			SET status = 'processing', error_message = NULL
+			FROM updated_job
+			WHERE request.tenant_id = updated_job.tenant_id
+			  AND request.id = updated_job.reporter_request_id
+			  AND request.status = 'failed'
+		)
+		SELECT id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
 		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
 		          object_key, object_size_bytes, error_message, created_at, updated_at
+		FROM updated_job
 	`, tenantID, jobID, now.UTC()))
 	if errors.Is(err, ErrNotFound) {
 		return Job{}, ErrJobUnavailable
@@ -145,7 +167,14 @@ func (Store) RetryJob(
 	if err != nil {
 		return Job{}, fmt.Errorf("retry privacy job: %w", err)
 	}
-	if err := recordPrivacyAudit(ctx, query, tenantID, "privacy.export_retried", actorMemberID, job.ID, map[string]any{
+	if job.ReporterRequestID != nil {
+		if err := recordPrivacyRequestAudit(
+			ctx, query, tenantID, "privacy.reporter_request_retried", actorMemberID,
+			*job.ReporterRequestID, map[string]any{"kind": job.Kind, "privacy_job_id": job.ID},
+		); err != nil {
+			return Job{}, err
+		}
+	} else if err := recordPrivacyAudit(ctx, query, tenantID, "privacy.export_retried", actorMemberID, job.ID, map[string]any{
 		"kind": job.Kind,
 	}); err != nil {
 		return Job{}, err
@@ -229,7 +258,7 @@ func (s Store) ClaimJob(
 		WHERE id = $1 AND tenant_id = $2 AND generation = $3
 		  AND (status = 'pending' OR status = 'processing')
 		  AND attempts < $5
-		RETURNING id, tenant_id, kind, status, actor_member_id, generation, attempts,
+		RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
 		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
 		          object_key, object_size_bytes, error_message, created_at, updated_at
 	`, jobID, tenantID, generation, now.UTC(), maximumJobAttempts))
@@ -247,11 +276,32 @@ func (s Store) MarkJobFailed(ctx context.Context, job Job, message string, now t
 		message = message[:2000]
 	}
 	if _, err := s.Database.Exec(ctx, `
-		UPDATE privacy_jobs
-		SET status = CASE WHEN attempts >= $5 THEN 'failed'::privacy_job_status ELSE 'pending'::privacy_job_status END,
-		    generation = generation + 1, enqueued_at = NULL,
-		    started_at = NULL, heartbeat_at = NULL, error_message = $4
-		WHERE id = $1 AND tenant_id = $2 AND generation = $3 AND status = 'processing'
+		WITH updated_job AS (
+			UPDATE privacy_jobs
+			SET status = CASE WHEN attempts >= $5 THEN 'failed'::privacy_job_status ELSE 'pending'::privacy_job_status END,
+			    generation = generation + 1, enqueued_at = NULL,
+			    started_at = NULL, heartbeat_at = NULL, error_message = $4
+			WHERE id = $1 AND tenant_id = $2 AND generation = $3 AND status = 'processing'
+			RETURNING id, status, reporter_request_id
+		), failed_request AS (
+			UPDATE reporter_privacy_requests AS request
+			SET status = 'failed', error_message = $4
+			FROM updated_job
+			WHERE updated_job.status = 'failed'
+			  AND request.tenant_id = $2 AND request.id = updated_job.reporter_request_id
+			  AND request.status = 'processing'
+			RETURNING request.id
+		)
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, subject_member_id, data
+		)
+		SELECT $2, 'privacy.reporter_request_failed', NULL, NULL,
+		       jsonb_build_object(
+			       'privacy_job_id', updated_job.id::text,
+			       'reporter_request_id', failed_request.id::text,
+			       'error', $4::text
+		       )
+		FROM updated_job CROSS JOIN failed_request
 	`, job.ID, job.TenantID, job.Generation, message, maximumJobAttempts); err != nil {
 		return fmt.Errorf("mark privacy job failed: %w", err)
 	}
@@ -367,7 +417,7 @@ func recordPrivacyAudit(
 }
 
 const jobSelect = `
-	SELECT job.id, job.tenant_id, job.kind, job.status, job.actor_member_id,
+	SELECT job.id, job.tenant_id, job.kind, job.status, job.actor_member_id, job.reporter_request_id,
 	       job.generation, job.attempts, job.enqueued_at, job.started_at,
 	       job.heartbeat_at, job.completed_at, job.expires_at, job.object_key,
 	       job.object_size_bytes, job.error_message, job.created_at, job.updated_at
@@ -381,7 +431,7 @@ type rowScanner interface {
 func scanJob(row rowScanner) (Job, error) {
 	var job Job
 	err := row.Scan(
-		&job.ID, &job.TenantID, &job.Kind, &job.Status, &job.ActorMemberID,
+		&job.ID, &job.TenantID, &job.Kind, &job.Status, &job.ActorMemberID, &job.ReporterRequestID,
 		&job.Generation, &job.Attempts, &job.EnqueuedAt, &job.StartedAt,
 		&job.HeartbeatAt, &job.CompletedAt, &job.ExpiresAt, &job.ObjectKey,
 		&job.ObjectSizeBytes, &job.ErrorMessage, &job.CreatedAt, &job.UpdatedAt,

@@ -33,26 +33,28 @@ func (s Status) Valid() bool {
 }
 
 type Issue struct {
-	ID                      string           `json:"id"`
-	TenantID                string           `json:"tenant_id"`
-	ProjectID               string           `json:"project_id"`
-	PublicID                string           `json:"public_id"`
-	Title                   string           `json:"title"`
-	Description             string           `json:"description"`
-	Status                  Status           `json:"status"`
-	Priority                *triage.Priority `json:"priority"`
-	Assignee                *triage.Assignee `json:"assignee"`
-	Tags                    []triage.Tag     `json:"tags"`
-	MergedIntoID            *string          `json:"merged_into_id,omitempty"`
-	MergedAt                *time.Time       `json:"merged_at,omitempty"`
-	ReporterEmail           *string          `json:"reporter_email,omitempty"`
-	NotifyReporter          bool             `json:"notify_reporter"`
-	ResolvedAt              *time.Time       `json:"resolved_at,omitempty"`
-	ReporterAccessRevokedAt *time.Time       `json:"reporter_access_revoked_at,omitempty"`
-	FeedbackCount           int              `json:"feedback_count"`
-	ContentModerated        bool             `json:"-"`
-	CreatedAt               time.Time        `json:"created_at"`
-	UpdatedAt               time.Time        `json:"updated_at"`
+	ID                         string           `json:"id"`
+	TenantID                   string           `json:"tenant_id"`
+	ProjectID                  string           `json:"project_id"`
+	PublicID                   string           `json:"public_id"`
+	Title                      string           `json:"title"`
+	Description                string           `json:"description"`
+	Status                     Status           `json:"status"`
+	Priority                   *triage.Priority `json:"priority"`
+	Assignee                   *triage.Assignee `json:"assignee"`
+	Tags                       []triage.Tag     `json:"tags"`
+	MergedIntoID               *string          `json:"merged_into_id,omitempty"`
+	MergedAt                   *time.Time       `json:"merged_at,omitempty"`
+	ReporterEmail              *string          `json:"reporter_email,omitempty"`
+	NotifyReporter             bool             `json:"notify_reporter"`
+	ReporterConsentGrantedAt   *time.Time       `json:"reporter_consent_granted_at,omitempty"`
+	ReporterConsentWithdrawnAt *time.Time       `json:"reporter_consent_withdrawn_at,omitempty"`
+	ResolvedAt                 *time.Time       `json:"resolved_at,omitempty"`
+	ReporterAccessRevokedAt    *time.Time       `json:"reporter_access_revoked_at,omitempty"`
+	FeedbackCount              int              `json:"feedback_count"`
+	ContentModerated           bool             `json:"-"`
+	CreatedAt                  time.Time        `json:"created_at"`
+	UpdatedAt                  time.Time        `json:"updated_at"`
 }
 
 type CreateFromFeedbackInput struct {

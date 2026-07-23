@@ -302,6 +302,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
+	privacy.RegisterPublicRoutes(platformRoutes, privacy.PublicHTTPOptions{
+		Store: privacy.Store{Database: pools.Admin}, Begin: db.BeginFromPool(pools.Admin),
+		Storage: objectStorage, Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+	})
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,
@@ -318,7 +323,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
 	privacy.RegisterRoutes(tenantRoutes, privacy.HTTPOptions{
-		Store: privacy.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
+		Store: privacy.Store{}, JWT: jwtManager, Storage: objectStorage, Email: emailQueue,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		From: settings.ResendAuthFrom, Logger: logger,
 	})
 	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: project.Store{}, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})

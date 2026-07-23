@@ -20,6 +20,7 @@ import (
 
 type ExportStorage interface {
 	PutObject(context.Context, string, io.Reader, int64, string) error
+	RemoveObject(context.Context, string) error
 }
 
 type Exporter struct {
@@ -43,7 +44,7 @@ type manifestFile struct {
 type archiveManifest struct {
 	SchemaVersion      string         `json:"schema_version"`
 	Scope              string         `json:"scope"`
-	WorkspaceID        string         `json:"workspace_id"`
+	WorkspaceID        string         `json:"workspace_id,omitempty"`
 	GeneratedAt        time.Time      `json:"generated_at"`
 	Files              []manifestFile `json:"files"`
 	BinaryDataPolicy   string         `json:"binary_data_policy"`
@@ -121,6 +122,8 @@ var workspaceExportFiles = []exportFile{
 			'priority', feedback.priority, 'assignee_id', feedback.assignee_id,
 			'reporter_email', feedback.reporter_email,
 			'notify_reporter', feedback.notify_reporter,
+			'reporter_consent_granted_at', feedback.reporter_consent_granted_at,
+			'reporter_consent_withdrawn_at', feedback.reporter_consent_withdrawn_at,
 			'page_url', feedback.page_url, 'referrer', feedback.referrer,
 			'user_agent', feedback.user_agent, 'os', feedback.os,
 			'browser', feedback.browser, 'device', feedback.device,
@@ -157,6 +160,8 @@ var workspaceExportFiles = []exportFile{
 			'priority', issue.priority, 'assignee_id', issue.assignee_id,
 			'merged_into_id', issue.merged_into_id, 'merged_at', issue.merged_at,
 			'reporter_email', issue.reporter_email, 'notify_reporter', issue.notify_reporter,
+			'reporter_consent_granted_at', issue.reporter_consent_granted_at,
+			'reporter_consent_withdrawn_at', issue.reporter_consent_withdrawn_at,
 			'reporter_access_revoked_at', issue.reporter_access_revoked_at,
 			'resolved_at', issue.resolved_at, 'created_at', issue.created_at,
 			'updated_at', issue.updated_at
@@ -297,13 +302,16 @@ func (exporter Exporter) Handler() asynq.HandlerFunc {
 		if !claimed {
 			return nil
 		}
-		if job.Kind != JobWorkspaceExport {
-			return exporter.fail(ctx, job, fmt.Errorf("unsupported privacy job kind %q", job.Kind))
-		}
 		if exporter.Storage == nil {
 			return exporter.fail(ctx, job, errors.New("privacy export storage is unavailable"))
 		}
-		path, size, err := exporter.buildWorkspaceArchive(ctx, job)
+		if job.Kind == JobReporterAnonymize {
+			return exporter.anonymizeReporter(ctx, job)
+		}
+		if job.Kind != JobWorkspaceExport && job.Kind != JobReporterExport {
+			return exporter.fail(ctx, job, fmt.Errorf("unsupported privacy job kind %q", job.Kind))
+		}
+		path, size, recordCount, manualReviewCount, err := exporter.buildArchive(ctx, job)
 		if err != nil {
 			return exporter.fail(ctx, job, err)
 		}
@@ -322,11 +330,29 @@ func (exporter Exporter) Handler() asynq.HandlerFunc {
 		if uploadErr != nil || closeErr != nil {
 			return exporter.fail(ctx, job, errors.Join(uploadErr, closeErr))
 		}
-		if err := exporter.Store.CompleteJob(ctx, job, objectKey, size, exporter.now()); err != nil {
+		if job.Kind == JobReporterExport {
+			err = exporter.Store.CompleteReporterExportJob(
+				ctx, job, objectKey, size, recordCount, manualReviewCount, exporter.now(),
+			)
+		} else {
+			err = exporter.Store.CompleteJob(ctx, job, objectKey, size, exporter.now())
+		}
+		if err != nil {
 			return fmt.Errorf("persist privacy export completion: %w", err)
 		}
 		return nil
 	}
+}
+
+func (exporter Exporter) buildArchive(
+	ctx context.Context,
+	job Job,
+) (string, int64, int, int, error) {
+	if job.Kind == JobReporterExport {
+		return exporter.buildReporterArchive(ctx, job)
+	}
+	path, size, err := exporter.buildWorkspaceArchive(ctx, job)
+	return path, size, 0, 0, err
 }
 
 func (exporter Exporter) buildWorkspaceArchive(ctx context.Context, job Job) (string, int64, error) {
@@ -438,7 +464,7 @@ func writeJSONL(
 	tx pgx.Tx,
 	archive *zip.Writer,
 	definition exportFile,
-	tenantID string,
+	arguments ...any,
 ) (int, error) {
 	entry, err := archive.CreateHeader(&zip.FileHeader{
 		Name: definition.Name, Method: zip.Deflate,
@@ -446,7 +472,7 @@ func writeJSONL(
 	if err != nil {
 		return 0, fmt.Errorf("create privacy export file %s: %w", definition.Name, err)
 	}
-	rows, err := tx.Query(ctx, definition.Query, tenantID)
+	rows, err := tx.Query(ctx, definition.Query, arguments...)
 	if err != nil {
 		return 0, fmt.Errorf("query privacy export file %s: %w", definition.Name, err)
 	}

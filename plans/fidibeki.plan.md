@@ -294,8 +294,14 @@ was removed from the staging test tenant.
         PostgreSQL migration/RLS, reconciled deterministic queueing, tenant-atomic claim, consistent
         archive snapshot, failure recovery, HTTP authorization, signed-download audit, full backend
         tests, and `go vet` pass locally.
-      - [ ] Slice 2: verified reporter export/anonymization, independent consent history, media and
+      - [x] Slice 2: verified reporter export/anonymization, independent consent history, media and
         progress-token cleanup, public status, and exact-identifier isolation.
+        Hashed, expiring verification tokens and neutral rate-limited public endpoints now create
+        one reconciled reporter job. Reporter exports use an allowlisted point-in-time scope;
+        anonymization removes stored media before transactionally clearing contact/DOM/transcript
+        data while preserving operational history and retry safety. Consent timestamps, RLS,
+        cross-tenant isolation, audit, terminal failure/retry, migration replay, full backend tests,
+        and `go vet` pass locally.
       - [ ] Slice 3: attachment/replay manifest-preserving retention, export/request expiry,
         bounded storage reconciliation, effective-retention API, and technical privacy inventory.
       - [ ] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile

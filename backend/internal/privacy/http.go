@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -25,6 +27,8 @@ type HTTPStore interface {
 	GetJob(context.Context, db.Querier, string, string) (Job, error)
 	RetryJob(context.Context, db.Querier, string, string, string, time.Time) (Job, error)
 	RecordDownload(context.Context, db.Querier, string, string, string, time.Time) error
+	CreateReporterRequest(context.Context, db.Querier, string, string, string, ReporterAction, time.Time) (ReporterRequest, string, bool, error)
+	ListReporterRequests(context.Context, db.Querier, string, int) ([]ReporterRequest, error)
 }
 
 type DownloadStorage interface {
@@ -32,11 +36,15 @@ type DownloadStorage interface {
 }
 
 type HTTPOptions struct {
-	Store   HTTPStore
-	JWT     *auth.JWTManager
-	Storage DownloadStorage
-	Logger  *slog.Logger
-	Now     func() time.Time
+	Store         HTTPStore
+	JWT           *auth.JWTManager
+	Storage       DownloadStorage
+	Email         email.Enqueuer
+	PublicBaseURL string
+	BaseDomain    string
+	From          string
+	Logger        *slog.Logger
+	Now           func() time.Time
 }
 
 type HTTPHandler struct {
@@ -62,6 +70,9 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/exports/{jobID}/retry", handler.retryExport)
 	router.With(read...).Post("/v1/privacy/exports/{jobID}/download", handler.downloadExport)
+	router.With(read...).Get("/v1/privacy/requests", handler.listReporterRequests)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/requests", handler.createReporterRequest)
 }
 
 func (handler *HTTPHandler) requireHuman(next http.Handler) http.Handler {
@@ -108,6 +119,71 @@ func (handler *HTTPHandler) listExports(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"exports": jobs})
+}
+
+func (handler *HTTPHandler) createReporterRequest(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var input struct {
+		Email  string `json:"email"`
+		Action string `json:"action"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "request body is invalid", nil)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "request body must contain one JSON value", nil)
+		return
+	}
+	action, err := ParseReporterAction(input.Action)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	request, token, shouldEmail, err := handler.options.Store.CreateReporterRequest(
+		r.Context(), query, resolved.ID, claims.Subject, input.Email, action, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	if shouldEmail {
+		message, err := reporterVerificationMessage(
+			request, resolved.Name, resolved.Slug, token, handler.options,
+		)
+		if err != nil || handler.options.Email == nil ||
+			!appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
+				return handler.options.Email.Enqueue(ctx, message)
+			}) {
+			if err == nil {
+				err = errors.New("privacy verification email is unavailable")
+			}
+			handler.writeError(w, r, err)
+			return
+		}
+	}
+	api.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"request": request, "verification_email_queued": shouldEmail,
+	})
+}
+
+func (handler *HTTPHandler) listReporterRequests(w http.ResponseWriter, r *http.Request) {
+	resolved, query, _, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	requests, err := handler.options.Store.ListReporterRequests(r.Context(), query, resolved.ID, 50)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"requests": requests})
 }
 
 func (handler *HTTPHandler) retryExport(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +253,7 @@ func (handler *HTTPHandler) downloadExport(w http.ResponseWriter, r *http.Reques
 func privacyRequestState(
 	w http.ResponseWriter,
 	r *http.Request,
-) (resolvedTenant struct{ ID, Slug string }, query db.Querier, claims auth.Claims, ok bool) {
+) (resolvedTenant struct{ ID, Slug, Name string }, query db.Querier, claims auth.Claims, ok bool) {
 	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
 	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
 	claims, claimsOK := appmiddleware.TenantClaimsFromContext(r.Context())
@@ -187,6 +263,7 @@ func privacyRequestState(
 	}
 	resolvedTenant.ID = resolved.ID
 	resolvedTenant.Slug = resolved.Slug
+	resolvedTenant.Name = resolved.Name
 	return resolvedTenant, query, claims, true
 }
 
@@ -207,6 +284,8 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy export is unavailable", nil)
 	case errors.Is(err, ErrHumanRequired):
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active human member required", nil)
+	case errors.Is(err, ErrInvalidRequest):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "request validation failed", nil)
 	default:
 		handler.logger.ErrorContext(r.Context(), "privacy request failed", "error", err)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)

@@ -62,6 +62,7 @@ const tenantFeedbackColumns = `
 		  AND feedback_tag.feedback_id = feedback.id
 	), '[]'::jsonb),
 	feedback.reporter_email, feedback.notify_reporter,
+	feedback.reporter_consent_granted_at, feedback.reporter_consent_withdrawn_at,
 	feedback.page_url, feedback.referrer, feedback.user_agent, feedback.os,
 	feedback.browser, feedback.device, feedback.viewport_width,
 	feedback.viewport_height, feedback.language, feedback.status::text,
@@ -702,7 +703,9 @@ func tenantFeedbackScanTargets(
 		&item.Text, &item.TextCleaned, &item.AISuggestedTitle,
 		&item.AIActionability, &item.AICategory, &item.AIPriority,
 		&item.Priority, assigneeID, assigneeName, assigneeEmail, tagPayload,
-		&item.ReporterEmail, &item.NotifyReporter, &item.PageURL, &item.Referrer,
+		&item.ReporterEmail, &item.NotifyReporter,
+		&item.ReporterConsentGrantedAt, &item.ReporterConsentWithdrawnAt,
+		&item.PageURL, &item.Referrer,
 		&item.UserAgent, &item.OS, &item.Browser, &item.Device, &item.ViewportWidth,
 		&item.ViewportHeight, &item.Language, &item.Status, &item.AIStatus,
 		&item.SentimentScore, &item.TextModerationFlags, &item.ModerationFlags, attachmentKinds,

@@ -26,6 +26,7 @@ type feedbackIssueState struct {
 	IssueID          *string
 	ReporterEmail    *string
 	NotifyReporter   bool
+	ConsentGrantedAt *time.Time
 	Priority         *triage.Priority
 	AIPriority       *triage.Priority
 	AssigneeID       *string
@@ -343,6 +344,7 @@ func (store Store) CreateFromFeedback(
 ) (Issue, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, project_id, issue_id, reporter_email, notify_reporter,
+		       reporter_consent_granted_at,
 		       priority, ai_priority, assignee_id, description, text, text_cleaned,
 		       ai_suggested_title,
 		       status = 'spam' OR cardinality(text_moderation_flags) > 0 OR text_process_status = 'failed'
@@ -359,7 +361,8 @@ func (store Store) CreateFromFeedback(
 		var state feedbackIssueState
 		if err := rows.Scan(
 			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
-			&state.NotifyReporter, &state.Priority, &state.AIPriority, &state.AssigneeID,
+			&state.NotifyReporter, &state.ConsentGrantedAt,
+			&state.Priority, &state.AIPriority, &state.AssigneeID,
 			&state.Description, &state.Text, &state.TextCleaned, &state.AISuggestedTitle,
 			&state.Moderated,
 		); err != nil {
@@ -425,7 +428,7 @@ func (store Store) CreateFromFeedback(
 			return Issue{}, ErrNotFound
 		}
 	}
-	reporterEmail, notifyReporter := consensusFeedbackReporter(states)
+	reporterEmail, notifyReporter, consentGrantedAt := consensusFeedbackReporter(states)
 	sequence, err := allocateIssueSequence(ctx, query, tenantID, now.Year())
 	if err != nil {
 		return Issue{}, err
@@ -435,10 +438,11 @@ func (store Store) CreateFromFeedback(
 	if _, err := query.Exec(ctx, `
 		INSERT INTO issues (
 			id, tenant_id, project_id, public_id, title, description,
-			priority, assignee_id, reporter_email, notify_reporter
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			priority, assignee_id, reporter_email, notify_reporter,
+			reporter_consent_granted_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, createdID, tenantID, projectID, publicID, input.Title, input.Description,
-		priority, assigneeID, reporterEmail, notifyReporter); err != nil {
+		priority, assigneeID, reporterEmail, notifyReporter, consentGrantedAt); err != nil {
 		return Issue{}, fmt.Errorf("create issue from feedback: %w", err)
 	}
 	if len(tagIDs) > 0 {
@@ -568,18 +572,22 @@ func consensusFeedbackAssignee(states []feedbackIssueState) *string {
 	return &candidate
 }
 
-func consensusFeedbackReporter(states []feedbackIssueState) (*string, bool) {
+func consensusFeedbackReporter(states []feedbackIssueState) (*string, bool, *time.Time) {
 	if len(states) == 0 || !states[0].NotifyReporter || states[0].ReporterEmail == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	candidate := *states[0].ReporterEmail
+	grantedAt := states[0].ConsentGrantedAt
 	for _, state := range states[1:] {
 		if !state.NotifyReporter || state.ReporterEmail == nil ||
 			!strings.EqualFold(*state.ReporterEmail, candidate) {
-			return nil, false
+			return nil, false, nil
+		}
+		if state.ConsentGrantedAt != nil && (grantedAt == nil || state.ConsentGrantedAt.Before(*grantedAt)) {
+			grantedAt = state.ConsentGrantedAt
 		}
 	}
-	return &candidate, true
+	return &candidate, true, grantedAt
 }
 
 func feedbackTagUnion(
@@ -1050,7 +1058,9 @@ const issueSelect = `
 	           WHERE issue_tag.tenant_id = issue.tenant_id AND issue_tag.issue_id = issue.id
 	       ), '[]'::jsonb),
 	       issue.merged_into_id, issue.merged_at, issue.reporter_email,
-	       issue.notify_reporter, issue.resolved_at, issue.reporter_access_revoked_at,
+	       issue.notify_reporter, issue.reporter_consent_granted_at,
+	       issue.reporter_consent_withdrawn_at,
+	       issue.resolved_at, issue.reporter_access_revoked_at,
 	       (SELECT count(*) FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id),
 	       COALESCE(content_moderation.title_moderated, false)
 	           OR COALESCE(content_moderation.description_moderated, false),
@@ -1097,7 +1107,8 @@ func scanIssue(row rowScanner) (Issue, error) {
 		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title, &found.Description,
 		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
 		&found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
-		&found.NotifyReporter, &found.ResolvedAt, &found.ReporterAccessRevokedAt, &found.FeedbackCount,
+		&found.NotifyReporter, &found.ReporterConsentGrantedAt, &found.ReporterConsentWithdrawnAt,
+		&found.ResolvedAt, &found.ReporterAccessRevokedAt, &found.FeedbackCount,
 		&found.ContentModerated,
 		&found.CreatedAt, &found.UpdatedAt,
 	); err != nil {
