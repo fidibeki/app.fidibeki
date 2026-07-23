@@ -28,7 +28,8 @@ func isSensitiveKey(key string) bool {
 		return true
 	}
 	switch key {
-	case "text", "transcription", "dom_snapshot_html", "storage_key":
+	case "text", "transcription", "page_url", "referrer", "user_agent",
+		"element_selector", "dom_snapshot_html", "dom_snapshot_styles", "storage_key":
 		return true
 	default:
 		return false

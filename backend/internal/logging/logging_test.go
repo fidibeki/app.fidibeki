@@ -18,6 +18,11 @@ func TestLoggerRedactsPIIAndSecrets(t *testing.T) {
 		"tenant_id", "tenant-1",
 		"email", "person@example.test",
 		"text", "private feedback",
+		"page_url", "https://example.test/account/person@example.test?token=secret",
+		"referrer", "https://external.test/search?q=person@example.test",
+		"user_agent", "PrivateBrowser account-48291",
+		"element_selector", "#person-account-48291",
+		"dom_snapshot_styles", `{"background":"url(https://private.test/avatar.png)"}`,
 		"storage_key", "tenants/tenant-1/private.wav",
 		"token", "secret-token",
 	)
@@ -29,7 +34,10 @@ func TestLoggerRedactsPIIAndSecrets(t *testing.T) {
 	if entry["tenant_id"] != "tenant-1" {
 		t.Errorf("tenant_id = %v, want tenant-1", entry["tenant_id"])
 	}
-	for _, name := range []string{"email", "text", "storage_key", "token"} {
+	for _, name := range []string{
+		"email", "text", "page_url", "referrer", "user_agent", "element_selector",
+		"dom_snapshot_styles", "storage_key", "token",
+	} {
 		if entry[name] != "[REDACTED]" {
 			t.Errorf("%s = %v, want [REDACTED]", name, entry[name])
 		}

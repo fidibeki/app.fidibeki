@@ -749,8 +749,10 @@ func integrationActions(notification Notification) []integrationAction {
 			candidates = append(candidates, integrationAction{Label: "Open issue", URL: notification.IssueURL})
 		}
 	}
+	if integrationSpecificPageURL(notification.PageURL) {
+		candidates = append(candidates, integrationAction{Label: "View page", URL: notification.PageURL})
+	}
 	candidates = append(candidates,
-		integrationAction{Label: "View page", URL: notification.PageURL},
 		integrationAction{Label: "View attachments", URL: notification.AttachmentsURL},
 	)
 	actions := make([]integrationAction, 0, len(candidates))
@@ -760,6 +762,12 @@ func integrationActions(notification Notification) []integrationAction {
 		}
 	}
 	return actions
+}
+
+func integrationSpecificPageURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") &&
+		parsed.Host != "" && parsed.Path != "" && parsed.Path != "/"
 }
 
 func integrationActionURL(value string) bool {

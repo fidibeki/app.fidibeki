@@ -163,6 +163,32 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 	}
 }
 
+func TestIntegrationActionsDoNotPresentOriginOnlyContextAsAnExactPage(t *testing.T) {
+	t.Parallel()
+	actions := integrationActions(Notification{
+		ResourceType: "feedback",
+		ResourceURL:  "https://acme.fidibeki.com/feedback/feedback-id",
+		PageURL:      "https://example.test/",
+	})
+	for _, action := range actions {
+		if action.Label == "View page" {
+			t.Fatalf("origin-only context exposed as a page action: %#v", actions)
+		}
+	}
+	actions = integrationActions(Notification{
+		ResourceType: "feedback",
+		ResourceURL:  "https://acme.fidibeki.com/feedback/feedback-id",
+		PageURL:      "https://example.test/checkout",
+	})
+	found := false
+	for _, action := range actions {
+		found = found || action.Label == "View page"
+	}
+	if !found {
+		t.Fatalf("approved static page action missing: %#v", actions)
+	}
+}
+
 func TestModerateNotificationRedactsFlaggedFeedbackAcrossProviders(t *testing.T) {
 	t.Parallel()
 	notification := Notification{
