@@ -30,6 +30,37 @@ export interface TargetingTestDiagnostic {
   result: TargetingTestResult
 }
 
+const targetingErrorKeys: Record<string, string> = {
+  'Choose where this rule should appear.': 'choose',
+  'Add between 1 and 20 include conditions.': 'includeCount',
+  'Use no more than 20 exclude conditions.': 'excludeCount',
+  'All pages must be the only include condition.': 'allPagesOnly',
+  'All pages cannot be excluded.': 'allPagesExcluded',
+  'All pages cannot have a value.': 'allPagesValue',
+  'Enter a matcher value.': 'matcherValue',
+  'Use no more than 2048 characters.': 'valueLength',
+  'Enter a valid safe regular expression.': 'invalidRegex',
+  'Enter an absolute HTTP(S) URL.': 'absoluteURL',
+}
+
+/**
+ * Maps a stable validation outcome from `validateTargeting` to its catalog key.
+ * Unrecognized outcomes fall back to the generic per-condition message.
+ */
+export function targetingErrorCatalogKey(error: string): string {
+  return `onboarding.targeting.errors.${targetingErrorKeys[error] || 'condition'}`
+}
+
+export function targetingTestResultMessage(
+  translate: (key: string, parameters?: Record<string, unknown>) => string,
+  result: TargetingTestResult,
+): string {
+  return translate(
+    `onboarding.targeting.testResults.${result.status}`,
+    result.status === 'excluded' ? { index: result.conditionIndex } : {},
+  )
+}
+
 export function canonicalPage(rawURL: string): CanonicalPage | null {
   try {
     const url = new URL(rawURL)

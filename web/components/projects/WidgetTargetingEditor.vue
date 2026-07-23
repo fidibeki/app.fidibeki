@@ -2,6 +2,8 @@
 import { CircleCheck, CircleX, Globe2, Plus, Search, Trash2 } from '@lucide/vue'
 import type { MatcherType, WidgetTargetConditionInput } from '~/types/api'
 import {
+  targetingErrorCatalogKey,
+  targetingTestResultMessage,
   testTargetingURL,
   validateTargeting,
   type TargetingFormState,
@@ -22,19 +24,6 @@ const matcherOptions: Array<{ value: MatcherType; labelKey: string }> = [
   { value: 'url_prefix', labelKey: 'onboarding.targeting.urlPrefix' },
   { value: 'url_regex', labelKey: 'onboarding.targeting.regularExpression' },
 ]
-const targetingErrorKeys: Record<string, string> = {
-  'Choose where this rule should appear.': 'choose',
-  'Add between 1 and 20 include conditions.': 'includeCount',
-  'Use no more than 20 exclude conditions.': 'excludeCount',
-  'All pages must be the only include condition.': 'allPagesOnly',
-  'All pages cannot be excluded.': 'allPagesExcluded',
-  'All pages cannot have a value.': 'allPagesValue',
-  'Enter a matcher value.': 'matcherValue',
-  'Use no more than 2048 characters.': 'valueLength',
-  'Enter a valid safe regular expression.': 'invalidRegex',
-  'Enter an absolute HTTP(S) URL.': 'absoluteURL',
-}
-
 watch(state, resetTest, { deep: true })
 watch(testURL, resetTest)
 
@@ -74,14 +63,11 @@ function conditionError(collection: 'include_conditions' | 'exclude_conditions',
 }
 
 function targetingErrorMessage(error: string) {
-  return t(`onboarding.targeting.errors.${targetingErrorKeys[error] || 'condition'}`)
+  return t(targetingErrorCatalogKey(error))
 }
 
 function testResultMessage(result: TargetingTestResult) {
-  return t(
-    `onboarding.targeting.testResults.${result.status}`,
-    result.status === 'excluded' ? { index: result.conditionIndex } : {},
-  )
+  return targetingTestResultMessage(t, result)
 }
 
 function runTest() {

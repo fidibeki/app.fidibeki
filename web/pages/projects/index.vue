@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowUpRight, ChevronRight, FolderKanban, Plus, X } from '@lucide/vue'
 import type { Project, TenantConfiguration } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
 const { canWrite } = useAuth()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { date: formatDate, integer } = useRegionalFormat()
 const createOpen = ref(false)
 const name = ref('')
 const domains = ref('')
@@ -25,7 +26,10 @@ const { data, status, error, refresh } = await useAsyncData(
 
 const projectLimit = computed(() => data.value?.configuration.plan.limits.projects ?? -1)
 const projectLimitReached = computed(() => projectLimit.value >= 0 && (data.value?.projects.length || 0) >= projectLimit.value)
-const projectUsage = computed(() => `${data.value?.projects.length || 0} of ${projectLimit.value} projects used`)
+const projectUsage = computed(() => t('projects.list.usage', {
+  used: integer(data.value?.projects.length || 0),
+  limit: integer(projectLimit.value),
+}))
 
 function parsedDomains() {
   return domains.value.split(/[\n,]+/).map((domain) => domain.trim()).filter(Boolean)
@@ -45,31 +49,31 @@ async function createProject() {
     await refresh()
     await navigateTo(`/projects/${response.project.id}`)
   } catch (createError) {
-    formError.value = apiErrorMessage(createError, 'Project could not be created.')
+    formError.value = apiErrorMessage(createError, 'projects.list.errors.create')
   } finally { pending.value = false }
 }
 
-useHead({ title: 'Projects · Fidibeki' })
+useHead(() => ({ title: t('projects.list.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page projects-page">
-    <header class="app-page-head"><div><p class="app-eyebrow">Collection</p><h1>Projects</h1><span>Manage widget origins, rules, and public embed keys.</span></div><div v-if="canWrite('project:create') && data" class="project-create-action"><template v-if="projectLimitReached"><span>{{ projectUsage }}</span><NuxtLink class="app-button" to="/billing">Upgrade plan <ArrowUpRight :size="14" /></NuxtLink></template><button v-else class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></header>
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading projects</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Projects unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
-    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>No projects yet</h2><p>Create a project to receive a scoped public key and configure the feedback widget.</p><button v-if="canWrite('project:create') && !projectLimitReached" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> New project</button></div></section>
+    <header class="app-page-head"><div><p class="app-eyebrow">{{ t('projects.list.eyebrow') }}</p><h1>{{ t('projects.list.title') }}</h1><span>{{ t('projects.list.description') }}</span></div><div v-if="canWrite('project:create') && data" class="project-create-action"><template v-if="projectLimitReached"><span>{{ projectUsage }}</span><NuxtLink class="app-button" to="/billing">{{ t('projects.list.upgradePlan') }} <ArrowUpRight :size="14" /></NuxtLink></template><button v-else class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> {{ t('projects.list.newProject') }}</button></div></header>
+    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>{{ t('projects.list.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>{{ t('projects.list.unavailable') }}</h2><p role="alert">{{ apiErrorMessage(error, 'projects.list.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('projects.list.tryAgain') }}</button></div></section>
+    <section v-else-if="!data?.projects.length" class="app-surface app-state"><div><FolderKanban :size="25" /><h2>{{ t('projects.list.emptyTitle') }}</h2><p>{{ t('projects.list.emptyDescription') }}</p><button v-if="canWrite('project:create') && !projectLimitReached" class="app-button app-button--primary" @click="createOpen = true"><Plus :size="15" /> {{ t('projects.list.newProject') }}</button></div></section>
     <section v-else class="project-list app-surface">
-      <header><span>Project</span><span>Allowed origins</span><span>Public key</span><span>Updated</span><span /></header>
+      <header><span>{{ t('projects.list.columnProject') }}</span><span>{{ t('projects.list.columnOrigins') }}</span><span>{{ t('projects.list.columnPublicKey') }}</span><span>{{ t('projects.list.columnUpdated') }}</span><span /></header>
       <NuxtLink v-for="project in data.projects" :key="project.id" :to="`/projects/${project.id}`">
         <span class="project-list-name"><i>{{ project.name.slice(0, 1).toUpperCase() }}</i><b>{{ project.name }}</b></span>
-        <span>{{ project.allowed_domains.join(', ') || 'No domains' }}</span><code>{{ project.public_key }}</code><time>{{ formatDate(project.updated_at) }}</time><ChevronRight :size="16" />
+        <span>{{ project.allowed_domains.join(', ') || t('projects.list.noDomains') }}</span><code>{{ project.public_key }}</code><time>{{ formatDate(project.updated_at) }}</time><ChevronRight :size="16" />
       </NuxtLink>
     </section>
 
     <AppDialog :open="createOpen" aria-labelledby="create-project-title" @close="createOpen = false">
       <section class="app-modal">
-        <header><div><p class="app-eyebrow">Collection endpoint</p><h2 id="create-project-title">Create project</h2></div><button class="app-icon-button" title="Close" @click="createOpen = false"><X :size="18" /></button></header>
-        <form @submit.prevent="createProject"><label>Project name<input v-model.trim="name" class="app-input" required maxlength="120" placeholder="Storefront" autofocus /></label><label>Allowed domains<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><span>One exact hostname or leading wildcard per line.</span></label><p v-if="formError" class="project-form-error" role="alert">{{ formError }}</p><footer><button class="app-button" type="button" @click="createOpen = false">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !name || !parsedDomains().length">{{ pending ? 'Creating…' : 'Create project' }}</button></footer></form>
+        <header><div><p class="app-eyebrow">{{ t('projects.list.create.eyebrow') }}</p><h2 id="create-project-title">{{ t('projects.list.create.title') }}</h2></div><button class="app-icon-button" :title="t('projects.list.create.close')" @click="createOpen = false"><X :size="18" /></button></header>
+        <form @submit.prevent="createProject"><label>{{ t('projects.list.create.name') }}<input v-model.trim="name" class="app-input" required maxlength="120" :placeholder="t('projects.list.create.namePlaceholder')" autofocus /></label><label>{{ t('projects.list.create.domains') }}<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><span>{{ t('projects.list.create.domainsHint') }}</span></label><p v-if="formError" class="project-form-error" role="alert">{{ formError }}</p><footer><button class="app-button" type="button" @click="createOpen = false">{{ t('projects.list.create.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !name || !parsedDomains().length">{{ pending ? t('projects.list.create.creating') : t('projects.list.create.submit') }}</button></footer></form>
       </section>
     </AppDialog>
   </div>

@@ -5,7 +5,47 @@ import type {
   WidgetPresentation,
 } from '~/types/api'
 
-const reasonLabels: Record<string, string> = {
+export interface PolicyMessage {
+  key: string
+  params: Record<string, number>
+  count?: number
+}
+
+const reasonKeys = new Set([
+  'continuous_availability',
+  'active_5s',
+  'active_10s',
+  'active_15s',
+  'active_20s',
+  'active_30s',
+  'active_45s',
+  'active_60s',
+  'scroll_25',
+  'scroll_40',
+  'scroll_50',
+  'scroll_75',
+  'scroll_85',
+  'interaction',
+  'interactions_3',
+  'interactions_8',
+  'return_visit',
+  'document_title',
+  'canonical_metadata',
+  'description_metadata',
+  'explicit_engagement',
+  'explicit_content',
+  'explicit_friction',
+  'repeated_activity_without_progress',
+])
+
+const guardrailKeys = new Set([
+  'discreet_launcher',
+  'layout_stable_inline',
+  'engaged_reaction_threshold',
+  'strict_prompt_threshold',
+])
+
+const legacyReasonLabels: Record<string, string> = {
   continuous_availability: 'Continuous availability',
   active_5s: 'Active for 5 seconds',
   active_10s: 'Active for 10 seconds',
@@ -32,7 +72,7 @@ const reasonLabels: Record<string, string> = {
   repeated_activity_without_progress: 'Repeated activity without progress',
 }
 
-const guardrailLabels: Record<string, string> = {
+const legacyGuardrailLabels: Record<string, string> = {
   discreet_launcher: 'Launcher stays closed until opened',
   layout_stable_inline: 'Inline placement remains layout-stable',
   engaged_reaction_threshold: 'Reaction waits for meaningful engagement',
@@ -54,14 +94,63 @@ export function defaultDecisionSignals(): ObjectiveSignals {
   }
 }
 
+/** Returns the catalog key for a decision reason, or an empty string when it is unknown. */
+export function decisionReasonKey(reason: string): string {
+  return reasonKeys.has(reason) ? `projects.decision.reasons.${reason}` : ''
+}
+
+/** Returns the catalog key for a policy guardrail, or an empty string when it is unknown. */
+export function decisionGuardrailKey(guardrail: string): string {
+  return guardrailKeys.has(guardrail) ? `projects.decision.guardrails.${guardrail}` : ''
+}
+
+export function humanizePolicyToken(token: string): string {
+  return token.replaceAll('_', ' ')
+}
+
+/** @deprecated Use `decisionReasonKey` and translate the returned catalog key. */
 export function decisionReasonLabel(reason: string): string {
-  return reasonLabels[reason] || reason.replaceAll('_', ' ')
+  return legacyReasonLabels[reason] || humanizePolicyToken(reason)
 }
 
+/** @deprecated Use `decisionGuardrailKey` and translate the returned catalog key. */
 export function decisionGuardrailLabel(guardrail: string): string {
-  return guardrailLabels[guardrail] || guardrail.replaceAll('_', ' ')
+  return legacyGuardrailLabels[guardrail] || humanizePolicyToken(guardrail)
 }
 
+export function triggerSummaryMessage(
+  type: TriggerType,
+  delaySeconds: number | null,
+  scrollPercent: number | null,
+): PolicyMessage {
+  if (type === 'scroll') {
+    return { key: 'projects.decision.triggers.scroll', params: { percent: scrollPercent ?? 100 } }
+  }
+  if (type === 'exit_intent') return { key: 'projects.decision.triggers.exitIntent', params: {} }
+  const seconds = Math.max(0, delaySeconds ?? 0)
+  return seconds === 0
+    ? { key: 'projects.decision.triggers.noDelay', params: {} }
+    : { key: 'projects.decision.triggers.delay', params: {}, count: seconds }
+}
+
+export function recurrenceSummaryMessage(
+  mode: RecurrenceMode,
+  days: number | null,
+  presentation: WidgetPresentation,
+): PolicyMessage {
+  if (mode === 'never') return { key: 'projects.decision.recurrences.never', params: {} }
+  if (presentation === 'launcher' || presentation === 'inline') {
+    if (mode === 'session') return { key: 'projects.decision.recurrences.session', params: {} }
+    return { key: 'projects.decision.recurrences.cooldown', params: {}, count: days ?? 30 }
+  }
+  const minimum = presentation === 'prompt' ? 30 : 7
+  const effective = Math.max(minimum, days ?? minimum)
+  return effective === minimum
+    ? { key: 'projects.decision.recurrences.minimumCooldown', params: {}, count: minimum }
+    : { key: 'projects.decision.recurrences.cooldown', params: {}, count: effective }
+}
+
+/** @deprecated Use `triggerSummaryMessage` and translate its catalog message. */
 export function legacyTriggerLabel(
   type: TriggerType,
   delaySeconds: number | null,
@@ -73,6 +162,7 @@ export function legacyTriggerLabel(
   return seconds === 0 ? 'No additional delay' : `After ${seconds} second${seconds === 1 ? '' : 's'}`
 }
 
+/** @deprecated Use `recurrenceSummaryMessage` and translate its catalog message. */
 export function recurrenceGuardrailLabel(
   mode: RecurrenceMode,
   days: number | null,

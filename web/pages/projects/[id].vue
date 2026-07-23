@@ -26,13 +26,13 @@ import type {
   WidgetRule,
   WidgetRuleInput,
 } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 import { cleanAppearanceOverrides, resolveWidgetAppearance } from '~/utils/widget-appearance'
 import {
   buildTargetingPayload,
+  targetingErrorCatalogKey,
   targetingFromRule,
+  targetingTestResultMessage,
   validateTargeting,
   type TargetingFormState,
   type TargetingTestDiagnostic,
@@ -41,6 +41,9 @@ import {
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite, tenant, workspaceWritable } = useAuth()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime: formatDateTime, integer, plural } = useRegionalFormat()
 const config = useRuntimeConfig()
 const projectID = computed(() => String(route.params.id || ''))
 const selectedRuleID = ref('')
@@ -124,6 +127,31 @@ const effectiveAppearance = computed(() => resolveWidgetAppearance(
   projectAppearance.value,
   ruleAppearance.value,
 ))
+const positionKeys: Record<string, string> = { 'bottom-left': 'bottomLeft', 'bottom-right': 'bottomRight' }
+const previewAppearanceSummary = computed(() => t('projects.preview.appearance', {
+  theme: t(`projects.appearance.themes.${effectiveAppearance.value.theme}`),
+  position: t(`projects.appearance.positions.${positionKeys[effectiveAppearance.value.position || ''] || ''}`),
+}))
+
+function ruleStatus(rule: WidgetRule) {
+  return rule.definition_status || (rule.enabled ? 'active' : 'paused')
+}
+
+function ruleSummary(rule: WidgetRule) {
+  return t('projects.rules.summary', {
+    status: t(`projects.enums.definitionStatus.${ruleStatus(rule)}`),
+    matcher: t(`projects.enums.matcher.${rule.matcher_type}`),
+    priority: integer(rule.priority),
+  })
+}
+
+function responseBlockLabel(type: WidgetResponseBlock['type']) {
+  return t(`projects.enums.responseBlock.${type}`)
+}
+
+function testResultMessage() {
+  return targetingDiagnostic.value ? targetingTestResultMessage(t, targetingDiagnostic.value.result) : ''
+}
 
 function selectRule(rule: WidgetRule) {
   selectedRuleID.value = rule.id
@@ -132,7 +160,7 @@ function selectRule(rule: WidgetRule) {
   targetingDiagnostic.value = null
   showTargetingErrors.value = false
   const locale = data.value?.project.default_locale || 'en'
-  const localizations = structuredClone(rule.localizations || {})
+  const localizations = structuredClone(toRaw(rule.localizations || {}))
   const localized = localizations[locale] || fallbackLocalization(rule.greeting || 'How was your experience?')
   localizations[locale] = localized
   const legacyAppearance: WidgetAppearanceOverrides = {
@@ -291,7 +319,7 @@ function removeResponseOption(block: WidgetResponseBlock, index: number) {
 function addLocalization() {
   const locale = newLocale.value.trim().replaceAll('_', '-').toLowerCase()
   if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(locale)) {
-    formError.value = 'Language must use a tag such as pt or pt-ao.'
+    formError.value = t('projects.editor.content.invalidLocale')
     return
   }
   if (!ruleForm.localizations[locale]) {
@@ -338,7 +366,7 @@ async function saveRule() {
   showTargetingErrors.value = true
   const targetingErrors = validateTargeting(targetingState.value)
   if (Object.keys(targetingErrors).length > 0) {
-    formError.value = Object.values(targetingErrors)[0] || 'Targeting configuration is invalid.'
+    formError.value = t(targetingErrorCatalogKey(Object.values(targetingErrors)[0] || ''))
     return
   }
   pending.value = true
@@ -350,10 +378,10 @@ async function saveRule() {
     } else {
       await $apiFetch(`/v1/projects/${projectID.value}/widget-rules/${selectedRuleID.value}`, { method: 'PATCH', body: normalizedRule() })
     }
-    notice.value = 'Widget rule saved.'
+    notice.value = t('projects.editor.saved')
     await refresh()
   } catch (saveError) {
-    formError.value = apiErrorMessage(saveError, 'Widget rule could not be saved.')
+    formError.value = apiErrorMessage(saveError, 'projects.editor.errors.save')
   } finally {
     pending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -361,7 +389,8 @@ async function saveRule() {
 }
 
 async function deleteRule() {
-  if (!canWrite('widget_rule:delete') || !selectedRule.value || pending.value || !window.confirm(`Delete “${selectedRule.value.name}”?`)) return
+  if (!canWrite('widget_rule:delete') || !selectedRule.value || pending.value
+    || !window.confirm(t('projects.editor.confirmDelete', { name: selectedRule.value.name }))) return
   pending.value = true
   formError.value = ''
   try {
@@ -370,7 +399,7 @@ async function deleteRule() {
     editingNew.value = false
     await refresh()
   } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'Widget rule could not be deleted.')
+    formError.value = apiErrorMessage(deleteError, 'projects.editor.errors.delete')
   } finally { pending.value = false }
 }
 
@@ -390,10 +419,10 @@ async function saveProject() {
         projectAppearance.value, projectAppearance.value.logo_url === '',
       ),
     } })
-    notice.value = 'Project settings saved.'
+    notice.value = t('projects.settings.saved')
     await refresh()
   } catch (saveError) {
-    formError.value = apiErrorMessage(saveError, 'Project settings could not be saved.')
+    formError.value = apiErrorMessage(saveError, 'projects.settings.errors.save')
   } finally {
     pending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -401,13 +430,14 @@ async function saveProject() {
 }
 
 async function deleteProject() {
-  if (!canWrite('project:delete') || !data.value || pending.value || !window.confirm(`Delete ${data.value.project.name} and all of its feedback?`)) return
+  if (!canWrite('project:delete') || !data.value || pending.value
+    || !window.confirm(t('projects.settings.confirmDelete', { name: data.value.project.name }))) return
   pending.value = true
   try {
     await $apiFetch(`/v1/projects/${projectID.value}`, { method: 'DELETE' })
     await navigateTo('/projects')
   } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'Project could not be deleted.')
+    formError.value = apiErrorMessage(deleteError, 'projects.settings.errors.delete')
     pending.value = false
   }
 }
@@ -418,7 +448,7 @@ async function copyEmbed() {
     copied.value = true
     window.setTimeout(() => { copied.value = false }, 1800)
   } catch {
-    formError.value = 'The install code could not be copied. Select the code and copy it manually.'
+    formError.value = t('projects.detail.copyFailed')
   }
 }
 
@@ -435,64 +465,66 @@ async function refreshDiagnostics() {
 
 watch(() => ruleForm.presentation, () => { previewLauncherOpen.value = false })
 
-useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }))
+useHead(() => ({
+  title: t('projects.detail.pageTitle', { name: data.value?.project.name || t('projects.detail.fallbackName') }),
+}))
 </script>
 
 <template>
   <div class="project-workspace">
     <header class="project-workspace-head">
-      <NuxtLink to="/projects" class="app-button"><ArrowLeft :size="15" /> Projects</NuxtLink>
-      <div v-if="data"><span class="project-workspace-mark">{{ data.project.name.slice(0, 1).toUpperCase() }}</span><p><b>{{ data.project.name }}</b><span>{{ data.project.allowed_domains.join(', ') || 'No domains' }}</span></p></div>
+      <NuxtLink to="/projects" class="app-button"><ArrowLeft :size="15" /> {{ t('projects.detail.back') }}</NuxtLink>
+      <div v-if="data"><span class="project-workspace-mark">{{ data.project.name.slice(0, 1).toUpperCase() }}</span><p><b>{{ data.project.name }}</b><span>{{ data.project.allowed_domains.join(', ') || t('projects.detail.noDomains') }}</span></p></div>
     </header>
-    <section v-if="status === 'pending'" class="app-state"><div><span class="app-spinner" /><h2>Loading project</h2></div></section>
-    <section v-else-if="error" class="app-state"><div><AlertTriangle :size="24" /><h2>Project unavailable</h2><p>{{ apiErrorMessage(error) }}</p></div></section>
+    <section v-if="status === 'pending'" class="app-state"><div><span class="app-spinner" /><h2>{{ t('projects.detail.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-state"><div><AlertTriangle :size="24" /><h2>{{ t('projects.detail.unavailable') }}</h2><p role="alert">{{ apiErrorMessage(error, 'projects.detail.errors.load') }}</p></div></section>
     <template v-else-if="data">
       <section class="project-config-band">
-        <div><p class="app-eyebrow">Project configuration</p><h1>{{ data.project.name }}</h1><span>{{ data.rules.length }} widget rule{{ data.rules.length === 1 ? '' : 's' }}</span></div>
-        <div class="project-embed"><Code2 :size="15" /><code>{{ embedCode }}</code><button title="Copy embed code" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
+        <div><p class="app-eyebrow">{{ t('projects.detail.eyebrow') }}</p><h1>{{ data.project.name }}</h1><span>{{ plural('projects.detail.ruleCount', data.rules.length) }}</span></div>
+        <div class="project-embed"><Code2 :size="15" /><code>{{ embedCode }}</code><button :title="t('projects.detail.copyEmbed')" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
       </section>
-      <section class="project-install-diagnostics" aria-label="Installation diagnostics">
-        <header><span>Installation</span><button type="button" title="Refresh diagnostics" aria-label="Refresh diagnostics" :disabled="diagnosticsRefreshing" @click="refreshDiagnostics"><RefreshCw :size="14" :class="{ spinning: diagnosticsRefreshing }" /></button></header>
+      <section class="project-install-diagnostics" :aria-label="t('projects.diagnostics.label')">
+        <header><span>{{ t('projects.diagnostics.title') }}</span><button type="button" :title="t('projects.diagnostics.refresh')" :aria-label="t('projects.diagnostics.refresh')" :disabled="diagnosticsRefreshing" @click="refreshDiagnostics"><RefreshCw :size="14" :class="{ spinning: diagnosticsRefreshing }" /></button></header>
         <dl>
-          <div :data-status="connectedAt ? 'ready' : 'attention'"><dt><Radio :size="13" /> Loader</dt><dd>{{ connectedAt ? `Observed ${formatDateTime(connectedAt)}` : 'Not detected' }}</dd></div>
-          <div :data-status="data.project.allowed_domains.length ? 'ready' : 'attention'"><dt><Globe2 :size="13" /> Domains</dt><dd>{{ data.project.allowed_domains.length ? `${data.project.allowed_domains.length} configured` : 'None configured' }}</dd></div>
-          <div :data-status="activeDefinitionCount ? 'ready' : 'attention'"><dt><CircleCheck :size="13" /> Definitions</dt><dd>{{ activeDefinitionCount }} active</dd></div>
-          <div :data-status="targetingDiagnostic?.result.status === 'eligible' ? 'ready' : targetingDiagnostic ? 'blocked' : 'attention'"><dt><CircleCheck v-if="targetingDiagnostic?.result.status === 'eligible'" :size="13" /><CircleX v-else :size="13" /> URL test</dt><dd>{{ targetingDiagnostic?.result.message || 'Not tested' }}</dd></div>
+          <div :data-status="connectedAt ? 'ready' : 'attention'"><dt><Radio :size="13" /> {{ t('projects.diagnostics.loader') }}</dt><dd>{{ connectedAt ? t('projects.diagnostics.observed', { date: formatDateTime(connectedAt) }) : t('projects.diagnostics.notDetected') }}</dd></div>
+          <div :data-status="data.project.allowed_domains.length ? 'ready' : 'attention'"><dt><Globe2 :size="13" /> {{ t('projects.diagnostics.domains') }}</dt><dd>{{ data.project.allowed_domains.length ? t('projects.diagnostics.domainsConfigured', { count: integer(data.project.allowed_domains.length) }) : t('projects.diagnostics.noDomainsConfigured') }}</dd></div>
+          <div :data-status="activeDefinitionCount ? 'ready' : 'attention'"><dt><CircleCheck :size="13" /> {{ t('projects.diagnostics.definitions') }}</dt><dd>{{ t('projects.diagnostics.definitionsActive', { count: integer(activeDefinitionCount) }) }}</dd></div>
+          <div :data-status="targetingDiagnostic?.result.status === 'eligible' ? 'ready' : targetingDiagnostic ? 'blocked' : 'attention'"><dt><CircleCheck v-if="targetingDiagnostic?.result.status === 'eligible'" :size="13" /><CircleX v-else :size="13" /> {{ t('projects.diagnostics.urlTest') }}</dt><dd>{{ targetingDiagnostic ? testResultMessage() : t('projects.diagnostics.notTested') }}</dd></div>
         </dl>
       </section>
       <p v-if="formError" class="project-config-error" role="alert"><AlertTriangle :size="15" /> {{ formError }}</p>
       <div class="project-config-grid">
         <aside class="project-rule-list">
-          <header><span>Widget rules</span><div><button v-if="data.rules.some(rule => rule.definition_status === 'archived')" :title="showArchivedRules ? 'Hide archived rules' : 'Show archived rules'" :aria-pressed="showArchivedRules" @click="showArchivedRules = !showArchivedRules"><Archive :size="15" /></button><button v-if="canWrite('widget_rule:create')" title="New widget rule" @click="startNewRule"><Plus :size="16" /></button></div></header>
-          <button v-for="rule in visibleRules" :key="rule.id" :data-active="rule.id === selectedRuleID" @click="selectRule(rule)"><span :data-status="rule.definition_status || (rule.enabled ? 'active' : 'paused')" /><p><b>{{ rule.name }}</b><small>{{ rule.definition_status || (rule.enabled ? 'active' : 'paused') }} · {{ rule.matcher_type.replaceAll('_', ' ') }} · priority {{ rule.priority }}</small></p></button>
-          <p v-if="!visibleRules.length" class="project-rule-empty">No rules configured.</p>
-          <nav><a href="#project-settings"><Settings2 :size="14" /> Project settings</a></nav>
+          <header><span>{{ t('projects.rules.title') }}</span><div><button v-if="data.rules.some(rule => rule.definition_status === 'archived')" :title="showArchivedRules ? t('projects.rules.hideArchived') : t('projects.rules.showArchived')" :aria-pressed="showArchivedRules" @click="showArchivedRules = !showArchivedRules"><Archive :size="15" /></button><button v-if="canWrite('widget_rule:create')" :title="t('projects.rules.new')" @click="startNewRule"><Plus :size="16" /></button></div></header>
+          <button v-for="rule in visibleRules" :key="rule.id" :data-active="rule.id === selectedRuleID" @click="selectRule(rule)"><span :data-status="ruleStatus(rule)" /><p><b>{{ rule.name }}</b><small>{{ ruleSummary(rule) }}</small></p></button>
+          <p v-if="!visibleRules.length" class="project-rule-empty">{{ t('projects.rules.empty') }}</p>
+          <nav><a href="#project-settings"><Settings2 :size="14" /> {{ t('projects.rules.settingsLink') }}</a></nav>
         </aside>
 
         <main class="project-rule-editor">
-          <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
+          <header><div><p class="app-eyebrow">{{ editingNew ? t('projects.editor.newRule') : t('projects.editor.editingRule') }}</p><h2>{{ ruleForm.name || t('projects.editor.untitled') }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" :title="t('projects.editor.delete')" :aria-label="t('projects.editor.delete')" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? t('projects.editor.saving') : t('projects.editor.save') }}</button></div></header>
           <form id="widget-rule-form" @submit.prevent="saveRule">
             <fieldset :disabled="!workspaceWritable">
-            <section><h3>Rule identity</h3><div class="project-form-grid"><label>Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Definition key<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>Lifecycle status<select v-model="ruleForm.definition_status" class="app-select"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option></select></label><label>Presentation<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">Launcher</option><option value="inline">Inline</option><option value="reaction">Reaction</option><option value="prompt">Prompt</option></select></label><label>Objective<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">Continuous feedback</option><option value="after_engagement">After engagement</option><option value="validate_content">Validate content</option><option value="detect_friction">Detect friction</option></select></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label></div></section>
-            <section><h3>Page matching</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" @tested="targetingDiagnostic = $event" /></section>
-            <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
-            <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
+            <section><h3>{{ t('projects.editor.identity.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.identity.name') }}<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>{{ t('projects.editor.identity.definitionKey') }}<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>{{ t('projects.editor.identity.lifecycleStatus') }}<select v-model="ruleForm.definition_status" class="app-select"><option value="draft">{{ t('projects.enums.definitionStatus.draft') }}</option><option value="active">{{ t('projects.enums.definitionStatus.active') }}</option><option value="paused">{{ t('projects.enums.definitionStatus.paused') }}</option><option value="archived">{{ t('projects.enums.definitionStatus.archived') }}</option></select></label><label>{{ t('projects.editor.identity.presentation') }}<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">{{ t('projects.enums.presentation.launcher') }}</option><option value="inline">{{ t('projects.enums.presentation.inline') }}</option><option value="reaction">{{ t('projects.enums.presentation.reaction') }}</option><option value="prompt">{{ t('projects.enums.presentation.prompt') }}</option></select></label><label>{{ t('projects.editor.identity.objective') }}<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">{{ t('projects.enums.objective.continuous_feedback') }}</option><option value="after_engagement">{{ t('projects.enums.objective.after_engagement') }}</option><option value="validate_content">{{ t('projects.enums.objective.validate_content') }}</option><option value="detect_friction">{{ t('projects.enums.objective.detect_friction') }}</option></select></label><label>{{ t('projects.editor.identity.priority') }}<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label></div></section>
+            <section><h3>{{ t('projects.editor.pageMatching') }}</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" @tested="targetingDiagnostic = $event" /></section>
+            <section><h3>{{ t('projects.editor.trigger.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.trigger.type') }}<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">{{ t('projects.enums.trigger.delay') }}</option><option value="scroll">{{ t('projects.enums.trigger.scroll') }}</option><option value="exit_intent">{{ t('projects.enums.trigger.exit_intent') }}</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">{{ t('projects.editor.trigger.delaySeconds') }}<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">{{ t('projects.editor.trigger.scrollPercent') }}<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
+            <section><h3>{{ t('projects.editor.recurrence.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.recurrence.showAgain') }}<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">{{ t('projects.enums.recurrence.cooldown') }}</option><option value="session">{{ t('projects.enums.recurrence.session') }}</option><option value="never">{{ t('projects.enums.recurrence.never') }}</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">{{ t('projects.editor.recurrence.cooldownDays') }}<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
             <section><WidgetDecisionDiagnostics :objective="ruleForm.objective" :presentation="ruleForm.presentation" :trigger-type="ruleForm.trigger_type" :trigger-delay-seconds="ruleForm.trigger_delay_seconds ?? null" :trigger-scroll-percent="ruleForm.trigger_scroll_percent ?? null" :recurrence-mode="ruleForm.recurrence_mode" :recurrence-days="ruleForm.recurrence_days ?? null" /></section>
-            <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>Reaction</b><small>Collect a compact sentiment</small></span></label><label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>Single choice</b><small>Offer configured options</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>Optional comment</b><small>Add context to compact responses</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>Optional email address</b><small>Offer reporter email with separate update consent</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
-            <section><h3>Response blocks</h3><div class="response-block-list"><div v-for="block in ruleForm.response_blocks" :key="block.type" class="response-block-row"><div class="response-block-head"><span>{{ block.type.replaceAll('_', ' ') }}</span><label><input v-model="block.required" type="checkbox" /> Required</label><button type="button" title="Remove response block" :aria-label="`Remove ${block.type} block`" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>Response key<input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" /></label><label>Label ({{ editingLocale }})<input class="app-input" maxlength="240" :value="editingLocalization.block_labels?.[block.key] || ''" @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)" /></label></div><div v-if="block.options" class="response-option-list"><div v-for="(option, optionIndex) in block.options" :key="optionIndex"><input v-model.trim="option.value" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" aria-label="Option key" /><input class="app-input" maxlength="120" aria-label="Localized option label" :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''" @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)" /><button type="button" title="Remove option" aria-label="Remove option" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button></div><button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> Add option</button></div></div></div></section>
-            <section><h3>Content and appearance</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" aria-label="Editing language"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale }}{{ locale === projectDefaultLocale ? ' · default' : '' }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" placeholder="pt-ao" aria-label="New language" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> Add</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" title="Remove language" aria-label="Remove language" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid localization-fields"><label>Launcher label<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">Prompt<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>Comment placeholder<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>Contact label<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">Consent label<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>Submit label<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>Success message<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label></div><WidgetAppearanceEditor v-model="ruleAppearance" :parent="projectEffectiveAppearance" allow-logo-reset /></section>
-            <section><h3>Session replay</h3><div class="project-form-grid"><label>Replay mode<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">Disabled</option><option value="full">Every session</option><option value="sampling">Sample sessions</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">Sampling percent<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>Max duration (seconds)<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>Max events<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>Mask all input values</span></label><label class="wide">Additional text mask selector<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
+            <section><h3>{{ t('projects.editor.methods.title') }}</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>{{ t('projects.editor.methods.rating') }}</b><small>{{ t('projects.editor.methods.ratingHint') }}</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>{{ t('projects.editor.methods.writtenFeedback') }}</b><small>{{ t('projects.editor.methods.writtenFeedbackHint') }}</small></span></label><label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>{{ t('projects.editor.methods.reaction') }}</b><small>{{ t('projects.editor.methods.reactionHint') }}</small></span></label><label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>{{ t('projects.editor.methods.singleChoice') }}</b><small>{{ t('projects.editor.methods.singleChoiceHint') }}</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>{{ t('projects.editor.methods.comment') }}</b><small>{{ t('projects.editor.methods.commentHint') }}</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>{{ t('projects.editor.methods.contact') }}</b><small>{{ t('projects.editor.methods.contactHint') }}</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>{{ t('projects.editor.methods.audio') }}</b><small>{{ supportsAudio ? t('projects.editor.methods.audioHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>{{ t('projects.editor.methods.video') }}</b><small>{{ supportsVideo ? t('projects.editor.methods.videoHint') : t('projects.editor.methods.scaleRequired') }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>{{ t('projects.editor.methods.element') }}</b><small>{{ supportsDOM ? t('projects.editor.methods.elementHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>{{ t('projects.editor.methods.screenshot') }}</b><small>{{ supportsDOM ? t('projects.editor.methods.screenshotHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label></div></section>
+            <section><h3>{{ t('projects.editor.blocks.title') }}</h3><div class="response-block-list"><div v-for="block in ruleForm.response_blocks" :key="block.type" class="response-block-row"><div class="response-block-head"><span>{{ responseBlockLabel(block.type) }}</span><label><input v-model="block.required" type="checkbox" /> {{ t('projects.editor.blocks.required') }}</label><button type="button" :title="t('projects.editor.blocks.remove')" :aria-label="t('projects.editor.blocks.removeNamed', { type: responseBlockLabel(block.type) })" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>{{ t('projects.editor.blocks.key') }}<input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" /></label><label>{{ t('projects.editor.blocks.label', { locale: editingLocale }) }}<input class="app-input" maxlength="240" :value="editingLocalization.block_labels?.[block.key] || ''" @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)" /></label></div><div v-if="block.options" class="response-option-list"><div v-for="(option, optionIndex) in block.options" :key="optionIndex"><input v-model.trim="option.value" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" :aria-label="t('projects.editor.blocks.optionKey')" /><input class="app-input" maxlength="120" :aria-label="t('projects.editor.blocks.optionLabel')" :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''" @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)" /><button type="button" :title="t('projects.editor.blocks.removeOption')" :aria-label="t('projects.editor.blocks.removeOption')" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button></div><button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> {{ t('projects.editor.blocks.addOption') }}</button></div></div></div></section>
+            <section><h3>{{ t('projects.editor.content.title') }}</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" :aria-label="t('projects.editor.content.editingLanguage')"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale === projectDefaultLocale ? t('projects.editor.content.defaultLanguage', { locale }) : locale }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" :placeholder="t('projects.editor.content.newLanguagePlaceholder')" :aria-label="t('projects.editor.content.newLanguage')" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> {{ t('projects.editor.content.add') }}</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" :title="t('projects.editor.content.removeLanguage')" :aria-label="t('projects.editor.content.removeLanguage')" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid localization-fields"><label>{{ t('projects.editor.content.launcherLabel') }}<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">{{ t('projects.editor.content.prompt') }}<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>{{ t('projects.editor.content.commentPlaceholder') }}<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>{{ t('projects.editor.content.contactLabel') }}<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">{{ t('projects.editor.content.consentLabel') }}<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>{{ t('projects.editor.content.submitLabel') }}<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>{{ t('projects.editor.content.successMessage') }}<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label></div><WidgetAppearanceEditor v-model="ruleAppearance" :parent="projectEffectiveAppearance" allow-logo-reset /></section>
+            <section><h3>{{ t('projects.editor.replay.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.replay.mode') }}<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">{{ t('projects.enums.replay.none') }}</option><option value="full">{{ t('projects.enums.replay.full') }}</option><option value="sampling">{{ t('projects.enums.replay.sampling') }}</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">{{ t('projects.editor.replay.samplingPercent') }}<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>{{ t('projects.editor.replay.maxDuration') }}<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>{{ t('projects.editor.replay.maxEvents') }}<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>{{ t('projects.editor.replay.maskAllInputs') }}</span></label><label class="wide">{{ t('projects.editor.replay.maskSelector') }}<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
             </fieldset>
           </form>
         </main>
 
         <aside class="project-widget-preview">
-          <header><span>Live preview</span><div v-if="ruleForm.presentation === 'launcher'" class="widget-preview-modes" role="group" aria-label="Launcher preview state"><button type="button" :data-active="!previewLauncherOpen" @click="previewLauncherOpen = false">Launcher</button><button type="button" :data-active="previewLauncherOpen" @click="previewLauncherOpen = true">Open</button></div><small v-else>{{ effectiveAppearance.theme }} · {{ effectiveAppearance.position }}</small></header>
-          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>Checkout</b><span>Review your order before payment.</span><div /></div><button v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.launcher_label }}</button><section v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen" class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || 'Tell us more'" /><div v-if="ruleForm.collect_contact" class="widget-preview-contact"><label><span>{{ previewLocalization.contact_label }}</span><input type="email" :placeholder="previewLocalization.contact_label" /></label><label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label></div><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">Screenshot</span><span v-if="ruleForm.can_record_audio">Audio</span><button :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.submit_label }}</button></div></section></div>
+          <header><span>{{ t('projects.preview.title') }}</span><div v-if="ruleForm.presentation === 'launcher'" class="widget-preview-modes" role="group" :aria-label="t('projects.preview.launcherState')"><button type="button" :data-active="!previewLauncherOpen" @click="previewLauncherOpen = false">{{ t('projects.preview.launcher') }}</button><button type="button" :data-active="previewLauncherOpen" @click="previewLauncherOpen = true">{{ t('projects.preview.open') }}</button></div><small v-else>{{ previewAppearanceSummary }}</small></header>
+          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>{{ t('projects.preview.pageTitle') }}</b><span>{{ t('projects.preview.pageDescription') }}</span><div /></div><button v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.launcher_label }}</button><section v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen" class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || 'Tell us more'" /><div v-if="ruleForm.collect_contact" class="widget-preview-contact"><label><span>{{ previewLocalization.contact_label }}</span><input type="email" :placeholder="previewLocalization.contact_label" /></label><label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label></div><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">{{ t('projects.preview.screenshot') }}</span><span v-if="ruleForm.can_record_audio">{{ t('projects.preview.audio') }}</span><button :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.submit_label }}</button></div></section></div>
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update collection, access, and browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Reporter progress access<select v-model="projectReporterAccess" class="app-select"><option value="inherit">Inherit workspace</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label class="wide">Allowed domains<textarea v-model="projectDomains" /></label><div class="wide project-appearance"><h3>Widget appearance</h3><WidgetAppearanceEditor v-model="projectAppearance" :parent="workspaceAppearance" allow-logo-reset /></div></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>{{ t('projects.settings.title') }}</h2><p>{{ t('projects.settings.description') }}</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> {{ t('projects.settings.save') }}</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>{{ t('projects.settings.name') }}<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>{{ t('projects.settings.defaultLanguage') }}<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" :placeholder="t('projects.settings.defaultLanguagePlaceholder')" /></label><label>{{ t('projects.settings.reporterAccess') }}<select v-model="projectReporterAccess" class="app-select"><option value="inherit">{{ t('projects.settings.reporterAccessOptions.inherit') }}</option><option value="enabled">{{ t('projects.settings.reporterAccessOptions.enabled') }}</option><option value="disabled">{{ t('projects.settings.reporterAccessOptions.disabled') }}</option></select></label><label class="wide">{{ t('projects.settings.allowedDomains') }}<textarea v-model="projectDomains" /></label><div class="wide project-appearance"><h3>{{ t('projects.settings.appearanceTitle') }}</h3><WidgetAppearanceEditor v-model="projectAppearance" :parent="workspaceAppearance" allow-logo-reset /></div></fieldset></form><footer><div><b>{{ t('projects.settings.deleteTitle') }}</b><span>{{ t('projects.settings.deleteDescription') }}</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> {{ t('projects.settings.delete') }}</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
