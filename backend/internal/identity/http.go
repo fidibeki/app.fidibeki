@@ -253,7 +253,7 @@ func (handler *HTTPHandler) readImage(
 			map[string]string{"image": "is required"})
 		return ImageVariants{}, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, MaxSourceBytes+1))
 	if err != nil {
 		handler.internalError(w, r, "read identity image", err)
@@ -331,7 +331,13 @@ func (handler *HTTPHandler) streamPNG(
 		handler.internalError(w, r, "open identity image", err)
 		return
 	}
-	defer object.Close()
+	defer func() {
+		if closeErr := object.Close(); closeErr != nil && handler.options.Logger != nil {
+			handler.options.Logger.WarnContext(
+				r.Context(), "close identity image failed", "error", closeErr,
+			)
+		}
+	}()
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
