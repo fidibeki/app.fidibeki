@@ -778,7 +778,7 @@ export const portugueseMessages = {
         video: 'Vídeo',
         videoHint: 'Gravar vídeo da câmara',
         element: 'Elemento da página',
-        elementHint: 'Anexar o contexto DOM selecionado',
+        elementHint: 'Anexar uma estrutura sanitizada sem texto nem atributos; ativar apenas após revisão de privacidade',
         screenshot: 'Captura de ecrã',
         screenshotHint: 'Capturar a vista atual',
         upgradeRequired: 'Requer atualização de plano',

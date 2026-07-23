@@ -778,7 +778,7 @@ export const englishMessages = {
         video: 'Video',
         videoHint: 'Capture camera video',
         element: 'Page element',
-        elementHint: 'Attach selected DOM context',
+        elementHint: 'Attach a sanitized structural outline without text or attributes; enable only after privacy review',
         screenshot: 'Screenshot',
         screenshotHint: 'Capture the current view',
         upgradeRequired: 'Upgrade required',
