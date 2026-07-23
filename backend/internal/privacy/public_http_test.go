@@ -3,6 +3,8 @@ package privacy
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,5 +86,121 @@ func TestPublicReporterRequestLimiterFailureIsUnavailable(t *testing.T) {
 	routes.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("limiter failure = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestPublicReporterRequestRejectsInvalidOrUnavailableDependencies(t *testing.T) {
+	t.Parallel()
+	token, _, _ := reporterRequestToken()
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   int
+	}{
+		{
+			name: "malformed token", method: http.MethodGet,
+			path: "/v1/privacy/requests/not-a-token", want: http.StatusNotFound,
+		},
+		{
+			name: "download without storage", method: http.MethodPost,
+			path: "/v1/privacy/requests/" + token + "/download",
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "verify without transaction", method: http.MethodPost,
+			path: "/v1/privacy/requests/" + token + "/verify",
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "status without database", method: http.MethodGet,
+			path: "/v1/privacy/requests/" + token,
+			want: http.StatusServiceUnavailable,
+		},
+	}
+	routes := chi.NewRouter()
+	RegisterPublicRoutes(routes, PublicHTTPOptions{})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			recorder := httptest.NewRecorder()
+			routes.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("request = %d body=%s, want %d",
+					recorder.Code, recorder.Body.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestPrivacyHandlersRejectMissingContextAndInvalidEmailConfiguration(t *testing.T) {
+	t.Parallel()
+	handler := &HTTPHandler{}
+	request := httptest.NewRequest(http.MethodGet, "/v1/privacy/retention", nil)
+	recorder := httptest.NewRecorder()
+	handler.retention(recorder, request)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("retention without tenant = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	recorder = httptest.NewRecorder()
+	if _, _, _, ok := privacyRequestState(recorder, request); ok ||
+		recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("privacy state without context ok=%t status=%d", ok, recorder.Code)
+	}
+	if handler.now().Location() != time.UTC {
+		t.Fatal("default HTTP privacy clock is not UTC")
+	}
+
+	_, err := reporterVerificationMessage(
+		ReporterRequest{ID: "request", Action: ReporterExport},
+		"Acme", "acme", strings.Repeat("a", 43),
+		HTTPOptions{
+			PublicBaseURL: "https://api.staging.fidibeki.com",
+			BaseDomain:    "staging.fidibeki.com",
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "email is unavailable") {
+		t.Fatalf("verification message without email error = %v", err)
+	}
+	if _, err := reporterPrivacyURL("", "", "", ""); err == nil {
+		t.Fatal("reporterPrivacyURL(invalid) error = nil")
+	}
+}
+
+func TestPrivacyHTTPErrorMappingAndTransactionContextGuards(t *testing.T) {
+	t.Parallel()
+	handler := &HTTPHandler{logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	for name, serve := range map[string]func(http.ResponseWriter, *http.Request){
+		"create export":          handler.createExport,
+		"list exports":           handler.listExports,
+		"list reporter requests": handler.listReporterRequests,
+	} {
+		recorder := httptest.NewRecorder()
+		serve(recorder, request)
+		if recorder.Code != http.StatusInternalServerError {
+			t.Errorf("%s without context = %d body=%s",
+				name, recorder.Code, recorder.Body.String())
+		}
+	}
+	for name, test := range map[string]struct {
+		err  error
+		want int
+	}{
+		"not found":       {err: ErrNotFound, want: http.StatusNotFound},
+		"unavailable":     {err: ErrJobUnavailable, want: http.StatusConflict},
+		"human required":  {err: ErrHumanRequired, want: http.StatusForbidden},
+		"invalid request": {err: ErrInvalidRequest, want: http.StatusUnprocessableEntity},
+		"dependency":      {err: errors.New("dependency unavailable"), want: http.StatusServiceUnavailable},
+	} {
+		recorder := httptest.NewRecorder()
+		handler.writeError(recorder, request, test.err)
+		if recorder.Code != test.want {
+			t.Errorf("%s error mapping = %d body=%s, want %d",
+				name, recorder.Code, recorder.Body.String(), test.want)
+		}
+	}
+	if (Exporter{}).logger() == nil || (Scheduler{}).logger() == nil {
+		t.Fatal("default privacy loggers are nil")
 	}
 }

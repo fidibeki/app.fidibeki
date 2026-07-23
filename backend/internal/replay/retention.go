@@ -10,6 +10,7 @@ import (
 )
 
 type RetentionCandidate struct {
+	TenantID   string
 	ID         string
 	ObjectKeys []string
 }
@@ -19,14 +20,15 @@ func (s Store) ExpiredSessions(ctx context.Context, now time.Time, limit int) ([
 		limit = 100
 	}
 	rows, err := s.Database.Query(ctx, `
-		SELECT session.id,
+		SELECT session.tenant_id, session.id,
 		       array_remove(array_prepend(session.storage_key, ARRAY(
 		           SELECT batch.storage_key FROM session_batches AS batch
 		           WHERE batch.session_id = session.id ORDER BY batch.batch_index
 		       )), NULL)
 		FROM sessions AS session
 		JOIN tenants AS tenant ON tenant.id = session.tenant_id
-		WHERE COALESCE(session.ended_at, session.created_at) < CASE tenant.plan
+		WHERE session.retention_deleted_at IS NULL
+		  AND COALESCE(session.ended_at, session.created_at) < CASE tenant.plan
 			WHEN 'starter' THEN $1::timestamptz - interval '30 days'
 			WHEN 'growth' THEN $1::timestamptz - interval '90 days'
 			WHEN 'scale' THEN $1::timestamptz - interval '365 days'
@@ -34,6 +36,7 @@ func (s Store) ExpiredSessions(ctx context.Context, now time.Time, limit int) ([
 		END
 		ORDER BY COALESCE(session.ended_at, session.created_at), session.id
 		LIMIT $2
+		FOR UPDATE OF session SKIP LOCKED
 	`, now.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list expired replay sessions: %w", err)
@@ -42,7 +45,7 @@ func (s Store) ExpiredSessions(ctx context.Context, now time.Time, limit int) ([
 	candidates := make([]RetentionCandidate, 0)
 	for rows.Next() {
 		var candidate RetentionCandidate
-		if err := rows.Scan(&candidate.ID, &candidate.ObjectKeys); err != nil {
+		if err := rows.Scan(&candidate.TenantID, &candidate.ID, &candidate.ObjectKeys); err != nil {
 			return nil, fmt.Errorf("scan expired replay session: %w", err)
 		}
 		candidates = append(candidates, candidate)
@@ -53,16 +56,39 @@ func (s Store) ExpiredSessions(ctx context.Context, now time.Time, limit int) ([
 	return candidates, nil
 }
 
-func (s Store) DeleteExpiredSession(ctx context.Context, sessionID string) error {
-	if _, err := s.Database.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, sessionID); err != nil {
-		return fmt.Errorf("delete expired replay session: %w", err)
+func (s Store) MarkSessionRetentionDeleted(
+	ctx context.Context,
+	tenantID string,
+	sessionID string,
+	now time.Time,
+) error {
+	if _, err := s.Database.Exec(ctx, `
+		WITH deleted_incomplete_batches AS (
+			DELETE FROM session_batches
+			WHERE tenant_id = $1 AND session_id = $2 AND completed_at IS NULL
+		), retained_batches AS (
+			UPDATE session_batches
+			SET storage_key = NULL, complete_token_hash = NULL, retention_deleted_at = $3
+			WHERE tenant_id = $1 AND session_id = $2
+			  AND completed_at IS NOT NULL AND retention_deleted_at IS NULL
+		)
+		UPDATE sessions
+		SET storage_key = NULL, retention_deleted_at = $3,
+		    merge_enqueued_at = NULL,
+		    merge_attempts = CASE WHEN merged_at IS NULL THEN 12 ELSE merge_attempts END,
+		    merge_error = CASE WHEN merged_at IS NULL
+		        THEN 'Replay data expired under the workspace retention policy.'
+		        ELSE merge_error END
+		WHERE tenant_id = $1 AND id = $2 AND retention_deleted_at IS NULL
+	`, tenantID, sessionID, now.UTC()); err != nil {
+		return fmt.Errorf("preserve expired replay manifest: %w", err)
 	}
 	return nil
 }
 
 type RetentionStore interface {
 	ExpiredSessions(context.Context, time.Time, int) ([]RetentionCandidate, error)
-	DeleteExpiredSession(context.Context, string) error
+	MarkSessionRetentionDeleted(context.Context, string, string, time.Time) error
 }
 
 type ObjectRemover interface {
@@ -77,7 +103,8 @@ type Cleaner struct {
 }
 
 func (c Cleaner) CleanupOnce(ctx context.Context) error {
-	candidates, err := c.Store.ExpiredSessions(ctx, c.now(), 100)
+	now := c.now()
+	candidates, err := c.Store.ExpiredSessions(ctx, now, 100)
 	if err != nil {
 		return err
 	}
@@ -93,7 +120,9 @@ func (c Cleaner) CleanupOnce(ctx context.Context) error {
 		if removeFailed {
 			continue
 		}
-		if err := c.Store.DeleteExpiredSession(ctx, candidate.ID); err != nil {
+		if err := c.Store.MarkSessionRetentionDeleted(
+			ctx, candidate.TenantID, candidate.ID, now,
+		); err != nil {
 			result = errors.Join(result, err)
 		}
 	}

@@ -58,12 +58,18 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	handler := &HTTPHandler{options: options, logger: logger}
+	retentionRead := []func(http.Handler) http.Handler{
+		appmiddleware.RequireActive,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionTenantRead),
+	}
 	read := []func(http.Handler) http.Handler{
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		handler.requireHuman,
 		appmiddleware.RequirePermission(auth.PermissionTenantUpdate),
 	}
+	router.With(retentionRead...).Get("/v1/privacy/retention", handler.retention)
 	router.With(read...).Get("/v1/privacy/exports", handler.listExports)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/exports", handler.createExport)
@@ -73,6 +79,20 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(read...).Get("/v1/privacy/requests", handler.listReporterRequests)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/requests", handler.createReporterRequest)
+}
+
+func (handler *HTTPHandler) retention(w http.ResponseWriter, r *http.Request) {
+	resolved, ok := appmiddleware.TenantFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	effective, err := EffectiveRetentionForPlan(resolved.Plan)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"retention": effective})
 }
 
 func (handler *HTTPHandler) requireHuman(next http.Handler) http.Handler {

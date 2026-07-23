@@ -803,7 +803,7 @@ func listTenantAttachments(
 		SELECT id, kind::text, content_type, size_bytes, duration_seconds,
 		       processing_status::text, error_message, transcription,
 		       sentiment_score::double precision, moderation_flags,
-		       processing_attempts, completed_at, processed_at, created_at
+		       processing_attempts, completed_at, processed_at, retention_deleted_at, created_at
 		FROM attachments
 		WHERE tenant_id = $1 AND feedback_id = $2
 		ORDER BY created_at, id
@@ -820,7 +820,7 @@ func listTenantAttachments(
 			&attachment.DurationSeconds, &attachment.ProcessingStatus, &attachment.ErrorMessage,
 			&attachment.Transcription, &attachment.SentimentScore, &attachment.ModerationFlags,
 			&attachment.ProcessingAttempts, &attachment.CompletedAt, &attachment.ProcessedAt,
-			&attachment.CreatedAt,
+			&attachment.RetentionDeletedAt, &attachment.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan tenant feedback attachment: %w", err)
 		}
@@ -844,7 +844,9 @@ func (Store) GetTenantAttachmentObject(
 	err := query.QueryRow(ctx, `
 		SELECT id, kind::text, storage_key, content_type, size_bytes, completed_at, created_at
 		FROM attachments
-		WHERE tenant_id = $1 AND feedback_id = $2 AND id = $3 AND completed_at IS NOT NULL
+		WHERE tenant_id = $1 AND feedback_id = $2 AND id = $3
+		  AND completed_at IS NOT NULL AND retention_deleted_at IS NULL
+		  AND storage_key IS NOT NULL
 	`, tenantID, feedbackID, attachmentID).Scan(
 		&object.ID, &object.Kind, &object.StorageKey, &object.ContentType,
 		&object.SizeBytes, &object.CompletedAt, &object.CreatedAt,
@@ -868,8 +870,9 @@ func getTenantSession(
 	var mergedAt *time.Time
 	err := query.QueryRow(ctx, `
 		SELECT id, page_url, started_at, ended_at, events_count, batches_count,
-		       rrweb_version, merged_at, merge_error,
+		       rrweb_version, merged_at, merge_error, retention_deleted_at,
 		       CASE
+		           WHEN retention_deleted_at IS NOT NULL THEN 'expired'
 		           WHEN merged_at IS NOT NULL THEN 'ready'
 		           WHEN merge_error IS NOT NULL AND merge_attempts >= 12 THEN 'failed'
 		           WHEN ended_at IS NOT NULL THEN 'processing'
@@ -879,7 +882,7 @@ func getTenantSession(
 	`, tenantID, sessionID).Scan(
 		&session.ID, &session.PageURL, &session.StartedAt, &session.EndedAt,
 		&session.EventsCount, &session.BatchesCount, &session.RRWebVersion,
-		&mergedAt, &session.MergeError, &session.Status,
+		&mergedAt, &session.MergeError, &session.RetentionDeletedAt, &session.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionDetail{}, ErrNotFound

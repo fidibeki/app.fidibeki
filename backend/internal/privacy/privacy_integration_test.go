@@ -273,6 +273,11 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	if !createdEnvelope.Created || createdEnvelope.Export.ID == "" {
 		t.Fatalf("created export = %#v", createdEnvelope)
 	}
+	listedExports := privacyHTTPRequest(handler, ownerToken, http.MethodGet, "/v1/privacy/exports")
+	if listedExports.Code != http.StatusOK ||
+		!strings.Contains(listedExports.Body.String(), createdEnvelope.Export.ID) {
+		t.Fatalf("list exports = %d body=%s", listedExports.Code, listedExports.Body.String())
+	}
 	if strings.Contains(createdResponse.Body.String(), "object_key") ||
 		strings.Contains(createdResponse.Body.String(), "tenants/") {
 		t.Fatalf("create response exposed storage metadata: %s", createdResponse.Body.String())
@@ -289,6 +294,18 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	machine := privacyHTTPRequest(handler, rawAPIKey, http.MethodGet, "/v1/privacy/exports")
 	if machine.Code != http.StatusForbidden || !strings.Contains(machine.Body.String(), "active human member required") {
 		t.Errorf("machine export list = %d body=%s", machine.Code, machine.Body.String())
+	}
+	retention := privacyHTTPRequest(handler, viewerToken, http.MethodGet, "/v1/privacy/retention")
+	if retention.Code != http.StatusOK ||
+		!strings.Contains(retention.Body.String(), `"plan":"growth"`) ||
+		!strings.Contains(retention.Body.String(), `"duration_days":90`) ||
+		!strings.Contains(retention.Body.String(), `"category":"attachments"`) {
+		t.Fatalf("viewer retention = %d body=%s", retention.Code, retention.Body.String())
+	}
+	machineRetention := privacyHTTPRequest(handler, rawAPIKey, http.MethodGet, "/v1/privacy/retention")
+	if machineRetention.Code != http.StatusForbidden {
+		t.Errorf("machine retention = %d body=%s",
+			machineRetention.Code, machineRetention.Body.String())
 	}
 	crossTenant := privacyHTTPRequest(handler, otherToken, http.MethodGet, "/v1/privacy/exports")
 	if crossTenant.Code != http.StatusForbidden {
@@ -336,7 +353,53 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	if missing.Code != http.StatusNotFound {
 		t.Errorf("missing export download = %d body=%s", missing.Code, missing.Body.String())
 	}
+	invalidJob := privacyHTTPRequest(
+		handler, ownerToken, http.MethodPost, "/v1/privacy/exports/not-a-uuid/retry",
+	)
+	if invalidJob.Code != http.StatusNotFound {
+		t.Errorf("invalid export retry = %d body=%s", invalidJob.Code, invalidJob.Body.String())
+	}
+	retryCreated := privacyHTTPRequest(handler, ownerToken, http.MethodPost, "/v1/privacy/exports")
+	var retryEnvelope struct {
+		Export Job `json:"export"`
+	}
+	if retryCreated.Code != http.StatusAccepted ||
+		json.Unmarshal(retryCreated.Body.Bytes(), &retryEnvelope) != nil ||
+		retryEnvelope.Export.ID == "" {
+		t.Fatalf("create retry export = %d body=%s", retryCreated.Code, retryCreated.Body.String())
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE privacy_jobs SET status = 'failed', error_message = 'terminal test failure'
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, retryEnvelope.Export.ID); err != nil {
+		t.Fatalf("fail retry export: %v", err)
+	}
+	retried := privacyHTTPRequest(
+		handler, ownerToken, http.MethodPost,
+		"/v1/privacy/exports/"+retryEnvelope.Export.ID+"/retry",
+	)
+	if retried.Code != http.StatusAccepted ||
+		!strings.Contains(retried.Body.String(), `"status":"pending"`) {
+		t.Fatalf("retry export = %d body=%s", retried.Code, retried.Body.String())
+	}
 
+	for name, test := range map[string]struct {
+		body   string
+		status int
+	}{
+		"malformed":       {body: `{`, status: http.StatusBadRequest},
+		"trailing":        {body: `{"email":"a@b.test","action":"export"} {}`, status: http.StatusBadRequest},
+		"unknown action":  {body: `{"email":"a@b.test","action":"erase"}`, status: http.StatusUnprocessableEntity},
+		"invalid address": {body: `{"email":"invalid","action":"export"}`, status: http.StatusUnprocessableEntity},
+	} {
+		response := privacyHTTPJSONRequest(
+			handler, ownerToken, http.MethodPost, "/v1/privacy/requests", test.body,
+		)
+		if response.Code != test.status {
+			t.Errorf("%s reporter request = %d body=%s",
+				name, response.Code, response.Body.String())
+		}
+	}
 	reporterRequestResponse := privacyHTTPJSONRequest(
 		handler, ownerToken, http.MethodPost, "/v1/privacy/requests",
 		`{"email":" Reporter@Example.Test ","action":"export"}`,
@@ -353,6 +416,13 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	if err := json.Unmarshal(reporterRequestResponse.Body.Bytes(), &requestEnvelope); err != nil ||
 		requestEnvelope.Request.ID == "" {
 		t.Fatalf("decode reporter request: %#v error=%v", requestEnvelope, err)
+	}
+	listedRequests := privacyHTTPRequest(handler, ownerToken, http.MethodGet, "/v1/privacy/requests")
+	if listedRequests.Code != http.StatusOK ||
+		!strings.Contains(listedRequests.Body.String(), requestEnvelope.Request.ID) ||
+		!strings.Contains(listedRequests.Body.String(), "reporter@example.test") {
+		t.Fatalf("list reporter requests = %d body=%s",
+			listedRequests.Code, listedRequests.Body.String())
 	}
 	marker := "/privacy/"
 	markerIndex := strings.Index(emails.messages[0].Text, marker)
@@ -419,6 +489,12 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		WHERE tenant_id = $1 AND kind = 'privacy.reporter_export_download_granted'
 	`, tenantID).Scan(&grants); err != nil || grants != 1 {
 		t.Fatalf("reporter download grants = %d, error=%v", grants, err)
+	}
+	cancelledCtx, cancelScheduler := context.WithCancel(context.Background())
+	cancelScheduler()
+	if err := (Scheduler{Store: Store{Database: database}}).
+		Run(cancelledCtx, time.Hour); err != nil {
+		t.Fatalf("cancelled privacy scheduler error = %v", err)
 	}
 }
 

@@ -68,6 +68,7 @@ func (h *TenantHTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
 		"events_count": session.EventsCount, "batches_count": session.BatchesCount,
 		"rrweb_version": session.RRWebVersion, "merged_at": session.MergedAt,
 		"status": session.Status(), "feedback_id": session.FeedbackID,
+		"retention_deleted_at": session.RetentionDeletedAt,
 	}
 	if session.Status() == "ready" {
 		response["replay_url"] = "/v1/sessions/" + session.ID + "/replay"

@@ -106,10 +106,10 @@ func TestRecoverUploadedBatchesPropagatesIndeterminateStorageFailure(t *testing.
 	}
 }
 
-func TestCleanerRemovesObjectsBeforeRecords(t *testing.T) {
+func TestCleanerRemovesObjectsBeforePreservingManifests(t *testing.T) {
 	store := &retentionStoreStub{candidates: []RetentionCandidate{
-		{ID: "one", ObjectKeys: []string{"one-final", "one-batch"}},
-		{ID: "two", ObjectKeys: []string{"two-final"}},
+		{TenantID: "tenant-one", ID: "one", ObjectKeys: []string{"one-final", "one-batch"}},
+		{TenantID: "tenant-two", ID: "two", ObjectKeys: []string{"two-final"}},
 	}}
 	storage := &objectRemoverStub{fail: map[string]error{"two-final": errors.New("storage unavailable")}}
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
@@ -121,8 +121,8 @@ func TestCleanerRemovesObjectsBeforeRecords(t *testing.T) {
 	if !reflect.DeepEqual(storage.removed, []string{"one-final", "one-batch", "two-final"}) {
 		t.Errorf("removed objects = %#v", storage.removed)
 	}
-	if !reflect.DeepEqual(store.deleted, []string{"one"}) {
-		t.Errorf("deleted records = %#v", store.deleted)
+	if !reflect.DeepEqual(store.marked, []string{"tenant-one:one:" + now.Format(time.RFC3339)}) {
+		t.Errorf("preserved manifests = %#v", store.marked)
 	}
 	if !store.now.Equal(now) || store.limit != 100 {
 		t.Errorf("retention query now/limit = %v/%d", store.now, store.limit)
@@ -142,6 +142,9 @@ func TestSessionStatus(t *testing.T) {
 		{name: "processing", session: Session{EndedAt: &now}, want: "processing"},
 		{name: "failed", session: Session{EndedAt: &now, MergeError: &message, MergeAttempts: 12}, want: "failed"},
 		{name: "ready", session: Session{MergedAt: &now, StorageKey: &key}, want: "ready"},
+		{name: "expired", session: Session{
+			MergedAt: &now, RetentionDeletedAt: &now,
+		}, want: "expired"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -415,7 +418,7 @@ func (s *memoryReplayStorage) RemoveObject(_ context.Context, key string) error 
 
 type retentionStoreStub struct {
 	candidates []RetentionCandidate
-	deleted    []string
+	marked     []string
 	now        time.Time
 	limit      int
 }
@@ -426,8 +429,13 @@ func (s *retentionStoreStub) ExpiredSessions(_ context.Context, now time.Time, l
 	return s.candidates, nil
 }
 
-func (s *retentionStoreStub) DeleteExpiredSession(_ context.Context, sessionID string) error {
-	s.deleted = append(s.deleted, sessionID)
+func (s *retentionStoreStub) MarkSessionRetentionDeleted(
+	_ context.Context,
+	tenantID string,
+	sessionID string,
+	now time.Time,
+) error {
+	s.marked = append(s.marked, tenantID+":"+sessionID+":"+now.Format(time.RFC3339))
 	return nil
 }
 

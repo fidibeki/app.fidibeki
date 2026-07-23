@@ -386,16 +386,25 @@ func TestReplayHTTPFlow(t *testing.T) {
 
 	var expiredSessionID string
 	expiredKey := "retention/expired.json"
+	expiredBatchKey := "retention/expired-batch.json"
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at, ended_at, events_count,
+			tenant_id, project_id, session_id, started_at, ended_at, events_count, batches_count,
 			storage_key, rrweb_version, merged_at, merge_requested_at,
 			max_duration_seconds, max_events, created_at
 		) VALUES (
-			$1, $2, gen_random_uuid(), $3, $3, 1, $4, '2.1.1', $3, $3, 1800, 50000, $3
+			$1, $2, gen_random_uuid(), $3, $3, 1, 1, $4, '2.1.1', $3, $3, 1800, 50000, $3
 		) RETURNING id
 	`, tenantID, projectID, now.Add(-91*24*time.Hour), expiredKey).Scan(&expiredSessionID); err != nil {
 		t.Fatalf("create expired replay: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, completed_at, created_at
+		) VALUES ($1, $2, $3, 0, $4, 1, 128, $5, $5)
+	`, tenantID, projectID, expiredSessionID, expiredBatchKey, now.Add(-91*24*time.Hour)); err != nil {
+		t.Fatalf("create expired replay batch: %v", err)
 	}
 	retentionStore := Store{Database: pools.Admin}
 	expired, err := retentionStore.ExpiredSessions(ctx, now, 10)
@@ -403,11 +412,38 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("list expired sessions: %v", err)
 	}
 	if len(expired) != 1 || expired[0].ID != expiredSessionID ||
-		len(expired[0].ObjectKeys) != 1 || expired[0].ObjectKeys[0] != expiredKey {
+		expired[0].TenantID != tenantID || len(expired[0].ObjectKeys) != 2 ||
+		expired[0].ObjectKeys[0] != expiredKey || expired[0].ObjectKeys[1] != expiredBatchKey {
 		t.Fatalf("expired sessions = %#v", expired)
 	}
-	if err := retentionStore.DeleteExpiredSession(ctx, expiredSessionID); err != nil {
-		t.Fatalf("delete expired session: %v", err)
+	if err := retentionStore.MarkSessionRetentionDeleted(
+		ctx, tenantID, expiredSessionID, now,
+	); err != nil {
+		t.Fatalf("preserve expired session manifest: %v", err)
+	}
+	var retainedKey *string
+	var retentionDeletedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT storage_key, retention_deleted_at
+		FROM sessions WHERE tenant_id = $1 AND id = $2
+	`, tenantID, expiredSessionID).Scan(&retainedKey, &retentionDeletedAt); err != nil {
+		t.Fatalf("read expired session manifest: %v", err)
+	}
+	if retainedKey != nil || retentionDeletedAt == nil || !retentionDeletedAt.Equal(now) {
+		t.Fatalf("expired session manifest key=%v retention_deleted_at=%v", retainedKey, retentionDeletedAt)
+	}
+	var retainedBatchKey *string
+	var batchRetentionDeletedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT storage_key, retention_deleted_at
+		FROM session_batches WHERE tenant_id = $1 AND session_id = $2
+	`, tenantID, expiredSessionID).Scan(&retainedBatchKey, &batchRetentionDeletedAt); err != nil {
+		t.Fatalf("read expired batch manifest: %v", err)
+	}
+	if retainedBatchKey != nil || batchRetentionDeletedAt == nil ||
+		!batchRetentionDeletedAt.Equal(now) {
+		t.Fatalf("expired batch manifest key=%v retention_deleted_at=%v",
+			retainedBatchKey, batchRetentionDeletedAt)
 	}
 
 	var abandonedSessionID, activeSessionID, renewedSessionID, emptySessionID, incompleteSessionID string

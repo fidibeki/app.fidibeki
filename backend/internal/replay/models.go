@@ -38,12 +38,16 @@ type Session struct {
 	MergeEnqueuedAt    *time.Time `json:"-"`
 	MergeAttempts      int        `json:"merge_attempts"`
 	MergeError         *string    `json:"merge_error,omitempty"`
+	RetentionDeletedAt *time.Time `json:"retention_deleted_at,omitempty"`
 	MaxDurationSeconds int        `json:"-"`
 	MaxEvents          int        `json:"-"`
 	CreatedAt          time.Time  `json:"created_at"`
 }
 
 func (s Session) Status() string {
+	if s.RetentionDeletedAt != nil {
+		return "expired"
+	}
 	if s.MergedAt != nil && s.StorageKey != nil {
 		return "ready"
 	}

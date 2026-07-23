@@ -557,6 +557,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	privacyExporter := privacy.Exporter{
 		Database: pools.Admin, Store: privacyStore, Storage: objectStorage, Logger: logger,
 	}
+	privacyRetention := privacy.RetentionMaintainer{
+		Store: privacyStore, Storage: objectStorage, Logger: logger,
+	}
 	analyticsMaintainer := widgetanalytics.Maintainer{
 		Store: widgetanalytics.MaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
@@ -628,12 +631,13 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 8)
+	backgroundDone := make(chan error, 9)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- replayCleaner.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- privacyScheduler.Run(workerCtx, 30*time.Second) }()
+	go func() { backgroundDone <- privacyRetention.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
@@ -643,7 +647,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		workerErr,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone,
+		<-backgroundDone, <-backgroundDone,
 	)
 }
 

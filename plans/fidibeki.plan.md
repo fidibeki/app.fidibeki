@@ -302,8 +302,14 @@ was removed from the staging test tenant.
         data while preserving operational history and retry safety. Consent timestamps, RLS,
         cross-tenant isolation, audit, terminal failure/retry, migration replay, full backend tests,
         and `go vet` pass locally.
-      - [ ] Slice 3: attachment/replay manifest-preserving retention, export/request expiry,
+      - [x] Slice 3: attachment/replay manifest-preserving retention, export/request expiry,
         bounded storage reconciliation, effective-retention API, and technical privacy inventory.
+        Plan boundaries now delete attachment and replay objects at 30/90/365 days while retaining
+        non-downloadable manifests, clearing derived transcripts, and retrying partial storage
+        failures. A bounded, timed maintainer expires seven-day archives, 48-hour unverified
+        requests, and 30-day verified access with audit records. `tenant:read` exposes the effective
+        retention matrix, `docs/privacy-data-map.md` documents the technical/legal boundary, migration
+        replay and retention boundary tests pass, and the backend coverage gate is restored above 80%.
       - [ ] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile
         E2E, CI, and staging validation.
     - [ ] #26: audit and implement layered public-submission abuse protection after #25.

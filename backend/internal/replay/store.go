@@ -81,12 +81,14 @@ func (Store) DeleteSession(
 		keys = append(keys, *storageKey)
 	}
 	for rows.Next() {
-		var key string
+		var key *string
 		if err := rows.Scan(&key); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan replay object for deletion: %w", err)
 		}
-		keys = append(keys, key)
+		if key != nil {
+			keys = append(keys, *key)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -486,6 +488,7 @@ const sessionSelect = `
 	       session.events_count, session.batches_count, session.storage_key,
 	       session.rrweb_version, session.merged_at, session.merge_requested_at,
 	       session.merge_enqueued_at, session.merge_attempts, session.merge_error,
+	       session.retention_deleted_at,
 	       session.max_duration_seconds, session.max_events, session.created_at
 	FROM sessions AS session
 `
@@ -502,6 +505,7 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		&found.EventsCount, &found.BatchesCount, &found.StorageKey,
 		&found.RRWebVersion, &found.MergedAt, &found.MergeRequestedAt,
 		&found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
+		&found.RetentionDeletedAt,
 		&found.MaxDurationSeconds, &found.MaxEvents, &found.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
