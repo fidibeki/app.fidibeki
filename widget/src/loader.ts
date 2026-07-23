@@ -13,6 +13,7 @@ import {
 import { createAnalyticsOutbox } from './analytics-outbox'
 import { getSessionID, isSuppressed, presentationRecurrencePolicy, recordWidgetState } from './suppression'
 import { armObjectivePolicy, recordObjectiveVisit } from './policy'
+import { privacySafeLocation } from './privacy-location'
 import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -26,6 +27,7 @@ interface WidgetModule {
     publicKey: string
     apiBase: URL
     assetBase: URL
+    pageURL: string
     replaySessionID: string | null
     onVisible(): void
     onInteraction(): void
@@ -127,7 +129,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   }
 
   const recordAnalytics = (eventType: FunnelEventType, rule: WidgetRule) => {
-    const event = analytics.record(eventType, rule.id)
+    const event = analytics.record(eventType, rule)
     if (!event) return
     analyticsOutbox.enqueue(event)
   }
@@ -163,6 +165,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
       if (!rule) return
+      const privacyLocation = privacySafeLocation(evaluationURL, rule)
+      if (!privacyLocation) return
       const visitCount = recordObjectiveVisit(durableStorage, {
         projectID: configuration.project_id,
         rawURL: evaluationURL,
@@ -185,10 +189,11 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               publicKey: key,
               apiBase: assetBase,
               assetBase,
+              pageURL: privacyLocation.target,
 					replaySessionID: replayCapture?.sessionID ?? null,
               onVisible: () => recordAnalytics('impression', rule),
               onInteraction: () => recordAnalytics('interaction', rule),
-              submissionAnalytics: () => analytics.record('submitted', rule.id),
+              submissionAnalytics: () => analytics.record('submitted', rule),
               onSubmitted: () => persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => {
 					recordAnalytics('dismissed', rule)
@@ -248,6 +253,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       })
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       if (!targeted) return explicitResult(false, 'not_targeted')
+      const privacyLocation = privacySafeLocation(currentURL, rule)
+      if (!privacyLocation) return explicitResult(false, 'not_targeted')
       await synchronizeReplay(configuration, rule)
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       recordAnalytics('matched', rule)
@@ -265,11 +272,12 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const hostID = `fidibeki-widget-host-${randomID()}`
       const unmount = module.mountWidget({
         configuration, rule, publicKey: key, apiBase: assetBase, assetBase,
+        pageURL: privacyLocation.target,
         replaySessionID: replayCapture?.sessionID ?? null,
         target, hostID,
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
-        submissionAnalytics: () => analytics.record('submitted', rule.id),
+        submissionAnalytics: () => analytics.record('submitted', rule),
         onSubmitted: () => persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'submitted'),
         onDismissed: () => {
           recordAnalytics('dismissed', rule)

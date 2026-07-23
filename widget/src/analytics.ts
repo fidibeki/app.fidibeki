@@ -1,4 +1,6 @@
 import { canonicalPage } from './targeting'
+import { privacySafeLocation } from './privacy-location'
+import type { WidgetRule } from './types'
 
 export type FunnelEventType = 'matched' | 'impression' | 'interaction' | 'submitted' | 'dismissed'
 
@@ -31,7 +33,7 @@ interface TrackerOptions {
 export interface AnalyticsTracker {
   readonly visitorID: string
   visit(rawURL: string): PageViewIdentity
-  record(eventType: FunnelEventType, ruleID: string): FunnelEvent | null
+  record(eventType: FunnelEventType, rule: WidgetRule): FunnelEvent | null
 }
 
 const visitorStorageKey = 'fidibeki:visitor:v1'
@@ -54,15 +56,17 @@ export function createAnalyticsTracker(options: TrackerOptions = {}): AnalyticsT
       }
       return current
     },
-    record(eventType, ruleID) {
+    record(eventType, rule) {
       if (!current) return null
-      const lifecycleKey = `${current.pageViewID}:${ruleID}:${eventType}`
+      const location = privacySafeLocation(current.pageURL, rule)
+      if (!location) return null
+      const lifecycleKey = `${current.pageViewID}:${rule.id}:${eventType}`
       if (emitted.has(lifecycleKey)) return null
       emitted.add(lifecycleKey)
       return {
         event_id: randomUUID(), event_type: eventType, visitor_id: visitorID,
-        page_view_id: current.pageViewID, rule_id: ruleID,
-        page_url: current.pageURL, occurred_at: now().toISOString(),
+        page_view_id: current.pageViewID, rule_id: rule.id,
+        page_url: location.target, occurred_at: now().toISOString(),
       }
     },
   }

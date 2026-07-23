@@ -19,10 +19,22 @@ describe('metadata collection', () => {
 		(width, expected) => expect(detectDevice(width)).toBe(expected),
 	)
 
-  it('collects page and viewport fields', () => {
-    const metadata = collectMetadata(window, document, { userAgent: 'Firefox/120 Linux' } as Navigator)
+  it('collects only the supplied safe page and coarse browser context', () => {
+    Object.defineProperty(document, 'referrer', {
+      configurable: true,
+      value: 'https://external.example/search?q=jane.private@example.test',
+    })
+    const metadata = collectMetadata(
+      'https://example.com/accounts',
+      window,
+      { userAgent: 'Firefox/120 Linux account-48291' } as Navigator,
+    )
     expect(metadata).toMatchObject({ browser: 'Firefox', os: 'Linux' })
-    expect(metadata.url).toBe(window.location.href)
+    expect(metadata.url).toBe('https://example.com/accounts')
+    expect(metadata.referrer).toBe('')
+    expect(metadata.user_agent).toBe('')
+    expect(JSON.stringify(metadata)).not.toContain('jane.private')
+    expect(JSON.stringify(metadata)).not.toContain('48291')
     expect(metadata.viewport_width).toBe(window.innerWidth)
   })
 })

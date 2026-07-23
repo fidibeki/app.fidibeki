@@ -34,6 +34,7 @@ interface MountOptions {
   publicKey: string
   apiBase: URL
 	assetBase: URL
+  pageURL: string
 	replaySessionID: string | null
   onVisible(): void
   onInteraction(): void
@@ -376,7 +377,7 @@ export function mountWidget(options: MountOptions): () => void {
           consent,
           element_attachment: attachment,
           company_website: honeypot.value,
-          metadata: { ...collectMetadata(), language: localization.locale },
+          metadata: { ...collectMetadata(options.pageURL), language: localization.locale },
           attachments: pendingAttachments.map(declarationFor),
           analytics: submissionAnalytics,
         }),

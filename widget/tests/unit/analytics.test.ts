@@ -1,5 +1,6 @@
 import { createAnalyticsTracker } from '../../src/analytics'
 import { reportFunnelEvents } from '../../src/analytics-outbox'
+import type { WidgetRule } from '../../src/types'
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
@@ -67,10 +68,10 @@ describe('widget funnel identity', () => {
     })
     tracker.visit('https://example.com/chart?asset=BAI')
 
-    const first = tracker.record('matched', '11111111-1111-4111-8111-111111111111')
-    const duplicate = tracker.record('matched', '11111111-1111-4111-8111-111111111111')
+    const first = tracker.record('matched', exactRule('https://example.com/chart'))
+    const duplicate = tracker.record('matched', exactRule('https://example.com/chart'))
     tracker.visit('https://example.com/other')
-    const nextPage = tracker.record('matched', '11111111-1111-4111-8111-111111111111')
+    const nextPage = tracker.record('matched', exactRule('https://example.com/chart'))
 
     expect(first).toMatchObject({
       event_id: ids[2], event_type: 'matched', visitor_id: ids[0], page_view_id: ids[1],
@@ -91,7 +92,7 @@ describe('widget funnel identity', () => {
       now: () => new Date('2026-07-22T12:00:00Z'),
     })
     tracker.visit('https://example.com/chart?asset=BAI')
-    const event = tracker.record('matched', '11111111-1111-4111-8111-111111111111')!
+    const event = tracker.record('matched', exactRule('https://example.com/chart'))!
 
     await reportFunnelEvents({
       endpoint: new URL('https://widget.test/v1/widget/events'),
@@ -104,4 +105,34 @@ describe('widget funnel identity', () => {
     expect(new Headers(options?.headers).get('X-Fidibeki-Public-Key')).toBe('pk_live_test')
     expect(JSON.parse(String(options?.body))).toEqual({ events: [event] })
   })
+
+  it('never emits an unapproved personal path suffix', () => {
+    const tracker = createAnalyticsTracker({
+      storage: new MemoryStorage(), randomUUID: idSequence(),
+      now: () => new Date('2026-07-22T12:00:00Z'),
+    })
+    tracker.visit('https://example.com/accounts/jane.private@example.test/48291?token=SECRET#profile')
+    const event = tracker.record('matched', {
+      ...exactRule('https://example.com/accounts'),
+      matcher_type: 'url_prefix',
+      include_conditions: [{
+        id: 'include', matcher_type: 'url_prefix',
+        matcher_value: 'https://example.com/accounts', position: 0,
+      }],
+    })
+
+    expect(event?.page_url).toBe('https://example.com/accounts')
+    expect(JSON.stringify(event)).not.toMatch(/jane\.private|48291|SECRET/)
+  })
 })
+
+function exactRule(target: string): WidgetRule {
+  return {
+    id: '11111111-1111-4111-8111-111111111111',
+    matcher_type: 'url_exact',
+    matcher_value: target,
+    include_conditions: [{
+      id: 'include', matcher_type: 'url_exact', matcher_value: target, position: 0,
+    }],
+  } as WidgetRule
+}

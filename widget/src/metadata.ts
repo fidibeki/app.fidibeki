@@ -1,15 +1,15 @@
 import type { FeedbackMetadata } from './types'
 
 export function collectMetadata(
+  pageURL: string,
   windowObject: Window = window,
-  documentObject: Document = document,
   navigatorObject: Navigator = navigator,
 ): FeedbackMetadata {
   const userAgent = navigatorObject.userAgent
   return {
-    url: windowObject.location.href,
-    referrer: documentObject.referrer,
-    user_agent: userAgent,
+    url: pageURL,
+    referrer: '',
+    user_agent: '',
     browser: detectBrowser(userAgent),
     os: detectOS(userAgent),
 		device: detectDevice(windowObject.innerWidth),
