@@ -55,12 +55,30 @@ func ValidateSubmission(
 	input SubmissionRequest,
 	configuration project.PublicConfiguration,
 ) (SubmissionValues, []FieldError) {
-	return ValidateSubmissionAt(input, configuration, time.Now().UTC())
+	return validateSubmissionAt(input, configuration, "", time.Now().UTC())
 }
 
 func ValidateSubmissionAt(
 	input SubmissionRequest,
 	configuration project.PublicConfiguration,
+	now time.Time,
+) (SubmissionValues, []FieldError) {
+	return validateSubmissionAt(input, configuration, "", now)
+}
+
+func ValidateSubmissionForOriginAt(
+	input SubmissionRequest,
+	configuration project.PublicConfiguration,
+	origin string,
+	now time.Time,
+) (SubmissionValues, []FieldError) {
+	return validateSubmissionAt(input, configuration, origin, now)
+}
+
+func validateSubmissionAt(
+	input SubmissionRequest,
+	configuration project.PublicConfiguration,
+	origin string,
 	now time.Time,
 ) (SubmissionValues, []FieldError) {
 	values := normalizeSubmission(input)
@@ -83,8 +101,17 @@ func ValidateSubmissionAt(
 		fields = append(fields, field("text", fmt.Sprintf("must not exceed %d characters", maxTextLength)))
 	}
 	fields = append(fields, validateReporterConsent(input, &values)...)
+	selectedRule := submissionRule(configuration, values.WidgetRuleID)
 	if !validHTTPURL(values.PageURL, 4096) {
 		fields = append(fields, field("metadata.url", "must be an absolute HTTP or HTTPS URL"))
+	} else if selectedRule != nil {
+		location, err := project.ProjectPrivacySafeLocation(values.PageURL, *selectedRule)
+		if err != nil || len(location.Target) > 4096 ||
+			(origin != "" && !sameSubmissionOrigin(location.Target, origin)) {
+			fields = append(fields, field("metadata.url", "must match the authorized request origin"))
+		} else {
+			values.PageURL = location.Target
+		}
 	}
 	if values.Referrer != nil && !validHTTPURL(*values.Referrer, 4096) {
 		fields = append(fields, field("metadata.referrer", "must be an absolute HTTP or HTTPS URL"))
@@ -182,6 +209,21 @@ func SupportedReporterConsentLocale(locale string) bool {
 	default:
 		return false
 	}
+}
+
+func submissionRule(configuration project.PublicConfiguration, ruleID string) *project.WidgetRule {
+	for index := range configuration.Rules {
+		if configuration.Rules[index].ID == ruleID {
+			return &configuration.Rules[index]
+		}
+	}
+	return nil
+}
+
+func sameSubmissionOrigin(pageURL string, origin string) bool {
+	pageOrigin, pageErr := project.CanonicalOrigin(pageURL)
+	requestOrigin, requestErr := project.CanonicalOrigin(origin)
+	return pageErr == nil && requestErr == nil && pageOrigin == requestOrigin
 }
 
 func normalizeSubmission(input SubmissionRequest) SubmissionValues {

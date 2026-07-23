@@ -67,6 +67,18 @@ type PrivacySafeLocation struct {
 	Source PrivacyLocationSource
 }
 
+func CanonicalOrigin(rawURL string) (string, error) {
+	page, err := CanonicalizePage(rawURL)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(page.Target)
+	if err != nil {
+		return "", fmt.Errorf("parse canonical origin: %w", err)
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
 func ProjectPrivacySafeLocation(rawURL string, rule WidgetRule) (PrivacySafeLocation, error) {
 	page, err := CanonicalizePage(rawURL)
 	if err != nil {

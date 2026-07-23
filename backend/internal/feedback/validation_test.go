@@ -21,6 +21,7 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	text := "Checkout was clear"
+	matcher := "https://example.com/checkout"
 	request := SubmissionRequest{
 		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
 		WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
@@ -50,6 +51,8 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 		Rules: []project.WidgetRule{{
 			ID: request.WidgetRuleID, CanRate: true, CanWriteText: true,
 			CanAttachElement: true, CanRecordAudio: true,
+			MatcherType:  project.MatcherURLExact,
+			MatcherValue: &matcher,
 		}},
 	}
 	values, fields := ValidateSubmissionAt(request, configuration, now)

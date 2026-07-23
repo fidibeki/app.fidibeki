@@ -25,9 +25,9 @@ func ValidateEvents(
 		return nil, fields
 	}
 	now = now.UTC()
-	rules := make(map[string]string, len(configuration.Rules))
+	rules := make(map[string]project.WidgetRule, len(configuration.Rules))
 	for _, rule := range configuration.Rules {
-		rules[rule.ID] = rule.Name
+		rules[rule.ID] = rule
 	}
 	originPage, originErr := project.CanonicalizePage(origin)
 	seenEventIDs := make(map[string]struct{}, len(inputs))
@@ -50,11 +50,11 @@ func ValidateEvents(
 		if _, err := uuid.Parse(input.PageViewID); err != nil {
 			fields[prefix+"page_view_id"] = "must be a UUID"
 		}
-		ruleName, ruleExists := rules[input.RuleID]
+		rule, ruleExists := rules[input.RuleID]
 		if _, err := uuid.Parse(input.RuleID); err != nil || !ruleExists {
 			fields[prefix+"rule_id"] = "must identify an enabled project rule"
 		}
-		page, err := project.CanonicalizePage(strings.TrimSpace(input.PageURL))
+		page, err := project.ProjectPrivacySafeLocation(strings.TrimSpace(input.PageURL), rule)
 		if err != nil || len(page.Target) > 4096 || originErr != nil || !targetsShareOrigin(page.Target, originPage.Target) {
 			fields[prefix+"page_url"] = "must be an allowed canonical page on the request origin"
 		}
@@ -66,7 +66,7 @@ func ValidateEvents(
 		pageKey := sha256.Sum256([]byte(page.Target))
 		values[index] = EventValues{
 			EventID: input.EventID, TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
-			RuleID: input.RuleID, RuleName: ruleName, EventType: input.EventType,
+			RuleID: input.RuleID, RuleName: rule.Name, EventType: input.EventType,
 			VisitorID: input.VisitorID, PageViewID: input.PageViewID,
 			PageURL: page.Target, PageKey: pageKey[:], OccurredAt: occurredAt, ReceivedAt: now,
 		}
@@ -107,8 +107,7 @@ func ValidateSubmissionEvent(
 	if input.RuleID != expectedRuleID {
 		fields["rule_id"] = "must match widget_rule_id"
 	}
-	page, pageErr := project.CanonicalizePage(strings.TrimSpace(input.PageURL))
-	if pageErr != nil || page.Target != expectedPage.Target {
+	if len(values) != 1 || values[0].PageURL != expectedPage.Target {
 		fields["page_url"] = "must match the submitted metadata page"
 	}
 	if len(fields) > 0 {

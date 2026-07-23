@@ -68,6 +68,33 @@ func TestValidateEventsRejectsUnsafeOrUntrustedFields(t *testing.T) {
 	}
 }
 
+func TestValidateEventsDropsUnapprovedPathSuffixes(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	configuration := analyticsConfiguration()
+	prefix := "https://example.com/accounts"
+	configuration.Rules[0].MatcherType = project.MatcherURLPrefix
+	configuration.Rules[0].MatcherValue = &prefix
+	values, fields := ValidateEvents([]EventInput{{
+		EventID: "00000000-0000-4000-8000-000000000001", EventType: EventMatched,
+		VisitorID:  "00000000-0000-4000-8000-000000000002",
+		PageViewID: "00000000-0000-4000-8000-000000000003",
+		RuleID:     configuration.Rules[0].ID,
+		PageURL: "https://example.com/accounts/jane.private@example.test/48291" +
+			"?token=SECRET#profile",
+		OccurredAt: now,
+	}}, configuration, "https://example.com", now)
+	if len(fields) != 0 || len(values) != 1 {
+		t.Fatalf("ValidateEvents() = %#v, fields %#v", values, fields)
+	}
+	if values[0].PageURL != prefix ||
+		strings.Contains(values[0].PageURL, "jane.private") ||
+		strings.Contains(values[0].PageURL, "48291") ||
+		strings.Contains(values[0].PageURL, "SECRET") {
+		t.Fatalf("safe analytics event = %#v", values[0])
+	}
+}
+
 func TestValidateSubmissionEventRequiresTheSubmittedRuleAndCanonicalPage(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
@@ -107,8 +134,14 @@ func analyticsConfiguration() project.PublicConfiguration {
 		ProjectID: "00000000-0000-4000-8000-000000000020",
 		Rules: []project.WidgetRule{{
 			ID: "00000000-0000-4000-8000-000000000004", Name: "Checkout", Enabled: true,
+			MatcherType:  project.MatcherURLExact,
+			MatcherValue: stringPointer("https://example.com/chart"),
 		}},
 	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func withEvent(input EventInput, mutate func(*EventInput)) EventInput {

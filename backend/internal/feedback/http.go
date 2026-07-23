@@ -127,7 +127,9 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 	); !allowed {
 		return
 	}
-	values, fields := ValidateSubmissionAt(request, configuration, h.now().UTC())
+	values, fields := ValidateSubmissionForOriginAt(
+		request, configuration, origin, h.now().UTC(),
+	)
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback is invalid", fields)
 		return
