@@ -78,7 +78,7 @@ const safeDOMSnapshot = computed(() => {
   const content = feedback.value.dom_snapshot_html
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'"><style>html,body{margin:0;padding:14px;font-family:system-ui;color:#17211f;background:#fff}*{box-sizing:border-box;max-width:100%}</style></head><body>${content}</body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;padding:10px;color:#147d64;background:#fff}body *{display:block;box-sizing:border-box;min-height:18px;margin:5px;padding:5px;border:1px solid currentColor;background:rgba(20,125,100,.04)}table{display:table}thead{display:table-header-group}tbody{display:table-row-group}tfoot{display:table-footer-group}tr{display:table-row}td,th{display:table-cell}</style></head><body>${content}</body></html>`
 })
 
 async function updateStatus(nextStatus: FeedbackStatus) {
@@ -285,7 +285,7 @@ useHead(() => ({
 
           <section v-else class="feedback-environment">
             <h2>{{ t('feedback.detail.environment') }}</h2>
-            <dl><div><dt>{{ t('feedback.detail.page') }}</dt><dd><a :href="feedback.page_url" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a></dd></div><div><dt>{{ t('feedback.detail.referrer') }}</dt><dd>{{ feedback.referrer || t('feedback.common.direct') }}</dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.userAgent') }}</dt><dd>{{ feedback.user_agent || t('feedback.common.unknown') }}</dd></div></dl>
+            <dl><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a :href="feedback.page_url" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a></dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
           </section>
         </main>
 
