@@ -370,8 +370,13 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 		fields = append(fields, field("content_type", "uploaded object MIME type does not match the declaration"))
 	}
 	if len(fields) > 0 {
-		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
-			"attachment upload is invalid", fields)
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryUploadSafety, abuse.ReasonUploadCompletionMismatch,
+		)
+		api.WriteErrorWithOptions(
+			w, http.StatusUnprocessableEntity, api.CodeValidation, "attachment upload is invalid", fields,
+			api.ErrorOptions{Reason: abuse.ReasonUploadInvalid},
+		)
 		return
 	}
 	if err := h.options.Store.CompleteAttachment(r.Context(), tx, attachment.ID, now); err != nil {

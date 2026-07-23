@@ -28,6 +28,39 @@ export class PublicAPIResponseError extends Error {
   }
 }
 
+export type AttachmentPipelineStage = 'upload' | 'complete'
+
+export interface AttachmentFailure {
+  kind: string
+  clientAttachmentId: string
+  stage: AttachmentPipelineStage
+  error: unknown
+}
+
+// Thrown when one or more declared attachments failed to upload or complete. Unlike a single
+// generic Error, it never discards the other attachments' outcomes: every declared attachment is
+// either uploaded, completed, or reported here by kind and stage so the widget can tell the
+// reporter precisely what did not make it through, instead of presenting a partial attachment
+// pipeline as a full success.
+export class AttachmentPipelineError extends Error {
+  readonly failures: AttachmentFailure[]
+
+  constructor(failures: AttachmentFailure[]) {
+    super(`attachment pipeline failed for ${failures.length} of the declared attachment(s): ${
+      failures.map(failure => `${failure.kind}/${failure.stage}`).join(', ')
+    }`)
+    this.name = 'AttachmentPipelineError'
+    this.failures = failures
+  }
+
+  get primaryPublicFailure(): PublicAPIError | null {
+    for (const failure of this.failures) {
+      if (failure.error instanceof PublicAPIResponseError) return failure.error.failure
+    }
+    return null
+  }
+}
+
 const maxRetryAfterSeconds = 24 * 60 * 60
 const stableReasons = new Set<PublicErrorReason>([
   'submission_rate_limited',

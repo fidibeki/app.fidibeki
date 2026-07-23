@@ -1,3 +1,5 @@
+import { AUDIO_MIME_CANDIDATES, actualChunkMimeType, resolveRecorderMimeType } from './media-mime'
+
 export function createAudioControl(): { element: HTMLElement; recording(): Promise<Blob | null>; destroy(): void } {
   const button = document.createElement('button')
   button.type = 'button'
@@ -18,13 +20,14 @@ export function createAudioControl(): { element: HTMLElement; recording(): Promi
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       chunks = []
-      recorder = new MediaRecorder(stream)
+      const requestedMimeType = resolveRecorderMimeType(AUDIO_MIME_CANDIDATES)
+      recorder = new MediaRecorder(stream, requestedMimeType ? { mimeType: requestedMimeType } : undefined)
 			stopped = new Promise((resolve) => recorder?.addEventListener('stop', () => resolve(), { once: true }))
       recorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) chunks.push(event.data)
       })
       recorder.addEventListener('stop', () => {
-        result = new Blob(chunks, { type: recorder?.mimeType || 'audio/webm' })
+        result = new Blob(chunks, { type: actualChunkMimeType(recorder, requestedMimeType) || 'audio/webm' })
         stream?.getTracks().forEach((track) => track.stop())
       })
       recorder.start()

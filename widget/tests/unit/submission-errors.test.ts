@@ -1,5 +1,7 @@
 import { resolveWidgetLocalization } from '../../src/localization'
 import {
+  AttachmentPipelineError,
+  PublicAPIResponseError,
   parsePublicAPIError,
   publicFailureMessage,
   type PublicAPIError,
@@ -89,5 +91,36 @@ describe('public submission errors', () => {
     expect(publicFailureMessage(failure, system, 2)).toBe(
       'Too many feedback attempts. Try again in 2 seconds.',
     )
+  })
+})
+
+describe('AttachmentPipelineError', () => {
+  it('keeps every declared attachment failure instead of only the first', () => {
+    const error = new AttachmentPipelineError([
+      { kind: 'audio', clientAttachmentId: 'audio-1', stage: 'upload', error: new Error('403') },
+      { kind: 'screenshot', clientAttachmentId: 'shot-1', stage: 'complete', error: new Error('409') },
+    ])
+    expect(error.failures).toHaveLength(2)
+    expect(error.failures.map(failure => failure.kind)).toEqual(['audio', 'screenshot'])
+    expect(error.message).toContain('audio/upload')
+    expect(error.message).toContain('screenshot/complete')
+  })
+
+  it('surfaces the first PublicAPIResponseError so a specific reason can be shown', () => {
+    const publicFailure: PublicAPIError = {
+      status: 410, code: 'conflict', reason: 'upload_expired', retryAfterSeconds: 0,
+    }
+    const error = new AttachmentPipelineError([
+      { kind: 'video', clientAttachmentId: 'video-1', stage: 'upload', error: new Error('network error') },
+      { kind: 'audio', clientAttachmentId: 'audio-1', stage: 'complete', error: new PublicAPIResponseError(publicFailure) },
+    ])
+    expect(error.primaryPublicFailure).toEqual(publicFailure)
+  })
+
+  it('has no primary public failure when no failure carries a public API reason', () => {
+    const error = new AttachmentPipelineError([
+      { kind: 'audio', clientAttachmentId: 'audio-1', stage: 'upload', error: new Error('network error') },
+    ])
+    expect(error.primaryPublicFailure).toBeNull()
   })
 })

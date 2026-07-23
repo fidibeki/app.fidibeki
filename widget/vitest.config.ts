@@ -18,6 +18,7 @@ export default defineConfig({
         'src/modules/replay.ts',
         'src/modules/privacy.ts',
         'src/modules/element-attachment.ts',
+        'src/modules/media-mime.ts',
       ],
       reporter: ['text', 'json-summary'],
       thresholds: {

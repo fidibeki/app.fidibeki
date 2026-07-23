@@ -246,6 +246,9 @@ func (store VerificationStore) MarkRejected(
 	checkedAt time.Time,
 ) error {
 	var updated int
+	// error_message carries the specific quarantine reason (e.g. "signature_mismatch") rather than
+	// a generic string, so it reads distinctly from an upload-expiry or AI-processing error_message
+	// instead of collapsing every attachment failure into a single indistinguishable label.
 	err := store.Database.QueryRow(ctx, `
 		WITH updated_attachment AS (
 			UPDATE attachments
@@ -254,7 +257,7 @@ func (store VerificationStore) MarkRejected(
 			    safety_error_reason = $5,
 			    detected_content_type = $6,
 			    processing_status = 'failed',
-			    error_message = 'attachment safety verification failed',
+			    error_message = 'attachment quarantined: ' || $5,
 			    processed_at = $4
 			WHERE tenant_id = $1 AND id = $2
 			  AND verification_generation = $3

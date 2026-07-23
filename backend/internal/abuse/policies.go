@@ -7,15 +7,16 @@ import (
 )
 
 const (
-	ReasonSubmissionRateLimited = "submission_rate_limited"
-	ReasonUploadRateLimited     = "upload_rate_limited"
-	ReasonReplayRateLimited     = "replay_rate_limited"
-	ReasonSpamRejected          = "spam_rejected"
-	ReasonPlanQuotaExhausted    = "plan_quota_exhausted"
-	ReasonUploadExpired         = "upload_expired"
-	ReasonUploadInvalid         = "upload_invalid"
-	ReasonUploadUnsafe          = "upload_unsafe"
-	ReasonProviderUnavailable   = "provider_temporarily_unavailable"
+	ReasonSubmissionRateLimited    = "submission_rate_limited"
+	ReasonUploadRateLimited        = "upload_rate_limited"
+	ReasonReplayRateLimited        = "replay_rate_limited"
+	ReasonSpamRejected             = "spam_rejected"
+	ReasonPlanQuotaExhausted       = "plan_quota_exhausted"
+	ReasonUploadExpired            = "upload_expired"
+	ReasonUploadInvalid            = "upload_invalid"
+	ReasonUploadUnsafe             = "upload_unsafe"
+	ReasonUploadCompletionMismatch = "upload_completion_mismatch"
+	ReasonProviderUnavailable      = "provider_temporarily_unavailable"
 )
 
 var SubmissionPolicy = Policy{

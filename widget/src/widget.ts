@@ -7,9 +7,11 @@ import {
 } from './localization'
 import { readPageLanguage, subscribeToPageLanguage } from './page-language'
 import {
+	AttachmentPipelineError,
 	PublicAPIResponseError,
 	parsePublicAPIError,
 	publicFailureMessage,
+	type AttachmentFailure,
 	type PublicAPIError,
 } from './submission-errors'
 import type {
@@ -407,8 +409,13 @@ export function mountWidget(options: MountOptions): () => void {
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong>${warningDetail}</div>`
         window.setTimeout(destroy, attachmentWarning ? 3200 : 1800)
       } catch (error) {
-        const detail = error instanceof PublicAPIResponseError
-          ? publicFailureMessage(error.failure, localization.system)
+        const publicFailure = error instanceof PublicAPIResponseError
+          ? error.failure
+          : error instanceof AttachmentPipelineError
+            ? error.primaryPublicFailure
+            : null
+        const detail = publicFailure
+          ? publicFailureMessage(publicFailure, localization.system)
           : localization.system.attachmentError
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(structured ? localization.content.success_message : 'Feedback received.')}</strong><span>${escapeHTML(detail)}</span></div>`
         window.setTimeout(destroy, 3200)
@@ -500,16 +507,31 @@ async function uploadAttachments(
 	uploads: NonNullable<SubmissionResponse['attachments']>,
 ): Promise<void> {
 	const byClientID = new Map(pending.map((attachment) => [attachment.clientAttachmentID, attachment]))
-	await Promise.all(uploads.map(async (upload) => {
+	// allSettled (not all/race) so one failed attachment's upload/completion never aborts or
+	// leaves the outcome of the others unobserved: every declared attachment is either uploaded
+	// and completed, or reported as a specific per-kind, per-stage failure below.
+	const outcomes = await Promise.allSettled(uploads.map(async (upload) => {
 		const attachment = byClientID.get(upload.client_attachment_id)
-		if (!attachment) throw new Error('feedback response referenced an unknown attachment')
-		const uploaded = await fetch(upload.presigned_url, {
-			method: upload.method,
-			headers: upload.headers,
-			body: attachment.blob,
-			credentials: 'omit',
-		})
-		if (!uploaded.ok) throw new Error(`attachment upload failed with status ${uploaded.status}`)
+		if (!attachment) {
+			throw {
+				kind: 'unknown', clientAttachmentId: upload.client_attachment_id, stage: 'upload',
+				error: new Error('feedback response referenced an unknown attachment'),
+			} satisfies AttachmentFailure
+		}
+		let uploaded: Response
+		try {
+			uploaded = await fetch(upload.presigned_url, {
+				method: upload.method,
+				headers: upload.headers,
+				body: attachment.blob,
+				credentials: 'omit',
+			})
+		} catch (error) {
+			throw attachmentFailure(attachment, 'upload', error)
+		}
+		if (!uploaded.ok) {
+			throw attachmentFailure(attachment, 'upload', new Error(`attachment upload failed with status ${uploaded.status}`))
+		}
 		const completed = await fetch(endpointURL(options, `attachments/${upload.attachment_id}/complete`), {
 			method: 'POST', mode: 'cors', credentials: 'omit',
 			headers: {
@@ -519,9 +541,21 @@ async function uploadAttachments(
 			body: JSON.stringify({ complete_token: upload.complete_token }),
 		})
 		if (!completed.ok) {
-			throw new PublicAPIResponseError(await parsePublicAPIError(completed))
+			throw attachmentFailure(attachment, 'complete', new PublicAPIResponseError(await parsePublicAPIError(completed)))
 		}
 	}))
+	const failures = outcomes
+		.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+		.map((outcome) => outcome.reason as AttachmentFailure)
+	if (failures.length > 0) throw new AttachmentPipelineError(failures)
+}
+
+function attachmentFailure(
+	attachment: PendingAttachment,
+	stage: AttachmentFailure['stage'],
+	error: unknown,
+): AttachmentFailure {
+	return { kind: attachment.kind, clientAttachmentId: attachment.clientAttachmentID, stage, error }
 }
 
 function endpointURL(options: MountOptions, path: string): URL {

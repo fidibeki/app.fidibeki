@@ -390,8 +390,28 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		completeBody, publicKey, "https://example.com")
 	if mismatchedUpload.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(mismatchedUpload.Body.String(), `"field":"size_bytes"`) ||
-		!strings.Contains(mismatchedUpload.Body.String(), `"field":"content_type"`) {
+		!strings.Contains(mismatchedUpload.Body.String(), `"field":"content_type"`) ||
+		!strings.Contains(mismatchedUpload.Body.String(), `"reason":"upload_invalid"`) {
 		t.Errorf("mismatched upload status = %d, body = %s", mismatchedUpload.Code, mismatchedUpload.Body.String())
+	}
+	// A content-type/size mismatch at completion must be observable as its own diagnostic reason,
+	// distinct from upload expiry, quarantine rejection, and AI-processing failure diagnostics.
+	completionDiagnostics := &abuseDiagnosticRecorderStub{}
+	diagnosedCompletionHandler := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Diagnostics: completionDiagnostics, Now: func() time.Time { return now },
+	})
+	mismatchedUploadDiagnosed := performFeedbackRequest(diagnosedCompletionHandler, http.MethodPost,
+		"/v1/attachments/"+second.Attachments[0].AttachmentID+"/complete?key="+publicKey,
+		completeBody, publicKey, "https://example.com")
+	if mismatchedUploadDiagnosed.Code != http.StatusUnprocessableEntity {
+		t.Errorf("diagnosed mismatch status = %d, body = %s",
+			mismatchedUploadDiagnosed.Code, mismatchedUploadDiagnosed.Body.String())
+	}
+	if len(completionDiagnostics.events) != 1 ||
+		completionDiagnostics.events[0].Category != abuse.CategoryUploadSafety ||
+		completionDiagnostics.events[0].Reason != abuse.ReasonUploadCompletionMismatch {
+		t.Errorf("completion mismatch diagnostics = %#v", completionDiagnostics.events)
 	}
 	if _, err := root.Exec(ctx, `
 		UPDATE attachments
@@ -1681,6 +1701,17 @@ func assertAttachmentVerificationStoreLifecycle(
 	detected := "image/jpeg"
 	if err := store.MarkRejected(ctx, work, "signature_mismatch", &detected, now); err != nil {
 		t.Fatalf("MarkRejected() error = %v", err)
+	}
+	var rejectedErrorMessage *string
+	if err := database.QueryRow(ctx,
+		`SELECT error_message FROM attachments WHERE id = $1`, attachmentID,
+	).Scan(&rejectedErrorMessage); err != nil {
+		t.Fatalf("read rejected attachment error_message: %v", err)
+	}
+	// The message must surface the specific quarantine reason, not a generic label that would
+	// read the same as an upload-expiry or AI-processing failure.
+	if rejectedErrorMessage == nil || *rejectedErrorMessage != "attachment quarantined: signature_mismatch" {
+		t.Errorf("rejected attachment error_message = %#v", rejectedErrorMessage)
 	}
 	if err := store.CompleteRejectedCleanup(ctx, work, now); err != nil {
 		t.Fatalf("CompleteRejectedCleanup() error = %v", err)
