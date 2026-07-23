@@ -228,7 +228,12 @@ was removed from the staging test tenant.
       Invitation email/domain failures remain adjacent to the email field with focus and ARIA error
       state, while transport failures stay at form level. Typecheck, unit, build, and responsive E2E
       coverage pass; one unrelated magic-link history timeout passed twice when rerun in isolation.
-  - [ ] Complete screenshot annotation issue #14.
+  - [x] Complete screenshot annotation issue #14.
+    - Screenshot capture now opens a lazy, responsive annotation editor before attachment. Reporters
+      can draw with controlled colors and brush size, undo or clear marks, confirm the annotated PNG,
+      reopen it for editing, or remove it. Capture always stops its media stream, excludes the widget
+      surface from the frame, preserves the existing upload contract, and cleans preview resources.
+      Browser coverage verifies annotated output pixels plus desktop and mobile presentation.
   - [ ] Complete moderated-content propagation issue #6.
   - [ ] Complete shared transactional email issue #21.
   - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.

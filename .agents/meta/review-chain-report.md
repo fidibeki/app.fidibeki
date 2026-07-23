@@ -7,7 +7,7 @@ status: final
 
 # Review Chain Report
 
-**Artifact**: Settings permission and invitation-error slice (#13, #16)
+**Artifact**: Widget screenshot annotation slice (#14)
 **Date**: 2026-07-23
 **Rounds**: 2 local review passes
 
@@ -17,37 +17,37 @@ status: final
 
 | # | Severity | Confidence | Location | Problem | Status |
 |---|----------|------------|----------|---------|--------|
-| 1 | major | 10/10 | `web/pages/settings/index.vue` | The first template used a namespaced component name that did not match Nuxt's local auto-import name. | Fixed by rendering `PermissionEditor` and verifying the production build. |
-| 2 | minor | 9/10 | `web/pages/settings/index.vue` | A manually changed permission could leave the previous preset visually selected. | Fixed by deriving the matching preset after every toggle and showing an explicit custom state. |
+| 1 | minor | 10/10 | `widget/src/modules/screenshot.ts` | The initial annotation preview retained its object URL after widget teardown. | Fixed by exposing an optional module cleanup and registering it with the widget lifecycle. |
+| 2 | minor | 9/10 | `widget/tests/e2e/widget.spec.ts` | The first browser assertion only proved that a PNG existed, not that drawing changed its pixels. | Fixed by decoding the resulting PNG and asserting the selected blue stroke in the output. |
 
 ## Input Quality Assessment
 
 | Input | Rating | Evidence |
 |-------|--------|----------|
-| Product/domain context | Rich | The issue bodies define the access-management hierarchy and the distinction between field and form failures. |
-| Requirements clarity | Precise | Both issues include responsive, accessibility, and error-placement acceptance criteria. |
-| Upstream artifacts | Fresh | Existing RBAC presets, permission grouping, invitation endpoint, and settings modal contracts were preserved. |
+| Product/domain context | Adequate | The issue identifies annotation as the missing value after the existing screenshot capture. |
+| Requirements clarity | Moderate | Tool details were open, so the approved recommendation supplies a minimal complete editing workflow. |
+| Upstream artifacts | Fresh | Existing lazy loading, PNG declarations, presigned uploads, and attachment completion remain unchanged. |
 
 ## Simplifications Applied
 
-Existing RBAC and invitation contracts were retained. The slice introduces one shared presentation component
-for the two existing permission consumers and classifies API errors locally without changing backend behavior.
+The editor stays inside the already lazy screenshot asset and outputs the same PNG blob consumed by the existing
+submission and upload pipeline. No migration, endpoint, paid dependency, or new persistent format was added.
 
 ## Changes Made
 
-Replaced the dense permission matrix with a calm grouped editor shared by member and API-key forms. Presets now
-remain truthful after manual edits. Invitation email and domain errors render beside the email field, restore
-focus, and expose ARIA state while service failures retain the existing form-level treatment.
+Capture now leads to a responsive native-dialog editor with freehand marks, three color swatches, brush sizing,
+undo, clear, cancel, confirm, edit, preview, and remove actions. The capture stream is closed in every outcome,
+the widget is hidden from its own frame, and preview resources follow the widget lifecycle.
 
 ## Reviewer's Summary
 
-The component preserves native checkbox semantics and never grants permissions outside those available to the
-current member. Both settings flows use the same source of truth, and the invitation branch keeps field and
-transport failures distinct. No unresolved finding remains.
+Pointer coordinates and brush widths scale to the source resolution, so saved marks remain accurate when the
+canvas is visually resized. Cancel restores the previous edit state and confirmation encodes one annotated PNG.
+Native dialog focus behavior, named controls, and responsive containment are covered. No unresolved finding remains.
 
 ## Resolver's Notes
 
-Web typecheck, 72 unit tests, and the Nuxt production build passed. Both new browser journeys passed on desktop
-and mobile and their screenshots were inspected for layout and overflow. The full suite passed 112 tests with
-43 intentional skips; one unrelated magic-link history test timed out once, then passed twice in isolation.
+Widget typecheck and production build pass. Widget coverage passes 104 tests, and all 33 browser journeys pass.
+The annotation journey verifies undo, color selection, annotated output pixels, confirmation, edit, cancel,
+removal, and blob clearing. Desktop and mobile screenshots were inspected for containment and control legibility.
 The remaining gate is the standard staging CI/post-deploy run for this commit.

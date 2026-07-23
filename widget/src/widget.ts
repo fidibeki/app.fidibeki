@@ -45,7 +45,7 @@ interface VideoModule {
 }
 
 interface ScreenshotModule {
-	createScreenshotControl(): { element: HTMLElement; screenshot(): Blob | null }
+	createScreenshotControl(): { element: HTMLElement; screenshot(): Blob | null; destroy?(): void }
 }
 
 interface ErrorModule {
@@ -191,6 +191,7 @@ export function mountWidget(options: MountOptions): () => void {
 			const control = (module as ScreenshotModule).createScreenshotControl()
 			optional.append(control.element)
 			screenshot = control.screenshot
+			if (control.destroy) cleanups.push(control.destroy)
 		})
 	}
 

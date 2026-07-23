@@ -823,6 +823,91 @@ test('never recurrence persists across sessions while another pathname remains e
   await expect(nextSession.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
 })
 
+test('annotates a captured screenshot before attaching it', async ({ page }, testInfo) => {
+  await page.goto('/sample.html')
+  await page.evaluate(async () => {
+    const importModule = new Function('path', 'return import(path)') as (path: string) => Promise<{
+      createScreenshotControl(capture: () => Promise<Blob>): { element: HTMLElement; screenshot(): Blob | null }
+    }>
+    const module = await importModule('/v1/screenshot.js')
+    const source = document.createElement('canvas')
+    source.width = 960
+    source.height = 540
+    const context = source.getContext('2d')!
+    context.fillStyle = '#f4f7f5'
+    context.fillRect(0, 0, source.width, source.height)
+    context.fillStyle = '#17201d'
+    context.font = 'bold 52px sans-serif'
+    context.fillText('Checkout summary', 64, 105)
+    context.fillStyle = '#ffffff'
+    context.fillRect(64, 150, 832, 300)
+    context.strokeStyle = '#d6dfda'
+    context.strokeRect(64, 150, 832, 300)
+    const blob = await new Promise<Blob>((resolve) => source.toBlob(value => resolve(value!), 'image/png'))
+    const control = module.createScreenshotControl(async () => blob)
+    document.querySelector('main')!.append(control.element)
+    Object.assign(window, { screenshotControl: control })
+  })
+
+  await page.getByRole('button', { name: 'Capture screenshot' }).click()
+  const editor = page.getByRole('dialog', { name: 'Annotate screenshot' })
+  await expect(editor).toBeVisible()
+  await expect(editor.getByRole('button', { name: 'Red' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(editor.getByRole('button', { name: 'Undo' })).toBeDisabled()
+  await page.screenshot({ path: testInfo.outputPath('screenshot-annotator-desktop.png'), animations: 'disabled' })
+
+  const canvas = editor.getByLabel('Screenshot annotation canvas')
+  const box = await canvas.boundingBox()
+  expect(box).not.toBeNull()
+  await page.mouse.move(box!.x + box!.width * 0.3, box!.y + box!.height * 0.35)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + box!.width * 0.7, box!.y + box!.height * 0.65, { steps: 8 })
+  await page.mouse.up()
+  await expect(editor.getByRole('button', { name: 'Undo' })).toBeEnabled()
+  await editor.getByRole('button', { name: 'Undo' }).click()
+  await expect(editor.getByRole('button', { name: 'Undo' })).toBeDisabled()
+
+  await editor.getByRole('button', { name: 'Blue' }).click()
+  await page.mouse.move(box!.x + box!.width * 0.2, box!.y + box!.height * 0.6)
+  await page.mouse.down()
+  await page.mouse.move(box!.x + box!.width * 0.75, box!.y + box!.height * 0.3, { steps: 8 })
+  await page.mouse.up()
+  await editor.getByRole('button', { name: 'Use screenshot' }).click()
+
+  await expect(page.getByText('Screenshot attached')).toBeVisible()
+  await expect(page.getByAltText('Screenshot preview')).toBeVisible()
+  const result = await page.evaluate(async () => {
+    const control = (window as typeof window & { screenshotControl: { screenshot(): Blob | null } }).screenshotControl
+    const screenshot = control.screenshot()
+    if (!screenshot) return { size: 0, type: '', blue: 0 }
+    const bitmap = await createImageBitmap(screenshot)
+    const output = document.createElement('canvas')
+    output.width = bitmap.width
+    output.height = bitmap.height
+    const context = output.getContext('2d')!
+    context.drawImage(bitmap, 0, 0)
+    const pixel = context.getImageData(Math.round(bitmap.width * 0.2), Math.round(bitmap.height * 0.6), 1, 1).data
+    bitmap.close()
+    return { size: screenshot.size, type: screenshot.type, blue: pixel[2] ?? 0 }
+  })
+  expect(result.size).toBeGreaterThan(0)
+  expect(result.type).toBe('image/png')
+  expect(result.blue).toBeGreaterThan(180)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Edit screenshot' }).click()
+  await expect(editor).toBeVisible()
+  await expect(editor).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('screenshot-annotator-mobile.png'), animations: 'disabled' })
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Remove screenshot' }).click()
+  await expect(page.getByRole('button', { name: 'Capture screenshot' })).toBeVisible()
+  await expect(page.getByText('Screenshot attached')).toBeHidden()
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & { screenshotControl: { screenshot(): Blob | null } }
+  ).screenshotControl.screenshot() === null)).toBe(true)
+})
+
 test('keeps an accepted feedback successful when its attachment upload fails', async ({ page }) => {
   let submissions = 0
   const attachmentRule = { ...browserRule, can_attach_element: false, can_attach_screenshot: true } satisfies WidgetRule
