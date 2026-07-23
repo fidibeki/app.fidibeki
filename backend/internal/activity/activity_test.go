@@ -71,17 +71,20 @@ func TestScanEventBuildsActorAndRejectsInvalidRows(t *testing.T) {
 	t.Parallel()
 	createdAt := time.Date(2026, 7, 23, 1, 0, 0, 0, time.UTC)
 	name := "Alex"
+	avatarVersion := "8d17f328-0cc2-44f3-b40d-26eb2c9f46ee"
 	row := activityRow{values: []any{
 		"activity-id", "issue-id", "issue.updated", VisibilityInternal,
 		[]byte(`{"changes":{"priority":{"to":"high"}}}`), createdAt,
-		stringPointer("member-id"), &name, stringPointer("alex@example.test"),
+		stringPointer("member-id"), &name, stringPointer("alex@example.test"), &avatarVersion,
 	}}
 	event, err := scanEvent(row)
 	if err != nil {
 		t.Fatalf("scanEvent() error = %v", err)
 	}
 	if event.ID != "activity-id" || event.Actor == nil || event.Actor.ID != "member-id" ||
-		event.Actor.Name == nil || *event.Actor.Name != "Alex" || event.Data["changes"] == nil {
+		event.Actor.Name == nil || *event.Actor.Name != "Alex" ||
+		event.Actor.AvatarVersion == nil || *event.Actor.AvatarVersion != avatarVersion ||
+		event.Data["changes"] == nil {
 		t.Errorf("event = %#v", event)
 	}
 
@@ -104,7 +107,7 @@ func TestGetIssueScopesQueryAndWrapsErrors(t *testing.T) {
 	t.Parallel()
 	query := &activityQuerier{row: activityRow{values: []any{
 		"activity-id", "issue-id", "issue.comment_created", VisibilityInternal,
-		[]byte(`{}`), time.Now(), nil, nil, nil,
+		[]byte(`{}`), time.Now(), nil, nil, nil, nil,
 	}}}
 	event, err := GetIssue(context.Background(), query, "tenant-id", "issue-id", "activity-id")
 	if err != nil || event.ID != "activity-id" {
@@ -124,8 +127,8 @@ func TestListIssueReturnsOrderedEventsAndWrapsRowFailures(t *testing.T) {
 	t.Parallel()
 	createdAt := time.Date(2026, 7, 23, 1, 0, 0, 0, time.UTC)
 	query := &activityQuerier{rows: &activityRows{rows: []activityRow{
-		{values: []any{"first", "issue-id", "issue.created", VisibilityInternal, []byte(`{}`), createdAt, nil, nil, nil}},
-		{values: []any{"second", "issue-id", "reporter.responded", VisibilityReporter, []byte(`{"response":"context"}`), createdAt.Add(time.Minute), nil, nil, nil}},
+		{values: []any{"first", "issue-id", "issue.created", VisibilityInternal, []byte(`{}`), createdAt, nil, nil, nil, nil}},
+		{values: []any{"second", "issue-id", "reporter.responded", VisibilityReporter, []byte(`{"response":"context"}`), createdAt.Add(time.Minute), nil, nil, nil, nil}},
 	}}}
 	events, err := ListIssue(context.Background(), query, "tenant-id", "issue-id")
 	if err != nil || len(events) != 2 || events[0].ID != "first" || events[1].ID != "second" {

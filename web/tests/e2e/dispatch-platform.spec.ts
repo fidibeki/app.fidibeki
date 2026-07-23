@@ -31,12 +31,21 @@ function createMockState() {
     deletion_requested_at: null as string | null,
     reporter_access_enabled: true,
     widget_appearance_defaults: {} as Record<string, string>,
+    short_name: 'ACME' as string | null,
+    website_url: 'https://acme.test' as string | null,
+    support_email: 'support@acme.test' as string | null,
+    default_locale: 'en' as string | null,
+    default_timezone: 'UTC' as string | null,
+    privacy_policy_url: null as string | null,
+    terms_url: null as string | null,
+    logo_version: null as string | null,
   }
   const member = {
     id: 'member-1',
     tenant_id: tenant.id,
     email: 'alex@acme.test',
     name: 'Alex Morgan',
+    avatar_version: null as string | null,
     permissions: [...allTenantPermissions],
     status: 'active' as 'active' | 'deactivated' | 'removed',
     role: 'owner' as 'owner' | 'member',
@@ -47,6 +56,7 @@ function createMockState() {
     tenant_id: tenant.id,
     email: 'jamie@acme.test',
     name: 'Jamie Torres',
+    avatar_version: null as string | null,
     permissions: ['feedback:read', 'feedback:update', 'issue:read', 'issue:update'],
     status: 'active' as 'active' | 'deactivated' | 'removed',
     role: 'member' as 'owner' | 'member',
@@ -153,7 +163,7 @@ function createMockState() {
     status: 'open',
     ai_status: 'completed',
     priority: 'high' as 'low' | 'medium' | 'high' | 'urgent' | null,
-    assignee: { id: member.id, name: member.name, email: member.email } as { id: string, name?: string, email: string } | null,
+    assignee: { id: member.id, name: member.name, email: member.email, avatar_version: member.avatar_version } as { id: string, name?: string, email: string, avatar_version?: string | null } | null,
     tags: [tags[0]],
     sentiment_score: -0.74,
     moderation_flags: [],
@@ -176,7 +186,7 @@ function createMockState() {
     status: 'open',
     ai_status: 'completed',
     priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
-    assignee: null as { id: string, name?: string, email: string } | null,
+    assignee: null as { id: string, name?: string, email: string, avatar_version?: string | null } | null,
     tags: [] as typeof tags,
     sentiment_score: 0.86,
     moderation_flags: [],
@@ -194,7 +204,7 @@ function createMockState() {
     description: 'Customers cannot complete payment after applying some promotion codes.',
     status: 'open',
     priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent' | null,
-    assignee: { id: member.id, name: member.name, email: member.email } as { id: string, name?: string, email: string } | null,
+    assignee: { id: member.id, name: member.name, email: member.email, avatar_version: member.avatar_version } as { id: string, name?: string, email: string, avatar_version?: string | null } | null,
     tags: [tags[0]],
     reporter_email: 'customer@example.test',
     notify_reporter: true,
@@ -212,7 +222,7 @@ function createMockState() {
     description: 'Promotion validation can leave the checkout waiting indefinitely.',
     status: 'in_progress',
     priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
-    assignee: null as { id: string, name?: string, email: string } | null,
+    assignee: null as { id: string, name?: string, email: string, avatar_version?: string | null } | null,
     tags: [] as typeof tags,
     reporter_email: 'ops@acme.test',
     notify_reporter: false,
@@ -244,15 +254,15 @@ function createMockState() {
     issueComments: [] as Array<{
       id: string
       issue_id: string
-      author: { id: string, name?: string, email: string }
+      author: { id: string, name?: string, email: string, avatar_version?: string | null }
       body: string
-      mentions: Array<{ id: string, name?: string, email: string }>
+      mentions: Array<{ id: string, name?: string, email: string, avatar_version?: string | null }>
       created_at: string
     }>,
     issueActivities: [] as Array<{
       id: string
       issue_id: string
-      actor: { id: string, name?: string, email: string }
+      actor: { id: string, name?: string, email: string, avatar_version?: string | null }
       kind: string
       visibility: 'internal' | 'reporter'
       data: Record<string, unknown>
@@ -265,7 +275,7 @@ function createMockState() {
       issue_id: string
       public_id: string
       issue_title: string
-      actor: { id: string, name?: string, email: string }
+      actor: { id: string, name?: string, email: string, avatar_version?: string | null }
       body: string
       read_at?: string
       created_at: string
@@ -324,6 +334,8 @@ function createMockState() {
     reporterResponse: null as string | null,
     lastReporterMessage: null as string | null,
     workspaceAccess: 'available' as 'available' | 'unknown' | 'suspended' | 'error',
+    failNextIdentityUpload: false,
+    failIdentityAssets: false,
   }
 }
 
@@ -551,6 +563,91 @@ async function installMockAPI(page: Page, state: MockState) {
       member_domain: state.memberDomains[0],
     })
     if (path === '/auth/logout' && method === 'POST') return json(route, {})
+
+    const identityPNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p7iWQAAAABJRU5ErkJggg==',
+      'base64',
+    )
+    if (/^\/v1\/public\/workspace-logo\/[^/]+\/[^/]+\/(?:64|256)\.png$/.test(path) && method === 'GET') {
+      if (state.failIdentityAssets) return route.fulfill({ status: 404, body: '' })
+      return route.fulfill({ status: 200, contentType: 'image/png', body: identityPNG })
+    }
+    if (/^\/v1\/members\/[^/]+\/avatar\/[^/]+\/(?:64|256)\.png$/.test(path) && method === 'GET') {
+      if (state.failIdentityAssets) return route.fulfill({ status: 404, body: '' })
+      return route.fulfill({ status: 200, contentType: 'image/png', body: identityPNG })
+    }
+    if (path === '/v1/organization-profile' && method === 'GET') {
+      return json(route, { organization_profile: {
+        name: state.tenant.name,
+        short_name: state.tenant.short_name,
+        website_url: state.tenant.website_url,
+        support_email: state.tenant.support_email,
+        accent_color: state.tenant.widget_appearance_defaults.accent_color || null,
+        default_locale: state.tenant.default_locale,
+        default_timezone: state.tenant.default_timezone,
+        privacy_policy_url: state.tenant.privacy_policy_url,
+        terms_url: state.tenant.terms_url,
+        logo_version: state.tenant.logo_version,
+      } })
+    }
+    if (path === '/v1/organization-profile' && method === 'PATCH') {
+      const input = body()
+      Object.assign(state.tenant, {
+        name: String(input.name || ''),
+        short_name: input.short_name as string | null,
+        website_url: input.website_url as string | null,
+        support_email: input.support_email as string | null,
+        default_locale: input.default_locale as string | null,
+        default_timezone: input.default_timezone as string | null,
+        privacy_policy_url: input.privacy_policy_url as string | null,
+        terms_url: input.terms_url as string | null,
+      })
+      if (input.accent_color) state.tenant.widget_appearance_defaults.accent_color = String(input.accent_color)
+      else delete state.tenant.widget_appearance_defaults.accent_color
+      return json(route, { organization_profile: {
+        ...state.tenant,
+        accent_color: state.tenant.widget_appearance_defaults.accent_color || null,
+      } })
+    }
+    if (path === '/v1/organization-profile/logo' && method === 'PUT') {
+      if (state.failNextIdentityUpload) {
+        state.failNextIdentityUpload = false
+        return json(route, {
+          error: {
+            code: 'validation_error',
+            message: 'validation failed',
+            details: { image: 'must be a valid PNG, JPEG, or WebP image between 32 and 4096 pixels and up to 2 MiB' },
+          },
+        }, 422)
+      }
+      state.tenant.logo_version = `logo-version-${Date.now()}`
+      return json(route, { logo_version: state.tenant.logo_version, logo_url: '/mock-logo.png' })
+    }
+    if (path === '/v1/organization-profile/logo' && method === 'DELETE') {
+      state.tenant.logo_version = null
+      return json(route, { removed: true, logo_version: null, logo_url: null })
+    }
+    if (path === '/v1/profile' && method === 'PATCH') {
+      const input = body()
+      state.member.name = typeof input.name === 'string' && input.name.trim()
+        ? input.name.trim()
+        : ''
+      return json(route, { member: state.member })
+    }
+    if (path === '/v1/profile/avatar' && method === 'PUT') {
+      if (state.failNextIdentityUpload) {
+        state.failNextIdentityUpload = false
+        return json(route, {
+          error: { code: 'validation_error', message: 'validation failed', details: { image: 'must be a valid image' } },
+        }, 422)
+      }
+      state.member.avatar_version = `avatar-version-${Date.now()}`
+      return json(route, { avatar_version: state.member.avatar_version, member_id: state.member.id })
+    }
+    if (path === '/v1/profile/avatar' && method === 'DELETE') {
+      state.member.avatar_version = null
+      return json(route, { removed: true, avatar_version: null, member_id: state.member.id })
+    }
 
     if (path === '/v1/dashboard' && method === 'GET') {
       return json(route, { dashboard: {
@@ -1557,6 +1654,106 @@ test('workspace widget defaults can be updated with controlled tokens', async ({
   expect(state.tenant.widget_appearance_defaults).toMatchObject({
     accent_color: '#005f56', logo_url: 'https://cdn.example.com/acme.svg',
   })
+})
+
+test('organization profile validates identity assets and updates the workspace immediately', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  const organization = page.locator('.organization-profile')
+  await expect(organization.getByRole('heading', { name: 'Identity and public defaults' })).toBeVisible()
+
+  state.failNextIdentityUpload = true
+  await organization.getByLabel('Workspace logo file').setInputFiles({
+    name: 'unsafe.svg',
+    mimeType: 'image/svg+xml',
+    buffer: Buffer.from('<svg/>'),
+  })
+  await expect(organization.getByRole('alert')).toContainText('PNG, JPEG, or WebP')
+  expect(state.tenant.logo_version).toBeNull()
+
+  await organization.getByLabel('Workspace logo file').setInputFiles({
+    name: 'acme.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p7iWQAAAABJRU5ErkJggg==', 'base64'),
+  })
+  await expect(organization.getByRole('status')).toHaveText('Workspace logo updated.')
+  await expect(page.locator('.app-tenant-switcher img')).toBeVisible()
+
+  await organization.getByLabel('Public name').fill('Acme Operations')
+  await organization.getByLabel('Default language').selectOption('pt-AO')
+  await organization.getByLabel('Default timezone').fill('Africa/Luanda')
+  await organization.getByRole('button', { name: 'Save profile' }).click()
+  await expect(organization.getByRole('status')).toHaveText('Organization profile saved.')
+  await expect(page.locator('.app-tenant-switcher b')).toHaveText('Acme Operations')
+  expect(state.tenant).toMatchObject({
+    name: 'Acme Operations',
+    default_locale: 'pt-AO',
+    default_timezone: 'Africa/Luanda',
+  })
+  await capture(page, testInfo, `organization-profile-${testInfo.project.name}`)
+
+  await organization.getByTitle('Remove workspace logo').click()
+  await expect(organization.getByRole('status')).toHaveText('Workspace logo removed.')
+  await expect(page.locator('.app-tenant-switcher img')).toHaveCount(0)
+  expect(state.tenant.logo_version).toBeNull()
+})
+
+test('organization identity controls are read-only without workspace update access', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Permission behavior is viewport independent')
+  const state = createMockState()
+  state.member.permissions = state.member.permissions.filter(permission => permission !== 'tenant:update')
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  const organization = page.locator('.organization-profile')
+  await expect(organization.getByRole('button', { name: 'Save profile' })).toBeDisabled()
+  await expect(organization.getByRole('button', { name: 'Upload logo' })).toBeDisabled()
+  await expect(organization).toContainText('read-only for this account')
+})
+
+test('workspace and member identity fall back to initials when assets are unavailable', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Fallback behavior is viewport independent')
+  const state = createMockState()
+  state.tenant.logo_version = 'missing-logo'
+  state.member.avatar_version = 'missing-avatar'
+  state.failIdentityAssets = true
+  await authenticate(page, state)
+
+  await expect(page.locator('.app-tenant-switcher img')).toHaveCount(0)
+  await expect(page.locator('.app-tenant-switcher .workspace-mark > span')).toHaveText('AS')
+  await expect(page.locator('.app-account-avatar img')).toHaveCount(0)
+  await expect(page.locator('.app-account-avatar .member-avatar > span')).toHaveText('AM')
+})
+
+test('member profile updates display name and self avatar without a new session', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await page.locator('.app-account-menu summary').click()
+  await page.getByRole('link', { name: 'Profile', exact: true }).click()
+  await expect(page).toHaveURL(/\/profile$/)
+  await expect(page.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible()
+
+  await page.getByLabel('Display name').fill('Alex Rivera')
+  await page.getByRole('button', { name: 'Save profile' }).click()
+  await expect(page.getByRole('status')).toHaveText('Profile saved.')
+  await expect(page.locator('.app-account-menu summary')).toContainText('Alex Rivera')
+
+  await page.getByLabel('Profile photo file').setInputFiles({
+    name: 'alex.webp',
+    mimeType: 'image/webp',
+    buffer: Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA', 'base64'),
+  })
+  await expect(page.getByRole('status')).toHaveText('Profile photo updated.')
+  await expect(page.locator('.profile-avatar img')).toBeVisible()
+  await expect(page.locator('.app-account-avatar img')).toBeVisible()
+  expect(state.member).toMatchObject({ name: 'Alex Rivera' })
+  expect(state.member.avatar_version).toMatch(/^avatar-version-/)
+  await capture(page, testInfo, `member-profile-${testInfo.project.name}`)
+
+  await page.getByTitle('Remove profile photo').click()
+  await expect(page.getByRole('status')).toHaveText('Profile photo removed.')
+  await expect(page.locator('.profile-avatar img')).toHaveCount(0)
+  expect(state.member.avatar_version).toBeNull()
 })
 
 test('widget appearance controls fit the mobile editor', async ({ page }, testInfo) => {
@@ -2755,6 +2952,7 @@ test('settings identifies and transfers workspace ownership', async ({ page }, t
   const state = createMockState()
   state.members.push({
     id: 'member-unverified', tenant_id: state.tenant.id, email: 'pending@acme.test', name: 'Pending Member',
+    avatar_version: null,
     permissions: ['project:read'], status: 'active', role: 'member', verified: false,
   })
   await authenticate(page, state)

@@ -9,6 +9,7 @@ export interface TriageAssignee {
   id: string
   name?: string | null
   email: string
+  avatar_version?: string | null
 }
 
 export interface TriageTag {
@@ -21,7 +22,10 @@ export interface Member {
   id: string
   tenant_id: string
   email: string
-  name?: string
+  name?: string | null
+  avatar_version?: string | null
+  locale?: string | null
+  timezone?: string | null
   permissions: string[]
   status: 'active' | 'deactivated' | 'removed'
   role: 'owner' | 'member'
@@ -50,6 +54,27 @@ export interface TenantSummary {
   deletion_requested_at?: string | null
   reporter_access_enabled: boolean
   widget_appearance_defaults?: WidgetAppearanceOverrides
+  short_name?: string | null
+  website_url?: string | null
+  support_email?: string | null
+  default_locale?: string | null
+  default_timezone?: string | null
+  privacy_policy_url?: string | null
+  terms_url?: string | null
+  logo_version?: string | null
+}
+
+export interface OrganizationProfile {
+  name: string
+  short_name?: string | null
+  website_url?: string | null
+  support_email?: string | null
+  accent_color?: string | null
+  default_locale?: string | null
+  default_timezone?: string | null
+  privacy_policy_url?: string | null
+  terms_url?: string | null
+  logo_version?: string | null
 }
 
 export interface AuthResponse {
@@ -72,6 +97,8 @@ export interface APIErrorBody {
     code: string
     message: string
     details?: unknown
+    reason?: string
+    retry_after_seconds?: number
     sentry_event_id?: string
   }
 }
@@ -465,6 +492,7 @@ export interface ActivityActor {
   id: string
   name?: string | null
   email: string
+  avatar_version?: string | null
 }
 
 export interface IssueActivity {

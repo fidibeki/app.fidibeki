@@ -365,7 +365,7 @@ func (store Store) CompleteReporterExportJob(
 		SELECT completed_job.id
 		FROM completed_job CROSS JOIN completed_request
 	`, job.ID, job.TenantID, *job.ReporterRequestID, job.Generation, now.UTC(),
-		objectKey, size, recordCount, manualReviewCount, data).Scan(&completedID)
+		objectKey, size, recordCount, manualReviewCount, string(data)).Scan(&completedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrJobUnavailable
 	}

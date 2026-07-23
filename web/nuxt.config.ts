@@ -12,7 +12,21 @@ export default defineNuxtConfig({
   ],
   css: ['~/assets/css/main.css', '~/assets/css/app.css'],
   devtools: { enabled: false },
-  modules: [],
+  modules: ['@nuxtjs/i18n'],
+  i18n: {
+    strategy: 'no_prefix',
+    defaultLocale: 'en',
+    detectBrowserLanguage: false,
+    langDir: 'locales',
+    locales: [
+      { code: 'en', language: 'en', file: 'en.ts', dir: 'ltr', name: 'English' },
+      { code: 'pt', language: 'pt', file: 'pt.ts', dir: 'ltr', name: 'Português' },
+      { code: 'pt-AO', language: 'pt-AO', file: 'pt-AO.ts', dir: 'ltr', name: 'Português (Angola)' },
+      { code: 'pt-PT', language: 'pt-PT', file: 'pt-PT.ts', dir: 'ltr', name: 'Português (Portugal)' },
+      { code: 'en-XA', language: 'en-XA', file: 'en-XA.ts', dir: 'ltr', name: 'Pseudo' },
+    ],
+    vueI18n: './i18n.config.ts',
+  },
   routeRules: {
     '/': { ssr: true },
     '/login': { ssr: true },

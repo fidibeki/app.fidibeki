@@ -4,9 +4,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
     isBaseDomainHost(useRequestURL().hostname, String(config.public.baseDomain || ''))) {
     return navigateTo('/signup')
   }
+  const regional = useRegionalContext()
   if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' ||
     to.path === '/auth/verify' || to.path === '/auth/domain-verify' ||
-    to.path.startsWith('/reporter/') || to.path.startsWith('/privacy/')) return
+    to.path.startsWith('/reporter/') || to.path.startsWith('/privacy/')) {
+    await regional.apply()
+    return
+  }
 
   const { authenticated, member } = useAuth()
 
@@ -22,6 +26,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
     }
   }
 
+  await regional.apply()
   const permissions = member.value?.permissions || []
   const home = firstAccessibleWorkspacePath(permissions)
   if (to.path === '/getting-started' && !canActivateWorkspace(permissions)) return navigateTo(home)

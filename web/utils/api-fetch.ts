@@ -23,3 +23,15 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
   }
   return fallback
 }
+
+export function apiFieldErrors(error: unknown): Record<string, string> {
+  if (!error || typeof error !== 'object') return {}
+  const details = (error as {
+    data?: { error?: { details?: unknown } }
+  }).data?.error?.details
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return {}
+  return Object.fromEntries(
+    Object.entries(details)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  )
+}

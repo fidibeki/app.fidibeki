@@ -325,7 +325,7 @@ func recordPrivacyRequestAudit(
 			tenant_id, kind, actor_member_id, subject_member_id, data
 		) VALUES ($1, $2, $3, NULL,
 		          $4::jsonb || jsonb_build_object('reporter_request_id', $5::text))
-	`, tenantID, kind, actor, encoded, requestID); err != nil {
+	`, tenantID, kind, actor, string(encoded), requestID); err != nil {
 		return fmt.Errorf("record reporter privacy audit: %w", err)
 	}
 	return nil

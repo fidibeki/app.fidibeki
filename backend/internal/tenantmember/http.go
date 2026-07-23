@@ -58,6 +58,10 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/auth/invite", handler.invite)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
 		Get("/v1/members", handler.listMembers)
+	router.With(append(protected, appmiddleware.RequireWritable)...).
+		Patch("/v1/profile", handler.updateProfile)
+	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionTenantRead))...).
+		Get("/v1/organization-profile", handler.getOrganizationProfile)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
 		Get("/v1/member-domains", handler.listMemberDomains)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberInvite))...).
@@ -78,6 +82,46 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Patch("/v1/reporter-access", handler.updateReporterAccess)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
 		Patch("/v1/widget-appearance", handler.updateWidgetAppearance)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
+		Patch("/v1/organization-profile", handler.updateOrganizationProfile)
+}
+
+func (h *HTTPHandler) getOrganizationProfile(w http.ResponseWriter, r *http.Request) {
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	profile, err := h.options.Store.GetOrganizationProfile(r.Context(), query, resolved.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"organization_profile": profile})
+}
+
+func (h *HTTPHandler) updateOrganizationProfile(w http.ResponseWriter, r *http.Request) {
+	var request tenant.OrganizationProfile
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	profile, fields := ValidateOrganizationProfile(request)
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed", fields)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
+	profile, err := h.options.Store.UpdateOrganizationProfile(
+		r.Context(), query, resolved.ID, claims.Subject, profile,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"organization_profile": profile})
 }
 
 func (h *HTTPHandler) updateWidgetAppearance(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +374,62 @@ func (h *HTTPHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
+func (h *HTTPHandler) updateProfile(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name     optionalStringPatch `json:"name"`
+		Locale   optionalStringPatch `json:"locale"`
+		Timezone optionalStringPatch `json:"timezone"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	patch := MemberProfilePatch{
+		SetName: request.Name.Set, SetLocale: request.Locale.Set, SetTimezone: request.Timezone.Set,
+	}
+	fields := map[string]string{}
+	if patch.SetName {
+		patch.Name, fields["name"] = NormalizeMemberName(request.Name.Value)
+	}
+	if patch.SetLocale {
+		patch.Locale, fields["locale"] = NormalizeMemberLocale(request.Locale.Value)
+	}
+	if patch.SetTimezone {
+		patch.Timezone, fields["timezone"] = NormalizeMemberTimezone(request.Timezone.Value)
+	}
+	for field, message := range fields {
+		if message == "" {
+			delete(fields, field)
+		}
+	}
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed", fields)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
+	member, err := h.options.Store.UpdateOwnProfile(
+		r.Context(), query, resolved.ID, claims.Subject, patch,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+type optionalStringPatch struct {
+	Set   bool
+	Value *string
+}
+
+func (field *optionalStringPatch) UnmarshalJSON(data []byte) error {
+	field.Set = true
+	return json.Unmarshal(data, &field.Value)
+}
+
 func (h *HTTPHandler) updateMember(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Permissions []string `json:"permissions"`
@@ -498,6 +598,14 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 			"id": resolved.ID, "name": resolved.Name, "slug": resolved.Slug,
 			"plan": resolved.Plan, "status": resolved.Status, "trial_ends_at": resolved.TrialEndsAt,
 			"deletion_requested_at": resolved.DeletionRequestedAt,
+			"short_name":            resolved.ShortName,
+			"website_url":           resolved.WebsiteURL,
+			"support_email":         resolved.SupportEmail,
+			"default_locale":        resolved.DefaultLocale,
+			"default_timezone":      resolved.DefaultTimezone,
+			"privacy_policy_url":    resolved.PrivacyPolicyURL,
+			"terms_url":             resolved.TermsURL,
+			"logo_version":          resolved.LogoVersion,
 		},
 	})
 }

@@ -199,6 +199,61 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		Scan(&storedAppearance); err != nil || !strings.Contains(storedAppearance, `"logo_url"`) {
 		t.Fatalf("stored widget appearance = %q, error = %v", storedAppearance, err)
 	}
+	organizationProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/organization-profile",
+		`{"name":"Acme Studio","short_name":"ACME","website_url":"https://acme.test",`+
+			`"support_email":"support@acme.test","accent_color":"#005f56",`+
+			`"default_locale":"pt-ao","default_timezone":"Africa/Luanda",`+
+			`"privacy_policy_url":"https://acme.test/privacy","terms_url":"https://acme.test/terms"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if organizationProfile.Code != http.StatusOK ||
+		!strings.Contains(organizationProfile.Body.String(), `"default_locale":"pt-AO"`) ||
+		!strings.Contains(organizationProfile.Body.String(), `"short_name":"ACME"`) {
+		t.Fatalf("organization profile status = %d, body = %s", organizationProfile.Code,
+			organizationProfile.Body.String())
+	}
+	storedProfile := performTenantRequest(
+		handler, http.MethodGet, "/v1/organization-profile", "", ownerSession.AccessToken, nil,
+	)
+	if storedProfile.Code != http.StatusOK ||
+		!strings.Contains(storedProfile.Body.String(), `"default_timezone":"Africa/Luanda"`) {
+		t.Fatalf("stored organization profile status = %d, body = %s", storedProfile.Code,
+			storedProfile.Body.String())
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT widget_appearance_defaults::text
+		FROM tenants WHERE id = $1
+	`, tenantID).Scan(&storedAppearance); err != nil ||
+		!strings.Contains(storedAppearance, `"logo_url"`) ||
+		!strings.Contains(storedAppearance, `"surface_color"`) {
+		t.Fatalf("organization profile dropped widget appearance = %q, error = %v",
+			storedAppearance, err)
+	}
+	var profileAuditBefore, profileAuditAfter string
+	if err := root.QueryRow(ctx, `
+		SELECT data->'before'->>'name', data->'after'->>'name'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'organization.profile_updated'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, tenantID).Scan(&profileAuditBefore, &profileAuditAfter); err != nil ||
+		profileAuditBefore != "Acme" || profileAuditAfter != "Acme Studio" {
+		t.Fatalf("organization profile audit = %q/%q, error = %v",
+			profileAuditBefore, profileAuditAfter, err)
+	}
+	invalidOrganizationProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/organization-profile",
+		`{"name":"","website_url":"javascript:alert(1)","support_email":"bad",`+
+			`"accent_color":"#ffffff","default_locale":"fr-FR","default_timezone":"Nowhere"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if invalidOrganizationProfile.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidOrganizationProfile.Body.String(), `"website_url"`) ||
+		!strings.Contains(invalidOrganizationProfile.Body.String(), `"default_timezone"`) {
+		t.Fatalf("invalid organization profile status = %d, body = %s",
+			invalidOrganizationProfile.Code, invalidOrganizationProfile.Body.String())
+	}
 	secondVerify := performTenantRequest(handler, http.MethodPost, "/auth/verify", `{"token":"`+ownerMagicToken+`"}`, "", nil)
 	if secondVerify.Code != http.StatusUnauthorized {
 		t.Errorf("second verify status = %d", secondVerify.Code)
@@ -273,6 +328,10 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	if len(viewerSession.Member.Permissions) != 1 || viewerSession.Member.Permissions[0] != "project:read" {
 		t.Errorf("viewer permissions = %#v", viewerSession.Member.Permissions)
 	}
+	if viewerSession.Member.Locale != nil || viewerSession.Member.Timezone != nil {
+		t.Fatalf("new viewer regional preferences = %v/%v, want inherit",
+			viewerSession.Member.Locale, viewerSession.Member.Timezone)
+	}
 
 	members := performTenantRequest(handler, http.MethodGet, "/v1/members", "", ownerSession.AccessToken, nil)
 	if members.Code != http.StatusOK || !strings.Contains(members.Body.String(), "viewer@acme.test") ||
@@ -282,6 +341,175 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	viewerForbidden := performTenantRequest(handler, http.MethodGet, "/v1/members", "", viewerSession.AccessToken, nil)
 	if viewerForbidden.Code != http.StatusForbidden {
 		t.Errorf("viewer members status = %d", viewerForbidden.Code)
+	}
+	viewerOwnProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"name":"  Jamie Analyst  "}`, viewerSession.AccessToken, nil,
+	)
+	if viewerOwnProfile.Code != http.StatusOK ||
+		!strings.Contains(viewerOwnProfile.Body.String(), `"name":"Jamie Analyst"`) {
+		t.Fatalf("viewer own profile status = %d, body = %s",
+			viewerOwnProfile.Code, viewerOwnProfile.Body.String())
+	}
+	var viewerProfileName string
+	var viewerProfileAudit int
+	if err := root.QueryRow(ctx, `
+		SELECT name FROM tenant_members WHERE tenant_id = $1 AND id = $2
+	`, tenantID, viewerSession.Member.ID).Scan(&viewerProfileName); err != nil ||
+		viewerProfileName != "Jamie Analyst" {
+		t.Fatalf("viewer profile name = %q, error = %v", viewerProfileName, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.profile_updated'
+		  AND actor_member_id = $2 AND subject_member_id = $2
+	`, tenantID, viewerSession.Member.ID).Scan(&viewerProfileAudit); err != nil ||
+		viewerProfileAudit != 1 {
+		t.Fatalf("viewer profile audit = %d, error = %v", viewerProfileAudit, err)
+	}
+	regionalProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"locale":" PT_ao ","timezone":" Africa/Luanda "}`, viewerSession.AccessToken, nil,
+	)
+	var regionalEnvelope struct {
+		Member Member `json:"member"`
+	}
+	if regionalProfile.Code != http.StatusOK ||
+		json.Unmarshal(regionalProfile.Body.Bytes(), &regionalEnvelope) != nil {
+		t.Fatalf("regional profile status = %d, body = %s",
+			regionalProfile.Code, regionalProfile.Body.String())
+	}
+	if regionalEnvelope.Member.Name == nil || *regionalEnvelope.Member.Name != "Jamie Analyst" ||
+		regionalEnvelope.Member.Locale == nil || *regionalEnvelope.Member.Locale != "pt-AO" ||
+		regionalEnvelope.Member.Timezone == nil || *regionalEnvelope.Member.Timezone != "Africa/Luanda" {
+		t.Fatalf("regional profile member = %#v", regionalEnvelope.Member)
+	}
+	refreshedViewer := performTenantRequest(
+		handler, http.MethodPost, "/auth/refresh", "", "", viewerCookie,
+	)
+	refreshedViewerSession := decodeTenantSession(t, refreshedViewer)
+	if refreshedViewerSession.Member.Locale == nil ||
+		*refreshedViewerSession.Member.Locale != "pt-AO" ||
+		refreshedViewerSession.Member.Timezone == nil ||
+		*refreshedViewerSession.Member.Timezone != "Africa/Luanda" {
+		t.Fatalf("refreshed viewer regional preferences = %#v", refreshedViewerSession.Member)
+	}
+	regionalMembers := performTenantRequest(
+		handler, http.MethodGet, "/v1/members", "", ownerSession.AccessToken, nil,
+	)
+	if regionalMembers.Code != http.StatusOK ||
+		!strings.Contains(regionalMembers.Body.String(), `"locale":"pt-AO"`) ||
+		!strings.Contains(regionalMembers.Body.String(), `"timezone":"Africa/Luanda"`) {
+		t.Fatalf("member listing regional preferences = %d, body = %s",
+			regionalMembers.Code, regionalMembers.Body.String())
+	}
+	var auditPreviousLocale, auditLocale, auditPreviousTimezone, auditTimezone *string
+	if err := root.QueryRow(ctx, `
+		SELECT data->>'previous_locale', data->>'locale',
+		       data->>'previous_timezone', data->>'timezone'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.profile_updated'
+		  AND actor_member_id = $2
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, tenantID, viewerSession.Member.ID).Scan(
+		&auditPreviousLocale, &auditLocale, &auditPreviousTimezone, &auditTimezone,
+	); err != nil {
+		t.Fatalf("read member regional audit: %v", err)
+	}
+	if auditPreviousLocale != nil || auditPreviousTimezone != nil ||
+		auditLocale == nil || *auditLocale != "pt-AO" ||
+		auditTimezone == nil || *auditTimezone != "Africa/Luanda" {
+		t.Fatalf("member regional audit = %v/%v and %v/%v",
+			auditPreviousLocale, auditLocale, auditPreviousTimezone, auditTimezone)
+	}
+	clearLocale := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"locale":null}`, viewerSession.AccessToken, nil,
+	)
+	var clearLocaleEnvelope struct {
+		Member Member `json:"member"`
+	}
+	if clearLocale.Code != http.StatusOK ||
+		json.Unmarshal(clearLocale.Body.Bytes(), &clearLocaleEnvelope) != nil ||
+		clearLocaleEnvelope.Member.Locale != nil ||
+		clearLocaleEnvelope.Member.Timezone == nil ||
+		*clearLocaleEnvelope.Member.Timezone != "Africa/Luanda" {
+		t.Fatalf("clear locale response = %d, %#v, body = %s",
+			clearLocale.Code, clearLocaleEnvelope.Member, clearLocale.Body.String())
+	}
+	clearTimezone := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"timezone":""}`, viewerSession.AccessToken, nil,
+	)
+	var clearTimezoneEnvelope struct {
+		Member Member `json:"member"`
+	}
+	if clearTimezone.Code != http.StatusOK ||
+		json.Unmarshal(clearTimezone.Body.Bytes(), &clearTimezoneEnvelope) != nil ||
+		clearTimezoneEnvelope.Member.Locale != nil || clearTimezoneEnvelope.Member.Timezone != nil {
+		t.Fatalf("clear timezone response = %d, %#v, body = %s",
+			clearTimezone.Code, clearTimezoneEnvelope.Member, clearTimezone.Body.String())
+	}
+	noOpProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile", `{}`, viewerSession.AccessToken, nil,
+	)
+	if noOpProfile.Code != http.StatusOK {
+		t.Fatalf("empty profile patch status = %d, body = %s",
+			noOpProfile.Code, noOpProfile.Body.String())
+	}
+	sameProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"name":"Jamie Analyst","locale":null,"timezone":null}`,
+		viewerSession.AccessToken, nil,
+	)
+	if sameProfile.Code != http.StatusOK {
+		t.Fatalf("unchanged profile patch status = %d, body = %s",
+			sameProfile.Code, sameProfile.Body.String())
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.profile_updated'
+		  AND actor_member_id = $2 AND subject_member_id = $2
+	`, tenantID, viewerSession.Member.ID).Scan(&viewerProfileAudit); err != nil ||
+		viewerProfileAudit != 4 {
+		t.Fatalf("viewer profile audit after regional updates = %d, error = %v",
+			viewerProfileAudit, err)
+	}
+	invalidViewerProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"name":"`+strings.Repeat("x", 121)+`","locale":"fr-FR","timezone":"Nowhere/Unknown"}`,
+		viewerSession.AccessToken, nil,
+	)
+	if invalidViewerProfile.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidViewerProfile.Body.String(), `"name"`) ||
+		!strings.Contains(invalidViewerProfile.Body.String(), `"locale"`) ||
+		!strings.Contains(invalidViewerProfile.Body.String(), `"timezone"`) {
+		t.Fatalf("invalid viewer profile status = %d, body = %s",
+			invalidViewerProfile.Code, invalidViewerProfile.Body.String())
+	}
+	foreignToken, _, err := jwtManager.IssueTenantMember(
+		viewerSession.Member.ID, "00000000-0000-4000-8000-000000000099",
+		viewerSession.Member.Permissions, viewerSession.Member.AuthorizationVersion,
+	)
+	if err != nil {
+		t.Fatalf("issue foreign tenant token: %v", err)
+	}
+	foreignProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"locale":"pt"}`, foreignToken, nil,
+	)
+	if foreignProfile.Code != http.StatusForbidden {
+		t.Fatalf("foreign tenant profile status = %d, body = %s",
+			foreignProfile.Code, foreignProfile.Body.String())
+	}
+	viewerProfileUpdate := performTenantRequest(
+		handler, http.MethodPatch, "/v1/organization-profile",
+		`{"name":"Unauthorized"}`, viewerSession.AccessToken, nil,
+	)
+	if viewerProfileUpdate.Code != http.StatusForbidden {
+		t.Errorf("viewer organization profile update status = %d, body = %s",
+			viewerProfileUpdate.Code, viewerProfileUpdate.Body.String())
 	}
 
 	updatedViewer := performTenantRequest(

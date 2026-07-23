@@ -202,7 +202,7 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 ## Task 13: End-To-End Quality Gate
 
 **Depends on:** Tasks 9, 10, 11, and 12
-**Status:** In progress
+**Status:** Complete
 
 **Outcome:** The complete public protection flow is documented, tested, and ready in staging.
 
@@ -210,5 +210,274 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 
 **Acceptance:** Migration replay, full backend/widget/web suites, static checks, responsive
 screenshots, CI, and one staging journey all pass for the same commit.
+
+**Completion:** Commit `4fd55a5` passed backend coverage, formatting, vet, golangci-lint, Compose,
+container, security, and release CI before Railway promoted API and worker in staging. The real
+Tauview widget accepted an independent four-star feedback, persisted one normalized submitted state
+across query/hash and trailing-slash variants, suppressed repeat display, surfaced the unlinked
+feedback in the inbox, completed AI analysis, and allowed the QA record to be archived.
+
+**Autonomy:** AFK
+
+# Organization Identity And Profile
+
+**Source:** `docs/superpowers/specs/2026-07-23-fidibeki-organization-identity-design.md`
+
+## Task 14: Forward-Compatible Profile Schema
+
+**Depends on:** Task 13
+**Status:** Complete
+
+**Outcome:** Tenant and member records hold organization profile and versioned identity metadata.
+
+**Acceptance:** Migration up/down/up tests prove constraints, RLS, grants, preservation, and
+rollback.
+
+**Autonomy:** AFK
+
+## Task 15: Organization Profile Contract And Inheritance
+
+**Depends on:** Task 14
+**Status:** Complete
+
+**Outcome:** Authorized administrators update organization defaults with audit, and existing project
+and widget overrides remain effective.
+
+**Acceptance:** Backend integration tests prove validation, permissions, audit, clear-to-fallback,
+and organization -> project -> widget inheritance.
+
+**Autonomy:** AFK
+
+## Task 16: Bounded Identity Asset Lifecycle
+
+**Depends on:** Task 14
+**Status:** Complete
+
+**Outcome:** Workspace logos and self-managed avatars are securely normalized, versioned, served,
+replaced, and removed.
+
+**Acceptance:** Image and HTTP integration tests prove supported/invalid inputs, rate limits, RBAC,
+tenant isolation, cache busting, cleanup, and storage failure behavior.
+
+**Autonomy:** AFK
+
+## Task 17: Shared Identity UI
+
+**Depends on:** Tasks 15 and 16
+**Status:** Complete
+
+**Outcome:** Settings and operational surfaces render organization/member identity with immediate
+updates and resilient initials fallbacks.
+
+**Acceptance:** Web unit and browser tests prove edit/upload/remove, field errors, read-only states,
+broken-image fallback, and responsive layouts.
+
+**Autonomy:** AFK
+
+## Task 18: Organization Identity Quality Gate
+
+**Depends on:** Task 17
+**Status:** Complete
+
+**Outcome:** Issues #30 and #31 are fully usable in staging.
+
+**Acceptance:** Migration, backend, web, widget, static, browser, CI, and real staging checks pass
+for the same commit without production work.
+
+**Completion:** Commit `92496cd` passed backend, web, security, and release CI. Railway staging
+applied migration 71 and serves the corresponding API/worker/web revisions. Authenticated Tauview
+journeys proved avatar and workspace-logo upload, immutable reads, immediate propagation, removal,
+fallback restoration, and no cleanup lock; all temporary identity data was removed.
+
+**Autonomy:** AFK
+
+# Member-Aware Localization
+
+**Source:** `docs/superpowers/specs/2026-07-23-fidibeki-member-aware-localization-design.md`
+
+## Task 19: Member Regional Preference Schema
+
+**Depends on:** Task 18
+**Status:** Complete
+
+**Outcome:** Member records hold nullable locale and timezone preferences without changing existing
+behavior.
+
+**Acceptance:** Migration `up/down/up` proves preservation, constraints, RLS, grants, and rollback.
+
+**Completion:** Migration 72 adds nullable normalized `locale` and syntactically safe IANA
+`timezone` preferences to existing member rows. The migration integration cycle proves defaults,
+supported/invalid values, app grants, tenant-scoped updates, cross-tenant denial, preservation,
+rollback, and clean reapplication.
+
+**Autonomy:** AFK
+
+## Task 20: Profile And Session Regional Contract
+
+**Depends on:** Task 19
+**Status:** Complete
+
+**Outcome:** Self-service profile updates and every member/session read expose validated regional
+preferences.
+
+**Acceptance:** Tenant-member integration tests prove partial update, inherit, validation, audit,
+isolation, and refresh propagation.
+
+**Completion:** `PATCH /v1/profile` now distinguishes omitted fields from explicit clears, validates
+and normalizes the supported locale set and IANA timezones, and updates name, locale, and timezone
+atomically with a single audit event only when values change. Authentication refresh and member
+listing return the nullable preferences without changing JWT claims. Focused normalization and
+tenant-member integration tests prove update, inherit, invalid input, no-op, audit, cross-tenant
+isolation, and refresh propagation; the full package test and `go vet` pass.
+
+**Autonomy:** AFK
+
+## Task 21: SSR-Safe Localization Runtime
+
+**Depends on:** Task 20
+**Status:** Complete
+
+**Outcome:** Nuxt resolves reactive no-prefix locales through member, organization, browser, and
+English precedence.
+
+**Acceptance:** Unit/browser tests prove Portuguese fallback, matching SSR hydration, and reactive
+`lang`/`dir`.
+
+**Completion:** Nuxt now uses `@nuxtjs/i18n` with unchanged `no_prefix` routes and lazy English,
+Portuguese, regional Portuguese, and pseudo-locale catalogs. A shared regional context resolves
+locale and timezone independently through member, organization, browser, and safe defaults; SSR
+uses `Accept-Language` plus first-party browser cookies and defers first-client detection until
+mount. The auth middleware applies the resolved locale before render, catalog switching is atomic,
+and root `lang`/`dir` attributes react to preference changes. Unit normalization/precedence tests,
+typecheck, production build, 139 full browser tests with CI-equivalent concurrency, and four
+production-build SSR/hydration tests pass across desktop and mobile.
+
+**Autonomy:** AFK
+
+## Task 22: Regional Format And Error Helpers
+
+**Depends on:** Task 21
+**Status:** Complete
+
+**Outcome:** Shared locale/timezone-aware formatters and safe localized API errors replace fixed
+English/UTC helpers.
+
+**Acceptance:** Unit tests prove DST/midnight, numeric formats, plurals, known errors, and unknown
+fallback.
+
+**Completion:** A shared cached `Intl` formatter factory and reactive composable now format dates,
+times, numbers, currencies, percentages, relative time, lists, and plural categories with the
+resolved member context. A centralized localized API-error layer maps only allowlisted stable
+codes, reasons, and structured field reasons, preventing arbitrary backend or provider text from
+reaching users while preserving a generic fallback. English and Portuguese catalogs cover the
+stable contract, including plural messages. Focused DST/midnight, Angolan numeric, plural,
+known/unknown error, and legacy compatibility tests pass; the full 93-test web unit suite,
+typecheck, production build, and four responsive regional-runtime browser tests also pass.
+
+**Autonomy:** AFK
+
+## Task 23: Profile And Shared Navigation Localization
+
+**Depends on:** Tasks 20, 21, and 22
+**Status:** Pending
+
+**Outcome:** Members switch preferences without logout and shared shell/account surfaces update
+immediately.
+
+**Acceptance:** Responsive browser tests prove switching, inheritance, accessible copy, and
+identity regression safety.
+
+**Autonomy:** AFK
+
+## Task 24: Authentication And Onboarding Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Public authentication and onboarding surfaces use English/Portuguese catalogs.
+
+**Acceptance:** Browser tests cover the complete public/auth onboarding journey in both languages.
+
+**Autonomy:** AFK
+
+## Task 25: Dashboard And Analytics Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Dashboard and widget analytics copy and metrics use effective regional settings.
+
+**Acceptance:** Unit/browser tests prove localized metrics/states without changing calculations.
+
+**Autonomy:** AFK
+
+## Task 26: Feedback Operations Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Feedback queue, detail, evidence, replay, moderation, triage, and linking use catalogs.
+
+**Acceptance:** Portuguese browser workflows preserve customer-authored content and exact mutations.
+
+**Autonomy:** AFK
+
+## Task 27: Issue Collaboration Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Issue operations, comments, mentions, activity, reporter access, and notifications use
+catalogs.
+
+**Acceptance:** Portuguese collaboration workflows prove copy, plurals, dates, accessibility, and
+mutation parity.
+
+**Autonomy:** AFK
+
+## Task 28: Project And Widget Configuration Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Project and widget configuration UI uses catalogs while customer widget content stays
+independent.
+
+**Acceptance:** Portuguese browser tests preserve customer content and exact API payloads.
+
+**Autonomy:** AFK
+
+## Task 29: Settings, Billing, And Shared Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Administration, diagnostics, privacy, billing, and remaining shared production
+components use catalogs.
+
+**Acceptance:** Portuguese browser tests preserve permissions and operational behavior.
+
+**Autonomy:** AFK
+
+## Task 30: Catalog And Pseudo-Locale Quality Gate
+
+**Depends on:** Tasks 23 through 29
+**Status:** Pending
+
+**Outcome:** Catalog parity, extraction coverage, and expanded layout resilience are enforced.
+
+**Acceptance:** Static/unit and responsive pseudo-locale tests detect missing keys, literals,
+interpolation loss, clipping, overlap, and overflow.
+
+**Autonomy:** AFK
+
+## Task 31: Localization Staging Gate
+
+**Depends on:** Task 30
+**Status:** Pending
+
+**Outcome:** #32 is fully usable in staging.
+
+**Acceptance:** Full local, CI, and real staging locale/timezone journeys pass on the same commit.
 
 **Autonomy:** AFK

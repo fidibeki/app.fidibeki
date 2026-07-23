@@ -179,6 +179,7 @@ const triageMembers = computed(() => {
   if (assignee && !options.some(option => option.id === assignee.id)) {
     options.push({
       id: assignee.id, tenant_id: '', email: assignee.email, name: assignee.name || undefined,
+      avatar_version: assignee.avatar_version,
       permissions: [], status: 'active', role: 'member', verified: false,
     })
   }
@@ -375,11 +376,6 @@ function toggleSelectedTag(tagID: string, checked: boolean) {
   return updateSelectedTriage(checked ? { add_tag_ids: [tagID] } : { remove_tag_ids: [tagID] }, 'Tags updated.')
 }
 
-function assigneeInitials(item: FeedbackItem) {
-  const value = item.assignee?.name || item.assignee?.email || ''
-  return value.split(/\s+|@/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
-}
-
 function priorityLabel(priority?: TriagePriority | null) {
   return priority ? priority[0].toUpperCase() + priority.slice(1) : ''
 }
@@ -490,7 +486,7 @@ useHead({ title: 'Feedback · Fidibeki' })
           <div class="feedback-row-copy"><strong>{{ copy(item) }}</strong><span>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</span></div>
           <div class="feedback-triage-markers">
             <span v-if="item.priority" class="feedback-priority-mark" :data-priority="item.priority">{{ priorityLabel(item.priority) }}</span>
-            <span v-if="item.assignee" class="feedback-assignee-mark" :title="item.assignee.name || item.assignee.email">{{ assigneeInitials(item) }}</span>
+            <span v-if="item.assignee" class="feedback-assignee-mark" :title="item.assignee.name || item.assignee.email"><MemberAvatar :member-id="item.assignee.id" :name="item.assignee.name" :email="item.assignee.email" :avatar-version="item.assignee.avatar_version" /></span>
             <span v-if="item.tags?.length" class="feedback-tag-marks" :title="item.tags.map(tag => tag.name).join(', ')"><i v-for="tag in item.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
             <span v-if="!item.priority && !item.assignee && !item.tags?.length" class="muted">Untriaged</span>
           </div>
@@ -593,7 +589,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: #315b52; background: #eaf3f0; border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .feedback-priority-mark[data-priority='high'] { color: #8d4918; background: #fff0e3; }
 .feedback-priority-mark[data-priority='urgent'] { color: #92333f; background: #fbe9eb; }
-.feedback-assignee-mark { display: grid; width: 23px; height: 23px; flex: 0 0 23px; place-items: center; color: #315b52; background: #dce9e6; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; font-weight: 800; }
+.feedback-assignee-mark { display: block; width: 23px; height: 23px; flex: 0 0 23px; overflow: hidden; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; }
 .feedback-tag-marks { display: flex; min-width: 10px; gap: 2px; }
 .feedback-tag-marks i { width: 6px; height: 18px; flex: 0 0 6px; border-radius: 2px; }
 .feedback-triage-markers > .muted { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }

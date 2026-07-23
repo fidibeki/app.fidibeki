@@ -38,11 +38,23 @@ type Member struct {
 	TenantID             string       `json:"tenant_id"`
 	Email                string       `json:"email"`
 	Name                 *string      `json:"name,omitempty"`
+	AvatarVersion        *string      `json:"avatar_version,omitempty"`
+	Locale               *string      `json:"locale"`
+	Timezone             *string      `json:"timezone"`
 	Permissions          []string     `json:"permissions"`
 	Status               MemberStatus `json:"status"`
 	Role                 string       `json:"role"`
 	Verified             bool         `json:"verified"`
 	AuthorizationVersion int          `json:"-"`
+}
+
+type MemberProfilePatch struct {
+	SetName     bool
+	Name        *string
+	SetLocale   bool
+	Locale      *string
+	SetTimezone bool
+	Timezone    *string
 }
 
 type MemberDomain struct {

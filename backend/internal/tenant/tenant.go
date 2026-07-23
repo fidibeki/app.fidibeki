@@ -31,6 +31,7 @@ const (
 type Tenant struct {
 	ID                       string
 	Name                     string
+	ShortName                *string
 	Slug                     string
 	Plan                     Plan
 	Status                   Status
@@ -38,6 +39,35 @@ type Tenant struct {
 	DeletionRequestedAt      *time.Time
 	ReporterAccessEnabled    bool
 	WidgetAppearanceDefaults widgetconfig.AppearanceOverrides
+	WebsiteURL               *string
+	SupportEmail             *string
+	DefaultLocale            *string
+	DefaultTimezone          *string
+	PrivacyPolicyURL         *string
+	TermsURL                 *string
+	LogoVersion              *string
+}
+
+type OrganizationProfile struct {
+	Name             string  `json:"name"`
+	ShortName        *string `json:"short_name"`
+	WebsiteURL       *string `json:"website_url"`
+	SupportEmail     *string `json:"support_email"`
+	AccentColor      *string `json:"accent_color"`
+	DefaultLocale    *string `json:"default_locale"`
+	DefaultTimezone  *string `json:"default_timezone"`
+	PrivacyPolicyURL *string `json:"privacy_policy_url"`
+	TermsURL         *string `json:"terms_url"`
+	LogoVersion      *string `json:"logo_version"`
+}
+
+func (t Tenant) OrganizationProfile() OrganizationProfile {
+	return OrganizationProfile{
+		Name: t.Name, ShortName: t.ShortName, WebsiteURL: t.WebsiteURL,
+		SupportEmail: t.SupportEmail, AccentColor: t.WidgetAppearanceDefaults.AccentColor,
+		DefaultLocale: t.DefaultLocale, DefaultTimezone: t.DefaultTimezone,
+		PrivacyPolicyURL: t.PrivacyPolicyURL, TermsURL: t.TermsURL, LogoVersion: t.LogoVersion,
+	}
 }
 
 type Resolver interface {

@@ -32,9 +32,10 @@ func (priority Priority) Rank() int {
 }
 
 type Assignee struct {
-	ID    string  `json:"id"`
-	Name  *string `json:"name,omitempty"`
-	Email string  `json:"email"`
+	ID            string  `json:"id"`
+	Name          *string `json:"name,omitempty"`
+	Email         string  `json:"email"`
+	AvatarVersion *string `json:"avatar_version,omitempty"`
 }
 
 type Tag struct {

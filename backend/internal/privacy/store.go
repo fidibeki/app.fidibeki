@@ -338,7 +338,7 @@ func (s Store) CompleteJob(
 			RETURNING id
 		)
 		SELECT id FROM completed
-	`, job.ID, job.TenantID, job.Generation, now.UTC(), objectKey, size, job.ActorMemberID, data).
+	`, job.ID, job.TenantID, job.Generation, now.UTC(), objectKey, size, job.ActorMemberID, string(data)).
 		Scan(&completedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrJobUnavailable
@@ -410,7 +410,7 @@ func recordPrivacyAudit(
 		INSERT INTO tenant_access_events (
 			tenant_id, kind, actor_member_id, subject_member_id, data
 		) VALUES ($1, $2, $3, NULL, $4::jsonb || jsonb_build_object('privacy_job_id', $5::text))
-	`, tenantID, kind, actor, encoded, jobID); err != nil {
+	`, tenantID, kind, actor, string(encoded), jobID); err != nil {
 		return fmt.Errorf("record privacy audit: %w", err)
 	}
 	return nil

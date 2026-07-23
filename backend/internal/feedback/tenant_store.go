@@ -55,6 +55,7 @@ const tenantFeedbackColumns = `
 	feedback.text, feedback.text_cleaned, feedback.ai_suggested_title,
 	feedback.ai_actionability, feedback.ai_category, feedback.ai_priority,
 	feedback.priority, assignee.id, assignee.name, assignee.email::text,
+	assignee.avatar_version::text,
 	COALESCE((
 		SELECT jsonb_agg(
 			jsonb_build_object('id', tag.id, 'name', tag.name::text, 'color', tag.color)
@@ -646,16 +647,17 @@ type tenantRowScanner interface {
 func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 	var item Item
 	var attachmentKinds []string
-	var assigneeID, assigneeName, assigneeEmail *string
+	var assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion *string
 	var tagPayload []byte
 	var responsesPayload []byte
 	if err := row.Scan(tenantFeedbackScanTargets(
-		&item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload, &responsesPayload,
+		&item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail,
+		&assigneeAvatarVersion, &tagPayload, &responsesPayload,
 	)...); err != nil {
 		return Item{}, err
 	}
 	if err := finalizeTenantFeedbackTriage(
-		&item, assigneeID, assigneeName, assigneeEmail, tagPayload,
+		&item, assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion, tagPayload,
 	); err != nil {
 		return Item{}, err
 	}
@@ -669,18 +671,19 @@ func scanTenantFeedback(row tenantRowScanner) (Item, error) {
 func scanTenantFeedbackDetail(row tenantRowScanner) (Detail, error) {
 	var detail Detail
 	var attachmentKinds []string
-	var assigneeID, assigneeName, assigneeEmail *string
+	var assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion *string
 	var tagPayload []byte
 	var responsesPayload []byte
 	targets := tenantFeedbackScanTargets(
-		&detail.Item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload, &responsesPayload,
+		&detail.Item, &attachmentKinds, &assigneeID, &assigneeName, &assigneeEmail,
+		&assigneeAvatarVersion, &tagPayload, &responsesPayload,
 	)
 	targets = append(targets, &detail.DOMSnapshotHTML, &detail.DOMSnapshotStyles, &detail.AIProcessedAt)
 	if err := row.Scan(targets...); err != nil {
 		return Detail{}, err
 	}
 	if err := finalizeTenantFeedbackTriage(
-		&detail.Item, assigneeID, assigneeName, assigneeEmail, tagPayload,
+		&detail.Item, assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion, tagPayload,
 	); err != nil {
 		return Detail{}, err
 	}
@@ -697,6 +700,7 @@ func tenantFeedbackScanTargets(
 	assigneeID **string,
 	assigneeName **string,
 	assigneeEmail **string,
+	assigneeAvatarVersion **string,
 	tagPayload *[]byte,
 	responsesPayload *[]byte,
 ) []any {
@@ -707,7 +711,7 @@ func tenantFeedbackScanTargets(
 		&item.DefinitionVersion, &item.Title, &item.Description,
 		&item.Text, &item.TextCleaned, &item.AISuggestedTitle,
 		&item.AIActionability, &item.AICategory, &item.AIPriority,
-		&item.Priority, assigneeID, assigneeName, assigneeEmail, tagPayload,
+		&item.Priority, assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion, tagPayload,
 		&item.ReporterEmail, &item.NotifyReporter,
 		&item.ReporterConsentGrantedAt, &item.ReporterConsentWithdrawnAt,
 		&item.PageURL, &item.Referrer,
@@ -723,10 +727,14 @@ func finalizeTenantFeedbackTriage(
 	assigneeID *string,
 	assigneeName *string,
 	assigneeEmail *string,
+	assigneeAvatarVersion *string,
 	tagPayload []byte,
 ) error {
 	if assigneeID != nil && assigneeEmail != nil {
-		item.Assignee = &triage.Assignee{ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail}
+		item.Assignee = &triage.Assignee{
+			ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail,
+			AvatarVersion: assigneeAvatarVersion,
+		}
 	}
 	tags, err := triage.DecodeTags(tagPayload)
 	if err != nil {

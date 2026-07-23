@@ -26,6 +26,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -1157,6 +1158,7 @@ func privacyTestDatabase(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("parse privacy database URL: %v", err)
 	}
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	config.MaxConns = 8
 	database, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

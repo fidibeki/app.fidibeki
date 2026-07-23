@@ -51,8 +51,17 @@ func configHandler(resolve ContextResolver) http.HandlerFunc {
 				"deletion_requested_at":      resolved.DeletionRequestedAt,
 				"reporter_access_enabled":    resolved.ReporterAccessEnabled,
 				"widget_appearance_defaults": resolved.WidgetAppearanceDefaults,
+				"short_name":                 resolved.ShortName,
+				"website_url":                resolved.WebsiteURL,
+				"support_email":              resolved.SupportEmail,
+				"default_locale":             resolved.DefaultLocale,
+				"default_timezone":           resolved.DefaultTimezone,
+				"privacy_policy_url":         resolved.PrivacyPolicyURL,
+				"terms_url":                  resolved.TermsURL,
+				"logo_version":               resolved.LogoVersion,
 			},
-			"plan": definition,
+			"organization_profile": resolved.OrganizationProfile(),
+			"plan":                 definition,
 		})
 	}
 }

@@ -262,7 +262,7 @@ was removed from the staging test tenant.
         Welcome and payment-failure previews were rendered and inspected at 1280 and 390 pixels;
         all Go packages, migration replay, static analysis, web unit/type checks, and the Nuxt build
         pass. `docs/transactional-email.md` records inventory, sender, consent, and retry policy.
-  - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
+  - [x] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
     - [x] #24 slice 1: add the explicit ownership invariant, append-only tenant access audit,
       current authorization-version enforcement, atomic recent-auth ownership transfer, and the
       owner-visible responsive Settings workflow.
@@ -282,7 +282,7 @@ was removed from the staging test tenant.
         Legacy and current tenant JWTs are checked against live membership state and authorization
         versions on every request. PostgreSQL migration replay/isolation, backend coverage, static
         analysis, frontend checks, and desktop/mobile ownership journeys pass locally.
-    - [ ] #25: audit and implement data access/export/deletion/retention controls after #24.
+    - [x] #25: audit and implement data access/export/deletion/retention controls after #24.
       - Audit result: tenant deletion, plan-based replay cleanup, and bounded analytics retention
         already exist and must remain the authoritative paths. Completed attachments have no retention
         cleanup, replay deletion loses its manifest, `notify_reporter` does not preserve consent
@@ -310,15 +310,18 @@ was removed from the staging test tenant.
         requests, and 30-day verified access with audit records. `tenant:read` exposes the effective
         retention matrix, `docs/privacy-data-map.md` documents the technical/legal boundary, migration
         replay and retention boundary tests pass, and the backend coverage gate is restored above 80%.
-      - [ ] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile
+      - [x] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile
         E2E, CI, and staging validation.
         Local implementation now exposes the plan-effective retention matrix, workspace export
         generation/history/download/retry, verified reporter export/anonymization requests with
         destructive confirmation, manual-review disclosure, and a neutral token-scoped public status
         and download page. Signed download schemes are constrained to HTTP(S), token pages ship
-        no-store/no-referrer/noindex response headers, and desktop/mobile journeys pass. Web CI and the
-        real staging smoke remain the completion gate.
-    - [ ] #26: audit and implement layered public-submission abuse protection after #25.
+        no-store/no-referrer/noindex response headers, and desktop/mobile journeys pass.
+        Commit `4fd55a5` passed the full backend gate and official CI before staging promotion.
+        Authenticated Tauview validation queued and completed a workspace export in one attempt,
+        issued and consumed a short-lived signed download, verified the 38 KB ZIP inventory, and
+        rendered Data & privacy responsively at 1280 and 390 pixels without horizontal overflow.
+    - [x] #26: audit and implement layered public-submission abuse protection after #25.
       - Audit result: public-key/origin authorization, honeypot, a 1 MiB request bound, basic
         project/network rate limits, plan quota, per-kind attachment declarations, one-time
         completion tokens, replay decoding, moderation, and a global provider limiter already exist.
@@ -327,7 +330,7 @@ was removed from the staging test tenant.
         stable widget retry UX, and tenant-safe diagnostics remain incomplete.
       - Approved design:
         `docs/superpowers/specs/2026-07-23-public-submission-abuse-protection-design.md`.
-      - [ ] Slice 1: shared HMAC buckets and named policies, stable error details, aggregate
+      - [x] Slice 1: shared HMAC buckets and named policies, stable error details, aggregate
         diagnostics/API, declaration bounds, and distributed/concurrency coverage.
         Local implementation now derives rotating HMAC identities before Redis, composes named
         project/origin/network/visitor policies, preserves the existing error envelope while adding
@@ -337,7 +340,7 @@ was removed from the staging test tenant.
         slots and a 125 MiB aggregate before storage, records honeypot/quota/rate pressure, retains
         text when an unavailable limiter denies optional upload grants, and keeps legacy handler
         compatibility. Focused backend, PostgreSQL/Redis concurrency, migration replay, and static
-        analysis pass locally; CI and staging remain the slice gate.
+        analysis pass locally; the shared CI and staging gate completed in slice 4.
       - [x] Slice 2: explicit upload expiry, quarantine and deterministic signature verification,
         safe-only preview/AI/export, cleanup/reconciliation, and failure coverage.
         Migration `65` preserves completed legacy objects as safe and expires abandoned
@@ -358,7 +361,7 @@ was removed from the staging test tenant.
         window, expose that state to the inbox, support explicit recovery, and record only aggregate
         budget/provider diagnostics. PostgreSQL migration replay, Redis/PostgreSQL concurrency,
         backend integration, widget unit, and static contract checks pass locally.
-      - [ ] Slice 4: widget retry/error experience, responsive Submission health diagnostics,
+      - [x] Slice 4: widget retry/error experience, responsive Submission health diagnostics,
         desktop/mobile E2E, CI, and staging validation.
         The widget portion is complete locally: stable public reasons map to localized inline copy,
         JSON/`Retry-After` delays drive an accessible countdown, and retry preserves the original
@@ -375,9 +378,60 @@ was removed from the staging test tenant.
         drove forward-only migrations `68`/`69`, server-owned immutable media promotion, real
         container parsing, replay finalization sealing, retryable object cleanup outside API
         transactions, bounded disk staging, queue isolation, and indexed AI maintenance. The final
-        local regression gate passes; CI and one real staging journey remain.
-  - [ ] Complete workspace identity and organization profile issues #30 and #31.
+        local regression gate and official CI pass. Staging Submission health rendered real
+        aggregate diagnostics responsively without overflow. A fresh Tauview session submitted
+        four-star feedback with `201`, created no Issue, persisted `submitted` under the normalized
+        `/en` page identity, remained suppressed for query/hash and `/en/` variants, appeared in the
+        inbox with completed analysis, and was archived after validation.
+  - [x] Complete workspace identity and organization profile issues #30 and #31.
+    - Audit result: tenant name, widget appearance inheritance, object storage, member permissions,
+      and append-only access audit already exist. Organization metadata, bounded image processing,
+      versioned identity assets, self profile management, and shared logo/avatar rendering are
+      missing. Extend those contracts rather than adding a separate identity or public upload
+      service.
+    - Approved design:
+      `docs/superpowers/specs/2026-07-23-fidibeki-organization-identity-design.md`.
+    - [x] Slice 1: forward-compatible tenant/member profile schema, cleanup queue, validation,
+      normalized organization profile updates, audit, and preserved appearance inheritance.
+    - [x] Slice 2: bounded PNG/JPEG/WebP processing, immutable 64/256 PNG variants, workspace logo
+      and self-avatar lifecycle, RBAC, rate limiting, versioned reads, and retryable cleanup.
+    - [x] Slice 3: Settings/profile editing and shared navigation, member, assignee, comment,
+      mention, notification, and activity identity rendering with resilient initials fallbacks.
+    - [x] Slice 4: migration/backend/web/browser/CI and real staging validation.
+      Migration replay, full backend tests/vet, web unit/type/build/browser suites, widget
+      unit/type/build/browser suites, desktop/mobile identity screenshots, field/read-only states,
+      upload/remove flows, and broken-asset fallbacks pass. Commit `92496cd` passed backend, web,
+      security, and release CI; Railway staging applied migration 71 and serves the matching
+      API/worker/web source. The authenticated Tauview journey proved avatar and workspace-logo
+      upload, immutable 64/256 reads through the tenant proxy, immediate propagation, removal,
+      fallbacks, and cleanup without lock. Temporary identity data was restored.
   - [ ] Complete member-aware internationalization issue #32.
+    - Audit result: organization locale/timezone defaults and independent widget localization
+      exist; member preferences, Nuxt i18n, SSR-aware precedence, regional formatters, localized
+      API errors, message catalogs, and extraction enforcement are missing.
+    - Approved design:
+      `docs/superpowers/specs/2026-07-23-fidibeki-member-aware-localization-design.md`.
+    - [x] Slice 1: additive member locale/timezone schema, self-service profile updates, session
+      propagation, normalization, audit, and clear-to-inherit behavior.
+      Migration 72 preserves existing members and enforces nullable regional preferences. The
+      profile API now supports true partial updates, explicit inheritance clears, normalized
+      supported locales, IANA timezone validation, one audit per real change, and preference
+      propagation through member/session reads. Migration and tenant-member integration coverage,
+      the full package test, and `go vet` pass locally.
+    - [x] Slice 2: no-prefix Nuxt i18n runtime, SSR-safe precedence, Portuguese regional fallback,
+      reactive document language/direction, and centralized regional/error formatting.
+      Nuxt now resolves lazy no-prefix English, Portuguese, regional Portuguese, and pseudo-locale
+      catalogs before SSR rendering, applies member/organization/browser/default precedence
+      independently for locale and timezone, and reacts without hydration drift. Shared cached
+      regional formatters cover temporal, numeric, relative, list, and plural output; localized API
+      errors expose only allowlisted stable codes/reasons with safe generic fallbacks. Unit,
+      typecheck, production-build, full-browser, and focused responsive SSR/runtime gates pass.
+    - [ ] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate
+      preference switching.
+    - [ ] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,
+      settings/billing, and shared production catalogs without translating domain content.
+    - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
+      gates, CI, and real staging validation.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

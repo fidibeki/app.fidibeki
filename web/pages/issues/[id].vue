@@ -65,6 +65,7 @@ const triageMembers = computed(() => {
   if (assignee && !options.some(option => option.id === assignee.id)) {
     options.push({
       id: assignee.id, tenant_id: '', email: assignee.email, name: assignee.name || undefined,
+      avatar_version: assignee.avatar_version,
       permissions: [], status: 'active', role: 'member', verified: false,
     })
   }
@@ -288,7 +289,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
             <header><div><h2>Internal comments</h2><p>Collaborate with workspace members without changing status.</p></div><span>{{ data.comments.length }}</span></header>
             <div v-if="data.comments.length" class="issue-comment-list">
               <article v-for="entry in [...data.comments].reverse()" :key="entry.id">
-                <span>{{ (entry.author?.name || entry.author?.email || 'F').slice(0, 1).toUpperCase() }}</span>
+                <span><MemberAvatar v-if="entry.author" :member-id="entry.author.id" :name="entry.author.name" :email="entry.author.email" :avatar-version="entry.author.avatar_version" /><template v-else>F</template></span>
                 <div><header><b>{{ entry.author?.name || entry.author?.email || 'Former member' }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p>{{ entry.body }}</p><small v-if="entry.mentions.length"><AtSign :size="12" /> {{ entry.mentions.map(member => member.name || member.email).join(', ') }}</small></div>
               </article>
             </div>
@@ -300,7 +301,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
             </form>
           </section>
           <section class="app-surface issue-feedback"><header><h2>Linked feedback</h2><span>{{ data.feedbacks.length }} {{ data.feedbacks.length === 1 ? 'record' : 'records' }}</span></header><div v-if="!data.feedbacks.length" class="issue-empty">No readable feedback is linked.</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>-</span><p><b>{{ feedback.title || 'Feedback without written detail' }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></NuxtLink></section>
-          <section class="app-surface issue-history"><header><h2>Activity</h2><span>{{ data.activities.length }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span /><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>Issue created</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
+          <section class="app-surface issue-history"><header><h2>Activity</h2><span>{{ data.activities.length }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span class="issue-activity-avatar" :data-actor="Boolean(activity.actor)"><MemberAvatar v-if="activity.actor" :member-id="activity.actor.id" :name="activity.actor.name" :email="activity.actor.email" :avatar-version="activity.actor.avatar_version" /></span><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>Issue created</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
         </main>
         <aside>
           <OperationalTriageControls
@@ -349,7 +350,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-comments > header > span,
 .issue-history > header > span { color: var(--muted); font-size: 9px; }
 .issue-comment-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.issue-comment-list article > span { display: grid; width: 28px; height: 28px; place-items: center; background: var(--surface-soft); color: var(--teal); border: 1px solid var(--line); border-radius: 50%; font-size: 10px; font-weight: 800; }
+.issue-comment-list article > span { display: grid; width: 28px; height: 28px; place-items: center; overflow: hidden; background: var(--surface-soft); color: var(--teal); border: 1px solid var(--line); border-radius: 50%; font-size: 9px; font-weight: 800; }
 .issue-comment-list article header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .issue-comment-list article b { font-size: 10px; }
 .issue-comment-list article time { color: var(--muted); font-size: 9px; }
@@ -374,6 +375,8 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-history ol { margin: 0; padding: 14px 18px; list-style: none; }
 .issue-history li { display: grid; min-height: 66px; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; }
 .issue-history li > span { position: relative; width: 8px; height: 8px; margin-top: 4px; background: var(--teal); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px var(--teal); }
+.issue-history li > .issue-activity-avatar[data-actor='true'] { width: 22px; height: 22px; margin: -3px 0 0 -7px; overflow: hidden; background: var(--teal-soft); border: 1px solid var(--line); box-shadow: none; font-size: 7px; }
+.issue-history li > .issue-activity-avatar[data-actor='true']::after { top: 22px; left: 10px; height: 42px; }
 .issue-history li > span::after { position: absolute; top: 10px; left: 2px; width: 1px; height: 51px; background: var(--line); content: ''; }
 .issue-history li:last-child > span::after { display: none; }
 .issue-history p,

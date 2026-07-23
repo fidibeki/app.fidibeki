@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 69
+	const latestMigrationVersion = 72
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-10); err != nil {
+	if err := migrateToVersion(migrator, 59); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -463,6 +463,156 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		SELECT to_regclass('public.idx_ai_project_daily_usage_cleanup')::text
 	`).Scan(&aiCleanupIndex); err != nil || aiCleanupIndex == nil {
 		t.Fatalf("read AI project cleanup index = %v, error = %v", aiCleanupIndex, err)
+	}
+	var profileMigrationTenantID, profileMigrationMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Profile migration', 'profile-migration', 'starter', 'active')
+		RETURNING id
+	`).Scan(&profileMigrationTenantID); err != nil {
+		t.Fatalf("create organization profile migration tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name)
+		VALUES ($1, 'owner@profile-migration.test', 'Profile Owner')
+		RETURNING id
+	`, profileMigrationTenantID).Scan(&profileMigrationMemberID); err != nil {
+		t.Fatalf("create organization profile migration member: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply organization identity profile migration: %v", err)
+	}
+	var shortName, organizationDefaultLocale, defaultTimezone *string
+	var logoVersion, avatarVersion *string
+	if err := root.QueryRow(ctx, `
+		SELECT short_name, default_locale, default_timezone, logo_version
+		FROM tenants WHERE id = $1
+	`, profileMigrationTenantID).Scan(
+		&shortName, &organizationDefaultLocale, &defaultTimezone, &logoVersion,
+	); err != nil {
+		t.Fatalf("read migrated organization profile: %v", err)
+	}
+	if shortName != nil || organizationDefaultLocale != nil || defaultTimezone != nil || logoVersion != nil {
+		t.Fatalf("migrated organization defaults = %v/%v/%v/%v, want nil", shortName,
+			organizationDefaultLocale, defaultTimezone, logoVersion)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT avatar_version FROM tenant_members WHERE id = $1
+	`, profileMigrationMemberID).Scan(&avatarVersion); err != nil || avatarVersion != nil {
+		t.Fatalf("migrated member avatar = %v, error = %v, want nil", avatarVersion, err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET short_name = '', default_locale = 'not_a_locale', default_timezone = 'bad timezone'
+		WHERE id = $1
+	`, profileMigrationTenantID); err == nil {
+		t.Fatal("invalid organization profile constraints succeeded")
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO identity_asset_deletions (tenant_id, asset_kind, member_id, version)
+		VALUES ($1, 'workspace_logo', $2, gen_random_uuid())
+	`, profileMigrationTenantID, profileMigrationMemberID); err == nil {
+		t.Fatal("workspace logo cleanup with member subject succeeded")
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO identity_asset_deletions (tenant_id, asset_kind, member_id, version)
+		VALUES ($1, 'member_avatar', $2, gen_random_uuid())
+	`, profileMigrationTenantID, profileMigrationMemberID); err != nil {
+		t.Fatalf("create member avatar cleanup: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back organization identity profile migration: %v", err)
+	}
+	var legacyProfileTenantName, legacyProfileMemberName string
+	if err := root.QueryRow(ctx, `
+		SELECT tenant.name, member.name
+		FROM tenants AS tenant
+		JOIN tenant_members AS member ON member.tenant_id = tenant.id
+		WHERE tenant.id = $1 AND member.id = $2
+	`, profileMigrationTenantID, profileMigrationMemberID).Scan(
+		&legacyProfileTenantName, &legacyProfileMemberName,
+	); err != nil {
+		t.Fatalf("read profile records after compatible rollback: %v", err)
+	}
+	if legacyProfileTenantName != "Profile migration" || legacyProfileMemberName != "Profile Owner" {
+		t.Fatalf("profile records after rollback = %q/%q", legacyProfileTenantName, legacyProfileMemberName)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply organization identity profile migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply transactional identity cleanup migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply member regional preference migration: %v", err)
+	}
+	var memberLocale, memberTimezone *string
+	if err := root.QueryRow(ctx, `
+		SELECT locale, timezone
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2
+	`, profileMigrationTenantID, profileMigrationMemberID).Scan(
+		&memberLocale, &memberTimezone,
+	); err != nil {
+		t.Fatalf("read migrated member regional preferences: %v", err)
+	}
+	if memberLocale != nil || memberTimezone != nil {
+		t.Fatalf("migrated member regional preferences = %v/%v, want nil", memberLocale, memberTimezone)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenant_members
+		SET locale = 'pt-AO', timezone = 'Africa/Luanda'
+		WHERE tenant_id = $1 AND id = $2
+	`, profileMigrationTenantID, profileMigrationMemberID); err != nil {
+		t.Fatalf("write valid member regional preferences: %v", err)
+	}
+	for name, statement := range map[string]string{
+		"unsupported locale":  `UPDATE tenant_members SET locale = 'fr-FR' WHERE id = $1`,
+		"unnormalized locale": `UPDATE tenant_members SET locale = 'PT-ao' WHERE id = $1`,
+		"unsafe timezone":     `UPDATE tenant_members SET timezone = 'bad timezone' WHERE id = $1`,
+	} {
+		if _, err := root.Exec(ctx, statement, profileMigrationMemberID); err == nil {
+			t.Fatalf("%s regional preference succeeded", name)
+		}
+	}
+	for _, column := range []string{"locale", "timezone"} {
+		var canSelect, canUpdate bool
+		if err := root.QueryRow(ctx, `
+			SELECT has_column_privilege('fidibeki_app', 'tenant_members', $1, 'SELECT'),
+			       has_column_privilege('fidibeki_app', 'tenant_members', $1, 'UPDATE')
+		`, column).Scan(&canSelect, &canUpdate); err != nil {
+			t.Fatalf("read app privilege for tenant_members.%s: %v", column, err)
+		}
+		if !canSelect || !canUpdate {
+			t.Fatalf("app privileges for tenant_members.%s = select:%t update:%t", column, canSelect, canUpdate)
+		}
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back member regional preference migration: %v", err)
+	}
+	var regionalColumnCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'tenant_members'
+		  AND column_name IN ('locale', 'timezone')
+	`).Scan(&regionalColumnCount); err != nil || regionalColumnCount != 0 {
+		t.Fatalf("member regional columns after rollback = %d, error = %v", regionalColumnCount, err)
+	}
+	var preservedProfileMemberName string
+	if err := root.QueryRow(ctx, `
+		SELECT name FROM tenant_members WHERE tenant_id = $1 AND id = $2
+	`, profileMigrationTenantID, profileMigrationMemberID).Scan(&preservedProfileMemberName); err != nil {
+		t.Fatalf("read member after regional preference rollback: %v", err)
+	}
+	if preservedProfileMemberName != "Profile Owner" {
+		t.Fatalf("member name after regional preference rollback = %q", preservedProfileMemberName)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply member regional preference migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, profileMigrationTenantID); err != nil {
+		t.Fatalf("remove organization profile migration fixture: %v", err)
 	}
 
 	var tenantA, tenantB string
@@ -1084,6 +1234,18 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("tenant A member count = %d, want 2", count)
 	}
+	var appMemberLocale, appMemberTimezone string
+	if err := tx.QueryRow(ctx, `
+		UPDATE tenant_members
+		SET locale = 'pt-PT', timezone = 'Europe/Lisbon'
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING locale, timezone
+	`, tenantA, memberA).Scan(&appMemberLocale, &appMemberTimezone); err != nil {
+		t.Fatalf("update tenant A member regional preferences: %v", err)
+	}
+	if appMemberLocale != "pt-PT" || appMemberTimezone != "Europe/Lisbon" {
+		t.Fatalf("tenant A member regional preferences = %q/%q", appMemberLocale, appMemberTimezone)
+	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM tenant_member_domains`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A member domains: %v", err)
 	}
@@ -1157,6 +1319,24 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("tenant A transaction read %d tenant B rows, want 0", count)
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO identity_asset_deletions (tenant_id, asset_kind, version)
+		VALUES ($1, 'workspace_logo', gen_random_uuid())
+	`, tenantA); err != nil {
+		t.Fatalf("insert tenant A identity cleanup: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE identity_asset_deletions
+		SET next_attempt_at = now()
+		WHERE tenant_id = $1
+	`, tenantA); err != nil {
+		t.Fatalf("update tenant A identity cleanup: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM identity_asset_deletions WHERE tenant_id = $1
+	`, tenantA).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("tenant A identity cleanup count = %d, error = %v, want 1", count, err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit tenant A read transaction: %v", err)
 	}
@@ -1170,6 +1350,37 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		`INSERT INTO tenant_members (tenant_id, email) VALUES ($1, 'intruder@beta.test')`, tenantB,
 	); err == nil {
 		t.Fatal("cross-tenant insert succeeded, want RLS rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant member preference transaction: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	tag, err := tx.Exec(ctx, `
+		UPDATE tenant_members
+		SET locale = 'en', timezone = 'UTC'
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantB, memberB)
+	if err != nil {
+		t.Fatalf("cross-tenant member preference update returned error: %v", err)
+	}
+	if tag.RowsAffected() != 0 {
+		t.Fatalf("cross-tenant member preference update affected %d rows", tag.RowsAffected())
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant identity cleanup transaction: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO identity_asset_deletions (tenant_id, asset_kind, version)
+		VALUES ($1, 'workspace_logo', gen_random_uuid())
+	`, tenantB); err == nil {
+		t.Fatal("cross-tenant identity cleanup insert succeeded, want RLS rejection")
 	}
 	_ = tx.Rollback(ctx)
 
@@ -1425,6 +1636,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM abuse_diagnostics_hourly`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin abuse diagnostic count = %d, error = %v, want 2", count, err)
+	}
+	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM identity_asset_deletions`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("admin identity cleanup count = %d, error = %v, want 1", count, err)
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM issue_updates`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin issue update count = %d, error = %v, want 2", count, err)

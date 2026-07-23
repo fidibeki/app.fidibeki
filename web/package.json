@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@lucide/vue": "1.25.0",
+    "@nuxtjs/i18n": "10.5.0",
     "nuxt": "3.21.9",
     "re2js": "2.8.6",
     "rrweb-player": "2.1.1",
