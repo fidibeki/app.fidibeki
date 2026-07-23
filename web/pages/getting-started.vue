@@ -13,8 +13,6 @@ import {
 } from '@lucide/vue'
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type { Project, WidgetRule } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 import {
   buildTargetingPayload,
@@ -23,11 +21,16 @@ import {
 } from '~/utils/widget-targeting'
 
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
 const { canWrite, tenant, workspaceWritable } = useAuth()
+const localizedError = useLocalizedAPIError()
+const regionalFormat = useRegionalFormat()
 const config = useRuntimeConfig()
 const stage = ref<'project' | 'rule' | 'install'>('project')
 const project = ref<Project | null>(null)
-const projectName = ref(tenant.value?.name ? `${tenant.value.name} website` : 'Main website')
+const projectName = ref(tenant.value?.name
+  ? t('onboarding.project.defaultName', { workspace: tenant.value.name })
+  : t('onboarding.project.fallbackName'))
 const domains = ref('')
 const pending = ref(false)
 const errorMessage = ref('')
@@ -95,7 +98,7 @@ async function createRule() {
   showTargetingErrors.value = true
   const targetingErrors = validateTargeting(targetingState.value)
   if (Object.keys(targetingErrors).length > 0) {
-    errorMessage.value = Object.values(targetingErrors)[0] || 'Targeting configuration is invalid.'
+    errorMessage.value = t('onboarding.targeting.errors.invalid')
     return
   }
   pending.value = true
@@ -114,7 +117,7 @@ async function createRule() {
     stage.value = 'install'
     startPolling()
   } catch (error) {
-    errorMessage.value = apiErrorMessage(error, 'The widget rule could not be created.')
+    errorMessage.value = localizedError.message(error, 'onboarding.rule.createFailed')
   } finally {
     pending.value = false
   }
@@ -131,7 +134,7 @@ async function createProject() {
     })
     project.value = response.project
   } catch (error) {
-    errorMessage.value = apiErrorMessage(error, 'The project could not be created.')
+    errorMessage.value = localizedError.message(error, 'onboarding.project.createFailed')
     pending.value = false
     return
   }
@@ -145,56 +148,56 @@ async function copyCode() {
     copied.value = true
     window.setTimeout(() => { copied.value = false }, 1800)
   } catch {
-    errorMessage.value = 'The install code could not be copied. Select it and copy it manually.'
+    errorMessage.value = t('onboarding.install.copyFailed')
   }
 }
 
 onBeforeUnmount(stopPolling)
-useHead({ title: 'Connect your first project · Fidibeki' })
+useHead({ title: computed(() => t('onboarding.pageTitle')) })
 </script>
 
 <template>
   <div class="activation-page app-page">
     <header class="activation-head">
-      <div><p class="app-eyebrow">Workspace activation</p><h1>Connect your first project</h1><span>{{ tenant?.name }}</span></div>
-      <ol aria-label="Setup progress">
-        <li :data-active="stage === 'project'" :data-complete="stage !== 'project'"><span>1</span> Project</li>
-        <li :data-active="stage === 'rule'" :data-complete="stage === 'install'"><span>2</span> Rule</li>
-        <li :data-active="stage === 'install'"><span>3</span> Install</li>
+      <div><p class="app-eyebrow">{{ t('onboarding.eyebrow') }}</p><h1>{{ t('onboarding.title') }}</h1><span>{{ tenant?.name }}</span></div>
+      <ol :aria-label="t('onboarding.progress')">
+        <li :data-active="stage === 'project'" :data-complete="stage !== 'project'"><span>1</span> {{ t('onboarding.steps.project') }}</li>
+        <li :data-active="stage === 'rule'" :data-complete="stage === 'install'"><span>2</span> {{ t('onboarding.steps.rule') }}</li>
+        <li :data-active="stage === 'install'"><span>3</span> {{ t('onboarding.steps.install') }}</li>
       </ol>
     </header>
 
     <section v-if="loadError" class="activation-surface activation-load-error">
       <AlertTriangle :size="22" />
-      <h2>Project state unavailable</h2>
-      <p>{{ apiErrorMessage(loadError) }}</p>
-      <button class="app-button" @click="refreshExisting()"><RefreshCw :size="15" /> Try again</button>
+      <h2>{{ t('onboarding.loadUnavailable') }}</h2>
+      <p>{{ localizedError.message(loadError) }}</p>
+      <button class="app-button" @click="refreshExisting()"><RefreshCw :size="15" /> {{ t('onboarding.tryAgain') }}</button>
     </section>
 
     <section v-else-if="stage === 'project'" class="activation-surface">
-      <header><FolderPlus :size="20" /><div><h2>Create a project</h2><p>The allowed domains determine where the public widget key can run.</p></div></header>
+      <header><FolderPlus :size="20" /><div><h2>{{ t('onboarding.project.createTitle') }}</h2><p>{{ t('onboarding.project.createDescription') }}</p></div></header>
       <form @submit.prevent="createProject">
         <fieldset :disabled="!workspaceWritable">
-        <label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label>
-        <label>Allowed domains<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><small>One exact hostname or leading wildcard per line.</small></label>
+        <label>{{ t('onboarding.project.name') }}<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label>
+        <label>{{ t('onboarding.project.domains') }}<textarea v-model="domains" required placeholder="example.com&#10;*.preview.example.com" /><small>{{ t('onboarding.project.domainsDescription') }}</small></label>
         <p v-if="errorMessage" class="activation-error" role="alert"><AlertTriangle :size="15" /> {{ errorMessage }}</p>
         <button class="app-button app-button--primary" type="submit" :disabled="!canWrite('project:create') || pending || !projectName || !parsedDomains().length">
-          {{ pending ? 'Creating project…' : 'Create and configure' }} <ArrowRight v-if="!pending" :size="15" />
+          {{ pending ? t('onboarding.project.creating') : t('onboarding.project.submit') }} <ArrowRight v-if="!pending" :size="15" />
         </button>
         </fieldset>
       </form>
     </section>
 
     <section v-else-if="stage === 'rule'" class="activation-surface activation-rule-targeting">
-      <header><Globe2 :size="20" /><div><h2>Choose target pages</h2><p>Select where the first feedback rule can appear.</p></div></header>
+      <header><Globe2 :size="20" /><div><h2>{{ t('onboarding.rule.title') }}</h2><p>{{ t('onboarding.rule.description') }}</p></div></header>
       <form @submit.prevent="createRule">
         <fieldset :disabled="!workspaceWritable || pending">
           <WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" />
           <p v-if="errorMessage" class="activation-error" role="alert"><AlertTriangle :size="15" /> {{ errorMessage }}</p>
           <div class="activation-rule-actions">
-            <NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project</NuxtLink>
+            <NuxtLink class="app-button" :to="`/projects/${project?.id}`">{{ t('onboarding.rule.openProject') }}</NuxtLink>
             <button class="app-button app-button--primary" type="submit" :disabled="!canWrite('widget_rule:create') || pending">
-              {{ pending ? 'Creating rule…' : 'Continue to install' }} <ArrowRight v-if="!pending" :size="15" />
+              {{ pending ? t('onboarding.rule.creating') : t('onboarding.rule.continue') }} <ArrowRight v-if="!pending" :size="15" />
             </button>
           </div>
         </fieldset>
@@ -203,20 +206,20 @@ useHead({ title: 'Connect your first project · Fidibeki' })
 
     <section v-else class="activation-install">
       <div class="activation-surface activation-code">
-        <header><Code2 :size="20" /><div><p class="app-eyebrow">Install loader</p><h2>{{ project?.name }}</h2></div></header>
-        <div class="activation-snippet"><code>{{ embedCode }}</code><button type="button" title="Copy install code" @click="copyCode"><Check v-if="copied" :size="16" /><Clipboard v-else :size="16" /></button></div>
+        <header><Code2 :size="20" /><div><p class="app-eyebrow">{{ t('onboarding.install.eyebrow') }}</p><h2>{{ project?.name }}</h2></div></header>
+        <div class="activation-snippet"><code>{{ embedCode }}</code><button type="button" :title="t('onboarding.install.copyCode')" @click="copyCode"><Check v-if="copied" :size="16" /><Clipboard v-else :size="16" /></button></div>
         <p v-if="errorMessage" class="activation-error" role="alert"><AlertTriangle :size="15" /> {{ errorMessage }}</p>
-        <footer><NuxtLink class="app-button" :to="`/projects/${project?.id}`">Open project configuration</NuxtLink></footer>
+        <footer><NuxtLink class="app-button" :to="`/projects/${project?.id}`">{{ t('onboarding.install.openConfiguration') }}</NuxtLink></footer>
       </div>
 
       <aside class="activation-connection" :data-connected="connected">
         <CheckCircle2 v-if="connected" :size="23" />
         <Radio v-else :size="23" />
-        <p class="app-eyebrow">Connection</p>
-        <h2>{{ connected ? 'Widget connected' : 'Awaiting connection' }}</h2>
-        <p v-if="connected && project?.widget_last_seen_at">Last seen {{ formatDateTime(project.widget_last_seen_at) }}</p>
-        <p v-else>The status updates after the loader requests an authorized widget configuration.</p>
-        <NuxtLink v-if="connected" class="app-button app-button--primary" to="/">Open workspace <ArrowRight :size="15" /></NuxtLink>
+        <p class="app-eyebrow">{{ t('onboarding.install.connection') }}</p>
+        <h2>{{ connected ? t('onboarding.install.connected') : t('onboarding.install.awaiting') }}</h2>
+        <p v-if="connected && project?.widget_last_seen_at">{{ t('onboarding.install.lastSeen', { date: regionalFormat.dateTime(project.widget_last_seen_at) }) }}</p>
+        <p v-else>{{ t('onboarding.install.awaitingDescription') }}</p>
+        <NuxtLink v-if="connected" class="app-button app-button--primary" to="/">{{ t('onboarding.install.openWorkspace') }} <ArrowRight :size="15" /></NuxtLink>
       </aside>
     </section>
   </div>

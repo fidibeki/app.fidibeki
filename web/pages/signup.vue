@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, RefreshCw } from '@lucide/vue'
 import type { PlanCatalogResponse, SignupResponse, TenantPlan } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatEuro, formatWholeNumber } from '~/utils/format'
+import { extractAPIError } from '~/utils/safe-api-error'
 import {
   baseDomainURL,
   normalizeWorkspaceSlug,
@@ -16,6 +15,9 @@ const config = useRuntimeConfig()
 const route = useRoute()
 const requestURL = useRequestURL()
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const regionalFormat = useRegionalFormat()
+const localizedError = useLocalizedAPIError()
 const baseDomain = String(config.public.baseDomain || requestURL.hostname)
 const siteKey = String(config.public.turnstileSiteKey || '')
 const name = ref('')
@@ -29,6 +31,7 @@ const challengeFailed = ref(false)
 const slugTouched = ref(Boolean(initialSlug))
 const pending = ref(false)
 const errorMessage = ref('')
+const fieldErrors = ref<Record<string, string>>({})
 const created = ref<SignupResponse['tenant'] | null>(null)
 const locatorSlug = ref('')
 const locatorError = ref('')
@@ -42,7 +45,9 @@ const { data: catalog, status: plansStatus, error: plansError, refresh: refreshP
   { server: false },
 )
 
-const signupSlugError = computed(() => slug.value ? workspaceSlugError(slug.value) : '')
+const signupSlugError = computed(() =>
+  slug.value && workspaceSlugError(slug.value) ? t('auth.signup.slugInvalid') : '',
+)
 const createdLoginURL = computed(() => created.value
   ? workspaceLoginURL(created.value.slug, baseDomain, requestURL)
   : '')
@@ -52,12 +57,23 @@ watch(name, (value) => {
 })
 
 function planName(plan: TenantPlan) {
-  return plan.charAt(0).toUpperCase() + plan.slice(1)
+  return t(`auth.signup.plans.${plan}`)
 }
 
 function planPrice(cents?: number | null) {
   if (cents == null) return ''
-  return formatEuro(cents)
+  return regionalFormat.currency(cents / 100, 'EUR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+function planProjectLimit(count: number) {
+  return regionalFormat.plural('auth.signup.projectLimit', count)
+}
+
+function planFeedbackLimit(count: number) {
+  return t('auth.signup.feedbackLimit', { count: regionalFormat.integer(count) })
 }
 
 function editSlug(event: Event) {
@@ -75,7 +91,11 @@ function resetChallenge(message = '') {
 function failChallenge() {
   turnstileToken.value = ''
   challengeFailed.value = true
-  errorMessage.value = 'Security verification could not be loaded. Please try again.'
+  errorMessage.value = t('auth.signup.challengeUnavailable')
+}
+
+function expireChallenge() {
+  resetChallenge(t('auth.signup.challengeExpired'))
 }
 
 async function retryChallenge() {
@@ -88,17 +108,18 @@ async function submit() {
   if (pending.value || !catalog.value) return
   const validationError = workspaceSlugError(slug.value)
   if (validationError) {
-    errorMessage.value = validationError
+    errorMessage.value = t('auth.signup.slugInvalid')
     slugInput.value?.focus()
     return
   }
   if (siteKey && !turnstileToken.value) {
-    errorMessage.value = 'Complete the security verification before creating your workspace.'
+    errorMessage.value = t('auth.signup.challengeRequired')
     return
   }
 
   pending.value = true
   errorMessage.value = ''
+  fieldErrors.value = {}
   try {
     const response = await $apiFetch<SignupResponse>('/v1/signup', {
       method: 'POST',
@@ -114,11 +135,12 @@ async function submit() {
     })
     created.value = response.tenant
   } catch (error) {
-    const message = apiErrorMessage(error, 'Your workspace could not be created.')
-    resetChallenge(message)
+    fieldErrors.value = localizedError.fields(error)
+    const message = localizedError.message(error, 'auth.signup.createFailed')
+    resetChallenge(Object.keys(fieldErrors.value).length ? '' : message)
     await nextTick()
-    if (message.toLowerCase().includes('slug')) slugInput.value?.focus()
-    else if (message.toLowerCase().includes('email')) emailInput.value?.focus()
+    if (fieldErrors.value.slug || extractAPIError(error)?.code === 'conflict') slugInput.value?.focus()
+    else if (fieldErrors.value.email) emailInput.value?.focus()
   } finally {
     pending.value = false
   }
@@ -127,12 +149,12 @@ async function submit() {
 async function openWorkspace() {
   const normalized = normalizeWorkspaceSlug(locatorSlug.value)
   locatorSlug.value = normalized
-  locatorError.value = workspaceSlugError(normalized)
+  locatorError.value = workspaceSlugError(normalized) ? t('auth.signup.slugInvalid') : ''
   if (locatorError.value) return
   await navigateTo(workspaceLoginURL(normalized, baseDomain, requestURL), { external: true })
 }
 
-useHead({ title: 'Create workspace · Fidibeki' })
+useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 </script>
 
 <template>
@@ -142,16 +164,16 @@ useHead({ title: 'Create workspace · Fidibeki' })
         <img src="/brand/fidibeki-white.png" alt="Fidibeki" />
       </NuxtLink>
       <div class="signup-context-copy">
-        <p class="signup-kicker">Workspace setup</p>
-        <h1>Start collecting product feedback.</h1>
-        <p>Create the workspace, install one loader, and verify the first live connection.</p>
+        <p class="signup-kicker">{{ t('auth.signup.setup') }}</p>
+        <h1>{{ t('auth.signup.contextTitle') }}</h1>
+        <p>{{ t('auth.signup.contextDescription') }}</p>
       </div>
       <form class="workspace-locator" @submit.prevent="openWorkspace">
-        <label for="workspace-locator">Already have a workspace?</label>
+        <label for="workspace-locator">{{ t('auth.signup.existingWorkspace') }}</label>
         <div>
-          <input id="workspace-locator" v-model="locatorSlug" type="text" autocomplete="organization" placeholder="workspace" />
+          <input id="workspace-locator" v-model="locatorSlug" type="text" autocomplete="organization" :placeholder="t('auth.signup.workspacePlaceholder')" />
           <span>.{{ baseDomain }}</span>
-          <button type="submit" title="Open workspace"><ArrowRight :size="16" /></button>
+          <button type="submit" :title="t('auth.signup.openWorkspace')"><ArrowRight :size="16" /></button>
         </div>
         <p v-if="locatorError" role="alert">{{ locatorError }}</p>
       </form>
@@ -160,54 +182,56 @@ useHead({ title: 'Create workspace · Fidibeki' })
     <section class="signup-panel">
       <div v-if="created" class="signup-confirmation">
         <CheckCircle2 :size="25" />
-        <p class="app-eyebrow">Workspace created</p>
-        <h2>Check {{ email }}</h2>
-        <p>We sent a one-time sign-in link. Open it to create your first feedback project.</p>
+        <p class="app-eyebrow">{{ t('auth.signup.created') }}</p>
+        <h2>{{ t('auth.signup.checkEmail', { email }) }}</h2>
+        <p>{{ t('auth.signup.createdDescription') }}</p>
         <a class="app-button app-button--primary" :href="createdLoginURL">
-          Open {{ created.slug }} workspace <ExternalLink :size="15" />
+          {{ t('auth.signup.openCreated', { workspace: created.slug }) }} <ExternalLink :size="15" />
         </a>
         <code>{{ createdLoginURL }}</code>
       </div>
 
       <form v-else class="signup-form" @submit.prevent="submit">
         <header>
-          <p class="app-eyebrow">14-day trial</p>
-          <h2>Create your workspace</h2>
-          <p>No card required. Choose the starting limits for this workspace.</p>
+          <p class="app-eyebrow">{{ t('auth.signup.trial') }}</p>
+          <h2>{{ t('auth.signup.title') }}</h2>
+          <p>{{ t('auth.signup.description') }}</p>
         </header>
 
         <div class="signup-field-grid">
           <label>
-            Workspace name
-            <input v-model.trim="name" class="app-input" type="text" autocomplete="organization" required maxlength="120" placeholder="Acme Studio" />
+            {{ t('auth.signup.workspaceName') }}
+            <input v-model.trim="name" class="app-input" type="text" autocomplete="organization" required maxlength="120" :placeholder="t('auth.signup.workspaceNamePlaceholder')" />
+            <small v-if="fieldErrors.name">{{ fieldErrors.name }}</small>
           </label>
           <label>
-            Owner email
-            <input ref="emailInput" v-model.trim="email" class="app-input" type="email" autocomplete="email" required placeholder="you@company.com" />
+            {{ t('auth.signup.ownerEmail') }}
+            <input ref="emailInput" v-model.trim="email" class="app-input" type="email" autocomplete="email" required :placeholder="t('auth.signup.ownerEmailPlaceholder')" />
+            <small v-if="fieldErrors.email">{{ fieldErrors.email }}</small>
           </label>
         </div>
 
         <label class="signup-slug-field">
-          Workspace URL
+          {{ t('auth.signup.workspaceURL') }}
           <span class="signup-slug-control" :data-invalid="Boolean(signupSlugError)">
             <input ref="slugInput" :value="slug" type="text" autocomplete="off" required minlength="3" maxlength="24" @input="editSlug" />
             <b>.{{ baseDomain }}</b>
           </span>
-          <small v-if="signupSlugError">{{ signupSlugError }}</small>
+          <small v-if="signupSlugError || fieldErrors.slug">{{ signupSlugError || fieldErrors.slug }}</small>
         </label>
 
         <fieldset class="signup-plans">
-          <legend>Starting plan</legend>
-          <div v-if="plansStatus === 'pending'" class="signup-plan-state"><span class="app-spinner" /> Loading plans</div>
+          <legend>{{ t('auth.signup.startingPlan') }}</legend>
+          <div v-if="plansStatus === 'pending'" class="signup-plan-state"><span class="app-spinner" /> {{ t('auth.signup.loadingPlans') }}</div>
           <div v-else-if="plansError" class="signup-plan-state signup-plan-state--error">
-            <AlertTriangle :size="16" /> Plans are unavailable.
-            <button type="button" title="Retry loading plans" @click="refreshPlans()"><RefreshCw :size="15" /></button>
+            <AlertTriangle :size="16" /> {{ t('auth.signup.plansUnavailable') }}
+            <button type="button" :title="t('auth.signup.retryPlans')" @click="refreshPlans()"><RefreshCw :size="15" /></button>
           </div>
           <div v-else class="signup-plan-grid">
             <label v-for="plan in catalog?.plans" :key="plan.plan" :data-selected="selectedPlan === plan.plan">
               <input v-model="selectedPlan" type="radio" name="plan" :value="plan.plan" />
-              <span><b>{{ planName(plan.plan) }}</b><strong>{{ planPrice(plan.monthly_price_cents) }}<small>/mo</small></strong></span>
-              <small>{{ plan.limits.projects }} project{{ plan.limits.projects === 1 ? '' : 's' }} · {{ formatWholeNumber(plan.limits.feedback_per_month) }} feedback/mo</small>
+              <span><b>{{ planName(plan.plan) }}</b><strong>{{ planPrice(plan.monthly_price_cents) }}<small>{{ t('auth.signup.monthly') }}</small></strong></span>
+              <small>{{ planProjectLimit(plan.limits.projects) }} · {{ planFeedbackLimit(plan.limits.feedback_per_month) }}</small>
             </label>
           </div>
         </fieldset>
@@ -216,16 +240,16 @@ useHead({ title: 'Create workspace · Fidibeki' })
           ref="turnstile"
           :site-key="siteKey"
           @verified="turnstileToken = $event"
-          @expired="resetChallenge('Security verification expired. Please complete it again.')"
+          @expired="expireChallenge"
           @failed="failChallenge"
         />
 
         <p v-if="errorMessage" class="auth-message auth-message--error" role="alert">{{ errorMessage }}</p>
         <button v-if="challengeFailed" class="app-button signup-challenge-retry" type="button" @click="retryChallenge">
-          <RefreshCw :size="15" /> Retry verification
+          <RefreshCw :size="15" /> {{ t('auth.signup.retryVerification') }}
         </button>
         <button class="app-button app-button--primary signup-submit" type="submit" :disabled="pending || plansStatus !== 'success' || Boolean(signupSlugError)">
-          {{ pending ? 'Creating workspace…' : 'Create workspace' }} <ArrowRight v-if="!pending" :size="16" />
+          {{ pending ? t('auth.signup.creating') : t('auth.signup.submit') }} <ArrowRight v-if="!pending" :size="16" />
         </button>
       </form>
     </section>
@@ -257,6 +281,7 @@ useHead({ title: 'Create workspace · Fidibeki' })
 .signup-form label, .signup-plans legend { color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .signup-field-grid label, .signup-slug-field { display: flex; flex-direction: column; gap: 6px; }
 .signup-field-grid .app-input { width: 100%; min-width: 0; min-height: 42px; }
+.signup-field-grid label > small { color: var(--red); font-size: 9px; font-weight: 600; }
 .signup-slug-field { margin-top: 13px; }
 .signup-slug-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
 .signup-slug-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgb(8 127 115 / 10%); }

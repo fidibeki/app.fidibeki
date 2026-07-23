@@ -402,11 +402,21 @@ suite succeed.
 ## Task 24: Authentication And Onboarding Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Public authentication and onboarding surfaces use English/Portuguese catalogs.
 
 **Acceptance:** Browser tests cover the complete public/auth onboarding journey in both languages.
+
+**Completion:** English and Portuguese catalogs now drive login, signup, magic-link verification,
+member-domain verification, access-denied, Turnstile, first-project activation, and the shared
+targeting editor. Public failures use safe localized fallbacks while structured field errors remain
+actionable; plan limits, dates, numbers, validation, page titles, tooltips, and accessible names use
+the effective regional context. Targeting diagnostics retain precise safe-regex and matched-exclude
+details in both languages without changing canonical URL or request payload behavior. Dedicated
+desktop/mobile browser journeys prove Portuguese signup, verification, onboarding, targeting, and
+access guidance, while the complete 93-test unit suite, typecheck, production build, and 147-pass
+browser suite remain green.
 
 **Autonomy:** AFK
 

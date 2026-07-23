@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2 } from '@lucide/vue'
 import type { AuthResponse, Project } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
 
 definePageMeta({ layout: false })
 
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
 const route = useRoute()
 const router = useRouter()
 const { apply } = useAuth()
@@ -40,13 +41,13 @@ async function verifyCurrentLink() {
   } catch {
     if (!isCurrentAttempt(attempt, controller)) return
     state.value = 'failed'
-    errorMessage.value = 'This sign-in link could not be opened safely. Please request another link.'
+    errorMessage.value = t('auth.verify.unsafe')
     return
   }
   if (!isCurrentAttempt(attempt, controller)) return
   if (!token) {
     state.value = 'failed'
-    errorMessage.value = 'This sign-in link is missing its verification token.'
+    errorMessage.value = t('auth.verify.missing')
     return
   }
 
@@ -62,7 +63,7 @@ async function verifyCurrentLink() {
   } catch (error) {
     if (!isCurrentAttempt(attempt, controller)) return
     state.value = 'failed'
-    errorMessage.value = apiErrorMessage(error, 'This sign-in link is invalid or has expired.')
+    errorMessage.value = localizedError.message(error, 'auth.verify.invalid')
     return
   }
 
@@ -119,32 +120,32 @@ onBeforeUnmount(() => {
   window.removeEventListener('hashchange', handleHashChange)
 })
 
-useHead({ title: 'Verify sign in · Fidibeki' })
+useHead({ title: computed(() => t('auth.verify.pageTitle')) })
 </script>
 
 <template>
   <main class="auth-page">
     <section class="auth-context">
       <NuxtLink to="/" class="app-brand"><img src="/brand/fidibeki-white.png" alt="Fidibeki" /></NuxtLink>
-      <div><h1>Secure workspace access.</h1><p>The verification token is removed from the address before it is exchanged for your session.</p></div>
+      <div><h1>{{ t('auth.verify.contextTitle') }}</h1><p>{{ t('auth.verify.contextDescription') }}</p></div>
     </section>
     <section class="auth-panel">
       <div class="auth-form">
         <template v-if="state === 'verifying'">
           <span class="app-spinner" />
-          <h2>Verifying your sign-in link</h2>
-          <p>This should only take a moment.</p>
+          <h2>{{ t('auth.verify.verifying') }}</h2>
+          <p>{{ t('auth.verify.wait') }}</p>
         </template>
         <template v-else-if="state === 'success'">
           <CheckCircle2 :size="24" color="var(--green)" />
-          <h2>Signed in</h2>
-          <p>Opening your workspace…</p>
+          <h2>{{ t('auth.verify.signedIn') }}</h2>
+          <p>{{ t('auth.verify.opening') }}</p>
         </template>
         <template v-else>
           <AlertTriangle :size="24" color="var(--red)" />
-          <h2>Sign-in link could not be verified</h2>
+          <h2>{{ t('auth.verify.failed') }}</h2>
           <p>{{ errorMessage }}</p>
-          <NuxtLink class="app-button" to="/login">Request another link</NuxtLink>
+          <NuxtLink class="app-button" to="/login">{{ t('auth.verify.requestAnother') }}</NuxtLink>
         </template>
       </div>
     </section>

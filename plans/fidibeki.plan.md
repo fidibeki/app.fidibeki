@@ -426,8 +426,14 @@ was removed from the staging test tenant.
       regional formatters cover temporal, numeric, relative, list, and plural output; localized API
       errors expose only allowlisted stable codes/reasons with safe generic fallbacks. Unit,
       typecheck, production-build, full-browser, and focused responsive SSR/runtime gates pass.
-    - [ ] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate
+    - [x] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate
       preference switching.
+      English and Portuguese catalogs now cover shared navigation/account state, profile
+      preferences, authentication, verification, access guidance, first-project activation,
+      Turnstile, and targeting controls. Member locale/timezone updates apply without logout;
+      public errors remain safe; regional dates, numbers, plan limits, titles, validation, and
+      accessible names update consistently. Responsive English/Portuguese journeys plus unit,
+      typecheck, build, and the complete browser suite pass.
     - [ ] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,
       settings/billing, and shared production catalogs without translating domain content.
     - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local

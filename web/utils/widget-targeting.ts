@@ -22,6 +22,7 @@ export interface TargetingFormState {
 export interface TargetingTestResult {
   status: TargetingTestStatus
   message: string
+  conditionIndex?: number
 }
 
 export interface TargetingTestDiagnostic {
@@ -112,7 +113,11 @@ export function testTargetingURL(rawURL: string, state: TargetingFormState): Tar
     if (!included) return { status: 'unmatched', message: 'No include condition matched.' }
     const excludedAt = payload.exclude_conditions.findIndex(condition => conditionMatches(condition, page.target))
     if (excludedAt >= 0) {
-      return { status: 'excluded', message: `Excluded by condition ${excludedAt + 1}.` }
+      return {
+        status: 'excluded',
+        message: `Excluded by condition ${excludedAt + 1}.`,
+        conditionIndex: excludedAt + 1,
+      }
     }
     return { status: 'eligible', message: 'This rule is eligible on the tested page.' }
   } catch {

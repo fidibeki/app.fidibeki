@@ -13,14 +13,27 @@ import {
 const state = defineModel<TargetingFormState>({ required: true })
 const props = withDefaults(defineProps<{ showErrors?: boolean }>(), { showErrors: false })
 const emit = defineEmits<{ tested: [diagnostic: TargetingTestDiagnostic | null] }>()
+const { t } = useI18n()
 const testURL = ref('')
 const testResult = ref<TargetingTestResult | null>(null)
 const errors = computed(() => validateTargeting(state.value))
-const matcherOptions: Array<{ value: MatcherType; label: string }> = [
-  { value: 'url_exact', label: 'Exact URL' },
-  { value: 'url_prefix', label: 'URL prefix' },
-  { value: 'url_regex', label: 'Regular expression' },
+const matcherOptions: Array<{ value: MatcherType; labelKey: string }> = [
+  { value: 'url_exact', labelKey: 'onboarding.targeting.exactURL' },
+  { value: 'url_prefix', labelKey: 'onboarding.targeting.urlPrefix' },
+  { value: 'url_regex', labelKey: 'onboarding.targeting.regularExpression' },
 ]
+const targetingErrorKeys: Record<string, string> = {
+  'Choose where this rule should appear.': 'choose',
+  'Add between 1 and 20 include conditions.': 'includeCount',
+  'Use no more than 20 exclude conditions.': 'excludeCount',
+  'All pages must be the only include condition.': 'allPagesOnly',
+  'All pages cannot be excluded.': 'allPagesExcluded',
+  'All pages cannot have a value.': 'allPagesValue',
+  'Enter a matcher value.': 'matcherValue',
+  'Use no more than 2048 characters.': 'valueLength',
+  'Enter a valid safe regular expression.': 'invalidRegex',
+  'Enter an absolute HTTP(S) URL.': 'absoluteURL',
+}
 
 watch(state, resetTest, { deep: true })
 watch(testURL, resetTest)
@@ -60,6 +73,17 @@ function conditionError(collection: 'include_conditions' | 'exclude_conditions',
     || errors.value[`${collection}[${index}].matcher_type`]
 }
 
+function targetingErrorMessage(error: string) {
+  return t(`onboarding.targeting.errors.${targetingErrorKeys[error] || 'condition'}`)
+}
+
+function testResultMessage(result: TargetingTestResult) {
+  return t(
+    `onboarding.targeting.testResults.${result.status}`,
+    result.status === 'excluded' ? { index: result.conditionIndex } : {},
+  )
+}
+
 function runTest() {
   testResult.value = testTargetingURL(testURL.value, state.value)
   emit('tested', { url: testURL.value.trim(), result: testResult.value })
@@ -77,51 +101,51 @@ function emptyCondition(): WidgetTargetConditionInput {
 
 <template>
   <div class="targeting-editor">
-    <div class="targeting-mode" role="radiogroup" aria-label="Target pages">
+    <div class="targeting-mode" role="radiogroup" :aria-label="t('onboarding.targeting.targetPages')">
       <button type="button" role="radio" :aria-checked="state.mode === 'all_pages'" :data-active="state.mode === 'all_pages'" @click="selectMode('all_pages')">
-        <Globe2 :size="14" /> All pages
+        <Globe2 :size="14" /> {{ t('onboarding.targeting.allPages') }}
       </button>
       <button type="button" role="radio" :aria-checked="state.mode === 'specific_pages'" :data-active="state.mode === 'specific_pages'" @click="selectMode('specific_pages')">
-        <Search :size="14" /> Specific pages
+        <Search :size="14" /> {{ t('onboarding.targeting.specificPages') }}
       </button>
     </div>
-    <p v-if="props.showErrors && errors.targeting" class="targeting-error" role="alert">{{ errors.targeting }}</p>
+    <p v-if="props.showErrors && errors.targeting" class="targeting-error" role="alert">{{ t('onboarding.targeting.errors.choose') }}</p>
 
     <template v-if="state.mode">
-      <div v-if="state.mode === 'all_pages'" class="targeting-all-pages"><Globe2 :size="14" /><span>Every allowed page</span></div>
+      <div v-if="state.mode === 'all_pages'" class="targeting-all-pages"><Globe2 :size="14" /><span>{{ t('onboarding.targeting.everyAllowedPage') }}</span></div>
       <div v-else class="targeting-group">
-        <header><div><b>Include</b><span>{{ state.includes.length }}/20</span></div><button type="button" :disabled="state.includes.length >= 20" @click="addCondition('includes')"><Plus :size="14" /> Add include</button></header>
+        <header><div><b>{{ t('onboarding.targeting.include') }}</b><span>{{ state.includes.length }}/20</span></div><button type="button" :disabled="state.includes.length >= 20" @click="addCondition('includes')"><Plus :size="14" /> {{ t('onboarding.targeting.addInclude') }}</button></header>
         <div v-for="(condition, index) in state.includes" :key="`include-${index}`" class="targeting-condition">
-          <select v-model="condition.matcher_type" class="app-select" :aria-label="`Include matcher ${index + 1}`" @change="changeMatcher(condition)">
-            <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.includeMatcher', { index: index + 1 })" @change="changeMatcher(condition)">
+            <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
           </select>
-          <input v-model="condition.matcher_value" class="app-input" :aria-label="`Include value ${index + 1}`" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/docs' : 'https://example.com/docs'" maxlength="2048" required />
-          <button type="button" class="targeting-remove" :aria-label="`Remove include ${index + 1}`" title="Remove include" @click="removeCondition('includes', index)"><Trash2 :size="14" /></button>
-          <p v-if="props.showErrors && conditionError('include_conditions', index)" class="targeting-error">{{ conditionError('include_conditions', index) }}</p>
+          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.includeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/docs' : 'https://example.com/docs'" maxlength="2048" required />
+          <button type="button" class="targeting-remove" :aria-label="t('onboarding.targeting.removeInclude', { index: index + 1 })" :title="t('onboarding.targeting.removeInclude', { index: index + 1 })" @click="removeCondition('includes', index)"><Trash2 :size="14" /></button>
+          <p v-if="props.showErrors && conditionError('include_conditions', index)" class="targeting-error">{{ targetingErrorMessage(conditionError('include_conditions', index)!) }}</p>
         </div>
-        <p v-if="props.showErrors && errors.include_conditions" class="targeting-error" role="alert">{{ errors.include_conditions }}</p>
+        <p v-if="props.showErrors && errors.include_conditions" class="targeting-error" role="alert">{{ t('onboarding.targeting.errors.includes') }}</p>
       </div>
 
       <div class="targeting-group">
-        <header><div><b>Exclude</b><span>{{ state.excludes.length }}/20</span></div><button type="button" :disabled="state.excludes.length >= 20" @click="addCondition('excludes')"><Plus :size="14" /> Add exclude</button></header>
+        <header><div><b>{{ t('onboarding.targeting.exclude') }}</b><span>{{ state.excludes.length }}/20</span></div><button type="button" :disabled="state.excludes.length >= 20" @click="addCondition('excludes')"><Plus :size="14" /> {{ t('onboarding.targeting.addExclude') }}</button></header>
         <div v-for="(condition, index) in state.excludes" :key="`exclude-${index}`" class="targeting-condition">
-          <select v-model="condition.matcher_type" class="app-select" :aria-label="`Exclude matcher ${index + 1}`" @change="changeMatcher(condition)">
-            <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.excludeMatcher', { index: index + 1 })" @change="changeMatcher(condition)">
+            <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
           </select>
-          <input v-model="condition.matcher_value" class="app-input" :aria-label="`Exclude value ${index + 1}`" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/account' : 'https://example.com/account'" maxlength="2048" required />
-          <button type="button" class="targeting-remove" :aria-label="`Remove exclude ${index + 1}`" title="Remove exclude" @click="removeCondition('excludes', index)"><Trash2 :size="14" /></button>
-          <p v-if="props.showErrors && conditionError('exclude_conditions', index)" class="targeting-error">{{ conditionError('exclude_conditions', index) }}</p>
+          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.excludeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/account' : 'https://example.com/account'" maxlength="2048" required />
+          <button type="button" class="targeting-remove" :aria-label="t('onboarding.targeting.removeExclude', { index: index + 1 })" :title="t('onboarding.targeting.removeExclude', { index: index + 1 })" @click="removeCondition('excludes', index)"><Trash2 :size="14" /></button>
+          <p v-if="props.showErrors && conditionError('exclude_conditions', index)" class="targeting-error">{{ targetingErrorMessage(conditionError('exclude_conditions', index)!) }}</p>
         </div>
-        <p v-if="props.showErrors && errors.exclude_conditions" class="targeting-error" role="alert">{{ errors.exclude_conditions }}</p>
+        <p v-if="props.showErrors && errors.exclude_conditions" class="targeting-error" role="alert">{{ t('onboarding.targeting.errors.excludes') }}</p>
       </div>
 
       <div class="targeting-tester">
-        <label>Test URL<input v-model="testURL" class="app-input" type="url" placeholder="https://example.com/docs?source=test" /></label>
-        <button class="app-button" type="button" @click="runTest"><Search :size="14" /> Test</button>
+        <label>{{ t('onboarding.targeting.testURL') }}<input v-model="testURL" class="app-input" type="url" placeholder="https://example.com/docs?source=test" /></label>
+        <button class="app-button" type="button" @click="runTest"><Search :size="14" /> {{ t('onboarding.targeting.test') }}</button>
         <p v-if="testResult" :data-status="testResult.status" role="status">
           <CircleCheck v-if="testResult.status === 'eligible'" :size="14" />
           <CircleX v-else :size="14" />
-          {{ testResult.message }}
+          {{ testResultMessage(testResult) }}
         </p>
       </div>
     </template>

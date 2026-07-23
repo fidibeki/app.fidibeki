@@ -6,6 +6,7 @@ interface TurnstileAPI {
 }
 
 const props = defineProps<{ siteKey: string }>()
+const { t } = useI18n()
 const emit = defineEmits<{
   verified: [token: string]
   expired: []
@@ -100,7 +101,7 @@ defineExpose({ reset, retry })
 </script>
 
 <template>
-  <div v-if="siteKey" ref="container" class="turnstile-widget" aria-label="Security verification" />
+  <div v-if="siteKey" ref="container" class="turnstile-widget" :aria-label="t('auth.securityVerification')" />
 </template>
 
 <style scoped>

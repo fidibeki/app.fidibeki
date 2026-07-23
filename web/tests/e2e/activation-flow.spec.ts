@@ -66,7 +66,8 @@ test('public signup keeps form state and resets Turnstile after a conflict', asy
   await expect(page.getByLabel('Workspace URL')).toHaveValue('acme-studio')
   await page.getByRole('button', { name: 'Create workspace' }).click()
   await expect.poll(() => signupAttempts).toBe(1)
-  await expect(page.getByText('tenant slug already exists')).toBeVisible()
+  await expect(page.getByText('That request conflicts with existing data.')).toBeVisible()
+  await expect(page.getByText('tenant slug already exists')).toHaveCount(0)
   await expect(page.getByLabel('Workspace name')).toHaveValue('Acme Studio')
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __turnstileResets?: number }).__turnstileResets || 0)).toBe(1)
 
