@@ -319,6 +319,22 @@ was removed from the staging test tenant.
         no-store/no-referrer/noindex response headers, and desktop/mobile journeys pass. Web CI and the
         real staging smoke remain the completion gate.
     - [ ] #26: audit and implement layered public-submission abuse protection after #25.
+      - Audit result: public-key/origin authorization, honeypot, a 1 MiB request bound, basic
+        project/network rate limits, plan quota, per-kind attachment declarations, one-time
+        completion tokens, replay decoding, moderation, and a global provider limiter already exist.
+        Attachment count/aggregate bytes, privacy-preserving coordinated scopes, upload expiry,
+        payload signatures, quarantine before preview/AI, replay cost limits, per-project AI budget,
+        stable widget retry UX, and tenant-safe diagnostics remain incomplete.
+      - Approved design:
+        `docs/superpowers/specs/2026-07-23-public-submission-abuse-protection-design.md`.
+      - [ ] Slice 1: shared HMAC buckets and named policies, stable error details, aggregate
+        diagnostics/API, declaration bounds, and distributed/concurrency coverage.
+      - [ ] Slice 2: explicit upload expiry, quarantine and deterministic signature verification,
+        safe-only preview/AI/export, cleanup/reconciliation, and failure coverage.
+      - [ ] Slice 3: coordinated replay protection, verified batch lifecycle and aggregate bounds,
+        idempotent tenant/project AI budget, defer behavior, and concurrency coverage.
+      - [ ] Slice 4: widget retry/error experience, responsive Submission health diagnostics,
+        desktop/mobile E2E, CI, and staging validation.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
