@@ -131,8 +131,9 @@ export function localizedAPIFieldErrors(
       )]]
     }))
   }
-  const fields = record(details)
-  if (!fields) return {}
+  const root = record(details)
+  if (!root) return {}
+  const fields = record(root.fields) || root
   return Object.fromEntries(Object.entries(fields).map(([field, detail]) => {
     const reason = fieldReason(detail)
     return [field, translate(

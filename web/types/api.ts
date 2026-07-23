@@ -141,6 +141,7 @@ export interface WidgetAppearance {
   position: WidgetPosition
   theme: WidgetTheme
   accent_color: string
+  accent_foreground: string
   surface_color?: string
   text_color?: string
   logo_url?: string

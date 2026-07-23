@@ -33,7 +33,7 @@ import type {
   TenantConfiguration,
   WidgetAppearanceOverrides,
 } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
+import { apiErrorMessage, apiFieldErrors } from '~/utils/api-fetch'
 import { cleanAppearanceOverrides, defaultWidgetAppearance } from '~/utils/widget-appearance'
 
 const route = useRoute()
@@ -89,6 +89,9 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
 const modal = ref<'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | null>(null)
 const pending = ref(false)
 const formError = ref('')
+const reporterAccessError = ref('')
+const appearanceFieldErrors = ref<Record<string, string>>({})
+const appearanceFormError = ref('')
 const memberEmailError = ref('')
 const memberEmailInput = ref<HTMLInputElement | null>(null)
 const memberMode = ref<'invite' | 'edit'>('invite')
@@ -512,12 +515,12 @@ async function confirmDestructiveAction() {
 async function updateReporterAccess(enabled: boolean) {
   if (!canWrite('tenant:update') || !data.value || pending.value) return
   pending.value = true
-  formError.value = ''
+  reporterAccessError.value = ''
   try {
     await $apiFetch('/v1/reporter-access', { method: 'PATCH', body: { enabled } })
     data.value.configuration.tenant.reporter_access_enabled = enabled
   } catch (accessError) {
-    formError.value = localizedError.message(accessError, 'admin.settings.errors.reporterAccess')
+    reporterAccessError.value = localizedError.message(accessError, 'admin.settings.errors.reporterAccess')
   } finally {
     pending.value = false
   }
@@ -526,17 +529,34 @@ async function updateReporterAccess(enabled: boolean) {
 async function updateWidgetAppearance() {
   if (!canWrite('tenant:update') || !data.value || pending.value) return
   pending.value = true
-  formError.value = ''
+  appearanceFieldErrors.value = {}
+  appearanceFormError.value = ''
   const appearance = cleanAppearanceOverrides(workspaceAppearance.value)
   try {
     await $apiFetch('/v1/widget-appearance', { method: 'PATCH', body: appearance })
     data.value.configuration.tenant.widget_appearance_defaults = appearance
     showSuccessToast(t('admin.settings.notices.appearanceSaved'))
   } catch (appearanceError) {
-    formError.value = localizedError.message(appearanceError, 'admin.settings.errors.appearance')
+    appearanceFieldErrors.value = apiFieldErrors(
+      appearanceError,
+      localizedError.fields(appearanceError),
+    )
+    if (!Object.keys(appearanceFieldErrors.value).length) {
+      appearanceFormError.value = localizedError.message(
+        appearanceError,
+        'admin.settings.errors.appearance',
+      )
+    }
   } finally {
     pending.value = false
   }
+}
+
+function clearAppearanceField(field: string) {
+  if (!appearanceFieldErrors.value[field]) return
+  const next = { ...appearanceFieldErrors.value }
+  delete next[field]
+  appearanceFieldErrors.value = next
 }
 
 function applyOrganizationProfile(profile: OrganizationProfile) {
@@ -610,11 +630,17 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
         <div class="app-surface settings-section settings-reporter-policy">
           <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.reporterEyebrow') }}</p><h2>{{ t('admin.settings.workspace.progressLinks') }}</h2></div><span class="settings-domain-mode" :data-enforced="data.configuration.tenant.reporter_access_enabled">{{ data.configuration.tenant.reporter_access_enabled ? t('admin.common.enabled') : t('admin.common.disabled') }}</span></header>
           <label><span><b>{{ t('admin.settings.workspace.reporterProgress') }}</b><small>{{ t('admin.settings.workspace.reporterDescription') }}</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" :aria-label="t('admin.settings.workspace.reporterProgress')" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
-          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
+          <p v-if="reporterAccessError" class="settings-form-error" role="alert">{{ reporterAccessError }}</p>
         </div>
         <form class="app-surface settings-section settings-widget-appearance" @submit.prevent="updateWidgetAppearance">
           <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.widgetEyebrow') }}</p><h2>{{ t('admin.settings.workspace.controlledAppearance') }}</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">{{ t('admin.settings.workspace.saveDefaults') }}</button></header>
-          <WidgetAppearanceEditor v-model="workspaceAppearance" :parent="defaultWidgetAppearance" />
+          <WidgetAppearanceEditor
+            v-model="workspaceAppearance"
+            :parent="defaultWidgetAppearance"
+            :errors="appearanceFieldErrors"
+            @field-edited="clearAppearanceField"
+          />
+          <p v-if="appearanceFormError" class="settings-form-error" role="alert">{{ appearanceFormError }}</p>
         </form>
       </section>
 
@@ -777,6 +803,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-reporter-policy small { color: var(--muted); font-size: 9px; }
 .settings-reporter-policy input { width: 18px; height: 18px; accent-color: var(--teal); }
 .settings-reporter-policy .settings-form-error { margin: 0 16px 14px; }
+.settings-widget-appearance > .settings-form-error { margin: 0 16px 16px; }
 .settings-members-page { display: grid; gap: 16px; }
 .settings-section { overflow: hidden; }
 .settings-section > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; border-bottom: 1px solid var(--line); }

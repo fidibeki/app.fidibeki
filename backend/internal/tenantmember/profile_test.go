@@ -133,12 +133,12 @@ func TestValidateOrganizationProfileRejectsUnsafeOrUnsupportedValues(t *testing.
 	javascriptURL := "javascript:alert(1)"
 	credentialURL := "https://user:secret@acme.test"
 	invalidEmail := "Acme Support <support@acme.test>"
-	lowContrastAccent := "#ffffff"
+	invalidAccent := "#fffff"
 	unsupportedLocale := "fr-FR"
 	invalidTimezone := "Europe/Nowhere"
 	_, fields := ValidateOrganizationProfile(tenant.OrganizationProfile{
 		Name: "", ShortName: &tooLongShortName, WebsiteURL: &javascriptURL,
-		SupportEmail: &invalidEmail, AccentColor: &lowContrastAccent,
+		SupportEmail: &invalidEmail, AccentColor: &invalidAccent,
 		DefaultLocale: &unsupportedLocale, DefaultTimezone: &invalidTimezone,
 		PrivacyPolicyURL: &credentialURL, TermsURL: &javascriptURL,
 	})

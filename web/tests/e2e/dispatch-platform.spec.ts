@@ -340,6 +340,9 @@ function createMockState() {
     workspaceAccess: 'available' as 'available' | 'unknown' | 'suspended' | 'error',
     failNextIdentityUpload: false,
     failIdentityAssets: false,
+    failNextAppearanceUpdate: false,
+    failNextReporterAccessUpdate: false,
+    nextWidgetRuleFieldErrors: null as Record<string, string> | null,
   }
 }
 
@@ -741,6 +744,17 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     const projectRuleMatch = path.match(/^\/v1\/projects\/([^/]+)\/widget-rules\/([^/]+)$/)
     if (projectRuleMatch && method === 'PATCH') {
+      if (state.nextWidgetRuleFieldErrors) {
+        const fields = state.nextWidgetRuleFieldErrors
+        state.nextWidgetRuleFieldErrors = null
+        return json(route, {
+          error: {
+            code: 'validation_error',
+            message: 'validation failed',
+            details: { fields },
+          },
+        }, 422)
+      }
       const rule = state.widgetRules.find(candidate => candidate.project_id === projectRuleMatch[1] && candidate.id === projectRuleMatch[2])
       if (rule) Object.assign(rule, body(), { updated_at: now })
       return json(route, { widget_rule: rule })
@@ -1076,10 +1090,28 @@ async function installMockAPI(page: Page, state: MockState) {
       })
     }
     if (path === '/v1/reporter-access' && method === 'PATCH') {
+      if (state.failNextReporterAccessUpdate) {
+        state.failNextReporterAccessUpdate = false
+        return json(route, {
+          error: { code: 'service_unavailable', message: 'reporter access unavailable' },
+        }, 503)
+      }
       state.tenant.reporter_access_enabled = Boolean(body().enabled)
       return json(route, { reporter_access_enabled: state.tenant.reporter_access_enabled })
     }
     if (path === '/v1/widget-appearance' && method === 'PATCH') {
+      if (state.failNextAppearanceUpdate) {
+        state.failNextAppearanceUpdate = false
+        return json(route, {
+          error: {
+            code: 'validation_error',
+            message: 'validation failed',
+            details: {
+              logo_url: 'must be an HTTPS URL without credentials or fragments',
+            },
+          },
+        }, 422)
+      }
       state.tenant.widget_appearance_defaults = body() as Record<string, string>
       return json(route, { widget_appearance_defaults: state.tenant.widget_appearance_defaults })
     }
@@ -1647,6 +1679,72 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
 })
 
+test('widget rule validation maps nested fields, switches locale, and clears edited errors', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Structured validation behavior is viewport independent')
+  const state = createMockState()
+  const localization = {
+    launcher_label: 'Feedback',
+    prompt: 'How was checkout?',
+    comment_placeholder: 'Tell us more',
+    contact_label: 'Email address',
+    consent_label: 'Email me about this feedback',
+    submit_label: 'Send feedback',
+    success_message: 'Your feedback was sent.',
+    block_labels: { rating: 'Rating', feedback: 'Feedback' },
+    option_labels: {},
+  }
+  Object.assign(state.widgetRules[0], {
+    response_blocks: [
+      { key: 'rating', type: 'rating', required: false },
+      { key: 'feedback', type: 'free_text', required: false },
+    ],
+    localizations: {
+      en: localization,
+      pt: { ...localization, prompt: 'Como foi o checkout?' },
+    },
+  })
+  state.nextWidgetRuleFieldErrors = {
+    greeting: 'must not exceed 500 characters',
+    'localizations.pt.block_labels.feedback':
+      'must identify a block and contain 1-240 characters',
+    'response_blocks[1].key':
+      'must contain 1-32 lowercase letters, numbers, or underscores',
+  }
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  const summary = page.locator('.rule-validation-summary')
+  await expect(summary).toContainText('greeting')
+  await expect(summary).toContainText('localizations.pt.block_labels.feedback')
+  await expect(summary).toContainText('response_blocks[1].key')
+  await expect(page.getByLabel('Editing language')).toHaveValue('pt')
+  const localizedFeedback = page.locator(
+    '[data-field-path="localizations.pt.block_labels.feedback"]',
+  )
+  await expect(localizedFeedback).toBeFocused()
+  await expect(localizedFeedback).toHaveAttribute('aria-invalid', 'true')
+  await expect(localizedFeedback).toHaveAttribute('aria-describedby', /^rule-error-/)
+  await expect(page.locator(`#${await localizedFeedback.getAttribute('aria-describedby')}`))
+    .toHaveText('must identify a block and contain 1-240 characters')
+
+  await localizedFeedback.fill('Conte-nos mais')
+  await expect(localizedFeedback).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(summary).not.toContainText('localizations.pt.block_labels.feedback')
+
+  const blockKey = page.locator('[data-field-path="response_blocks[1].key"]')
+  await expect(blockKey).toHaveAttribute('aria-invalid', 'true')
+  await blockKey.fill('feedback_text')
+  await expect(summary).toContainText('greeting')
+  await expect(summary).not.toContainText('response_blocks[1].key')
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  await expect(summary).toHaveCount(0)
+})
+
 test('widget lifecycle exposes every status and hides archived rules by default', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Lifecycle editing is viewport independent')
   const state = createMockState()
@@ -1704,8 +1802,11 @@ test('workspace widget defaults can be updated with controlled tokens', async ({
   await openPrimary(page, 'Settings')
 
   const appearance = page.locator('.settings-widget-appearance')
-  await appearance.getByLabel('Accent color swatch').fill('#005f56')
+  await appearance.getByLabel('Accent color swatch').fill('#46c754')
   await appearance.getByLabel('Logo URL').fill('https://cdn.example.com/acme.svg')
+  const accentPreview = appearance.locator('.appearance-accent-preview > span')
+  await expect(accentPreview).toHaveCSS('background-color', 'rgb(70, 199, 84)')
+  await expect(accentPreview).toHaveCSS('color', 'rgb(23, 26, 25)')
   const heightBeforeSave = await appearance.evaluate(element => element.getBoundingClientRect().height)
   await appearance.getByRole('button', { name: 'Save defaults' }).click()
   const toast = page.locator('.app-toast')
@@ -1717,8 +1818,41 @@ test('workspace widget defaults can be updated with controlled tokens', async ({
   await expect(toast).toHaveCount(1)
   await expect(toast).toHaveText('Widget appearance saved.')
   expect(state.tenant.widget_appearance_defaults).toMatchObject({
-    accent_color: '#005f56', logo_url: 'https://cdn.example.com/acme.svg',
+    accent_color: '#46c754', logo_url: 'https://cdn.example.com/acme.svg',
   })
+})
+
+test('workspace appearance and reporter policy keep validation in their own forms', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Form ownership is viewport independent')
+  const state = createMockState()
+  state.failNextReporterAccessUpdate = true
+  state.failNextAppearanceUpdate = true
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+
+  const reporterPolicy = page.locator('.settings-reporter-policy')
+  await page.getByLabel('Reporter progress access').uncheck()
+  await expect(reporterPolicy.getByRole('alert')).toBeVisible()
+
+  const appearance = page.locator('.settings-widget-appearance')
+  const logoURL = appearance.getByLabel('Logo URL')
+  await logoURL.fill('http://example.test/logo.svg')
+  await appearance.getByRole('button', { name: 'Save defaults' }).click()
+
+  await expect(logoURL).toHaveAttribute('aria-invalid', 'true')
+  const describedBy = await logoURL.getAttribute('aria-describedby')
+  expect(describedBy).toBeTruthy()
+  await expect(appearance.locator(`#${describedBy}`))
+    .toHaveText('must be an HTTPS URL without credentials or fragments')
+  await expect(reporterPolicy.getByRole('alert')).toBeVisible()
+  await expect(page.locator('.settings-page > .settings-form-error')).toHaveCount(0)
+
+  await logoURL.fill('https://cdn.example.test/logo.svg')
+  await expect(logoURL).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(appearance.getByText('must be an HTTPS URL without credentials or fragments'))
+    .toHaveCount(0)
+  await appearance.getByRole('button', { name: 'Save defaults' }).click()
+  await expect(page.locator('.app-toast')).toHaveText('Widget appearance saved.')
 })
 
 test('organization profile validates identity assets and updates the workspace immediately', async ({ page }, testInfo) => {

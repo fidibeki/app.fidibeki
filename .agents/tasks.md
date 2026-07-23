@@ -629,7 +629,7 @@ pass, including the project flow on desktop and mobile.
 ## Task 37: Complete Appearance And Validation Contracts
 
 **Depends on:** Task 36
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** Complete issues #36, #37, and #39 through one consistent structured field-error and
 accent-foreground contract across API, backoffice preview, and widget.
@@ -638,6 +638,15 @@ accent-foreground contract across API, backoffice preview, and widget.
 accessible foreground derivation is deterministic, and backend/web/widget/browser tests pass.
 
 **Design:** `docs/superpowers/specs/2026-07-23-widget-appearance-validation-contract-design.md`
+
+**Evidence:** Appearance accepts every normalized six-digit accent, derives a deterministic
+WCAG-AA foreground in backend/web/widget, and exposes the additive resolved value without a
+migration. Settings keeps Reporter Access and Widget Defaults failures in their owning forms.
+Widget-rule validation now unwraps `details.fields`, preserves multiple and unmapped errors, maps
+backend array paths including response blocks and targeting conditions, switches locale, focuses
+the first actionable field, and clears only edited paths. Backend full tests, web unit (113),
+widget unit (129), both typechecks/builds, focused widget Chromium, and three focused backoffice
+browser journeys pass.
 
 **Autonomy:** AFK
 

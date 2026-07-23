@@ -579,7 +579,8 @@ test('automatic reaction waits for the configured objective policy', async ({ pa
 test('applies controlled appearance tokens and a privacy-safe logo', async ({ page }) => {
   const configuration = definitionConfiguration('inline')
   configuration.definitions![0]!.appearance = {
-    position: 'bottom-left', theme: 'dark', accent_color: '#005f56',
+    position: 'bottom-left', theme: 'dark', accent_color: '#46c754',
+    accent_foreground: '#171a19',
     surface_color: '#101817', text_color: '#f7faf9',
     logo_url: 'https://cdn.example.com/fidibeki-mark.svg',
   }
@@ -599,7 +600,8 @@ test('applies controlled appearance tokens and a privacy-safe logo', async ({ pa
   await expect(logo).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(widget.locator('.panel')).toHaveCSS('background-color', 'rgb(16, 24, 23)')
   await expect(widget.locator('.panel')).toHaveCSS('color', 'rgb(247, 250, 249)')
-  await expect(widget.getByRole('button', { name: 'Send response' })).toHaveCSS('background-color', 'rgb(0, 95, 86)')
+  await expect(widget.getByRole('button', { name: 'Send response' })).toHaveCSS('background-color', 'rgb(70, 199, 84)')
+  await expect(widget.getByRole('button', { name: 'Send response' })).toHaveCSS('color', 'rgb(23, 26, 25)')
 })
 
 test('loads the matching rule and serializes feedback through the public contract', async ({ page }) => {

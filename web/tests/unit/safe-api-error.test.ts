@@ -86,4 +86,21 @@ describe('safe localized API errors', () => {
       name: 'Check this field.',
     })
   })
+
+  it('unwraps nested fields without exposing backend prose', () => {
+    expect(localizedAPIFieldErrors({
+      data: {
+        error: {
+          code: 'validation_error',
+          details: {
+            fields: {
+              name: 'provider-specific validation prose',
+            },
+          },
+        },
+      },
+    }, translate)).toEqual({
+      name: 'Check this field.',
+    })
+  })
 })

@@ -1,3 +1,5 @@
+import { extractAPIError } from './safe-api-error'
+
 export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
 export interface ApiFetchOptions {
@@ -24,14 +26,31 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
   return fallback
 }
 
-export function apiFieldErrors(error: unknown): Record<string, string> {
-  if (!error || typeof error !== 'object') return {}
-  const details = (error as {
-    data?: { error?: { details?: unknown } }
-  }).data?.error?.details
-  if (!details || typeof details !== 'object' || Array.isArray(details)) return {}
-  return Object.fromEntries(
-    Object.entries(details)
-      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  )
+export function apiFieldErrors(
+  error: unknown,
+  localizedFallbacks: Record<string, string> = {},
+): Record<string, string> {
+  const details = extractAPIError(error)?.details
+  if (Array.isArray(details)) {
+    const messages = Object.fromEntries(details.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+      const field = 'field' in item && typeof item.field === 'string' ? item.field.trim() : ''
+      const message = 'message' in item && typeof item.message === 'string' ? item.message.trim() : ''
+      return field && message ? [[field, message]] : []
+    }))
+    return { ...localizedFallbacks, ...messages }
+  }
+  if (!details || typeof details !== 'object') return localizedFallbacks
+  const root = details as Record<string, unknown>
+  const nested = root.fields
+  const fields = nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : root
+  return {
+    ...localizedFallbacks,
+    ...Object.fromEntries(
+      Object.entries(fields)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    ),
+  }
 }

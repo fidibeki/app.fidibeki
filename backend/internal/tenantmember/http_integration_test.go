@@ -187,11 +187,11 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	}
 	appearance := performTenantRequest(
 		handler, http.MethodPatch, "/v1/widget-appearance",
-		`{"theme":"dark","accent_color":"#005f56","surface_color":"#101817","text_color":"#f7faf9",`+
+		`{"theme":"dark","accent_color":"#46c754","surface_color":"#101817","text_color":"#f7faf9",`+
 			`"logo_url":"https://cdn.example.com/acme.svg"}`,
 		ownerSession.AccessToken, nil,
 	)
-	if appearance.Code != http.StatusOK || !strings.Contains(appearance.Body.String(), `"accent_color":"#005f56"`) {
+	if appearance.Code != http.StatusOK || !strings.Contains(appearance.Body.String(), `"accent_color":"#46c754"`) {
 		t.Fatalf("widget appearance status = %d, body = %s", appearance.Code, appearance.Body.String())
 	}
 	var storedAppearance string
@@ -202,7 +202,7 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	organizationProfile := performTenantRequest(
 		handler, http.MethodPatch, "/v1/organization-profile",
 		`{"name":"Acme Studio","short_name":"ACME","website_url":"https://acme.test",`+
-			`"support_email":"support@acme.test","accent_color":"#005f56",`+
+			`"support_email":"support@acme.test","accent_color":"#46c754",`+
 			`"default_locale":"pt-ao","default_timezone":"Africa/Luanda",`+
 			`"privacy_policy_url":"https://acme.test/privacy","terms_url":"https://acme.test/terms"}`,
 		ownerSession.AccessToken, nil,

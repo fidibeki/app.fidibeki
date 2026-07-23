@@ -79,10 +79,12 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 			AllowComment: true, CollectContact: true,
 			Appearance: widgetconfig.Appearance{
 				Position: "bottom-right", Theme: "dark", AccentColor: "#005f56",
+				AccentForeground: "#ffffff",
 			},
 		}, {
 			ID: "paused-rule-id", Name: "Paused", MatcherType: project.MatcherAllPages,
 			DefinitionKey: "paused-feedback", DefinitionStatus: project.DefinitionPaused,
+			Appearance: widgetconfig.Resolve(),
 		}},
 	}}
 	handler := NewHTTPHandler(HTTPOptions{Store: store, Now: func() time.Time { return now }})
@@ -111,7 +113,7 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
-		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56"}`,
+		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56","accent_foreground":"#ffffff"}`,
 	} {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)

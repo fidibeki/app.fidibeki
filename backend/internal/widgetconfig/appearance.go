@@ -8,9 +8,13 @@ import (
 )
 
 const (
-	DefaultPosition = "bottom-right"
-	DefaultTheme    = "auto"
-	DefaultAccent   = "#087f73"
+	DefaultPosition         = "bottom-right"
+	DefaultTheme            = "auto"
+	DefaultAccent           = "#087f73"
+	DefaultAccentForeground = "#ffffff"
+	AccentInk               = "#171a19"
+	accentBlack             = "#000000"
+	minimumTextContrast     = 4.5
 )
 
 type AppearanceOverrides struct {
@@ -23,12 +27,13 @@ type AppearanceOverrides struct {
 }
 
 type Appearance struct {
-	Position     string  `json:"position"`
-	Theme        string  `json:"theme"`
-	AccentColor  string  `json:"accent_color"`
-	SurfaceColor *string `json:"surface_color,omitempty"`
-	TextColor    *string `json:"text_color,omitempty"`
-	LogoURL      *string `json:"logo_url,omitempty"`
+	Position         string  `json:"position"`
+	Theme            string  `json:"theme"`
+	AccentColor      string  `json:"accent_color"`
+	AccentForeground string  `json:"accent_foreground"`
+	SurfaceColor     *string `json:"surface_color,omitempty"`
+	TextColor        *string `json:"text_color,omitempty"`
+	LogoURL          *string `json:"logo_url,omitempty"`
 }
 
 func Normalize(input AppearanceOverrides) AppearanceOverrides {
@@ -59,11 +64,8 @@ func Validate(input AppearanceOverrides) map[string]string {
 		fields["text_color"] = "surface_color and text_color must be configured together"
 	}
 	if input.SurfaceColor != nil && input.TextColor != nil && validHex(*input.SurfaceColor) && validHex(*input.TextColor) &&
-		contrastRatio(*input.SurfaceColor, *input.TextColor) < 4.5 {
+		contrastRatio(*input.SurfaceColor, *input.TextColor) < minimumTextContrast {
 		fields["text_color"] = "must have at least 4.5:1 contrast against surface_color"
-	}
-	if input.AccentColor != nil && validHex(*input.AccentColor) && contrastRatio(*input.AccentColor, "#ffffff") < 4.5 {
-		fields["accent_color"] = "must have at least 4.5:1 contrast against white button text"
 	}
 	if input.LogoURL != nil && *input.LogoURL != "" && !validLogoURL(*input.LogoURL) {
 		fields["logo_url"] = "must be an HTTPS URL without credentials or fragments"
@@ -96,7 +98,21 @@ func Resolve(layers ...AppearanceOverrides) Appearance {
 	if appearance.LogoURL != nil && *appearance.LogoURL == "" {
 		appearance.LogoURL = nil
 	}
+	appearance.AccentForeground = ResolveAccentForeground(appearance.AccentColor)
 	return appearance
+}
+
+func ResolveAccentForeground(accent string) string {
+	accent = strings.ToLower(strings.TrimSpace(accent))
+	if !validHex(accent) {
+		return DefaultAccentForeground
+	}
+	for _, foreground := range []string{AccentInk, DefaultAccentForeground, accentBlack} {
+		if contrastRatio(accent, foreground) >= minimumTextContrast {
+			return foreground
+		}
+	}
+	return accentBlack
 }
 
 func normalizeLower(value *string) *string {

@@ -13,9 +13,19 @@ import {
 } from '~/utils/widget-targeting'
 
 const state = defineModel<TargetingFormState>({ required: true })
-const props = withDefaults(defineProps<{ showErrors?: boolean }>(), { showErrors: false })
-const emit = defineEmits<{ tested: [diagnostic: TargetingTestDiagnostic | null] }>()
+const props = withDefaults(defineProps<{
+  showErrors?: boolean
+  serverErrors?: Record<string, string>
+}>(), {
+  showErrors: false,
+  serverErrors: () => ({}),
+})
+const emit = defineEmits<{
+  tested: [diagnostic: TargetingTestDiagnostic | null]
+  'field-edited': [field: string]
+}>()
 const { t } = useI18n()
+const identifier = useId()
 const testURL = ref('')
 const testResult = ref<TargetingTestResult | null>(null)
 const errors = computed(() => validateTargeting(state.value))
@@ -28,6 +38,7 @@ watch(state, resetTest, { deep: true })
 watch(testURL, resetTest)
 
 function selectMode(mode: Exclude<TargetingMode, null>) {
+  emit('field-edited', 'include_conditions')
   if (mode === 'all_pages') {
     state.value = {
       mode,
@@ -47,19 +58,53 @@ function selectMode(mode: Exclude<TargetingMode, null>) {
 function addCondition(kind: 'includes' | 'excludes') {
   if (state.value[kind].length >= 20) return
   state.value[kind].push(emptyCondition())
+  emit('field-edited', kind === 'includes' ? 'include_conditions' : 'exclude_conditions')
 }
 
 function removeCondition(kind: 'includes' | 'excludes', index: number) {
   state.value[kind].splice(index, 1)
+  emit('field-edited', kind === 'includes' ? 'include_conditions' : 'exclude_conditions')
 }
 
-function changeMatcher(condition: WidgetTargetConditionInput) {
+function changeMatcher(
+  condition: WidgetTargetConditionInput,
+  collection: 'include_conditions' | 'exclude_conditions',
+  index: number,
+) {
   condition.matcher_value = null
+  emit('field-edited', `${collection}[${index}].matcher_type`)
+  emit('field-edited', `${collection}[${index}].matcher_value`)
+}
+
+function fieldError(path: string) {
+  return props.serverErrors[path] || ''
+}
+
+function fieldErrorID(path: string) {
+  return `${identifier}-${path.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}-error`
+}
+
+function fieldAttributes(path: string) {
+  const error = fieldError(path)
+  return {
+    'data-field-path': path,
+    'aria-invalid': error ? true : undefined,
+    'aria-describedby': error ? fieldErrorID(path) : undefined,
+  }
 }
 
 function conditionError(collection: 'include_conditions' | 'exclude_conditions', index: number) {
-  return errors.value[`${collection}[${index}].matcher_value`]
-    || errors.value[`${collection}[${index}].matcher_type`]
+  const valuePath = `${collection}[${index}].matcher_value`
+  const typePath = `${collection}[${index}].matcher_type`
+  if (fieldError(valuePath)) return { path: valuePath, message: fieldError(valuePath) }
+  if (fieldError(typePath)) return { path: typePath, message: fieldError(typePath) }
+  const local = errors.value[valuePath] || errors.value[typePath]
+  return local ? { path: '', message: targetingErrorMessage(local) } : null
+}
+
+function collectionError(collection: 'include_conditions' | 'exclude_conditions') {
+  return fieldError(collection)
+    || (errors.value[collection] ? targetingErrorMessage(errors.value[collection]!) : '')
 }
 
 function targetingErrorMessage(error: string) {
@@ -99,30 +144,30 @@ function emptyCondition(): WidgetTargetConditionInput {
 
     <template v-if="state.mode">
       <div v-if="state.mode === 'all_pages'" class="targeting-all-pages"><Globe2 :size="14" /><span>{{ t('onboarding.targeting.everyAllowedPage') }}</span></div>
-      <div v-else class="targeting-group">
+      <div v-else class="targeting-group" tabindex="-1" v-bind="fieldAttributes('include_conditions')">
         <header><div><b>{{ t('onboarding.targeting.include') }}</b><span>{{ state.includes.length }}/20</span></div><button type="button" :disabled="state.includes.length >= 20" @click="addCondition('includes')"><Plus :size="14" /> {{ t('onboarding.targeting.addInclude') }}</button></header>
         <div v-for="(condition, index) in state.includes" :key="`include-${index}`" class="targeting-condition">
-          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.includeMatcher', { index: index + 1 })" @change="changeMatcher(condition)">
+          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.includeMatcher', { index: index + 1 })" v-bind="fieldAttributes(`include_conditions[${index}].matcher_type`)" @change="changeMatcher(condition, 'include_conditions', index)">
             <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
           </select>
-          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.includeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/docs' : 'https://example.com/docs'" maxlength="2048" required />
+          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.includeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/docs' : 'https://example.com/docs'" maxlength="2048" required v-bind="fieldAttributes(`include_conditions[${index}].matcher_value`)" @input="emit('field-edited', `include_conditions[${index}].matcher_value`)" />
           <button type="button" class="targeting-remove" :aria-label="t('onboarding.targeting.removeInclude', { index: index + 1 })" :title="t('onboarding.targeting.removeInclude', { index: index + 1 })" @click="removeCondition('includes', index)"><Trash2 :size="14" /></button>
-          <p v-if="props.showErrors && conditionError('include_conditions', index)" class="targeting-error">{{ targetingErrorMessage(conditionError('include_conditions', index)!) }}</p>
+          <p v-if="(props.showErrors || Object.keys(props.serverErrors).length) && conditionError('include_conditions', index)" :id="conditionError('include_conditions', index)?.path ? fieldErrorID(conditionError('include_conditions', index)!.path) : undefined" class="targeting-error">{{ conditionError('include_conditions', index)?.message }}</p>
         </div>
-        <p v-if="props.showErrors && errors.include_conditions" class="targeting-error" role="alert">{{ t('onboarding.targeting.errors.includes') }}</p>
+        <p v-if="(props.showErrors || fieldError('include_conditions')) && collectionError('include_conditions')" :id="fieldError('include_conditions') ? fieldErrorID('include_conditions') : undefined" class="targeting-error" role="alert">{{ collectionError('include_conditions') }}</p>
       </div>
 
-      <div class="targeting-group">
+      <div class="targeting-group" tabindex="-1" v-bind="fieldAttributes('exclude_conditions')">
         <header><div><b>{{ t('onboarding.targeting.exclude') }}</b><span>{{ state.excludes.length }}/20</span></div><button type="button" :disabled="state.excludes.length >= 20" @click="addCondition('excludes')"><Plus :size="14" /> {{ t('onboarding.targeting.addExclude') }}</button></header>
         <div v-for="(condition, index) in state.excludes" :key="`exclude-${index}`" class="targeting-condition">
-          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.excludeMatcher', { index: index + 1 })" @change="changeMatcher(condition)">
+          <select v-model="condition.matcher_type" class="app-select" :aria-label="t('onboarding.targeting.excludeMatcher', { index: index + 1 })" v-bind="fieldAttributes(`exclude_conditions[${index}].matcher_type`)" @change="changeMatcher(condition, 'exclude_conditions', index)">
             <option v-for="option in matcherOptions" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
           </select>
-          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.excludeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/account' : 'https://example.com/account'" maxlength="2048" required />
+          <input v-model="condition.matcher_value" class="app-input" :aria-label="t('onboarding.targeting.excludeValue', { index: index + 1 })" :placeholder="condition.matcher_type === 'url_regex' ? '^https://example\\.com/account' : 'https://example.com/account'" maxlength="2048" required v-bind="fieldAttributes(`exclude_conditions[${index}].matcher_value`)" @input="emit('field-edited', `exclude_conditions[${index}].matcher_value`)" />
           <button type="button" class="targeting-remove" :aria-label="t('onboarding.targeting.removeExclude', { index: index + 1 })" :title="t('onboarding.targeting.removeExclude', { index: index + 1 })" @click="removeCondition('excludes', index)"><Trash2 :size="14" /></button>
-          <p v-if="props.showErrors && conditionError('exclude_conditions', index)" class="targeting-error">{{ targetingErrorMessage(conditionError('exclude_conditions', index)!) }}</p>
+          <p v-if="(props.showErrors || Object.keys(props.serverErrors).length) && conditionError('exclude_conditions', index)" :id="conditionError('exclude_conditions', index)?.path ? fieldErrorID(conditionError('exclude_conditions', index)!.path) : undefined" class="targeting-error">{{ conditionError('exclude_conditions', index)?.message }}</p>
         </div>
-        <p v-if="props.showErrors && errors.exclude_conditions" class="targeting-error" role="alert">{{ t('onboarding.targeting.errors.excludes') }}</p>
+        <p v-if="(props.showErrors || fieldError('exclude_conditions')) && collectionError('exclude_conditions')" :id="fieldError('exclude_conditions') ? fieldErrorID('exclude_conditions') : undefined" class="targeting-error" role="alert">{{ collectionError('exclude_conditions') }}</p>
       </div>
 
       <div class="targeting-tester">
@@ -154,6 +199,8 @@ function emptyCondition(): WidgetTargetConditionInput {
 .targeting-condition { display: grid; grid-template-columns: minmax(118px, .34fr) minmax(0, 1fr) 32px; gap: 7px; align-items: start; }
 .targeting-condition .app-select,
 .targeting-condition .app-input { min-width: 0; height: 36px; font-size: 9px; }
+.targeting-editor :is(input, select)[aria-invalid='true'],
+.targeting-group[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
 .targeting-remove { display: grid; width: 32px; height: 36px; place-items: center; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; }
 .targeting-remove:hover { color: var(--red); border-color: #e4adb4; }
 .targeting-condition .targeting-error { grid-column: 2 / -1; }

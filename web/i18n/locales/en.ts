@@ -726,6 +726,9 @@ export const englishMessages = {
       save: 'Save rule',
       saving: 'Saving…',
       saved: 'Widget rule saved.',
+      validation: {
+        title: 'Review the highlighted fields',
+      },
       errors: {
         save: 'Widget rule could not be saved.',
         delete: 'Widget rule could not be deleted.',
@@ -867,6 +870,9 @@ export const englishMessages = {
       textSwatch: 'Text color swatch',
       inherit: 'Inherit',
       inherited: 'Inherited {value}',
+      foregroundPreview: 'Button foreground',
+      foregroundSample: 'Aa',
+      contrastRatio: '{ratio}:1 contrast',
       logoURL: 'Logo URL',
       hideInheritedLogo: 'Hide inherited logo',
       positions: {

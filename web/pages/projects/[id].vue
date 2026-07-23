@@ -38,12 +38,13 @@ import {
   type TargetingFormState,
   type TargetingTestDiagnostic,
 } from '~/utils/widget-targeting'
+import { apiFieldErrors } from '~/utils/api-fetch'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite, tenant, workspaceWritable } = useAuth()
 const { t } = useI18n()
-const { message: apiErrorMessage } = useLocalizedAPIError()
+const { message: apiErrorMessage, fields: localizedFieldErrors } = useLocalizedAPIError()
 const { dateTime: formatDateTime, integer, plural } = useRegionalFormat()
 const config = useRuntimeConfig()
 const projectID = computed(() => String(route.params.id || ''))
@@ -51,6 +52,10 @@ const selectedRuleID = ref('')
 const editingNew = ref(false)
 const pending = ref(false)
 const formError = ref('')
+const ruleFormError = ref('')
+const ruleFieldErrors = ref<Record<string, string>>({})
+const ruleFormElement = ref<HTMLFormElement | null>(null)
+const ruleValidationSummary = ref<HTMLElement | null>(null)
 const notice = ref('')
 const projectName = ref('')
 const projectDomains = ref('')
@@ -155,6 +160,107 @@ const destructiveConfirmLabel = computed(() => destructiveAction.value?.kind ===
 const destructivePendingLabel = computed(() => destructiveAction.value?.kind === 'rule'
   ? t('projects.editor.deleting')
   : t('projects.settings.deleting'))
+const ruleValidationEntries = computed(() => Object.entries(ruleFieldErrors.value))
+const localizationFields = [
+  'launcher_label',
+  'prompt',
+  'comment_placeholder',
+  'contact_label',
+  'consent_label',
+  'submit_label',
+  'success_message',
+] as const
+type LocalizationField = typeof localizationFields[number]
+const localizationLabelKeys: Record<LocalizationField, string> = {
+  launcher_label: 'launcherLabel',
+  prompt: 'prompt',
+  comment_placeholder: 'commentPlaceholder',
+  contact_label: 'contactLabel',
+  consent_label: 'consentLabel',
+  submit_label: 'submitLabel',
+  success_message: 'successMessage',
+}
+const ruleAppearanceErrors = computed(() => Object.fromEntries(
+  Object.entries(ruleFieldErrors.value).flatMap(([path, message]) => {
+    if (path.startsWith('appearance_overrides.')) {
+      return [[path.slice('appearance_overrides.'.length), message]]
+    }
+    return path === 'accent_color' ? [['accent_color', message]] : []
+  }),
+))
+
+function ruleErrorID(path: string) {
+  return `rule-error-${path.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}`
+}
+
+function localizationLabel(field: LocalizationField) {
+  return t(`projects.editor.content.${localizationLabelKeys[field]}`)
+}
+
+function localizationMaximum(field: LocalizationField) {
+  if (field === 'prompt') return 500
+  if (field === 'comment_placeholder' || field === 'consent_label') return 240
+  return 120
+}
+
+function ruleFieldError(path: string) {
+  return ruleFieldErrors.value[path] || ''
+}
+
+function ruleFieldAttributes(path: string) {
+  const error = ruleFieldError(path)
+  return {
+    'data-field-path': path,
+    'aria-invalid': error ? true : undefined,
+    'aria-describedby': error ? ruleErrorID(path) : undefined,
+  }
+}
+
+function clearRuleField(path: string) {
+  const paths = path === 'appearance_overrides.accent_color'
+    ? [path, 'accent_color']
+    : [path]
+  if (!paths.some(candidate => ruleFieldErrors.value[candidate])) return
+  const next = { ...ruleFieldErrors.value }
+  paths.forEach(candidate => delete next[candidate])
+  ruleFieldErrors.value = next
+}
+
+function clearRuleFieldFromEvent(event: Event) {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return
+  const path = target.dataset.fieldPath
+  if (path) clearRuleField(path)
+}
+
+function clearRuleValidation() {
+  ruleFormError.value = ''
+  ruleFieldErrors.value = {}
+}
+
+async function focusRuleField(path: string, fallbackToSummary = true) {
+  const locale = /^localizations\.([^.]+)\./.exec(path)?.[1]
+  if (locale && ruleForm.localizations[locale]) editingLocale.value = locale
+  await nextTick()
+  const elements = ruleFormElement.value?.querySelectorAll<HTMLElement>('[data-field-path]')
+  const target = Array.from(elements || []).find(element =>
+    element.dataset.fieldPath === path
+      || (path === 'accent_color' && element.dataset.fieldPath === 'appearance_overrides.accent_color'))
+  if (!target) {
+    if (fallbackToSummary) ruleValidationSummary.value?.focus()
+    return false
+  }
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  target.focus({ preventScroll: true })
+  return true
+}
+
+async function focusFirstRuleField() {
+  for (const path of Object.keys(ruleFieldErrors.value)) {
+    if (await focusRuleField(path, false)) return
+  }
+  ruleValidationSummary.value?.focus()
+}
 
 function ruleStatus(rule: WidgetRule) {
   return rule.definition_status || (rule.enabled ? 'active' : 'paused')
@@ -177,6 +283,7 @@ function testResultMessage() {
 }
 
 function selectRule(rule: WidgetRule) {
+  clearRuleValidation()
   selectedRuleID.value = rule.id
   editingNew.value = false
   targetingState.value = targetingFromRule(rule)
@@ -216,6 +323,7 @@ function selectRule(rule: WidgetRule) {
 }
 
 function startNewRule() {
+  clearRuleValidation()
   selectedRuleID.value = ''
   editingNew.value = true
   targetingState.value = { mode: null, includes: [], excludes: [] }
@@ -386,6 +494,7 @@ async function saveRule() {
   const permission = editingNew.value ? 'widget_rule:create' : 'widget_rule:update'
   if (!canWrite(permission) || pending.value) return
   formError.value = ''
+  clearRuleValidation()
   showTargetingErrors.value = true
   const targetingErrors = validateTargeting(targetingState.value)
   if (Object.keys(targetingErrors).length > 0) {
@@ -404,7 +513,12 @@ async function saveRule() {
     notice.value = t('projects.editor.saved')
     await refresh()
   } catch (saveError) {
-    formError.value = apiErrorMessage(saveError, 'projects.editor.errors.save')
+    ruleFieldErrors.value = apiFieldErrors(saveError, localizedFieldErrors(saveError))
+    if (Object.keys(ruleFieldErrors.value).length) {
+      await focusFirstRuleField()
+    } else {
+      ruleFormError.value = apiErrorMessage(saveError, 'projects.editor.errors.save')
+    }
   } finally {
     pending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -557,24 +671,303 @@ useHead(() => ({
 
         <main class="project-rule-editor">
           <header><div><p class="app-eyebrow">{{ editingNew ? t('projects.editor.newRule') : t('projects.editor.editingRule') }}</p><h2>{{ ruleForm.name || t('projects.editor.untitled') }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" :title="t('projects.editor.delete')" :aria-label="t('projects.editor.delete')" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? t('projects.editor.saving') : t('projects.editor.save') }}</button></div></header>
-          <form id="widget-rule-form" @submit.prevent="saveRule">
+          <form
+            id="widget-rule-form"
+            ref="ruleFormElement"
+            @submit.prevent="saveRule"
+            @input="clearRuleFieldFromEvent"
+            @change="clearRuleFieldFromEvent"
+          >
+            <section
+              v-if="ruleValidationEntries.length || ruleFormError"
+              ref="ruleValidationSummary"
+              class="rule-validation-summary"
+              role="alert"
+              tabindex="-1"
+            >
+              <h3>{{ t('projects.editor.validation.title') }}</h3>
+              <p v-if="ruleFormError">{{ ruleFormError }}</p>
+              <ul v-else>
+                <li v-for="[path, message] in ruleValidationEntries" :key="path">
+                  <button type="button" @click="focusRuleField(path)">
+                    <code>{{ path }}</code>
+                    <span>{{ message }}</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
             <fieldset :disabled="!workspaceWritable">
-            <section><h3>{{ t('projects.editor.identity.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.identity.name') }}<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>{{ t('projects.editor.identity.definitionKey') }}<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>{{ t('projects.editor.identity.lifecycleStatus') }}<select v-model="ruleForm.definition_status" class="app-select"><option value="draft">{{ t('projects.enums.definitionStatus.draft') }}</option><option value="active">{{ t('projects.enums.definitionStatus.active') }}</option><option value="paused">{{ t('projects.enums.definitionStatus.paused') }}</option><option value="archived">{{ t('projects.enums.definitionStatus.archived') }}</option></select></label><label>{{ t('projects.editor.identity.presentation') }}<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">{{ t('projects.enums.presentation.launcher') }}</option><option value="inline">{{ t('projects.enums.presentation.inline') }}</option><option value="reaction">{{ t('projects.enums.presentation.reaction') }}</option><option value="prompt">{{ t('projects.enums.presentation.prompt') }}</option></select></label><label>{{ t('projects.editor.identity.objective') }}<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">{{ t('projects.enums.objective.continuous_feedback') }}</option><option value="after_engagement">{{ t('projects.enums.objective.after_engagement') }}</option><option value="validate_content">{{ t('projects.enums.objective.validate_content') }}</option><option value="detect_friction">{{ t('projects.enums.objective.detect_friction') }}</option></select></label><label>{{ t('projects.editor.identity.priority') }}<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label></div></section>
-            <section><h3>{{ t('projects.editor.pageMatching') }}</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" @tested="targetingDiagnostic = $event" /></section>
-            <section><h3>{{ t('projects.editor.trigger.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.trigger.type') }}<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">{{ t('projects.enums.trigger.delay') }}</option><option value="scroll">{{ t('projects.enums.trigger.scroll') }}</option><option value="exit_intent">{{ t('projects.enums.trigger.exit_intent') }}</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">{{ t('projects.editor.trigger.delaySeconds') }}<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">{{ t('projects.editor.trigger.scrollPercent') }}<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
-            <section><h3>{{ t('projects.editor.recurrence.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.recurrence.showAgain') }}<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">{{ t('projects.enums.recurrence.cooldown') }}</option><option value="session">{{ t('projects.enums.recurrence.session') }}</option><option value="never">{{ t('projects.enums.recurrence.never') }}</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">{{ t('projects.editor.recurrence.cooldownDays') }}<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
+            <section>
+              <h3>{{ t('projects.editor.identity.title') }}</h3>
+              <div class="project-form-grid">
+                <label>
+                  {{ t('projects.editor.identity.name') }}
+                  <input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" v-bind="ruleFieldAttributes('name')" />
+                  <small v-if="ruleFieldError('name')" :id="ruleErrorID('name')" class="rule-field-error">{{ ruleFieldError('name') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.identity.definitionKey') }}
+                  <input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" v-bind="ruleFieldAttributes('definition_key')" />
+                  <small v-if="ruleFieldError('definition_key')" :id="ruleErrorID('definition_key')" class="rule-field-error">{{ ruleFieldError('definition_key') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.identity.lifecycleStatus') }}
+                  <select v-model="ruleForm.definition_status" class="app-select" v-bind="ruleFieldAttributes('definition_status')">
+                    <option value="draft">{{ t('projects.enums.definitionStatus.draft') }}</option>
+                    <option value="active">{{ t('projects.enums.definitionStatus.active') }}</option>
+                    <option value="paused">{{ t('projects.enums.definitionStatus.paused') }}</option>
+                    <option value="archived">{{ t('projects.enums.definitionStatus.archived') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('definition_status')" :id="ruleErrorID('definition_status')" class="rule-field-error">{{ ruleFieldError('definition_status') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.identity.presentation') }}
+                  <select v-model="ruleForm.presentation" class="app-select" v-bind="ruleFieldAttributes('presentation')">
+                    <option value="launcher">{{ t('projects.enums.presentation.launcher') }}</option>
+                    <option value="inline">{{ t('projects.enums.presentation.inline') }}</option>
+                    <option value="reaction">{{ t('projects.enums.presentation.reaction') }}</option>
+                    <option value="prompt">{{ t('projects.enums.presentation.prompt') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('presentation')" :id="ruleErrorID('presentation')" class="rule-field-error">{{ ruleFieldError('presentation') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.identity.objective') }}
+                  <select v-model="ruleForm.objective" class="app-select" v-bind="ruleFieldAttributes('objective')">
+                    <option value="continuous_feedback">{{ t('projects.enums.objective.continuous_feedback') }}</option>
+                    <option value="after_engagement">{{ t('projects.enums.objective.after_engagement') }}</option>
+                    <option value="validate_content">{{ t('projects.enums.objective.validate_content') }}</option>
+                    <option value="detect_friction">{{ t('projects.enums.objective.detect_friction') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('objective')" :id="ruleErrorID('objective')" class="rule-field-error">{{ ruleFieldError('objective') }}</small>
+                </label>
+                <label>{{ t('projects.editor.identity.priority') }}<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label>
+              </div>
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.pageMatching') }}</h3>
+              <WidgetTargetingEditor
+                v-model="targetingState"
+                :show-errors="showTargetingErrors"
+                :server-errors="ruleFieldErrors"
+                @field-edited="clearRuleField"
+                @tested="targetingDiagnostic = $event"
+              />
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.trigger.title') }}</h3>
+              <div class="project-form-grid">
+                <label>
+                  {{ t('projects.editor.trigger.type') }}
+                  <select v-model="ruleForm.trigger_type" class="app-select" v-bind="ruleFieldAttributes('trigger_type')">
+                    <option value="delay">{{ t('projects.enums.trigger.delay') }}</option>
+                    <option value="scroll">{{ t('projects.enums.trigger.scroll') }}</option>
+                    <option value="exit_intent">{{ t('projects.enums.trigger.exit_intent') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('trigger_type')" :id="ruleErrorID('trigger_type')" class="rule-field-error">{{ ruleFieldError('trigger_type') }}</small>
+                </label>
+                <label v-if="ruleForm.trigger_type === 'delay'">
+                  {{ t('projects.editor.trigger.delaySeconds') }}
+                  <input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" v-bind="ruleFieldAttributes('trigger_delay_seconds')" />
+                  <small v-if="ruleFieldError('trigger_delay_seconds')" :id="ruleErrorID('trigger_delay_seconds')" class="rule-field-error">{{ ruleFieldError('trigger_delay_seconds') }}</small>
+                </label>
+                <label v-if="ruleForm.trigger_type === 'scroll'">
+                  {{ t('projects.editor.trigger.scrollPercent') }}
+                  <input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" v-bind="ruleFieldAttributes('trigger_scroll_percent')" />
+                  <small v-if="ruleFieldError('trigger_scroll_percent')" :id="ruleErrorID('trigger_scroll_percent')" class="rule-field-error">{{ ruleFieldError('trigger_scroll_percent') }}</small>
+                </label>
+              </div>
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.recurrence.title') }}</h3>
+              <div class="project-form-grid">
+                <label>
+                  {{ t('projects.editor.recurrence.showAgain') }}
+                  <select v-model="ruleForm.recurrence_mode" class="app-select" v-bind="ruleFieldAttributes('recurrence_mode')">
+                    <option value="cooldown">{{ t('projects.enums.recurrence.cooldown') }}</option>
+                    <option value="session">{{ t('projects.enums.recurrence.session') }}</option>
+                    <option value="never">{{ t('projects.enums.recurrence.never') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('recurrence_mode')" :id="ruleErrorID('recurrence_mode')" class="rule-field-error">{{ ruleFieldError('recurrence_mode') }}</small>
+                </label>
+                <label v-if="ruleForm.recurrence_mode === 'cooldown'">
+                  {{ t('projects.editor.recurrence.cooldownDays') }}
+                  <input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required v-bind="ruleFieldAttributes('recurrence_days')" />
+                  <small v-if="ruleFieldError('recurrence_days')" :id="ruleErrorID('recurrence_days')" class="rule-field-error">{{ ruleFieldError('recurrence_days') }}</small>
+                </label>
+              </div>
+            </section>
             <section><WidgetDecisionDiagnostics :objective="ruleForm.objective" :presentation="ruleForm.presentation" :trigger-type="ruleForm.trigger_type" :trigger-delay-seconds="ruleForm.trigger_delay_seconds ?? null" :trigger-scroll-percent="ruleForm.trigger_scroll_percent ?? null" :recurrence-mode="ruleForm.recurrence_mode" :recurrence-days="ruleForm.recurrence_days ?? null" /></section>
-            <section><h3>{{ t('projects.editor.methods.title') }}</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>{{ t('projects.editor.methods.rating') }}</b><small>{{ t('projects.editor.methods.ratingHint') }}</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>{{ t('projects.editor.methods.writtenFeedback') }}</b><small>{{ t('projects.editor.methods.writtenFeedbackHint') }}</small></span></label><label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>{{ t('projects.editor.methods.reaction') }}</b><small>{{ t('projects.editor.methods.reactionHint') }}</small></span></label><label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>{{ t('projects.editor.methods.singleChoice') }}</b><small>{{ t('projects.editor.methods.singleChoiceHint') }}</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>{{ t('projects.editor.methods.comment') }}</b><small>{{ t('projects.editor.methods.commentHint') }}</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>{{ t('projects.editor.methods.contact') }}</b><small>{{ t('projects.editor.methods.contactHint') }}</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>{{ t('projects.editor.methods.audio') }}</b><small>{{ supportsAudio ? t('projects.editor.methods.audioHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>{{ t('projects.editor.methods.video') }}</b><small>{{ supportsVideo ? t('projects.editor.methods.videoHint') : t('projects.editor.methods.scaleRequired') }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>{{ t('projects.editor.methods.element') }}</b><small>{{ supportsDOM ? t('projects.editor.methods.elementHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>{{ t('projects.editor.methods.screenshot') }}</b><small>{{ supportsDOM ? t('projects.editor.methods.screenshotHint') : t('projects.editor.methods.upgradeRequired') }}</small></span></label></div></section>
-            <section><h3>{{ t('projects.editor.blocks.title') }}</h3><div class="response-block-list"><div v-for="block in ruleForm.response_blocks" :key="block.type" class="response-block-row"><div class="response-block-head"><span>{{ responseBlockLabel(block.type) }}</span><label><input v-model="block.required" type="checkbox" /> {{ t('projects.editor.blocks.required') }}</label><button type="button" :title="t('projects.editor.blocks.remove')" :aria-label="t('projects.editor.blocks.removeNamed', { type: responseBlockLabel(block.type) })" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>{{ t('projects.editor.blocks.key') }}<input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" /></label><label>{{ t('projects.editor.blocks.label', { locale: editingLocale }) }}<input class="app-input" maxlength="240" :value="editingLocalization.block_labels?.[block.key] || ''" @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)" /></label></div><div v-if="block.options" class="response-option-list"><div v-for="(option, optionIndex) in block.options" :key="optionIndex"><input v-model.trim="option.value" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" :aria-label="t('projects.editor.blocks.optionKey')" /><input class="app-input" maxlength="120" :aria-label="t('projects.editor.blocks.optionLabel')" :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''" @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)" /><button type="button" :title="t('projects.editor.blocks.removeOption')" :aria-label="t('projects.editor.blocks.removeOption')" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button></div><button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> {{ t('projects.editor.blocks.addOption') }}</button></div></div></div></section>
-            <section><h3>{{ t('projects.editor.content.title') }}</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" :aria-label="t('projects.editor.content.editingLanguage')"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale === projectDefaultLocale ? t('projects.editor.content.defaultLanguage', { locale }) : locale }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" :placeholder="t('projects.editor.content.newLanguagePlaceholder')" :aria-label="t('projects.editor.content.newLanguage')" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> {{ t('projects.editor.content.add') }}</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" :title="t('projects.editor.content.removeLanguage')" :aria-label="t('projects.editor.content.removeLanguage')" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid localization-fields"><label>{{ t('projects.editor.content.launcherLabel') }}<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">{{ t('projects.editor.content.prompt') }}<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>{{ t('projects.editor.content.commentPlaceholder') }}<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>{{ t('projects.editor.content.contactLabel') }}<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">{{ t('projects.editor.content.consentLabel') }}<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>{{ t('projects.editor.content.submitLabel') }}<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>{{ t('projects.editor.content.successMessage') }}<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label></div><WidgetAppearanceEditor v-model="ruleAppearance" :parent="projectEffectiveAppearance" allow-logo-reset /></section>
-            <section><h3>{{ t('projects.editor.replay.title') }}</h3><div class="project-form-grid"><label>{{ t('projects.editor.replay.mode') }}<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">{{ t('projects.enums.replay.none') }}</option><option value="full">{{ t('projects.enums.replay.full') }}</option><option value="sampling">{{ t('projects.enums.replay.sampling') }}</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">{{ t('projects.editor.replay.samplingPercent') }}<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>{{ t('projects.editor.replay.maxDuration') }}<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>{{ t('projects.editor.replay.maxEvents') }}<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>{{ t('projects.editor.replay.maskAllInputs') }}</span></label><label class="wide">{{ t('projects.editor.replay.maskSelector') }}<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
+            <section>
+              <h3>{{ t('projects.editor.methods.title') }}</h3>
+              <div class="project-capability-grid">
+                <label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>{{ t('projects.editor.methods.rating') }}</b><small>{{ t('projects.editor.methods.ratingHint') }}</small></span></label>
+                <label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>{{ t('projects.editor.methods.writtenFeedback') }}</b><small>{{ t('projects.editor.methods.writtenFeedbackHint') }}</small></span></label>
+                <label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>{{ t('projects.editor.methods.reaction') }}</b><small>{{ t('projects.editor.methods.reactionHint') }}</small></span></label>
+                <label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>{{ t('projects.editor.methods.singleChoice') }}</b><small>{{ t('projects.editor.methods.singleChoiceHint') }}</small></span></label>
+                <label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>{{ t('projects.editor.methods.comment') }}</b><small>{{ t('projects.editor.methods.commentHint') }}</small></span></label>
+                <label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>{{ t('projects.editor.methods.contact') }}</b><small>{{ t('projects.editor.methods.contactHint') }}</small></span></label>
+                <label :data-locked="!supportsAudio">
+                  <input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" v-bind="ruleFieldAttributes('can_record_audio')" />
+                  <span><b>{{ t('projects.editor.methods.audio') }}</b><small :id="ruleFieldError('can_record_audio') ? ruleErrorID('can_record_audio') : undefined" :class="{ 'rule-field-error': ruleFieldError('can_record_audio') }">{{ ruleFieldError('can_record_audio') || (supportsAudio ? t('projects.editor.methods.audioHint') : t('projects.editor.methods.upgradeRequired')) }}</small></span>
+                </label>
+                <label :data-locked="!supportsVideo">
+                  <input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" v-bind="ruleFieldAttributes('can_record_video')" />
+                  <span><b>{{ t('projects.editor.methods.video') }}</b><small :id="ruleFieldError('can_record_video') ? ruleErrorID('can_record_video') : undefined" :class="{ 'rule-field-error': ruleFieldError('can_record_video') }">{{ ruleFieldError('can_record_video') || (supportsVideo ? t('projects.editor.methods.videoHint') : t('projects.editor.methods.scaleRequired')) }}</small></span>
+                </label>
+                <label :data-locked="!supportsDOM">
+                  <input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" v-bind="ruleFieldAttributes('can_attach_element')" />
+                  <span><b>{{ t('projects.editor.methods.element') }}</b><small :id="ruleFieldError('can_attach_element') ? ruleErrorID('can_attach_element') : undefined" :class="{ 'rule-field-error': ruleFieldError('can_attach_element') }">{{ ruleFieldError('can_attach_element') || (supportsDOM ? t('projects.editor.methods.elementHint') : t('projects.editor.methods.upgradeRequired')) }}</small></span>
+                </label>
+                <label :data-locked="!supportsDOM">
+                  <input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" v-bind="ruleFieldAttributes('can_attach_screenshot')" />
+                  <span><b>{{ t('projects.editor.methods.screenshot') }}</b><small :id="ruleFieldError('can_attach_screenshot') ? ruleErrorID('can_attach_screenshot') : undefined" :class="{ 'rule-field-error': ruleFieldError('can_attach_screenshot') }">{{ ruleFieldError('can_attach_screenshot') || (supportsDOM ? t('projects.editor.methods.screenshotHint') : t('projects.editor.methods.upgradeRequired')) }}</small></span>
+                </label>
+              </div>
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.blocks.title') }}</h3>
+              <div
+                class="response-block-list"
+                tabindex="-1"
+                v-bind="ruleFieldAttributes('response_blocks')"
+              >
+                <small v-if="ruleFieldError('response_blocks')" :id="ruleErrorID('response_blocks')" class="rule-field-error">{{ ruleFieldError('response_blocks') }}</small>
+                <div v-for="(block, blockIndex) in ruleForm.response_blocks" :key="block.type" class="response-block-row">
+                  <div class="response-block-head">
+                    <span
+                      tabindex="-1"
+                      v-bind="ruleFieldAttributes(`response_blocks[${blockIndex}].type`)"
+                    >{{ responseBlockLabel(block.type) }}</span>
+                    <label><input v-model="block.required" type="checkbox" /> {{ t('projects.editor.blocks.required') }}</label>
+                    <button type="button" :title="t('projects.editor.blocks.remove')" :aria-label="t('projects.editor.blocks.removeNamed', { type: responseBlockLabel(block.type) })" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button>
+                  </div>
+                  <small v-if="ruleFieldError(`response_blocks[${blockIndex}].type`)" :id="ruleErrorID(`response_blocks[${blockIndex}].type`)" class="rule-field-error">{{ ruleFieldError(`response_blocks[${blockIndex}].type`) }}</small>
+                  <div class="project-form-grid">
+                    <label>
+                      {{ t('projects.editor.blocks.key') }}
+                      <input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" v-bind="ruleFieldAttributes(`response_blocks[${blockIndex}].key`)" />
+                      <small v-if="ruleFieldError(`response_blocks[${blockIndex}].key`)" :id="ruleErrorID(`response_blocks[${blockIndex}].key`)" class="rule-field-error">{{ ruleFieldError(`response_blocks[${blockIndex}].key`) }}</small>
+                    </label>
+                    <label>
+                      {{ t('projects.editor.blocks.label', { locale: editingLocale }) }}
+                      <input
+                        class="app-input"
+                        maxlength="240"
+                        :value="editingLocalization.block_labels?.[block.key] || ''"
+                        v-bind="ruleFieldAttributes(`localizations.${editingLocale}.block_labels.${block.key}`)"
+                        @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)"
+                      />
+                      <small v-if="ruleFieldError(`localizations.${editingLocale}.block_labels.${block.key}`)" :id="ruleErrorID(`localizations.${editingLocale}.block_labels.${block.key}`)" class="rule-field-error">{{ ruleFieldError(`localizations.${editingLocale}.block_labels.${block.key}`) }}</small>
+                    </label>
+                  </div>
+                  <div
+                    v-if="block.options"
+                    class="response-option-list"
+                    tabindex="-1"
+                    v-bind="ruleFieldAttributes(`response_blocks[${blockIndex}].options`)"
+                  >
+                    <small v-if="ruleFieldError(`response_blocks[${blockIndex}].options`)" :id="ruleErrorID(`response_blocks[${blockIndex}].options`)" class="rule-field-error">{{ ruleFieldError(`response_blocks[${blockIndex}].options`) }}</small>
+                    <div v-for="(option, optionIndex) in block.options" :key="optionIndex">
+                      <input
+                        v-model.trim="option.value"
+                        class="app-input"
+                        required
+                        maxlength="32"
+                        pattern="[a-z0-9_]{1,32}"
+                        :aria-label="t('projects.editor.blocks.optionKey')"
+                        v-bind="ruleFieldAttributes(`response_blocks[${blockIndex}].options[${optionIndex}].value`)"
+                      />
+                      <input
+                        class="app-input"
+                        maxlength="120"
+                        :aria-label="t('projects.editor.blocks.optionLabel')"
+                        :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''"
+                        v-bind="ruleFieldAttributes(`localizations.${editingLocale}.option_labels.${block.key}.${option.value}`)"
+                        @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)"
+                      />
+                      <button type="button" :title="t('projects.editor.blocks.removeOption')" :aria-label="t('projects.editor.blocks.removeOption')" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button>
+                      <small v-if="ruleFieldError(`response_blocks[${blockIndex}].options[${optionIndex}].value`)" :id="ruleErrorID(`response_blocks[${blockIndex}].options[${optionIndex}].value`)" class="rule-field-error">{{ ruleFieldError(`response_blocks[${blockIndex}].options[${optionIndex}].value`) }}</small>
+                      <small v-if="ruleFieldError(`localizations.${editingLocale}.option_labels.${block.key}.${option.value}`)" :id="ruleErrorID(`localizations.${editingLocale}.option_labels.${block.key}.${option.value}`)" class="rule-field-error">{{ ruleFieldError(`localizations.${editingLocale}.option_labels.${block.key}.${option.value}`) }}</small>
+                    </div>
+                    <button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> {{ t('projects.editor.blocks.addOption') }}</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.content.title') }}</h3>
+              <div class="localization-toolbar">
+                <select v-model="editingLocale" class="app-select" :aria-label="t('projects.editor.content.editingLanguage')">
+                  <option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale === projectDefaultLocale ? t('projects.editor.content.defaultLanguage', { locale }) : locale }}</option>
+                </select>
+                <input v-model.trim="newLocale" class="app-input" maxlength="32" :placeholder="t('projects.editor.content.newLanguagePlaceholder')" :aria-label="t('projects.editor.content.newLanguage')" />
+                <button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> {{ t('projects.editor.content.add') }}</button>
+                <button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" :title="t('projects.editor.content.removeLanguage')" :aria-label="t('projects.editor.content.removeLanguage')" @click="removeLocalization"><Trash2 :size="13" /></button>
+              </div>
+              <div class="project-form-grid localization-fields">
+                <label v-for="field in localizationFields" :key="field" :class="{ wide: field === 'prompt' || field === 'consent_label' }">
+                  {{ localizationLabel(field) }}
+                  <input
+                    v-model="editingLocalization[field]"
+                    class="app-input"
+                    required
+                    :maxlength="localizationMaximum(field)"
+                    v-bind="ruleFieldAttributes(`localizations.${editingLocale}.${field}`)"
+                  />
+                  <small v-if="ruleFieldError(`localizations.${editingLocale}.${field}`)" :id="ruleErrorID(`localizations.${editingLocale}.${field}`)" class="rule-field-error">{{ ruleFieldError(`localizations.${editingLocale}.${field}`) }}</small>
+                </label>
+              </div>
+              <WidgetAppearanceEditor
+                v-model="ruleAppearance"
+                :parent="projectEffectiveAppearance"
+                :errors="ruleAppearanceErrors"
+                field-path-prefix="appearance_overrides"
+                allow-logo-reset
+                @field-edited="clearRuleField"
+              />
+            </section>
+            <section>
+              <h3>{{ t('projects.editor.replay.title') }}</h3>
+              <div class="project-form-grid">
+                <label>
+                  {{ t('projects.editor.replay.mode') }}
+                  <select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay" v-bind="ruleFieldAttributes('replay_mode')">
+                    <option value="none">{{ t('projects.enums.replay.none') }}</option>
+                    <option value="full">{{ t('projects.enums.replay.full') }}</option>
+                    <option value="sampling">{{ t('projects.enums.replay.sampling') }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('replay_mode')" :id="ruleErrorID('replay_mode')" class="rule-field-error">{{ ruleFieldError('replay_mode') }}</small>
+                </label>
+                <label v-if="ruleForm.replay_mode === 'sampling'">
+                  {{ t('projects.editor.replay.samplingPercent') }}
+                  <input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" v-bind="ruleFieldAttributes('replay_sampling_rate')" />
+                  <small v-if="ruleFieldError('replay_sampling_rate')" :id="ruleErrorID('replay_sampling_rate')" class="rule-field-error">{{ ruleFieldError('replay_sampling_rate') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.replay.maxDuration') }}
+                  <input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" v-bind="ruleFieldAttributes('replay_max_duration_seconds')" />
+                  <small v-if="ruleFieldError('replay_max_duration_seconds')" :id="ruleErrorID('replay_max_duration_seconds')" class="rule-field-error">{{ ruleFieldError('replay_max_duration_seconds') }}</small>
+                </label>
+                <label>
+                  {{ t('projects.editor.replay.maxEvents') }}
+                  <input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" v-bind="ruleFieldAttributes('replay_max_events')" />
+                  <small v-if="ruleFieldError('replay_max_events')" :id="ruleErrorID('replay_max_events')" class="rule-field-error">{{ ruleFieldError('replay_max_events') }}</small>
+                </label>
+                <label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>{{ t('projects.editor.replay.maskAllInputs') }}</span></label>
+                <label class="wide">
+                  {{ t('projects.editor.replay.maskSelector') }}
+                  <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
+                  <small v-if="ruleFieldError('replay_mask_text_selector')" :id="ruleErrorID('replay_mask_text_selector')" class="rule-field-error">{{ ruleFieldError('replay_mask_text_selector') }}</small>
+                </label>
+              </div>
+            </section>
             </fieldset>
           </form>
         </main>
 
         <aside class="project-widget-preview">
           <header><span>{{ t('projects.preview.title') }}</span><div v-if="ruleForm.presentation === 'launcher'" class="widget-preview-modes" role="group" :aria-label="t('projects.preview.launcherState')"><button type="button" :data-active="!previewLauncherOpen" @click="previewLauncherOpen = false">{{ t('projects.preview.launcher') }}</button><button type="button" :data-active="previewLauncherOpen" @click="previewLauncherOpen = true">{{ t('projects.preview.open') }}</button></div><small v-else>{{ previewAppearanceSummary }}</small></header>
-          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>{{ t('projects.preview.pageTitle') }}</b><span>{{ t('projects.preview.pageDescription') }}</span><div /></div><button v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.launcher_label }}</button><section v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen" class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || t('projects.preview.tellUsMore')" /><div v-if="ruleForm.collect_contact" class="widget-preview-contact"><label><span>{{ previewLocalization.contact_label }}</span><input type="email" :placeholder="previewLocalization.contact_label" /></label><label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label></div><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">{{ t('projects.preview.screenshot') }}</span><span v-if="ruleForm.can_record_audio">{{ t('projects.preview.audio') }}</span><button :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.submit_label }}</button></div></section></div>
+          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>{{ t('projects.preview.pageTitle') }}</b><span>{{ t('projects.preview.pageDescription') }}</span><div /></div><button v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }">{{ previewLocalization.launcher_label }}</button><section v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen" class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || t('projects.preview.tellUsMore')" /><div v-if="ruleForm.collect_contact" class="widget-preview-contact"><label><span>{{ previewLocalization.contact_label }}</span><input type="email" :placeholder="previewLocalization.contact_label" /></label><label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label></div><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">{{ t('projects.preview.screenshot') }}</span><span v-if="ruleForm.can_record_audio">{{ t('projects.preview.audio') }}</span><button :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }">{{ previewLocalization.submit_label }}</button></div></section></div>
         </aside>
       </div>
 
@@ -650,12 +1043,22 @@ useHead(() => ({
 .project-rule-editor > header h2 { margin: 3px 0 0; font-size: 14px; }
 .project-rule-editor > header > div:last-child { display: flex; gap: 6px; }
 .project-delete-button { width: 38px; padding: 0; color: var(--red); }
+.rule-validation-summary { margin: 0; padding: 13px 18px; background: var(--red-soft); border-bottom: 1px solid #efc2c6; }
+.rule-validation-summary:focus { outline: 2px solid var(--red); outline-offset: -3px; }
+.rule-validation-summary h3 { margin: 0 0 7px; color: var(--red); font-size: 10px; }
+.rule-validation-summary > p { margin: 0; color: var(--red); font-size: 9px; line-height: 1.5; }
+.rule-validation-summary ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.rule-validation-summary button { display: grid; width: 100%; grid-template-columns: minmax(120px, .45fr) minmax(0, 1fr); gap: 8px; padding: 0; background: transparent; color: var(--red); border: 0; font: inherit; text-align: left; }
+.rule-validation-summary code { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.rule-validation-summary span { font-size: 9px; line-height: 1.4; }
 .project-rule-editor form > fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .project-rule-editor form > fieldset > section { padding: 17px 18px; border-bottom: 1px solid var(--line); }
 .project-rule-editor form h3 { margin: 0 0 13px; font-size: 11px; }
 .project-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .project-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .project-form-grid label.wide { grid-column: 1 / -1; }
+.project-rule-editor :is(input, select, textarea, [tabindex])[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
+.rule-field-error { grid-column: 1 / -1; color: var(--red) !important; font-size: 8px !important; font-weight: 650 !important; line-height: 1.4; }
 .project-toggle { align-items: center; justify-content: flex-start; flex-direction: row !important; gap: 8px !important; min-height: 38px; padding-top: 17px; color: var(--ink-soft) !important; }
 .project-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .project-capability-grid label { display: flex; min-height: 58px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; }
@@ -690,7 +1093,7 @@ useHead(() => ({
 .widget-preview-copy b { font-size: 16px; }
 .widget-preview-copy > span { color: var(--muted); font-size: 9px; }
 .widget-preview-copy div { height: 170px; margin-top: 10px; background: #edf2f0; border-radius: 5px; }
-.widget-preview-trigger { position: absolute; right: 18px; bottom: 18px; min-height: 38px; padding: 0 13px; color: #fff; border: 0; border-radius: 5px; font-size: 10px; font-weight: 750; }
+.widget-preview-trigger { position: absolute; right: 18px; bottom: 18px; min-height: 38px; padding: 0 13px; border: 0; border-radius: 5px; font-size: 10px; font-weight: 750; }
 .widget-preview-modal { position: absolute; right: 18px; bottom: 66px; left: 18px; padding: 14px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-top-width: 4px; border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .widget-preview-modal[data-presentation='inline'] { position: relative; inset: auto; margin-top: 18px; box-shadow: none; }
 .widget-preview-modal[data-presentation='reaction'] { left: auto; width: min(360px, calc(100% - 36px)); }
@@ -705,7 +1108,7 @@ useHead(() => ({
 .widget-preview-contact label:last-child { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; }
 .widget-preview-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .widget-preview-actions span { color: var(--muted); font-size: 8px; }
-.widget-preview-actions button { min-height: 30px; margin-left: auto; padding: 0 11px; color: #fff; border: 0; border-radius: 4px; font-size: 9px; font-weight: 700; }
+.widget-preview-actions button { min-height: 30px; margin-left: auto; padding: 0 11px; border: 0; border-radius: 4px; font-size: 9px; font-weight: 700; }
 .project-settings { margin: 22px; overflow: hidden; }
 .project-settings > header { display: flex; min-height: 66px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .project-settings h2 { margin: 0; font-size: 13px; }

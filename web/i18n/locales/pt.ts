@@ -726,6 +726,9 @@ export const portugueseMessages = {
       save: 'Guardar regra',
       saving: 'A guardar…',
       saved: 'Regra do widget guardada.',
+      validation: {
+        title: 'Reveja os campos assinalados',
+      },
       errors: {
         save: 'Não foi possível guardar a regra do widget.',
         delete: 'Não foi possível eliminar a regra do widget.',
@@ -867,6 +870,9 @@ export const portugueseMessages = {
       textSwatch: 'Amostra da cor do texto',
       inherit: 'Herdar',
       inherited: 'Herdado {value}',
+      foregroundPreview: 'Texto do botão',
+      foregroundSample: 'Aa',
+      contrastRatio: 'Contraste {ratio}:1',
       logoURL: 'URL do logótipo',
       hideInheritedLogo: 'Ocultar o logótipo herdado',
       positions: {

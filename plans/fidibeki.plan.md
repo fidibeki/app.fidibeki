@@ -469,6 +469,16 @@ was removed from the staging test tenant.
       pending guards, and local errors. No production `window.confirm` remains.
     - Web unit (104), typecheck, build, and focused browser journeys pass locally, including project
       deletion on desktop and mobile.
+  - [x] Complete appearance and structured validation issues #36, #37, and #39.
+    - Accent colors remain the only persisted input. Backend, backoffice, and widget deterministically
+      derive the first WCAG-AA foreground from Fidibeki ink, white, then black; `#46c754` is accepted
+      and renders with `#171a19`.
+    - Reporter Access and Widget Defaults errors remain scoped to their forms. Rule validation
+      preserves nested and unmapped fields, maps backend array paths, switches localization tabs,
+      focuses the first actionable control, and clears only the edited path.
+    - Full backend tests, web unit (113), widget unit (129), typechecks/builds, focused widget
+      Chromium, and three focused backoffice browser journeys pass locally. No migration or
+      deployment was required.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.
