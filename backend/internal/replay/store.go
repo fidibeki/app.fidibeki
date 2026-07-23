@@ -42,7 +42,11 @@ func (Store) CreateSession(
 		RRWebVersion, maxDurationSeconds, maxEvents); err != nil {
 		return Session{}, fmt.Errorf("create replay session: %w", err)
 	}
-	return getSessionByClientID(ctx, query, tenantID, projectID, clientSessionID)
+	found, err := getSessionByClientID(ctx, query, tenantID, projectID, clientSessionID)
+	if err == nil && found.PrivacyVersion < CurrentReplayPrivacyVersion {
+		return Session{}, ErrPrivacyContract
+	}
+	return found, err
 }
 
 func (Store) GetSession(
@@ -138,8 +142,10 @@ func (Store) DeclareBatch(
 	err := query.QueryRow(ctx, `
 		SELECT ended_at, finalize_requested_at, max_events FROM sessions
 		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+		  AND replay_privacy_version = $4
 		FOR UPDATE
-	`, tenantID, projectID, sessionID).Scan(&endedAt, &finalizeRequestedAt, &maxEvents)
+	`, tenantID, projectID, sessionID, CurrentReplayPrivacyVersion).
+		Scan(&endedAt, &finalizeRequestedAt, &maxEvents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Batch{}, "", ErrNotFound
 	}
@@ -233,13 +239,14 @@ func (Store) LockBatch(
 		       batch.safety_status, batch.upload_expires_at, batch.safety_checked_at,
 		       batch.safety_error_reason, batch.verification_generation,
 		       batch.verification_enqueued_at, batch.verification_attempts,
-		       session.ended_at
+	       session.ended_at
 		FROM session_batches AS batch
 		JOIN sessions AS session ON session.id = batch.session_id
 		WHERE batch.tenant_id = $1 AND batch.project_id = $2
 		  AND batch.session_id = $3 AND batch.batch_index = $4
+		  AND session.replay_privacy_version = $5
 		FOR UPDATE OF batch
-	`, tenantID, projectID, sessionID, batchIndex)
+	`, tenantID, projectID, sessionID, batchIndex, CurrentReplayPrivacyVersion)
 	var batch Batch
 	err := row.Scan(
 		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
@@ -299,8 +306,10 @@ func (store Store) Finalize(
 		SELECT started_at, ended_at, max_duration_seconds
 		FROM sessions
 		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+		  AND replay_privacy_version = $4
 		FOR UPDATE
-	`, tenantID, projectID, sessionID).Scan(&startedAt, &endedAt, &maxDuration)
+	`, tenantID, projectID, sessionID, CurrentReplayPrivacyVersion).
+		Scan(&startedAt, &endedAt, &maxDuration)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, false, ErrNotFound
 	}
@@ -387,6 +396,7 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 				WHERE batch.session_id = session.id
 			) AS activity
 			WHERE session.ended_at IS NULL AND session.started_at < $1
+			  AND session.replay_privacy_version = $6
 			  AND activity.last_activity_at < $1
 			  AND activity.unresolved_count = 0
 			ORDER BY activity.last_activity_at, session.id
@@ -411,7 +421,14 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 		    END
 		FROM candidates
 		WHERE session.id = candidates.id AND session.ended_at IS NULL
-	`, staleBefore.UTC(), limit, now.UTC(), unavailableReplayMessage, terminalMergeAttempts); err != nil {
+	`,
+		staleBefore.UTC(),
+		limit,
+		now.UTC(),
+		unavailableReplayMessage,
+		terminalMergeAttempts,
+		CurrentReplayPrivacyVersion,
+	); err != nil {
 		return fmt.Errorf("recover abandoned replay sessions: %w", err)
 	}
 	return nil
@@ -420,11 +437,12 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 func (s Store) PendingMerges(ctx context.Context, limit int, staleBefore time.Time) ([]Session, error) {
 	rows, err := s.Database.Query(ctx, sessionSelect+`
 		WHERE session.merge_requested_at IS NOT NULL AND session.merged_at IS NULL
+		  AND session.replay_privacy_version = $3
 		  AND session.merge_attempts < 12
 		  AND (session.merge_enqueued_at IS NULL OR session.merge_enqueued_at < $1)
 		ORDER BY session.merge_requested_at, session.id
 		LIMIT $2
-	`, staleBefore.UTC(), limit)
+	`, staleBefore.UTC(), limit, CurrentReplayPrivacyVersion)
 	if err != nil {
 		return nil, fmt.Errorf("list pending replay merges: %w", err)
 	}
@@ -456,7 +474,8 @@ func (s Store) MarkMergeEnqueued(ctx context.Context, sessionID string, now time
 func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batch, error) {
 	found, err := scanSessionRow(s.Database.QueryRow(ctx, sessionSelect+`
 		WHERE session.id = $1 AND session.merge_requested_at IS NOT NULL
-	`, sessionID))
+		  AND session.replay_privacy_version = $2
+	`, sessionID, CurrentReplayPrivacyVersion))
 	if err != nil {
 		return Session{}, nil, err
 	}
@@ -561,7 +580,7 @@ const sessionSelect = `
 	       session.rrweb_version, session.merged_at, session.merge_requested_at,
 	       session.finalize_requested_at, session.merge_enqueued_at,
 	       session.merge_attempts, session.merge_error,
-	       session.retention_deleted_at,
+	       session.retention_deleted_at, session.replay_privacy_version,
 	       session.max_duration_seconds, session.max_events, session.created_at
 	FROM sessions AS session
 `
@@ -596,7 +615,7 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		&found.EventsCount, &found.BatchesCount, &found.StorageKey,
 		&found.RRWebVersion, &found.MergedAt, &found.MergeRequestedAt,
 		&found.FinalizeRequestedAt, &found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
-		&found.RetentionDeletedAt,
+		&found.RetentionDeletedAt, &found.PrivacyVersion,
 		&found.MaxDurationSeconds, &found.MaxEvents, &found.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

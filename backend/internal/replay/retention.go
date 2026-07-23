@@ -28,16 +28,19 @@ func (s Store) ExpiredSessions(ctx context.Context, now time.Time, limit int) ([
 		FROM sessions AS session
 		JOIN tenants AS tenant ON tenant.id = session.tenant_id
 		WHERE session.retention_deleted_at IS NULL
-		  AND COALESCE(session.ended_at, session.created_at) < CASE tenant.plan
-			WHEN 'starter' THEN $1::timestamptz - interval '30 days'
-			WHEN 'growth' THEN $1::timestamptz - interval '90 days'
-			WHEN 'scale' THEN $1::timestamptz - interval '365 days'
-			ELSE NULL
-		END
+		  AND (
+			session.replay_privacy_version < $3
+			OR COALESCE(session.ended_at, session.created_at) < CASE tenant.plan
+				WHEN 'starter' THEN $1::timestamptz - interval '30 days'
+				WHEN 'growth' THEN $1::timestamptz - interval '90 days'
+				WHEN 'scale' THEN $1::timestamptz - interval '365 days'
+				ELSE NULL
+			END
+		  )
 		ORDER BY COALESCE(session.ended_at, session.created_at), session.id
 		LIMIT $2
 		FOR UPDATE OF session SKIP LOCKED
-	`, now.UTC(), limit)
+	`, now.UTC(), limit, CurrentReplayPrivacyVersion)
 	if err != nil {
 		return nil, fmt.Errorf("list expired replay sessions: %w", err)
 	}

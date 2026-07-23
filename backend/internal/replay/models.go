@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-const RRWebVersion = "2.1.1"
+const (
+	RRWebVersion                = "2.1.1"
+	CurrentReplayPrivacyVersion = 1
+)
 
 const (
 	terminalMergeAttempts    = 12
@@ -21,6 +24,7 @@ var (
 	ErrBatchLimit        = errors.New("replay session batch limit exceeded")
 	ErrByteLimit         = errors.New("replay session byte limit exceeded")
 	ErrUploadExpired     = errors.New("replay batch upload expired")
+	ErrPrivacyContract   = errors.New("replay session predates the anonymous privacy contract")
 )
 
 type BatchSafetyStatus string
@@ -54,13 +58,14 @@ type Session struct {
 	MergeAttempts       int        `json:"merge_attempts"`
 	MergeError          *string    `json:"merge_error,omitempty"`
 	RetentionDeletedAt  *time.Time `json:"retention_deleted_at,omitempty"`
+	PrivacyVersion      int        `json:"-"`
 	MaxDurationSeconds  int        `json:"-"`
 	MaxEvents           int        `json:"-"`
 	CreatedAt           time.Time  `json:"created_at"`
 }
 
 func (s Session) Status() string {
-	if s.RetentionDeletedAt != nil {
+	if s.RetentionDeletedAt != nil || s.PrivacyVersion < CurrentReplayPrivacyVersion {
 		return "expired"
 	}
 	if s.MergedAt != nil && s.StorageKey != nil {

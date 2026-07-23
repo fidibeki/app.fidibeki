@@ -138,21 +138,23 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		// are kept for API/storage compatibility.
 		ReplayMaskAllInputs:    true,
 		ReplayMaskTextSelector: trimOptional(input.ReplayMaskTextSelector),
-		ReplayRecordCanvas:     input.ReplayRecordCanvas,
-		ReplayCanvasFPS:        input.ReplayCanvasFPS,
-		RecurrenceMode:         input.RecurrenceMode,
-		RecurrenceDays:         input.RecurrenceDays,
-		IncludeConditions:      normalizeTargetConditions(input.IncludeConditions),
-		ExcludeConditions:      normalizeTargetConditions(input.ExcludeConditions),
-		LegacyTargeting:        legacyTargeting,
-		DefinitionKey:          strings.ToLower(strings.TrimSpace(input.DefinitionKey)),
-		DefinitionStatus:       input.DefinitionStatus,
-		Presentation:           input.Presentation,
-		Objective:              input.Objective,
-		ResponseBlocks:         normalizeResponseBlocks(input.ResponseBlocks),
-		Localizations:          normalizeLocalizations(input.Localizations),
-		AllowComment:           valueOr(input.AllowComment, false),
-		CollectContact:         input.CollectContact,
+		// Anonymous replay cannot redact identity rendered as pixels. Keep the legacy
+		// fields for wire/storage compatibility, but force capture off at the API boundary.
+		ReplayRecordCanvas: false,
+		ReplayCanvasFPS:    2,
+		RecurrenceMode:     input.RecurrenceMode,
+		RecurrenceDays:     input.RecurrenceDays,
+		IncludeConditions:  normalizeTargetConditions(input.IncludeConditions),
+		ExcludeConditions:  normalizeTargetConditions(input.ExcludeConditions),
+		LegacyTargeting:    legacyTargeting,
+		DefinitionKey:      strings.ToLower(strings.TrimSpace(input.DefinitionKey)),
+		DefinitionStatus:   input.DefinitionStatus,
+		Presentation:       input.Presentation,
+		Objective:          input.Objective,
+		ResponseBlocks:     normalizeResponseBlocks(input.ResponseBlocks),
+		Localizations:      normalizeLocalizations(input.Localizations),
+		AllowComment:       valueOr(input.AllowComment, false),
+		CollectContact:     input.CollectContact,
 	}
 	if legacyTargeting {
 		values.IncludeConditions = []WidgetRuleTargetConditionValues{{

@@ -653,7 +653,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 		ID string `json:"id"`
 	}
 	decodeReplayResponse(t, rejectedCreated, &rejectedSession)
-	rejectedData := []byte(`[{"type":99,"timestamp":1784800000300,"data":{}}]`)
+	rejectedData := []byte(
+		`[{"type":2,"timestamp":1784800000300,"data":{"node":` +
+			`{"type":2,"id":1,"tagName":"img","attributes":` +
+			`{"alt":"SENTINEL-Jane-Doe","src":"https://cdn.example/SENTINEL-jane@example.com"}}}}]`,
+	)
 	rejectedDeclared := replayRequest(router, http.MethodPost,
 		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
 		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
@@ -781,7 +785,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("create aggregate-limit replay: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
-		INSERT INTO session_batches (
+			INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
 			events_count, size_bytes, content_type, complete_token_hash,
 			upload_refreshed_at, upload_expires_at
@@ -980,14 +984,59 @@ func TestReplayHTTPFlow(t *testing.T) {
 	`, tenantID, projectID, expiredSessionID, expiredBatchKey, now.Add(-91*24*time.Hour)); err != nil {
 		t.Fatalf("create expired replay batch: %v", err)
 	}
+	var legacySessionID string
+	legacyKey := "retention/legacy-privacy.json"
+	legacyBatchKey := "retention/legacy-privacy-batch.json"
+	if err := root.QueryRow(ctx, `
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at, ended_at, events_count, batches_count,
+				storage_key, rrweb_version, merged_at, merge_requested_at,
+				max_duration_seconds, max_events, replay_privacy_version
+			) VALUES (
+				$1, $2, gen_random_uuid(), $3, $3, 1, 1, $4, '2.1.1', $3, $3,
+				1800, 50000, 0
+			) RETURNING id
+		`, tenantID, projectID, now, legacyKey).Scan(&legacySessionID); err != nil {
+		t.Fatalf("create legacy-privacy replay: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+			INSERT INTO session_batches (
+				tenant_id, project_id, session_id, batch_index, storage_key,
+				events_count, size_bytes, completed_at, safety_status, safety_checked_at
+			) VALUES ($1, $2, $3, 0, $4, 1, 128, $5, 'safe', $5)
+		`, tenantID, projectID, legacySessionID, legacyBatchKey, now); err != nil {
+		t.Fatalf("create legacy-privacy replay batch: %v", err)
+	}
+	storageClient.objects[legacyKey] = []byte(`[{"identity":"jane@example.com"}]`)
+	storageClient.objects[legacyBatchKey] = []byte(`[{"identity":"jane@example.com"}]`)
+	legacyMetadata := tenantReplayRequest(
+		tenantHandler, http.MethodGet, "/v1/sessions/"+legacySessionID, accessToken,
+	)
+	if legacyMetadata.Code != http.StatusOK ||
+		!strings.Contains(legacyMetadata.Body.String(), `"status":"expired"`) ||
+		strings.Contains(legacyMetadata.Body.String(), `"replay_url"`) {
+		t.Fatalf(
+			"legacy replay metadata status/body = %d/%s",
+			legacyMetadata.Code, legacyMetadata.Body.String(),
+		)
+	}
+	legacyStream := tenantReplayRequest(
+		streamRoutes, http.MethodGet, "/v1/sessions/"+legacySessionID+"/replay", accessToken,
+	)
+	if legacyStream.Code != http.StatusNotFound ||
+		strings.Contains(legacyStream.Body.String(), "jane@example.com") {
+		t.Fatalf("legacy replay stream status/body = %d/%s", legacyStream.Code, legacyStream.Body.String())
+	}
 	retentionStore := Store{Database: pools.Admin}
 	expired, err := retentionStore.ExpiredSessions(ctx, now, 10)
 	if err != nil {
 		t.Fatalf("list expired sessions: %v", err)
 	}
-	if len(expired) != 1 || expired[0].ID != expiredSessionID ||
+	if len(expired) != 2 || expired[0].ID != expiredSessionID ||
 		expired[0].TenantID != tenantID || len(expired[0].ObjectKeys) != 2 ||
-		expired[0].ObjectKeys[0] != expiredKey || expired[0].ObjectKeys[1] != expiredBatchKey {
+		expired[0].ObjectKeys[0] != expiredKey || expired[0].ObjectKeys[1] != expiredBatchKey ||
+		expired[1].ID != legacySessionID || len(expired[1].ObjectKeys) != 2 ||
+		expired[1].ObjectKeys[0] != legacyKey || expired[1].ObjectKeys[1] != legacyBatchKey {
 		t.Fatalf("expired sessions = %#v", expired)
 	}
 	if err := retentionStore.MarkSessionRetentionDeleted(
@@ -1018,6 +1067,29 @@ func TestReplayHTTPFlow(t *testing.T) {
 		!batchRetentionDeletedAt.Equal(now) {
 		t.Fatalf("expired batch manifest key=%v retention_deleted_at=%v",
 			retainedBatchKey, batchRetentionDeletedAt)
+	}
+	if err := (Cleaner{
+		Store: retentionStore, Storage: storageClient, Now: func() time.Time { return now },
+	}).CleanupOnce(ctx); err != nil {
+		t.Fatalf("remove legacy-privacy replay objects: %v", err)
+	}
+	if _, exists := storageClient.objects[legacyKey]; exists {
+		t.Fatal("legacy merged replay object remained after privacy cleanup")
+	}
+	if _, exists := storageClient.objects[legacyBatchKey]; exists {
+		t.Fatal("legacy replay batch remained after privacy cleanup")
+	}
+	if err := root.QueryRow(ctx, `
+			SELECT storage_key, retention_deleted_at
+			FROM sessions WHERE tenant_id = $1 AND id = $2
+		`, tenantID, legacySessionID).Scan(&retainedKey, &retentionDeletedAt); err != nil {
+		t.Fatalf("read cleaned legacy replay manifest: %v", err)
+	}
+	if retainedKey != nil || retentionDeletedAt == nil || !retentionDeletedAt.Equal(now) {
+		t.Fatalf(
+			"legacy replay manifest key=%v retention_deleted_at=%v",
+			retainedKey, retentionDeletedAt,
+		)
 	}
 
 	var abandonedSessionID, activeSessionID, renewedSessionID, emptySessionID, incompleteSessionID string
@@ -1070,7 +1142,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 	activeKey := "active/completed.json"
 	renewedKey := "active/renewed.json"
 	missingIncompleteKey := "abandoned/missing.json"
-	abandonedData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{}}]`)
+	abandonedData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}}]`)
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
@@ -1189,7 +1261,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("create failed merge session: %v", err)
 	}
 	failedBatchKey := "failed/batch.json"
-	failedBatchData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{}}]`)
+	failedBatchData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}}]`)
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,

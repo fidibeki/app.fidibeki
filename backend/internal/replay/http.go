@@ -145,6 +145,13 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		min(rule.ReplayMaxDurationSeconds, project.MaximumReplayDurationSeconds),
 		min(rule.ReplayMaxEvents, project.MaximumReplayEvents),
 	)
+	if errors.Is(err, ErrPrivacyContract) {
+		api.WriteError(
+			w, http.StatusConflict, api.CodeConflict,
+			"replay session must be restarted under the current privacy contract", nil,
+		)
+		return
+	}
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return
@@ -673,19 +680,11 @@ func canonicalReplayURL(value string) (string, bool) {
 	if value == "" || len(value) > 4096 {
 		return "", false
 	}
-	parsed, err := url.ParseRequestURI(value)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+	canonical, err := project.CanonicalizePage(value)
+	if err != nil {
 		return "", false
 	}
-	pathname := parsed.EscapedPath()
-	if pathname != "/" {
-		pathname = strings.TrimRight(pathname, "/")
-		if pathname == "" {
-			pathname = "/"
-		}
-	}
-	origin := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
-	return origin.String() + pathname, true
+	return canonical.Target, true
 }
 
 func normalizeReplayContentType(value string) string {

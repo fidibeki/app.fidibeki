@@ -3,6 +3,7 @@ package replay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -35,7 +36,7 @@ func TestDecodeVerifiedBatchAcceptsBoundedRRWebEvents(t *testing.T) {
 }
 
 func TestDecodeVerifiedBatchRejectsUnsafePayloads(t *testing.T) {
-	validEvent := `{"type":2,"timestamp":1784800000000,"data":{}}`
+	validEvent := `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}}`
 	tests := []struct {
 		name   string
 		body   string
@@ -69,8 +70,112 @@ func TestDecodeVerifiedBatchRejectsUnsafePayloads(t *testing.T) {
 	}
 }
 
+func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		event string
+		valid bool
+	}{
+		{
+			name:  "lifecycle",
+			event: `{"type":0,"timestamp":1784800000000,"data":{}}`,
+			valid: true,
+		},
+		{
+			name: "masked snapshot with explicit safe text",
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0,"id":1,"childNodes":[` +
+				`{"type":2,"id":2,"tagName":"div","attributes":{},"childNodes":[{"type":3,"id":3,"textContent":"**** ***"}]},` +
+				`{"type":2,"id":4,"tagName":"span","attributes":{"data-fidibeki-safe-text":""},` +
+				`"childNodes":[{"type":3,"id":5,"textContent":"Powered by Fidibeki"}]}]}}}`,
+			valid: true,
+		},
+		{
+			name:  "canonical metadata",
+			event: `{"type":4,"timestamp":1784800000000,"data":{"href":"https://example.com/chart","width":1280,"height":720}}`,
+			valid: true,
+		},
+		{
+			name:  "canonical navigation",
+			event: `{"type":5,"timestamp":1784800000000,"data":{"tag":"navigation","payload":{"url":"https://example.com/chart"}}}`,
+			valid: true,
+		},
+		{
+			name:  "raw visible text",
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":3,"id":1,"textContent":"Jane Doe"}}}`,
+		},
+		{
+			name:  "identity attribute",
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":2,"id":1,"tagName":"img","attributes":{"alt":"Jane Doe"}}}}`,
+		},
+		{
+			name:  "invalid tag name",
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":2,"id":1,"tagName":"-img","attributes":{}}}}`,
+		},
+		{
+			name:  "raw input",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":1,"text":"jane@example.com"}}`,
+		},
+		{
+			name:  "canvas",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":9,"id":1,"commands":[{"property":"drawImage"}]}}`,
+		},
+		{
+			name:  "stylesheet text",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":8,"id":1,"adds":[{"rule":"body{content:'Jane'}"}]}}`,
+		},
+		{
+			name:  "uncanonical metadata",
+			event: `{"type":4,"timestamp":1784800000000,"data":{"href":"https://user:pass@example.com/chart/?token=secret#private"}}`,
+		},
+		{
+			name:  "unknown custom event",
+			event: `{"type":5,"timestamp":1784800000000,"data":{"tag":"identity","payload":{"email":"jane@example.com"}}}`,
+		},
+		{
+			name:  "plugin event",
+			event: `{"type":6,"timestamp":1784800000000,"data":{"plugin":"identity","payload":"jane@example.com"}}`,
+		},
+		{
+			name:  "unknown top-level field",
+			event: `{"type":0,"timestamp":1784800000000,"data":{},"reporter":"jane@example.com"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := validRRWebEvent(json.RawMessage(test.event)); got != test.valid {
+				t.Fatalf("validRRWebEvent() = %t, want %t for %s", got, test.valid, test.event)
+			}
+		})
+	}
+}
+
+func TestBatchVerificationProcessorRejectsIdentityBearingBatch(t *testing.T) {
+	body := []byte(`[{"type":2,"timestamp":1784800000000,"data":{"node":` +
+		`{"type":2,"id":1,"tagName":"img","attributes":{"src":"https://cdn.example/avatar/jane@example.com"}}}}]`)
+	store := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
+		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
+		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),
+		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
+	}}}
+	storage := &batchVerificationStorageStub{body: body}
+	processor := BatchVerificationProcessor{Store: store, Storage: storage}
+	task := asynq.NewTask(TaskVerifyBatch, []byte(
+		`{"tenant_id":"tenant","batch_id":"batch","generation":1}`,
+	))
+	if err := processor.Handler()(context.Background(), task); err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	if store.rejectedReason != "invalid_event" || store.safeAt != nil || !storage.removed {
+		t.Fatalf(
+			"identity batch state = rejected %q safe %v removed %t",
+			store.rejectedReason, store.safeAt, storage.removed,
+		)
+	}
+}
+
 func TestBatchVerificationProcessorPromotesOnlyValidBatches(t *testing.T) {
-	body := []byte(`[{"type":2,"timestamp":1784800000000,"data":{}}]`)
+	body := []byte(`[{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}}]`)
 	store := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
 		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
 		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),

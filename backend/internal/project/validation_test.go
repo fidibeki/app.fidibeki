@@ -99,6 +99,20 @@ func TestValidateWidgetRuleNormalizesDefaults(t *testing.T) {
 	}
 }
 
+func TestValidateWidgetRuleForcesAnonymousReplayCanvasOff(t *testing.T) {
+	t.Parallel()
+	values, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Replay", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		ReplayRecordCanvas: true, ReplayCanvasFPS: 5,
+	}, tenant.Tenant{Plan: tenant.PlanEnterprise})
+	if len(fields) != 0 {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if values.ReplayRecordCanvas || values.ReplayCanvasFPS != 2 {
+		t.Fatalf("canvas privacy policy = %t/%d, want false/2", values.ReplayRecordCanvas, values.ReplayCanvasFPS)
+	}
+}
+
 func TestValidateDefaultLocale(t *testing.T) {
 	t.Parallel()
 	if locale, message := ValidateDefaultLocale(""); locale != "en" || message != "" {
@@ -338,11 +352,6 @@ func TestValidateWidgetRuleCoversRemainingInvalidVariants(t *testing.T) {
 			name: "replay events above recording cap", field: "replay_max_events",
 			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
 				TriggerType: TriggerExitIntent, ReplayMaxEvents: 50001},
-		},
-		{
-			name: "canvas fps above capture cap", field: "replay_canvas_fps",
-			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
-				TriggerType: TriggerExitIntent, ReplayCanvasFPS: 6},
 		},
 	}
 	for _, tt := range tests {

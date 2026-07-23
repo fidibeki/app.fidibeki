@@ -219,7 +219,8 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, err := h.options.Store.GetSession(r.Context(), tx, resolved.ID, sessionID)
-	if errors.Is(err, ErrNotFound) || (err == nil && (session.MergedAt == nil || session.StorageKey == nil)) {
+	if errors.Is(err, ErrNotFound) ||
+		(err == nil && (session.Status() != "ready" || session.MergedAt == nil || session.StorageKey == nil)) {
 		writeTenantReplayNotFound(w)
 		return
 	}

@@ -75,7 +75,9 @@ describe('rrweb replay capture', () => {
     expect(typeof options?.maskTextFn).toBe('function')
     expect(options?.sampling).toBeUndefined()
     const emit = options?.emit as ((event: unknown) => void)
-    for (let index = 0; index < 51; index++) emit({ type: 3, timestamp: index, data: { index } })
+    for (let index = 0; index < 51; index++) {
+      emit({ type: 3, timestamp: index + 1, data: { source: 3, id: 1, x: index, y: 0 } })
+    }
     window.dispatchEvent(new Event('fidibeki:navigation'))
     expect(recordMock.addCustomEvent).toHaveBeenCalledWith('navigation', { url: window.location.href })
 
@@ -202,10 +204,10 @@ describe('rrweb replay capture', () => {
     for (const sentinel of ['jane.doe@example.com', 'reporter-avatar', 'Jane Doe']) {
       expect(serialized).not.toContain(sentinel)
     }
-    expect(serialized).toContain('avatar')
+    expect(serialized).not.toContain('avatar')
   })
 
-  it('records canvas frames only after explicit opt-in and uses the configured FPS', async () => {
+  it('suppresses canvas frames even when a legacy rule requests capture', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
       const url = input.toString()
       if (url.endsWith('/replay/sessions?key=key')) {
@@ -226,10 +228,10 @@ describe('rrweb replay capture', () => {
 
     const recordOptions = recordMock.mock.calls[0]?.[0]
     expect(recordOptions).toMatchObject({
-      recordCanvas: true,
-      sampling: { canvas: 3 },
+      recordCanvas: false,
       blockSelector: '[data-fidibeki-block]',
     })
+    expect(recordOptions?.sampling).toBeUndefined()
     const canvasError = new Error('canvas capture is unavailable')
     recordOptions?.errorHandler?.(canvasError)
     expect(onError).toHaveBeenCalledWith(canvasError)
@@ -263,7 +265,7 @@ describe('rrweb replay capture', () => {
       rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
     })
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
-    emit({ type: 2, timestamp: 1, data: {} })
+    emit({ type: 0, timestamp: 1, data: {} })
 
     await vi.advanceTimersByTimeAsync(30_000)
 
@@ -302,7 +304,7 @@ describe('rrweb replay capture', () => {
       rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
     })
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
-    emit({ type: 2, timestamp: 1, data: {} })
+    emit({ type: 0, timestamp: 1, data: {} })
     await capture?.stop()
     expect(declarations).toBe(2)
     expect(uploads).toBe(2)

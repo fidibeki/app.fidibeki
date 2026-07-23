@@ -112,7 +112,7 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"response_blocks":[{"key":"rating"`, `"collect_contact":true`,
 		`"definitions":[{"id":"rule-id"`, `"id":"paused-rule-id"`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
-		`"replay_record_canvas":true`, `"replay_canvas_fps":3`,
+		`"replay_record_canvas":false`, `"replay_canvas_fps":2`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
 		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56","accent_foreground":"#ffffff"}`,

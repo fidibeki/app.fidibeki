@@ -710,7 +710,7 @@ test('dismissal records explicit close without manufacturing interaction', async
   await expect.poll(() => events).toEqual(['matched', 'impression', 'dismissed'])
 })
 
-test('canvas replay captures bounded frames, excludes blocked pixels, and keeps the host responsive', async ({ page }) => {
+test('anonymous replay suppresses canvas pixels even when a legacy rule requests capture', async ({ page }) => {
   const replayRule: WidgetRule = {
     ...browserRule,
     replay_mode: 'full',
@@ -824,20 +824,11 @@ test('canvas replay captures bounded frames, excludes blocked pixels, and keeps 
   }>
   const serialized = JSON.stringify(events)
   const canvasMutations = events.filter(event => event.type === 3 && event.data?.source === 9)
-  // The `id`/`data-*` attributes that named these canvases are stripped for anonymity (issue
-  // #53), so presence is asserted structurally: exactly one <canvas> tag survives serialization
-  // (the included one), because blockSelector excludes the blocked canvas's entire subtree.
   expect((serialized.match(/"tagName":"canvas"/g) ?? []).length).toBe(1)
-  // Pre-existing assertion drift: this rrweb version serializes canvas frame payloads with an
-  // `rr_type` wrapper (ImageBitmap/Blob/ArrayBuffer), not `rr_dataURL`; fixed while touching
-  // this test for the id/data-* attribute stripping change above (issue #53).
-  expect(serialized).toContain('"property":"drawImage"')
+  expect(serialized).not.toContain('"property":"drawImage"')
   expect(serialized).not.toContain('included-replay-canvas')
   expect(serialized).not.toContain('blocked-replay-canvas')
-  expect(canvasMutations.length).toBeGreaterThan(0)
-  expect(canvasMutations.length).toBeLessThanOrEqual(8)
-  expect(canvasMutations.every(event => Number.isInteger(event.data?.id))).toBe(true)
-  expect(new Set(canvasMutations.map(event => event.data?.id)).size).toBe(1)
+  expect(canvasMutations).toHaveLength(0)
   expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
   expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(1024 * 1024)
 })

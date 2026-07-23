@@ -99,13 +99,16 @@ describe('sanitizeReplayEvent', () => {
       },
     }
     const sanitized = sanitizeReplayEvent(event) as {
-      data: { node: { childNodes: Array<{ attributes: Record<string, unknown> }> } }
+      data: { node: { childNodes: Array<{
+        attributes: Record<string, unknown>
+        childNodes: Array<{ textContent: string }>
+      }> } }
     }
-    const attributes = sanitized.data.node.childNodes[0]!.attributes
-    expect(attributes).toEqual({ class: 'avatar', width: '80' })
-    expect(Object.keys(attributes)).not.toContain('id')
-    expect(Object.keys(attributes)).not.toContain('src')
-    expect(Object.keys(attributes)).not.toContain('data-user-id')
+    const element = sanitized.data.node.childNodes[0]!
+    expect(element.attributes).toEqual({})
+    expect(element.childNodes[0]!.textContent).toBe(
+      '******** **** **** ******** ** ***** ***** **** ****',
+    )
   })
 
   it('blanks HTML comment text, which rrweb text-masking does not cover', () => {
@@ -115,6 +118,22 @@ describe('sanitizeReplayEvent', () => {
         node: {
           type: 0,
           childNodes: [{ type: 5, textContent: 'reporter: jane.doe@example.com' }],
+        },
+      },
+    }
+    const sanitized = sanitizeReplayEvent(event) as {
+      data: { node: { childNodes: Array<{ textContent: string }> } }
+    }
+    expect(sanitized.data.node.childNodes[0]!.textContent).toBe('')
+  })
+
+  it('blanks CDATA text, which rrweb text-masking does not cover', () => {
+    const event = {
+      type: 2, timestamp: 1,
+      data: {
+        node: {
+          type: 0,
+          childNodes: [{ type: 4, textContent: 'reporter: jane.doe@example.com' }],
         },
       },
     }
@@ -136,7 +155,7 @@ describe('sanitizeReplayEvent', () => {
     const sanitized = sanitizeReplayEvent(event) as {
       data: { attributes: Array<{ attributes: Record<string, unknown> }> }
     }
-    expect(sanitized.data.attributes[0]!.attributes).toEqual({ style: 'color:red' })
+    expect(sanitized.data.attributes[0]!.attributes).toEqual({})
   })
 
   it('sanitizes newly-added node subtrees in incremental mutations', () => {
@@ -158,7 +177,7 @@ describe('sanitizeReplayEvent', () => {
     const sanitized = sanitizeReplayEvent(event) as {
       data: { adds: Array<{ node: { attributes: Record<string, unknown> } }> }
     }
-    expect(sanitized.data.adds[0]!.node.attributes).toEqual({ class: 'card' })
+    expect(sanitized.data.adds[0]!.node.attributes).toEqual({})
   })
 
   it('passes through incremental sources unrelated to mutations unchanged', () => {
@@ -166,9 +185,72 @@ describe('sanitizeReplayEvent', () => {
     expect(sanitizeReplayEvent(event)).toEqual(event)
   })
 
-  it('passes through unrecognized event shapes unchanged', () => {
+  it('fails closed for unknown custom events', () => {
     const event = { type: 5, timestamp: 1, data: { tag: 'custom', payload: { foo: 'bar' } } }
-    expect(sanitizeReplayEvent(event)).toEqual(event)
+    expect(sanitizeReplayEvent(event)).toBeNull()
+  })
+
+  it('canonicalizes the only supported navigation custom event', () => {
+    const event = {
+      type: 5, timestamp: 1,
+      data: {
+        tag: 'navigation',
+        payload: { url: 'https://user:pass@example.com/account/jane?token=secret#private', extra: 'secret' },
+      },
+    }
+    expect(sanitizeReplayEvent(event)).toEqual({
+      type: 5, timestamp: 1,
+      data: { tag: 'navigation', payload: { url: 'https://example.com/account/jane' } },
+    })
+  })
+
+  it('suppresses canvas, string-bearing, and unknown incremental sources', () => {
+    for (const source of [8, 9, 10, 11, 13, 15, 16, 999]) {
+      expect(sanitizeReplayEvent({
+        type: 3, timestamp: 1, data: { source, value: 'jane.doe@example.com' },
+      })).toBeNull()
+    }
+  })
+
+  it('masks mutation and input text independently of rrweb hooks', () => {
+    const mutation = {
+      type: 3, timestamp: 1,
+      data: {
+        source: 0, attributes: [], adds: [], removes: [],
+        texts: [{ id: 7, value: 'Jane Doe' }],
+      },
+    }
+    expect(sanitizeReplayEvent(mutation)).toEqual({
+      ...mutation,
+      data: { ...mutation.data, texts: [{ id: 7, value: '**** ***' }] },
+    })
+    const input = { type: 3, timestamp: 2, data: { source: 5, id: 8, text: 'jane@example.com' } }
+    expect(sanitizeReplayEvent(input)).toEqual({
+      type: 3, timestamp: 2, data: { source: 5, id: 8, text: '****************' },
+    })
+  })
+
+  it('keeps safe text only with the explicit canonical marker', () => {
+    const event = {
+      type: 2, timestamp: 1,
+      data: {
+        node: {
+          type: 2,
+          attributes: { [SAFE_TEXT_ATTRIBUTE]: 'ignored', class: 'private-account' },
+          childNodes: [{ type: 3, textContent: 'Known static text' }],
+        },
+      },
+    }
+    expect(sanitizeReplayEvent(event)).toEqual({
+      type: 2, timestamp: 1,
+      data: {
+        node: {
+          type: 2,
+          attributes: { [SAFE_TEXT_ATTRIBUTE]: '' },
+          childNodes: [{ type: 3, textContent: 'Known static text' }],
+        },
+      },
+    })
   })
 
   it('fails closed for non-object input', () => {

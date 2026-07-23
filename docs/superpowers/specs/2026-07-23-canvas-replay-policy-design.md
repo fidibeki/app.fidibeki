@@ -4,11 +4,16 @@
 **Scope:** GitHub issue #41 and Task 39  
 **Environment:** Product and staging only; no production or deployment work
 
-## Outcome
+**Status:** Superseded by issue #53 and
+`2026-07-23-replay-identity-threat-model.md`
 
-Session replay can capture supported Canvas 2D and WebGL output when an operator explicitly enables
-it for a widget rule. Existing rules remain unchanged and keep canvas recording disabled.
-Sensitive canvases remain excludable with the existing `[data-fidibeki-block]` contract.
+## Superseded Decision Record
+
+This document records the earlier opt-in canvas design for historical context. It is no longer the
+active product or runtime contract. Canvas pixels are never recorded, regardless of persisted
+legacy rule settings, because they cannot be reliably redacted before capture. Migration `000074`
+forces existing settings off, the public widget projection always returns canvas recording
+disabled, and both the widget and backend reject canvas replay data.
 
 ## Existing System Audit
 

@@ -309,7 +309,7 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		ReplayMode: rule.ReplayMode, ReplaySamplingRate: rule.ReplaySamplingRate,
 		ReplayMaxDurationSeconds: rule.ReplayMaxDurationSeconds, ReplayMaxEvents: rule.ReplayMaxEvents,
 		ReplayMaskAllInputs: rule.ReplayMaskAllInputs, ReplayMaskTextSelector: rule.ReplayMaskTextSelector,
-		ReplayRecordCanvas: rule.ReplayRecordCanvas, ReplayCanvasFPS: rule.ReplayCanvasFPS,
+		ReplayRecordCanvas: false, ReplayCanvasFPS: 2,
 		RecurrenceMode: rule.RecurrenceMode, RecurrenceDays: rule.RecurrenceDays,
 		DefinitionKey: rule.DefinitionKey, DefinitionVersion: rule.DefinitionVersion,
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,

@@ -1821,45 +1821,62 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 
 	if _, err := root.Exec(ctx, `
-		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
-	`, widgetRuleA); err != nil {
-		t.Fatalf("write legacy unmasked replay rule before migration: %v", err)
+			UPDATE widget_rules
+			SET replay_mask_all_inputs = false, replay_record_canvas = true
+			WHERE id = $1
+		`, widgetRuleA); err != nil {
+		t.Fatalf("write legacy unsafe replay rule before migration: %v", err)
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("apply replay input masking migration: %v", err)
 	}
 	var replayMaskAllInputs bool
 	if err := root.QueryRow(ctx, `
-		SELECT replay_mask_all_inputs FROM widget_rules WHERE id = $1
-	`, widgetRuleA).Scan(&replayMaskAllInputs); err != nil {
+			SELECT replay_mask_all_inputs, replay_record_canvas
+			FROM widget_rules WHERE id = $1
+		`, widgetRuleA).Scan(&replayMaskAllInputs, &replayRecordCanvas); err != nil {
 		t.Fatalf("read backfilled replay input masking: %v", err)
 	}
-	if !replayMaskAllInputs {
-		t.Fatal("backfilled replay input masking = false, want true")
+	if !replayMaskAllInputs || replayRecordCanvas {
+		t.Fatalf(
+			"backfilled replay privacy policy = mask %t canvas %t, want true/false",
+			replayMaskAllInputs, replayRecordCanvas,
+		)
 	}
 	if _, err := root.Exec(ctx, `
-		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
-	`, widgetRuleA); err == nil {
+			UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
+		`, widgetRuleA); err == nil {
 		t.Fatal("replay input masking constraint accepted false")
+	}
+	if _, err := root.Exec(ctx, `
+			UPDATE widget_rules SET replay_record_canvas = true WHERE id = $1
+		`, widgetRuleA); err == nil {
+		t.Fatal("anonymous replay canvas constraint accepted true")
 	}
 	if err := migrator.Steps(-1); err != nil {
 		t.Fatalf("roll back replay input masking migration: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
-		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
-	`, widgetRuleA); err != nil {
-		t.Fatalf("write unmasked replay rule after rollback: %v", err)
+			UPDATE widget_rules
+			SET replay_mask_all_inputs = false, replay_record_canvas = true
+			WHERE id = $1
+		`, widgetRuleA); err != nil {
+		t.Fatalf("write unsafe replay rule after rollback: %v", err)
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply replay input masking migration: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		SELECT replay_mask_all_inputs FROM widget_rules WHERE id = $1
-	`, widgetRuleA).Scan(&replayMaskAllInputs); err != nil {
+			SELECT replay_mask_all_inputs, replay_record_canvas
+			FROM widget_rules WHERE id = $1
+		`, widgetRuleA).Scan(&replayMaskAllInputs, &replayRecordCanvas); err != nil {
 		t.Fatalf("read re-migrated replay input masking: %v", err)
 	}
-	if !replayMaskAllInputs {
-		t.Fatal("re-migrated replay input masking = false, want true")
+	if !replayMaskAllInputs || replayRecordCanvas {
+		t.Fatalf(
+			"re-migrated replay privacy policy = mask %t canvas %t, want true/false",
+			replayMaskAllInputs, replayRecordCanvas,
+		)
 	}
 
 	if _, err := root.Exec(ctx, `
@@ -1871,16 +1888,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("apply replay page URL canonicalization migration: %v", err)
 	}
 	var canonicalizedPageURL string
+	var legacyPrivacyVersion int
 	if err := root.QueryRow(ctx, `
-		SELECT page_url FROM sessions WHERE id = $1
-	`, sessionA).Scan(&canonicalizedPageURL); err != nil {
+			SELECT page_url, replay_privacy_version FROM sessions WHERE id = $1
+		`, sessionA).Scan(&canonicalizedPageURL, &legacyPrivacyVersion); err != nil {
 		t.Fatalf("read canonicalized legacy replay page URL: %v", err)
 	}
-	if canonicalizedPageURL != "https://a.example.com/chart/" {
+	if canonicalizedPageURL != "https://a.example.com/chart" || legacyPrivacyVersion != 0 {
 		t.Fatalf(
-			"canonicalized legacy replay page URL = %q, want https://a.example.com/chart/ with credentials/query/hash stripped",
-			canonicalizedPageURL,
+			"legacy replay privacy state = URL %q version %d, want https://a.example.com/chart and version 0",
+			canonicalizedPageURL, legacyPrivacyVersion,
 		)
+	}
+	var newPrivacyVersion int
+	if err := root.QueryRow(ctx, `
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at, rrweb_version,
+				max_duration_seconds, max_events
+			) VALUES ($1, $2, gen_random_uuid(), now(), '2.1.1', 1800, 50000)
+			RETURNING replay_privacy_version
+		`, tenantA, projectA).Scan(&newPrivacyVersion); err != nil {
+		t.Fatalf("insert replay after privacy contract migration: %v", err)
+	}
+	if newPrivacyVersion != 1 {
+		t.Fatalf("new replay privacy version = %d, want 1", newPrivacyVersion)
+	}
+	var cleanupIndex *string
+	if err := root.QueryRow(ctx, `
+			SELECT to_regclass('public.idx_sessions_replay_privacy_cleanup')::text
+		`).Scan(&cleanupIndex); err != nil || cleanupIndex == nil {
+		t.Fatalf("replay privacy cleanup index = %v, error = %v", cleanupIndex, err)
 	}
 
 	if err := migrateToVersion(migrator, 44); err != nil {

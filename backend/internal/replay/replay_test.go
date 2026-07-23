@@ -24,8 +24,8 @@ import (
 
 func TestMergeBatchesStreamsOrderedJSONArray(t *testing.T) {
 	storage := &memoryReplayStorage{objects: map[string][]byte{
-		"batch-0": []byte(`[{"type":2,"timestamp":1,"data":{}},{"type":3,"timestamp":2,"data":{}}]`),
-		"batch-1": []byte(`[{"type":4,"timestamp":3,"data":{}}]`),
+		"batch-0": []byte(`[{"type":2,"timestamp":1,"data":{"node":{"type":0}}},{"type":3,"timestamp":2,"data":{"source":5}}]`),
+		"batch-1": []byte(`[{"type":4,"timestamp":3,"data":{"href":"https://example.com/chart"}}]`),
 	}}
 	processor := Processor{Storage: storage}
 	count, err := processor.mergeBatches(context.Background(), "merged", []Batch{
@@ -36,7 +36,7 @@ func TestMergeBatchesStreamsOrderedJSONArray(t *testing.T) {
 		t.Fatalf("mergeBatches() error = %v", err)
 	}
 	if count != 3 || string(storage.objects["merged"]) !=
-		`[{"type":2,"timestamp":1,"data":{}},{"type":3,"timestamp":2,"data":{}},{"type":4,"timestamp":3,"data":{}}]` {
+		`[{"type":2,"timestamp":1,"data":{"node":{"type":0}}},{"type":3,"timestamp":2,"data":{"source":5}},{"type":4,"timestamp":3,"data":{"href":"https://example.com/chart"}}]` {
 		t.Fatalf("merge result count = %d, body = %s", count, storage.objects["merged"])
 	}
 	if storage.contentTypes["merged"] != "application/json" {
@@ -53,7 +53,7 @@ func TestMergeBatchesRejectsInvalidInput(t *testing.T) {
 	}{
 		{name: "not array", body: `{}`, count: 0, needle: "expected_array"},
 		{name: "invalid event", body: `[{]`, count: 1, needle: "invalid_json"},
-		{name: "wrong count", body: `[{"type":2,"timestamp":1,"data":{}}]`, count: 2, needle: "event_count_mismatch"},
+		{name: "wrong count", body: `[{"type":2,"timestamp":1,"data":{"node":{"type":0}}}]`, count: 2, needle: "event_count_mismatch"},
 		{name: "trailing JSON", body: `[] {}`, count: 0, needle: "trailing_json"},
 	}
 	for _, test := range tests {
@@ -81,7 +81,7 @@ func TestMergeBatchesReportsMissingObject(t *testing.T) {
 }
 
 func TestMergeBatchesReportsOutputFailure(t *testing.T) {
-	body := []byte(`[{"type":2,"timestamp":1,"data":{}}]`)
+	body := []byte(`[{"type":2,"timestamp":1,"data":{"node":{"type":0}}}]`)
 	want := errors.New("storage unavailable")
 	storage := &memoryReplayStorage{objects: map[string][]byte{"batch": body}, putErr: want}
 	processor := Processor{Storage: storage}
@@ -125,12 +125,21 @@ func TestSessionStatus(t *testing.T) {
 		session Session
 		want    string
 	}{
-		{name: "recording", session: Session{}, want: "recording"},
-		{name: "processing", session: Session{EndedAt: &now}, want: "processing"},
-		{name: "failed", session: Session{EndedAt: &now, MergeError: &message, MergeAttempts: 12}, want: "failed"},
-		{name: "ready", session: Session{MergedAt: &now, StorageKey: &key}, want: "ready"},
+		{name: "recording", session: Session{PrivacyVersion: CurrentReplayPrivacyVersion}, want: "recording"},
+		{name: "processing", session: Session{EndedAt: &now, PrivacyVersion: CurrentReplayPrivacyVersion}, want: "processing"},
+		{name: "failed", session: Session{
+			EndedAt: &now, MergeError: &message, MergeAttempts: 12,
+			PrivacyVersion: CurrentReplayPrivacyVersion,
+		}, want: "failed"},
+		{name: "ready", session: Session{
+			MergedAt: &now, StorageKey: &key, PrivacyVersion: CurrentReplayPrivacyVersion,
+		}, want: "ready"},
 		{name: "expired", session: Session{
 			MergedAt: &now, RetentionDeletedAt: &now,
+			PrivacyVersion: CurrentReplayPrivacyVersion,
+		}, want: "expired"},
+		{name: "legacy privacy contract", session: Session{
+			MergedAt: &now, StorageKey: &key, PrivacyVersion: 0,
 		}, want: "expired"},
 	}
 	for _, test := range tests {

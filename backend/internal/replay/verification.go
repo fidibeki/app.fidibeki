@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/hibiken/asynq"
@@ -319,19 +320,516 @@ func decodeVerifiedBatch(
 }
 
 func validRRWebEvent(raw json.RawMessage) bool {
-	var event struct {
-		Type      *int            `json:"type"`
-		Timestamp *float64        `json:"timestamp"`
-		Data      json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &event); err != nil {
+	event, ok := decodeReplayObject(raw)
+	if !ok || !hasOnlyKeys(event, "type", "timestamp", "data") {
 		return false
 	}
-	if event.Type == nil || *event.Type < 0 || *event.Type > 6 ||
-		event.Timestamp == nil || math.IsNaN(*event.Timestamp) ||
-		math.IsInf(*event.Timestamp, 0) || *event.Timestamp <= 0 {
+	eventType, ok := replayInteger(event["type"])
+	if !ok || eventType < 0 || eventType > 5 || !positiveReplayNumber(event["timestamp"]) {
 		return false
 	}
-	trimmed := bytes.TrimSpace(event.Data)
-	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+	data, ok := replayObject(event["data"])
+	if !ok {
+		return false
+	}
+	switch eventType {
+	case 0, 1:
+		return len(data) == 0
+	case 2:
+		if !hasOnlyKeys(data, "node", "initialOffset") {
+			return false
+		}
+		if _, exists := data["node"]; !exists || !validReplaySnapshotNode(data["node"], false) {
+			return false
+		}
+		if offset, exists := data["initialOffset"]; exists &&
+			!validReplayNumberObject(offset, "top", "left") {
+			return false
+		}
+		return true
+	case 3:
+		return validReplayIncrementalData(data)
+	case 4:
+		return validReplayMetaData(data)
+	case 5:
+		return validReplayCustomData(data)
+	default:
+		return false
+	}
+}
+
+func decodeReplayObject(raw []byte) (map[string]any, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return nil, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return object, true
+}
+
+func replayObject(value any) (map[string]any, bool) {
+	object, ok := value.(map[string]any)
+	return object, ok && object != nil
+}
+
+func hasOnlyKeys(object map[string]any, keys ...string) bool {
+	allowed := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		allowed[key] = struct{}{}
+	}
+	for key := range object {
+		if _, ok := allowed[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func replayNumber(value any) (float64, bool) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := number.Float64()
+	return parsed, err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0)
+}
+
+func positiveReplayNumber(value any) bool {
+	parsed, ok := replayNumber(value)
+	return ok && parsed > 0
+}
+
+func replayInteger(value any) (int, bool) {
+	parsed, ok := replayNumber(value)
+	if !ok || parsed != math.Trunc(parsed) ||
+		parsed < float64(math.MinInt) || parsed > float64(math.MaxInt) {
+		return 0, false
+	}
+	return int(parsed), true
+}
+
+func replayID(value any, nullable bool) bool {
+	if nullable && value == nil {
+		return true
+	}
+	parsed, ok := replayInteger(value)
+	return ok && parsed >= 0
+}
+
+func replayBoolean(value any) bool {
+	_, ok := value.(bool)
+	return ok
+}
+
+func validReplayNumberObject(value any, keys ...string) bool {
+	object, ok := replayObject(value)
+	if !ok || !hasOnlyKeys(object, keys...) {
+		return false
+	}
+	for _, key := range keys {
+		if candidate, exists := object[key]; exists {
+			if _, ok := replayNumber(candidate); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validReplayMetaData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "href", "width", "height") {
+		return false
+	}
+	href, ok := data["href"].(string)
+	if !ok {
+		return false
+	}
+	canonical, valid := canonicalReplayURL(href)
+	if !valid || canonical != href {
+		return false
+	}
+	for _, key := range []string{"width", "height"} {
+		if value, exists := data[key]; exists {
+			number, ok := replayNumber(value)
+			if !ok || number < 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validReplayCustomData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "tag", "payload") || data["tag"] != "navigation" {
+		return false
+	}
+	payload, ok := replayObject(data["payload"])
+	if !ok || !hasOnlyKeys(payload, "url") {
+		return false
+	}
+	rawURL, ok := payload["url"].(string)
+	if !ok {
+		return false
+	}
+	canonical, valid := canonicalReplayURL(rawURL)
+	return valid && canonical == rawURL
+}
+
+func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
+	node, ok := replayObject(value)
+	if !ok {
+		return false
+	}
+	nodeType, ok := replayInteger(node["type"])
+	if !ok || nodeType < 0 || nodeType > 5 {
+		return false
+	}
+	if value, exists := node["id"]; exists && !replayID(value, false) {
+		return false
+	}
+	if value, exists := node["rootId"]; exists && !replayID(value, true) {
+		return false
+	}
+	for _, key := range []string{
+		"isSVG", "needBlock", "isShadowHost", "isShadow", "isCustom", "isAttachIframe",
+	} {
+		if value, exists := node[key]; exists && !replayBoolean(value) {
+			return false
+		}
+	}
+	switch nodeType {
+	case 0:
+		if !hasOnlyKeys(
+			node, "type", "id", "rootId", "childNodes", "compatMode",
+			"isShadowHost", "isShadow", "isAttachIframe",
+		) {
+			return false
+		}
+		if mode, exists := node["compatMode"]; exists &&
+			mode != "CSS1Compat" && mode != "BackCompat" {
+			return false
+		}
+	case 1:
+		if !hasOnlyKeys(node, "type", "id", "rootId", "name", "publicId", "systemId") {
+			return false
+		}
+		name, nameOK := node["name"].(string)
+		publicID, publicOK := node["publicId"].(string)
+		systemID, systemOK := node["systemId"].(string)
+		if !nameOK || !publicOK || !systemOK ||
+			strings.ToLower(name) != "html" || publicID != "" || systemID != "" {
+			return false
+		}
+	case 2:
+		if !hasOnlyKeys(
+			node, "type", "id", "rootId", "tagName", "attributes", "childNodes",
+			"isSVG", "needBlock", "isShadowHost", "isShadow", "isCustom",
+			"isAttachIframe",
+		) {
+			return false
+		}
+		tagName, ok := node["tagName"].(string)
+		if !ok || !safeReplayTagName(tagName) {
+			return false
+		}
+	case 3:
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isStyle") {
+			return false
+		}
+		if value, exists := node["isStyle"]; exists && !replayBoolean(value) {
+			return false
+		}
+	case 4, 5:
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent") {
+			return false
+		}
+	}
+
+	safeText := safeTextAncestor
+	if attributes, exists := node["attributes"]; exists {
+		marker, valid := validReplayAttributes(attributes)
+		if !valid {
+			return false
+		}
+		safeText = safeText || marker
+	} else if nodeType == 2 {
+		return false
+	}
+	if content, exists := node["textContent"]; exists {
+		text, ok := content.(string)
+		if !ok {
+			return false
+		}
+		if nodeType == 3 && !safeText && !maskedReplayText(text) {
+			return false
+		}
+		if (nodeType == 4 || nodeType == 5) && text != "" {
+			return false
+		}
+	} else if nodeType >= 3 {
+		return false
+	}
+	if children, exists := node["childNodes"]; exists {
+		list, ok := children.([]any)
+		if !ok {
+			return false
+		}
+		for _, child := range list {
+			if !validReplaySnapshotNode(child, safeText) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validReplayAttributes(value any) (bool, bool) {
+	attributes, ok := replayObject(value)
+	if !ok || !hasOnlyKeys(attributes, "data-fidibeki-safe-text") {
+		return false, false
+	}
+	marker, exists := attributes["data-fidibeki-safe-text"]
+	if !exists {
+		return false, true
+	}
+	return true, marker == nil || marker == ""
+}
+
+func safeReplayTagName(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'A' && character <= 'Z' {
+			character += 'a' - 'A'
+		}
+		letter := character >= 'a' && character <= 'z'
+		digit := index > 0 && character >= '0' && character <= '9'
+		hyphen := index > 0 && character == '-'
+		if !letter && !digit && !hyphen {
+			return false
+		}
+	}
+	return true
+}
+
+func maskedReplayText(value string) bool {
+	for _, character := range value {
+		if character != '*' && !unicode.IsSpace(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validReplayIncrementalData(data map[string]any) bool {
+	source, ok := replayInteger(data["source"])
+	if !ok {
+		return false
+	}
+	switch source {
+	case 0:
+		return validReplayMutationData(data)
+	case 1, 6, 12:
+		return validReplayPositionData(data)
+	case 2:
+		return validReplayMouseInteractionData(data)
+	case 3:
+		return validReplayNumericData(data, "source", "id", "x", "y")
+	case 4:
+		return validReplayNumericData(data, "source", "width", "height")
+	case 5:
+		return validReplayInputData(data)
+	case 7:
+		return validReplayMediaData(data)
+	case 14:
+		return validReplaySelectionData(data)
+	default:
+		return false
+	}
+}
+
+func validReplayNumericData(data map[string]any, keys ...string) bool {
+	if !hasOnlyKeys(data, keys...) {
+		return false
+	}
+	for _, key := range keys {
+		value, exists := data[key]
+		if !exists {
+			continue
+		}
+		if _, ok := replayNumber(value); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func validReplayPositionData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "positions") {
+		return false
+	}
+	positions, ok := data["positions"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range positions {
+		position, ok := replayObject(value)
+		if !ok || !validReplayNumericData(position, "x", "y", "id", "timeOffset") {
+			return false
+		}
+	}
+	return true
+}
+
+func validReplayMouseInteractionData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "type", "id", "x", "y", "pointerType") {
+		return false
+	}
+	for _, key := range []string{"source", "type", "id", "x", "y"} {
+		if value, exists := data[key]; exists {
+			if _, ok := replayNumber(value); !ok {
+				return false
+			}
+		}
+	}
+	if pointer, exists := data["pointerType"]; exists {
+		switch pointer {
+		case "mouse", "pen", "touch":
+		default:
+			if _, ok := replayNumber(pointer); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validReplayInputData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "id", "text", "isChecked", "userTriggered") {
+		return false
+	}
+	if value, exists := data["id"]; exists && !replayID(value, false) {
+		return false
+	}
+	if text, exists := data["text"]; exists {
+		value, ok := text.(string)
+		if !ok || !maskedReplayText(value) {
+			return false
+		}
+	}
+	for _, key := range []string{"isChecked", "userTriggered"} {
+		if value, exists := data[key]; exists && !replayBoolean(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validReplayMediaData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "type", "id", "currentTime", "volume", "muted") {
+		return false
+	}
+	for _, key := range []string{"source", "type", "id", "currentTime", "volume"} {
+		if value, exists := data[key]; exists {
+			if _, ok := replayNumber(value); !ok {
+				return false
+			}
+		}
+	}
+	if value, exists := data["muted"]; exists && !replayBoolean(value) {
+		return false
+	}
+	return true
+}
+
+func validReplaySelectionData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "ranges") {
+		return false
+	}
+	ranges, ok := data["ranges"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range ranges {
+		selected, ok := replayObject(value)
+		if !ok || !validReplayNumericData(
+			selected, "start", "startOffset", "end", "endOffset",
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+func validReplayMutationData(data map[string]any) bool {
+	if !hasOnlyKeys(data, "source", "adds", "removes", "texts", "attributes", "isAttachIframe") {
+		return false
+	}
+	if value, exists := data["isAttachIframe"]; exists && !replayBoolean(value) {
+		return false
+	}
+	if values, exists := data["adds"]; exists {
+		adds, ok := values.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range adds {
+			added, ok := replayObject(value)
+			if !ok || !hasOnlyKeys(added, "parentId", "nextId", "node") ||
+				!replayID(added["parentId"], false) ||
+				!replayID(added["nextId"], true) ||
+				!validReplaySnapshotNode(added["node"], false) {
+				return false
+			}
+		}
+	}
+	if values, exists := data["removes"]; exists {
+		removes, ok := values.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range removes {
+			removed, ok := replayObject(value)
+			if !ok || !hasOnlyKeys(removed, "parentId", "id") ||
+				!replayID(removed["parentId"], false) || !replayID(removed["id"], false) {
+				return false
+			}
+		}
+	}
+	if values, exists := data["texts"]; exists {
+		texts, ok := values.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range texts {
+			text, ok := replayObject(value)
+			masked, textOK := text["value"].(string)
+			if !ok || !hasOnlyKeys(text, "id", "value") ||
+				!replayID(text["id"], false) || !textOK || !maskedReplayText(masked) {
+				return false
+			}
+		}
+	}
+	if values, exists := data["attributes"]; exists {
+		attributes, ok := values.([]any)
+		if !ok {
+			return false
+		}
+		for _, value := range attributes {
+			change, ok := replayObject(value)
+			if !ok || !hasOnlyKeys(change, "id", "attributes") ||
+				!replayID(change["id"], false) {
+				return false
+			}
+			if _, valid := validReplayAttributes(change["attributes"]); !valid {
+				return false
+			}
+		}
+	}
+	return true
 }

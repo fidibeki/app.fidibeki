@@ -312,8 +312,8 @@ function selectRule(rule: WidgetRule) {
     replay_max_duration_seconds: rule.replay_max_duration_seconds,
     replay_max_events: rule.replay_max_events, replay_mask_all_inputs: rule.replay_mask_all_inputs,
     replay_mask_text_selector: rule.replay_mask_text_selector ?? null,
-    replay_record_canvas: rule.replay_record_canvas ?? false,
-    replay_canvas_fps: rule.replay_canvas_fps || 2,
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
     recurrence_mode: rule.recurrence_mode || 'cooldown',
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
     definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
@@ -360,7 +360,8 @@ function normalizedRule(): WidgetRuleInput {
     // regardless of this value; kept true here so the form never suggests it is optional.
     replay_mask_all_inputs: true,
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
-    replay_canvas_fps: Number(ruleForm.replay_canvas_fps || 2),
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
     definition_key: ruleForm.definition_key.trim().toLowerCase(),
     definition_status: ruleForm.definition_status,
@@ -975,18 +976,11 @@ useHead(() => ({
                   <p><b>{{ t('projects.editor.replay.anonymityTitle') }}</b><span>{{ t('projects.editor.replay.anonymityDescription') }}</span></p>
                 </div>
                 <label class="project-toggle wide">
-                  <input v-model="ruleForm.replay_record_canvas" type="checkbox" :disabled="ruleForm.replay_mode === 'none'" />
+                  <input v-model="ruleForm.replay_record_canvas" type="checkbox" disabled />
                   <span><b>{{ t('projects.editor.replay.captureCanvas') }}</b><small>{{ t('projects.editor.replay.captureCanvasHint') }}</small></span>
                 </label>
-                <label v-if="ruleForm.replay_record_canvas">
-                  {{ t('projects.editor.replay.canvasFPS') }}
-                  <select v-model.number="ruleForm.replay_canvas_fps" class="app-select" :disabled="ruleForm.replay_mode === 'none'" v-bind="ruleFieldAttributes('replay_canvas_fps')">
-                    <option v-for="fps in 5" :key="fps" :value="fps">{{ t('projects.editor.replay.canvasFPSOption', { fps }) }}</option>
-                  </select>
-                  <small v-if="ruleFieldError('replay_canvas_fps')" :id="ruleErrorID('replay_canvas_fps')" class="rule-field-error">{{ ruleFieldError('replay_canvas_fps') }}</small>
-                </label>
-                <div v-if="ruleForm.replay_record_canvas" class="replay-privacy-note wide" role="note">
-                  <AlertTriangle :size="16" aria-hidden="true" />
+                <div class="replay-privacy-note wide" role="note">
+                  <ShieldCheck :size="16" aria-hidden="true" />
                   <p><b>{{ t('projects.editor.replay.canvasPrivacyTitle') }}</b><span>{{ t('projects.editor.replay.canvasPrivacyDescription') }}</span></p>
                 </div>
               </div>

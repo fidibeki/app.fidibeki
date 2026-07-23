@@ -2036,29 +2036,29 @@ test('widget appearance controls fit the mobile editor', async ({ page }, testIn
   await capture(page, testInfo, 'widget-appearance-mobile')
 })
 
-test('widget canvas replay is explicit, bounded, and explains the privacy exclusion', async ({ page }, testInfo) => {
+test('widget canvas replay is disabled by the anonymous privacy contract', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
 
   const captureCanvas = page.getByRole('checkbox', { name: /Capture canvas content/ })
-  await expect(captureCanvas).toBeEnabled()
+  await expect(captureCanvas).toBeDisabled()
   await expect(captureCanvas).not.toBeChecked()
   await expect(page.getByLabel('Canvas capture rate')).toHaveCount(0)
 
-  await expect(page.getByRole('note')).toContainText('Replay is anonymous by default.')
+  await expect(
+    page.getByRole('note').filter({ hasText: 'Replay is anonymous by default.' }),
+  ).toContainText('Replay is anonymous by default.')
 
-  await captureCanvas.check()
-  await page.getByLabel('Canvas capture rate').selectOption('3')
-  const canvasNote = page.getByRole('note').filter({ hasText: 'Canvas pixels may contain sensitive information.' })
-  await expect(canvasNote).toContainText('data-fidibeki-block')
+  const canvasNote = page.getByRole('note').filter({ hasText: 'Canvas pixels are always suppressed.' })
+  await expect(canvasNote).toContainText('pixel content is never recorded')
   await page.getByRole('button', { name: 'Save rule' }).click()
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[0]).toMatchObject({
-    replay_record_canvas: true,
-    replay_canvas_fps: 3,
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
   })
   await canvasNote.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `widget-canvas-policy-${testInfo.project.name}`)

@@ -70,8 +70,6 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     session.max_duration_seconds,
     options.rule.replay_max_duration_seconds,
   )
-  const recordCanvas = options.rule.replay_record_canvas
-
   const enqueueBatch = () => {
     if (serializedEvents.length === 0) return
     const batch: PendingBatch = {
@@ -114,8 +112,8 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     maskTextFn: createReplayMaskTextFn(),
     blockSelector: '[data-fidibeki-block]',
     slimDOMOptions: true,
-    recordCanvas,
-    ...(recordCanvas ? { sampling: { canvas: options.rule.replay_canvas_fps } } : {}),
+    // Anonymous replay cannot prove that rendered pixels contain no identity.
+    recordCanvas: false,
     inlineImages: false,
     collectFonts: false,
     errorHandler: (error) => options.onError?.(error),
