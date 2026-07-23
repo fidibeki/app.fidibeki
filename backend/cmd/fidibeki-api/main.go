@@ -342,11 +342,12 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
-	privacy.RegisterPublicRoutes(platformRoutes, privacy.PublicHTTPOptions{
+	privacyPublicOptions := privacy.PublicHTTPOptions{
 		Store: privacy.Store{Database: pools.Admin}, Begin: db.BeginFromPool(pools.Admin),
 		Storage: objectStorage, Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
-	})
+	}
+	privacy.RegisterPublicRoutes(platformRoutes, privacyPublicOptions)
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,
@@ -407,6 +408,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})(tenantRoutes)
 	tenantRoot := chi.NewRouter()
 	issue.RegisterReporterProgressRoutes(tenantRoot, reporterProgressOptions)
+	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Store: feedback.Store{}, JWT: jwtManager,
