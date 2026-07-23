@@ -2,9 +2,12 @@ package feedback
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/hibiken/asynq"
 )
 
 func TestVerificationSchedulerRollsBackFailedEnqueue(t *testing.T) {
@@ -50,14 +53,73 @@ func TestVerificationSchedulerReconcilesExpiryAndStaleWork(t *testing.T) {
 	}
 }
 
+func TestVerificationQueueUsesStableTaskContract(t *testing.T) {
+	t.Parallel()
+
+	task := VerificationTask{TenantID: "tenant", AttachmentID: "attachment", Generation: 4}
+	client := &verificationTaskClientStub{}
+	queue := NewVerificationQueue(client)
+	if err := queue.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if client.task == nil || client.task.Type() != TaskAttachmentVerify || client.options != 4 {
+		t.Fatalf("queued task = %#v, options = %d", client.task, client.options)
+	}
+	var decoded VerificationTask
+	if err := json.Unmarshal(client.task.Payload(), &decoded); err != nil || decoded != task {
+		t.Fatalf("queued payload = %#v, error = %v", decoded, err)
+	}
+
+	client.enqueueErr = asynq.ErrTaskIDConflict
+	if err := queue.Enqueue(context.Background(), task); err != nil {
+		t.Fatalf("duplicate Enqueue() error = %v", err)
+	}
+	failure := errors.New("Redis unavailable")
+	client.enqueueErr = failure
+	if err := queue.Enqueue(context.Background(), task); !errors.Is(err, failure) {
+		t.Fatalf("failed Enqueue() error = %v", err)
+	}
+	client.closeErr = failure
+	if err := queue.Close(); !errors.Is(err, failure) {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := OpenVerificationQueue("http://not-redis"); err == nil {
+		t.Fatal("OpenVerificationQueue() error = nil")
+	}
+}
+
+func TestVerificationSchedulerRunReconcilesBeforeCanceledShutdown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store := &verificationSchedulingStoreStub{expiryErr: errors.New("database unavailable")}
+	scheduler := VerificationScheduler{Store: store, Queue: &verificationQueueStub{}}
+	if err := scheduler.Run(ctx, 0); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if store.expireCalls != 1 || store.prepareCalls != 1 {
+		t.Fatalf("Run() calls = expire %d, prepare %d", store.expireCalls, store.prepareCalls)
+	}
+	if got := (VerificationTask{
+		TenantID: "tenant", AttachmentID: "attachment", Generation: 2,
+	}).String(); got != "tenant/attachment/2" {
+		t.Fatalf("VerificationTask.String() = %q", got)
+	}
+}
+
 type verificationSchedulingStoreStub struct {
-	marked     VerificationTask
-	markedAt   time.Time
-	undone     VerificationTask
-	prepared   []VerificationTask
-	preparedAt time.Time
-	expired    int64
-	expiredAt  time.Time
+	marked       VerificationTask
+	markedAt     time.Time
+	undone       VerificationTask
+	prepared     []VerificationTask
+	preparedAt   time.Time
+	expired      int64
+	expiredAt    time.Time
+	expiryErr    error
+	prepareErr   error
+	expireCalls  int
+	prepareCalls int
 }
 
 func (store *verificationSchedulingStoreStub) MarkEnqueued(
@@ -82,8 +144,9 @@ func (store *verificationSchedulingStoreStub) Prepare(
 	at time.Time,
 	_ int,
 ) ([]VerificationTask, error) {
+	store.prepareCalls++
 	store.preparedAt = at
-	return store.prepared, nil
+	return store.prepared, store.prepareErr
 }
 
 func (store *verificationSchedulingStoreStub) ExpirePending(
@@ -91,8 +154,9 @@ func (store *verificationSchedulingStoreStub) ExpirePending(
 	at time.Time,
 	_ int,
 ) (int64, error) {
+	store.expireCalls++
 	store.expiredAt = at
-	return store.expired, nil
+	return store.expired, store.expiryErr
 }
 
 type verificationQueueStub struct {
@@ -103,4 +167,24 @@ type verificationQueueStub struct {
 func (queue *verificationQueueStub) Enqueue(_ context.Context, task VerificationTask) error {
 	queue.tasks = append(queue.tasks, task)
 	return queue.err
+}
+
+type verificationTaskClientStub struct {
+	task       *asynq.Task
+	options    int
+	enqueueErr error
+	closeErr   error
+}
+
+func (client *verificationTaskClientStub) EnqueueContext(
+	_ context.Context,
+	task *asynq.Task,
+	options ...asynq.Option,
+) (*asynq.TaskInfo, error) {
+	client.task, client.options = task, len(options)
+	return nil, client.enqueueErr
+}
+
+func (client *verificationTaskClientStub) Close() error {
+	return client.closeErr
 }

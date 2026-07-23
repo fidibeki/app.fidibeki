@@ -32,6 +32,29 @@ func TestMaintainerReturnsCleanupFailure(t *testing.T) {
 	}
 }
 
+func TestMaintainerRunReconcilesBeforeCanceledShutdown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store := &cleanupStoreStub{err: errors.New("database unavailable")}
+	if err := (Maintainer{Store: store}).Run(ctx, 0); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if store.calls != 1 {
+		t.Fatalf("Run() cleanup calls = %d, want 1", store.calls)
+	}
+}
+
+func TestMaintenanceStoreRequiresConfiguredRecorder(t *testing.T) {
+	t.Parallel()
+
+	store := MaintenanceStore{}
+	if _, err := store.DeleteExpired(context.Background(), time.Now(), 0); err == nil {
+		t.Fatal("DeleteExpired() error = nil")
+	}
+}
+
 type cleanupStoreStub struct {
 	deleted []int64
 	err     error

@@ -81,7 +81,7 @@ func (store VerificationStore) Prepare(
 			WHERE safety_status = 'quarantined'
 			  AND (
 			      verification_enqueued_at IS NULL
-			      OR verification_enqueued_at < $1 - interval '15 minutes'
+			      OR verification_enqueued_at < $1::timestamptz - interval '15 minutes'
 			  )
 			ORDER BY COALESCE(verification_enqueued_at, completed_at), id
 			LIMIT $2

@@ -420,6 +420,9 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		t.Fatalf("verified attachment AI schedule = %q/%q",
 			aiAttachmentScheduler.attachmentID, aiAttachmentScheduler.feedbackID)
 	}
+	assertAttachmentVerificationStoreLifecycle(
+		t, ctx, root, tenantID, first.FeedbackID, now,
+	)
 	invalidOrigin := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey,
 		body, publicKey, "https://evil.test")
 	if invalidOrigin.Code != http.StatusForbidden || invalidOrigin.Header().Get("Access-Control-Allow-Origin") != "" {
@@ -1264,6 +1267,116 @@ func addHoneypot(t *testing.T, body string) string {
 		t.Fatalf("encode feedback fixture: %v", err)
 	}
 	return string(encoded)
+}
+
+func assertAttachmentVerificationStoreLifecycle(
+	t *testing.T,
+	ctx context.Context,
+	database *pgx.Conn,
+	tenantID string,
+	feedbackID string,
+	now time.Time,
+) {
+	t.Helper()
+	store := VerificationStore{Database: database}
+	var attachmentID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, completed_at, safety_status,
+			upload_refreshed_at, upload_expires_at, verification_generation
+		) VALUES (
+			$1, $2, 'screenshot', gen_random_uuid(), $3,
+			'image/png', 8, 'pending', $4, 'quarantined',
+			$4::timestamptz - interval '10 minutes', $4::timestamptz + interval '1 hour', 1
+		)
+		RETURNING id
+	`, tenantID, feedbackID, "verification/quarantined.png", now).Scan(&attachmentID); err != nil {
+		t.Fatalf("create quarantined attachment: %v", err)
+	}
+	task := VerificationTask{
+		TenantID: tenantID, AttachmentID: attachmentID, Generation: 1,
+	}
+	if err := store.MarkEnqueued(ctx, task, now.Add(-20*time.Minute)); err != nil {
+		t.Fatalf("MarkEnqueued() error = %v", err)
+	}
+	prepared, err := store.Prepare(ctx, now, 10)
+	if err != nil || len(prepared) != 1 || prepared[0].AttachmentID != attachmentID ||
+		prepared[0].Generation != 2 {
+		t.Fatalf("Prepare() = %#v, %v", prepared, err)
+	}
+	task = prepared[0]
+	if err := store.UndoEnqueued(ctx, task); err != nil {
+		t.Fatalf("UndoEnqueued() error = %v", err)
+	}
+	if err := store.MarkEnqueued(ctx, task, now); err != nil {
+		t.Fatalf("second MarkEnqueued() error = %v", err)
+	}
+	work, err := store.Claim(ctx, task)
+	if err != nil || work.AttachmentID != attachmentID || work.Attempt != 1 ||
+		work.SafetyStatus != AttachmentSafetyQuarantined {
+		t.Fatalf("Claim() = %#v, %v", work, err)
+	}
+	detected := "image/jpeg"
+	if err := store.MarkRejected(ctx, work, "signature_mismatch", &detected, now); err != nil {
+		t.Fatalf("MarkRejected() error = %v", err)
+	}
+	if err := store.CompleteRejectedCleanup(ctx, work); err != nil {
+		t.Fatalf("CompleteRejectedCleanup() error = %v", err)
+	}
+	noWork := task
+	noWork.Generation++
+	if err := store.MarkEnqueued(ctx, noWork, now); !errors.Is(err, ErrNoVerificationWork) {
+		t.Fatalf("stale MarkEnqueued() error = %v", err)
+	}
+	if err := store.CompleteRejectedCleanup(ctx, VerificationWork{
+		VerificationTask: noWork,
+	}); !errors.Is(err, ErrNoVerificationWork) {
+		t.Fatalf("stale CompleteRejectedCleanup() error = %v", err)
+	}
+	if _, err := store.Prepare(ctx, now, 0); err == nil {
+		t.Fatal("Prepare(invalid limit) error = nil")
+	}
+
+	var pendingID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, complete_token_hash, safety_status,
+			upload_refreshed_at, upload_expires_at, verification_generation
+		) VALUES (
+			$1, $2, 'audio', gen_random_uuid(), $3,
+			'audio/webm', 4, 'pending', 'hash', 'pending',
+			$4::timestamptz - interval '20 minutes', $4::timestamptz - interval '10 minutes', 1
+		)
+		RETURNING id
+	`, tenantID, feedbackID, "verification/expired.webm", now).Scan(&pendingID); err != nil {
+		t.Fatalf("create pending attachment: %v", err)
+	}
+	if _, err := store.ExpirePending(ctx, now, 1001); err == nil {
+		t.Fatal("ExpirePending(invalid limit) error = nil")
+	}
+	expired, err := store.ExpirePending(ctx, now, 10)
+	if err != nil || expired != 1 {
+		t.Fatalf("ExpirePending() = %d, %v", expired, err)
+	}
+	var safetyStatus, processingStatus string
+	var completeTokenHash *string
+	if err := database.QueryRow(ctx, `
+		SELECT safety_status, processing_status, complete_token_hash
+		FROM attachments WHERE id = $1
+	`, pendingID).Scan(&safetyStatus, &processingStatus, &completeTokenHash); err != nil {
+		t.Fatalf("read expired attachment: %v", err)
+	}
+	if safetyStatus != "expired" || processingStatus != "failed" || completeTokenHash != nil {
+		t.Fatalf("expired attachment state = %s/%s/%v",
+			safetyStatus, processingStatus, completeTokenHash)
+	}
+	if _, err := database.Exec(ctx, `
+		DELETE FROM attachments WHERE id IN ($1, $2)
+	`, attachmentID, pendingID); err != nil {
+		t.Fatalf("remove verification lifecycle fixtures: %v", err)
+	}
 }
 
 func assertFeedbackRows(

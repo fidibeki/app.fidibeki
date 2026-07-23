@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,45 @@ func TestResultNormalizeAndGeminiErrorClassification(t *testing.T) {
 	}
 	if IsPermanent(classifyGeminiError(context.DeadlineExceeded)) {
 		t.Error("deadline error was permanent")
+	}
+}
+
+func TestProviderDiagnosticReasonUsesStableOperationalCategories(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		failure error
+		want    string
+	}{
+		{name: "unauthenticated", failure: genai.APIError{Code: 401}, want: "provider_unauthenticated"},
+		{name: "forbidden", failure: genai.APIError{Code: 403}, want: "provider_forbidden"},
+		{name: "not found", failure: genai.APIError{Code: 404}, want: "provider_not_found"},
+		{name: "request timeout", failure: genai.APIError{Code: 408}, want: "provider_timeout"},
+		{name: "gateway timeout", failure: genai.APIError{Code: 504}, want: "provider_timeout"},
+		{name: "conflict", failure: genai.APIError{Code: 409}, want: "provider_conflict"},
+		{name: "rate limited", failure: genai.APIError{Code: 429}, want: "provider_rate_limited"},
+		{name: "unavailable", failure: genai.APIError{Code: 503}, want: "provider_unavailable"},
+		{name: "rejected", failure: genai.APIError{Code: 422}, want: "provider_rejected"},
+		{name: "provider error", failure: genai.APIError{Code: 302}, want: "provider_error"},
+		{name: "analyzer unavailable", failure: ErrUnavailable, want: "analyzer_unavailable"},
+		{name: "deadline", failure: context.DeadlineExceeded, want: "deadline_exceeded"},
+		{name: "canceled", failure: context.Canceled, want: "canceled"},
+		{name: "network timeout", failure: &net.DNSError{
+			Err: "timeout", IsTimeout: true,
+		}, want: "network_timeout"},
+		{name: "network", failure: &net.DNSError{Err: "unavailable"}, want: "network_error"},
+		{name: "permanent", failure: permanent(errors.New("unsupported")), want: "permanent_failure"},
+		{name: "internal", failure: errors.New("database unavailable"), want: "internal_error"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := providerDiagnosticReason(test.failure); got != test.want {
+				t.Fatalf("providerDiagnosticReason() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
