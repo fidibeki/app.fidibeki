@@ -7,7 +7,7 @@ status: final
 
 # Review Chain Report
 
-**Artifact**: Widget Platform backoffice completion
+**Artifact**: Feedback UI and widget contact issue slice (#15, #17, #18, #20)
 **Date**: 2026-07-23
 **Rounds**: 2 local review passes
 
@@ -17,41 +17,38 @@ status: final
 
 | # | Severity | Confidence | Location | Problem | Status |
 |---|----------|------------|----------|---------|--------|
-| 1 | major | 10/10 | `web/pages/projects/[id].vue` | Refreshing installation diagnostics reloaded the entire editor and could discard unsaved rule changes. | Fixed with an isolated project-status fetch and desktop/mobile regression coverage. |
-| 2 | minor | 10/10 | `web/components/projects/WidgetDecisionDiagnostics.vue` | Native `output` elements added implicit `status` roles and made existing status announcements ambiguous. | Fixed by using ordinary text for live simulator values while retaining the explicit eligibility state. |
-| 3 | minor | 9/10 | `widget/vitest.config.ts` | The shared evaluator ran in tests but its file was outside the widget coverage root, so it was omitted from thresholds. | Fixed with explicit external coverage and a matching contract include. |
+| 1 | minor | 10/10 | `web/assets/css/main.css` | The initial status sizing fix also applied `width: max-content` to tags and filter chips through a grouped selector. | Fixed by limiting intrinsic width to `.status-pill`. |
 
 ## Input Quality Assessment
 
 | Input | Rating | Evidence |
 |-------|--------|----------|
-| Product/domain context | Rich | The approved roadmap defines preview, targeting, decision explanation, installation evidence, privacy, and compatibility boundaries. |
-| Requirements clarity | Precise | Existing URL testing must be preserved; explanation uses non-personal signals; diagnostics may reuse current connection state. |
-| Upstream artifacts | Fresh | The runtime policy, recurrence, safe targeting, lifecycle, appearance, analytics, and project connection timestamp are current. |
+| Product/domain context | Rich | The issue bodies define canonical sentiment thresholds, responsive geometry, modal containment, and explicit reporter consent. |
+| Requirements clarity | Precise | Each issue includes a TDD plan and measurable acceptance criteria across backend, web, and widget. |
+| Upstream artifacts | Fresh | Backend contact persistence/public contracts and widget definition fields were already implemented and tested. |
 
 ## Simplifications Applied
 
-One pure evaluator now serves both the runtime and backoffice simulator. Existing targeting results feed the
-diagnostic band through a small additive event; installation state is derived from current project data rather
-than a new endpoint or telemetry stream. The preview models presentation state without making inert controls
-keyboard-accessible.
+Existing backend contact contracts were retained. The slice adds only missing UI/runtime behavior: one shared
+sentiment classifier and badge, one global modal layout contract, a narrow status sizing fix, project preview
+controls, and explicit client-side contact validation through the existing submission payload.
 
 ## Changes Made
 
-Added a decision simulator with score, threshold, signal reasons, trigger and recurrence explanations; a
-responsive installation band for loader, domains, definitions, and URL-test state; faithful launcher open/closed,
-inline, and reaction previews; a shared evaluator contract; focused unit and browser regressions; and external
-coverage for the shared source.
+Replaced raw sentiment scores with semantic labels and accessible exact-score disclosure; prevented status label
+clipping and constrained the master-detail breakpoint; restored shared, scroll-safe single/bulk/link modals; and
+completed optional reporter email preview, consent, inline validation, localization, and payload coverage.
 
 ## Reviewer's Summary
 
-The backoffice explains the same deterministic decision used by the runtime and introduces no collection of
-private data. URL matching remains canonical and RE2-safe. Diagnostics do not overwrite in-progress edits,
-preview controls outside the inert canvas remain operable, and desktop/mobile layouts have no horizontal
-overflow. No unresolved blocking issue remains.
+The implementation matches backend sentiment thresholds and never infers notification consent from an email.
+Invalid contact data is rejected before attachment collection or submission and retains the prepared response.
+Modal and status geometry stays within tested desktop, tablet, mobile, and short viewports. No unresolved finding
+remains.
 
 ## Resolver's Notes
 
-The full web browser suite passed with 104 tests and 42 intentional skips; widget coverage passed with 104 unit
-tests, including the external shared evaluator, and all 27 widget browser journeys passed. Nuxt and widget builds
-and both typechecks passed. The remaining gate is the standard staging CI/post-deploy run for this commit.
+The full web browser suite passed with 109 tests and 43 intentional skips; web unit coverage passed 72 tests.
+Widget coverage passed 104 unit tests and all 32 widget browser journeys passed. Nuxt build, widget build, both
+typechecks, and focused backend project/widget/feedback packages passed. The remaining gate is the standard
+staging CI/post-deploy run for this commit.

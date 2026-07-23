@@ -104,9 +104,22 @@ export function mountWidget(options: MountOptions): () => void {
 	const responseControls = structured
 		? createResponseControls(optional, options.rule, localization)
 		: null
+	const messageID = `${hostID}-message`
+	message.id = messageID
 	if (reporterEmail && notifyReporter) {
+		reporterEmail.setAttribute('aria-describedby', messageID)
+		const clearContactError = () => {
+			if (reporterEmail.getAttribute('aria-invalid') !== 'true') return
+			reporterEmail.removeAttribute('aria-invalid')
+			reporterEmail.removeAttribute('data-invalid')
+			message.textContent = ''
+		}
 		const synchronizeContactRequirement = () => { reporterEmail.required = notifyReporter.checked }
-		notifyReporter.addEventListener('change', synchronizeContactRequirement)
+		reporterEmail.addEventListener('input', clearContactError)
+		notifyReporter.addEventListener('change', () => {
+			synchronizeContactRequirement()
+			if (!notifyReporter.checked) clearContactError()
+		})
 		synchronizeContactRequirement()
 	}
 	const reportInteraction = () => {
@@ -197,6 +210,21 @@ export function mountWidget(options: MountOptions): () => void {
 			message.textContent = localization.system.required
 			responseControls.focusInvalid()
 			return
+		}
+		if (reporterEmail && notifyReporter) {
+			const email = reporterEmail.value.trim()
+			const contactError = notifyReporter.checked && !email
+				? localization.system.emailRequired
+				: email && reporterEmail.validity.typeMismatch
+					? localization.system.invalidEmail
+					: ''
+			if (contactError) {
+				message.textContent = contactError
+				reporterEmail.setAttribute('aria-invalid', 'true')
+				reporterEmail.setAttribute('data-invalid', 'true')
+				reporterEmail.focus()
+				return
+			}
 		}
 		submitting = true
 		closeButton.disabled = true
@@ -540,7 +568,7 @@ function markup(
       ? `<img class="brand" src="${escapeHTML(logoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
       : '<span class="eyebrow">FIDIBEKI</span>'}<h2>${escapeHTML(content.prompt)}</h2></div>
       <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
-    <form>
+    <form novalidate>
       <div data-optional class="optional"></div>
       ${legacyText}${comment}${contact}
       <label class="honeypot" aria-hidden="true">Website<input name="company_website" tabindex="-1" autocomplete="off"></label>

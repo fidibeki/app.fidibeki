@@ -1477,6 +1477,12 @@ test('widget preview mirrors launcher and inline presentation states', async ({ 
   await page.getByRole('group', { name: 'Launcher preview state' }).getByRole('button', { name: 'Open' }).click()
   await expect(page.locator('.widget-preview-trigger')).toHaveCount(0)
   await expect(page.locator('.widget-preview-modal')).toBeVisible()
+  await expect(page.locator('.widget-preview-contact')).toHaveCount(0)
+  await page.getByRole('checkbox', { name: 'Optional email address' }).check()
+  const previewContact = page.locator('.widget-preview-contact')
+  await expect(previewContact).toBeVisible()
+  await expect(previewContact.locator('input[type="email"]')).toHaveAttribute('placeholder', 'Email address')
+  await expect(previewContact).toContainText('Email me about this feedback')
 
   await page.getByLabel('Presentation').selectOption('inline')
   await expect(page.locator('.widget-preview-modal')).toBeVisible()
@@ -1609,6 +1615,106 @@ test('feedback can be inspected, previewed, and archived', async ({ page }, test
   await expect(page.getByText('Feedback marked archived.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible()
   expect(state.feedback[0].status).toBe('archived')
+})
+
+test('feedback sentiment uses semantic labels with an exact-score disclosure', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('link', { name: 'Open FB-1048' }).click()
+    await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
+  }
+
+  const badge = page.locator(testInfo.project.name === 'mobile'
+    ? '.feedback-detail-page .sentiment-badge'
+    : '.feedback-inspector .sentiment-badge')
+  await expect(badge).toHaveText('Negative')
+  await expect(badge).toHaveAttribute('aria-label', 'Negative sentiment, exact score -0.74')
+  await badge.focus()
+  await expect(badge).toBeFocused()
+  await expect(badge).toHaveCSS('--sentiment-detail-visible', '1')
+  await capture(page, testInfo, `feedback-sentiment-${testInfo.project.name}`)
+})
+
+test('feedback status pills remain readable in normal and selected rows', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This test controls the viewport widths directly')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  for (const width of [1440, 1100, 768]) {
+    await page.setViewportSize({ width, height: 900 })
+    const pills = page.locator('.feedback-stream article > .status-pill', { hasText: 'completed' })
+    await expect(pills).toHaveCount(2)
+    const measurements = await pills.evaluateAll(elements => elements.map((element) => {
+      const pill = element as HTMLElement
+      const row = pill.closest('article')!.getBoundingClientRect()
+      const bounds = pill.getBoundingClientRect()
+      return {
+        text: pill.textContent,
+        contentFits: pill.scrollWidth <= pill.clientWidth,
+        insideRow: bounds.left >= row.left && bounds.right <= row.right,
+      }
+    }))
+    expect(measurements).toEqual([
+      { text: 'completed', contentFits: true, insideRow: true },
+      { text: 'completed', contentFits: true, insideRow: true },
+    ])
+    const overflow = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      offenders: Array.from(document.querySelectorAll<HTMLElement>('body *'))
+        .filter(element => element.getBoundingClientRect().right > document.documentElement.clientWidth + 1)
+        .slice(0, 5)
+        .map(element => ({ className: element.className, right: Math.round(element.getBoundingClientRect().right) })),
+    }))
+    expect(overflow.scrollWidth, `page should not overflow at ${width}px: ${JSON.stringify(overflow.offenders)}`).toBeLessThanOrEqual(overflow.clientWidth)
+    await capture(page, testInfo, `feedback-status-${width}`)
+  }
+})
+
+test('create-issue modal stays contained and usable in short viewports', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await page.getByRole('link', { name: 'Open FB-1047' }).click()
+  await expect(page).toHaveURL(/\/feedback\/feedback-2$/)
+  await page.getByRole('button', { name: 'Create issue' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Create issue from feedback' })
+  const surface = dialog.locator('.app-modal')
+  const body = surface.locator('.app-modal__body')
+  await expect(surface).toBeVisible()
+  await expect(body).toBeVisible()
+  await expect(page.locator('body')).toHaveCSS('overflow', 'hidden')
+
+  const contained = await surface.evaluate((element) => {
+    const bounds = element.getBoundingClientRect()
+    const children = ['header', '.app-modal__body', 'footer'].map(selector => element.querySelector(selector)!.getBoundingClientRect())
+    return {
+      sensibleWidth: bounds.width <= 580,
+      inViewport: bounds.left >= 0 && bounds.right <= window.innerWidth,
+      childrenInside: children.every(child => child.left >= bounds.left && child.right <= bounds.right),
+    }
+  })
+  expect(contained).toEqual({ sensibleWidth: true, inViewport: true, childrenInside: true })
+  await capture(page, testInfo, `feedback-create-issue-modal-${testInfo.project.name}`)
+
+  const viewport = page.viewportSize()!
+  await page.setViewportSize({ width: viewport.width, height: 320 })
+  const shortGeometry = await surface.evaluate((element) => {
+    const bounds = element.getBoundingClientRect()
+    const content = element.querySelector<HTMLElement>('.app-modal__body')!
+    return {
+      inViewport: bounds.top >= 0 && bounds.bottom <= window.innerHeight,
+      bodyScrolls: content.scrollHeight > content.clientHeight,
+    }
+  })
+  expect(shortGeometry).toEqual({ inViewport: true, bodyScrolls: true })
+  await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Create issue' })).toBeVisible()
 })
 
 test('unlinked feedback can be titled and promoted into an editable issue', async ({ page }, testInfo) => {
@@ -1895,6 +2001,8 @@ test('selected feedback can create, unlink, and link issues within one project',
   await openIssueActions()
   await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Create issue', exact: true }).click()
   const createDialog = page.getByRole('dialog', { name: 'Create issue from 2 feedback records' })
+  await expect(createDialog.locator('.app-modal')).toBeVisible()
+  await expect(createDialog.locator('.app-modal__body')).toBeVisible()
   await expect(createDialog.getByLabel('Issue title')).toHaveValue('Checkout froze after I applied a promotion code.')
   await capture(page, testInfo, 'feedback-create-issue-dialog')
   await createDialog.getByLabel('Issue title').fill('Checkout promotion failures')

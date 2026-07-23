@@ -329,6 +329,89 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
   })
 }
 
+const contactSubmissionCases = [
+  { name: 'disabled', enabled: false, email: '', consent: false, expectedEmail: null, expectedConsent: false },
+  { name: 'enabled and empty', enabled: true, email: '', consent: false, expectedEmail: null, expectedConsent: false },
+  { name: 'email without consent', enabled: true, email: 'customer@example.com', consent: false, expectedEmail: 'customer@example.com', expectedConsent: false },
+  { name: 'email with consent', enabled: true, email: 'customer@example.com', consent: true, expectedEmail: 'customer@example.com', expectedConsent: true },
+]
+
+for (const contactCase of contactSubmissionCases) {
+  test(`contact collection submits the ${contactCase.name} state`, async ({ page }) => {
+    const configuration = definitionConfiguration('inline')
+    configuration.definitions![0]!.collect_contact = contactCase.enabled
+    const submissions: Array<Record<string, unknown>> = []
+    await page.route('**/v1/widget/config*', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+    }))
+    await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+    await page.route('**/v1/feedback?*', route => {
+      submissions.push(route.request().postDataJSON() as Record<string, unknown>)
+      return route.fulfill({ status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_contact"}' })
+    })
+
+    await page.goto('/sample.html')
+    const email = page.getByRole('textbox', { name: 'Email address' })
+    const consent = page.getByRole('checkbox', { name: 'Email me about this feedback' })
+    if (!contactCase.enabled) {
+      await expect(email).toHaveCount(0)
+      await expect(consent).toHaveCount(0)
+    } else {
+      await expect(email).toHaveAttribute('type', 'email')
+      await expect(email).toHaveAttribute('autocomplete', 'email')
+      if (contactCase.email) await email.fill(contactCase.email)
+      if (contactCase.consent) await consent.check()
+    }
+    await page.getByRole('button', { name: '4 out of 5' }).click()
+    await page.getByRole('button', { name: 'Helpful', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Details' }).fill('Contact preference regression.')
+    await page.getByRole('button', { name: 'Send response' }).click()
+    await expect(page.getByText('Response received.')).toBeVisible()
+
+    expect(submissions).toHaveLength(1)
+    expect(submissions[0]).toMatchObject({
+      reporter_email: contactCase.expectedEmail,
+      notify_reporter: contactCase.expectedConsent,
+    })
+  })
+}
+
+test('contact validation is inline and preserves the prepared response', async ({ page }) => {
+  const submissions: Array<Record<string, unknown>> = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(definitionConfiguration('inline')),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/feedback?*', route => {
+    submissions.push(route.request().postDataJSON() as Record<string, unknown>)
+    return route.fulfill({ status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_contact"}' })
+  })
+
+  await page.goto('/sample.html')
+  await page.getByRole('button', { name: '4 out of 5' }).click()
+  await page.getByRole('button', { name: 'Helpful', exact: true }).click()
+  const details = page.getByRole('textbox', { name: 'Details' })
+  const email = page.getByRole('textbox', { name: 'Email address' })
+  const consent = page.getByRole('checkbox', { name: 'Email me about this feedback' })
+  await details.fill('Keep this response while correcting contact details.')
+  await email.fill('not-an-email')
+  await page.getByRole('button', { name: 'Send response' }).click()
+
+  await expect(page.getByText('Enter a valid email address.')).toBeVisible()
+  await expect(email).toHaveValue('not-an-email')
+  await expect(email).toHaveAttribute('aria-invalid', 'true')
+  await expect(details).toHaveValue('Keep this response while correcting contact details.')
+  await expect(page.getByRole('button', { name: '4 out of 5' })).toHaveAttribute('aria-pressed', 'true')
+  expect(submissions).toHaveLength(0)
+
+  await email.fill('')
+  await consent.check()
+  await page.getByRole('button', { name: 'Send response' }).click()
+  await expect(page.getByText('Enter an email address to receive updates.')).toBeVisible()
+  await expect(details).toHaveValue('Keep this response while correcting contact details.')
+  expect(submissions).toHaveLength(0)
+})
+
 test('imperative mount resolves a definition key and safely rejects inactive definitions', async ({ page }) => {
   const active = definitionConfiguration('inline', 'imperative-checkout').definitions![0]!
   const inactive = { ...active, id: 'definition-paused', definition_key: 'paused-checkout', definition_status: 'paused' as const }

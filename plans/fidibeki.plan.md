@@ -214,6 +214,22 @@ was removed from the staging test tenant.
   staging behavior. Close issues that are already materially complete, then implement the remaining
   issues that do not carry the `postpone` label. Recommended planning decisions are pre-approved;
   the staging-only and no-production boundary still applies.
+  - [x] Confirm Phase 0 issues #8-#12 are closed and retain passing regression coverage.
+  - [x] Complete Feedback UI and widget contact issues #15, #17, #18, and #20.
+    - Sentiment now uses one threshold-tested semantic badge with exact-score disclosure; status
+      pills retain their complete labels in selected and ordinary rows across desktop and tablet.
+      Individual, bulk-create, and link flows share a viewport-contained modal contract with an
+      internally scrolling body. Optional reporter email is represented in configuration and live
+      preview, validates inline without losing prepared feedback, and has explicit coverage for
+      disabled, empty, email-only, and email-plus-consent payloads.
+  - [ ] Complete Settings quality issues #13 and #16.
+  - [ ] Complete screenshot annotation issue #14.
+  - [ ] Complete moderated-content propagation issue #6.
+  - [ ] Complete shared transactional email issue #21.
+  - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
+  - [ ] Complete workspace identity and organization profile issues #30 and #31.
+  - [ ] Complete member-aware internationalization issue #32.
+  - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
 web, and widget tests, responsive/accessibility verification, and one real staging journey. The

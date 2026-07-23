@@ -521,7 +521,7 @@ useHead({ title: 'Feedback · Fidibeki' })
           @set-assignee="setSelectedAssignee"
           @toggle-tag="toggleSelectedTag"
         />
-        <dl><div><dt>Reporter</dt><dd>{{ selected.reporter_email || 'Anonymous' }}</dd></div><div><dt>Sentiment</dt><dd>{{ selected.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Issue</dt><dd>{{ selected.issue_public_id || 'Not linked' }}</dd></div><div><dt>AI</dt><dd><span class="status-pill" :class="`status-${selected.ai_status}`">{{ selected.ai_status }}</span></dd></div></dl>
+        <dl><div><dt>Reporter</dt><dd>{{ selected.reporter_email || 'Anonymous' }}</dd></div><div><dt>Sentiment</dt><dd><SentimentBadge :score="selected.sentiment_score" /></dd></div><div><dt>Issue</dt><dd>{{ selected.issue_public_id || 'Not linked' }}</dd></div><div><dt>AI</dt><dd><span class="status-pill" :class="`status-${selected.ai_status}`">{{ selected.ai_status }}</span></dd></div></dl>
       </div>
       <div v-else-if="inspectorTab === 'evidence'" class="feedback-inspector-body feedback-inspector-evidence"><AttachmentIcons :attachments="selected.attachment_kinds" /><p>{{ selected.attachment_kinds.length ? 'Open full detail to inspect captured evidence.' : 'No evidence was attached.' }}</p></div>
       <div v-else class="feedback-inspector-body feedback-inspector-evidence"><PanelRightOpen :size="24" /><p>{{ selected.has_replay ? 'A session replay is attached and available in full detail.' : 'No replay is attached.' }}</p></div>
@@ -529,9 +529,9 @@ useHead({ title: 'Feedback · Fidibeki' })
     </aside>
 
     <AppDialog :open="createIssueOpen" aria-labelledby="bulk-create-issue-title" @close="createIssueOpen = false">
-      <form class="feedback-issue-dialog" @submit.prevent="createIssueFromSelection">
+      <form class="feedback-issue-dialog app-modal" @submit.prevent="createIssueFromSelection">
         <header><div><p class="app-eyebrow">Create actionable work</p><h2 id="bulk-create-issue-title">Create issue from {{ selectedIds.length }} feedback records</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="createIssueOpen = false"><X :size="16" /></button></header>
-        <div class="feedback-issue-dialog-body">
+        <div class="feedback-issue-dialog-body app-modal__body">
           <label><span>Title</span><input v-model="issueTitle" class="app-input" aria-label="Issue title" required maxlength="80" autofocus /></label>
           <label><span>Description</span><textarea v-model="issueDescription" class="app-input" aria-label="Issue description" rows="6" maxlength="10000" /></label>
           <p v-if="mutationError" class="feedback-dialog-error" role="alert">{{ mutationError }}</p>
@@ -541,9 +541,9 @@ useHead({ title: 'Feedback · Fidibeki' })
     </AppDialog>
 
     <AppDialog :open="linkIssueOpen" aria-labelledby="bulk-link-issue-title" @close="linkIssueOpen = false">
-      <form class="feedback-issue-dialog feedback-link-dialog" @submit.prevent="linkSelectedFeedback">
+      <form class="feedback-issue-dialog feedback-link-dialog app-modal" @submit.prevent="linkSelectedFeedback">
         <header><div><p class="app-eyebrow">Existing actionable work</p><h2 id="bulk-link-issue-title">Link {{ selectedIds.length }} feedback records to an issue</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="linkIssueOpen = false"><X :size="16" /></button></header>
-        <div class="feedback-issue-dialog-body">
+        <div class="feedback-issue-dialog-body app-modal__body">
           <label><span>Issue</span><select v-model="linkTargetID" class="app-select" aria-label="Issue" required><option value="">Choose an issue</option><option v-for="issueOption in linkIssueOptions" :key="issueOption.id" :value="issueOption.id">{{ issueOption.public_id }} · {{ issueOption.title }}</option></select></label>
           <p v-if="linkIssueOptions.length === 0" class="feedback-dialog-note">No target issue is available in this project.</p>
           <p v-if="mutationError" class="feedback-dialog-error" role="alert">{{ mutationError }}</p>
@@ -577,7 +577,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-more-filters button { min-height: 34px; grid-column: 1 / -1; background: var(--surface-soft); border: 0; border-radius: 4px; color: var(--teal); font-size: 10px; font-weight: 750; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
-.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 86px 82px 78px 86px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 82px 74px 94px 78px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .feedback-stream article:hover { background: #f7faf9; }
 .feedback-stream article[data-selected='true'] { background: #eaf3f0; box-shadow: inset 3px 0 var(--teal); }
 .feedback-row-check { display: grid; place-items: center; }
@@ -597,6 +597,7 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-stream article > .status-pill,
 .feedback-stream article > .issue-label,
 .feedback-stream article > .muted { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-stream article > .status-pill { justify-self: start; overflow: visible; text-overflow: clip; }
 .feedback-stream time { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
 .feedback-no-rating { display: inline-grid; min-width: 34px; height: 28px; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
 .feedback-mobile-open { display: grid; width: 26px; height: 30px; place-items: center; color: var(--muted); border-radius: 4px; }
@@ -628,26 +629,21 @@ useHead({ title: 'Feedback · Fidibeki' })
 .feedback-inspector-evidence p { max-width: 260px; font-size: 11px; line-height: 1.5; }
 .feedback-inspector > footer { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: 7px; padding: 10px 14px; border-top: 1px solid var(--line); }
 .feedback-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 11px; }
-.feedback-issue-dialog { width: min(580px, calc(100vw - 32px)); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
-.feedback-issue-dialog > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.feedback-issue-dialog h2 { margin: 4px 0 0; font-size: 15px; }
-.feedback-issue-dialog-body { display: grid; gap: 13px; padding: 16px; }
-.feedback-issue-dialog label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.feedback-issue-dialog { width: min(580px, calc(100vw - 32px)); }
 .feedback-issue-dialog textarea { min-height: 130px; padding: 10px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
 .feedback-issue-dialog select { width: 100%; }
-.feedback-issue-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 0 16px 16px; }
 .feedback-dialog-error { margin: 0; padding: 9px 10px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 4px; font-size: 10px; }
 .feedback-dialog-note { margin: 0; color: var(--muted); font-size: 10px; }
 
 @media (max-width: 1240px) {
-  .feedback-workspace { grid-template-columns: minmax(500px, 1fr) 340px; }
-  .feedback-stream article { grid-template-columns: 22px 36px minmax(170px, 1fr) 78px 70px 64px 34px 20px; }
+  .feedback-workspace { grid-template-columns: minmax(480px, 1fr) 320px; }
+  .feedback-stream article { grid-template-columns: 22px 36px minmax(140px, 1fr) 70px 94px 34px 20px; }
   .feedback-stream article :deep(.attachment-icons) { display: none; }
   .feedback-stream article .issue-label,
   .feedback-stream article > .muted { display: none; }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .feedback-workspace { display: block; min-height: 0; }
   .feedback-stream-panel { border: 0; }
   .feedback-inspector { display: none; }

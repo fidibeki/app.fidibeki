@@ -258,7 +258,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
         </main>
 
         <aside class="feedback-case-facts">
-          <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div v-if="feedback.ai_actionability"><dt>Actionability</dt><dd>{{ feedback.ai_actionability.replace('_', ' ') }}</dd></div><div v-if="feedback.ai_category"><dt>Category</dt><dd>{{ feedback.ai_category }}</dd></div><div v-if="feedback.ai_priority"><dt>Suggested priority</dt><dd>{{ feedback.ai_priority }}</dd></div><div><dt>Sentiment</dt><dd>{{ feedback.sentiment_score?.toFixed(2) || 'Not scored' }}</dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
+          <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div v-if="feedback.ai_actionability"><dt>Actionability</dt><dd>{{ feedback.ai_actionability.replace('_', ' ') }}</dd></div><div v-if="feedback.ai_category"><dt>Category</dt><dd>{{ feedback.ai_category }}</dd></div><div v-if="feedback.ai_priority"><dt>Suggested priority</dt><dd>{{ feedback.ai_priority }}</dd></div><div><dt>Sentiment</dt><dd><SentimentBadge :score="feedback.sentiment_score" /></dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
           <section><h2>Reporter</h2><dl><div><dt>Email</dt><dd>{{ feedback.reporter_email || 'Anonymous' }}</dd></div><div><dt>Updates</dt><dd>{{ feedback.notify_reporter ? 'Subscribed' : 'Not subscribed' }}</dd></div></dl></section>
           <section v-if="retryableAttachments.length"><h2>AI failures</h2><p>{{ retryableAttachments.length }} attachment{{ retryableAttachments.length === 1 ? '' : 's' }} can be retried.</p></section>
         </aside>
@@ -267,9 +267,11 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
     <AppDialog :open="createIssueOpen" aria-labelledby="create-issue-title" @close="createIssueOpen = false">
       <form class="feedback-issue-modal app-modal" @submit.prevent="createIssue">
         <header><div><p class="app-eyebrow">Create actionable work</p><h2 id="create-issue-title">Create issue from feedback</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="createIssueOpen = false"><X :size="16" /></button></header>
-        <label><span>Title</span><input v-model="issueTitle" class="app-input" required maxlength="80" autofocus /></label>
-        <label><span>Description</span><textarea v-model="issueDescription" class="app-input" rows="6" maxlength="10000" /></label>
-        <p v-if="feedback?.ai_suggested_title && feedback.ai_suggested_title !== feedback.title" class="feedback-ai-suggestion">AI suggestion: {{ feedback.ai_suggested_title }}</p>
+        <div class="app-modal__body">
+          <label><span>Title</span><input v-model="issueTitle" class="app-input" required maxlength="80" autofocus /></label>
+          <label><span>Description</span><textarea v-model="issueDescription" class="app-input" rows="6" maxlength="10000" /></label>
+          <p v-if="feedback?.ai_suggested_title && feedback.ai_suggested_title !== feedback.title" class="feedback-ai-suggestion">AI suggestion: {{ feedback.ai_suggested_title }}</p>
+        </div>
         <footer><button type="button" class="app-button" :disabled="mutationPending" @click="createIssueOpen = false">Cancel</button><button class="app-button app-button--primary" :disabled="mutationPending || !issueTitle.trim()" type="submit"><Plus :size="14" /> {{ mutationPending ? 'Creating...' : 'Create issue' }}</button></footer>
       </form>
     </AppDialog>
@@ -351,10 +353,8 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
 .feedback-case-facts section > p { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .feedback-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 11px; }
 .feedback-issue-modal { width: min(560px, calc(100vw - 32px)); }
-.feedback-issue-modal label { display: grid; gap: 6px; margin-top: 12px; }
 .feedback-issue-modal label span { color: var(--muted); font-size: 10px; font-weight: 700; }
 .feedback-issue-modal textarea { min-height: 130px; padding: 10px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
-.feedback-issue-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .feedback-ai-suggestion { margin: 10px 0 0; color: var(--muted); font-size: 9px; }
 
 @media (max-width: 900px) {

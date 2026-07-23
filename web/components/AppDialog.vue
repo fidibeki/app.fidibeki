@@ -32,8 +32,13 @@ function closeFromBackdrop(event: MouseEvent) {
   max-height: none;
   margin: 0;
   padding: 20px;
+  overflow: hidden;
   background: transparent;
   border: 0;
+}
+
+@media (max-width: 600px) {
+  .app-dialog { padding: 8px; }
 }
 
 .app-dialog[open] {

@@ -46,6 +46,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+body:has(.app-dialog[open]) {
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -183,6 +187,7 @@ svg {
 .status-pill,
 .tag,
 .filter-chip {
+  box-sizing: border-box;
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -196,12 +201,82 @@ svg {
   white-space: nowrap;
 }
 
+.status-pill {
+  width: max-content;
+}
+
 .status-pill::before {
   width: 7px;
   height: 7px;
+  flex: 0 0 7px;
   background: var(--muted);
   border-radius: 50%;
   content: '';
+}
+
+.app-modal {
+  display: flex;
+  width: min(580px, calc(100vw - 40px));
+  max-height: calc(100dvh - 40px);
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.app-modal > header {
+  display: flex;
+  min-height: 68px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-modal h2 {
+  margin: 4px 0 0;
+  font-size: 15px;
+}
+
+.app-modal__body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 13px;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-modal__body label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.app-modal > footer {
+  display: flex;
+  min-height: 56px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #fbfcfb;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 600px) {
+  .app-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
 }
 
 .status-new::before,

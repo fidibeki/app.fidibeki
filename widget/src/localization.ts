@@ -7,6 +7,8 @@ export interface WidgetSystemCopy {
   sendError: string
   attachmentError: string
   emailPlaceholder: string
+  invalidEmail: string
+  emailRequired: string
   required: string
 }
 
@@ -21,13 +23,17 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     close: 'Close feedback', feedback: 'Feedback', sending: 'Sending...',
     sendError: 'Could not send feedback. Please try again.',
     attachmentError: 'One or more attachments could not be uploaded.',
-    emailPlaceholder: 'you@example.com', required: 'Please complete the required response.',
+    emailPlaceholder: 'you@example.com', invalidEmail: 'Enter a valid email address.',
+    emailRequired: 'Enter an email address to receive updates.',
+    required: 'Please complete the required response.',
   },
   pt: {
     close: 'Fechar feedback', feedback: 'Feedback', sending: 'A enviar...',
     sendError: 'Não foi possível enviar o feedback. Tenta novamente.',
     attachmentError: 'Não foi possível carregar um ou mais anexos.',
-    emailPlaceholder: 'voce@exemplo.com', required: 'Preenche a resposta obrigatória.',
+    emailPlaceholder: 'voce@exemplo.com', invalidEmail: 'Introduz um endereço de email válido.',
+    emailRequired: 'Introduz um endereço de email para receber atualizações.',
+    required: 'Preenche a resposta obrigatória.',
   },
 }
 
