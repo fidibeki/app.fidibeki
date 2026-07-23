@@ -25,6 +25,7 @@ type Options struct {
 	FileDeleteHandler  asynq.HandlerFunc
 	AIErrorHandler     asynq.ErrorHandler
 	ReporterHandler    asynq.HandlerFunc
+	LifecycleHandler   asynq.HandlerFunc
 	ReplayMergeHandler asynq.HandlerFunc
 	IntegrationHandler asynq.HandlerFunc
 }
@@ -47,7 +48,8 @@ func New(options Options) (*Worker, error) {
 	}
 	if options.PipelineHandler == nil || options.TextHandler == nil ||
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
-		options.AIErrorHandler == nil || options.ReporterHandler == nil || options.ReplayMergeHandler == nil ||
+		options.AIErrorHandler == nil || options.ReporterHandler == nil || options.LifecycleHandler == nil ||
+		options.ReplayMergeHandler == nil ||
 		options.IntegrationHandler == nil {
 		return nil, fmt.Errorf("all domain and AI handlers are required")
 	}
@@ -63,6 +65,7 @@ func New(options Options) (*Worker, error) {
 		return nil, err
 	}
 	emailMux.HandleFunc(issue.TaskReporterNotify, options.ReporterHandler)
+	emailMux.HandleFunc(email.TaskLifecycleEmail, options.LifecycleHandler)
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)
 	domainMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)

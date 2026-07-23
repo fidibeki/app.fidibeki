@@ -244,13 +244,24 @@ was removed from the staging test tenant.
     - Integration delivery waits for the existing AI pass before any external request and then
       applies the same projection to Slack, Teams, and signed generic webhooks. Backend integration,
       unit, and responsive browser coverage verifies no raw moderated content crosses these paths.
-  - [ ] Complete shared transactional email issue #21.
+  - [x] Complete shared transactional email issue #21.
     - [x] Add the shared minimal renderer and migrate every existing email family. Structured
       content now produces escaped, responsive HTML and equivalent plain text with an
       environment-aware logo, preheader, workspace context, metadata, one CTA, security-link
       fallback, purpose footer, Reply-To support, and no tracking or arbitrary HTML.
-    - [ ] Add the one-time founder welcome and remaining high-value lifecycle messages, then render
+    - [x] Add the one-time founder welcome and remaining high-value lifecycle messages, then render
       and inspect representative desktop/mobile previews before staging validation.
+      - Migration `59` preserves old workspaces while scheduling one independent, retryable welcome
+        after the first owner activation for new workspaces. The personal sender and Reply-To are
+        configurable and validated; the message contains no authentication token.
+      - Material persisted Stripe transitions and account-deletion cancellations emit transactional
+        outbox events. Billing managers and the deduplicated billing contact receive payment failure,
+        recovery, activation, plan-change, cancellation, and deletion-cancellation notices with
+        stable provider idempotency and actor context where available.
+      - The shared wordmark now keeps its source aspect ratio and a clean blocked-image fallback.
+        Welcome and payment-failure previews were rendered and inspected at 1280 and 390 pixels;
+        all Go packages, migration replay, static analysis, web unit/type checks, and the Nuxt build
+        pass. `docs/transactional-email.md` records inventory, sender, consent, and retry policy.
   - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.

@@ -48,6 +48,8 @@ for both services because configuration is validated before the command starts.
 | `EMAIL_QUEUE_CONCURRENCY` | no | Email worker concurrency; default `20`. |
 | `RESEND_API_KEY` | resend | Resend API token. |
 | `RESEND_AUTH_FROM` | resend | Auth sender, including display name. |
+| `RESEND_WELCOME_FROM` | resend | Founder-welcome sender; verify this address/domain with Resend before enabling staging delivery. |
+| `RESEND_WELCOME_REPLY_TO` | resend | Monitored reply address for the one-time founder welcome. |
 | `RESEND_WEBHOOK_SECRET` | production | Svix/Resend signing secret. |
 | `STRIPE_SECRET_KEY` | staging/prod | Stripe secret key. |
 | `STRIPE_WEBHOOK_SECRET` | staging/prod | Stripe endpoint signing secret. |

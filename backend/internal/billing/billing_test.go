@@ -566,7 +566,7 @@ func (s *serviceStoreStub) RequestDeletion(context.Context, string, string, stri
 	s.requestDeletionCalls++
 	return s.deletion, s.requestErr
 }
-func (s *serviceStoreStub) CancelDeletion(context.Context, string) error {
+func (s *serviceStoreStub) CancelDeletion(context.Context, string, string) error {
 	s.cancelDeletionCalls++
 	s.tenant.DeletionRequestedAt = nil
 	return nil

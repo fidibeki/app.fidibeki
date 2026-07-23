@@ -3,6 +3,7 @@ package billing
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,9 +17,11 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -75,6 +78,9 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	if existing, err := store.SaveCustomer(ctx, loaded.ID, "cus_orphan"); err != nil || existing != "cus_1" {
 		t.Fatalf("SaveCustomer(existing) = %q, %v", existing, err)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE tenants SET billing_email = 'billing@acme.test' WHERE id = $1`, loaded.ID); err != nil {
+		t.Fatalf("set distinct billing contact: %v", err)
+	}
 	testTenantBillingHTTP(t, pool, store, loaded, signup.MemberID, now)
 
 	trialEnd := now.Add(7 * 24 * time.Hour)
@@ -102,6 +108,42 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	if loaded.Plan != tenant.PlanGrowth || loaded.PendingPlan != nil || loaded.Status != tenant.StatusActive {
 		t.Fatalf("tenant after paid invoice = %#v", loaded)
 	}
+	var billingEventCount int
+	var paidEventID string
+	var paidEventData []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'billing.state_changed'
+	`, loaded.ID).Scan(&billingEventCount); err != nil || billingEventCount != 2 {
+		t.Fatalf("billing lifecycle event count = %d error = %v", billingEventCount, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT id, data FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'billing.state_changed' AND event_key = 'evt_paid'
+	`, loaded.ID).Scan(&paidEventID, &paidEventData); err != nil ||
+		!bytes.Contains(paidEventData, []byte(`"status": "active"`)) {
+		t.Fatalf("billing lifecycle events = %d data = %s error = %v", billingEventCount, paidEventData, err)
+	}
+	billingSender := &billingLifecycleSender{}
+	billingHandler := email.LifecycleHandler{
+		Database: pool, Sender: billingSender,
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
+		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
+		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
+		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+	}.Handler()
+	billingPayload, _ := json.Marshal(map[string]string{
+		"outbox_event_id": paidEventID, "tenant_id": loaded.ID, "resource_id": loaded.ID,
+	})
+	if err := billingHandler(ctx, asynq.NewTask(email.TaskLifecycleEmail, billingPayload)); err != nil {
+		t.Fatalf("send billing lifecycle email: %v", err)
+	}
+	if len(billingSender.messages) != 2 ||
+		!lifecycleRecipientsAre(billingSender.messages, "billing@acme.test", "owner@acme.test") ||
+		billingSender.messages[0].Subject != "Fidibeki subscription updated" ||
+		!strings.Contains(billingSender.messages[0].Text, "https://acme-billing.fidibeki.com/settings/billing") {
+		t.Fatalf("billing lifecycle messages = %#v", billingSender.messages)
+	}
 	found, err := store.FindByStripeReference(ctx, "cus_1", "")
 	if err != nil || found.ID != loaded.ID {
 		t.Fatalf("FindByStripeReference() = %#v, %v", found, err)
@@ -121,10 +163,44 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	if err != nil || len(emails) != 1 || emails[0] != "owner@acme.test" {
 		t.Fatalf("MemberEmails() = %v, %v", emails, err)
 	}
-	if err := store.CancelDeletion(ctx, loaded.ID); err != nil {
+	if err := store.CancelDeletion(ctx, loaded.ID, signup.MemberID); err != nil {
 		t.Fatalf("CancelDeletion() error = %v", err)
 	}
-	if err := store.CancelDeletion(ctx, loaded.ID); !errors.Is(err, ErrDeletionNotPending) {
+	var cancellationEvents int
+	var cancellationEventID string
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'tenant.deletion_cancelled'
+	`, loaded.ID).Scan(&cancellationEvents); err != nil || cancellationEvents != 2 {
+		t.Fatalf("deletion cancellation events = %d error = %v", cancellationEvents, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT id FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'tenant.deletion_cancelled'
+		ORDER BY created_at DESC, id DESC LIMIT 1
+	`, loaded.ID).Scan(&cancellationEventID); err != nil {
+		t.Fatalf("load deletion cancellation event: %v", err)
+	}
+	cancellationPayload, _ := json.Marshal(map[string]string{
+		"outbox_event_id": cancellationEventID, "tenant_id": loaded.ID, "resource_id": loaded.ID,
+	})
+	cancellationSender := &billingLifecycleSender{}
+	cancellationHandler := email.LifecycleHandler{
+		Database: pool, Sender: cancellationSender,
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
+		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
+		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
+		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+	}.Handler()
+	if err := cancellationHandler(ctx, asynq.NewTask(email.TaskLifecycleEmail, cancellationPayload)); err != nil {
+		t.Fatalf("send deletion cancellation email: %v", err)
+	}
+	if len(cancellationSender.messages) != 2 ||
+		!strings.Contains(cancellationSender.messages[0].Text, "Cancelled by: owner@acme.test") ||
+		!strings.Contains(cancellationSender.messages[0].Text, "Original request:") {
+		t.Fatalf("deletion cancellation messages = %#v", cancellationSender.messages)
+	}
+	if err := store.CancelDeletion(ctx, loaded.ID, signup.MemberID); !errors.Is(err, ErrDeletionNotPending) {
 		t.Fatalf("CancelDeletion(missing) error = %v", err)
 	}
 
@@ -344,4 +420,29 @@ func billingMigrationsPath(t *testing.T) string {
 		t.Fatalf("resolve migration path: %v", err)
 	}
 	return path
+}
+
+type billingLifecycleSender struct {
+	messages []email.Message
+}
+
+func (s *billingLifecycleSender) Send(_ context.Context, message email.Message) (string, error) {
+	s.messages = append(s.messages, message)
+	return "email-id", nil
+}
+
+func lifecycleRecipientsAre(messages []email.Message, expected ...string) bool {
+	seen := make(map[string]struct{}, len(messages))
+	for _, message := range messages {
+		seen[message.To] = struct{}{}
+	}
+	if len(seen) != len(expected) {
+		return false
+	}
+	for _, address := range expected {
+		if _, ok := seen[address]; !ok {
+			return false
+		}
+	}
+	return true
 }

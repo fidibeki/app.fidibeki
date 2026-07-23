@@ -301,6 +301,23 @@ func (s Store) ConsumeMagicLink(
 	if err := lockTenantMember(ctx, query, tenantID, member.ID); err != nil {
 		return Member{}, err
 	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, data)
+		SELECT tenant.id, 'tenant.owner_activated', 'tenant', tenant.id,
+		       jsonb_build_object('member_id', $2::text)
+		FROM tenants AS tenant
+		WHERE tenant.id = $1 AND tenant.welcome_email_sent_at IS NULL
+		  AND $2::uuid = (
+		      SELECT candidate.id
+		      FROM tenant_members AS candidate
+		      WHERE candidate.tenant_id = tenant.id
+		      ORDER BY candidate.created_at, candidate.id
+		      LIMIT 1
+		  )
+		ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
+	`, tenantID, member.ID); err != nil {
+		return Member{}, fmt.Errorf("schedule owner welcome email: %w", err)
+	}
 	if _, err := query.Exec(ctx,
 		`UPDATE tenant_members SET last_login_at = $3 WHERE tenant_id = $1 AND id = $2`,
 		tenantID, member.ID, s.now(),

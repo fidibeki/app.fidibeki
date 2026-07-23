@@ -501,7 +501,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	dispatcher := outbox.Dispatcher{
 		Store: outbox.Store{Database: pools.Admin},
 		Resolver: outbox.MultiResolver{
-			outbox.FeedbackResolver{}, issue.OutboxResolver{},
+			outbox.FeedbackResolver{}, issue.OutboxResolver{}, email.LifecycleResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
 		},
 		Enqueuer: outboxQueue, Logger: logger,
@@ -555,6 +555,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: issue.Store{Database: pools.Admin}, Sender: sender, Tokens: reporterTokens,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	lifecycleHandler := email.LifecycleHandler{
+		Database: pools.Admin, Sender: sender,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		AuthFrom:    settings.ResendAuthFrom,
+		WelcomeFrom: settings.ResendWelcomeFrom, WelcomeReplyTo: settings.ResendWelcomeReplyTo,
+	}
 	integrationHandler := integration.DeliveryHandler{
 		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
@@ -587,6 +593,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
 		AIErrorHandler:     processor.ErrorHandler(),
 		ReporterHandler:    reporterHandler.Handler(),
+		LifecycleHandler:   lifecycleHandler.Handler(),
 		ReplayMergeHandler: replayProcessor.MergeHandler(),
 		IntegrationHandler: integrationHandler.Handler(),
 	})

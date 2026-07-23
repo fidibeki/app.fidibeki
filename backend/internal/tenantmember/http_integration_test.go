@@ -20,6 +20,7 @@ import (
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -137,6 +138,40 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	verified := performTenantRequest(handler, http.MethodPost, "/auth/verify", `{"token":"`+ownerMagicToken+`"}`, "", nil)
 	ownerSession := decodeTenantSession(t, verified)
 	ownerCookie := responseCookie(t, verified, tenantRefreshCookie)
+	var welcomeEvents int
+	var welcomeEventID string
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'tenant.owner_activated'
+	`, tenantID).Scan(&welcomeEvents); err != nil || welcomeEvents != 1 {
+		t.Fatalf("owner welcome events = %d error = %v", welcomeEvents, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT id FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'tenant.owner_activated'
+	`, tenantID).Scan(&welcomeEventID); err != nil {
+		t.Fatalf("load owner welcome event: %v", err)
+	}
+	welcomePayload, _ := json.Marshal(map[string]string{
+		"outbox_event_id": welcomeEventID, "tenant_id": tenantID, "resource_id": tenantID,
+	})
+	welcomeSender := &lifecycleMessageSender{}
+	welcomeHandler := email.LifecycleHandler{
+		Database: pools.Admin, Sender: welcomeSender,
+		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>",
+		WelcomeFrom: "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
+		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+	}.Handler()
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := welcomeHandler(ctx, asynq.NewTask(email.TaskLifecycleEmail, welcomePayload)); err != nil {
+			t.Fatalf("founder welcome attempt %d: %v", attempt+1, err)
+		}
+	}
+	if len(welcomeSender.messages) != 1 || welcomeSender.messages[0].ReplyTo != "acidiney.dias@fidibeki.com" ||
+		strings.Contains(welcomeSender.messages[0].Text, "token=") {
+		t.Fatalf("founder welcome messages = %#v", welcomeSender.messages)
+	}
 	if ownerCookie.Path != "/" {
 		t.Fatalf("tenant refresh cookie path = %q, want / for server-rendered route refresh", ownerCookie.Path)
 	}
@@ -344,6 +379,12 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		handler, http.MethodPost, "/auth/verify",
 		`{"token":"`+messageToken(t, queue.messages[6])+`"}`, "", nil,
 	)
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE tenant_id = $1 AND event = 'tenant.owner_activated'
+	`, tenantID).Scan(&welcomeEvents); err != nil || welcomeEvents != 1 {
+		t.Fatalf("owner welcome events after re-login = %d error = %v", welcomeEvents, err)
+	}
 	fingerprintCookie := responseCookie(t, reverified, tenantRefreshCookie)
 	fingerprintRefresh := performTenantRequest(handler, http.MethodPost, "/auth/refresh", "", "", fingerprintCookie)
 	if fingerprintRefresh.Code != http.StatusOK {
@@ -491,6 +532,15 @@ func messageToken(t *testing.T, message email.Message) string {
 
 type messageCapture struct {
 	messages []email.Message
+}
+
+type lifecycleMessageSender struct {
+	messages []email.Message
+}
+
+func (s *lifecycleMessageSender) Send(_ context.Context, message email.Message) (string, error) {
+	s.messages = append(s.messages, message)
+	return "welcome-message", nil
 }
 
 func (c *messageCapture) Enqueue(_ context.Context, message email.Message) error {

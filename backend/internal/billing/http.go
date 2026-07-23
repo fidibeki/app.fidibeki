@@ -181,12 +181,13 @@ func (h *HTTPHandler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) cancelDeletion(w http.ResponseWriter, r *http.Request) {
-	resolved, ok := appmiddleware.TenantFromContext(r.Context())
-	if !ok {
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	claims, claimsOK := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !tenantOK || !claimsOK {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
-	if err := h.options.Service.Store.CancelDeletion(r.Context(), resolved.ID); err != nil {
+	if err := h.options.Service.CancelDeletion(r.Context(), resolved.ID, claims.Subject); err != nil {
 		writeBillingError(w, err)
 		return
 	}

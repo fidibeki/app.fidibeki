@@ -32,12 +32,15 @@ func TestRenderTransactionalEmailHasTextParityAndEscapesDynamicContent(t *testin
 		t.Errorf("HTML contains unescaped content: %s", htmlBody)
 	}
 	for _, expected := range []string{
-		"Fidibeki logo", "A useful preview", "Acme &amp; Sons", "Open workspace",
+		`alt="Fidibeki"`, `width="111" height="28"`, "A useful preview", "Acme &amp; Sons", "Open workspace",
 		"https://acme.fidibeki.com/getting-started", "If the button does not work",
 	} {
 		if !strings.Contains(htmlBody, expected) {
 			t.Errorf("HTML missing %q", expected)
 		}
+	}
+	if strings.Contains(htmlBody, ">Fidibeki</strong>") {
+		t.Errorf("HTML duplicates the wordmark with adjacent brand text")
 	}
 }
 

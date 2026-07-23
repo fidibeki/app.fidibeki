@@ -182,6 +182,30 @@ func (s Store) ApplyEvent(
 	`, current.ID, subscription.CustomerID, subscription.ID, plan, pending, status, subscription.TrialEndsAt); err != nil {
 		return false, fmt.Errorf("apply Stripe event: %w", err)
 	}
+	materialChange := current.Status != status || current.Plan != plan ||
+		current.StripeSubscriptionID != subscription.ID ||
+		planValue(current.PendingPlan) != planValue(pending)
+	if materialChange {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox_events (
+				tenant_id, event, resource_type, resource_id, event_key, data
+			) VALUES (
+				$1, 'billing.state_changed', 'tenant', $1, $2,
+				jsonb_build_object(
+					'provider_event', $3::text,
+					'previous_status', $4::text, 'status', $5::text,
+					'previous_plan', $6::text, 'plan', $7::text,
+					'previous_pending_plan', $8::text, 'pending_plan', $9::text,
+					'previous_subscription_id', $10::text, 'subscription_id', $11::text
+				)
+			)
+			ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
+		`, current.ID, event.ID, event.Type, current.Status, status, current.Plan, plan,
+			planValue(current.PendingPlan), planValue(pending),
+			current.StripeSubscriptionID, subscription.ID); err != nil {
+			return false, fmt.Errorf("record billing lifecycle event: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("commit Stripe event: %w", err)
 	}
@@ -222,19 +246,55 @@ func (s Store) RequestDeletion(ctx context.Context, tenantID, memberID, confirma
 	return current, nil
 }
 
-func (s Store) CancelDeletion(ctx context.Context, tenantID string) error {
-	result, err := s.Database.Exec(ctx, `
-		UPDATE tenants
-		SET deletion_requested_at = NULL, deletion_requested_by_member_id = NULL
-		WHERE id = $1 AND deletion_requested_at IS NOT NULL
-	`, tenantID)
+func (s Store) CancelDeletion(ctx context.Context, tenantID, memberID string) error {
+	tx, err := s.Database.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("cancel tenant deletion: %w", err)
+		return fmt.Errorf("begin deletion cancellation: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+	var requestedAt *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT deletion_requested_at FROM tenants WHERE id = $1 FOR UPDATE
+	`, tenantID).Scan(&requestedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock tenant deletion: %w", err)
+	}
+	if requestedAt == nil {
 		return ErrDeletionNotPending
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tenants
+		SET deletion_requested_at = NULL, deletion_requested_by_member_id = NULL
+		WHERE id = $1
+	`, tenantID); err != nil {
+		return fmt.Errorf("cancel tenant deletion: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key, data)
+		VALUES (
+			$1, 'tenant.deletion_cancelled', 'tenant', $1, gen_random_uuid()::text,
+			jsonb_build_object(
+				'actor_member_id', $2::text,
+				'deletion_requested_at', $3::timestamptz
+			)
+		)
+	`, tenantID, memberID, requestedAt); err != nil {
+		return fmt.Errorf("record deletion cancellation event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit deletion cancellation: %w", err)
+	}
 	return nil
+}
+
+func planValue(value *tenant.Plan) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
 }
 
 func (s Store) MemberEmails(ctx context.Context, tenantID string) ([]string, error) {

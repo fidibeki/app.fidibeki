@@ -32,7 +32,7 @@ type ServiceStore interface {
 	FindByStripeReference(context.Context, string, string) (Tenant, error)
 	ApplyEvent(context.Context, EventSignal, Subscription, tenant.Plan) (bool, error)
 	RequestDeletion(context.Context, string, string, string) (Tenant, error)
-	CancelDeletion(context.Context, string) error
+	CancelDeletion(context.Context, string, string) error
 	MemberEmails(context.Context, string) ([]string, error)
 }
 
@@ -238,6 +238,10 @@ func (s Service) RequestDeletion(ctx context.Context, tenantID, memberID, confir
 		}
 	}
 	return executesAt, nil
+}
+
+func (s Service) CancelDeletion(ctx context.Context, tenantID, memberID string) error {
+	return s.Store.CancelDeletion(ctx, tenantID, memberID)
 }
 
 func (s Service) composeEmail(message email.Message, content email.Content) (email.Message, error) {

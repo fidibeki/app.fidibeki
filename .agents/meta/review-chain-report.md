@@ -7,7 +7,7 @@ status: final
 
 # Review Chain Report
 
-**Artifact**: Moderated-content propagation (#6)
+**Artifact**: Shared transactional and lifecycle email completion (#21)
 **Date**: 2026-07-23
 **Rounds**: 2 local review passes
 
@@ -17,38 +17,38 @@ status: final
 
 | # | Severity | Confidence | Location | Problem | Status |
 |---|----------|------------|----------|---------|--------|
-| 1 | major | 10/10 | `backend/internal/feedback/tenant_store.go` | The first projection replaced every flagged feedback title, including safe operator edits. | Fixed by replacing only titles derived from reporter content and retaining independent summaries. |
-| 2 | major | 10/10 | `backend/internal/issue/store.go` | Exact replacement missed fallback titles that were only the first sentence or another substring of the original report. | Fixed with bidirectional derived-copy detection and regression coverage. |
-| 3 | major | 10/10 | `backend/internal/issue/http.go`, `backend/internal/integration/delivery.go` | Historical activity `changes.from` values could expose an older raw title/body after the current Issue was edited to safe content. | Fixed by projecting title/description activity and integration changes against the linked moderated sources. |
+| 1 | major | 10/10 | `backend/internal/billing/store.go` | Deletion-cancellation events used the actor as their unique key, suppressing every later cancellation by the same administrator. | Fixed with one event UUID per successful locked cancellation; the integration test proves two cancellations by the same actor. |
+| 2 | minor | 9/10 | `backend/internal/email/lifecycle.go` | Including a maximum-length recipient address verbatim could exceed the provider idempotency-key limit and leave a valid delivery in permanent retry. | Fixed with a stable SHA-256 recipient digest; keys no longer expose addresses and remain below the limit. |
+| 3 | minor | 10/10 | `backend/internal/email/render.go` | The horizontal wordmark was forced into a square and duplicated by adjacent text, producing a broken blocked-image fallback. | Fixed with the source aspect ratio and one useful alt-text fallback; desktop and mobile previews were reinspected. |
 
 ## Input Quality Assessment
 
 | Input | Rating | Evidence |
 |-------|--------|----------|
-| Product/domain context | Adequate | The issue identifies the feedback, Issue, spam, and integration leak paths with concrete examples. |
-| Requirements clarity | Good | `[MODERATED]` is the explicit public projection; preserving raw evidence at rest is an implementation decision. |
-| Upstream artifacts | Fresh | Existing AI moderation flags, suggested title, outbox retry behavior, and nullable Issue linkage were reused. |
+| Product/domain context | Rich | Issue #21 defines every existing family, missing lifecycle moment, sender identity, recipient, consent, and retry boundary. |
+| Requirements clarity | Precise | Acceptance covers one-time activation, persisted billing changes, idempotency, plain-text parity, environment URLs, and mobile rendering. |
+| Upstream artifacts | Fresh | The transactional outbox, Resend sender, email queue, bounce state, and shared renderer were current and reused. |
 
 ## Simplifications Applied
 
-No extra AI call, schema migration, moderation service, or destructive rewrite was added. One shared redaction
-helper and safe read/delivery projections contain the change while preserving the original evidence.
+Lifecycle emails reuse the existing outbox dispatcher, email worker queue, sender, and renderer. No second
+notification system, HTML input surface, tracking mechanism, or historical welcome backfill was introduced.
 
 ## Changes Made
 
-Flagged and spam feedback now render safe text in the tenant API, including copied response/comment content and
-flagged transcripts. Issue creation stores safe derived content; historical linked Issues and activity changes are
-safely projected; external integrations wait for AI completion before constructing provider payloads.
+New workspaces schedule a one-time founder welcome after owner activation without coupling delivery to login.
+Persisted billing changes and deletion cancellation create tenant lifecycle events atomically. The handler
+selects authorized recipients, composes the shared HTML/text format, and carries stable provider idempotency.
+Existing workspaces are backfilled as already welcomed. The email inventory and delivery policy are documented.
 
 ## Reviewer's Summary
 
-The review traced raw reporter content from submission storage through tenant reads, Issue creation/history, and
-all integration provider formats. Safe operator-authored titles and descriptions remain intact. No unresolved
-correctness, security, or tenant-isolation finding remains in the changed paths.
+The review traced activation, concurrent/repeated deletion cancellation, Stripe replay, outbox task identity,
+recipient selection, tenant boundaries, provider retries, sender validation, and rendered output. No unresolved
+correctness, security, tenant-isolation, or delivery finding remains in the changed paths.
 
 ## Resolver's Notes
 
-All backend packages pass, including PostgreSQL integration tests. Web typecheck, 72 unit tests, and the Nuxt
-build pass. The full browser suite passes 115 tests with 43 intentional skips; the moderation journey passes on
-desktop and mobile, and both screenshots were inspected for containment and absence of raw content. The remaining
-gate is the standard CI and staging post-deploy run for this commit.
+All Go packages and the migration `up/down/up` suite pass. `golangci-lint v2.12.2` reports zero issues. Web
+typecheck, 72 unit tests, and the Nuxt build pass. Representative welcome and payment-failure emails were rendered
+at desktop and mobile widths and inspected after correcting the wordmark. CI and staging remain the final gate.

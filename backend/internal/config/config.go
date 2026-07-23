@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"os"
@@ -52,6 +53,8 @@ type Config struct {
 	EmailCaptureDir          string
 	ResendAPIKey             string
 	ResendAuthFrom           string
+	ResendWelcomeFrom        string
+	ResendWelcomeReplyTo     string
 	ResendWebhookSecret      string
 	EmailConcurrency         int
 	AIConcurrency            int
@@ -146,6 +149,8 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		EmailCaptureDir:          get("EMAIL_CAPTURE_DIR", "/tmp/fidibeki-emails"),
 		ResendAPIKey:             get("RESEND_API_KEY", ""),
 		ResendAuthFrom:           get("RESEND_AUTH_FROM", "Fidibeki <auth@fidibeki.com>"),
+		ResendWelcomeFrom:        get("RESEND_WELCOME_FROM", "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>"),
+		ResendWelcomeReplyTo:     get("RESEND_WELCOME_REPLY_TO", "acidiney.dias@fidibeki.com"),
 		ResendWebhookSecret:      get("RESEND_WEBHOOK_SECRET", ""),
 		EmailConcurrency:         emailConcurrency,
 		AIConcurrency:            aiConcurrency,
@@ -321,6 +326,12 @@ func (c Config) validate() []error {
 		if c.ResendAuthFrom == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("RESEND_AUTH_FROM is required for resend email driver"))
 		}
+		if _, err := mail.ParseAddress(c.ResendWelcomeFrom); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("RESEND_WELCOME_FROM must be a valid email address"))
+		}
+		if _, err := mail.ParseAddress(c.ResendWelcomeReplyTo); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("RESEND_WELCOME_REPLY_TO must be a valid email address"))
+		}
 		if c.Environment == "production" && c.ResendWebhookSecret == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("RESEND_WEBHOOK_SECRET is required for resend email driver in production"))
 		}
@@ -417,6 +428,8 @@ func (c Config) Redacted() map[string]any {
 		"email_capture_dir":          c.EmailCaptureDir,
 		"resend_api_key":             "[REDACTED]",
 		"resend_auth_from":           c.ResendAuthFrom,
+		"resend_welcome_from":        c.ResendWelcomeFrom,
+		"resend_welcome_reply_to":    c.ResendWelcomeReplyTo,
 		"resend_webhook_secret":      "[REDACTED]",
 		"email_concurrency":          c.EmailConcurrency,
 		"ai_concurrency":             c.AIConcurrency,

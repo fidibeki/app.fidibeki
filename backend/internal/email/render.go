@@ -172,8 +172,7 @@ var transactionalTemplate = template.Must(template.New("transactional").Parse(`<
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f4;padding:24px 12px;"><tr><td align="center">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #dfe3df;">
 <tr><td style="padding:24px 28px 18px;border-bottom:1px solid #e8ebe8;">
-<img src="{{.LogoURL}}" width="32" height="32" alt="Fidibeki logo" style="display:inline-block;vertical-align:middle;border:0;width:32px;height:32px;">
-<strong style="display:inline-block;vertical-align:middle;margin-left:10px;font-size:18px;line-height:24px;color:#161a17;">Fidibeki</strong>
+<img src="{{.LogoURL}}" width="111" height="28" alt="Fidibeki" style="display:block;border:0;width:111px;height:28px;font-size:16px;line-height:28px;font-weight:bold;color:#161a17;">
 </td></tr>
 <tr><td style="padding:28px;">
 {{if .Workspace}}<p style="margin:0 0 10px;color:#55705f;font-size:13px;line-height:20px;font-weight:bold;">{{.Workspace}}</p>{{end}}
