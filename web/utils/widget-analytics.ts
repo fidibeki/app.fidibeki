@@ -5,13 +5,11 @@ export interface WidgetAnalyticsFilters {
   page: string
 }
 
-const percentageFormatter = new Intl.NumberFormat('en-US', {
-  style: 'percent',
-  maximumFractionDigits: 1,
-})
-
-export function formatAnalyticsRate(value: number | null): string {
-  return value == null ? '—' : percentageFormatter.format(value)
+export function formatAnalyticsRate(
+  value: number | null,
+  formatPercent: (value: number) => string,
+): string {
+  return value == null ? '—' : formatPercent(value)
 }
 
 export function buildWidgetAnalyticsQuery(filters: WidgetAnalyticsFilters): string {

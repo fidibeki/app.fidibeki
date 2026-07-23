@@ -105,6 +105,8 @@ async function verifyCurrentLink() {
 }
 
 function handleHashChange() {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  if (!fragment.get('token')) return
   void verifyCurrentLink()
 }
 

@@ -2,6 +2,8 @@
 import type { WidgetAnalyticsTrendPoint } from '~/types/api'
 
 const props = defineProps<{ points: WidgetAnalyticsTrendPoint[] }>()
+const { t } = useI18n()
+const { date } = useRegionalFormat()
 
 const width = 1000
 const height = 210
@@ -22,8 +24,7 @@ function linePoints(metric: typeof metrics[number]) {
 
 function shortDate(value?: string) {
   if (!value) return ''
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-    .format(new Date(`${value}T00:00:00Z`))
+  return date(`${value}T12:00:00.000Z`)
 }
 
 const dateLabels = computed(() => {
@@ -35,12 +36,12 @@ const dateLabels = computed(() => {
 
 <template>
   <div class="funnel-trend">
-    <div class="funnel-trend-legend" aria-label="Trend series">
-      <span data-series="impressions"><i />Impressions</span>
-      <span data-series="interactions"><i />Interactions</span>
-      <span data-series="submissions"><i />Submissions</span>
+    <div class="funnel-trend-legend" :aria-label="t('analytics.trend.seriesLabel')">
+      <span data-series="impressions"><i />{{ t('analytics.trend.impressions') }}</span>
+      <span data-series="interactions"><i />{{ t('analytics.trend.interactions') }}</span>
+      <span data-series="submissions"><i />{{ t('analytics.trend.submissions') }}</span>
     </div>
-    <svg :viewBox="`0 0 ${width} ${height}`" preserveAspectRatio="none" role="img" aria-label="Daily widget funnel trend">
+    <svg :viewBox="`0 0 ${width} ${height}`" preserveAspectRatio="none" role="img" :aria-label="t('analytics.trend.chartLabel')">
       <line
         v-for="line in gridLines"
         :key="line"

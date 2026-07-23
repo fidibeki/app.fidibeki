@@ -423,11 +423,18 @@ browser suite remain green.
 ## Task 25: Dashboard And Analytics Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Dashboard and widget analytics copy and metrics use effective regional settings.
 
 **Acceptance:** Unit/browser tests prove localized metrics/states without changing calculations.
+
+**Completion evidence:** English and Portuguese catalogs cover the dashboard and widget analytics;
+regional numbers, percentages, dates, relative times, and plurals retain the existing calculations;
+provider errors are replaced with safe localized messages while customer-authored feedback, rule
+names, and URLs remain unchanged. Unit (93), typecheck, build, focused English/Portuguese browser
+flows, responsive screenshots, and the full browser suite (149 passed, 47 skipped) pass. The full
+gate also exposed and now covers a magic-link hash-clearing race in both viewports.
 
 **Autonomy:** AFK
 

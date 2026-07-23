@@ -33,6 +33,6 @@ export function useRegionalFormat() {
       key: string,
       count: number,
       parameters: Record<string, unknown> = {},
-    ) => nuxtApp.$i18n.t(key, { ...parameters, count }, count),
+    ) => nuxtApp.$i18n.t(key, { count, ...parameters }, count),
   }
 }

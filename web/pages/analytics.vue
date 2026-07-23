@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, BarChart3, RotateCcw } from '@lucide/vue'
 import type { WidgetAnalyticsBreakdown, WidgetAnalyticsResponse } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate, formatWholeNumber } from '~/utils/format'
 import { buildWidgetAnalyticsQuery, formatAnalyticsRate, type WidgetAnalyticsFilters } from '~/utils/widget-analytics'
 
 type AnalyticsTab = 'projects' | 'rules' | 'pages'
@@ -10,6 +8,9 @@ type AnalyticsTab = 'projects' | 'rules' | 'pages'
 const route = useRoute()
 const router = useRouter()
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { date, integer, percent, plural } = useRegionalFormat()
 const supportedRanges = new Set<WidgetAnalyticsFilters['range']>(['7d', '30d', '90d'])
 const requestedRange = typeof route.query.range === 'string' ? route.query.range : '30d'
 const range = ref<WidgetAnalyticsFilters['range']>(supportedRanges.has(requestedRange as WidgetAnalyticsFilters['range'])
@@ -34,10 +35,38 @@ const { data, status, error, refresh } = await useAsyncData<WidgetAnalyticsRespo
 )
 
 const metrics = computed(() => data.value ? [
-  { label: 'Impressions', value: formatWholeNumber(data.value.summary.impressions), note: `${formatWholeNumber(data.value.summary.matched)} matched` },
-  { label: 'Interaction rate', value: formatAnalyticsRate(data.value.summary.interaction_rate), note: `${formatWholeNumber(data.value.summary.interactions)} interactions` },
-  { label: 'Completion rate', value: formatAnalyticsRate(data.value.summary.completion_rate), note: `${formatWholeNumber(data.value.summary.submissions)} submitted` },
-  { label: 'Submit rate', value: formatAnalyticsRate(data.value.summary.submit_rate), note: `${formatWholeNumber(data.value.summary.dismissals)} dismissed` },
+  {
+    key: 'impressions',
+    label: t('analytics.metrics.impressions'),
+    value: integer(data.value.summary.impressions),
+    note: plural('analytics.metrics.matched', data.value.summary.matched, {
+      count: integer(data.value.summary.matched),
+    }),
+  },
+  {
+    key: 'interaction-rate',
+    label: t('analytics.metrics.interactionRate'),
+    value: formatRate(data.value.summary.interaction_rate),
+    note: plural('analytics.metrics.interactions', data.value.summary.interactions, {
+      count: integer(data.value.summary.interactions),
+    }),
+  },
+  {
+    key: 'completion-rate',
+    label: t('analytics.metrics.completionRate'),
+    value: formatRate(data.value.summary.completion_rate),
+    note: plural('analytics.metrics.submitted', data.value.summary.submissions, {
+      count: integer(data.value.summary.submissions),
+    }),
+  },
+  {
+    key: 'submit-rate',
+    label: t('analytics.metrics.submitRate'),
+    value: formatRate(data.value.summary.submit_rate),
+    note: plural('analytics.metrics.dismissed', data.value.summary.dismissals, {
+      count: integer(data.value.summary.dismissals),
+    }),
+  },
 ] : [])
 const availableRules = computed(() => data.value?.options.rules.filter(option => !projectId.value || option.project_id === projectId.value) || [])
 const activeRows = computed(() => data.value?.[activeTab.value] || [])
@@ -67,11 +96,15 @@ function resetFilters() {
 }
 
 function rowName(row: WidgetAnalyticsBreakdown) {
-  return row.rule_name || row.project_name || row.page_url || 'Unknown'
+  return row.rule_name || row.project_name || row.page_url || t('analytics.breakdown.unknown')
 }
 
 function rowContext(row: WidgetAnalyticsBreakdown) {
-  if (row.rule_id) return row.deleted ? `${row.project_name} · deleted` : row.project_name
+  if (row.rule_id) {
+    return row.deleted
+      ? t('analytics.breakdown.deleted', { project: row.project_name })
+      : row.project_name
+  }
   return ''
 }
 
@@ -79,6 +112,35 @@ function rowKey(tab: AnalyticsTab, row: WidgetAnalyticsBreakdown) {
   if (tab === 'projects') return row.project_id || row.project_name || 'unknown-project'
   if (tab === 'rules') return row.rule_id || `${row.project_id}:${row.rule_name}`
   return row.page_url || 'unknown-page'
+}
+
+function formatRate(value: number | null) {
+  return formatAnalyticsRate(value, percent)
+}
+
+function formatPeriodDate(value: string) {
+  return date(`${value}T12:00:00.000Z`)
+}
+
+function tabLabel(tab: AnalyticsTab) {
+  return t(`analytics.breakdown.${tab}`)
+}
+
+function breakdownSummary() {
+  const count = activeRows.value.length
+  if (activeMetadata.value?.truncated) {
+    return t(`analytics.breakdown.truncated${capitalize(activeTab.value)}`, {
+      returned: integer(activeMetadata.value.returned),
+      total: integer(activeMetadata.value.total),
+    })
+  }
+  return plural(`analytics.breakdown.count${capitalize(activeTab.value)}`, count, {
+    count: integer(count),
+  })
+}
+
+function capitalize(value: AnalyticsTab) {
+  return `${value[0]?.toUpperCase()}${value.slice(1)}`
 }
 
 watch(filters, (next) => {
@@ -89,59 +151,59 @@ watch(filters, (next) => {
   void router.replace({ query })
 })
 
-useHead({ title: 'Analytics · Fidibeki' })
+useHead(() => ({ title: t('analytics.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page analytics-page">
     <header class="app-page-head analytics-heading">
-      <div><p class="app-eyebrow">Widget funnel</p><h1>Analytics</h1><span v-if="data">{{ formatDate(data.period.start_date) }} – {{ formatDate(data.period.end_date) }} · UTC</span></div>
+      <div><p class="app-eyebrow">{{ t('analytics.eyebrow') }}</p><h1>{{ t('analytics.title') }}</h1><span v-if="data">{{ t('analytics.period', { start: formatPeriodDate(data.period.start_date), end: formatPeriodDate(data.period.end_date) }) }}</span></div>
     </header>
 
-    <section class="analytics-toolbar" aria-label="Analytics filters">
-      <div class="analytics-range" aria-label="Period">
+    <section class="analytics-toolbar" :aria-label="t('analytics.filtersLabel')">
+      <div class="analytics-range" :aria-label="t('analytics.periodLabel')">
         <button v-for="option in (['7d', '30d', '90d'] as const)" :key="option" type="button" :aria-pressed="range === option" @click="setRange(option)">{{ option }}</button>
       </div>
-      <label><span>Project</span><select class="app-select" :value="projectId" @change="changeProject"><option value="">All projects</option><option v-for="option in data?.options.projects || []" :key="option.id" :value="option.id">{{ option.name }}</option></select></label>
-      <label><span>Rule</span><select class="app-select" :value="ruleId" @change="changeRule"><option value="">All rules</option><option v-for="option in availableRules" :key="option.id" :value="option.id">{{ option.name }}{{ option.deleted ? ' (deleted)' : '' }}</option></select></label>
-      <label class="analytics-page-filter"><span>Page</span><select v-model="pageFilter" class="app-select"><option value="">All pages</option><option v-for="option in data?.options.pages || []" :key="option.url" :value="option.url">{{ option.url }}</option></select></label>
-      <button class="app-icon-button analytics-reset" type="button" title="Reset filters" :disabled="range === '30d' && !projectId && !ruleId && !pageFilter" @click="resetFilters"><RotateCcw :size="16" /><span class="sr-only">Reset filters</span></button>
+      <label><span>{{ t('analytics.project') }}</span><select class="app-select" :value="projectId" @change="changeProject"><option value="">{{ t('analytics.allProjects') }}</option><option v-for="option in data?.options.projects || []" :key="option.id" :value="option.id">{{ option.name }}</option></select></label>
+      <label><span>{{ t('analytics.rule') }}</span><select class="app-select" :value="ruleId" @change="changeRule"><option value="">{{ t('analytics.allRules') }}</option><option v-for="option in availableRules" :key="option.id" :value="option.id">{{ option.name }}{{ option.deleted ? t('analytics.deletedSuffix') : '' }}</option></select></label>
+      <label class="analytics-page-filter"><span>{{ t('analytics.page') }}</span><select v-model="pageFilter" class="app-select"><option value="">{{ t('analytics.allPages') }}</option><option v-for="option in data?.options.pages || []" :key="option.url" :value="option.url">{{ option.url }}</option></select></label>
+      <button class="app-icon-button analytics-reset" type="button" :title="t('analytics.resetFilters')" :aria-label="t('analytics.resetFilters')" :disabled="range === '30d' && !projectId && !ruleId && !pageFilter" @click="resetFilters"><RotateCcw :size="16" /></button>
     </section>
 
-    <section v-if="status === 'pending' && !data" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>Loading analytics</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>Analytics unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
+    <section v-if="status === 'pending' && !data" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>{{ t('analytics.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('analytics.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'analytics.loadFailed') }}</p><button class="app-button" @click="refresh()">{{ t('analytics.tryAgain') }}</button></div></section>
     <template v-else-if="data">
       <section class="analytics-ledger" :aria-busy="status === 'pending'">
-        <article v-for="metric in metrics" :key="metric.label"><span>{{ metric.label }}</span><b>{{ metric.value }}</b><small>{{ metric.note }}</small></article>
+        <article v-for="metric in metrics" :key="metric.key"><span>{{ metric.label }}</span><b>{{ metric.value }}</b><small>{{ metric.note }}</small></article>
       </section>
 
-      <section class="analytics-diagnostics" aria-label="Funnel diagnostics">
-        <span><b>{{ formatWholeNumber(data.summary.matched) }}</b> matched</span>
-        <span><b>{{ formatAnalyticsRate(data.summary.impression_rate) }}</b> impression rate</span>
-        <span><b>{{ formatWholeNumber(data.summary.dismissals) }}</b> dismissed</span>
+      <section class="analytics-diagnostics" :aria-label="t('analytics.diagnosticsLabel')">
+        <span><b>{{ integer(data.summary.matched) }}</b> {{ plural('analytics.metrics.matchedNoun', data.summary.matched) }}</span>
+        <span><b>{{ formatRate(data.summary.impression_rate) }}</b> {{ t('analytics.metrics.impressionRate') }}</span>
+        <span><b>{{ integer(data.summary.dismissals) }}</b> {{ plural('analytics.metrics.dismissedNoun', data.summary.dismissals) }}</span>
       </section>
 
       <section class="analytics-trend">
-        <header><div><p class="app-eyebrow">Daily movement</p><h2>Funnel trend</h2></div><span>Peak impression volume and downstream completion</span></header>
+        <header><div><p class="app-eyebrow">{{ t('analytics.trend.eyebrow') }}</p><h2>{{ t('analytics.trend.title') }}</h2></div><span>{{ t('analytics.trend.description') }}</span></header>
         <WidgetFunnelTrend :points="data.trend" />
       </section>
 
       <section class="analytics-breakdown app-surface">
         <header>
-          <div class="analytics-tabs" role="tablist" aria-label="Analytics breakdown">
-            <button v-for="tab in (['projects', 'rules', 'pages'] as const)" :id="`analytics-tab-${tab}`" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab" :aria-controls="`analytics-panel-${tab}`" @click="activeTab = tab">{{ tab[0]?.toUpperCase() + tab.slice(1) }}</button>
+          <div class="analytics-tabs" role="tablist" :aria-label="t('analytics.breakdown.label')">
+            <button v-for="tab in (['projects', 'rules', 'pages'] as const)" :id="`analytics-tab-${tab}`" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab" :aria-controls="`analytics-panel-${tab}`" @click="activeTab = tab">{{ tabLabel(tab) }}</button>
           </div>
-          <span>{{ activeMetadata?.truncated ? `${activeMetadata.returned} of ${activeMetadata.total}` : activeRows.length }} {{ activeTab }}</span>
+          <span>{{ breakdownSummary() }}</span>
         </header>
         <div :id="`analytics-panel-${activeTab}`" class="analytics-table-scroll" role="tabpanel" :aria-labelledby="`analytics-tab-${activeTab}`">
           <table>
-            <thead><tr><th>Source</th><th>Impressions</th><th>Interactions</th><th>Submissions</th><th>Interaction</th><th>Completion</th><th>Submit rate</th></tr></thead>
+            <thead><tr><th>{{ t('analytics.breakdown.source') }}</th><th>{{ t('analytics.breakdown.impressions') }}</th><th>{{ t('analytics.breakdown.interactions') }}</th><th>{{ t('analytics.breakdown.submissions') }}</th><th>{{ t('analytics.breakdown.interaction') }}</th><th>{{ t('analytics.breakdown.completion') }}</th><th>{{ t('analytics.breakdown.submitRate') }}</th></tr></thead>
             <tbody>
               <tr v-for="row in activeRows" :key="rowKey(activeTab, row)" :data-row-key="rowKey(activeTab, row)">
                 <th scope="row"><strong>{{ rowName(row) }}</strong><span v-if="rowContext(row)">{{ rowContext(row) }}</span></th>
-                <td>{{ formatWholeNumber(row.impressions) }}</td><td>{{ formatWholeNumber(row.interactions) }}</td><td>{{ formatWholeNumber(row.submissions) }}</td><td>{{ formatAnalyticsRate(row.interaction_rate) }}</td><td>{{ formatAnalyticsRate(row.completion_rate) }}</td><td>{{ formatAnalyticsRate(row.submit_rate) }}</td>
+                <td>{{ integer(row.impressions) }}</td><td>{{ integer(row.interactions) }}</td><td>{{ integer(row.submissions) }}</td><td>{{ formatRate(row.interaction_rate) }}</td><td>{{ formatRate(row.completion_rate) }}</td><td>{{ formatRate(row.submit_rate) }}</td>
               </tr>
-              <tr v-if="!activeRows.length" class="analytics-empty-row"><td colspan="7"><BarChart3 :size="20" /><b>{{ hasActivity ? `No ${activeTab} match these filters` : 'No widget activity in this period' }}</b><span>Rates remain unavailable until their denominator has activity.</span></td></tr>
+              <tr v-if="!activeRows.length" class="analytics-empty-row"><td colspan="7"><BarChart3 :size="20" /><b>{{ hasActivity ? t(`analytics.breakdown.noFiltered${capitalize(activeTab)}`) : t('analytics.breakdown.noActivity') }}</b><span>{{ t('analytics.breakdown.ratesUnavailable') }}</span></td></tr>
             </tbody>
           </table>
         </div>

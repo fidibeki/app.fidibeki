@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { createRegionalFormatters } from '../../utils/regional-format'
 import { buildWidgetAnalyticsQuery, formatAnalyticsRate } from '../../utils/widget-analytics'
 
 describe('widget analytics presentation', () => {
-  it('distinguishes unavailable rates from real zero rates', () => {
-    expect(formatAnalyticsRate(null)).toBe('—')
-    expect(formatAnalyticsRate(0)).toBe('0%')
-    expect(formatAnalyticsRate(0.124)).toBe('12.4%')
-    expect(formatAnalyticsRate(1)).toBe('100%')
+  it('distinguishes unavailable rates and delegates locale-aware percent formatting', () => {
+    const english = createRegionalFormatters({ locale: 'en', timezone: 'UTC' })
+    const angola = createRegionalFormatters({ locale: 'pt-AO', timezone: 'Africa/Luanda' })
+
+    expect(formatAnalyticsRate(null, english.percent)).toBe('—')
+    expect(formatAnalyticsRate(0, english.percent)).toBe('0%')
+    expect(formatAnalyticsRate(0.124, english.percent)).toBe('12.4%')
+    expect(formatAnalyticsRate(0.124, angola.percent)).toBe('12,4%')
   })
 
   it('serializes only active filters and preserves canonical page URLs', () => {

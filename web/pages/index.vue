@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronRight, Inbox } from '@lucide/vue'
 import type { DashboardSummary, FeedbackPage, Project } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatWholeNumber } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
 const { can, member } = useAuth()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime, decimal, integer, percent, plural, relativeTime } = useRegionalFormat()
 const range = ref('30d')
 
 const { data, status, error, refresh } = await useAsyncData(
@@ -43,82 +44,101 @@ const chartPoints = computed(() => {
     .join(' ')
 })
 
-const firstName = computed(() => member.value?.name?.split(' ')[0] || member.value?.email.split('@')[0] || 'there')
+const firstName = computed(() =>
+  member.value?.name?.split(' ')[0]
+  || member.value?.email.split('@')[0]
+  || t('dashboard.fallbackName'),
+)
 
 function feedbackCopy(item: FeedbackPage['feedbacks'][number]) {
-  return item.text_cleaned || item.text || 'Feedback without written detail'
+  return item.text_cleaned || item.text || t('dashboard.feedbackWithoutDetail')
 }
 
-function signed(value?: number) {
-  if (value === undefined) return 'No comparison'
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)}% vs previous`
+function signedPercent(value?: number) {
+  if (value === undefined) return t('dashboard.metrics.noComparison')
+  return t('dashboard.metrics.comparedWithPrevious', {
+    value: percent(value / 100, { signDisplay: 'exceptZero' }),
+  })
+}
+
+function signedDecimal(value?: number) {
+  if (value === undefined) return t('dashboard.metrics.noComparison')
+  return t('dashboard.metrics.comparedWithPrevious', {
+    value: decimal(value, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+      signDisplay: 'exceptZero',
+    }),
+  })
 }
 
 function formatAge(value: string) {
-  const diff = Math.max(0, Date.now() - new Date(value).getTime())
+  const timestamp = new Date(value).getTime()
+  if (Number.isNaN(timestamp)) return '—'
+  const diff = Math.max(0, Date.now() - timestamp)
   const hours = Math.floor(diff / 3_600_000)
-  if (hours < 1) return 'Now'
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
+  if (hours < 1) return t('dashboard.now')
+  if (hours < 24) return relativeTime(-hours, 'hour', { numeric: 'always', style: 'short' })
+  return relativeTime(-Math.floor(hours / 24), 'day', { numeric: 'always', style: 'short' })
 }
 
-useHead({ title: 'Overview · Fidibeki' })
+useHead(() => ({ title: t('dashboard.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page dashboard-page">
     <header class="app-page-head">
       <div>
-        <p class="app-eyebrow">Operations</p>
-        <h1>Good afternoon, {{ firstName }}</h1>
-        <span>{{ data?.dashboard.attention_count || 0 }} feedback items need attention.</span>
+        <p class="app-eyebrow">{{ t('dashboard.eyebrow') }}</p>
+        <h1>{{ t('dashboard.greeting', { name: firstName }) }}</h1>
+        <span>{{ plural('dashboard.attention', data?.dashboard.attention_count || 0) }}</span>
       </div>
-      <select v-model="range" class="app-select" aria-label="Dashboard date range">
-        <option value="7d">Last 7 days</option>
-        <option value="30d">Last 30 days</option>
-        <option value="90d">Last 90 days</option>
+      <select v-model="range" class="app-select" :aria-label="t('dashboard.rangeLabel')">
+        <option value="7d">{{ t('dashboard.ranges.seven') }}</option>
+        <option value="30d">{{ t('dashboard.ranges.thirty') }}</option>
+        <option value="90d">{{ t('dashboard.ranges.ninety') }}</option>
       </select>
     </header>
 
     <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite">
-      <div><span class="app-spinner" /><h2>Loading workspace signals</h2></div>
+      <div><span class="app-spinner" /><h2>{{ t('dashboard.loading') }}</h2></div>
     </section>
 
     <section v-else-if="error" class="app-surface app-state" role="alert">
       <div>
         <AlertTriangle :size="24" />
-        <h2>Dashboard unavailable</h2>
-        <p>{{ apiErrorMessage(error, 'The workspace data could not be loaded.') }}</p>
-        <button class="app-button" type="button" @click="refresh()">Try again</button>
+        <h2>{{ t('dashboard.unavailable') }}</h2>
+        <p>{{ apiErrorMessage(error, 'dashboard.loadFailed') }}</p>
+        <button class="app-button" type="button" @click="refresh()">{{ t('dashboard.tryAgain') }}</button>
       </div>
     </section>
 
     <template v-else-if="data">
-      <section class="dashboard-ledger" aria-label="Workspace metrics">
+      <section class="dashboard-ledger" :aria-label="t('dashboard.workspaceMetrics')">
         <article>
-          <span>Feedback received</span>
-          <strong>{{ formatWholeNumber(data.dashboard.feedback_count) }}</strong>
+          <span>{{ t('dashboard.metrics.feedbackReceived') }}</span>
+          <strong>{{ integer(data.dashboard.feedback_count) }}</strong>
           <small :data-positive="(data.dashboard.feedback_delta_percent || 0) >= 0">
             <component :is="(data.dashboard.feedback_delta_percent || 0) >= 0 ? ArrowUpRight : ArrowDownRight" :size="13" />
-            {{ signed(data.dashboard.feedback_delta_percent) }}
+            {{ signedPercent(data.dashboard.feedback_delta_percent) }}
           </small>
         </article>
         <article>
-          <span>Open issues</span>
-          <strong>{{ formatWholeNumber(data.dashboard.open_issue_count) }}</strong>
-          <small>Active product work</small>
+          <span>{{ t('dashboard.metrics.openIssues') }}</span>
+          <strong>{{ integer(data.dashboard.open_issue_count) }}</strong>
+          <small>{{ t('dashboard.metrics.activeProductWork') }}</small>
         </article>
         <article>
-          <span>Satisfaction</span>
-          <strong>{{ data.dashboard.satisfaction?.toFixed(1) || '—' }}</strong>
+          <span>{{ t('dashboard.metrics.satisfaction') }}</span>
+          <strong>{{ data.dashboard.satisfaction == null ? '—' : decimal(data.dashboard.satisfaction, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }}</strong>
           <small :data-positive="(data.dashboard.satisfaction_delta || 0) >= 0">
             <component :is="(data.dashboard.satisfaction_delta || 0) >= 0 ? ArrowUpRight : ArrowDownRight" :size="13" />
-            {{ data.dashboard.satisfaction_delta === undefined ? 'No comparison' : `${data.dashboard.satisfaction_delta > 0 ? '+' : ''}${data.dashboard.satisfaction_delta.toFixed(1)} vs previous` }}
+            {{ signedDecimal(data.dashboard.satisfaction_delta) }}
           </small>
         </article>
         <article class="dashboard-chart-cell">
-          <span>Feedback volume</span>
-          <svg viewBox="0 0 600 120" role="img" :aria-label="`Feedback volume over ${data.dashboard.range_days} days`" preserveAspectRatio="none">
+          <span>{{ t('dashboard.metrics.feedbackVolume') }}</span>
+          <svg viewBox="0 0 600 120" role="img" :aria-label="t('dashboard.metrics.feedbackVolumeDays', { count: data.dashboard.range_days })" preserveAspectRatio="none">
             <line x1="0" y1="112" x2="600" y2="112" />
             <polyline v-if="chartPoints" :points="chartPoints" />
           </svg>
@@ -127,29 +147,29 @@ useHead({ title: 'Overview · Fidibeki' })
 
       <section class="dashboard-worklist app-surface">
         <header>
-          <div><h2>Work requiring attention</h2><p>Open feedback ordered by recency</p></div>
-          <NuxtLink to="/feedback?status=open">View queue <ChevronRight :size="15" /></NuxtLink>
+          <div><h2>{{ t('dashboard.attentionTitle') }}</h2><p>{{ t('dashboard.attentionDescription') }}</p></div>
+          <NuxtLink to="/feedback?status=open">{{ t('dashboard.viewQueue') }} <ChevronRight :size="15" /></NuxtLink>
         </header>
         <div v-if="data.feedbacks.length === 0" class="dashboard-empty">
-          <Inbox :size="22" /><p>No open feedback is waiting.</p>
+          <Inbox :size="22" /><p>{{ t('dashboard.noOpenFeedback') }}</p>
         </div>
         <NuxtLink v-for="item in data.feedbacks" :key="item.id" :to="`/feedback/${item.id}`" class="dashboard-work-row">
           <span class="dashboard-priority" :data-tone="item.moderation_flags.length ? 'critical' : item.ai_status" />
           <RatingMark :rating="item.rating" compact />
           <span class="dashboard-work-copy"><b>{{ feedbackCopy(item) }}</b><small>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</small></span>
           <AttachmentIcons :attachments="item.attachment_kinds" />
-          <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">Unlinked</span>
-          <time>{{ formatAge(item.created_at) }}</time>
+          <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">{{ t('dashboard.unlinked') }}</span>
+          <time :datetime="item.created_at" :title="dateTime(item.created_at)">{{ formatAge(item.created_at) }}</time>
           <ChevronRight :size="16" />
         </NuxtLink>
       </section>
 
       <section v-if="can('project:read')" class="dashboard-projects app-surface">
-        <header><div><h2>Projects</h2><p>Collection endpoints in this workspace</p></div><NuxtLink to="/projects">Manage projects</NuxtLink></header>
-        <div v-if="data.projects.length === 0" class="dashboard-empty"><p>No projects have been created.</p></div>
+        <header><div><h2>{{ t('dashboard.projects.title') }}</h2><p>{{ t('dashboard.projects.description') }}</p></div><NuxtLink to="/projects">{{ t('dashboard.projects.manage') }}</NuxtLink></header>
+        <div v-if="data.projects.length === 0" class="dashboard-empty"><p>{{ t('dashboard.projects.empty') }}</p></div>
         <NuxtLink v-for="project in data.projects" :key="project.id" :to="`/projects/${project.id}`">
           <span class="dashboard-project-mark">{{ project.name.slice(0, 1).toUpperCase() }}</span>
-          <p><b>{{ project.name }}</b><span>{{ project.allowed_domains.join(', ') || 'No allowed domains' }}</span></p>
+          <p><b>{{ project.name }}</b><span>{{ project.allowed_domains.join(', ') || t('dashboard.projects.noDomains') }}</span></p>
           <code>{{ project.public_key }}</code>
           <ChevronRight :size="16" />
         </NuxtLink>
