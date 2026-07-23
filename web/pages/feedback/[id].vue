@@ -221,7 +221,7 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
               <dl v-if="structuredResponses.length"><div v-for="[key, value] in structuredResponses" :key="key"><dt>{{ responseLabel(key) }}</dt><dd>{{ value }}</dd></div></dl>
               <div v-if="feedback.comment" class="feedback-response-comment"><b>Additional context</b><p>{{ feedback.comment }}</p></div>
             </section>
-            <section class="feedback-evidence-section">
+            <section id="attachments" class="feedback-evidence-section">
               <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">Upgrade for AI <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">

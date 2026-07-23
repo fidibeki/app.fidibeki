@@ -553,7 +553,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
 	integrationHandler := integration.DeliveryHandler{
-		Store: integration.Store{Database: pools.Admin, Cipher: integrationCipher},
+		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
 	aiStore := aiprocessing.Store{Database: pools.Admin}
 	var analyzer aiprocessing.Analyzer = aiprocessing.UnavailableAnalyzer{}

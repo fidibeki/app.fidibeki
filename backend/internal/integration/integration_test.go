@@ -94,23 +94,45 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 	t.Parallel()
 	rating := 4
 	notification := Notification{
-		TenantName: "Acme", Event: EventFeedbackCreated, ResourceType: "feedback",
-		ResourceID: "feedback-id", PublicID: "fb_123", Text: "Checkout is confusing",
-		Rating: &rating, IssuePublicID: "ACME-2026-0001", Channel: "#feedback",
+		OutboxEventID: "event-id", TenantName: "Acme", Event: EventFeedbackCreated,
+		ResourceType: "feedback", ResourceID: "feedback-id", PublicID: "fb_123",
+		Title: "Checkout <script>", Description: "Checkout is confusing", Rating: &rating,
+		ProjectID: "project-id", ProjectName: "Storefront", Priority: "high",
+		Category: "checkout", Actionability: "actionable",
+		IssueID: "issue-id", IssuePublicID: "ACME-2026-0001", Channel: "#feedback",
+		OccurredAt:      time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
+		ResourceURL:     "https://acme.fidibeki.com/feedback/feedback-id",
+		FeedbackURL:     "https://acme.fidibeki.com/feedback/feedback-id",
+		IssueURL:        "https://acme.fidibeki.com/issues/issue-id",
+		PageURL:         "https://example.test/checkout",
+		AttachmentsURL:  "https://acme.fidibeki.com/feedback/feedback-id#attachments",
+		AttachmentCount: 2, AttachmentKinds: []string{"audio", "screenshot"},
+		Changes: map[string]Change{"priority": {From: nil, To: "high"}},
+		Actor:   &NotificationActor{Type: "member", ID: "member-id", Name: "Alex"},
+		Comment: "Needs review",
 	}
 	notification.Kind = KindSlack
 	body, err := notificationBody(notification)
-	if err != nil || !bytes.Contains(body, []byte(`"blocks"`)) || !bytes.Contains(body, []byte(`"channel":"#feedback"`)) {
+	if err != nil || !bytes.Contains(body, []byte(`"blocks"`)) ||
+		!bytes.Contains(body, []byte(`"channel":"#feedback"`)) ||
+		!bytes.Contains(body, []byte(`"type":"actions"`)) ||
+		!bytes.Contains(body, []byte(`Open issue`)) ||
+		bytes.Contains(body, []byte(`<script>`)) {
 		t.Fatalf("Slack body = %s, error = %v", body, err)
 	}
 	notification.Kind = KindTeams
 	body, err = notificationBody(notification)
-	if err != nil || !bytes.Contains(body, []byte(`"@type":"MessageCard"`)) {
+	if err != nil || !bytes.Contains(body, []byte(`"@type":"MessageCard"`)) ||
+		!bytes.Contains(body, []byte(`"potentialAction"`)) || bytes.Contains(body, []byte(`<script>`)) {
 		t.Fatalf("Teams body = %s, error = %v", body, err)
 	}
 	notification.Kind = KindWebhook
 	body, err = notificationBody(notification)
-	if err != nil || !bytes.Contains(body, []byte(`"event":"feedback.created"`)) {
+	if err != nil || !bytes.Contains(body, []byte(`"event":"feedback.created"`)) ||
+		!bytes.Contains(body, []byte(`"schema_version":"1.0"`)) ||
+		!bytes.Contains(body, []byte(`"event_id":"event-id"`)) ||
+		!bytes.Contains(body, []byte(`"changes":{"priority":{"from":null,"to":"high"}}`)) ||
+		!bytes.Contains(body, []byte(`"page_url":"https://example.test/checkout"`)) {
 		t.Fatalf("webhook body = %s, error = %v", body, err)
 	}
 	notification.Kind = "email"
@@ -122,13 +144,22 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 		Title: "Payment failed", IssueStatus: "in_progress",
 	}
 	headline, detail := notificationCopy(issue)
-	if headline != "New issue ACME-2026-0002" || !strings.Contains(detail, "Status: in progress") {
+	if headline != "New issue ACME-2026-0002" || detail != "Payment failed" {
 		t.Errorf("created issue copy = %q / %q", headline, detail)
+	}
+	facts := notificationFacts(issue)
+	if len(facts) != 1 || facts[0].Name != "Status" || facts[0].Value != "in progress" {
+		t.Errorf("created issue facts = %#v", facts)
 	}
 	issue.Event = EventIssueUpdated
 	headline, _ = notificationCopy(issue)
 	if headline != "Issue ACME-2026-0002 updated" {
 		t.Errorf("updated issue headline = %q", headline)
+	}
+	issue.Event = EventIssueResolved
+	headline, _ = notificationCopy(issue)
+	if headline != "Issue ACME-2026-0002 resolved" {
+		t.Errorf("resolved issue headline = %q", headline)
 	}
 }
 

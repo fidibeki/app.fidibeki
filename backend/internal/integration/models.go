@@ -64,26 +64,59 @@ type FieldError struct {
 }
 
 type Notification struct {
-	OutboxEventID string
-	TenantID      string
-	TenantName    string
-	IntegrationID string
-	Kind          Kind
-	WebhookURL    string
-	Channel       string
-	CustomHeaders map[string]string
-	WebhookSecret string
-	Event         string
-	ResourceType  string
-	ResourceID    string
-	OccurredAt    time.Time
-	PublicID      string
-	Title         string
-	Text          string
-	PageURL       string
-	Rating        *int
-	IssuePublicID string
-	IssueStatus   string
+	OutboxEventID        string
+	TenantID             string
+	TenantName           string
+	TenantSlug           string
+	IntegrationID        string
+	Kind                 Kind
+	WebhookURL           string
+	Channel              string
+	CustomHeaders        map[string]string
+	WebhookSecret        string
+	Event                string
+	ResourceType         string
+	ResourceID           string
+	OccurredAt           time.Time
+	PublicID             string
+	Title                string
+	Description          string
+	Text                 string
+	PageURL              string
+	Rating               *int
+	Category             string
+	Actionability        string
+	Priority             string
+	ProjectID            string
+	ProjectName          string
+	FeedbackID           string
+	IssueID              string
+	IssuePublicID        string
+	IssueStatus          string
+	OldStatus            string
+	NewStatus            string
+	Changes              map[string]Change
+	Actor                *NotificationActor
+	Comment              string
+	AttachmentCount      int
+	AttachmentKinds      []string
+	AttachmentFeedbackID string
+	ResourceURL          string
+	IssueURL             string
+	FeedbackURL          string
+	AttachmentsURL       string
+}
+
+type Change struct {
+	From any `json:"from"`
+	To   any `json:"to"`
+}
+
+type NotificationActor struct {
+	Type  string `json:"type"`
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 type DeliveryAttempt struct {

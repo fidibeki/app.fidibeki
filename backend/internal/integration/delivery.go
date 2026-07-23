@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -32,9 +33,11 @@ type HTTPDoer interface {
 }
 
 type DeliveryHandler struct {
-	Store  Store
-	Client HTTPDoer
-	Now    func() time.Time
+	Store         Store
+	Client        HTTPDoer
+	PublicBaseURL string
+	BaseDomain    string
+	Now           func() time.Time
 }
 
 func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notification, error) {
@@ -44,16 +47,41 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	var headersCiphertext []byte
 	var secretCiphertext []byte
 	var channel *string
+	var changesJSON []byte
+	var actorID, actorName, actorEmail *string
+	var activityKind string
 	err := s.Database.QueryRow(ctx, `
-		SELECT event.id, event.tenant_id, tenant.name, tenant.plan, tenant.status,
+		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, tenant.plan, tenant.status,
 		       integration.id, integration.kind, integration.webhook_url, integration.channel,
 		       integration.custom_headers_ciphertext, integration.webhook_secret_ciphertext,
 		       event.event, event.resource_type, event.resource_id, event.created_at,
 		       COALESCE(feedback.public_id, issue.public_id),
-		       COALESCE(issue.title, ''), COALESCE(feedback.text, ''),
-		       COALESCE(feedback.page_url, ''), feedback.rating,
+		       COALESCE(feedback.title, issue.title, ''),
+		       COALESCE(feedback.description, issue.description, ''),
+		       COALESCE(feedback.text, ''),
+		       COALESCE(feedback.page_url, primary_feedback.page_url, ''),
+		       COALESCE(feedback.rating, primary_feedback.rating),
+		       COALESCE(feedback_issue.id::text, issue.id::text, ''),
 		       COALESCE(feedback_issue.public_id, issue.public_id, ''),
-		       COALESCE(issue.status::text, feedback_issue.status::text, '')
+		       COALESCE(issue.status::text, feedback_issue.status::text, ''),
+		       COALESCE(issue_update.old_status::text, ''),
+		       COALESCE(issue_update.new_status::text, ''),
+		       project.id::text, project.name,
+		       COALESCE(feedback.id::text, primary_feedback.id::text, ''),
+		       COALESCE(feedback.ai_category, primary_feedback.ai_category, ''),
+		       COALESCE(feedback.ai_actionability, primary_feedback.ai_actionability, ''),
+		       COALESCE(issue.priority::text, feedback.priority::text, feedback.ai_priority, ''),
+		       COALESCE(issue_activity.data->'changes', '{}'::jsonb),
+		       COALESCE(
+		           issue_activity.data->>'transition_comment',
+		           issue_activity.data->>'response',
+		           issue_update.comment,
+		           ''
+		       ),
+		       COALESCE(issue_activity.kind, ''),
+		       actor.id::text, actor.name, actor.email::text,
+		       evidence.attachment_count, evidence.attachment_kinds,
+		       evidence.attachment_feedback_id
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN integrations AS integration
@@ -66,17 +94,69 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		LEFT JOIN issues AS issue
 		  ON event.resource_type = 'issue' AND issue.id = event.resource_id
 		 AND issue.tenant_id = event.tenant_id
+		JOIN projects AS project
+		  ON project.tenant_id = event.tenant_id
+		 AND project.id = COALESCE(feedback.project_id, issue.project_id)
+		LEFT JOIN issue_updates AS issue_update
+		  ON issue_update.tenant_id = event.tenant_id
+		 AND issue_update.id::text = event.event_key
+		LEFT JOIN LATERAL (
+			SELECT linked.id, linked.page_url, linked.rating,
+			       linked.ai_category, linked.ai_actionability
+			FROM feedbacks AS linked
+			WHERE linked.tenant_id = event.tenant_id AND linked.issue_id = issue.id
+			ORDER BY linked.created_at, linked.id
+			LIMIT 1
+		) AS primary_feedback ON event.resource_type = 'issue'
+		LEFT JOIN LATERAL (
+			SELECT activity.kind, activity.actor_member_id, activity.data
+			FROM issue_activities AS activity
+			WHERE activity.tenant_id = event.tenant_id AND activity.issue_id = issue.id
+			  AND (
+			      (event.event_key IS NOT NULL AND (
+			          activity.id::text = event.event_key
+			          OR activity.data->>'legacy_update_id' = event.event_key
+			      ))
+			      OR (event.event_key IS NULL AND event.event = 'issue.created'
+			          AND activity.kind = 'issue.created')
+			  )
+			ORDER BY activity.created_at DESC, activity.id DESC
+			LIMIT 1
+		) AS issue_activity ON true
+		LEFT JOIN tenant_members AS actor
+		  ON actor.tenant_id = event.tenant_id AND actor.id = issue_activity.actor_member_id
+		LEFT JOIN LATERAL (
+			SELECT count(*)::integer AS attachment_count,
+			       COALESCE(array_agg(DISTINCT attachment.kind::text), '{}'::text[]) AS attachment_kinds,
+			       COALESCE(min(attachment.feedback_id::text), '') AS attachment_feedback_id
+			FROM attachments AS attachment
+			JOIN feedbacks AS attached_feedback
+			  ON attached_feedback.tenant_id = attachment.tenant_id
+			 AND attached_feedback.id = attachment.feedback_id
+			WHERE attachment.tenant_id = event.tenant_id AND attachment.completed_at IS NOT NULL
+			  AND (
+			      (event.resource_type = 'feedback' AND attachment.feedback_id = feedback.id)
+			      OR (event.resource_type = 'issue' AND attached_feedback.issue_id = issue.id)
+			  )
+		) AS evidence ON true
 		WHERE event.id = $1 AND event.tenant_id = $2 AND event.resource_id = $3
 		  AND integration.is_active = true
 		  AND event.event = ANY(integration.events)
 	`, task.OutboxEventID, task.TenantID, task.ResourceID, task.IntegrationID).Scan(
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
-		&plan, &status, &notification.IntegrationID, &notification.Kind,
+		&notification.TenantSlug, &plan, &status, &notification.IntegrationID, &notification.Kind,
 		&notification.WebhookURL, &channel, &headersCiphertext, &secretCiphertext,
 		&notification.Event, &notification.ResourceType, &notification.ResourceID,
 		&notification.OccurredAt, &notification.PublicID, &notification.Title,
-		&notification.Text, &notification.PageURL, &notification.Rating,
-		&notification.IssuePublicID, &notification.IssueStatus,
+		&notification.Description, &notification.Text, &notification.PageURL, &notification.Rating,
+		&notification.IssueID, &notification.IssuePublicID, &notification.IssueStatus,
+		&notification.OldStatus, &notification.NewStatus,
+		&notification.ProjectID, &notification.ProjectName, &notification.FeedbackID,
+		&notification.Category, &notification.Actionability, &notification.Priority,
+		&changesJSON, &notification.Comment, &activityKind,
+		&actorID, &actorName, &actorEmail,
+		&notification.AttachmentCount, &notification.AttachmentKinds,
+		&notification.AttachmentFeedbackID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Notification{}, ErrNotFound
@@ -110,6 +190,23 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 			return Notification{}, err
 		}
 		notification.WebhookSecret = string(plaintext)
+	}
+	notification.Changes = make(map[string]Change)
+	if len(changesJSON) > 0 {
+		if err := json.Unmarshal(changesJSON, &notification.Changes); err != nil {
+			return Notification{}, fmt.Errorf("decode integration changes: %w", err)
+		}
+	}
+	if actorID != nil {
+		notification.Actor = &NotificationActor{Type: "member", ID: *actorID}
+		if actorName != nil {
+			notification.Actor.Name = *actorName
+		}
+		if actorEmail != nil {
+			notification.Actor.Email = *actorEmail
+		}
+	} else if activityKind == "reporter.responded" {
+		notification.Actor = &NotificationActor{Type: "reporter", Name: "Reporter"}
 	}
 	if !supportedEvent(notification.Event, notification.ResourceType) || notification.PublicID == "" {
 		return Notification{}, ErrNotFound
@@ -220,6 +317,7 @@ func (h DeliveryHandler) Handler() asynq.HandlerFunc {
 }
 
 func (h DeliveryHandler) deliver(ctx context.Context, notification Notification) (string, error) {
+	notification = withNotificationURLs(notification, h.PublicBaseURL, h.BaseDomain)
 	body, err := notificationBody(notification)
 	if err != nil {
 		return "", fmt.Errorf("encode integration notification: %w", err)
@@ -268,6 +366,38 @@ func (h DeliveryHandler) deliver(ctx context.Context, notification Notification)
 	return providerID, nil
 }
 
+func withNotificationURLs(
+	notification Notification,
+	publicBaseURL string,
+	baseDomain string,
+) Notification {
+	domain := strings.TrimSuffix(strings.TrimSpace(baseDomain), ".")
+	if domain == "" || notification.TenantSlug == "" {
+		return notification
+	}
+	scheme := "https"
+	if parsed, err := url.Parse(publicBaseURL); err == nil && parsed.Scheme != "" {
+		scheme = parsed.Scheme
+	}
+	root := scheme + "://" + notification.TenantSlug + "." + domain
+	if notification.IssueID != "" {
+		notification.IssueURL = root + "/issues/" + url.PathEscape(notification.IssueID)
+	}
+	if notification.FeedbackID != "" {
+		notification.FeedbackURL = root + "/feedback/" + url.PathEscape(notification.FeedbackID)
+	}
+	if notification.AttachmentCount > 0 && notification.AttachmentFeedbackID != "" {
+		notification.AttachmentsURL = root + "/feedback/" +
+			url.PathEscape(notification.AttachmentFeedbackID) + "#attachments"
+	}
+	if notification.ResourceType == "issue" {
+		notification.ResourceURL = notification.IssueURL
+	} else {
+		notification.ResourceURL = notification.FeedbackURL
+	}
+	return notification
+}
+
 func notificationBody(notification Notification) ([]byte, error) {
 	switch notification.Kind {
 	case KindSlack:
@@ -283,15 +413,46 @@ func notificationBody(notification Notification) ([]byte, error) {
 
 func slackMessage(notification Notification) map[string]any {
 	headline, detail := notificationCopy(notification)
+	blocks := []map[string]any{
+		{"type": "header", "text": map[string]string{
+			"type": "plain_text", "text": truncateIntegrationText(headline, 150),
+		}},
+		{"type": "section", "text": map[string]string{
+			"type": "mrkdwn", "text": slackEscape(truncateIntegrationText(detail, 2800)),
+		}},
+	}
+	facts := notificationFacts(notification)
+	if len(facts) > 0 {
+		fields := make([]map[string]string, 0, len(facts))
+		for _, fact := range facts {
+			fields = append(fields, map[string]string{
+				"type": "mrkdwn", "text": "*" + slackEscape(fact.Name) + "*\n" +
+					slackEscape(truncateIntegrationText(fact.Value, 1500)),
+			})
+		}
+		blocks = append(blocks, map[string]any{"type": "section", "fields": fields})
+	}
+	blocks = append(blocks, map[string]any{
+		"type": "context", "elements": []map[string]string{{
+			"type": "mrkdwn", "text": slackEscape(notification.Event) + " | " +
+				notification.OccurredAt.UTC().Format(time.RFC3339),
+		}},
+	})
+	actions := integrationActions(notification)
+	if len(actions) > 0 {
+		elements := make([]map[string]any, 0, len(actions))
+		for _, action := range actions {
+			elements = append(elements, map[string]any{
+				"type": "button",
+				"text": map[string]string{"type": "plain_text", "text": action.Label},
+				"url":  action.URL,
+			})
+		}
+		blocks = append(blocks, map[string]any{"type": "actions", "elements": elements})
+	}
 	message := map[string]any{
-		"text": headline,
-		"blocks": []map[string]any{
-			{"type": "header", "text": map[string]string{"type": "plain_text", "text": headline}},
-			{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": detail}},
-			{"type": "context", "elements": []map[string]string{{
-				"type": "mrkdwn", "text": notification.TenantName + " | " + notification.Event,
-			}}},
-		},
+		"text":   headline,
+		"blocks": blocks,
 	}
 	if notification.Channel != "" {
 		message["channel"] = notification.Channel
@@ -301,55 +462,217 @@ func slackMessage(notification Notification) map[string]any {
 
 func teamsMessage(notification Notification) map[string]any {
 	headline, detail := notificationCopy(notification)
-	return map[string]any{
+	facts := notificationFacts(notification)
+	teamFacts := make([]map[string]string, 0, len(facts)+1)
+	teamFacts = append(teamFacts, map[string]string{"name": "Event", "value": notification.Event})
+	for _, fact := range facts {
+		teamFacts = append(teamFacts, map[string]string{
+			"name":  htmlEscape(fact.Name),
+			"value": htmlEscape(truncateIntegrationText(fact.Value, 1500)),
+		})
+	}
+	message := map[string]any{
 		"@type": "MessageCard", "@context": "https://schema.org/extensions",
 		"summary": headline, "themeColor": "167D64",
 		"sections": []map[string]any{{
-			"activityTitle": headline, "text": detail,
-			"facts": []map[string]string{
-				{"name": "Event", "value": notification.Event},
-				{"name": "Tenant", "value": notification.TenantName},
-			},
+			"activityTitle": htmlEscape(truncateIntegrationText(headline, 150)),
+			"text":          htmlEscape(truncateIntegrationText(detail, 2800)),
+			"facts":         teamFacts,
 		}},
 	}
+	actions := integrationActions(notification)
+	if len(actions) > 0 {
+		potentialActions := make([]map[string]any, 0, len(actions))
+		for _, action := range actions {
+			potentialActions = append(potentialActions, map[string]any{
+				"@type": "OpenUri", "name": action.Label,
+				"targets": []map[string]string{{"os": "default", "uri": action.URL}},
+			})
+		}
+		message["potentialAction"] = potentialActions
+	}
+	return message
 }
 
 func webhookMessage(notification Notification) map[string]any {
 	data := map[string]any{
 		"id": notification.ResourceID, "public_id": notification.PublicID,
-		"title": notification.Title, "text": notification.Text,
+		"url":   notification.ResourceURL,
+		"title": notification.Title, "description": notification.Description, "text": notification.Text,
 		"page_url": notification.PageURL, "rating": notification.Rating,
 		"issue_public_id": notification.IssuePublicID, "issue_status": notification.IssueStatus,
+		"priority": notification.Priority,
+		"classification": map[string]string{
+			"category": notification.Category, "actionability": notification.Actionability,
+		},
+		"project": map[string]string{
+			"id": notification.ProjectID, "name": notification.ProjectName,
+		},
+		"attachments": map[string]any{
+			"count": notification.AttachmentCount,
+			"kinds": notification.AttachmentKinds,
+			"url":   notification.AttachmentsURL,
+		},
 	}
 	return map[string]any{
-		"id": notification.OutboxEventID, "event": notification.Event,
+		"schema_version": "1.0",
+		"id":             notification.OutboxEventID, "event_id": notification.OutboxEventID,
+		"event":         notification.Event,
 		"occurred_at":   notification.OccurredAt.UTC(),
-		"resource_type": notification.ResourceType, "data": data,
+		"resource_type": notification.ResourceType,
+		"resource": map[string]string{
+			"id": notification.ResourceID, "public_id": notification.PublicID,
+			"type": notification.ResourceType, "url": notification.ResourceURL,
+		},
+		"changes": notification.Changes,
+		"actor":   notification.Actor,
+		"comment": notification.Comment,
+		"data":    data,
 	}
 }
 
 func notificationCopy(notification Notification) (string, string) {
 	if notification.ResourceType == "feedback" {
 		headline := "New feedback " + notification.PublicID
-		detail := strings.TrimSpace(notification.Text)
+		detail := notification.Title
+		description := strings.TrimSpace(notification.Description)
+		if description == "" {
+			description = strings.TrimSpace(notification.Text)
+		}
+		if description != "" && description != detail {
+			detail += "\n" + description
+		}
 		if detail == "" {
 			detail = "Feedback received without a text comment."
-		}
-		if notification.Rating != nil {
-			detail = fmt.Sprintf("Rating: %d/5\n%s", *notification.Rating, detail)
-		}
-		if notification.IssuePublicID != "" {
-			detail += "\nIssue: " + notification.IssuePublicID
 		}
 		return headline, detail
 	}
 	headline := "Issue " + notification.PublicID + " updated"
 	if notification.Event == EventIssueCreated {
 		headline = "New issue " + notification.PublicID
+	} else if notification.Event == EventIssueResolved {
+		headline = "Issue " + notification.PublicID + " resolved"
 	}
 	detail := notification.Title
-	if notification.IssueStatus != "" {
-		detail += "\nStatus: " + strings.ReplaceAll(notification.IssueStatus, "_", " ")
+	if notification.Description != "" && notification.Description != detail {
+		detail += "\n" + notification.Description
 	}
 	return headline, detail
+}
+
+type notificationFact struct {
+	Name  string
+	Value string
+}
+
+func notificationFacts(notification Notification) []notificationFact {
+	facts := make([]notificationFact, 0, 10)
+	add := func(name, value string) {
+		if strings.TrimSpace(value) != "" && len(facts) < 10 {
+			facts = append(facts, notificationFact{Name: name, Value: value})
+		}
+	}
+	add("Project", notification.ProjectName)
+	add("Page", integrationPageLabel(notification.PageURL))
+	if notification.Rating != nil {
+		add("Rating", fmt.Sprintf("%d/5", *notification.Rating))
+	}
+	add("Category", strings.ReplaceAll(notification.Category, "_", " "))
+	add("Actionability", strings.ReplaceAll(notification.Actionability, "_", " "))
+	add("Priority", strings.ReplaceAll(notification.Priority, "_", " "))
+	status := strings.ReplaceAll(notification.IssueStatus, "_", " ")
+	if notification.OldStatus != "" && notification.NewStatus != "" {
+		status = strings.ReplaceAll(notification.OldStatus, "_", " ") + " -> " +
+			strings.ReplaceAll(notification.NewStatus, "_", " ")
+	}
+	add("Status", status)
+	if notification.Actor != nil {
+		add("Actor", notificationActorLabel(*notification.Actor))
+	}
+	if notification.Comment != "" {
+		add("Comment", notification.Comment)
+	}
+	if notification.AttachmentCount > 0 {
+		value := fmt.Sprintf("%d", notification.AttachmentCount)
+		if len(notification.AttachmentKinds) > 0 {
+			value += " (" + strings.Join(notification.AttachmentKinds, ", ") + ")"
+		}
+		add("Attachments", value)
+	}
+	return facts
+}
+
+type integrationAction struct {
+	Label string
+	URL   string
+}
+
+func integrationActions(notification Notification) []integrationAction {
+	candidates := make([]integrationAction, 0, 5)
+	if notification.ResourceType == "issue" {
+		candidates = append(candidates, integrationAction{Label: "Open issue", URL: notification.ResourceURL})
+		if notification.FeedbackURL != "" {
+			candidates = append(candidates, integrationAction{Label: "Open feedback", URL: notification.FeedbackURL})
+		}
+	} else {
+		candidates = append(candidates, integrationAction{Label: "Open feedback", URL: notification.ResourceURL})
+		if notification.IssueURL != "" {
+			candidates = append(candidates, integrationAction{Label: "Open issue", URL: notification.IssueURL})
+		}
+	}
+	candidates = append(candidates,
+		integrationAction{Label: "View page", URL: notification.PageURL},
+		integrationAction{Label: "View attachments", URL: notification.AttachmentsURL},
+	)
+	actions := make([]integrationAction, 0, len(candidates))
+	for _, action := range candidates {
+		if integrationActionURL(action.URL) {
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
+func integrationActionURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != ""
+}
+
+func integrationPageLabel(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return truncateIntegrationText(parsed.Host+parsed.EscapedPath(), 100)
+}
+
+func notificationActorLabel(actor NotificationActor) string {
+	if actor.Name != "" {
+		return actor.Name
+	}
+	if actor.Email != "" {
+		return actor.Email
+	}
+	if actor.Type == "reporter" {
+		return "Reporter"
+	}
+	return actor.Type
+}
+
+func slackEscape(value string) string {
+	value = strings.ReplaceAll(value, "&", "&amp;")
+	value = strings.ReplaceAll(value, "<", "&lt;")
+	return strings.ReplaceAll(value, ">", "&gt;")
+}
+
+func htmlEscape(value string) string {
+	return slackEscape(value)
+}
+
+func truncateIntegrationText(value string, maximum int) string {
+	runes := []rune(value)
+	if len(runes) <= maximum {
+		return value
+	}
+	return string(runes[:maximum-3]) + "..."
 }

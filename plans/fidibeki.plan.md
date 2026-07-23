@@ -153,9 +153,14 @@ was removed from the staging test tenant.
   - Backend tests cover receipt unsubscribe/complaint, policy inheritance compatibility, token
     revocation, older-link continuity, clarification response idempotency, and migration replay.
     Web type/unit tests and the complete 97-pass E2E suite cover operator, policy, and public flows.
-- [ ] Enrich Slack Block Kit, Teams, and additive versioned generic webhooks with complete context,
+- [x] Enrich Slack Block Kit, Teams, and additive versioned generic webhooks with complete context,
   changes, actors, comments, attachments, timestamps, and environment-aware resource links.
   Interactive Slack/Teams commands remain outside these three phases.
+  - Provider-native messages now include operational facts and relevant Open issue, Open feedback,
+    View page, and View attachments actions. Generic webhooks retain their existing envelope fields
+    and add schema `1.0`, event/resource URLs, changes, actor, comment, classification, project, and
+    attachment metadata. Outbox event keys associate Issue creation and updates with the immutable
+    activity actor without adding another delivery path.
 
 #### Phase 3: Widget Platform
 

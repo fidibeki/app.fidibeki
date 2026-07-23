@@ -1493,6 +1493,7 @@ test('expired uploads are not offered an AI processing retry', async ({ page }, 
   await openPrimary(page, 'Feedback')
   await page.getByTitle('Open full detail').click()
   await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
+  await expect(page.locator('#attachments')).toContainText('Captured evidence')
 
   const expiredUpload = page.locator('.feedback-attachment-list article').filter({ hasText: 'attachment upload expired before completion' })
   await expect(expiredUpload).toBeVisible()

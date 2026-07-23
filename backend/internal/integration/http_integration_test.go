@@ -203,12 +203,24 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, issue_id, public_id, client_feedback_id,
-			page_url, rating, text, text_process_status
+			title, description, page_url, rating, text, text_process_status,
+			priority, ai_category, ai_actionability, ai_priority
 		) VALUES ($1, $2, $3, 'fb_Intg0001', gen_random_uuid(),
-		          'https://example.test/checkout', 4, 'The checkout is confusing', 'skipped')
+		          'Checkout is confusing', 'The payment step is unclear.',
+		          'https://example.test/checkout', 4, 'The checkout is confusing', 'skipped',
+		          'high', 'checkout', 'actionable', 'urgent')
 		RETURNING id
 	`, tenantIDs["acme"], projectID, issueID).Scan(&feedbackID); err != nil {
 		t.Fatalf("create feedback: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, completed_at
+		) VALUES ($1, $2, 'screenshot', gen_random_uuid(), $3,
+		          'image/png', 1024, 'completed', now())
+	`, tenantIDs["acme"], feedbackID, "integration/"+feedbackID+"/screenshot.png"); err != nil {
+		t.Fatalf("create feedback attachment: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
@@ -233,7 +245,10 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		t.Errorf("resolved destinations = %#v", destinations)
 	}
 
-	delivery := DeliveryHandler{Store: Store{Database: pools.Admin, Cipher: cipher}}
+	delivery := DeliveryHandler{
+		Store:         Store{Database: pools.Admin, Cipher: cipher},
+		PublicBaseURL: "http://api.localhost", BaseDomain: "localhost",
+	}
 	taskPayload := func(integrationID string) []byte {
 		payload, _ := json.Marshal(DeliveryTask{
 			OutboxEventID: outboxID, TenantID: tenantIDs["acme"],
@@ -245,7 +260,11 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		t.Fatalf("deliver webhook: %v", err)
 	}
 	if requestCount != 1 || deliveredHeaders.Get("Authorization") != "Bearer stored-secret" ||
-		!strings.Contains(string(deliveredBody), `"event":"feedback.created"`) {
+		!strings.Contains(string(deliveredBody), `"event":"feedback.created"`) ||
+		!strings.Contains(string(deliveredBody), `"schema_version":"1.0"`) ||
+		!strings.Contains(string(deliveredBody), `"name":"Acme web"`) ||
+		!strings.Contains(string(deliveredBody), `"count":1`) ||
+		!strings.Contains(string(deliveredBody), `http://acme.localhost/feedback/`+feedbackID) {
 		t.Fatalf("webhook requests = %d, headers = %#v, body = %s", requestCount, deliveredHeaders, deliveredBody)
 	}
 	mac := hmac.New(sha256.New, []byte(created.WebhookSecret))
@@ -262,7 +281,10 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, taskPayload(slackID))); err != nil {
 		t.Fatalf("deliver Slack: %v", err)
 	}
-	if !strings.Contains(string(slackBody), `"blocks"`) || !strings.Contains(string(slackBody), "fb_Intg0001") {
+	if !strings.Contains(string(slackBody), `"blocks"`) ||
+		!strings.Contains(string(slackBody), "fb_Intg0001") ||
+		!strings.Contains(string(slackBody), `"type":"actions"`) ||
+		!strings.Contains(string(slackBody), "View attachments") {
 		t.Errorf("Slack body = %s", slackBody)
 	}
 	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, taskPayload(failingID))); err == nil {
@@ -277,6 +299,80 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	}
 	if sentCount != 2 || failedCount != 1 {
 		t.Errorf("delivery log counts = sent %d failed %d", sentCount, failedCount)
+	}
+
+	var actorID, updateID, issueOutboxID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, name)
+		VALUES ($1, 'alex@example.test', 'Alex Morgan') RETURNING id
+	`, tenantIDs["acme"]).Scan(&actorID); err != nil {
+		t.Fatalf("create integration actor: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issue_updates (
+			tenant_id, issue_id, member_id, old_status, new_status, comment
+		) VALUES ($1, $2, $3, 'open', 'in_progress', 'Investigating payment validation')
+		RETURNING id
+	`, tenantIDs["acme"], issueID, actorID).Scan(&updateID); err != nil {
+		t.Fatalf("create issue integration update: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issues SET status = 'in_progress', priority = 'urgent' WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("update rich issue integration fixture: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO issue_activities (
+			tenant_id, issue_id, actor_member_id, kind, data
+		) VALUES ($1, $2, $3, 'issue.status_changed', jsonb_build_object(
+			'legacy_update_id', $4::text,
+			'transition_comment', 'Investigating payment validation',
+			'changes', jsonb_build_object(
+				'status', jsonb_build_object('from', 'open', 'to', 'in_progress'),
+				'priority', jsonb_build_object('from', null, 'to', 'urgent')
+			)
+		))
+	`, tenantIDs["acme"], issueID, actorID, updateID); err != nil {
+		t.Fatalf("create rich issue integration activity: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE integrations SET events = array_append(events, 'issue.updated'::event_type)
+		WHERE id = $1 AND NOT ('issue.updated'::event_type = ANY(events))
+	`, slackID); err != nil {
+		t.Fatalf("subscribe Slack fixture to issue updates: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key)
+		VALUES ($1, 'issue.updated', 'issue', $2, $3) RETURNING id
+	`, tenantIDs["acme"], issueID, updateID).Scan(&issueOutboxID); err != nil {
+		t.Fatalf("create issue integration outbox: %v", err)
+	}
+	issueTaskPayload := func(integrationID string) []byte {
+		payload, _ := json.Marshal(DeliveryTask{
+			OutboxEventID: issueOutboxID, TenantID: tenantIDs["acme"],
+			ResourceID: issueID, IntegrationID: integrationID,
+		})
+		return payload
+	}
+	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, issueTaskPayload(created.Integration.ID))); err != nil {
+		t.Fatalf("deliver rich issue webhook: %v", err)
+	}
+	if requestCount != 2 || !strings.Contains(string(deliveredBody), `"name":"Alex Morgan"`) ||
+		!strings.Contains(string(deliveredBody), `"comment":"Investigating payment validation"`) ||
+		!strings.Contains(string(deliveredBody), `"status":{"from":"open","to":"in_progress"}`) ||
+		!strings.Contains(string(deliveredBody), `http://acme.localhost/issues/`+issueID) {
+		t.Fatalf("rich issue webhook requests = %d, body = %s", requestCount, deliveredBody)
+	}
+	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, issueTaskPayload(slackID))); err != nil {
+		t.Fatalf("deliver rich issue Slack message: %v", err)
+	}
+	if !strings.Contains(string(slackBody), "Alex Morgan") ||
+		!strings.Contains(string(slackBody), `open -\u0026gt; in progress`) ||
+		!strings.Contains(string(slackBody), "Investigating payment validation") ||
+		!strings.Contains(string(slackBody), `4/5`) ||
+		!strings.Contains(string(slackBody), `checkout`) ||
+		!strings.Contains(string(slackBody), "Open issue") {
+		t.Errorf("rich issue Slack body = %s", slackBody)
 	}
 
 	deniedDelete := integrationRequest(handler, "acme", http.MethodDelete,

@@ -449,20 +449,21 @@ func (store Store) CreateFromFeedback(
 		return Issue{}, ErrFeedbackLinked
 	}
 	actorID := actorMemberID
-	if _, err := activity.Record(ctx, query, activity.RecordInput{
+	activityID, err := activity.Record(ctx, query, activity.RecordInput{
 		TenantID: tenantID, IssueID: createdID, ActorMemberID: &actorID,
 		Kind: "issue.created", Data: map[string]any{
 			"feedback_ids": input.FeedbackIDs,
 			"title":        input.Title,
 			"description":  input.Description,
 		}, CreatedAt: now,
-	}); err != nil {
+	})
+	if err != nil {
 		return Issue{}, err
 	}
 	if _, err := query.Exec(ctx, `
-		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
-		VALUES ($1, 'issue.created', 'issue', $2)
-	`, tenantID, createdID); err != nil {
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key)
+		VALUES ($1, 'issue.created', 'issue', $2, $3)
+	`, tenantID, createdID, activityID); err != nil {
 		return Issue{}, fmt.Errorf("create issue outbox event: %w", err)
 	}
 	return store.Get(ctx, query, tenantID, createdID)
