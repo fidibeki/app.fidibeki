@@ -353,6 +353,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"trigger_type":"delay",`+
 			`"trigger_delay_seconds":3,"can_record_audio":true,"can_attach_screenshot":true,`+
 			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session",`+
+			`"replay_record_canvas":true,"replay_canvas_fps":3,`+
 			`"definition_key":"checkout-reaction","definition_status":"active",`+
 			`"presentation":"reaction","objective":"after_engagement",`+
 			`"response_blocks":[{"key":"reaction","type":"reaction","required":true,`+
@@ -373,6 +374,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(updatedRule.Body.String(), `"definition_version":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"presentation":"reaction"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"replay_record_canvas":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"replay_canvas_fps":3`) ||
 		!strings.Contains(updatedRule.Body.String(), `"appearance_overrides":{"logo_url":""}`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
 	}
@@ -401,6 +404,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		publicConfiguration.Rules[0].DefinitionKey != "checkout-reaction" ||
 		publicConfiguration.Rules[0].DefinitionVersion != 2 ||
 		publicConfiguration.Rules[0].Presentation != PresentationReaction ||
+		!publicConfiguration.Rules[0].ReplayRecordCanvas ||
+		publicConfiguration.Rules[0].ReplayCanvasFPS != 3 ||
 		publicConfiguration.Rules[0].Position != PositionBottomRight ||
 		publicConfiguration.Rules[0].Theme != ThemeDark ||
 		publicConfiguration.Rules[0].AccentColor == nil || *publicConfiguration.Rules[0].AccentColor != "#005f56" ||

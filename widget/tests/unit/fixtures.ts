@@ -26,6 +26,8 @@ export function rule(overrides: Partial<WidgetRule> = {}): WidgetRule {
     replay_max_events: 50000,
     replay_mask_all_inputs: true,
     replay_mask_text_selector: null,
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
     recurrence_mode: 'cooldown',
     recurrence_days: 30,
     ...overrides,

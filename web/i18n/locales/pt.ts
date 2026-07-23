@@ -816,6 +816,12 @@ export const portugueseMessages = {
         maxEvents: 'Eventos máximos',
         maskAllInputs: 'Mascarar todos os valores introduzidos',
         maskSelector: 'Seletor adicional de máscara de texto',
+        captureCanvas: 'Capturar conteúdo de canvas',
+        captureCanvasHint: 'Grava pixels Canvas 2D e WebGL suportados a uma frequência limitada.',
+        canvasFPS: 'Frequência de captura do canvas',
+        canvasFPSOption: '{fps} FPS',
+        canvasPrivacyTitle: 'Os pixels do canvas podem conter informação sensível.',
+        canvasPrivacyDescription: 'Adicione data-fidibeki-block ao canvas ou a um elemento ascendente para o excluir do replay.',
       },
     },
     preview: {

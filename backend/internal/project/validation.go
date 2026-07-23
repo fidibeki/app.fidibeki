@@ -135,6 +135,8 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		ReplayMaxEvents:          input.ReplayMaxEvents,
 		ReplayMaskAllInputs:      valueOr(input.ReplayMaskAllInputs, true),
 		ReplayMaskTextSelector:   trimOptional(input.ReplayMaskTextSelector),
+		ReplayRecordCanvas:       input.ReplayRecordCanvas,
+		ReplayCanvasFPS:          input.ReplayCanvasFPS,
 		RecurrenceMode:           input.RecurrenceMode,
 		RecurrenceDays:           input.RecurrenceDays,
 		IncludeConditions:        normalizeTargetConditions(input.IncludeConditions),
@@ -177,6 +179,9 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	}
 	if values.ReplayMaxEvents == 0 {
 		values.ReplayMaxEvents = 50000
+	}
+	if values.ReplayCanvasFPS == 0 {
+		values.ReplayCanvasFPS = 2
 	}
 	if values.RecurrenceMode == "" {
 		values.RecurrenceMode = RecurrenceCooldown
@@ -484,6 +489,9 @@ func validateReplay(values WidgetRuleValues, fields FieldErrors) {
 	}
 	if values.ReplayMaxEvents < 1 || values.ReplayMaxEvents > MaximumReplayEvents {
 		fields["replay_max_events"] = "must be between 1 and 50000"
+	}
+	if values.ReplayCanvasFPS < 1 || values.ReplayCanvasFPS > 5 {
+		fields["replay_canvas_fps"] = "must be between 1 and 5"
 	}
 }
 

@@ -816,6 +816,12 @@ export const englishMessages = {
         maxEvents: 'Max events',
         maskAllInputs: 'Mask all input values',
         maskSelector: 'Additional text mask selector',
+        captureCanvas: 'Capture canvas content',
+        captureCanvasHint: 'Records supported Canvas 2D and WebGL pixels at a bounded rate.',
+        canvasFPS: 'Canvas capture rate',
+        canvasFPSOption: '{fps} FPS',
+        canvasPrivacyTitle: 'Canvas pixels may contain sensitive information.',
+        canvasPrivacyDescription: 'Add data-fidibeki-block to a canvas or an ancestor to exclude it from replay.',
       },
     },
     preview: {

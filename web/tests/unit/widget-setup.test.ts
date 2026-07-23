@@ -13,6 +13,8 @@ describe('widget setup helpers', () => {
       can_record_audio: false,
       can_record_video: false,
       replay_mode: 'none',
+      replay_record_canvas: false,
+      replay_canvas_fps: 2,
       recurrence_mode: 'cooldown',
       recurrence_days: 30,
       definition_status: 'draft',

@@ -69,6 +69,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     session.max_duration_seconds,
     options.rule.replay_max_duration_seconds,
   )
+  const recordCanvas = options.rule.replay_record_canvas
 
   const enqueueBatch = () => {
     if (serializedEvents.length === 0) return
@@ -105,7 +106,8 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 			: {}),
     blockSelector: '[data-fidibeki-block]',
     slimDOMOptions: true,
-    recordCanvas: false,
+    recordCanvas,
+    ...(recordCanvas ? { sampling: { canvas: options.rule.replay_canvas_fps } } : {}),
     inlineImages: false,
     collectFonts: false,
     errorHandler: (error) => options.onError?.(error),

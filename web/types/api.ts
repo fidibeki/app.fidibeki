@@ -211,6 +211,8 @@ export interface WidgetRule {
   replay_max_events: number
   replay_mask_all_inputs: boolean
   replay_mask_text_selector?: string | null
+  replay_record_canvas: boolean
+  replay_canvas_fps: number
   recurrence_mode: RecurrenceMode
   recurrence_days?: number | null
   definition_key: string

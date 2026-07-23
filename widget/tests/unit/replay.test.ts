@@ -71,6 +71,7 @@ describe('rrweb replay capture', () => {
       maskAllInputs: true, maskTextSelector: '.private', blockSelector: '[data-fidibeki-block]',
       recordCanvas: false, inlineImages: false, collectFonts: false,
     })
+    expect(options?.sampling).toBeUndefined()
     const emit = options?.emit as ((event: unknown) => void)
     for (let index = 0; index < 51; index++) emit({ type: 3, timestamp: index, data: { index } })
     window.dispatchEvent(new Event('fidibeki:navigation'))
@@ -89,6 +90,37 @@ describe('rrweb replay capture', () => {
     expect(declarations.map(({ init }) => JSON.parse(String(init.body)).events_count)).toEqual([50, 1])
     expect(requests.filter(({ url }) => url.startsWith('https://storage.example/'))).toHaveLength(2)
 		expect(requests[requests.length - 1]?.url).toContain('/finalize?key=pk_live_test')
+  })
+
+  it('records canvas frames only after explicit opt-in and uses the configured FPS', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({
+          id: 'canvas-session', rrweb_version: '2.1.1',
+          max_duration_seconds: 1800, max_events: 50000,
+        }, 201)
+      }
+      throw new Error(`unexpected request ${url}`)
+    }))
+
+    const onError = vi.fn()
+    const capture = await startReplayCapture({
+      rule: replayRule({ replay_record_canvas: true, replay_canvas_fps: 3 }),
+      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      onError,
+    })
+
+    const recordOptions = recordMock.mock.calls[0]?.[0]
+    expect(recordOptions).toMatchObject({
+      recordCanvas: true,
+      sampling: { canvas: 3 },
+      blockSelector: '[data-fidibeki-block]',
+    })
+    const canvasError = new Error('canvas capture is unavailable')
+    recordOptions?.errorHandler?.(canvasError)
+    expect(onError).toHaveBeenCalledWith(canvasError)
+    await capture?.stop()
   })
 
   it('uploads active replay events before the browser lifecycle ends', async () => {
@@ -180,6 +212,7 @@ function replayRule(overrides: Partial<ReturnType<typeof rule>> = {}) {
     replay_mode: 'full', replay_sampling_rate: 0,
     replay_max_duration_seconds: 1800, replay_max_events: 50000,
     replay_mask_all_inputs: true, replay_mask_text_selector: null,
+    replay_record_canvas: false, replay_canvas_fps: 2,
     ...overrides,
   })
 }

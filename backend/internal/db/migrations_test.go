@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 72
+	const latestMigrationVersion = 73
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1794,6 +1794,30 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if preservedIssueID != issueA || recurrenceMode != "cooldown" ||
 		recurrenceDays == nil || *recurrenceDays != 30 {
 		t.Fatalf("state after recurrence replay = issue %q recurrence %q/%v", preservedIssueID, recurrenceMode, recurrenceDays)
+	}
+
+	if err := migrateToVersion(migrator, 72); err != nil {
+		t.Fatalf("roll back canvas replay policy migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply canvas replay policy migration: %v", err)
+	}
+	var replayRecordCanvas bool
+	var replayCanvasFPS int
+	if err := root.QueryRow(ctx, `
+		SELECT replay_record_canvas, replay_canvas_fps
+		FROM widget_rules
+		WHERE id = $1
+	`, widgetRuleA).Scan(&replayRecordCanvas, &replayCanvasFPS); err != nil {
+		t.Fatalf("read backfilled canvas replay policy: %v", err)
+	}
+	if replayRecordCanvas || replayCanvasFPS != 2 {
+		t.Fatalf("backfilled canvas replay policy = %t/%d, want false/2", replayRecordCanvas, replayCanvasFPS)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_canvas_fps = 6 WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("canvas replay FPS constraint accepted value above 5")
 	}
 
 	if err := migrateToVersion(migrator, 44); err != nil {

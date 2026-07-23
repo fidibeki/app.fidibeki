@@ -12,6 +12,7 @@ const browserRule: WidgetRule = {
   accent_color: '#147d64', replay_mode: 'sampling', replay_sampling_rate: 100,
   replay_max_duration_seconds: 1800, replay_max_events: 50000,
   replay_mask_all_inputs: true, replay_mask_text_selector: null,
+  replay_record_canvas: false, replay_canvas_fps: 2,
   recurrence_mode: 'cooldown', recurrence_days: 30,
   localizations: {
     en: {
@@ -707,6 +708,131 @@ test('dismissal records explicit close without manufacturing interaction', async
   await expect.poll(() => events).toEqual(['matched', 'impression'])
   await page.getByRole('button', { name: 'Close feedback' }).click()
   await expect.poll(() => events).toEqual(['matched', 'impression', 'dismissed'])
+})
+
+test('canvas replay captures bounded frames, excludes blocked pixels, and keeps the host responsive', async ({ page }) => {
+  const replayRule: WidgetRule = {
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+    replay_record_canvas: true,
+    replay_canvas_fps: 2,
+  }
+  const baseConfiguration = browserConfiguration(replayRule)
+  const configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+  const uploadedBatches: Array<{ bytes: number, events: unknown[] }> = []
+  let batchIndex = 0
+  let finalized = false
+
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const article = document.querySelector('article')
+      if (!article) return
+      const included = document.createElement('canvas')
+      included.id = 'included-replay-canvas'
+      included.width = 80
+      included.height = 40
+      article.append(included)
+
+      const blocked = document.createElement('div')
+      blocked.dataset.fidibekiBlock = ''
+      const sensitive = document.createElement('canvas')
+      sensitive.id = 'blocked-replay-canvas'
+      sensitive.width = 80
+      sensitive.height = 40
+      blocked.append(sensitive)
+      article.append(blocked)
+
+      const includedContext = included.getContext('2d')
+      const sensitiveContext = sensitive.getContext('2d')
+      const stats = { frames: 0, maxGap: 0, previous: 0 }
+      Object.assign(window, { __fidibekiCanvasStats: stats })
+      const draw = (now: number) => {
+        if (stats.previous > 0) stats.maxGap = Math.max(stats.maxGap, now - stats.previous)
+        stats.previous = now
+        stats.frames++
+        includedContext!.fillStyle = stats.frames % 2 === 0 ? '#e53935' : '#147d64'
+        includedContext!.fillRect(0, 0, included.width, included.height)
+        sensitiveContext!.fillStyle = '#ff00ff'
+        sensitiveContext!.fillRect(0, 0, sensitive.width, sensitive.height)
+        requestAnimationFrame(draw)
+      }
+      requestAnimationFrame(draw)
+    }, { once: true })
+  })
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/replay/sessions?*', route => route.fulfill({
+    status: 201,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      id: 'canvas-session', session_id: 'canvas-session', rrweb_version: '2.1.1',
+      max_duration_seconds: 1800, max_events: 50000,
+    }),
+  }))
+  await page.route('**/v1/replay/sessions/canvas-session/batches?*', async (route) => {
+    const request = route.request().postDataJSON() as { batch_index: number }
+    batchIndex = request.batch_index
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        presigned_url: `http://127.0.0.1:4173/canvas-upload/${batchIndex}`,
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        complete_token: `canvas-token-${batchIndex}`,
+      }),
+    })
+  })
+  await page.route('**/canvas-upload/*', async (route) => {
+    const body = route.request().postDataBuffer()
+    if (!body) throw new Error('canvas replay upload did not contain a body')
+    uploadedBatches.push({ bytes: body.byteLength, events: JSON.parse(body.toString()) as unknown[] })
+    await route.fulfill({ status: 200 })
+  })
+  await page.route('**/v1/replay/sessions/canvas-session/batches/*/complete?*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/replay/sessions/canvas-session/finalize?*', (route) => {
+    finalized = true
+    return route.fulfill({ status: 202, contentType: 'application/json', body: '{}' })
+  })
+
+  await page.goto('/sample.html')
+  await expect.poll(async () => page.evaluate(() =>
+    (window as typeof window & { __fidibekiCanvasStats?: { frames: number } }).__fidibekiCanvasStats?.frames || 0,
+  )).toBeGreaterThan(20)
+  await page.waitForTimeout(2_200)
+  const performance = await page.evaluate(() =>
+    (window as typeof window & {
+      __fidibekiCanvasStats: { frames: number, maxGap: number }
+    }).__fidibekiCanvasStats,
+  )
+  expect(performance.frames).toBeGreaterThan(40)
+  expect(performance.maxGap).toBeLessThan(500)
+
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+  await expect.poll(() => uploadedBatches.length).toBeGreaterThan(0)
+  await expect.poll(() => finalized).toBe(true)
+
+  const events = uploadedBatches.flatMap(batch => batch.events) as Array<{
+    type?: number
+    data?: { source?: number, id?: number }
+  }>
+  const serialized = JSON.stringify(events)
+  const canvasMutations = events.filter(event => event.type === 3 && event.data?.source === 9)
+  expect(serialized).toContain('included-replay-canvas')
+  expect(serialized).toContain('rr_dataURL')
+  expect(serialized).not.toContain('blocked-replay-canvas')
+  expect(canvasMutations.length).toBeGreaterThan(0)
+  expect(canvasMutations.length).toBeLessThanOrEqual(8)
+  expect(canvasMutations.every(event => Number.isInteger(event.data?.id))).toBe(true)
+  expect(new Set(canvasMutations.map(event => event.data?.id)).size).toBe(1)
+  expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
+  expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(1024 * 1024)
 })
 
 test('failed submission can be dismissed but accepted submission cannot', async ({ page }) => {

@@ -183,15 +183,16 @@ func (Store) CreateWidgetRule(
 			can_attach_element, can_attach_screenshot, greeting, position, theme,
 			accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
 			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
+			replay_record_canvas, replay_canvas_fps,
 			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
 			response_blocks, localizations, allow_comment, collect_contact,
 			widget_appearance_overrides
 		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-			       $27, $28,
-			       COALESCE(NULLIF($29, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
-			       $30, $31, $32, $33::jsonb, $34::jsonb, $35, $36, $37::jsonb
+			       $27, $28, $29, $30,
+			       COALESCE(NULLIF($31, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+			       $32, $33, $34, $35::jsonb, $36::jsonb, $37, $38, $39::jsonb
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -292,15 +293,16 @@ func (Store) UpdateWidgetRule(
 			position = $19, theme = $20, accent_color = $21, replay_mode = $22,
 				replay_sampling_rate = $23, replay_max_duration_seconds = $24,
 				replay_max_events = $25, replay_mask_all_inputs = $26, replay_mask_text_selector = $27,
-				recurrence_mode = $28, recurrence_days = $29,
-				definition_key = COALESCE(NULLIF($30, ''), rule.definition_key),
+				replay_record_canvas = $28, replay_canvas_fps = $29,
+				recurrence_mode = $30, recurrence_days = $31,
+				definition_key = COALESCE(NULLIF($32, ''), rule.definition_key),
 				definition_version = rule.definition_version + 1,
-				definition_status = $31, presentation = $32, objective = $33,
-				response_blocks = $34::jsonb, localizations = $35::jsonb,
-				allow_comment = $36, collect_contact = $37,
+				definition_status = $33, presentation = $34, objective = $35,
+				response_blocks = $36::jsonb, localizations = $37::jsonb,
+				allow_comment = $38, collect_contact = $39,
 				widget_appearance_overrides = CASE
-					WHEN $39 THEN $38::jsonb
-					ELSE rule.widget_appearance_overrides || $38::jsonb
+					WHEN $41 THEN $40::jsonb
+					ELSE rule.widget_appearance_overrides || $40::jsonb
 				END
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
@@ -545,7 +547,8 @@ const widgetRuleColumns = `
 	can_rate, can_write_text, can_record_audio, can_record_video,
 	can_attach_element, can_attach_screenshot, greeting, position, theme, accent_color,
 		replay_mode, replay_sampling_rate, replay_max_duration_seconds, replay_max_events,
-		replay_mask_all_inputs, replay_mask_text_selector, recurrence_mode, recurrence_days,
+		replay_mask_all_inputs, replay_mask_text_selector, replay_record_canvas, replay_canvas_fps,
+		recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
 		response_blocks, localizations, allow_comment, collect_contact,
 		widget_appearance_overrides,
@@ -558,7 +561,8 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"can_record_audio", "can_record_video", "can_attach_element", "can_attach_screenshot", "greeting",
 		"position", "theme", "accent_color", "replay_mode", "replay_sampling_rate",
 		"replay_max_duration_seconds", "replay_max_events", "replay_mask_all_inputs",
-		"replay_mask_text_selector", "recurrence_mode", "recurrence_days",
+		"replay_mask_text_selector", "replay_record_canvas", "replay_canvas_fps",
+		"recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
 		"response_blocks", "localizations", "allow_comment", "collect_contact",
 		"widget_appearance_overrides",
@@ -609,7 +613,8 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		values.CanAttachElement, values.CanAttachScreenshot, values.Greeting, values.Position,
 		values.Theme, values.AccentColor, values.ReplayMode, values.ReplaySamplingRate,
 		values.ReplayMaxDurationSeconds, values.ReplayMaxEvents, values.ReplayMaskAllInputs,
-		values.ReplayMaskTextSelector, values.RecurrenceMode, values.RecurrenceDays,
+		values.ReplayMaskTextSelector, values.ReplayRecordCanvas, values.ReplayCanvasFPS,
+		values.RecurrenceMode, values.RecurrenceDays,
 		values.DefinitionKey, values.DefinitionStatus, values.Presentation, values.Objective,
 		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
 		string(appearance),
@@ -644,7 +649,8 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.CanRecordVideo, &rule.CanAttachElement, &rule.CanAttachScreenshot, &rule.Greeting,
 		&rule.Position, &rule.Theme, &rule.AccentColor, &rule.ReplayMode, &rule.ReplaySamplingRate,
 		&rule.ReplayMaxDurationSeconds, &rule.ReplayMaxEvents, &rule.ReplayMaskAllInputs,
-		&rule.ReplayMaskTextSelector, &rule.RecurrenceMode, &rule.RecurrenceDays,
+		&rule.ReplayMaskTextSelector, &rule.ReplayRecordCanvas, &rule.ReplayCanvasFPS,
+		&rule.RecurrenceMode, &rule.RecurrenceDays,
 		&rule.DefinitionKey, &rule.DefinitionVersion, &rule.DefinitionStatus,
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
 		&rule.AllowComment, &rule.CollectContact,

@@ -302,6 +302,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			events: rule.replay_max_events,
 			maskInputs: rule.replay_mask_all_inputs,
 			maskText: rule.replay_mask_text_selector,
+			recordCanvas: rule.replay_record_canvas,
+			canvasFPS: rule.replay_canvas_fps,
 		}) : ''
 		if (fingerprint === replayFingerprint) return
 		const transition = ++replayTransition

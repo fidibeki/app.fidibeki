@@ -153,6 +153,8 @@ test('pseudo-locale product surfaces remain responsive and preserve customer con
     replay_max_events: 50_000,
     replay_mask_all_inputs: true,
     replay_mask_text_selector: '.private',
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
     recurrence_mode: 'cooldown',
     recurrence_days: 30,
     definition_key: 'checkout-pulse',

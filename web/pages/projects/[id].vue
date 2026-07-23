@@ -311,6 +311,8 @@ function selectRule(rule: WidgetRule) {
     replay_max_duration_seconds: rule.replay_max_duration_seconds,
     replay_max_events: rule.replay_max_events, replay_mask_all_inputs: rule.replay_mask_all_inputs,
     replay_mask_text_selector: rule.replay_mask_text_selector ?? null,
+    replay_record_canvas: rule.replay_record_canvas ?? false,
+    replay_canvas_fps: rule.replay_canvas_fps || 2,
     recurrence_mode: rule.recurrence_mode || 'cooldown',
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
     definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
@@ -354,6 +356,7 @@ function normalizedRule(): WidgetRuleInput {
     accent_color: ruleForm.accent_color?.trim() || null,
     replay_sampling_rate: ruleForm.replay_mode === 'sampling' ? Number(ruleForm.replay_sampling_rate || 1) : 0,
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
+    replay_canvas_fps: Number(ruleForm.replay_canvas_fps || 2),
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
     definition_key: ruleForm.definition_key.trim().toLowerCase(),
     definition_status: ruleForm.definition_status,
@@ -959,6 +962,21 @@ useHead(() => ({
                   <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
                   <small v-if="ruleFieldError('replay_mask_text_selector')" :id="ruleErrorID('replay_mask_text_selector')" class="rule-field-error">{{ ruleFieldError('replay_mask_text_selector') }}</small>
                 </label>
+                <label class="project-toggle wide">
+                  <input v-model="ruleForm.replay_record_canvas" type="checkbox" :disabled="ruleForm.replay_mode === 'none'" />
+                  <span><b>{{ t('projects.editor.replay.captureCanvas') }}</b><small>{{ t('projects.editor.replay.captureCanvasHint') }}</small></span>
+                </label>
+                <label v-if="ruleForm.replay_record_canvas">
+                  {{ t('projects.editor.replay.canvasFPS') }}
+                  <select v-model.number="ruleForm.replay_canvas_fps" class="app-select" :disabled="ruleForm.replay_mode === 'none'" v-bind="ruleFieldAttributes('replay_canvas_fps')">
+                    <option v-for="fps in 5" :key="fps" :value="fps">{{ t('projects.editor.replay.canvasFPSOption', { fps }) }}</option>
+                  </select>
+                  <small v-if="ruleFieldError('replay_canvas_fps')" :id="ruleErrorID('replay_canvas_fps')" class="rule-field-error">{{ ruleFieldError('replay_canvas_fps') }}</small>
+                </label>
+                <div v-if="ruleForm.replay_record_canvas" class="replay-privacy-note wide" role="note">
+                  <AlertTriangle :size="16" aria-hidden="true" />
+                  <p><b>{{ t('projects.editor.replay.canvasPrivacyTitle') }}</b><span>{{ t('projects.editor.replay.canvasPrivacyDescription') }}</span></p>
+                </div>
               </div>
             </section>
             </fieldset>
@@ -1060,6 +1078,13 @@ useHead(() => ({
 .project-rule-editor :is(input, select, textarea, [tabindex])[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
 .rule-field-error { grid-column: 1 / -1; color: var(--red) !important; font-size: 8px !important; font-weight: 650 !important; line-height: 1.4; }
 .project-toggle { align-items: center; justify-content: flex-start; flex-direction: row !important; gap: 8px !important; min-height: 38px; padding-top: 17px; color: var(--ink-soft) !important; }
+.project-toggle span { display: grid; gap: 2px; }
+.project-toggle span b { color: var(--ink); font-size: 10px; }
+.project-toggle span small { color: var(--muted); font-size: 9px; font-weight: 500; line-height: 1.4; }
+.replay-privacy-note { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); color: var(--muted); }
+.replay-privacy-note svg { margin-top: 1px; color: var(--amber); }
+.replay-privacy-note p { display: grid; gap: 3px; margin: 0; font-size: 9px; line-height: 1.5; }
+.replay-privacy-note b { color: var(--ink-soft); }
 .project-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .project-capability-grid label { display: flex; min-height: 58px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; }
 .project-capability-grid label[data-locked='true'] { background: #f7f8f8; opacity: .65; }

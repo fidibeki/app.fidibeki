@@ -87,6 +87,8 @@ var workspaceExportFiles = []exportFile{
 			'replay_max_events', rule.replay_max_events,
 			'replay_mask_all_inputs', rule.replay_mask_all_inputs,
 			'replay_mask_text_selector', rule.replay_mask_text_selector,
+			'replay_record_canvas', rule.replay_record_canvas,
+			'replay_canvas_fps', rule.replay_canvas_fps,
 			'recurrence_mode', rule.recurrence_mode, 'recurrence_days', rule.recurrence_days,
 			'response_blocks', rule.response_blocks, 'localizations', rule.localizations,
 			'widget_appearance_overrides', rule.widget_appearance_overrides,

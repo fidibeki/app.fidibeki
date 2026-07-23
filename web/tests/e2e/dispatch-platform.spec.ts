@@ -128,6 +128,8 @@ function createMockState() {
     replay_max_events: 50000,
     replay_mask_all_inputs: true,
     replay_mask_text_selector: '.private',
+    replay_record_canvas: false,
+    replay_canvas_fps: 2,
     recurrence_mode: 'cooldown' as 'cooldown' | 'session' | 'never',
     recurrence_days: 30 as number | null,
     appearance_overrides: {
@@ -534,6 +536,17 @@ const replayEvents = [
               attributes: {},
               id: 8,
               childNodes: [{ type: 3, textContent: 'Review your order', id: 9 }],
+            }, {
+              type: 2,
+              tagName: 'canvas',
+              attributes: {
+                id: 'replay-canvas',
+                width: '4',
+                height: '4',
+                rr_dataURL: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224%22 height=%224%22%3E%3Crect width=%224%22 height=%224%22 fill=%22%23e53935%22/%3E%3C/svg%3E',
+              },
+              id: 10,
+              childNodes: [],
             }],
           }],
         }],
@@ -2023,6 +2036,32 @@ test('widget appearance controls fit the mobile editor', async ({ page }, testIn
   await capture(page, testInfo, 'widget-appearance-mobile')
 })
 
+test('widget canvas replay is explicit, bounded, and explains the privacy exclusion', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const captureCanvas = page.getByRole('checkbox', { name: /Capture canvas content/ })
+  await expect(captureCanvas).toBeEnabled()
+  await expect(captureCanvas).not.toBeChecked()
+  await expect(page.getByLabel('Canvas capture rate')).toHaveCount(0)
+
+  await captureCanvas.check()
+  await page.getByLabel('Canvas capture rate').selectOption('3')
+  await expect(page.getByRole('note')).toContainText('Canvas pixels may contain sensitive information.')
+  await expect(page.getByRole('note')).toContainText('data-fidibeki-block')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0]).toMatchObject({
+    replay_record_canvas: true,
+    replay_canvas_fps: 3,
+  })
+  await page.getByRole('note').scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `widget-canvas-policy-${testInfo.project.name}`)
+})
+
 test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)
@@ -2579,6 +2618,26 @@ test('session replay fits its surface across responsive viewports', async ({ pag
     expect(geometry!.controllerRight, `${viewport.width}px controls right edge`).toBeLessThanOrEqual(geometry!.targetRight + 1)
     expect(geometry!.frameRatio, `${viewport.width}px recorded aspect ratio`).toBeCloseTo(16 / 9, 1)
   }
+})
+
+test('session replay renders captured canvas pixels inside the backoffice player', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Canvas replay rendering is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await page.getByTitle('Open full detail').click()
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
+  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Play or pause replay' })).toBeVisible()
+
+  const replayFrame = page.locator('.rr-player__frame iframe').contentFrame()
+  const canvas = replayFrame.locator('#replay-canvas')
+  await expect(canvas).toBeAttached()
+  await expect.poll(async () => canvas.evaluate((element) => {
+    const context = (element as HTMLCanvasElement).getContext('2d')
+    const pixel = context?.getImageData(0, 0, 1, 1).data
+    return pixel ? { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] } : null
+  })).toMatchObject({ red: 229, green: 57, blue: 53, alpha: 255 })
 })
 
 test('replay fullscreen fills the viewport, preserves aspect ratio, and exits via Escape and the control', async ({ page }, testInfo) => {

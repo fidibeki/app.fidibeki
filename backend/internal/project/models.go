@@ -184,6 +184,8 @@ type WidgetRule struct {
 	ReplayMaxEvents          int                              `json:"replay_max_events"`
 	ReplayMaskAllInputs      bool                             `json:"replay_mask_all_inputs"`
 	ReplayMaskTextSelector   *string                          `json:"replay_mask_text_selector"`
+	ReplayRecordCanvas       bool                             `json:"replay_record_canvas"`
+	ReplayCanvasFPS          int                              `json:"replay_canvas_fps"`
 	RecurrenceMode           RecurrenceMode                   `json:"recurrence_mode"`
 	RecurrenceDays           *int                             `json:"recurrence_days"`
 	DefinitionKey            string                           `json:"definition_key"`
@@ -228,6 +230,8 @@ type WidgetRuleInput struct {
 	ReplayMaxEvents          int                               `json:"replay_max_events"`
 	ReplayMaskAllInputs      *bool                             `json:"replay_mask_all_inputs"`
 	ReplayMaskTextSelector   *string                           `json:"replay_mask_text_selector"`
+	ReplayRecordCanvas       bool                              `json:"replay_record_canvas"`
+	ReplayCanvasFPS          int                               `json:"replay_canvas_fps"`
 	RecurrenceMode           RecurrenceMode                    `json:"recurrence_mode"`
 	RecurrenceDays           *int                              `json:"recurrence_days"`
 	DefinitionKey            string                            `json:"definition_key"`
@@ -269,6 +273,8 @@ type WidgetRuleValues struct {
 	ReplayMaxEvents          int
 	ReplayMaskAllInputs      bool
 	ReplayMaskTextSelector   *string
+	ReplayRecordCanvas       bool
+	ReplayCanvasFPS          int
 	RecurrenceMode           RecurrenceMode
 	RecurrenceDays           *int
 	DefinitionKey            string

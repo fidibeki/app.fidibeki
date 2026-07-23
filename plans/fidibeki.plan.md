@@ -461,6 +461,15 @@ was removed from the staging test tenant.
     - Feedback metadata stores the resolved active locale. Legacy customer copy remains compatible
       while Fidibeki system copy follows supported page languages.
     - Widget unit (124), typecheck, build, and all 38 browser journeys pass locally.
+  - [x] Complete replay correctness issues #33 and #41.
+    - Fullscreen state now follows the browser Fullscreen API, preserves the recorded aspect ratio,
+      keeps controls available, restores inline geometry, and survives repeated enter/exit cycles.
+    - Canvas recording is an explicit per-rule opt-in with a validated 1-5 FPS bound, defaults off,
+      and retains the existing `data-fidibeki-block` privacy exclusion plus all replay resource
+      limits. Localized configuration explains the pixel risk and exclusion contract.
+    - Migration replay, full backend tests/vet, web unit/type/build and responsive browser coverage,
+      widget unit/type/build, all 39 widget browser journeys, continuously changing canvas
+      performance/volume checks, and backoffice pixel reconstruction pass locally.
   - [x] Complete shared transient notification and destructive confirmation issues #34 and #35.
     - Workspace appearance success uses one global accessible toast without resizing the owning
       form or stacking repeated saves.

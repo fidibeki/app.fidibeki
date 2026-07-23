@@ -679,13 +679,25 @@ and all 38 browser journeys pass.
 ## Task 39: Add Explicit Canvas Replay Policy
 
 **Depends on:** Task 34
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Complete issue #41 with opt-in canvas recording, privacy exclusions, bounded resource
 use, and faithful playback.
 
 **Acceptance:** Configuration, API/runtime projection, rrweb events, playback, failure behavior,
 privacy guidance, performance measurement, and automated coverage pass.
+
+**Design:** `docs/superpowers/specs/2026-07-23-canvas-replay-policy-design.md`
+
+**Evidence:** Migration 73 and the project/public widget contracts default canvas capture off and
+bound explicit capture to 1-5 FPS. The widget projects that policy to rrweb, retains the
+`data-fidibeki-block` exclusion, forwards capture errors, and keeps the existing duration, event,
+batch, and storage limits. Real browser coverage records one continuously changing canvas while
+excluding a second blocked canvas, measures host responsiveness and upload volume, and verifies the
+captured pixels render in the backoffice player. The privacy map and localized rule editor explain
+the risk and exclusion. Full backend tests and vet, web unit (121), typecheck/build, focused
+desktop/mobile browser journeys, widget unit (130) with coverage, typecheck/build, and all 39 widget
+browser journeys pass.
 
 **Autonomy:** AFK
 

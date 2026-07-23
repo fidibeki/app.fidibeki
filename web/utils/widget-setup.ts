@@ -9,6 +9,7 @@ export function defaultWidgetRule(): WidgetRuleInput {
     position: 'bottom-right', theme: 'auto', accent_color: '#087f73', replay_mode: 'none',
     replay_sampling_rate: 0, replay_max_duration_seconds: 1800, replay_max_events: 50000,
     replay_mask_all_inputs: true, replay_mask_text_selector: null,
+    replay_record_canvas: false, replay_canvas_fps: 2,
     recurrence_mode: 'cooldown', recurrence_days: 30,
     definition_key: 'all-pages-feedback', definition_status: 'draft', presentation: 'launcher',
     objective: 'continuous_feedback',

@@ -86,6 +86,9 @@ func TestValidateWidgetRuleNormalizesDefaults(t *testing.T) {
 	if values.ReplayMaxDurationSeconds != 1800 || values.ReplayMaxEvents != 50000 || !values.ReplayMaskAllInputs {
 		t.Errorf("replay defaults = %#v", values)
 	}
+	if values.ReplayRecordCanvas || values.ReplayCanvasFPS != 2 {
+		t.Errorf("canvas replay defaults = %#v", values)
+	}
 	if values.RecurrenceMode != RecurrenceCooldown || values.RecurrenceDays == nil || *values.RecurrenceDays != 30 {
 		t.Errorf("recurrence defaults = %#v", values)
 	}
@@ -316,6 +319,11 @@ func TestValidateWidgetRuleCoversRemainingInvalidVariants(t *testing.T) {
 			name: "replay events above recording cap", field: "replay_max_events",
 			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
 				TriggerType: TriggerExitIntent, ReplayMaxEvents: 50001},
+		},
+		{
+			name: "canvas fps above capture cap", field: "replay_canvas_fps",
+			input: WidgetRuleInput{Name: "Rule", MatcherType: MatcherURLExact, MatcherValue: &value,
+				TriggerType: TriggerExitIntent, ReplayCanvasFPS: 6},
 		},
 	}
 	for _, tt := range tests {
