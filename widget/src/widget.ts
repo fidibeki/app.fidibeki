@@ -532,14 +532,19 @@ async function uploadAttachments(
 		if (!uploaded.ok) {
 			throw attachmentFailure(attachment, 'upload', new Error(`attachment upload failed with status ${uploaded.status}`))
 		}
-		const completed = await fetch(endpointURL(options, `attachments/${upload.attachment_id}/complete`), {
-			method: 'POST', mode: 'cors', credentials: 'omit',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Fidibeki-Public-Key': options.publicKey,
-			},
-			body: JSON.stringify({ complete_token: upload.complete_token }),
-		})
+		let completed: Response
+		try {
+			completed = await fetch(endpointURL(options, `attachments/${upload.attachment_id}/complete`), {
+				method: 'POST', mode: 'cors', credentials: 'omit',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Fidibeki-Public-Key': options.publicKey,
+				},
+				body: JSON.stringify({ complete_token: upload.complete_token }),
+			})
+		} catch (error) {
+			throw attachmentFailure(attachment, 'complete', error)
+		}
 		if (!completed.ok) {
 			throw attachmentFailure(attachment, 'complete', new PublicAPIResponseError(await parsePublicAPIError(completed)))
 		}

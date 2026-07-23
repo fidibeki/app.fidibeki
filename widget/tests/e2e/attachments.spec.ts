@@ -228,3 +228,76 @@ test('uploads and completes every simultaneously captured attachment kind', asyn
   expect(byKind.video).toBe('video/webm')
   expect(byKind.audio).toBe(isFirefox ? 'audio/ogg' : 'audio/webm')
 })
+
+test('completes unaffected attachments and attributes a completion network failure', async ({ page }, testInfo) => {
+  const isFirefox = testInfo.project.name === 'firefox'
+  await installFakeMediaRecordingEnvironment(
+    page,
+    isFirefox ? ['audio/ogg;codecs=opus', 'audio/ogg'] : ['audio/webm;codecs=opus', 'audio/webm'],
+    ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'],
+  )
+  await mockScreenshotModule(page)
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ...attachmentConfiguration(), error_reporting_dsn: 'https://errors.example.test/1' }),
+  }))
+  await page.route('**/v1/error-reporting.js', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/javascript',
+    body: `export function captureWidgetError(error) {
+      window.__attachmentErrors = window.__attachmentErrors || []
+      window.__attachmentErrors.push({ name: error?.name, message: error?.message })
+    }`,
+  }))
+  await page.route('**/v1/widget/events*', (route) => route.fulfill({ status: 204 }))
+
+  let declared: Array<{ client_attachment_id: string; kind: string }> = []
+  const uploaded: string[] = []
+  const completed: string[] = []
+  await page.route('**/v1/feedback?*', async (route) => {
+    const payload = route.request().postDataJSON() as { attachments: typeof declared }
+    declared = payload.attachments
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        feedback_id: 'fb_attachments_partial',
+        attachments: payload.attachments.map((attachment, index) => ({
+          attachment_id: `attachment-${index}`,
+          client_attachment_id: attachment.client_attachment_id,
+          presigned_url: `http://127.0.0.1:4173/storage/upload-${index}`,
+          method: 'PUT', headers: {}, complete_token: `complete-${index}`,
+          expires_at: '2026-07-22T13:00:00Z',
+        })),
+      }),
+    })
+  })
+  await page.route('**/storage/upload-*', (route) => {
+    uploaded.push(route.request().url())
+    return route.fulfill({ status: 200, body: '' })
+  })
+  await page.route('**/v1/attachments/*/complete*', (route) => {
+    const attachmentID = route.request().url().match(/attachments\/([^/]+)\/complete/)?.[1] ?? ''
+    if (attachmentID === 'attachment-1') return route.abort('failed')
+    completed.push(attachmentID)
+    return route.fulfill({ status: 204 })
+  })
+
+  await page.goto('/sample.html')
+  await recordThroughUI(page)
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+
+  await expect.poll(() => uploaded.length).toBe(3)
+  await expect.poll(() => completed.sort()).toEqual(['attachment-0', 'attachment-2'])
+  expect(declared.map(attachment => attachment.kind)).toEqual(['audio', 'video', 'screenshot'])
+  await expect.poll(() => page.evaluate(() => {
+    const errors = (window as unknown as {
+      __attachmentErrors?: Array<{ name?: string, message?: string }>
+    }).__attachmentErrors ?? []
+    return errors.find(error => error.name === 'AttachmentPipelineError')
+  })).toEqual({
+      name: 'AttachmentPipelineError',
+      message: 'attachment pipeline failed for 1 of the declared attachment(s): video/complete',
+    })
+})
