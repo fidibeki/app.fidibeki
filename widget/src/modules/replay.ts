@@ -1,5 +1,6 @@
 import { record } from 'rrweb'
 import type { WidgetRule } from '../types'
+import { canonicalizeReplayURL, createReplayMaskTextFn, replayMaskTextSelector, sanitizeReplayEvent } from './privacy'
 
 const batchEventLimit = 50
 const batchTargetBytes = 200 * 1024
@@ -88,7 +89,12 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   const captureEvent = (event: unknown) => {
     if (stopped || eventCount >= maxEvents) return
-    const serialized = JSON.stringify(event)
+    const sanitized = sanitizeReplayEvent(event)
+    if (sanitized === null) {
+      options.onError?.(new Error('replay event failed anonymity sanitization and was dropped'))
+      return
+    }
+    const serialized = JSON.stringify(sanitized)
     const eventBytes = new TextEncoder().encode(serialized).byteLength + (serializedEvents.length > 0 ? 1 : 0)
     if (serializedEvents.length > 0 && serializedBytes+eventBytes > batchTargetBytes) enqueueBatch()
     serializedEvents.push(serialized)
@@ -100,10 +106,12 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   const stopRecording = record<unknown>({
     emit: captureEvent,
-    maskAllInputs: options.rule.replay_mask_all_inputs,
-		...(options.rule.replay_mask_text_selector
-			? { maskTextSelector: options.rule.replay_mask_text_selector }
-			: {}),
+    // Input and text masking are anonymity-safe defaults, not customer-configurable: they do
+    // not depend on `replay_mask_all_inputs`/`replay_mask_text_selector` so a misconfigured or
+    // absent rule setting can never weaken the default. See modules/privacy.ts.
+    maskAllInputs: true,
+    maskTextSelector: replayMaskTextSelector(),
+    maskTextFn: createReplayMaskTextFn(),
     blockSelector: '[data-fidibeki-block]',
     slimDOMOptions: true,
     recordCanvas,
@@ -117,7 +125,12 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     window.clearTimeout(idleTimer)
     idleTimer = window.setTimeout(() => void stop(), idleTimeoutMilliseconds)
   }
-  const onNavigation = () => record.addCustomEvent('navigation', { url: window.location.href })
+  const onNavigation = () => {
+    const canonical = canonicalizeReplayURL(window.location.href)
+    // Fail closed: an un-canonicalizable URL (credentials/query/hash cannot be verified
+    // stripped) is dropped rather than recorded, matching the batch-level sanitization policy.
+    if (canonical) record.addCustomEvent('navigation', { url: canonical })
+  }
   const onPageHide = () => void stop()
   const activityEvents: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'scroll', 'touchstart']
   for (const event of activityEvents) window.addEventListener(event, resetIdleTimer, { passive: true })
@@ -156,12 +169,14 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 }
 
 async function createSession(options: ReplayCaptureOptions, sessionID: string): Promise<SessionResponse> {
+  const pageURL = canonicalizeReplayURL(window.location.href)
+  if (!pageURL) throw new Error('replay session page URL could not be sanitized for anonymity')
   const response = await widgetFetch(options, 'replay/sessions', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionID,
       widget_rule_id: options.rule.id,
-      page_url: window.location.href,
+      page_url: pageURL,
       visitor_id: options.visitorID,
     }),
   })

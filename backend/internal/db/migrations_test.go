@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 73
+	const latestMigrationVersion = 75
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1818,6 +1818,69 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		UPDATE widget_rules SET replay_canvas_fps = 6 WHERE id = $1
 	`, widgetRuleA); err == nil {
 		t.Fatal("canvas replay FPS constraint accepted value above 5")
+	}
+
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("write legacy unmasked replay rule before migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply replay input masking migration: %v", err)
+	}
+	var replayMaskAllInputs bool
+	if err := root.QueryRow(ctx, `
+		SELECT replay_mask_all_inputs FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(&replayMaskAllInputs); err != nil {
+		t.Fatalf("read backfilled replay input masking: %v", err)
+	}
+	if !replayMaskAllInputs {
+		t.Fatal("backfilled replay input masking = false, want true")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("replay input masking constraint accepted false")
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back replay input masking migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_mask_all_inputs = false WHERE id = $1
+	`, widgetRuleA); err != nil {
+		t.Fatalf("write unmasked replay rule after rollback: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply replay input masking migration: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT replay_mask_all_inputs FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(&replayMaskAllInputs); err != nil {
+		t.Fatalf("read re-migrated replay input masking: %v", err)
+	}
+	if !replayMaskAllInputs {
+		t.Fatal("re-migrated replay input masking = false, want true")
+	}
+
+	if _, err := root.Exec(ctx, `
+		UPDATE sessions SET page_url = $2 WHERE id = $1
+	`, sessionA, "https://sentinel-user:sentinel-pass@a.example.com/chart/?email=jane.doe@example.com&token=secret#fragment-secret"); err != nil {
+		t.Fatalf("write legacy uncanonicalized replay page URL: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply replay page URL canonicalization migration: %v", err)
+	}
+	var canonicalizedPageURL string
+	if err := root.QueryRow(ctx, `
+		SELECT page_url FROM sessions WHERE id = $1
+	`, sessionA).Scan(&canonicalizedPageURL); err != nil {
+		t.Fatalf("read canonicalized legacy replay page URL: %v", err)
+	}
+	if canonicalizedPageURL != "https://a.example.com/chart/" {
+		t.Fatalf(
+			"canonicalized legacy replay page URL = %q, want https://a.example.com/chart/ with credentials/query/hash stripped",
+			canonicalizedPageURL,
+		)
 	}
 
 	if err := migrateToVersion(migrator, 44); err != nil {

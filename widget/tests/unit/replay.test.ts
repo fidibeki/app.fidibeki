@@ -61,6 +61,7 @@ describe('rrweb replay capture', () => {
 
     const onError = vi.fn()
     const capture = await startReplayCapture({
+      // A customer-configured mask selector must not narrow the anonymity-safe default.
       rule: replayRule({ replay_mask_text_selector: '.private' }),
       publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'),
       visitorID: 'e8b3bb8c-e7ce-4c06-b804-c40f1db21355', onError,
@@ -68,9 +69,10 @@ describe('rrweb replay capture', () => {
     expect(capture?.sessionID).toBe('server-session')
     const options = recordMock.mock.calls[0]?.[0]
     expect(options).toMatchObject({
-      maskAllInputs: true, maskTextSelector: '.private', blockSelector: '[data-fidibeki-block]',
+      maskAllInputs: true, maskTextSelector: '*', blockSelector: '[data-fidibeki-block]',
       recordCanvas: false, inlineImages: false, collectFonts: false,
     })
+    expect(typeof options?.maskTextFn).toBe('function')
     expect(options?.sampling).toBeUndefined()
     const emit = options?.emit as ((event: unknown) => void)
     for (let index = 0; index < 51; index++) emit({ type: 3, timestamp: index, data: { index } })
@@ -90,6 +92,117 @@ describe('rrweb replay capture', () => {
     expect(declarations.map(({ init }) => JSON.parse(String(init.body)).events_count)).toEqual([50, 1])
     expect(requests.filter(({ url }) => url.startsWith('https://storage.example/'))).toHaveLength(2)
 		expect(requests[requests.length - 1]?.url).toContain('/finalize?key=pk_live_test')
+  })
+
+  it('forces input masking even when the widget rule requests it disabled', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+      }
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule({ replay_mask_all_inputs: false }),
+      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+    })
+    expect(recordMock.mock.calls[0]?.[0]).toMatchObject({ maskAllInputs: true })
+    await capture?.stop()
+  })
+
+  it('canonicalizes the session page URL and navigation URLs, stripping credentials, query, and hash', async () => {
+    window.history.replaceState({}, '', '/checkout?token=secret&email=jane.doe%40example.com#fragment-secret')
+    const expectedCanonicalURL = `${window.location.origin}/checkout`
+    const requests: Array<{ url: string; init: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo, init: RequestInit = {}) => {
+      const url = input.toString()
+      requests.push({ url, init })
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+      }
+      if (url.endsWith('/finalize?key=key')) return jsonResponse({}, 202)
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+    })
+    const sessionRequest = requests.find(({ url }) => url.endsWith('/replay/sessions?key=key'))
+    const sessionBody = JSON.parse(String(sessionRequest?.init.body)) as { page_url: string }
+    expect(sessionBody.page_url).toBe(expectedCanonicalURL)
+    expect(sessionBody.page_url).not.toContain('token')
+    expect(sessionBody.page_url).not.toContain('jane.doe')
+    expect(sessionBody.page_url).not.toContain('fragment-secret')
+
+    window.dispatchEvent(new Event('fidibeki:navigation'))
+    expect(recordMock.addCustomEvent).toHaveBeenCalledWith('navigation', { url: expectedCanonicalURL })
+    await capture?.stop()
+  })
+
+  it('drops the navigation custom event instead of emitting an uncanonicalizable URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+      }
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+    })
+    // afterEach() calls vi.unstubAllGlobals(), so this override does not leak into later tests.
+    vi.stubGlobal('location', { href: 'not a valid url' })
+    window.dispatchEvent(new Event('fidibeki:navigation'))
+    expect(recordMock.addCustomEvent).not.toHaveBeenCalled()
+    await capture?.stop()
+  })
+
+  it('sanitizes identity-bearing attributes and text before an event reaches an uploaded batch', async () => {
+    const requests: Array<{ url: string; init: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo, init: RequestInit = {}) => {
+      const url = input.toString()
+      requests.push({ url, init })
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+      }
+      if (url.endsWith('/batches?key=key')) {
+        const declaration = JSON.parse(String(init.body)) as { batch_index: number }
+        return jsonResponse({
+          presigned_url: `https://storage.example/batch-${declaration.batch_index}`,
+          method: 'PUT', headers: {}, complete_token: `token-${declaration.batch_index}`,
+        }, 201)
+      }
+      if (url.startsWith('https://storage.example/')) return new Response(null, { status: 200 })
+      if (url.includes('/complete?')) return new Response(null, { status: 204 })
+      if (url.includes('/finalize?')) return jsonResponse({}, 202)
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    emit({
+      type: 2, timestamp: 1,
+      data: {
+        node: {
+          type: 0,
+          childNodes: [{
+            type: 2, tagName: 'img',
+            attributes: {
+              id: 'reporter-avatar', src: 'https://cdn.example.com/avatars/jane.doe@example.com.jpg',
+              alt: 'Jane Doe', title: 'Jane Doe', 'data-reporter-email': 'jane.doe@example.com', class: 'avatar',
+            },
+            childNodes: [],
+          }],
+        },
+      },
+    })
+    await capture?.stop()
+    const uploadedBody = requests.find(({ url }) => url.startsWith('https://storage.example/'))?.init.body
+    const serialized = await (uploadedBody as Blob).text()
+    for (const sentinel of ['jane.doe@example.com', 'reporter-avatar', 'Jane Doe']) {
+      expect(serialized).not.toContain(sentinel)
+    }
+    expect(serialized).toContain('avatar')
   })
 
   it('records canvas frames only after explicit opt-in and uses the configured FPS', async () => {

@@ -17,7 +17,7 @@ customer-facing claims.
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | Workspace lifetime until explicit workspace deletion or supported anonymization |
 | Reporter contact and consent | Normalized email, notification preference, consent granted/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Until supported anonymization, workspace deletion, or request expiry where applicable |
 | Attachments and derived analysis | Screenshot/audio/video objects, transcript, sentiment, moderation flags, declared metadata | Give operational context to feedback | Private S3-compatible object storage and PostgreSQL manifest | Objects and derived transcript: plan storage limit (30/90/365 days); manifest retained with workflow |
-| Session replay | rrweb batches/merged object, page URL, timing and event counts; canvas pixels only when a rule explicitly enables bounded canvas capture | Reproduce the reported page experience | Private S3-compatible object storage and PostgreSQL manifest | Inputs/text stay masked by policy; place `data-fidibeki-block` on sensitive subtrees, including canvases, to exclude them. Objects: plan storage limit (30/90/365 days); manifest retained with workflow |
+| Session replay | rrweb batches/merged object; session-scoped random identifier; canonicalized page URL (origin + normalized pathname only, credentials/query/fragment stripped); timing and event counts; canvas pixels only when a rule explicitly enables bounded canvas capture | Reproduce the reported page experience without exposing the authenticated user's identity | Private S3-compatible object storage and PostgreSQL manifest | Anonymous by default: all visible text and form input values are masked unconditionally (not only via optional customer selectors), and identity-bearing DOM attributes (`id`, `data-*`, ARIA, `title`, `alt`, links, avatar/media URLs) are stripped by an attribute allowlist. `data-fidibeki-block` excludes a subtree entirely, including canvases; `data-fidibeki-safe-text` explicitly opts known-safe static text back in. See `docs/superpowers/specs/2026-07-23-replay-identity-threat-model.md`. Objects: plan storage limit (30/90/365 days); manifest retained with workflow |
 | Anonymous widget analytics | Visitor/page-view/event IDs, page path, funnel event and daily counts | Measure matched, impression, interaction, submit, and dismiss funnels | PostgreSQL | Raw events 90 days; daily aggregates 730 days |
 | Integration delivery | Slack/Teams/webhook configuration, encrypted credentials, attempts and errors | Send operational notifications and retry delivery | PostgreSQL, Asynq/Redis | Workspace/integration lifecycle; credentials are never exported |
 | Email delivery | Recipient, message metadata, delivery/bounce/complaint events | Send authentication, lifecycle, and reporter messages | PostgreSQL, Asynq/Redis, configured email provider | Operational and audit lifecycle |
@@ -70,6 +70,12 @@ be verified independently.
 - Privacy request and archive expiry is append-only audited without storing raw reporter email in
   audit data.
 - Anonymous widget identifiers are not intended for personal fingerprinting.
+- The persistent anonymous analytics visitor identifier (`widget/src/analytics.ts`, stored in the
+  visitor's browser) is used only for widget funnel analytics and replay abuse-protection rate
+  limiting. It is never written to the replay session record, never exposed in the backoffice, and
+  is isolated from any authenticated account identity.
+- Reporter anonymization deletes/nulls session replay storage objects and manifests reachable
+  through the reporter's feedback, in addition to attachments.
 
 ## Customer Responsibilities
 

@@ -15,6 +15,7 @@ export default defineConfig({
 				'src/submission-errors.ts',
 				'contracts/widget-objective-policy.ts',
 				'src/modules/replay.ts',
+				'src/modules/privacy.ts',
 			],
       reporter: ['text', 'json-summary'],
       thresholds: {

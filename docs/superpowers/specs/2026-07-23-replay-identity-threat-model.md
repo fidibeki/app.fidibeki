@@ -1,0 +1,54 @@
+# Replay Identity Threat Model
+
+**Date:** 2026-07-23
+**Scope:** GitHub issue #53
+**Environment:** Product and staging only; no production or deployment work
+
+## Problem
+
+Session replay is intended to be anonymous: a person viewing a replay must not be able to
+determine which authenticated user generated it, unless that person separately and explicitly
+supplied reporter contact information through the feedback/contact workflow. Before this change,
+replay used a random session identifier and masked input values by default, but multiple other
+surfaces could still carry identity. This document enumerates those surfaces, states the
+mitigation for each, and records what remains an accepted residual risk.
+
+## Threat model by surface
+
+| Surface | How identity could leak | Mitigation |
+|---|---|---|
+| Visible text nodes | rrweb serializes DOM text content verbatim; names, emails, account/organization names rendered anywhere on the page are captured | `widget/src/modules/replay.ts` forces `maskTextSelector: '*'` (every element, not an optional customer selector) with a custom `maskTextFn` (`widget/src/modules/privacy.ts`) that replaces all text by default. Text is only left unmasked inside an explicit `data-fidibeki-safe-text` subtree. |
+| HTML comments | rrweb's text-masking pipeline (`maskTextFn`) only applies to genuine Text nodes, not Comment nodes, so an HTML comment (`<!-- reporter: jane@example.com -->`) would otherwise pass through unmasked | `sanitizeSnapshotNode` in `widget/src/modules/privacy.ts` blanks Comment node `textContent` unconditionally (comments carry no visual replay value). |
+| Form values | Typed input/textarea/select content can contain emails, names, or other PII | `maskAllInputs: true` is forced unconditionally in the widget and the backend `widget_rules.replay_mask_all_inputs` column now has a `CHECK` constraint requiring `true` (migration `000074`); it is no longer a customer-configurable toggle. |
+| DOM `id`/`class`/`data-*` attributes | Application code commonly encodes identity into element metadata (`id="user-42"`, `data-email="…"`) | rrweb 2.1.1 has no per-attribute masking hook, so `widget/src/modules/privacy.ts` sanitizes serialized attributes with an **allowlist** (structural/presentational attributes only: `class`, `style`, `type`, sizing, a small set of state-only ARIA attributes, etc.) rather than a denylist. Any attribute not on the allowlist — including `id` and every `data-*` key — is dropped. `data-fidibeki-block`/`data-fidibeki-safe-text` are read from the live DOM at capture time and are not expected to appear in the serialized output regardless. |
+| ARIA/`title`/`alt`/`placeholder` | Accessible names and hints frequently restate visible identity text or add new identity text not present elsewhere | Covered by the same attribute allowlist; `aria-label`, `aria-labelledby`, `aria-describedby`, `title`, `alt`, and `placeholder` are all dropped by default. |
+| Links (`href`) and other URL attributes | `mailto:` links, profile links, or internal deep links can encode identity | Dropped by the same attribute allowlist (not on it). Loses some visual/functional fidelity (link targets are not visible in replay) in exchange for the guarantee. |
+| Avatar/media URLs (`src`, `srcset`, `poster`, etc.) | Image URLs frequently embed an email hash (e.g. Gravatar) or a user ID in the path | Dropped by the same attribute allowlist; the widget already sets `inlineImages: false`, so this closes the remaining leak from serialized `src`/`srcset` values. Avatars will not render in replay; that is an intentional fail-closed tradeoff. |
+| Initial page URL | `window.location.href` includes query parameters and a fragment that can carry emails, tokens, or user IDs | The widget canonicalizes to origin + normalized pathname (`widget/src/targeting.ts#canonicalPage`, reused via `widget/src/modules/privacy.ts#canonicalizeReplayURL`) before sending `page_url` to `POST /v1/replay/sessions`. The backend independently re-derives the same canonical form (`backend/internal/replay/http.go#canonicalReplayURL`) so persistence is enforced even if a legacy or compromised client sends a raw URL. |
+| Navigation custom events | The widget emits a `navigation` custom rrweb event carrying `window.location.href` on every SPA route change | Canonicalized the same way as the initial URL before `record.addCustomEvent` is called; the event is dropped entirely (fails closed) if canonicalization fails. |
+| rrweb's internal `Meta` event | rrweb itself emits an event of `type: 4` with `data.href = window.location.href` on every full snapshot — a path the widget does not construct directly | `sanitizeReplayEvent` in `widget/src/modules/privacy.ts` intercepts every serialized event before upload and rewrites `Meta` event `href` through the same canonicalizer, or drops the event if it cannot be canonicalized. |
+| Canvas pixels | Canvas content can render identity as pixels (signatures, "Welcome, Jane" banners, cropped avatars); there is no automated way to detect identity in pixel data | Canvas capture remains explicit per-rule opt-in (`replay_record_canvas`, default `false`) — the default posture already suppresses all canvas frames. `data-fidibeki-block` continues to exclude a canvas or an ancestor from serialization entirely. No pixel-level redaction is attempted; this is a known, documented limitation communicated in the backoffice UI (`projects.editor.replay.canvasPrivacyDescription`) rather than a false anonymity guarantee. |
+| Persistent analytics visitor ID | `widget/src/analytics.ts` maintains a long-lived random UUID in `localStorage` used for funnel analytics and abuse-protection rate limiting | The same UUID is sent as `visitor_id` on `POST /v1/replay/sessions`, but the backend only uses it in-memory for the abuse-policy rate-limit key (`backend/internal/replay/http.go#enforceAbusePolicy`); it is never written to the `sessions` table (confirmed by `TestReplayHTTPFlow`, which asserts the `sessions` table has no `visitor_id` column and that neither the session-creation response nor the backoffice metadata response ever contains it) and is not used for fingerprinting. |
+| Replay metadata / backoffice projection | The tenant API (`GET /v1/sessions/{id}`) and stream endpoint project session fields to the backoffice player | The response only ever included `id`, `session_id` (the random replay-scoped identifier), `page_url` (now canonical), timestamps, counts, and status — never an authenticated account ID, reporter email, or the visitor ID. `TestReplayHTTPFlow` and `TestReplayHTTPFlowRetentionAndAggregateLimits`-style coverage assert this. |
+| Reporter contact | A reporter can optionally supply an email through the feedback/contact workflow (`reporter_email` on the feedback submission) | Reporter contact is submitted on the feedback record, not the replay session; the two share only an opaque foreign key (`sessions.feedback_id`) used for lookup, never reporter content. `sanitizeReplayEvent` and the attribute/text masking above apply uniformly regardless of whether a reporter later supplies contact information, so contact details typed into the widget's own contact field never reach replay capture (that field is not part of the recorded DOM subtree rrweb observes for capture purposes it shares with the page). |
+| Existing/legacy objects and deletion paths | Sessions created before this change may have raw (uncanonicalized) `page_url` values in Postgres | Migration `000075` backfills existing `sessions.page_url` rows, stripping credentials/query/fragment with the same rules as new writes. Reporter anonymization (`backend/internal/privacy/anonymizer.go`) already deletes/nulls session and batch storage objects and `storage_key`s for any session reachable from an anonymized reporter's feedback; this was audited and required no change. |
+
+## What is explicitly not attempted
+
+- **No content-based PII classifier.** The mitigation for text and attributes is masking/allowlisting by default, not a heuristic identity detector (an email-regex replacement was explicitly called out in the issue as insufficient, and it is not used here).
+- **No pixel-level canvas redaction.** Canvas privacy is handled entirely through opt-in + block-selector exclusion, not attempted pixel analysis.
+- **No personal fingerprinting.** The persistent visitor ID is not correlated with replay content, not exposed in the backoffice, and not used to infer identity.
+- **No #54 (automatic feedback/element-context capture) scope.** The primitives in `widget/src/modules/privacy.ts` (`canonicalizeReplayURL`, `sanitizeReplayEvent`, `SAFE_TEXT_ATTRIBUTE`, attribute allowlist) are written generically so a future automatic feedback/element-context capture path can reuse them, but no such capture path is implemented here.
+
+## Accepted residual risks
+
+- CSS text content (`<style>` tag bodies and inline `style` attribute values) is not masked — masking it would produce invalid CSS and break replay layout. CSS-based identity leaks (e.g. a `content: attr(data-name)` generated-content rule) are theoretically possible but rare; operators can still use `data-fidibeki-block` on the containing element.
+- `<script>` text content is replaced with a fixed placeholder by rrweb itself (pre-existing, unrelated to this change).
+- `sessions.page_url` (canonicalized pathname only) is not nulled during reporter anonymization, consistent with how `feedbacks.page_url` is already treated elsewhere in the schema; a path could theoretically embed identity (e.g. `/users/jane.doe@example.com`). This mirrors existing product behavior for feedback and was not in scope to change here.
+- Legacy replay *storage objects* (already-uploaded rrweb batches/merged JSON) predating this change were captured under the old policy and are not retroactively re-sanitized; only the Postgres `page_url` column is backfilled. Retention/anonymization deletion already removes the underlying objects on the existing schedule.
+
+## Verification
+
+- Widget unit tests (`widget/tests/unit/replay.test.ts`, new privacy-focused cases) assert the forced masking options, URL canonicalization, and that a browser fixture containing sentinel identity values never appears in a captured/uploaded batch.
+- A Playwright browser test (`widget/tests/e2e/widget.spec.ts`) plants sentinel identity values in text, inputs, ARIA/title/alt attributes, DOM/data attributes, avatar URLs, query/hash values, and custom navigation, then asserts none of the sentinels occur in the uploaded batches.
+- Backend tests (`backend/internal/replay/replay_test.go`, `http_integration_test.go`, `backend/internal/project/validation_test.go`, `backend/internal/db/migrations_test.go`) cover URL canonicalization, forced input masking (including the DB constraint and backfill migrations), and that `visitor_id` never reaches storage or API responses.

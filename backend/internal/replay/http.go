@@ -117,7 +117,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeReplayJSON(w, r, &request) {
 		return
 	}
-	rule, valid := h.validateReplayStart(
+	rule, canonicalPageURL, valid := h.validateReplayStart(
 		w, configuration, request.SessionID, request.WidgetRuleID, request.PageURL, request.VisitorID,
 	)
 	if !valid {
@@ -141,7 +141,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}()
 	session, err := h.options.Store.CreateSession(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID,
-		strings.TrimSpace(request.SessionID), strings.TrimSpace(request.PageURL), h.now(),
+		strings.TrimSpace(request.SessionID), canonicalPageURL, h.now(),
 		min(rule.ReplayMaxDurationSeconds, project.MaximumReplayDurationSeconds),
 		min(rule.ReplayMaxEvents, project.MaximumReplayEvents),
 	)
@@ -438,15 +438,16 @@ func (h *HTTPHandler) validateReplayStart(
 	widgetRuleID string,
 	pageURL string,
 	visitorID string,
-) (project.WidgetRule, bool) {
+) (project.WidgetRule, string, bool) {
 	if !h.requireReplayPlan(w, configuration) {
-		return project.WidgetRule{}, false
+		return project.WidgetRule{}, "", false
 	}
 	fields := make([]map[string]string, 0, 3)
 	if _, err := uuid.Parse(strings.TrimSpace(clientSessionID)); err != nil {
 		fields = append(fields, replayField("session_id", "must be a UUID"))
 	}
-	if !validReplayURL(strings.TrimSpace(pageURL)) {
+	canonicalURL, urlValid := canonicalReplayURL(strings.TrimSpace(pageURL))
+	if !urlValid {
 		fields = append(fields, replayField("page_url", "must be an absolute HTTP or HTTPS URL"))
 	}
 	if value := strings.TrimSpace(visitorID); value != "" {
@@ -467,9 +468,9 @@ func (h *HTTPHandler) validateReplayStart(
 	}
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "replay session is invalid", fields)
-		return project.WidgetRule{}, false
+		return project.WidgetRule{}, "", false
 	}
-	return *selected, true
+	return *selected, canonicalURL, true
 }
 
 func (h *HTTPHandler) requireReplayPlan(w http.ResponseWriter, configuration project.PublicConfiguration) bool {
@@ -663,12 +664,28 @@ func decodeReplayJSON(w http.ResponseWriter, r *http.Request, destination any) b
 	return true
 }
 
-func validReplayURL(value string) bool {
+// canonicalReplayURL reduces a page URL to origin + normalized pathname, stripping
+// credentials, query parameters, and the fragment before the URL is transmitted or
+// persisted (issue #53). This mirrors widget/src/targeting.ts's canonicalPage so a replay
+// URL is anonymized identically whether the widget canonicalizes it or a legacy/compromised
+// client sends a raw URL and the backend must enforce the contract itself.
+func canonicalReplayURL(value string) (string, bool) {
 	if value == "" || len(value) > 4096 {
-		return false
+		return "", false
 	}
 	parsed, err := url.ParseRequestURI(value)
-	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return "", false
+	}
+	pathname := parsed.EscapedPath()
+	if pathname != "/" {
+		pathname = strings.TrimRight(pathname, "/")
+		if pathname == "" {
+			pathname = "/"
+		}
+	}
+	origin := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+	return origin.String() + pathname, true
 }
 
 func normalizeReplayContentType(value string) string {

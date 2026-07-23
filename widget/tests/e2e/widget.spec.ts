@@ -824,8 +824,15 @@ test('canvas replay captures bounded frames, excludes blocked pixels, and keeps 
   }>
   const serialized = JSON.stringify(events)
   const canvasMutations = events.filter(event => event.type === 3 && event.data?.source === 9)
-  expect(serialized).toContain('included-replay-canvas')
-  expect(serialized).toContain('rr_dataURL')
+  // The `id`/`data-*` attributes that named these canvases are stripped for anonymity (issue
+  // #53), so presence is asserted structurally: exactly one <canvas> tag survives serialization
+  // (the included one), because blockSelector excludes the blocked canvas's entire subtree.
+  expect((serialized.match(/"tagName":"canvas"/g) ?? []).length).toBe(1)
+  // Pre-existing assertion drift: this rrweb version serializes canvas frame payloads with an
+  // `rr_type` wrapper (ImageBitmap/Blob/ArrayBuffer), not `rr_dataURL`; fixed while touching
+  // this test for the id/data-* attribute stripping change above (issue #53).
+  expect(serialized).toContain('"property":"drawImage"')
+  expect(serialized).not.toContain('included-replay-canvas')
   expect(serialized).not.toContain('blocked-replay-canvas')
   expect(canvasMutations.length).toBeGreaterThan(0)
   expect(canvasMutations.length).toBeLessThanOrEqual(8)
@@ -833,6 +840,119 @@ test('canvas replay captures bounded frames, excludes blocked pixels, and keeps 
   expect(new Set(canvasMutations.map(event => event.data?.id)).size).toBe(1)
   expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
   expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(1024 * 1024)
+})
+
+test('replay capture is anonymous: no sentinel identity value reaches an uploaded batch, session request, or navigation event', async ({ page }) => {
+  const replayRule: WidgetRule = {
+    ...browserRule, replay_mode: 'full', replay_sampling_rate: 0,
+  }
+  const baseConfiguration = browserConfiguration(replayRule)
+  const configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+
+  const sentinels = [
+    'SENTINEL-TEXT-Jane-Doe', 'SENTINEL-INPUT-jane.doe@example.com',
+    'SENTINEL-TITLE-Jane', 'SENTINEL-ARIA-Jane', 'SENTINEL-ALT-Jane',
+    'SENTINEL-AVATAR-jane', 'SENTINEL-ID-jane-42', 'SENTINEL-DATA-jane',
+    'SENTINEL-QUERY-jane.doe', 'SENTINEL-QUERY-TOKEN', 'SENTINEL-HASH-fragment',
+    'SENTINEL-NAV-SECRET', 'SENTINEL-NAV-HASH',
+  ]
+  const safeTextMarker = 'SAFE-TEXT-Powered-By-Fidibeki'
+
+  await page.addInitScript((marker: string) => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const article = document.querySelector('article')
+      if (!article) return
+
+      const text = document.createElement('p')
+      text.textContent = 'SENTINEL-TEXT-Jane-Doe'
+      article.append(text)
+
+      const input = document.createElement('input')
+      input.type = 'email'
+      input.value = 'SENTINEL-INPUT-jane.doe@example.com'
+      article.append(input)
+
+      const labeled = document.createElement('button')
+      labeled.title = 'SENTINEL-TITLE-Jane'
+      labeled.setAttribute('aria-label', 'SENTINEL-ARIA-Jane')
+      labeled.id = 'SENTINEL-ID-jane-42'
+      labeled.dataset.reporter = 'SENTINEL-DATA-jane'
+      labeled.textContent = 'Button'
+      article.append(labeled)
+
+      const avatar = document.createElement('img')
+      avatar.alt = 'SENTINEL-ALT-Jane'
+      avatar.src = 'https://cdn.example.test/avatars/SENTINEL-AVATAR-jane.jpg'
+      article.append(avatar)
+
+      const safe = document.createElement('div')
+      safe.setAttribute('data-fidibeki-safe-text', '')
+      safe.textContent = marker
+      article.append(safe)
+    }, { once: true })
+  }, safeTextMarker)
+
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+
+  const sessionRequests: string[] = []
+  await page.route('**/v1/replay/sessions?*', async (route) => {
+    sessionRequests.push(route.request().postData() ?? '')
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'sentinel-session', session_id: 'sentinel-session', rrweb_version: '2.1.1',
+        max_duration_seconds: 1800, max_events: 50000,
+      }),
+    })
+  })
+  const uploadedBatches: string[] = []
+  await page.route('**/v1/replay/sessions/sentinel-session/batches?*', async (route) => {
+    const request = route.request().postDataJSON() as { batch_index: number }
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        presigned_url: `http://127.0.0.1:4173/sentinel-upload/${request.batch_index}`,
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        complete_token: `sentinel-token-${request.batch_index}`,
+      }),
+    })
+  })
+  await page.route('**/sentinel-upload/*', async (route) => {
+    const body = route.request().postDataBuffer()
+    if (!body) throw new Error('replay upload did not contain a body')
+    uploadedBatches.push(body.toString())
+    await route.fulfill({ status: 200 })
+  })
+  await page.route('**/v1/replay/sessions/sentinel-session/batches/*/complete?*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/replay/sessions/sentinel-session/finalize?*', route => route.fulfill({
+    status: 202, contentType: 'application/json', body: '{}',
+  }))
+
+  await page.goto('/sample.html?email=SENTINEL-QUERY-jane.doe%40example.com&token=SENTINEL-QUERY-TOKEN#SENTINEL-HASH-fragment')
+  await page.waitForTimeout(300)
+  await page.evaluate(() => {
+    history.pushState({}, '', '/sample.html?token=SENTINEL-NAV-SECRET#SENTINEL-NAV-HASH')
+    window.dispatchEvent(new Event('fidibeki:navigation'))
+  })
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+  await expect.poll(() => uploadedBatches.length).toBeGreaterThan(0)
+
+  expect(sessionRequests.length).toBeGreaterThan(0)
+  const serializedBatches = uploadedBatches.join('\n')
+  for (const sentinel of sentinels) {
+    for (const request of sessionRequests) expect(request).not.toContain(sentinel)
+    expect(serializedBatches).not.toContain(sentinel)
+  }
+  // The explicit safe-text opt-in still lets known-non-identifying static text through.
+  expect(serializedBatches).toContain(safeTextMarker)
 })
 
 test('failed submission can be dismissed but accepted submission cannot', async ({ page }) => {

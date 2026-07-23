@@ -2047,10 +2047,12 @@ test('widget canvas replay is explicit, bounded, and explains the privacy exclus
   await expect(captureCanvas).not.toBeChecked()
   await expect(page.getByLabel('Canvas capture rate')).toHaveCount(0)
 
+  await expect(page.getByRole('note')).toContainText('Replay is anonymous by default.')
+
   await captureCanvas.check()
   await page.getByLabel('Canvas capture rate').selectOption('3')
-  await expect(page.getByRole('note')).toContainText('Canvas pixels may contain sensitive information.')
-  await expect(page.getByRole('note')).toContainText('data-fidibeki-block')
+  const canvasNote = page.getByRole('note').filter({ hasText: 'Canvas pixels may contain sensitive information.' })
+  await expect(canvasNote).toContainText('data-fidibeki-block')
   await page.getByRole('button', { name: 'Save rule' }).click()
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
@@ -2058,7 +2060,7 @@ test('widget canvas replay is explicit, bounded, and explains the privacy exclus
     replay_record_canvas: true,
     replay_canvas_fps: 3,
   })
-  await page.getByRole('note').scrollIntoViewIfNeeded()
+  await canvasNote.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `widget-canvas-policy-${testInfo.project.name}`)
 })
 

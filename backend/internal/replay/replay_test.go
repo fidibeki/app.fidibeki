@@ -576,3 +576,66 @@ func (errorQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) {
 func (errorQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
 	return nil
 }
+
+func TestCanonicalReplayURLStripsCredentialsQueryAndFragment(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "credentials query and fragment removed",
+			input: "https://sentinel-user:sentinel-pass@example.com/checkout?email=jane.doe@example.com&token=secret#fragment-secret",
+			want:  "https://example.com/checkout",
+		},
+		{
+			name:  "trailing slash normalized",
+			input: "https://example.com/checkout/",
+			want:  "https://example.com/checkout",
+		},
+		{
+			name:  "root path preserved",
+			input: "https://example.com/",
+			want:  "https://example.com/",
+		},
+		{
+			name:  "port preserved",
+			input: "https://example.com:8443/checkout",
+			want:  "https://example.com:8443/checkout",
+		},
+		{
+			name:  "repeated trailing slashes collapse to root",
+			input: "https://example.com///",
+			want:  "https://example.com/",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := canonicalReplayURL(test.input)
+			if !ok || got != test.want {
+				t.Fatalf("canonicalReplayURL(%q) = %q, %t; want %q, true", test.input, got, ok, test.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalReplayURLFailsClosedForUnsafeInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty", input: ""},
+		{name: "javascript scheme", input: "javascript:alert(1)"},
+		{name: "data scheme", input: "data:text/html,hi"},
+		{name: "no host", input: "https:///checkout"},
+		{name: "relative path", input: "/checkout"},
+		{name: "oversized", input: "https://example.com/" + strings.Repeat("a", 4096)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got, ok := canonicalReplayURL(test.input); ok {
+				t.Fatalf("canonicalReplayURL(%q) = %q, true; want failure", test.input, got)
+			}
+		})
+	}
+}

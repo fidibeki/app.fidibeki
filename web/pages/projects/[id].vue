@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Save,
   Settings2,
+  ShieldCheck,
   Trash2,
 } from '@lucide/vue'
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
@@ -355,6 +356,9 @@ function normalizedRule(): WidgetRuleInput {
     greeting: defaultPrompt,
     accent_color: ruleForm.accent_color?.trim() || null,
     replay_sampling_rate: ruleForm.replay_mode === 'sampling' ? Number(ruleForm.replay_sampling_rate || 1) : 0,
+    // Input masking is an anonymity-safe default enforced by the backend and widget
+    // regardless of this value; kept true here so the form never suggests it is optional.
+    replay_mask_all_inputs: true,
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
     replay_canvas_fps: Number(ruleForm.replay_canvas_fps || 2),
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
@@ -956,12 +960,20 @@ useHead(() => ({
                   <input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" v-bind="ruleFieldAttributes('replay_max_events')" />
                   <small v-if="ruleFieldError('replay_max_events')" :id="ruleErrorID('replay_max_events')" class="rule-field-error">{{ ruleFieldError('replay_max_events') }}</small>
                 </label>
-                <label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>{{ t('projects.editor.replay.maskAllInputs') }}</span></label>
+                <label class="project-toggle wide">
+                  <input :checked="true" type="checkbox" disabled />
+                  <span><b>{{ t('projects.editor.replay.maskAllInputs') }}</b><small>{{ t('projects.editor.replay.maskAllInputsHint') }}</small></span>
+                </label>
                 <label class="wide">
                   {{ t('projects.editor.replay.maskSelector') }}
-                  <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
+                  <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" disabled v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
+                  <small>{{ t('projects.editor.replay.maskSelectorHint') }}</small>
                   <small v-if="ruleFieldError('replay_mask_text_selector')" :id="ruleErrorID('replay_mask_text_selector')" class="rule-field-error">{{ ruleFieldError('replay_mask_text_selector') }}</small>
                 </label>
+                <div class="replay-privacy-note wide" role="note">
+                  <ShieldCheck :size="16" aria-hidden="true" />
+                  <p><b>{{ t('projects.editor.replay.anonymityTitle') }}</b><span>{{ t('projects.editor.replay.anonymityDescription') }}</span></p>
+                </div>
                 <label class="project-toggle wide">
                   <input v-model="ruleForm.replay_record_canvas" type="checkbox" :disabled="ruleForm.replay_mode === 'none'" />
                   <span><b>{{ t('projects.editor.replay.captureCanvas') }}</b><small>{{ t('projects.editor.replay.captureCanvasHint') }}</small></span>

@@ -161,6 +161,47 @@ func TestReplayHTTPFlow(t *testing.T) {
 		abuseEvaluator.calls[0].request.Identity.SessionID != clientSessionID {
 		t.Fatalf("replay start abuse call = %#v", abuseEvaluator.calls)
 	}
+	var storedVisitorIDColumns int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'sessions' AND column_name = 'visitor_id'
+	`).Scan(&storedVisitorIDColumns); err != nil || storedVisitorIDColumns != 0 {
+		t.Fatalf("sessions table visitor_id columns = %d, error = %v, want 0 (persistent visitor ID must stay isolated from replay artifacts)",
+			storedVisitorIDColumns, err)
+	}
+	if strings.Contains(created.Body.String(), visitorID) {
+		t.Fatalf("replay session creation response leaked the visitor ID: %s", created.Body.String())
+	}
+
+	// The widget should already canonicalize page_url, but the backend enforces the same
+	// contract independently (issue #53): credentials, query parameters, and the fragment must
+	// never reach persistence or the response even if an old/compromised client sends them raw.
+	canonicalizationSessionID := "a24b6e05-6a94-4fd0-9c4c-2a4e7cf1c8f0"
+	dirtyURL := "https://sentinel-user:sentinel-pass@example.com/checkout/" +
+		"?email=jane.doe%40example.com&token=secret-token#fragment-secret"
+	canonicalizationBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":%q}`,
+		canonicalizationSessionID, ruleID, dirtyURL,
+	)
+	canonicalized := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		canonicalizationBody, publicKey, "https://example.com")
+	if canonicalized.Code != http.StatusCreated {
+		t.Fatalf("canonicalization create status = %d, body = %s", canonicalized.Code, canonicalized.Body.String())
+	}
+	var storedPageURL string
+	if err := root.QueryRow(ctx,
+		`SELECT page_url FROM sessions WHERE session_id = $1`, canonicalizationSessionID,
+	).Scan(&storedPageURL); err != nil {
+		t.Fatalf("read canonicalized replay page URL: %v", err)
+	}
+	if storedPageURL != "https://example.com/checkout" {
+		t.Fatalf("stored replay page URL = %q, want https://example.com/checkout with credentials/query/hash stripped", storedPageURL)
+	}
+	for _, sentinel := range []string{"sentinel-user", "sentinel-pass", "jane.doe", "secret-token", "fragment-secret"} {
+		if strings.Contains(canonicalized.Body.String(), sentinel) {
+			t.Fatalf("replay session response leaked sentinel URL content %q: %s", sentinel, canonicalized.Body.String())
+		}
+	}
 	rateLimitedSessionID := "5bc697f3-229d-44b8-b9ca-d3e236ad592b"
 	rateLimitedBody := strings.Replace(createBody, clientSessionID, rateLimitedSessionID, 1)
 	abuseEvaluator.denyPolicy = abuse.ReplayStartPolicy.Name
@@ -838,6 +879,9 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if metadata.Code != http.StatusOK || !strings.Contains(metadata.Body.String(), `"status":"ready"`) ||
 		!strings.Contains(metadata.Body.String(), `"replay_url"`) {
 		t.Fatalf("metadata status = %d, body = %s", metadata.Code, metadata.Body.String())
+	}
+	if strings.Contains(metadata.Body.String(), "visitor_id") || strings.Contains(metadata.Body.String(), visitorID) {
+		t.Fatalf("backoffice replay session metadata leaked the visitor ID: %s", metadata.Body.String())
 	}
 	invalidMetadata := tenantReplayRequest(tenantHandler, http.MethodGet, "/v1/sessions/not-a-uuid", accessToken)
 	if invalidMetadata.Code != http.StatusNotFound {

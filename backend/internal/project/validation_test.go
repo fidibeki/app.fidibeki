@@ -171,6 +171,25 @@ func TestValidateWidgetDefinitionRejectsInvalidContract(t *testing.T) {
 	}
 }
 
+func TestValidateWidgetRuleForcesReplayInputMasking(t *testing.T) {
+	t.Parallel()
+	requestedFalse := false
+	delay := 2
+	values, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Checkout", MatcherType: MatcherAllPages,
+		TriggerType: TriggerDelay, TriggerDelaySeconds: &delay,
+		ReplayMaskAllInputs: &requestedFalse,
+	}, tenant.Tenant{Plan: tenant.PlanStarter})
+	if len(fields) != 0 {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if !values.ReplayMaskAllInputs {
+		t.Fatalf(
+			"ReplayMaskAllInputs = false, want true; input masking is an anonymity-safe default and must not be disableable",
+		)
+	}
+}
+
 func TestValidateWidgetRuleAcceptsRecurrenceModes(t *testing.T) {
 	t.Parallel()
 	days := 45
