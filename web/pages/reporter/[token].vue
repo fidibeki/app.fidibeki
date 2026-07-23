@@ -29,6 +29,12 @@ const isInvalidLink = computed(() => extractAPIError(error.value)?.code === 'not
 const canRespond = computed(() => progress.value?.status === 'needs_info' &&
   Boolean(progress.value.clarification) && !progress.value.clarification?.responded && !responseAccepted.value)
 
+watch(token, () => {
+  response.value = ''
+  responseError.value = ''
+  responseAccepted.value = false
+})
+
 function statusLabel(value: string) {
   const key = issueStatusKey(value)
   return key ? t(key) : value
@@ -37,12 +43,14 @@ function statusLabel(value: string) {
 async function submitResponse() {
   const body = response.value.trim()
   if (!canRespond.value || !body || sending.value) return
+  const submissionToken = token.value
   sending.value = true
   responseError.value = ''
   try {
-    await $apiFetch(`/v1/reporter/progress/${encodeURIComponent(token.value)}/response`, {
+    await $apiFetch(`/v1/reporter/progress/${encodeURIComponent(submissionToken)}/response`, {
       method: 'POST', body: { response: body },
     })
+    if (token.value !== submissionToken) return
     responseAccepted.value = true
     response.value = ''
     await refresh()
@@ -163,7 +171,7 @@ useHead(() => ({
 
 .reporter-heading h1 {
   max-width: 600px;
-  font-size: clamp(20px, 3.6vw, 26px);
+  font-size: 26px;
   line-height: 1.25;
 }
 
@@ -341,6 +349,10 @@ useHead(() => ({
 }
 
 @media (max-width: 600px) {
+  .reporter-heading h1 {
+    font-size: 22px;
+  }
+
   .reporter-clarification form button {
     width: 100%;
     justify-self: stretch;

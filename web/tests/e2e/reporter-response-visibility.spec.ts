@@ -147,7 +147,11 @@ test('reporter clarification response submitted on the public page is visible in
   await expect(page.getByRole('heading', { name: issue.title, level: 1 })).toBeVisible()
   await expect(page.getByAltText('Fidibeki')).toBeVisible()
 
-  const responseText = 'Used client@example.com at checkout.\nAlso tried a work email as a backup, same result.'
+  const responseText = [
+    'Used client@example.com at checkout.',
+    'Also tried a work email as a backup, same result.',
+    '<script>window.__fidibekiXss = true</script>',
+  ].join('\n')
   await page.getByLabel('Your response').fill(responseText)
   await page.getByRole('button', { name: 'Send response' }).click()
   await expect.poll(() => state.lastResponseBody).toEqual({ response: responseText })
@@ -188,6 +192,7 @@ test('reporter clarification response submitted on the public page is visible in
   const responseBlock = responseEntry.locator('blockquote.issue-activity-response')
   await expect(responseBlock).toContainText('Used client@example.com at checkout.')
   await expect(responseBlock).toContainText('Also tried a work email as a backup, same result.')
+  await expect(responseBlock).toContainText('<script>window.__fidibekiXss = true</script>')
   const responseTextContent = await responseBlock.evaluate(element => element.textContent || '')
   expect(responseTextContent).toContain('\n')
 
@@ -197,6 +202,7 @@ test('reporter clarification response submitted on the public page is visible in
 
   const html = await page.locator('.issue-history').innerHTML()
   expect(html).not.toContain('<script')
+  expect(await page.evaluate(() => '__fidibekiXss' in window)).toBe(false)
   await capture(page, testInfo, 'issue-detail-reporter-response')
 
   if (testInfo.project.name === 'mobile') {
