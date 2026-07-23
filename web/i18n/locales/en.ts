@@ -1,3 +1,5 @@
+import { feedbackMessages } from '../messages/feedback.en'
+
 export default defineI18nLocale(() => ({
   common: {
     workspace: 'Workspace',
@@ -404,6 +406,7 @@ export default defineI18nLocale(() => ({
       ratesUnavailable: 'Rates remain unavailable until their denominator has activity.',
     },
   },
+  feedback: feedbackMessages,
   runtime: {
     catalogLanguage: 'English',
     fallbackProbe: 'English fallback',

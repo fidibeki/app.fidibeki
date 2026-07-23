@@ -28,9 +28,10 @@ const props = defineProps<{
   canUnlink: boolean
   issueActionReason?: string
 }>()
+const { t } = useI18n()
 
 const emit = defineEmits<{
-  mutate: [body: Record<string, unknown>, action: string]
+  mutate: [body: Record<string, unknown>, actionKey: string, parameters?: Record<string, unknown>]
   reprocess: []
   createIssue: []
   linkIssue: []
@@ -43,12 +44,11 @@ const tagPopover = ref<HTMLDetailsElement>()
 const issuePopover = ref<HTMLDetailsElement>()
 let mediaQuery: MediaQueryList | undefined
 
-const priorities: Array<{ value: TriagePriority, label: string }> = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'urgent', label: 'Urgent' },
-]
+const priorityValues: TriagePriority[] = ['low', 'medium', 'high', 'urgent']
+const priorities = computed(() => priorityValues.map(value => ({
+  value,
+  label: t(`feedback.priority.${value}`),
+})))
 
 function syncCompact(event: MediaQueryList | MediaQueryListEvent) {
   compact.value = event.matches
@@ -68,7 +68,7 @@ function choosePriority(event: Event) {
   const value = select.value
   select.value = ''
   if (!value) return
-  mutate({ priority: value }, value === 'none' ? 'had priority cleared' : 'prioritized')
+  mutate({ priority: value }, value === 'none' ? 'bulkPriorityCleared' : 'bulkPrioritized')
 }
 
 function chooseAssignee(event: Event) {
@@ -76,7 +76,10 @@ function chooseAssignee(event: Event) {
   const value = select.value
   select.value = ''
   if (!value) return
-  mutate(value === 'unassign' ? { unassign: true } : { assignee_id: value }, value === 'unassign' ? 'unassigned' : 'assigned')
+  mutate(
+    value === 'unassign' ? { unassign: true } : { assignee_id: value },
+    value === 'unassign' ? 'bulkUnassigned' : 'bulkAssigned',
+  )
 }
 
 function allHaveTag(tagID: string) {
@@ -88,15 +91,16 @@ function toggleTag(tag: TriageTag) {
   const remove = allHaveTag(tag.id)
   mutate(
     remove ? { remove_tag_ids: [tag.id] } : { add_tag_ids: [tag.id] },
-    remove ? `had ${tag.name} removed` : `tagged ${tag.name}`,
+    remove ? 'bulkTagRemoved' : 'bulkTagged',
+    { tag: tag.name },
   )
 }
 
-function mutate(body: Record<string, unknown>, action: string) {
+function mutate(body: Record<string, unknown>, actionKey: string, parameters?: Record<string, unknown>) {
   compactMenuOpen.value = false
   if (tagPopover.value) tagPopover.value.open = false
   if (issuePopover.value) issuePopover.value.open = false
-  emit('mutate', body, action)
+  emit('mutate', body, actionKey, parameters)
 }
 
 function reprocess() {
@@ -114,74 +118,74 @@ function issueAction(action: 'createIssue' | 'linkIssue' | 'unlinkIssue') {
 </script>
 
 <template>
-  <section class="feedback-bulk-bar" aria-label="Bulk feedback actions">
-    <b>{{ count }} selected</b>
+  <section class="feedback-bulk-bar" :aria-label="t('feedback.bulk.label')">
+    <b>{{ t('feedback.bulk.selected', { count }, count) }}</b>
 
     <template v-if="!compact">
       <details v-if="issueActionsAvailable" ref="issuePopover" class="bulk-popover bulk-issue-popover">
-        <summary><CircleDot :size="14" /> Issue <ChevronDown :size="13" /></summary>
+        <summary><CircleDot :size="14" /> {{ t('feedback.bulk.issue') }} <ChevronDown :size="13" /></summary>
         <div>
           <p v-if="issueActionReason">{{ issueActionReason }}</p>
-          <button type="button" :disabled="pending || !canCreateOrLink" :title="issueActionReason" @click="issueAction('createIssue')"><Plus :size="14" /> Create issue</button>
-          <button type="button" :disabled="pending || !canCreateOrLink" :title="issueActionReason" @click="issueAction('linkIssue')"><Link2 :size="14" /> Link issue</button>
-          <button type="button" :disabled="pending || !canUnlink" @click="issueAction('unlinkIssue')"><Link2Off :size="14" /> Unlink</button>
+          <button type="button" :disabled="pending || !canCreateOrLink" :title="issueActionReason" @click="issueAction('createIssue')"><Plus :size="14" /> {{ t('feedback.actions.createIssue') }}</button>
+          <button type="button" :disabled="pending || !canCreateOrLink" :title="issueActionReason" @click="issueAction('linkIssue')"><Link2 :size="14" /> {{ t('feedback.actions.linkIssue') }}</button>
+          <button type="button" :disabled="pending || !canUnlink" @click="issueAction('unlinkIssue')"><Link2Off :size="14" /> {{ t('feedback.actions.unlink') }}</button>
         </div>
       </details>
-      <select aria-label="Bulk priority" :disabled="pending" value="" @change="choosePriority">
-        <option value="" disabled>Priority</option>
+      <select :aria-label="t('feedback.bulk.priority')" :disabled="pending" value="" @change="choosePriority">
+        <option value="" disabled>{{ t('feedback.triage.priority') }}</option>
         <option v-for="priority in priorities" :key="priority.value" :value="priority.value">{{ priority.label }}</option>
-        <option value="none">Clear priority</option>
+        <option value="none">{{ t('feedback.priority.clear') }}</option>
       </select>
-      <select aria-label="Bulk assignee" :disabled="pending" value="" @change="chooseAssignee">
-        <option value="" disabled>Assign</option>
+      <select :aria-label="t('feedback.bulk.assignee')" :disabled="pending" value="" @change="chooseAssignee">
+        <option value="" disabled>{{ t('feedback.bulk.assign') }}</option>
         <option v-for="member in members" :key="member.id" :value="member.id">{{ member.name || member.email }}</option>
-        <option value="unassign">Unassign</option>
+        <option value="unassign">{{ t('feedback.bulk.unassign') }}</option>
       </select>
       <details ref="tagPopover" class="bulk-popover bulk-tag-popover">
-        <summary><Tag :size="14" /> Tags <ChevronDown :size="13" /></summary>
+        <summary><Tag :size="14" /> {{ t('feedback.bulk.tags') }} <ChevronDown :size="13" /></summary>
         <div>
           <button
             v-for="tag in tags"
             :key="tag.id"
             type="button"
-            :aria-label="`${allHaveTag(tag.id) ? 'Remove' : 'Add'} ${tag.name} tag`"
+            :aria-label="t(allHaveTag(tag.id) ? 'feedback.bulk.removeTag' : 'feedback.bulk.addTag', { tag: tag.name })"
             :disabled="pending"
             @click="toggleTag(tag)"
           ><span :style="{ backgroundColor: tag.color }" /><Check v-if="allHaveTag(tag.id)" :size="13" />{{ tag.name }}</button>
-          <span v-if="tags.length === 0">No tags configured</span>
+          <span v-if="tags.length === 0">{{ t('feedback.triage.noTags') }}</span>
         </div>
       </details>
-      <button type="button" :disabled="pending" @click="mutate({ status: 'archived' }, 'archived')"><Archive :size="14" /> Archive</button>
-      <button class="danger" type="button" :disabled="pending" @click="mutate({ status: 'spam' }, 'marked as spam')"><ShieldAlert :size="14" /> Spam</button>
-      <button v-if="aiEnabled" type="button" :disabled="pending" @click="reprocess"><RotateCcw :size="14" /> Reprocess AI</button>
-      <NuxtLink v-else-if="showAIUpgrade" to="/billing">Upgrade for AI <ArrowUpRight :size="13" /></NuxtLink>
+      <button type="button" :disabled="pending" @click="mutate({ status: 'archived' }, 'bulkArchived')"><Archive :size="14" /> {{ t('feedback.actions.archive') }}</button>
+      <button class="danger" type="button" :disabled="pending" @click="mutate({ status: 'spam' }, 'bulkSpam')"><ShieldAlert :size="14" /> {{ t('feedback.actions.spam') }}</button>
+      <button v-if="aiEnabled" type="button" :disabled="pending" @click="reprocess"><RotateCcw :size="14" /> {{ t('feedback.actions.reprocessAI') }}</button>
+      <NuxtLink v-else-if="showAIUpgrade" to="/billing">{{ t('feedback.actions.upgradeAI') }} <ArrowUpRight :size="13" /></NuxtLink>
     </template>
 
     <div v-else class="bulk-compact-actions">
       <button
         class="bulk-compact-trigger"
         type="button"
-        aria-label="Bulk actions"
+        :aria-label="t('feedback.bulk.actionsLabel')"
         :aria-expanded="compactMenuOpen"
         :disabled="pending"
         @click="compactMenuOpen = !compactMenuOpen"
-      ><ListFilter :size="15" /> Actions <ChevronDown :size="13" /></button>
+      ><ListFilter :size="15" /> {{ t('feedback.bulk.actions') }} <ChevronDown :size="13" /></button>
       <div v-if="compactMenuOpen" class="bulk-compact-menu">
         <fieldset v-if="issueActionsAvailable" class="bulk-issue-actions">
-          <legend>Issue</legend>
+          <legend>{{ t('feedback.bulk.issue') }}</legend>
           <p v-if="issueActionReason">{{ issueActionReason }}</p>
-          <button type="button" :disabled="pending || !canCreateOrLink" @click="issueAction('createIssue')"><Plus :size="14" /> Create issue</button>
-          <button type="button" :disabled="pending || !canCreateOrLink" @click="issueAction('linkIssue')"><Link2 :size="14" /> Link issue</button>
-          <button type="button" :disabled="pending || !canUnlink" @click="issueAction('unlinkIssue')"><Link2Off :size="14" /> Unlink</button>
+          <button type="button" :disabled="pending || !canCreateOrLink" @click="issueAction('createIssue')"><Plus :size="14" /> {{ t('feedback.actions.createIssue') }}</button>
+          <button type="button" :disabled="pending || !canCreateOrLink" @click="issueAction('linkIssue')"><Link2 :size="14" /> {{ t('feedback.actions.linkIssue') }}</button>
+          <button type="button" :disabled="pending || !canUnlink" @click="issueAction('unlinkIssue')"><Link2Off :size="14" /> {{ t('feedback.actions.unlink') }}</button>
         </fieldset>
-        <label>Priority<select aria-label="Bulk priority" :disabled="pending" value="" @change="choosePriority"><option value="" disabled>Choose priority</option><option v-for="priority in priorities" :key="priority.value" :value="priority.value">{{ priority.label }}</option><option value="none">Clear priority</option></select></label>
-        <label>Assignee<select aria-label="Bulk assignee" :disabled="pending" value="" @change="chooseAssignee"><option value="" disabled>Choose assignee</option><option v-for="member in members" :key="member.id" :value="member.id">{{ member.name || member.email }}</option><option value="unassign">Unassign</option></select></label>
-        <fieldset><legend>Tags</legend><button v-for="tag in tags" :key="tag.id" type="button" :aria-label="`${allHaveTag(tag.id) ? 'Remove' : 'Add'} ${tag.name} tag`" :disabled="pending" @click="toggleTag(tag)"><span :style="{ backgroundColor: tag.color }" /><Check v-if="allHaveTag(tag.id)" :size="13" />{{ tag.name }}</button><span v-if="tags.length === 0">No tags configured</span></fieldset>
+        <label>{{ t('feedback.triage.priority') }}<select :aria-label="t('feedback.bulk.priority')" :disabled="pending" value="" @change="choosePriority"><option value="" disabled>{{ t('feedback.bulk.choosePriority') }}</option><option v-for="priority in priorities" :key="priority.value" :value="priority.value">{{ priority.label }}</option><option value="none">{{ t('feedback.priority.clear') }}</option></select></label>
+        <label>{{ t('feedback.triage.assignee') }}<select :aria-label="t('feedback.bulk.assignee')" :disabled="pending" value="" @change="chooseAssignee"><option value="" disabled>{{ t('feedback.bulk.chooseAssignee') }}</option><option v-for="member in members" :key="member.id" :value="member.id">{{ member.name || member.email }}</option><option value="unassign">{{ t('feedback.bulk.unassign') }}</option></select></label>
+        <fieldset><legend>{{ t('feedback.bulk.tags') }}</legend><button v-for="tag in tags" :key="tag.id" type="button" :aria-label="t(allHaveTag(tag.id) ? 'feedback.bulk.removeTag' : 'feedback.bulk.addTag', { tag: tag.name })" :disabled="pending" @click="toggleTag(tag)"><span :style="{ backgroundColor: tag.color }" /><Check v-if="allHaveTag(tag.id)" :size="13" />{{ tag.name }}</button><span v-if="tags.length === 0">{{ t('feedback.triage.noTags') }}</span></fieldset>
         <div class="bulk-compact-commands">
-          <button type="button" :disabled="pending" @click="mutate({ status: 'archived' }, 'archived')"><Archive :size="14" /> Archive</button>
-          <button class="danger" type="button" :disabled="pending" @click="mutate({ status: 'spam' }, 'marked as spam')"><ShieldAlert :size="14" /> Spam</button>
-          <button v-if="aiEnabled" type="button" :disabled="pending" @click="reprocess"><RotateCcw :size="14" /> Reprocess AI</button>
-          <NuxtLink v-else-if="showAIUpgrade" to="/billing">Upgrade for AI <ArrowUpRight :size="13" /></NuxtLink>
+          <button type="button" :disabled="pending" @click="mutate({ status: 'archived' }, 'bulkArchived')"><Archive :size="14" /> {{ t('feedback.actions.archive') }}</button>
+          <button class="danger" type="button" :disabled="pending" @click="mutate({ status: 'spam' }, 'bulkSpam')"><ShieldAlert :size="14" /> {{ t('feedback.actions.spam') }}</button>
+          <button v-if="aiEnabled" type="button" :disabled="pending" @click="reprocess"><RotateCcw :size="14" /> {{ t('feedback.actions.reprocessAI') }}</button>
+          <NuxtLink v-else-if="showAIUpgrade" to="/billing">{{ t('feedback.actions.upgradeAI') }} <ArrowUpRight :size="13" /></NuxtLink>
         </div>
       </div>
     </div>

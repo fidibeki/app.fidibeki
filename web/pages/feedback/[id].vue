@@ -18,13 +18,14 @@ import {
   X,
 } from '@lucide/vue'
 import type { FeedbackAttachment, FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const { $apiFetch } = useNuxtApp()
 const { canWrite } = useAuth()
+const { t, te } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime, decimal, integer, plural } = useRegionalFormat()
 const feedbackID = computed(() => String(route.params.id || ''))
 const tab = ref<'evidence' | 'replay' | 'details'>('evidence')
 const mutationPending = ref(false)
@@ -86,10 +87,10 @@ async function updateStatus(nextStatus: FeedbackStatus) {
   mutationError.value = ''
   try {
     await $apiFetch(`/v1/feedbacks/${feedback.value.id}`, { method: 'PATCH', body: { status: nextStatus } })
-    notice.value = `Feedback marked ${nextStatus}.`
+    notice.value = t('feedback.notices.marked', { status: statusLabel(nextStatus).toLocaleLowerCase() })
     await refresh()
   } catch (updateError) {
-    mutationError.value = apiErrorMessage(updateError, 'Feedback could not be updated.')
+    mutationError.value = apiErrorMessage(updateError, 'feedback.errors.update')
   } finally {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -110,10 +111,10 @@ async function saveTitle() {
   try {
     await $apiFetch(`/v1/feedbacks/${feedback.value.id}`, { method: 'PATCH', body: { title } })
     titleEditing.value = false
-    notice.value = 'Feedback title updated.'
+    notice.value = t('feedback.notices.titleUpdated')
     await refresh()
   } catch (updateError) {
-    mutationError.value = apiErrorMessage(updateError, 'Feedback title could not be updated.')
+    mutationError.value = apiErrorMessage(updateError, 'feedback.errors.title')
   } finally {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -139,7 +140,7 @@ async function createIssue() {
     createIssueOpen.value = false
     await router.push(`/issues/${response.issue.id}`)
   } catch (createError) {
-    mutationError.value = apiErrorMessage(createError, 'Issue could not be created.')
+    mutationError.value = apiErrorMessage(createError, 'feedback.errors.createIssue')
   } finally {
     mutationPending.value = false
   }
@@ -151,10 +152,10 @@ async function reprocessAll() {
   mutationError.value = ''
   try {
     await $apiFetch(`/v1/feedbacks/${feedback.value.id}/reprocess`, { method: 'POST' })
-    notice.value = 'AI reprocessing queued.'
+    notice.value = t('feedback.notices.aiReprocessing')
     await refresh()
   } catch (reprocessError) {
-    mutationError.value = apiErrorMessage(reprocessError, 'AI reprocessing could not be queued.')
+    mutationError.value = apiErrorMessage(reprocessError, 'feedback.errors.aiReprocess')
   } finally {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -167,10 +168,10 @@ async function retryAttachment(id: string) {
   mutationError.value = ''
   try {
     await $apiFetch(`/v1/attachments/${id}/retry`, { method: 'POST' })
-    notice.value = 'Attachment retry queued.'
+    notice.value = t('feedback.notices.attachmentRetry')
     await refresh()
   } catch (retryError) {
-    mutationError.value = apiErrorMessage(retryError, 'Attachment retry could not be queued.')
+    mutationError.value = apiErrorMessage(retryError, 'feedback.errors.attachmentRetry')
   } finally {
     mutationPending.value = false
     window.setTimeout(() => { notice.value = '' }, 3000)
@@ -178,105 +179,132 @@ async function retryAttachment(id: string) {
 }
 
 function formatDate(value?: string) {
-  if (!value) return 'Not available'
-  return formatDateTime(value)
+  if (!value) return t('feedback.common.notAvailable')
+  return dateTime(value, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki` }))
+function statusLabel(value: string) {
+  return t(`feedback.status.${value}`)
+}
+
+function priorityLabel(value: string) {
+  return t(`feedback.priority.${value}`)
+}
+
+function actionabilityLabel(value: string) {
+  return t(`feedback.actionability.${value}`)
+}
+
+function moderationLabel(value: string) {
+  const key = `feedback.moderationFlags.${value}`
+  return te(key) ? t(key) : value
+}
+
+function evidenceKindLabel(value: string) {
+  return t(`feedback.evidenceKinds.${value}`)
+}
+
+function attachmentSize(sizeBytes: number) {
+  return decimal(sizeBytes / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+}
+
+useHead(() => ({
+  title: t('feedback.detailPageTitle', { feedback: feedback.value?.public_id || t('feedback.title') }),
+}))
 </script>
 
 <template>
   <div class="feedback-detail-page">
     <header class="feedback-detail-toolbar">
-      <NuxtLink class="app-button" to="/feedback"><ArrowLeft :size="15" /> Back to queue</NuxtLink>
+      <NuxtLink class="app-button" to="/feedback"><ArrowLeft :size="15" /> {{ t('feedback.detail.back') }}</NuxtLink>
       <div v-if="feedback">
         <template v-if="canWrite('feedback:update')">
-          <button v-if="feedback.status === 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus('archived')"><Archive :size="15" /> Archive</button>
-          <button v-else class="app-button" :disabled="mutationPending" @click="updateStatus('open')">Reopen</button>
-          <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> Spam</button>
+          <button v-if="feedback.status === 'open'" class="app-button" :disabled="mutationPending" @click="updateStatus('archived')"><Archive :size="15" /> {{ t('feedback.actions.archive') }}</button>
+          <button v-else class="app-button" :disabled="mutationPending" @click="updateStatus('open')">{{ t('feedback.actions.reopen') }}</button>
+          <button class="app-button" :disabled="mutationPending" @click="updateStatus('spam')"><ShieldAlert :size="15" /> {{ t('feedback.actions.spam') }}</button>
         </template>
-        <NuxtLink v-if="feedback.issue_id" class="app-button app-button--primary" :to="`/issues/${feedback.issue_id}`"><Link2 :size="15" /> Open issue</NuxtLink>
-        <button v-else-if="canWrite('feedback:update') && canWrite('issue:update')" class="app-button app-button--primary" :disabled="mutationPending" @click="openCreateIssue"><Plus :size="15" /> Create issue</button>
+        <NuxtLink v-if="feedback.issue_id" class="app-button app-button--primary" :to="`/issues/${feedback.issue_id}`"><Link2 :size="15" /> {{ t('feedback.actions.openIssue') }}</NuxtLink>
+        <button v-else-if="canWrite('feedback:update') && canWrite('issue:update')" class="app-button app-button--primary" :disabled="mutationPending" @click="openCreateIssue"><Plus :size="15" /> {{ t('feedback.actions.createIssue') }}</button>
       </div>
     </header>
 
-    <div v-if="status === 'pending'" class="app-state"><div><span class="app-spinner" /><h2>Loading feedback evidence</h2></div></div>
-    <div v-else-if="error" class="app-state" role="alert"><div><AlertTriangle :size="24" /><h2>Feedback unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></div>
+    <div v-if="status === 'pending'" class="app-state"><div><span class="app-spinner" /><h2>{{ t('feedback.detail.loading') }}</h2></div></div>
+    <div v-else-if="error" class="app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('feedback.states.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'feedback.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('feedback.actions.tryAgain') }}</button></div></div>
 
     <template v-else-if="feedback">
       <section class="feedback-detail-heading">
-        <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" aria-label="Feedback title" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">Save</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">Cancel</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" title="Edit feedback title" aria-label="Edit feedback title" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
-        <RatingMark v-if="feedback.rating" :rating="feedback.rating" /><span v-else class="feedback-detail-no-rating">No rating</span>
+        <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" :aria-label="t('feedback.detail.titleLabel')" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">{{ t('feedback.actions.save') }}</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">{{ t('feedback.actions.cancel') }}</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" :title="t('feedback.actions.editTitle')" :aria-label="t('feedback.actions.editTitle')" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
+        <RatingMark v-if="feedback.rating" :rating="feedback.rating" /><span v-else class="feedback-detail-no-rating">{{ t('feedback.common.noRating') }}</span>
       </section>
 
       <p v-if="mutationError" class="feedback-detail-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
 
-      <nav class="feedback-detail-tabs" aria-label="Feedback detail sections">
-        <button :data-active="tab === 'evidence'" @click="tab = 'evidence'">Evidence</button>
-        <button :data-active="tab === 'replay'" @click="tab = 'replay'">Replay</button>
-        <button :data-active="tab === 'details'" @click="tab = 'details'">Environment</button>
+      <nav class="feedback-detail-tabs" :aria-label="t('feedback.inspector.sections')">
+        <button :data-active="tab === 'evidence'" @click="tab = 'evidence'">{{ t('feedback.detail.tabs.evidence') }}</button>
+        <button :data-active="tab === 'replay'" @click="tab = 'replay'">{{ t('feedback.detail.tabs.replay') }}</button>
+        <button :data-active="tab === 'details'" @click="tab = 'details'">{{ t('feedback.detail.tabs.environment') }}</button>
       </nav>
 
       <div class="feedback-detail-grid">
         <main class="feedback-detail-canvas">
           <template v-if="tab === 'evidence'">
             <section v-if="structuredResponses.length || feedback.comment" class="feedback-response-section">
-              <header><div><h2>Submitted response</h2><p v-if="feedback.widget_definition_version">Widget definition v{{ feedback.widget_definition_version }}</p></div></header>
+              <header><div><h2>{{ t('feedback.detail.submittedResponse') }}</h2><p v-if="feedback.widget_definition_version">{{ t('feedback.detail.widgetVersion', { version: integer(feedback.widget_definition_version) }) }}</p></div></header>
               <dl v-if="structuredResponses.length"><div v-for="[key, value] in structuredResponses" :key="key"><dt>{{ responseLabel(key) }}</dt><dd>{{ value }}</dd></div></dl>
-              <div v-if="feedback.comment" class="feedback-response-comment"><b>Additional context</b><p>{{ feedback.comment }}</p></div>
+              <div v-if="feedback.comment" class="feedback-response-comment"><b>{{ t('feedback.detail.additionalContext') }}</b><p>{{ feedback.comment }}</p></div>
             </section>
             <section id="attachments" class="feedback-evidence-section">
-              <header><div><h2>Captured evidence</h2><p>{{ feedback.attachments.length }} attachments</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">Upgrade for AI <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> Reprocess all</button></header>
+              <header><div><h2>{{ t('feedback.detail.capturedEvidence') }}</h2><p>{{ plural('feedback.detail.attachments', feedback.attachments.length, { count: integer(feedback.attachments.length) }) }}</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">{{ t('feedback.actions.upgradeAI') }} <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> {{ t('feedback.actions.reprocessAll') }}</button></header>
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
-                  <div><b>{{ attachmentItem.kind }}</b><span>{{ attachmentItem.content_type }} · {{ (attachmentItem.size_bytes / 1024).toFixed(1) }} KB</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentItem.error_message }}</p></div>
-                  <span class="status-pill" :class="`status-${attachmentStatus(attachmentItem)}`">{{ attachmentStatus(attachmentItem) }}</span>
-                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.safety_status === 'safe' && attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
+                  <div><b>{{ evidenceKindLabel(attachmentItem.kind) }}</b><span>{{ t('feedback.detail.attachmentSize', { contentType: attachmentItem.content_type, size: attachmentSize(attachmentItem.size_bytes) }) }}</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ t('feedback.detail.attachmentFailed') }}</p></div>
+                  <span class="status-pill" :class="`status-${attachmentStatus(attachmentItem)}`">{{ statusLabel(attachmentStatus(attachmentItem)) }}</span>
+                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.safety_status === 'safe' && attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">{{ t('feedback.actions.retry') }}</button></div>
                 </article>
               </div>
-              <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>No media was attached to this feedback.</p></div>
+              <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>{{ t('feedback.detail.noMedia') }}</p></div>
             </section>
 
             <section v-if="safeDOMSnapshot" class="feedback-dom-capture">
-              <header><div><h2>Attached element</h2><p>Rendered in a script-free sandbox</p></div><ExternalLink :size="15" /></header>
-              <iframe title="Captured page element" sandbox="" :srcdoc="safeDOMSnapshot" />
+              <header><div><h2>{{ t('feedback.detail.attachedElement') }}</h2><p>{{ t('feedback.detail.sandboxed') }}</p></div><ExternalLink :size="15" /></header>
+              <iframe :title="t('feedback.detail.capturedElement')" sandbox="" :srcdoc="safeDOMSnapshot" />
             </section>
 
-            <section v-if="transcript" class="feedback-transcript"><h2>Transcript</h2><p>{{ transcript }}</p></section>
+            <section v-if="transcript" class="feedback-transcript"><h2>{{ t('feedback.detail.transcript') }}</h2><p>{{ transcript }}</p></section>
           </template>
 
           <template v-else-if="tab === 'replay'">
             <section v-if="feedback.session" class="feedback-replay-surface">
-              <header><div><h2>Session replay</h2><p>{{ feedback.session.events_count }} events · rrweb {{ feedback.session.rrweb_version }}</p></div><span class="status-pill" :class="replayStatus === 'ready' ? 'status-completed' : `status-${replayStatus === 'recording' ? 'processing' : replayStatus}`">{{ replayStatus }}</span></header>
+              <header><div><h2>{{ t('feedback.detail.sessionReplay') }}</h2><p>{{ t('feedback.detail.replayVersion', { events: plural('feedback.replay.events', feedback.session.events_count, { count: integer(feedback.session.events_count) }), version: feedback.session.rrweb_version }) }}</p></div><span class="status-pill" :class="replayStatus === 'ready' ? 'status-completed' : `status-${replayStatus === 'recording' ? 'processing' : replayStatus}`">{{ statusLabel(replayStatus) }}</span></header>
               <ReplayPlayer v-if="feedback.session.replay_ready && feedback.session.replay_url" :url="feedback.session.replay_url" :viewport-width="feedback.viewport_width" :viewport-height="feedback.viewport_height" />
-              <div v-else class="feedback-replay-placeholder"><MonitorPlay :size="34" /><h3>{{ replayStatus === 'failed' ? 'Session replay unavailable' : 'Replay is still processing' }}</h3><p>{{ feedback.session.merge_error || 'The replay will appear after its batches are merged.' }}</p></div>
+              <div v-else class="feedback-replay-placeholder"><MonitorPlay :size="34" /><h3>{{ replayStatus === 'failed' ? t('feedback.detail.replayUnavailable') : t('feedback.detail.replayProcessing') }}</h3><p>{{ t('feedback.detail.replayPending') }}</p></div>
             </section>
-            <section v-else class="feedback-evidence-empty"><MonitorPlay :size="28" /><h2>No session replay</h2><p>This feedback was captured without replay enabled.</p></section>
+            <section v-else class="feedback-evidence-empty"><MonitorPlay :size="28" /><h2>{{ t('feedback.detail.noReplay') }}</h2><p>{{ t('feedback.detail.noReplayDescription') }}</p></section>
           </template>
 
           <section v-else class="feedback-environment">
-            <h2>Capture environment</h2>
-            <dl><div><dt>Page</dt><dd><a :href="feedback.page_url" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a></dd></div><div><dt>Referrer</dt><dd>{{ feedback.referrer || 'Direct' }}</dd></div><div><dt>Browser</dt><dd>{{ feedback.browser || 'Unknown' }}</dd></div><div><dt>Operating system</dt><dd>{{ feedback.os || 'Unknown' }}</dd></div><div><dt>Device</dt><dd>{{ feedback.device || 'Unknown' }}</dd></div><div><dt>Viewport</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${feedback.viewport_width} × ${feedback.viewport_height}` : 'Unknown' }}</dd></div><div><dt>Language</dt><dd>{{ feedback.language || 'Unknown' }}</dd></div><div><dt>User agent</dt><dd>{{ feedback.user_agent || 'Unknown' }}</dd></div></dl>
+            <h2>{{ t('feedback.detail.environment') }}</h2>
+            <dl><div><dt>{{ t('feedback.detail.page') }}</dt><dd><a :href="feedback.page_url" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a></dd></div><div><dt>{{ t('feedback.detail.referrer') }}</dt><dd>{{ feedback.referrer || t('feedback.common.direct') }}</dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.userAgent') }}</dt><dd>{{ feedback.user_agent || t('feedback.common.unknown') }}</dd></div></dl>
           </section>
         </main>
 
         <aside class="feedback-case-facts">
-          <section><h2>Triage</h2><dl><div><dt>Status</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ feedback.status }}</span></dd></div><div><dt>AI status</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></dd></div><div v-if="feedback.ai_actionability"><dt>Actionability</dt><dd>{{ feedback.ai_actionability.replace('_', ' ') }}</dd></div><div v-if="feedback.ai_category"><dt>Category</dt><dd>{{ feedback.ai_category }}</dd></div><div v-if="feedback.ai_priority"><dt>Suggested priority</dt><dd>{{ feedback.ai_priority }}</dd></div><div><dt>Sentiment</dt><dd><SentimentBadge :score="feedback.sentiment_score" /></dd></div><div><dt>Moderation</dt><dd>{{ feedback.moderation_flags.join(', ') || 'Clear' }}</dd></div><div><dt>Issue</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>Not linked</span></dd></div></dl></section>
-          <section><h2>Reporter</h2><dl><div><dt>Email</dt><dd>{{ feedback.reporter_email || 'Anonymous' }}</dd></div><div><dt>Updates</dt><dd>{{ feedback.notify_reporter ? 'Subscribed' : 'Not subscribed' }}</dd></div></dl></section>
-          <section v-if="retryableAttachments.length"><h2>AI failures</h2><p>{{ retryableAttachments.length }} attachment{{ retryableAttachments.length === 1 ? '' : 's' }} can be retried.</p></section>
+          <section><h2>{{ t('feedback.detail.triage') }}</h2><dl><div><dt>{{ t('feedback.common.status') }}</dt><dd><span class="status-pill" :class="`status-${feedback.status}`">{{ statusLabel(feedback.status) }}</span></dd></div><div><dt>{{ t('feedback.detail.aiStatus') }}</dt><dd><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ statusLabel(feedback.ai_status) }}</span></dd></div><div v-if="feedback.ai_actionability"><dt>{{ t('feedback.detail.actionability') }}</dt><dd>{{ actionabilityLabel(feedback.ai_actionability) }}</dd></div><div v-if="feedback.ai_category"><dt>{{ t('feedback.common.category') }}</dt><dd>{{ feedback.ai_category }}</dd></div><div v-if="feedback.ai_priority"><dt>{{ t('feedback.detail.suggestedPriority') }}</dt><dd>{{ priorityLabel(feedback.ai_priority) }}</dd></div><div><dt>{{ t('feedback.common.sentiment') }}</dt><dd><SentimentBadge :score="feedback.sentiment_score" /></dd></div><div><dt>{{ t('feedback.common.moderation') }}</dt><dd>{{ feedback.moderation_flags.length ? feedback.moderation_flags.map(moderationLabel).join(', ') : t('feedback.common.clear') }}</dd></div><div><dt>{{ t('feedback.common.issue') }}</dt><dd><NuxtLink v-if="feedback.issue_id" :to="`/issues/${feedback.issue_id}`">{{ feedback.issue_public_id }}</NuxtLink><span v-else>{{ t('feedback.common.notLinked') }}</span></dd></div></dl></section>
+          <section><h2>{{ t('feedback.detail.reporter') }}</h2><dl><div><dt>{{ t('feedback.common.email') }}</dt><dd>{{ feedback.reporter_email || t('feedback.common.anonymous') }}</dd></div><div><dt>{{ t('feedback.common.updates') }}</dt><dd>{{ feedback.notify_reporter ? t('feedback.common.subscribed') : t('feedback.common.notSubscribed') }}</dd></div></dl></section>
+          <section v-if="retryableAttachments.length"><h2>{{ t('feedback.detail.aiFailures') }}</h2><p>{{ plural('feedback.detail.retryableAttachments', retryableAttachments.length, { count: integer(retryableAttachments.length) }) }}</p></section>
         </aside>
       </div>
     </template>
     <AppDialog :open="createIssueOpen" aria-labelledby="create-issue-title" @close="createIssueOpen = false">
       <form class="feedback-issue-modal app-modal" @submit.prevent="createIssue">
-        <header><div><p class="app-eyebrow">Create actionable work</p><h2 id="create-issue-title">Create issue from feedback</h2></div><button type="button" class="app-icon-button" title="Close" aria-label="Close" @click="createIssueOpen = false"><X :size="16" /></button></header>
+        <header><div><p class="app-eyebrow">{{ t('feedback.dialogs.createEyebrow') }}</p><h2 id="create-issue-title">{{ t('feedback.dialogs.createOne') }}</h2></div><button type="button" class="app-icon-button" :title="t('feedback.actions.close')" :aria-label="t('feedback.actions.close')" @click="createIssueOpen = false"><X :size="16" /></button></header>
         <div class="app-modal__body">
-          <label><span>Title</span><input v-model="issueTitle" class="app-input" required maxlength="80" autofocus /></label>
-          <label><span>Description</span><textarea v-model="issueDescription" class="app-input" rows="6" maxlength="10000" /></label>
-          <p v-if="feedback?.ai_suggested_title && feedback.ai_suggested_title !== feedback.title" class="feedback-ai-suggestion">AI suggestion: {{ feedback.ai_suggested_title }}</p>
+          <label><span>{{ t('feedback.dialogs.title') }}</span><input v-model="issueTitle" class="app-input" required maxlength="80" autofocus /></label>
+          <label><span>{{ t('feedback.dialogs.description') }}</span><textarea v-model="issueDescription" class="app-input" rows="6" maxlength="10000" /></label>
+          <p v-if="feedback?.ai_suggested_title && feedback.ai_suggested_title !== feedback.title" class="feedback-ai-suggestion">{{ t('feedback.dialogs.aiSuggestion', { title: feedback.ai_suggested_title }) }}</p>
         </div>
-        <footer><button type="button" class="app-button" :disabled="mutationPending" @click="createIssueOpen = false">Cancel</button><button class="app-button app-button--primary" :disabled="mutationPending || !issueTitle.trim()" type="submit"><Plus :size="14" /> {{ mutationPending ? 'Creating...' : 'Create issue' }}</button></footer>
+        <footer><button type="button" class="app-button" :disabled="mutationPending" @click="createIssueOpen = false">{{ t('feedback.actions.cancel') }}</button><button class="app-button app-button--primary" :disabled="mutationPending || !issueTitle.trim()" type="submit"><Plus :size="14" /> {{ mutationPending ? t('feedback.actions.creating') : t('feedback.actions.createIssue') }}</button></footer>
       </form>
     </AppDialog>
     <p v-if="notice" class="feedback-toast" role="status"><CheckCircle2 :size="14" /> {{ notice }}</p>

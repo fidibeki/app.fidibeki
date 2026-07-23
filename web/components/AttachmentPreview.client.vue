@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { AlertTriangle, Eye, LoaderCircle, X } from '@lucide/vue'
 import type { FeedbackAttachment } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
 
 const props = defineProps<{ attachment: FeedbackAttachment }>()
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
 const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const objectURL = ref('')
 const errorMessage = ref('')
@@ -19,7 +20,7 @@ async function load() {
     objectURL.value = URL.createObjectURL(blob)
     state.value = 'ready'
   } catch (error) {
-    errorMessage.value = apiErrorMessage(error, 'Evidence could not be loaded.')
+    errorMessage.value = apiErrorMessage(error, 'feedback.errors.evidence')
     state.value = 'error'
   }
 }
@@ -36,20 +37,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button v-if="attachment.content_url && state === 'idle'" class="attachment-preview-button app-button" type="button" @click="load"><Eye :size="14" /> View</button>
-  <span v-else-if="state === 'loading'" class="attachment-preview-loading"><LoaderCircle :size="14" /> Loading</span>
+  <button v-if="attachment.content_url && state === 'idle'" class="attachment-preview-button app-button" type="button" @click="load"><Eye :size="14" /> {{ t('feedback.attachment.view') }}</button>
+  <span v-else-if="state === 'loading'" class="attachment-preview-loading"><LoaderCircle :size="14" /> {{ t('feedback.attachment.loading') }}</span>
   <div v-else-if="state === 'ready'" class="attachment-preview-backdrop" @click.self="close">
-    <section class="attachment-preview-dialog" role="dialog" aria-modal="true" aria-label="Attachment evidence">
-      <header><b>{{ attachment.kind }} evidence</b><button class="app-icon-button" type="button" title="Close evidence" @click="close"><X :size="17" /></button></header>
+    <section class="attachment-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('feedback.attachment.dialog')">
+      <header><b>{{ t('feedback.attachment.evidence', { kind: t(`feedback.evidenceKinds.${attachment.kind}`) }) }}</b><button class="app-icon-button" type="button" :title="t('feedback.attachment.close')" :aria-label="t('feedback.attachment.close')" @click="close"><X :size="17" /></button></header>
       <div class="attachment-preview-media" :data-kind="attachment.kind">
-        <img v-if="attachment.kind === 'screenshot'" :src="objectURL" alt="Captured feedback screenshot" />
+        <img v-if="attachment.kind === 'screenshot'" :src="objectURL" :alt="t('feedback.attachment.screenshotAlt')" />
         <audio v-else-if="attachment.kind === 'audio'" :src="objectURL" controls preload="metadata" />
         <video v-else-if="attachment.kind === 'video'" :src="objectURL" controls preload="metadata" />
-        <a v-else :href="objectURL" target="_blank" rel="noreferrer">Open evidence</a>
+        <a v-else :href="objectURL" target="_blank" rel="noreferrer">{{ t('feedback.attachment.open') }}</a>
       </div>
     </section>
   </div>
-  <button v-else-if="state === 'error'" class="attachment-preview-error" type="button" :title="errorMessage" @click="load"><AlertTriangle :size="14" /> Retry view</button>
+  <button v-else-if="state === 'error'" class="attachment-preview-error" type="button" :title="errorMessage" @click="load"><AlertTriangle :size="14" /> {{ t('feedback.attachment.retryView') }}</button>
 </template>
 
 <style scoped>

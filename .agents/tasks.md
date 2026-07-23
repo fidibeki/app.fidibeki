@@ -441,11 +441,16 @@ gate also exposed and now covers a magic-link hash-clearing race in both viewpor
 ## Task 26: Feedback Operations Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Feedback queue, detail, evidence, replay, moderation, triage, and linking use catalogs.
 
 **Acceptance:** Portuguese browser workflows preserve customer-authored content and exact mutations.
+
+**Evidence:** 93 unit tests, typecheck, Nuxt build, and the 40-test feedback/replay/upload
+browser slice pass (29 executed, 11 intentional viewport skips). The Portuguese desktop
+and mobile journey verifies exact bulk mutations, link/unlink, archive, evidence safety,
+regional sentiment, replay controls, and preservation of customer-authored content.
 
 **Autonomy:** AFK
 

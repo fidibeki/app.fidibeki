@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { classifySentiment, formatSentimentScore } from '~/utils/sentiment'
+import { classifySentiment } from '~/utils/sentiment'
 
 const props = defineProps<{ score?: number | null }>()
+const { t } = useI18n()
+const { decimal } = useRegionalFormat()
 const classification = computed(() => classifySentiment(props.score))
-const label = computed(() => classification.value === 'unscored'
-  ? 'Not scored'
-  : classification.value.slice(0, 1).toUpperCase() + classification.value.slice(1))
-const exactScore = computed(() => formatSentimentScore(props.score))
+const label = computed(() => t(`feedback.sentiment.${classification.value}`))
+const exactScore = computed(() => classification.value === 'unscored'
+  ? t('feedback.sentiment.unscored')
+  : decimal(props.score!, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const accessibleLabel = computed(() => classification.value === 'unscored'
-  ? 'Sentiment not scored'
-  : `${label.value} sentiment, exact score ${exactScore.value}`)
+  ? t('feedback.sentiment.notScored')
+  : t('feedback.sentiment.accessible', { label: label.value, score: exactScore.value }))
+const detail = computed(() => classification.value === 'unscored'
+  ? t('feedback.sentiment.noExactScore')
+  : t('feedback.sentiment.exactScore', { score: exactScore.value }))
 </script>
 
 <template>
@@ -17,7 +22,7 @@ const accessibleLabel = computed(() => classification.value === 'unscored'
     class="sentiment-badge"
     :class="`sentiment-${classification}`"
     :aria-label="accessibleLabel"
-    :data-detail="classification === 'unscored' ? 'No exact score' : `Exact score ${exactScore}`"
+    :data-detail="detail"
     tabindex="0"
   >{{ label }}</span>
 </template>

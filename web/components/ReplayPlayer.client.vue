@@ -8,6 +8,9 @@ const props = defineProps<{
   viewportHeight?: number
 }>()
 const { $apiFetch } = useNuxtApp()
+const { t, locale } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { integer, plural } = useRegionalFormat()
 const target = ref<HTMLElement | null>(null)
 const state = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
@@ -48,10 +51,10 @@ function labelReplayControls() {
   const buttons = target.value.querySelectorAll<HTMLButtonElement>('.rr-controller__btns > button')
   const playPause = buttons.item(0)
   const fullscreen = buttons.item(buttons.length - 1)
-  playPause?.setAttribute('aria-label', 'Play or pause replay')
-  fullscreen?.setAttribute('aria-label', 'Toggle fullscreen replay')
+  playPause?.setAttribute('aria-label', t('feedback.replay.playPause'))
+  fullscreen?.setAttribute('aria-label', t('feedback.replay.fullscreen'))
   target.value.querySelector<HTMLInputElement>('.rr-controller input[type="checkbox"]')
-    ?.setAttribute('aria-label', 'Skip inactive periods')
+    ?.setAttribute('aria-label', t('feedback.replay.skipInactive'))
 }
 
 async function loadReplay() {
@@ -92,13 +95,14 @@ async function loadReplay() {
     resizeObserver = new ResizeObserver(entries => resizePlayer(entries[0]?.contentRect.width || 0))
     resizeObserver.observe(target.value)
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Replay could not be loaded.'
+    errorMessage.value = apiErrorMessage(error, 'feedback.errors.replay')
     state.value = 'error'
   }
 }
 
 onMounted(loadReplay)
 watch(() => props.url, loadReplay)
+watch(locale, () => nextTick(labelReplayControls))
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   cancelAnimationFrame(resizeFrame)
@@ -108,10 +112,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="replay-player">
-    <div v-if="state === 'loading'" class="replay-player-state"><span class="app-spinner" /><h3>Loading replay</h3></div>
-    <div v-else-if="state === 'error'" class="replay-player-state"><AlertTriangle :size="24" /><h3>Replay unavailable</h3><p>{{ errorMessage }}</p><button class="app-button" type="button" @click="loadReplay"><RotateCcw :size="14" /> Retry</button></div>
+    <div v-if="state === 'loading'" class="replay-player-state"><span class="app-spinner" /><h3>{{ t('feedback.replay.loading') }}</h3></div>
+    <div v-else-if="state === 'error'" class="replay-player-state"><AlertTriangle :size="24" /><h3>{{ t('feedback.replay.unavailable') }}</h3><p>{{ errorMessage }}</p><button class="app-button" type="button" @click="loadReplay"><RotateCcw :size="14" /> {{ t('feedback.replay.retry') }}</button></div>
     <div v-show="state === 'ready'" ref="target" class="replay-player-target" />
-    <span v-if="state === 'ready'" class="replay-player-count"><MonitorPlay :size="13" /> {{ formatWholeNumber(eventCount) }} events</span>
+    <span v-if="state === 'ready'" class="replay-player-count"><MonitorPlay :size="13" /> {{ plural('feedback.replay.events', eventCount, { count: integer(eventCount) }) }}</span>
   </div>
 </template>
 

@@ -1,3 +1,5 @@
+import { feedbackMessages } from '../messages/feedback.pt'
+
 export default defineI18nLocale(() => ({
   common: {
     workspace: 'Workspace',
@@ -404,6 +406,7 @@ export default defineI18nLocale(() => ({
       ratesUnavailable: 'As taxas ficam indisponíveis enquanto o denominador não tiver atividade.',
     },
   },
+  feedback: feedbackMessages,
   runtime: {
     catalogLanguage: 'Português',
     itemCount: 'um item | {count} itens',

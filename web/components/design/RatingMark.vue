@@ -1,9 +1,14 @@
 <script setup lang="ts">
 const props = defineProps<{ rating?: number | null; compact?: boolean }>()
+const { t } = useI18n()
 
 const hasRating = computed(() => props.rating !== null && props.rating !== undefined)
-const label = computed(() => hasRating.value ? `${props.rating} out of 5` : 'Not rated')
-const visibleValue = computed(() => hasRating.value ? props.rating : props.compact ? '—' : 'Not rated')
+const label = computed(() => hasRating.value
+  ? t('feedback.rating.value', { rating: props.rating })
+  : t('feedback.rating.notRated'))
+const visibleValue = computed(() => hasRating.value
+  ? props.rating
+  : props.compact ? '—' : t('feedback.rating.notRated'))
 </script>
 
 <template>

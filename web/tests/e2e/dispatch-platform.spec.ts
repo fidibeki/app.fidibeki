@@ -2162,8 +2162,8 @@ test('feedback status pills remain readable in normal and selected rows', async 
       }
     }))
     expect(measurements).toEqual([
-      { text: 'completed', contentFits: true, insideRow: true },
-      { text: 'completed', contentFits: true, insideRow: true },
+      { text: 'Completed', contentFits: true, insideRow: true },
+      { text: 'Completed', contentFits: true, insideRow: true },
     ])
     const overflow = await page.evaluate(() => ({
       clientWidth: document.documentElement.clientWidth,
@@ -2270,9 +2270,13 @@ test('expired uploads are not offered an AI processing retry', async ({ page }, 
   await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
   await expect(page.locator('#attachments')).toContainText('Captured evidence')
 
-  const expiredUpload = page.locator('.feedback-attachment-list article').filter({ hasText: 'attachment upload expired before completion' })
+  const expiredUpload = page.locator('.feedback-attachment-list article').filter({
+    has: page.locator('.status-pill', { hasText: 'Expired' }),
+  })
   await expect(expiredUpload).toBeVisible()
-  await expect(expiredUpload.locator('.status-pill')).toHaveText('expired')
+  await expect(expiredUpload.locator('.status-pill')).toHaveText('Expired')
+  await expect(expiredUpload).toContainText('Attachment processing failed.')
+  await expect(expiredUpload).not.toContainText('attachment upload expired before completion')
   await expect(expiredUpload.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   await expect(page.getByText('1 attachment can be retried.')).toBeVisible()
   await capture(page, testInfo, `attachment-safety-${testInfo.project.name}`)
@@ -2293,8 +2297,9 @@ test('terminal replay failures are shown as unavailable', async ({ page }, testI
   await page.getByRole('button', { name: 'Replay', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: 'Session replay unavailable' })).toBeVisible()
-  await expect(page.getByText('No replay events were uploaded before the recording ended.')).toBeVisible()
-  await expect(page.locator('.feedback-replay-surface .status-pill')).toHaveText('failed')
+  await expect(page.getByText('The replay will appear after its batches are merged.')).toBeVisible()
+  await expect(page.getByText('No replay events were uploaded before the recording ended.')).toHaveCount(0)
+  await expect(page.locator('.feedback-replay-surface .status-pill')).toHaveText('Failed')
 })
 
 test('session replay fits its surface across responsive viewports', async ({ page }, testInfo) => {
@@ -2450,7 +2455,8 @@ test('bulk feedback triage is atomic and responsive', async ({ page }, testInfo)
 
   state.failNextBulkFeedbackUpdate = true
   await selectBulkOption('Bulk priority', 'urgent')
-  await expect(page.getByRole('alert')).toContainText('Bulk update rejected.')
+  await expect(page.getByRole('alert')).toContainText('Feedback could not be updated.')
+  await expect(page.getByRole('alert')).not.toContainText('Bulk update rejected.')
   await expect(page.getByLabel('Select FB-1048')).toBeChecked()
   await expect(page.getByLabel('Select FB-1047')).toBeChecked()
   await expect(page.locator('.feedback-bulk-bar')).toBeVisible()
@@ -2551,6 +2557,92 @@ test('selected feedback can create, unlink, and link issues within one project',
   await expect(page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Create issue', exact: true })).toBeDisabled()
   await expect(page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Link issue', exact: true })).toBeDisabled()
   await capture(page, testInfo, 'feedback-mixed-project-actions')
+})
+
+test('Portuguese feedback operations preserve customer content and exact mutations', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.member.locale = 'pt-AO'
+  state.member.timezone = 'Africa/Luanda'
+  await installMockAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=feedback-portuguese-token`)
+  await expect(page.getByRole('heading', { name: 'Boa tarde, Alex' })).toBeVisible()
+
+  const openPortugueseFeedback = async () => {
+    if (testInfo.project.name === 'mobile') {
+      await page.getByTitle('Abrir navegação').click()
+    }
+    await page
+      .getByRole('navigation', { name: 'Navegação principal' })
+      .getByRole('link', { name: 'Feedback', exact: true })
+      .click()
+    await expect(page).toHaveURL(`${tenantOrigin}/feedback`)
+  }
+
+  await openPortugueseFeedback()
+  await expect(page).toHaveTitle('Feedback · Fidibeki')
+  await expect(page.getByText('2 carregados')).toBeVisible()
+  const negativeFeedbackRow = page.getByRole('listitem').filter({ hasText: 'FB-1048' })
+  const positiveFeedbackRow = page.getByRole('listitem').filter({ hasText: 'FB-1047' })
+  await expect(negativeFeedbackRow.getByText('Checkout froze after I applied a promotion code.', { exact: true })).toBeVisible()
+  await expect(positiveFeedbackRow.getByText('The new checkout is much clearer.', { exact: true })).toBeVisible()
+  await expect(negativeFeedbackRow).toContainText('Storefront')
+
+  const openBulkActions = async () => {
+    if (testInfo.project.name === 'mobile') {
+      const trigger = page.getByRole('button', { name: 'Ações em bulk' })
+      if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+    }
+  }
+  const openIssueActions = async () => {
+    await openBulkActions()
+    if (testInfo.project.name === 'desktop') await page.locator('.bulk-issue-popover summary').click()
+  }
+
+  await page.getByLabel('Selecionar FB-1048').check()
+  await page.getByLabel('Selecionar FB-1047').check()
+  await openBulkActions()
+  await page.getByLabel('Prioridade em bulk').selectOption('urgent')
+  expect(state.bulkFeedbackRequests.at(-1)).toEqual({
+    feedback_ids: ['feedback-1', 'feedback-2'],
+    priority: 'urgent',
+  })
+  expect(state.feedback.map(item => item.priority)).toEqual(['urgent', 'urgent'])
+
+  await page.getByLabel('Selecionar FB-1048').check()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Desligar', exact: true }).click()
+  expect(state.feedback[0].issue_id).toBeUndefined()
+
+  await page.getByLabel('Selecionar FB-1047').check()
+  await openIssueActions()
+  await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Ligar issue', exact: true }).click()
+  const linkDialog = page.getByRole('dialog', { name: 'Ligar 1 feedback a uma issue' })
+  await linkDialog.getByLabel('Issue').selectOption('issue-2')
+  await linkDialog.getByRole('button', { name: 'Ligar feedback', exact: true }).click()
+  await expect(page).toHaveURL(`${tenantOrigin}/issues/issue-2`)
+  expect(state.feedback[1]).toMatchObject({ issue_id: 'issue-2', issue_public_id: 'ISS-099' })
+
+  await openPortugueseFeedback()
+  await page.getByRole('link', { name: 'Abrir FB-1048' }).click()
+  await expect(page).toHaveURL(`${tenantOrigin}/feedback/feedback-1`)
+  await expect(page.getByRole('heading', { name: 'Checkout froze after I applied a promotion code.' })).toBeVisible()
+  await expect(page.getByText('Checkout froze after I applied a promotion code.', { exact: true })).toHaveCount(2)
+  await expect(page.locator('.feedback-detail-page .sentiment-badge')).toHaveAttribute(
+    'aria-label',
+    'Sentimento Negativo, valor exato -0,74',
+  )
+  await expect(page.getByText('Screenshot analysis timed out')).toHaveCount(0)
+  await expect(page.getByText('attachment upload expired before completion')).toHaveCount(0)
+  await expect(page.getByText('O processamento do anexo falhou.')).toHaveCount(2)
+
+  await page.getByRole('button', { name: 'Arquivar', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('Feedback marcado como arquivado.')
+  expect(state.feedback[0].status).toBe('archived')
+
+  await page.getByRole('button', { name: 'Replay', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Reproduzir ou pausar replay' })).toBeVisible()
+  await expect(page.getByText('3 eventos', { exact: true })).toBeVisible()
+  await capture(page, testInfo, `feedback-portuguese-${testInfo.project.name}`)
 })
 
 test('all-status and clear-filters choices survive route synchronization', async ({ page }, testInfo) => {
