@@ -159,8 +159,8 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	welcomeHandler := email.LifecycleHandler{
 		Database: pools.Admin, Sender: welcomeSender,
 		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost",
-		AuthFrom: "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom: "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
+		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
+		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
 		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
 	}.Handler()
 	for attempt := 0; attempt < 2; attempt++ {
