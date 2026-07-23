@@ -133,6 +133,9 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	warnings := make([]SubmissionWarning, 0, 1)
+	if values.ElementContextOmitted {
+		warnings = append(warnings, elementContextOmittedWarning())
+	}
 	if len(values.Attachments) > 0 {
 		grant, allowed := h.enforceAbusePolicy(
 			w, r, configuration, origin, visitorID, abuse.AttachmentGrantPolicy,
@@ -674,6 +677,14 @@ func uploadUnavailableWarning() SubmissionWarning {
 	return SubmissionWarning{
 		Code: "service_unavailable", Message: "Feedback saved without attachments. Try again later.",
 		Reason: abuse.ReasonUploadRateLimited, RetryAfterSeconds: 5,
+	}
+}
+
+func elementContextOmittedWarning() SubmissionWarning {
+	return SubmissionWarning{
+		Code:    "context_omitted",
+		Message: "Feedback saved without the selected page element because it could not be reduced safely.",
+		Reason:  "element_privacy_policy",
 	}
 }
 

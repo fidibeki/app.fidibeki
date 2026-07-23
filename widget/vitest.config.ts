@@ -7,16 +7,17 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.ts'],
     coverage: {
       provider: 'v8',
-			allowExternal: true,
-			include: [
-				'src/analytics.ts', 'src/analytics-outbox.ts', 'src/config.ts', 'src/targeting.ts',
-				'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
-				'src/policy.ts',
-				'src/submission-errors.ts',
-				'contracts/widget-objective-policy.ts',
-				'src/modules/replay.ts',
-				'src/modules/privacy.ts',
-			],
+      allowExternal: true,
+      include: [
+        'src/analytics.ts', 'src/analytics-outbox.ts', 'src/config.ts', 'src/targeting.ts',
+        'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
+        'src/policy.ts',
+        'src/submission-errors.ts',
+        'contracts/widget-objective-policy.ts',
+        'src/modules/replay.ts',
+        'src/modules/privacy.ts',
+        'src/modules/element-attachment.ts',
+      ],
       reporter: ['text', 'json-summary'],
       thresholds: {
         statements: 80,

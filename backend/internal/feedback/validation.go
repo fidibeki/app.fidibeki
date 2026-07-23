@@ -98,18 +98,6 @@ func ValidateSubmissionAt(
 	if values.ViewportHeight == nil || *values.ViewportHeight < 1 || *values.ViewportHeight > 100000 {
 		fields = append(fields, field("metadata.viewport_height", "must be between 1 and 100000"))
 	}
-	if input.Element != nil {
-		if strings.TrimSpace(input.Element.Selector) == "" || len(input.Element.Selector) > 2000 {
-			fields = append(fields, field("element_attachment.selector", "must be between 1 and 2000 characters"))
-		}
-		if len(input.Element.HTML) == 0 || len(input.Element.HTML) > maxElementHTMLBytes {
-			fields = append(fields, field("element_attachment.html", "must be between 1 and 200000 bytes"))
-		}
-		styles, _ := json.Marshal(input.Element.Styles)
-		if len(styles) > maxElementCSSBytes {
-			fields = append(fields, field("element_attachment.styles", "must not exceed 100000 bytes"))
-		}
-	}
 	fields = append(fields, validateAttachments(values.Attachments)...)
 	fields = append(fields, validateResponses(input, &values, configuration)...)
 	fields = append(fields, validateRuleCapabilities(input, values, configuration)...)
@@ -216,11 +204,13 @@ func normalizeSubmission(input SubmissionRequest) SubmissionValues {
 		values.ViewportHeight = &input.Metadata.ViewportHeight
 	}
 	if input.Element != nil {
-		html := input.Element.HTML
-		styles, _ := json.Marshal(input.Element.Styles)
-		stylesJSON := string(styles)
-		values.DOMSnapshotHTML = &html
-		values.DOMSnapshotStyles = &stylesJSON
+		html, styles, ok := sanitizeElementAttachment(*input.Element)
+		if ok {
+			values.DOMSnapshotHTML = &html
+			values.DOMSnapshotStyles = &styles
+		} else {
+			values.ElementContextOmitted = true
+		}
 	}
 	for index, attachment := range input.Attachments {
 		values.Attachments[index] = AttachmentValues{

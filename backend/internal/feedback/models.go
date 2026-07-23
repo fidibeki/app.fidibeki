@@ -142,6 +142,7 @@ type SubmissionValues struct {
 	Language                     *string
 	DOMSnapshotHTML              *string
 	DOMSnapshotStyles            *string
+	ElementContextOmitted        bool
 	Attachments                  []AttachmentValues
 	Analytics                    *widgetanalytics.EventValues
 }
