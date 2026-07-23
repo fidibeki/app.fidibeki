@@ -17,6 +17,7 @@ type ReporterRequestStatus string
 const (
 	ReporterPendingVerification ReporterRequestStatus = "pending_verification"
 	ReporterProcessing          ReporterRequestStatus = "processing"
+	ReporterAwaitingReview      ReporterRequestStatus = "awaiting_manual_review"
 	ReporterCompleted           ReporterRequestStatus = "completed"
 	ReporterFailed              ReporterRequestStatus = "failed"
 	ReporterExpired             ReporterRequestStatus = "expired"
@@ -33,18 +34,35 @@ const (
 type JobStatus string
 
 const (
-	JobPending    JobStatus = "pending"
-	JobProcessing JobStatus = "processing"
-	JobCompleted  JobStatus = "completed"
-	JobFailed     JobStatus = "failed"
-	JobExpired    JobStatus = "expired"
+	JobPending        JobStatus = "pending"
+	JobProcessing     JobStatus = "processing"
+	JobAwaitingReview JobStatus = "awaiting_manual_review"
+	JobCompleted      JobStatus = "completed"
+	JobFailed         JobStatus = "failed"
+	JobExpired        JobStatus = "expired"
+)
+
+// ReviewItemStatus tracks the disposition of one flagged free-form record. Pending is the only
+// non-terminal value; every other value is permanent once recorded (see the immutability
+// trigger on reporter_privacy_review_items).
+type ReviewItemStatus string
+
+const (
+	ReviewPending           ReviewItemStatus = "pending"
+	ReviewRedacted          ReviewItemStatus = "redacted"
+	ReviewDeleted           ReviewItemStatus = "deleted"
+	ReviewNotPersonalData   ReviewItemStatus = "not_personal_data"
+	ReviewRetainedException ReviewItemStatus = "retained_exception"
 )
 
 var (
-	ErrNotFound       = errors.New("privacy job not found")
-	ErrHumanRequired  = errors.New("active human member required")
-	ErrJobUnavailable = errors.New("privacy job is unavailable")
-	ErrInvalidRequest = errors.New("privacy request is invalid")
+	ErrNotFound            = errors.New("privacy job not found")
+	ErrHumanRequired       = errors.New("active human member required")
+	ErrJobUnavailable      = errors.New("privacy job is unavailable")
+	ErrInvalidRequest      = errors.New("privacy request is invalid")
+	ErrReviewItemDecided   = errors.New("privacy review item is already decided")
+	ErrReviewReasonMissing = errors.New("privacy review decision requires a reason")
+	ErrReviewPending       = errors.New("privacy review has pending items")
 )
 
 type Job struct {
@@ -105,4 +123,39 @@ type ReporterRequestView struct {
 	JobStatus         *JobStatus            `json:"job_status,omitempty"`
 	DownloadAvailable bool                  `json:"download_available"`
 	AccessExpiresAt   time.Time             `json:"access_expires_at"`
+}
+
+// ReviewItem is one resource flagged for human review. Fields lists the flagged column names
+// only (never content), and DisclosedDestinations summarizes prior delivery without leaking
+// recipient-identifying detail, so the queue itself is safe to render and audit.
+type ReviewItem struct {
+	ID                    string           `json:"id"`
+	TenantID              string           `json:"-"`
+	ReporterRequestID     string           `json:"-"`
+	PrivacyJobID          *string          `json:"privacy_job_id,omitempty"`
+	ResourceType          string           `json:"resource_type"`
+	ResourceID            string           `json:"resource_id"`
+	Fields                []string         `json:"fields"`
+	Status                ReviewItemStatus `json:"status"`
+	DecisionReason        *string          `json:"decision_reason,omitempty"`
+	DecidedByMemberID     *string          `json:"decided_by_member_id,omitempty"`
+	DecidedAt             *time.Time       `json:"decided_at,omitempty"`
+	DisclosedDestinations map[string]int   `json:"disclosed_destinations,omitempty"`
+	CreatedAt             time.Time        `json:"created_at"`
+	UpdatedAt             time.Time        `json:"updated_at"`
+}
+
+// ReviewDecision is the input to deciding a single review item.
+type ReviewDecision struct {
+	Status ReviewItemStatus
+	Reason string
+}
+
+func ParseReviewDecisionStatus(value string) (ReviewItemStatus, error) {
+	switch ReviewItemStatus(value) {
+	case ReviewRedacted, ReviewDeleted, ReviewNotPersonalData, ReviewRetainedException:
+		return ReviewItemStatus(value), nil
+	default:
+		return "", ErrInvalidRequest
+	}
 }

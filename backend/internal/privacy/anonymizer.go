@@ -47,15 +47,17 @@ func (exporter Exporter) anonymizeReporter(ctx context.Context, job Job) error {
 	if err != nil {
 		return failTransaction(err)
 	}
-	manualReviewCount, err := reporterManualReviewCount(
-		ctx, tx, job.TenantID, scope.Email, scope.VerifiedAt,
-	)
-	if err != nil {
+	if job.ReporterRequestID == nil {
+		return failTransaction(ErrJobUnavailable)
+	}
+	// Capture the resource scope before the statements below null reporter_email, so a later
+	// review/finalize pass can recheck this fixed set of records without the reporter's address.
+	if err := captureReporterRequestScope(
+		ctx, tx, job.TenantID, *job.ReporterRequestID, scope.Email, scope.VerifiedAt,
+	); err != nil {
 		return failTransaction(err)
 	}
-	if err := anonymizeReporterRows(
-		ctx, tx, job, scope, recordCount, manualReviewCount, exporter.now(),
-	); err != nil {
+	if err := anonymizeReporterRows(ctx, tx, job, scope, recordCount, exporter.now()); err != nil {
 		return failTransaction(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -154,7 +156,6 @@ func anonymizeReporterRows(
 	job Job,
 	scope reporterScope,
 	recordCount int,
-	manualReviewCount int,
 	now time.Time,
 ) error {
 	if job.ReporterRequestID == nil {
@@ -222,8 +223,18 @@ func anonymizeReporterRows(
 			return fmt.Errorf("anonymize reporter records: %w", err)
 		}
 	}
+	// Structured identifiers are gone at this point; rescan for the free-form content that
+	// still needs a documented human decision. dom_snapshot_html/styles are excluded because the
+	// statements above already remove them unconditionally, not because they are safe.
+	pending, err := reconcileReviewItems(ctx, tx, job.TenantID, *job.ReporterRequestID, &job.ID, now)
+	if err != nil {
+		return err
+	}
+	if pending > 0 {
+		return markReporterAwaitingReview(ctx, tx, job, recordCount, pending, now)
+	}
 	data, err := json.Marshal(map[string]any{
-		"record_count": recordCount, "manual_review_count": manualReviewCount,
+		"record_count": recordCount, "manual_review_count": 0,
 	})
 	if err != nil {
 		return fmt.Errorf("encode reporter anonymization audit: %w", err)
@@ -259,12 +270,69 @@ func anonymizeReporterRows(
 		)
 		SELECT completed_job.id FROM completed_job CROSS JOIN completed_request
 	`, job.ID, job.TenantID, *job.ReporterRequestID, job.Generation, now.UTC(),
-		recordCount, manualReviewCount, string(data)).Scan(&completedID)
+		recordCount, 0, string(data)).Scan(&completedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrJobUnavailable
 	}
 	if err != nil {
 		return fmt.Errorf("complete reporter anonymization: %w", err)
+	}
+	return nil
+}
+
+// markReporterAwaitingReview transitions the job and request into the non-terminal
+// awaiting_manual_review state: automated deletion succeeded, but completed_at stays unset and
+// nothing is communicated to the reporter as finished while flagged free-form content remains
+// undecided.
+func markReporterAwaitingReview(
+	ctx context.Context,
+	tx pgx.Tx,
+	job Job,
+	recordCount int,
+	pendingCount int,
+	now time.Time,
+) error {
+	data, err := json.Marshal(map[string]any{
+		"record_count": recordCount, "manual_review_count": pendingCount,
+	})
+	if err != nil {
+		return fmt.Errorf("encode reporter awaiting-review audit: %w", err)
+	}
+	var awaitingID string
+	err = tx.QueryRow(ctx, `
+		WITH awaiting_job AS (
+			UPDATE privacy_jobs
+			SET status = 'awaiting_manual_review', heartbeat_at = $5, error_message = NULL
+			WHERE id = $1 AND tenant_id = $2 AND reporter_request_id = $3
+			  AND generation = $4 AND kind = 'reporter_anonymize' AND status = 'processing'
+			RETURNING id, reporter_request_id
+		), awaiting_request AS (
+			UPDATE reporter_privacy_requests AS request
+			SET status = 'awaiting_manual_review', reporter_email = NULL,
+			    record_count = $6, manual_review_count = $7, error_message = NULL
+			FROM awaiting_job
+			WHERE request.tenant_id = $2 AND request.id = awaiting_job.reporter_request_id
+			  AND request.status = 'processing' AND request.action = 'anonymize'
+			RETURNING request.id
+		), audited AS (
+			INSERT INTO tenant_access_events (
+				tenant_id, kind, actor_member_id, subject_member_id, data
+			)
+			SELECT $2, 'privacy.reporter_awaiting_manual_review', NULL, NULL,
+			       $8::jsonb
+			       || jsonb_build_object('privacy_job_id', awaiting_job.id::text)
+			       || jsonb_build_object('reporter_request_id', awaiting_request.id::text)
+			FROM awaiting_job CROSS JOIN awaiting_request
+			RETURNING id
+		)
+		SELECT awaiting_job.id FROM awaiting_job CROSS JOIN awaiting_request
+	`, job.ID, job.TenantID, *job.ReporterRequestID, job.Generation, now.UTC(),
+		recordCount, pendingCount, string(data)).Scan(&awaitingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrJobUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("mark reporter anonymization awaiting review: %w", err)
 	}
 	return nil
 }

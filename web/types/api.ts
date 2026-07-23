@@ -590,9 +590,39 @@ export interface TenantConfiguration {
 }
 
 export type PrivacyJobKind = 'workspace_export' | 'reporter_export' | 'reporter_anonymize'
-export type PrivacyJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired'
+export type PrivacyJobStatus =
+  | 'pending'
+  | 'processing'
+  | 'awaiting_manual_review'
+  | 'completed'
+  | 'failed'
+  | 'expired'
 export type ReporterPrivacyAction = 'export' | 'anonymize'
-export type ReporterPrivacyStatus = 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired'
+export type ReporterPrivacyStatus =
+  | 'pending_verification'
+  | 'processing'
+  | 'awaiting_manual_review'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+export type ReviewItemResourceType = 'feedback' | 'issue' | 'issue_comment' | 'clarification_request' | 'legacy_unlinked'
+export type ReviewItemStatus = 'pending' | 'redacted' | 'deleted' | 'not_personal_data' | 'retained_exception'
+export type ReviewDecisionStatus = Exclude<ReviewItemStatus, 'pending'>
+
+export interface ReviewItem {
+  id: string
+  privacy_job_id?: string
+  resource_type: ReviewItemResourceType
+  resource_id: string
+  fields: string[]
+  status: ReviewItemStatus
+  decision_reason?: string
+  decided_by_member_id?: string
+  decided_at?: string
+  disclosed_destinations?: Record<string, number>
+  created_at: string
+  updated_at: string
+}
 
 export interface PrivacyExport {
   id: string

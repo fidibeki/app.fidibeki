@@ -198,7 +198,8 @@ func (Store) VerifyReporterRequest(
 		status = ReporterProcessing
 	}
 	if accessExpires == nil || !accessExpires.After(now) ||
-		(status != ReporterProcessing && status != ReporterCompleted && status != ReporterFailed) {
+		(status != ReporterProcessing && status != ReporterAwaitingReview &&
+			status != ReporterCompleted && status != ReporterFailed) {
 		return ReporterRequestView{}, ErrNotFound
 	}
 	return loadReporterRequestView(ctx, query, tokenHash, now)
@@ -239,7 +240,7 @@ func loadReporterRequestView(
 			ORDER BY privacy_job.created_at DESC, privacy_job.id DESC LIMIT 1
 		) AS job ON true
 		WHERE request.token_hash = $1
-		  AND request.status IN ('processing', 'completed', 'failed')
+		  AND request.status IN ('processing', 'awaiting_manual_review', 'completed', 'failed')
 		  AND request.access_expires_at > $2
 	`, tokenHash[:], now.UTC()).Scan(
 		&view.Action, &view.Status, &view.CompletedAt,

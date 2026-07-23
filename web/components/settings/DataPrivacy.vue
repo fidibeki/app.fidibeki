@@ -2,6 +2,8 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   Download,
   FileArchive,
@@ -16,6 +18,8 @@ import type {
   ReporterPrivacyAction,
   ReporterPrivacyRequest,
   RetentionPolicy,
+  ReviewDecisionStatus,
+  ReviewItem,
 } from '~/types/api'
 import { triggerSignedDownload } from '~/utils/download'
 
@@ -170,6 +174,77 @@ async function createReporterRequest() {
     await refresh()
   })
 }
+
+const reviewExpanded = ref<Record<string, boolean>>({})
+const reviewItems = ref<Record<string, ReviewItem[]>>({})
+const reviewReasons = ref<Record<string, string>>({})
+
+function resourceLabel(item: ReviewItem) {
+  return t(`admin.privacy.settings.review.resource.${item.resource_type}`)
+}
+
+function fieldsLabel(item: ReviewItem) {
+  return item.fields.map(field => t(`admin.privacy.settings.review.field.${field}`, field)).join(', ')
+}
+
+function disclosedDestinationsLabel(item: ReviewItem) {
+  const destinations = item.disclosed_destinations
+  if (!destinations) return ''
+  return Object.entries(destinations)
+    .map(([kind, count]) => `${t(`admin.privacy.settings.review.destination.${kind}`, kind)} (${count})`)
+    .join(', ')
+}
+
+async function loadReviewItems(request: ReporterPrivacyRequest) {
+  const response = await $apiFetch<{ review_items: ReviewItem[] }>(
+    `/v1/privacy/requests/${request.id}/review-items`,
+  )
+  reviewItems.value = { ...reviewItems.value, [request.id]: response.review_items }
+}
+
+async function toggleReview(request: ReporterPrivacyRequest) {
+  const isOpen = Boolean(reviewExpanded.value[request.id])
+  if (isOpen) {
+    reviewExpanded.value = { ...reviewExpanded.value, [request.id]: false }
+    return
+  }
+  await runAction(`review:${request.id}`, async () => {
+    await loadReviewItems(request)
+    reviewExpanded.value = { ...reviewExpanded.value, [request.id]: true }
+  })
+}
+
+async function decideReviewItem(request: ReporterPrivacyRequest, item: ReviewItem, status: ReviewDecisionStatus) {
+  if (!canWrite('tenant:update')) return
+  const reason = (reviewReasons.value[item.id] || '').trim()
+  if (status === 'retained_exception' && !reason) {
+    actionError.value = t('admin.privacy.settings.review.reasonRequired')
+    return
+  }
+  await runAction(`decide:${item.id}`, async () => {
+    await $apiFetch(`/v1/privacy/requests/${request.id}/review-items/${item.id}/decide`, {
+      method: 'POST',
+      body: { status, reason },
+    })
+    await loadReviewItems(request)
+    await refresh()
+  })
+}
+
+async function finalizeRequest(request: ReporterPrivacyRequest) {
+  if (!canWrite('tenant:update')) return
+  await runAction(`finalize:${request.id}`, async () => {
+    const response = await $apiFetch<{ completed: boolean, pending: number }>(
+      `/v1/privacy/requests/${request.id}/finalize`,
+      { method: 'POST' },
+    )
+    actionNotice.value = response.completed
+      ? t('admin.privacy.settings.notices.reviewCompleted')
+      : t('admin.privacy.settings.notices.reviewPending', { count: response.pending })
+    await loadReviewItems(request)
+    await refresh()
+  })
+}
 </script>
 
 <template>
@@ -239,21 +314,60 @@ async function createReporterRequest() {
           <div v-if="!data.requests.length" class="privacy-empty privacy-empty--compact"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.noRequests') }}</h3><p>{{ t('admin.privacy.settings.noRequestsDescription') }}</p></div>
           <div v-else class="privacy-table privacy-request-table">
             <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.reporter') }}</span><span>{{ t('admin.privacy.settings.columns.request') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.columns.access') }}</span><span /></div>
-            <div v-for="item in data.requests" :key="item.id" class="privacy-row">
-              <span><b>{{ item.reporter_email || t('admin.privacy.settings.identityRemoved') }}</b><small>{{ dateTime(item.created_at) }}</small></span>
-              <span class="privacy-action-label">{{ actionLabel(item.action) }}</span>
-              <span>
-                <span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span>
-                <small v-if="item.job_status && item.job_status !== item.status">{{ t('admin.privacy.settings.jobStatus', { status: statusLabel(item.job_status) }) }}</small>
-              </span>
-              <span>
-                {{ item.access_expires_at ? dateTime(item.access_expires_at) : dateTime(item.verification_expires_at) }}
-                <small v-if="item.manual_review_count">{{ t('admin.privacy.settings.manualReview', { count: item.manual_review_count }) }}</small>
-              </span>
-              <span class="privacy-actions">
-                <button v-if="item.job_id && (item.status === 'failed' || item.job_status === 'failed')" class="app-icon-button" :title="t('admin.privacy.settings.retryRequest')" :disabled="Boolean(actionPending)" @click="retryJob(item.job_id)"><RefreshCw :size="16" /></button>
-              </span>
-            </div>
+            <template v-for="item in data.requests" :key="item.id">
+              <div class="privacy-row">
+                <span><b>{{ item.reporter_email || t('admin.privacy.settings.identityRemoved') }}</b><small>{{ dateTime(item.created_at) }}</small></span>
+                <span class="privacy-action-label">{{ actionLabel(item.action) }}</span>
+                <span>
+                  <span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span>
+                  <small v-if="item.job_status && item.job_status !== item.status">{{ t('admin.privacy.settings.jobStatus', { status: statusLabel(item.job_status) }) }}</small>
+                </span>
+                <span>
+                  {{ item.access_expires_at ? dateTime(item.access_expires_at) : dateTime(item.verification_expires_at) }}
+                  <small v-if="item.manual_review_count">{{ t('admin.privacy.settings.manualReview', { count: item.manual_review_count }) }}</small>
+                </span>
+                <span class="privacy-actions">
+                  <button v-if="item.job_id && (item.status === 'failed' || item.job_status === 'failed')" class="app-icon-button" :title="t('admin.privacy.settings.retryRequest')" :disabled="Boolean(actionPending)" @click="retryJob(item.job_id)"><RefreshCw :size="16" /></button>
+                  <button v-if="item.status === 'awaiting_manual_review'" class="app-icon-button" :title="t('admin.privacy.settings.review.toggle')" :disabled="Boolean(actionPending)" @click="toggleReview(item)">
+                    <ChevronUp v-if="reviewExpanded[item.id]" :size="16" /><ChevronDown v-else :size="16" />
+                  </button>
+                </span>
+              </div>
+              <div v-if="item.status === 'awaiting_manual_review' && reviewExpanded[item.id]" class="privacy-review-queue">
+                <header>
+                  <h3>{{ t('admin.privacy.settings.review.title') }}</h3>
+                  <button class="app-button" :disabled="Boolean(actionPending)" @click="finalizeRequest(item)">
+                    {{ actionPending === `finalize:${item.id}` ? t('admin.common.queuing') : t('admin.privacy.settings.review.finalize') }}
+                  </button>
+                </header>
+                <p v-if="!(reviewItems[item.id] || []).length" class="privacy-review-queue-empty">{{ t('admin.privacy.settings.review.empty') }}</p>
+                <div v-for="reviewItem in reviewItems[item.id] || []" :key="reviewItem.id" class="privacy-review-item">
+                  <div class="privacy-review-item-meta">
+                    <b>{{ resourceLabel(reviewItem) }}</b>
+                    <span>{{ fieldsLabel(reviewItem) }}</span>
+                    <small v-if="disclosedDestinationsLabel(reviewItem)">{{ t('admin.privacy.settings.review.disclosedTo', { destinations: disclosedDestinationsLabel(reviewItem) }) }}</small>
+                  </div>
+                  <template v-if="reviewItem.status === 'pending'">
+                    <input
+                      v-model.trim="reviewReasons[reviewItem.id]"
+                      class="app-input privacy-review-reason"
+                      :placeholder="t('admin.privacy.settings.review.reasonPlaceholder')"
+                      maxlength="2000"
+                    />
+                    <div class="privacy-review-item-actions">
+                      <button class="app-button" :disabled="Boolean(actionPending)" @click="decideReviewItem(item, reviewItem, 'redacted')">{{ t('admin.privacy.settings.review.decisionRedacted') }}</button>
+                      <button class="app-button" :disabled="Boolean(actionPending)" @click="decideReviewItem(item, reviewItem, 'deleted')">{{ t('admin.privacy.settings.review.decisionDeleted') }}</button>
+                      <button class="app-button" :disabled="Boolean(actionPending)" @click="decideReviewItem(item, reviewItem, 'not_personal_data')">{{ t('admin.privacy.settings.review.decisionNotPersonalData') }}</button>
+                      <button class="app-button privacy-danger-button" :disabled="Boolean(actionPending)" @click="decideReviewItem(item, reviewItem, 'retained_exception')">{{ t('admin.privacy.settings.review.decisionRetainedException') }}</button>
+                    </div>
+                  </template>
+                  <div v-else class="privacy-review-item-decided">
+                    <span class="privacy-status" :data-tone="reviewItem.status === 'retained_exception' ? 'pending' : 'success'">{{ t(`admin.privacy.settings.review.decision.${reviewItem.status}`) }}</span>
+                    <small v-if="reviewItem.decision_reason">{{ reviewItem.decision_reason }}</small>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
           <p class="privacy-review-note"><Clock3 :size="14" />{{ t('admin.privacy.settings.reviewNote') }}</p>
         </template>
@@ -304,6 +418,20 @@ async function createReporterRequest() {
 .privacy-danger-button { background: var(--red); color: #fff; border-color: var(--red); }
 .privacy-danger-button:hover:not(:disabled) { background: #962f3a; color: #fff; border-color: #962f3a; }
 .privacy-review-note { display: flex; min-height: 42px; align-items: center; gap: 8px; margin: 0; padding: 8px 15px; background: #fff9e9; color: #765d1d; border-top: 1px solid #eadcad; font-size: 9px; line-height: 1.5; }
+.privacy-review-queue { display: grid; gap: 10px; padding: 14px 15px; background: #fff9e9; border-top: 1px solid #eadcad; border-bottom: 1px solid #eadcad; }
+.privacy-review-queue > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.privacy-review-queue h3 { margin: 0; color: #765d1d; font-size: 11px; }
+.privacy-review-queue-empty { margin: 0; color: #765d1d; font-size: 10px; }
+.privacy-review-item { display: grid; gap: 8px; padding: 10px; background: #fff; border: 1px solid #eadcad; border-radius: 4px; }
+.privacy-review-item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 10px; }
+.privacy-review-item-meta b { color: var(--ink-soft); }
+.privacy-review-item-meta span { color: var(--muted); }
+.privacy-review-item-meta small { flex-basis: 100%; color: var(--muted); }
+.privacy-review-reason { font-size: 10px; }
+.privacy-review-item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.privacy-review-item-actions .app-button { padding: 0 10px; font-size: 9px; }
+.privacy-review-item-decided { display: flex; align-items: center; gap: 8px; }
+.privacy-review-item-decided small { color: var(--muted); font-size: 10px; }
 .privacy-empty { display: grid; min-height: 190px; place-items: center; align-content: center; gap: 7px; padding: 20px; color: var(--muted); text-align: center; }
 .privacy-empty--compact { min-height: 130px; }
 .privacy-empty h3, .privacy-empty p { margin: 0; }

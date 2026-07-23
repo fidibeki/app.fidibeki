@@ -19,6 +19,7 @@ const downloading = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 
 const isProcessing = computed(() => request.value?.status === 'processing' ||
+  request.value?.status === 'awaiting_manual_review' ||
   request.value?.job_status === 'pending' || request.value?.job_status === 'processing')
 
 function statusLabel(value: string) {

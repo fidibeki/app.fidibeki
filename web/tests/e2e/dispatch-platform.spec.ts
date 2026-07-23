@@ -302,24 +302,37 @@ function createMockState() {
     privacyRequests: [{
       id: 'privacy-request-1',
       action: 'anonymize' as 'export' | 'anonymize',
-      status: 'failed' as 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired',
+      status: 'failed' as 'pending_verification' | 'processing' | 'awaiting_manual_review' | 'completed' | 'failed' | 'expired',
       reporter_email: 'former.customer@example.test' as string | undefined,
       verification_expires_at: '2026-07-23T12:00:00.000Z',
       verified_at: '2026-07-21T12:02:00.000Z' as string | undefined,
       access_expires_at: '2026-08-20T12:02:00.000Z' as string | undefined,
       job_id: 'privacy-job-reporter-1' as string | undefined,
-      job_status: 'failed' as 'pending' | 'processing' | 'completed' | 'failed' | 'expired' | undefined,
+      job_status: 'failed' as 'pending' | 'processing' | 'awaiting_manual_review' | 'completed' | 'failed' | 'expired' | undefined,
       manual_review_count: 2 as number | undefined,
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:05:00.000Z',
     }],
+    reviewItems: [] as Array<{
+      id: string
+      resource_type: 'feedback' | 'issue' | 'issue_comment' | 'clarification_request' | 'legacy_unlinked'
+      resource_id: string
+      fields: string[]
+      status: 'pending' | 'redacted' | 'deleted' | 'not_personal_data' | 'retained_exception'
+      decision_reason?: string
+      decided_by_member_id?: string
+      decided_at?: string
+      disclosed_destinations?: Record<string, number>
+      created_at: string
+      updated_at: string
+    }>,
     publicPrivacyRequest: {
       action: 'export' as 'export' | 'anonymize',
-      status: 'completed' as 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired',
-      completed_at: '2026-07-21T12:04:00.000Z',
+      status: 'completed' as 'pending_verification' | 'processing' | 'awaiting_manual_review' | 'completed' | 'failed' | 'expired',
+      completed_at: '2026-07-21T12:04:00.000Z' as string | undefined,
       record_count: 14,
-      manual_review_count: 0,
-      job_status: 'completed' as 'pending' | 'processing' | 'completed' | 'failed' | 'expired',
+      manual_review_count: 0 as number | undefined,
+      job_status: 'completed' as 'pending' | 'processing' | 'awaiting_manual_review' | 'completed' | 'failed' | 'expired',
       download_available: true,
       access_expires_at: '2026-08-20T12:02:00.000Z',
     },
@@ -1196,6 +1209,45 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       state.privacyRequests.unshift(item)
       return json(route, { request: item, verification_email_queued: true }, 202)
+    }
+    const privacyReviewItemsMatch = path.match(/^\/v1\/privacy\/requests\/([^/]+)\/review-items$/)
+    if (privacyReviewItemsMatch && method === 'GET') return json(route, { review_items: state.reviewItems })
+    const privacyDecideMatch = path.match(/^\/v1\/privacy\/requests\/([^/]+)\/review-items\/([^/]+)\/decide$/)
+    if (privacyDecideMatch && method === 'POST') {
+      const input = body()
+      const item = state.reviewItems.find(candidate => candidate.id === privacyDecideMatch[2])
+      if (!item || item.status !== 'pending') return json(route, { error: { code: 'conflict', message: 'privacy review item is already decided' } }, 409)
+      item.status = input.status as typeof item.status
+      item.decision_reason = input.reason ? String(input.reason) : undefined
+      item.decided_by_member_id = 'member-1'
+      item.decided_at = now
+      item.updated_at = now
+      const pending = state.reviewItems.filter(candidate => candidate.status === 'pending').length
+      let completed = false
+      if (pending === 0) {
+        const request = state.privacyRequests.find(candidate => candidate.id === privacyDecideMatch[1])
+        if (request && request.status === 'awaiting_manual_review') {
+          request.status = 'completed'
+          request.manual_review_count = 0
+          completed = true
+        }
+      }
+      return json(route, { review_item: item, completed, pending })
+    }
+    const privacyFinalizeMatch = path.match(/^\/v1\/privacy\/requests\/([^/]+)\/finalize$/)
+    if (privacyFinalizeMatch && method === 'POST') {
+      const pending = state.reviewItems.filter(candidate => candidate.status === 'pending').length
+      const request = state.privacyRequests.find(candidate => candidate.id === privacyFinalizeMatch[1])
+      let completed = pending === 0
+      if (completed && request) {
+        if (request.status === 'awaiting_manual_review') {
+          request.status = 'completed'
+          request.manual_review_count = 0
+        } else {
+          completed = request.status === 'completed'
+        }
+      }
+      return json(route, { completed, pending })
     }
     const privacyPublicMatch = path.match(/^\/v1\/privacy\/requests\/([^/]+)(?:\/(verify|download))?$/)
     if (privacyPublicMatch && method === 'POST' && privacyPublicMatch[2] === 'verify') {
@@ -3587,6 +3639,74 @@ test('data privacy controls cover retention, exports, reporter verification, and
   expect(state.privacyRequests[0].action).toBe('anonymize')
 })
 
+test('admin resolves a manual-review queue and the request completes only once every item is decided', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.privacyRequests[0].status = 'awaiting_manual_review'
+  state.privacyRequests[0].job_status = 'awaiting_manual_review'
+  state.privacyRequests[0].manual_review_count = 2
+  state.reviewItems = [
+    {
+      id: 'review-item-1',
+      resource_type: 'feedback',
+      resource_id: 'feedback-1',
+      fields: ['description'],
+      status: 'pending',
+      disclosed_destinations: { slack: 1 },
+      created_at: '2026-07-21T12:05:00.000Z',
+      updated_at: '2026-07-21T12:05:00.000Z',
+    },
+    {
+      id: 'review-item-2',
+      resource_type: 'issue_comment',
+      resource_id: 'comment-1',
+      fields: ['body'],
+      status: 'pending',
+      created_at: '2026-07-21T12:05:00.000Z',
+      updated_at: '2026-07-21T12:05:00.000Z',
+    },
+  ]
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=privacy$/)
+
+  const requestRow = page.locator('.privacy-request-table .privacy-row', { hasText: 'former.customer@example.test' })
+  await expect(requestRow).toContainText('Awaiting review')
+  await expect(requestRow).toContainText('Manual review: 2')
+
+  await requestRow.getByTitle('Show review queue').click()
+  const queue = page.locator('.privacy-review-queue')
+  await expect(queue).toBeVisible()
+  await expect(queue).toContainText('Feedback')
+  await expect(queue).toContainText('description')
+  await expect(queue).toContainText('Already disclosed to: Slack (1)')
+  await expect(queue).toContainText('Issue comment')
+  await capture(page, testInfo, `settings-data-privacy-review-queue-${testInfo.project.name}`)
+
+  // Deciding the second item first (while the first is still pending) keeps the queue open so
+  // the confirmed decision is visible before the request completes and the panel unmounts.
+  const items = queue.locator('.privacy-review-item')
+  const secondItem = items.nth(1)
+  await secondItem.getByRole('button', { name: 'Retain (exception)' }).click()
+  await expect(page.getByRole('alert')).toContainText('A decision reason is required')
+  expect(state.reviewItems[1].status).toBe('pending')
+
+  await secondItem.getByPlaceholder('Decision reason (required to retain)').fill('Needed for an open support ticket')
+  await secondItem.getByRole('button', { name: 'Retain (exception)' }).click()
+  await expect(secondItem).toContainText('Retained (exception)')
+  await expect(secondItem).toContainText('Needed for an open support ticket')
+  expect(state.reviewItems[1].status).toBe('retained_exception')
+  await expect(requestRow).toContainText('Awaiting review')
+
+  // Deciding the last pending item completes the request; the queue panel unmounts with it.
+  await items.nth(0).getByRole('button', { name: 'Redact' }).click()
+  expect(state.reviewItems[0].status).toBe('redacted')
+  await expect(requestRow).toContainText('Completed')
+  await expect(page.locator('.privacy-review-queue')).toHaveCount(0)
+  expect(state.privacyRequests[0].status).toBe('completed')
+  expect(state.privacyRequests[0].manual_review_count).toBe(0)
+})
+
 test('Portuguese administration preserves permissions and operational mutations', async ({ page }, testInfo) => {
   const state = createMockState()
   state.member.locale = 'pt-AO'
@@ -3703,6 +3823,21 @@ test('reporter data request keeps failures and invalid links neutral', async ({ 
 
   await expect(page.getByRole('heading', { name: 'The request needs attention' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download data archive' })).toHaveCount(0)
+
+  const awaitingReview = createMockState()
+  awaitingReview.publicPrivacyRequest.action = 'anonymize'
+  awaitingReview.publicPrivacyRequest.status = 'awaiting_manual_review'
+  awaitingReview.publicPrivacyRequest.job_status = 'awaiting_manual_review'
+  awaitingReview.publicPrivacyRequest.completed_at = undefined
+  awaitingReview.publicPrivacyRequest.manual_review_count = 2
+  awaitingReview.publicPrivacyRequest.download_available = false
+  await page.unrouteAll({ behavior: 'wait' })
+  await installMockAPI(page, awaitingReview)
+  await page.goto(`${tenantOrigin}/privacy/awaiting-review-token`)
+
+  await expect(page.getByRole('heading', { name: 'Your request is processing' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Anonymization completed' })).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('Data request expired')
 
   const unavailable = createMockState()
   unavailable.privacyPublicUnavailable = true

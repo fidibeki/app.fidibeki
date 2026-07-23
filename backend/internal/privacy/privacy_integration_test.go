@@ -848,10 +848,18 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	`, tenantID, issueID).Scan(&progressTokens); err != nil || progressTokens != 0 {
 		t.Fatalf("reporter progress tokens after anonymization = %d, error=%v", progressTokens, err)
 	}
+	// A positive manual-review count must never produce a completed request: the job and the
+	// request both land in the non-terminal awaiting_manual_review state, with no completed_at
+	// and nothing communicated to the reporter as finished.
 	anonymizedView, err := store.GetReporterRequestView(ctx, anonymizeHash, now)
-	if err != nil || anonymizedView.Status != ReporterCompleted || anonymizedView.DownloadAvailable ||
-		anonymizedView.ManualReviewCount == nil || *anonymizedView.ManualReviewCount == 0 {
-		t.Fatalf("completed anonymization view = %#v, error=%v", anonymizedView, err)
+	if err != nil || anonymizedView.Status != ReporterAwaitingReview || anonymizedView.CompletedAt != nil ||
+		anonymizedView.DownloadAvailable ||
+		anonymizedView.ManualReviewCount == nil || *anonymizedView.ManualReviewCount != 3 {
+		t.Fatalf("awaiting-review anonymization view = %#v, error=%v", anonymizedView, err)
+	}
+	anonymizeJob, err = store.GetJob(ctx, database, tenantID, anonymizeJob.ID)
+	if err != nil || anonymizeJob.Status != JobAwaitingReview || anonymizeJob.CompletedAt != nil {
+		t.Fatalf("awaiting-review anonymization job = %#v, error=%v", anonymizeJob, err)
 	}
 	var requestEmail *string
 	if err := database.QueryRow(ctx, `
@@ -864,6 +872,111 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		SELECT reporter_email FROM feedbacks WHERE tenant_id = $1
 	`, otherTenantID).Scan(&otherReporterEmail); err != nil || otherReporterEmail != "reporter@example.test" {
 		t.Fatalf("other tenant reporter email = %q, error=%v", otherReporterEmail, err)
+	}
+
+	// Tenant isolation: the other tenant cannot see or act on this tenant's review queue.
+	if items, err := store.ListReviewItems(ctx, database, otherTenantID, anonymizeRequest.ID); err != nil || len(items) != 0 {
+		t.Fatalf("cross-tenant review items = %#v, error=%v", items, err)
+	}
+
+	items, err := store.ListReviewItems(ctx, database, tenantID, anonymizeRequest.ID)
+	if err != nil || len(items) != 3 {
+		t.Fatalf("review items = %#v, error=%v", items, err)
+	}
+	itemsByType := make(map[string]ReviewItem, len(items))
+	for _, item := range items {
+		if item.Status != ReviewPending {
+			t.Fatalf("review item %s status = %q, want pending", item.ID, item.Status)
+		}
+		itemsByType[item.ResourceType] = item
+	}
+	for _, wantType := range []string{"feedback", "issue", "issue_comment"} {
+		if _, ok := itemsByType[wantType]; !ok {
+			t.Fatalf("review items missing resource_type %q: %#v", wantType, items)
+		}
+	}
+
+	var otherMemberID string
+	if err := database.QueryRow(ctx, `
+		SELECT id FROM tenant_members WHERE tenant_id = $1 AND status = 'active' LIMIT 1
+	`, otherTenantID).Scan(&otherMemberID); err != nil {
+		t.Fatalf("read other tenant member: %v", err)
+	}
+	if _, err := store.DecideReviewItem(
+		ctx, database, otherTenantID, anonymizeRequest.ID, itemsByType["feedback"].ID, otherMemberID,
+		ReviewDecision{Status: ReviewRedacted}, now,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant review decision error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.DecideReviewItem(
+		ctx, database, tenantID, anonymizeRequest.ID, itemsByType["issue_comment"].ID, memberID,
+		ReviewDecision{Status: ReviewRetainedException}, now,
+	); !errors.Is(err, ErrReviewReasonMissing) {
+		t.Fatalf("retained_exception without reason error = %v, want ErrReviewReasonMissing", err)
+	}
+
+	if _, err := store.DecideReviewItem(
+		ctx, database, tenantID, anonymizeRequest.ID, itemsByType["feedback"].ID, memberID,
+		ReviewDecision{Status: ReviewRedacted}, now,
+	); err != nil {
+		t.Fatalf("decide feedback review item: %v", err)
+	}
+	if _, err := store.DecideReviewItem(
+		ctx, database, tenantID, anonymizeRequest.ID, itemsByType["feedback"].ID, memberID,
+		ReviewDecision{Status: ReviewDeleted}, now,
+	); !errors.Is(err, ErrReviewItemDecided) {
+		t.Fatalf("re-deciding a decided review item error = %v, want ErrReviewItemDecided", err)
+	}
+	if _, err := store.DecideReviewItem(
+		ctx, database, tenantID, anonymizeRequest.ID, itemsByType["issue"].ID, memberID,
+		ReviewDecision{Status: ReviewNotPersonalData}, now,
+	); err != nil {
+		t.Fatalf("decide issue review item: %v", err)
+	}
+	if _, err := store.DecideReviewItem(
+		ctx, database, tenantID, anonymizeRequest.ID, itemsByType["issue_comment"].ID, memberID,
+		ReviewDecision{Status: ReviewRetainedException, Reason: "Needed for support ticket continuity"}, now,
+	); err != nil {
+		t.Fatalf("decide issue comment review item: %v", err)
+	}
+
+	var feedbackDescriptionAfterDecision *string
+	if err := database.QueryRow(ctx, `
+		SELECT description FROM feedbacks WHERE id = $1
+	`, feedbackID).Scan(&feedbackDescriptionAfterDecision); err != nil || feedbackDescriptionAfterDecision != nil {
+		t.Fatalf("redacted feedback description = %v, error=%v", feedbackDescriptionAfterDecision, err)
+	}
+	var issueDescriptionAfterDecision string
+	if err := database.QueryRow(ctx, `
+		SELECT description FROM issues WHERE id = $1
+	`, issueID).Scan(&issueDescriptionAfterDecision); err != nil || issueDescriptionAfterDecision != "Issue description" {
+		t.Fatalf("not_personal_data issue description = %q, error=%v", issueDescriptionAfterDecision, err)
+	}
+	var commentBodyAfterDecision string
+	if err := database.QueryRow(ctx, `
+		SELECT body FROM issue_comments WHERE issue_id = $1
+	`, issueID).Scan(&commentBodyAfterDecision); err != nil || commentBodyAfterDecision != "Operational comment" {
+		t.Fatalf("retained_exception comment body = %q, error=%v", commentBodyAfterDecision, err)
+	}
+
+	completed, pending, err := store.FinalizeReporterAnonymization(ctx, database, tenantID, anonymizeRequest.ID, now)
+	if err != nil || !completed || pending != 0 {
+		t.Fatalf("finalize reporter anonymization = completed=%t pending=%d error=%v", completed, pending, err)
+	}
+	if completed, pending, err := store.FinalizeReporterAnonymization(
+		ctx, database, tenantID, anonymizeRequest.ID, now,
+	); err != nil || !completed || pending != 0 {
+		t.Fatalf("idempotent finalize reporter anonymization = completed=%t pending=%d error=%v", completed, pending, err)
+	}
+
+	completedView, err := store.GetReporterRequestView(ctx, anonymizeHash, now)
+	if err != nil || completedView.Status != ReporterCompleted || completedView.CompletedAt == nil ||
+		completedView.ManualReviewCount == nil || *completedView.ManualReviewCount != 0 {
+		t.Fatalf("completed anonymization view = %#v, error=%v", completedView, err)
+	}
+	finalJob, err := store.GetJob(ctx, database, tenantID, anonymizeJob.ID)
+	if err != nil || finalJob.Status != JobCompleted || finalJob.CompletedAt == nil {
+		t.Fatalf("completed anonymization job = %#v, error=%v", finalJob, err)
 	}
 }
 

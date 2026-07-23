@@ -29,6 +29,9 @@ type HTTPStore interface {
 	RecordDownload(context.Context, db.Querier, string, string, string, time.Time) error
 	CreateReporterRequest(context.Context, db.Querier, string, string, string, ReporterAction, time.Time) (ReporterRequest, string, bool, error)
 	ListReporterRequests(context.Context, db.Querier, string, int) ([]ReporterRequest, error)
+	ListReviewItems(context.Context, db.Querier, string, string) ([]ReviewItem, error)
+	DecideReviewItem(context.Context, db.Querier, string, string, string, string, ReviewDecision, time.Time) (ReviewItem, error)
+	FinalizeReporterAnonymization(context.Context, db.Querier, string, string, time.Time) (bool, int, error)
 }
 
 type DownloadStorage interface {
@@ -79,6 +82,11 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(read...).Get("/v1/privacy/requests", handler.listReporterRequests)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/requests", handler.createReporterRequest)
+	router.With(read...).Get("/v1/privacy/requests/{requestID}/review-items", handler.listReviewItems)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/requests/{requestID}/review-items/{itemID}/decide", handler.decideReviewItem)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/requests/{requestID}/finalize", handler.finalizeReporterRequest)
 }
 
 func (handler *HTTPHandler) retention(w http.ResponseWriter, r *http.Request) {
@@ -206,6 +214,95 @@ func (handler *HTTPHandler) listReporterRequests(w http.ResponseWriter, r *http.
 	api.WriteJSON(w, http.StatusOK, map[string]any{"requests": requests})
 }
 
+func (handler *HTTPHandler) listReviewItems(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := privacyRequestID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, _, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	items, err := handler.options.Store.ListReviewItems(r.Context(), query, resolved.ID, requestID)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"review_items": items})
+}
+
+func (handler *HTTPHandler) decideReviewItem(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := privacyRequestID(w, r)
+	if !ok {
+		return
+	}
+	itemID, ok := privacyReviewItemID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var input struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "request body is invalid", nil)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "request body must contain one JSON value", nil)
+		return
+	}
+	status, err := ParseReviewDecisionStatus(input.Status)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	now := handler.now()
+	item, err := handler.options.Store.DecideReviewItem(
+		r.Context(), query, resolved.ID, requestID, itemID, claims.Subject,
+		ReviewDecision{Status: status, Reason: input.Reason}, now,
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	// Best-effort: attempt completion immediately so the last decision in a queue finishes the
+	// request without a separate call. A failure here does not affect the decision that was just
+	// recorded; the explicit finalize endpoint (or the next decision) can retry it.
+	completed, pending, _ := handler.options.Store.FinalizeReporterAnonymization(
+		r.Context(), query, resolved.ID, requestID, now,
+	)
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"review_item": item, "completed": completed, "pending": pending,
+	})
+}
+
+func (handler *HTTPHandler) finalizeReporterRequest(w http.ResponseWriter, r *http.Request) {
+	requestID, ok := privacyRequestID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, _, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	completed, pending, err := handler.options.Store.FinalizeReporterAnonymization(
+		r.Context(), query, resolved.ID, requestID, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"completed": completed, "pending": pending})
+}
+
 func (handler *HTTPHandler) retryExport(w http.ResponseWriter, r *http.Request) {
 	jobID, ok := privacyJobID(w, r)
 	if !ok {
@@ -296,6 +393,24 @@ func privacyJobID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return jobID, true
 }
 
+func privacyRequestID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	requestID := chi.URLParam(r, "requestID")
+	if _, err := uuid.Parse(requestID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "privacy request not found", nil)
+		return "", false
+	}
+	return requestID, true
+}
+
+func privacyReviewItemID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	itemID := chi.URLParam(r, "itemID")
+	if _, err := uuid.Parse(itemID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "privacy review item not found", nil)
+		return "", false
+	}
+	return itemID, true
+}
+
 func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -306,6 +421,10 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active human member required", nil)
 	case errors.Is(err, ErrInvalidRequest):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "request validation failed", nil)
+	case errors.Is(err, ErrReviewReasonMissing):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "a decision reason is required", nil)
+	case errors.Is(err, ErrReviewItemDecided):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy review item is already decided", nil)
 	default:
 		handler.logger.ErrorContext(r.Context(), "privacy request failed", "error", err)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
