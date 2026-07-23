@@ -193,6 +193,51 @@ func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 	if err := (DeliveryHandler{}).Handler()(context.Background(), asynq.NewTask(TaskDeliver, []byte(`{}`))); err == nil || !strings.Contains(err.Error(), "skip retry") {
 		t.Errorf("invalid delivery task error = %v", err)
 	}
+	for _, test := range []struct {
+		actor NotificationActor
+		want  string
+	}{
+		{NotificationActor{Type: "member", Email: "alex@example.test"}, "alex@example.test"},
+		{NotificationActor{Type: "reporter"}, "Reporter"},
+		{NotificationActor{Type: "service"}, "service"},
+	} {
+		if got := notificationActorLabel(test.actor); got != test.want {
+			t.Errorf("notificationActorLabel(%#v) = %q, want %q", test.actor, got, test.want)
+		}
+	}
+	if got := truncateIntegrationText("short", 10); got != "short" {
+		t.Errorf("truncateIntegrationText(short) = %q", got)
+	}
+	if got := truncateIntegrationText("long value", 7); got != "long..." {
+		t.Errorf("truncateIntegrationText(long) = %q", got)
+	}
+	feedbackHeadline, feedbackDetail := notificationCopy(Notification{
+		ResourceType: "feedback", PublicID: "fb_123", Description: "Original report",
+	})
+	if feedbackHeadline != "New feedback fb_123" || feedbackDetail != "Original report" {
+		t.Errorf("fallback feedback copy = %q / %q", feedbackHeadline, feedbackDetail)
+	}
+	emptyHeadline, emptyDetail := notificationCopy(Notification{ResourceType: "feedback", PublicID: "fb_empty"})
+	if emptyHeadline != "New feedback fb_empty" || emptyDetail != "Feedback received without a text comment." {
+		t.Errorf("empty feedback copy = %q / %q", emptyHeadline, emptyDetail)
+	}
+	_, legacyDetail := notificationCopy(Notification{ResourceType: "feedback", Text: "Legacy feedback text"})
+	if legacyDetail != "Legacy feedback text" {
+		t.Errorf("legacy feedback detail = %q", legacyDetail)
+	}
+	_, issueDetail := notificationCopy(Notification{
+		ResourceType: "issue", Event: EventIssueUpdated, Description: "Issue-only description",
+	})
+	if issueDetail != "Issue-only description" {
+		t.Errorf("description-only issue detail = %q", issueDetail)
+	}
+	_, completeIssueDetail := notificationCopy(Notification{
+		ResourceType: "issue", Event: EventIssueUpdated,
+		Title: "Issue title", Description: "Issue description",
+	})
+	if completeIssueDetail != "Issue title\nIssue description" {
+		t.Errorf("complete issue detail = %q", completeIssueDetail)
+	}
 }
 
 func TestWebhookDeliverySignsExactBodyAndHandlesProviderFailures(t *testing.T) {

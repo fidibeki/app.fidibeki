@@ -540,7 +540,11 @@ func notificationCopy(notification Notification) (string, string) {
 			description = strings.TrimSpace(notification.Text)
 		}
 		if description != "" && description != detail {
-			detail += "\n" + description
+			if detail == "" {
+				detail = description
+			} else {
+				detail += "\n" + description
+			}
 		}
 		if detail == "" {
 			detail = "Feedback received without a text comment."
@@ -555,7 +559,11 @@ func notificationCopy(notification Notification) (string, string) {
 	}
 	detail := notification.Title
 	if notification.Description != "" && notification.Description != detail {
-		detail += "\n" + notification.Description
+		if detail == "" {
+			detail = notification.Description
+		} else {
+			detail += "\n" + notification.Description
+		}
 	}
 	return headline, detail
 }
