@@ -53,11 +53,13 @@ func TestRetentionStorePreservesManifestsAndExpiresAccess(t *testing.T) {
 				INSERT INTO attachments (
 					tenant_id, feedback_id, kind, client_attachment_id, storage_key,
 					content_type, size_bytes, processing_status, completed_at,
-					transcription, sentiment_score, moderation_flags, processed_at, created_at
+					transcription, sentiment_score, moderation_flags, processed_at, created_at,
+					safety_status, safety_checked_at, detected_content_type
 				) VALUES (
 					$1, $2, 'audio', gen_random_uuid(), $3,
 					'audio/webm', 2048, 'completed', $4,
-					'personal transcript', 0.4, ARRAY['personal'], $4, $4
+					'personal transcript', 0.4, ARRAY['personal'], $4, $4,
+					'safe', $4, 'audio/webm'
 				)
 			`, tenantID, feedbackID, slug+"/"+suffix+".webm", completedAt); err != nil {
 				t.Fatalf("create %s %s attachment: %v", definition.plan, suffix, err)

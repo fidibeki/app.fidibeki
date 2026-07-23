@@ -29,6 +29,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -142,13 +143,19 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if err := analyticsTx.Commit(ctx); err != nil {
 		t.Fatalf("commit feedback matched analytics: %v", err)
 	}
-	storageClient := &feedbackStorageStub{stat: storage.ObjectInfo{Size: 2048, ContentType: "audio/webm"}}
+	audioBody := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, bytes.Repeat([]byte{1}, 2044)...)
+	storageClient := &feedbackStorageStub{
+		stat: storage.ObjectInfo{Size: 2048, ContentType: "audio/webm"},
+		data: audioBody,
+	}
 	scheduler := &attachmentSchedulerStub{}
+	var handlerLogs bytes.Buffer
 	authorizer := widgetapi.Authorizer{Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now }}
 	handler := feedbackHandler(HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
 		Storage: storageClient, Scheduler: scheduler, Analytics: widgetanalytics.Store{},
-		Now: func() time.Time { return now },
+		Now:    func() time.Time { return now },
+		Logger: slog.New(slog.NewTextHandler(&handlerLogs, nil)),
 	})
 
 	clientFeedbackID := "57e3ee52-4ebf-43ce-9e31-9f909628634d"
@@ -164,7 +171,8 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 
 	created := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
 	if created.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+		t.Fatalf("create status = %d, body = %s, logs = %s",
+			created.Code, created.Body.String(), handlerLogs.String())
 	}
 	var first SubmissionResponse
 	decodeFeedbackResponse(t, created, &first)
@@ -225,15 +233,26 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `
 		UPDATE attachments
 		SET processing_status = 'failed', error_message = 'attachment upload expired before completion',
-		    processed_at = $2, upload_refreshed_at = $2
+		    processed_at = $2, upload_refreshed_at = $2::timestamptz - interval '10 minutes',
+		    upload_expires_at = $2
 		WHERE id = $1
-	`, first.Attachments[0].AttachmentID, now.Add(-time.Hour)); err != nil {
+	`, first.Attachments[0].AttachmentID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("expire attachment before retry: %v", err)
+	}
+	expiredCompletion := performFeedbackRequest(handler, http.MethodPost,
+		"/v1/attachments/"+first.Attachments[0].AttachmentID+"/complete?key="+publicKey,
+		fmt.Sprintf(`{"complete_token":%q}`, first.Attachments[0].CompleteToken),
+		publicKey, "https://example.com")
+	if expiredCompletion.Code != http.StatusGone ||
+		!strings.Contains(expiredCompletion.Body.String(), `"reason":"upload_expired"`) {
+		t.Fatalf("expired completion status = %d, body = %s",
+			expiredCompletion.Code, expiredCompletion.Body.String())
 	}
 
 	idempotent := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
 	if idempotent.Code != http.StatusOK {
-		t.Fatalf("idempotent status = %d, body = %s", idempotent.Code, idempotent.Body.String())
+		t.Fatalf("idempotent status = %d, body = %s, logs = %s",
+			idempotent.Code, idempotent.Body.String(), handlerLogs.String())
 	}
 	var second SubmissionResponse
 	decodeFeedbackResponse(t, idempotent, &second)
@@ -356,22 +375,50 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	var tokenHash, completedError *string
 	var completedAt *time.Time
-	var completedStatus string
+	var completedStatus, completedSafetyStatus string
 	var completedProcessedAt *time.Time
 	if err := root.QueryRow(ctx,
-		`SELECT complete_token_hash, completed_at, processing_status, error_message, processed_at
-		 FROM attachments WHERE id = $1`,
+		`SELECT complete_token_hash, completed_at, processing_status, error_message, processed_at,
+			        safety_status
+			 FROM attachments WHERE id = $1`,
 		second.Attachments[0].AttachmentID,
-	).Scan(&tokenHash, &completedAt, &completedStatus, &completedError, &completedProcessedAt); err != nil {
+	).Scan(&tokenHash, &completedAt, &completedStatus, &completedError, &completedProcessedAt,
+		&completedSafetyStatus); err != nil {
 		t.Fatalf("read completed attachment: %v", err)
 	}
 	if tokenHash != nil || completedAt == nil || completedStatus != "pending" ||
-		completedError != nil || completedProcessedAt != nil {
-		t.Errorf("completed attachment state = token %#v at %#v status %s error %#v processed %#v",
-			tokenHash, completedAt, completedStatus, completedError, completedProcessedAt)
+		completedError != nil || completedProcessedAt != nil || completedSafetyStatus != "quarantined" {
+		t.Errorf("completed attachment state = token %#v at %#v status %s safety %s error %#v processed %#v",
+			tokenHash, completedAt, completedStatus, completedSafetyStatus, completedError, completedProcessedAt)
 	}
-	if scheduler.attachmentID != second.Attachments[0].AttachmentID || scheduler.feedbackID != first.FeedbackID {
-		t.Errorf("scheduled attachment/feedback = %q/%q", scheduler.attachmentID, scheduler.feedbackID)
+	if scheduler.task.AttachmentID != second.Attachments[0].AttachmentID ||
+		scheduler.task.TenantID != tenantID || scheduler.task.Generation < 1 {
+		t.Errorf("scheduled verification = %#v", scheduler.task)
+	}
+	if _, err := (Store{}).GetTenantAttachmentObject(
+		ctx, root, tenantID, first.FeedbackID, second.Attachments[0].AttachmentID,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("quarantined attachment stream lookup error = %v, want ErrNotFound", err)
+	}
+	aiAttachmentScheduler := &verifiedAISchedulerStub{}
+	verificationProcessor := VerificationProcessor{
+		Store: VerificationStore{Database: root}, Storage: storageClient,
+		Scanner: SignatureScanner{}, AI: aiAttachmentScheduler,
+		Now: func() time.Time { return now },
+	}
+	verificationPayload, err := json.Marshal(scheduler.task)
+	if err != nil {
+		t.Fatalf("encode verification task: %v", err)
+	}
+	if err := verificationProcessor.Handler()(
+		ctx, asynq.NewTask(TaskAttachmentVerify, verificationPayload),
+	); err != nil {
+		t.Fatalf("verify uploaded attachment: %v", err)
+	}
+	if aiAttachmentScheduler.attachmentID != second.Attachments[0].AttachmentID ||
+		aiAttachmentScheduler.feedbackID != first.FeedbackID {
+		t.Fatalf("verified attachment AI schedule = %q/%q",
+			aiAttachmentScheduler.attachmentID, aiAttachmentScheduler.feedbackID)
 	}
 	invalidOrigin := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey,
 		body, publicKey, "https://evil.test")
@@ -1048,7 +1095,9 @@ func assertFeedbackTriageRead(t *testing.T, item Item, assigneeID string) {
 }
 
 type feedbackStorageStub struct {
-	stat storage.ObjectInfo
+	stat    storage.ObjectInfo
+	data    []byte
+	removed bool
 }
 
 type attachmentStreamStorageStub struct {
@@ -1066,8 +1115,7 @@ func (s *attachmentStreamStorageStub) OpenObject(_ context.Context, key string) 
 }
 
 type attachmentSchedulerStub struct {
-	attachmentID string
-	feedbackID   string
+	task VerificationTask
 }
 
 type submissionAnalyticsStoreStub struct {
@@ -1082,13 +1130,11 @@ func (s submissionAnalyticsStoreStub) InsertSubmittedEvent(
 	return false, s.err
 }
 
-func (s *attachmentSchedulerStub) ScheduleAttachment(
+func (s *attachmentSchedulerStub) ScheduleVerification(
 	_ context.Context,
-	attachmentID string,
-	feedbackID string,
+	task VerificationTask,
 ) error {
-	s.attachmentID = attachmentID
-	s.feedbackID = feedbackID
+	s.task = task
 	return nil
 }
 
@@ -1098,6 +1144,15 @@ func (s *feedbackStorageStub) PresignPut(_ context.Context, key string, _ time.D
 
 func (s *feedbackStorageStub) Stat(context.Context, string) (storage.ObjectInfo, error) {
 	return s.stat, nil
+}
+
+func (s *feedbackStorageStub) OpenObject(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.data)), nil
+}
+
+func (s *feedbackStorageStub) RemoveObject(context.Context, string) error {
+	s.removed = true
+	return nil
 }
 
 type staticLimiter struct {

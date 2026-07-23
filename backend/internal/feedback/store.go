@@ -175,14 +175,19 @@ func (Store) CreateSubmission(
 	createdAttachments := make([]Attachment, 0, len(attachments))
 	for _, attachment := range attachments {
 		if _, err := query.Exec(ctx, `
-			INSERT INTO attachments (
-				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-				content_type, size_bytes, duration_seconds, processing_status, complete_token_hash
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				INSERT INTO attachments (
+					id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+					content_type, size_bytes, duration_seconds, processing_status, complete_token_hash,
+					safety_status, upload_refreshed_at, upload_expires_at, verification_generation
+				) VALUES (
+					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+					$13::timestamptz - interval '10 minutes', $13, $14
+				)
 		`, attachment.ID, configuration.TenantID, feedbackID, attachment.Kind,
 			attachment.ClientAttachmentID, attachment.StorageKey, attachment.ContentType,
 			attachment.SizeBytes, attachment.DurationSeconds, attachment.ProcessingStatus,
-			attachment.CompleteTokenHash); err != nil {
+			attachment.CompleteTokenHash, attachment.SafetyStatus, attachment.UploadExpiresAt,
+			attachment.VerificationGeneration); err != nil {
 			return Submission{}, fmt.Errorf("create feedback attachment: %w", err)
 		}
 		createdAttachments = append(createdAttachments, attachment.Attachment)
@@ -205,34 +210,48 @@ func (Store) RotateCompletionToken(
 	attachmentID string,
 	tokenHash string,
 	refreshedAt time.Time,
-) error {
+) (time.Time, int, error) {
 	var feedbackID string
 	var pendingAI bool
+	var uploadExpiresAt time.Time
+	var generation int
 	err := query.QueryRow(ctx, `
 		UPDATE attachments
-		SET complete_token_hash = $2,
-		    upload_refreshed_at = $3,
-		    processing_status = CASE
+			SET complete_token_hash = $2,
+			    upload_refreshed_at = $3::timestamptz,
+			    upload_expires_at = $3::timestamptz + interval '10 minutes',
+			    safety_status = 'pending',
+			    safety_checked_at = NULL,
+			    safety_error_reason = NULL,
+			    detected_content_type = NULL,
+			    verification_generation = verification_generation + 1,
+			    verification_enqueued_at = NULL,
+			    verification_attempts = 0,
+			    processing_status = CASE
 		        WHEN processing_status = 'failed' THEN 'pending'::processing_status
 		        ELSE processing_status
 		    END,
 		    error_message = CASE WHEN processing_status = 'failed' THEN NULL ELSE error_message END,
 		    processed_at = CASE WHEN processing_status = 'failed' THEN NULL ELSE processed_at END
-		WHERE id = $1 AND completed_at IS NULL
-		RETURNING feedback_id, processing_status = 'pending'
-	`, attachmentID, tokenHash, refreshedAt.UTC()).Scan(&feedbackID, &pendingAI)
+			WHERE id = $1 AND completed_at IS NULL
+			  AND safety_status IN ('pending', 'expired')
+			RETURNING feedback_id, processing_status = 'pending', upload_expires_at,
+			          verification_generation
+		`, attachmentID, tokenHash, refreshedAt.UTC()).Scan(
+		&feedbackID, &pendingAI, &uploadExpiresAt, &generation,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+		return time.Time{}, 0, ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("rotate attachment completion token: %w", err)
+		return time.Time{}, 0, fmt.Errorf("rotate attachment completion token: %w", err)
 	}
 	if pendingAI {
 		if _, err := query.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
-			return fmt.Errorf("reset feedback AI after attachment retry: %w", err)
+			return time.Time{}, 0, fmt.Errorf("reset feedback AI after attachment retry: %w", err)
 		}
 	}
-	return nil
+	return uploadExpiresAt, generation, nil
 }
 
 func (Store) LockAttachment(
@@ -247,7 +266,11 @@ func (Store) LockAttachment(
 	err := query.QueryRow(ctx, `
 		SELECT attachment.id, attachment.feedback_id, attachment.client_attachment_id, attachment.kind,
 		       attachment.storage_key, attachment.content_type, attachment.size_bytes,
-		       attachment.duration_seconds, attachment.complete_token_hash, attachment.completed_at
+		       attachment.duration_seconds, attachment.complete_token_hash, attachment.completed_at,
+		       attachment.safety_status, attachment.upload_expires_at,
+		       attachment.safety_checked_at, attachment.safety_error_reason,
+		       attachment.detected_content_type, attachment.verification_generation,
+		       attachment.verification_enqueued_at, attachment.verification_attempts
 		FROM attachments AS attachment
 		JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
 		WHERE feedback.project_id = $1 AND attachment.id = $2
@@ -256,6 +279,10 @@ func (Store) LockAttachment(
 		&attachment.ID, &attachment.FeedbackID, &attachment.ClientAttachmentID, &attachment.Kind,
 		&attachment.StorageKey, &attachment.ContentType, &attachment.SizeBytes,
 		&attachment.DurationSeconds, &completeTokenHash, &completedAt,
+		&attachment.SafetyStatus, &attachment.UploadExpiresAt,
+		&attachment.SafetyCheckedAt, &attachment.SafetyErrorReason,
+		&attachment.DetectedContentType, &attachment.VerificationGeneration,
+		&attachment.VerificationEnqueuedAt, &attachment.VerificationAttempts,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attachment{}, ErrNotFound
@@ -278,15 +305,22 @@ func (Store) CompleteAttachment(
 	var pendingAI bool
 	err := query.QueryRow(ctx, `
 		UPDATE attachments
-		SET complete_token_hash = NULL,
-		    completed_at = $2,
-		    processing_status = CASE
+			SET complete_token_hash = NULL,
+			    completed_at = $2,
+			    safety_status = 'quarantined',
+			    safety_checked_at = NULL,
+			    safety_error_reason = NULL,
+			    detected_content_type = NULL,
+			    verification_enqueued_at = NULL,
+			    verification_attempts = 0,
+			    processing_status = CASE
 		        WHEN processing_status = 'failed' THEN 'pending'::processing_status
 		        ELSE processing_status
 		    END,
 		    error_message = CASE WHEN processing_status = 'failed' THEN NULL ELSE error_message END,
 		    processed_at = CASE WHEN processing_status = 'failed' THEN NULL ELSE processed_at END
-		WHERE id = $1 AND completed_at IS NULL AND complete_token_hash IS NOT NULL
+			WHERE id = $1 AND completed_at IS NULL AND complete_token_hash IS NOT NULL
+			  AND safety_status = 'pending' AND upload_expires_at > $2
 		RETURNING feedback_id, processing_status = 'pending'
 	`, attachmentID, completedAt.UTC()).Scan(&feedbackID, &pendingAI)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -303,10 +337,46 @@ func (Store) CompleteAttachment(
 	return nil
 }
 
+func (Store) ExpireAttachment(
+	ctx context.Context,
+	query db.Querier,
+	attachmentID string,
+	expiredAt time.Time,
+) error {
+	var feedbackID string
+	err := query.QueryRow(ctx, `
+		UPDATE attachments
+		SET complete_token_hash = NULL,
+		    safety_status = 'expired',
+		    safety_checked_at = $2,
+		    safety_error_reason = 'upload_expired',
+		    verification_enqueued_at = NULL,
+		    processing_status = 'failed',
+		    error_message = 'attachment upload expired before completion',
+		    processed_at = $2
+		WHERE id = $1 AND completed_at IS NULL
+		  AND safety_status = 'pending' AND upload_expires_at <= $2
+		RETURNING feedback_id
+	`, attachmentID, expiredAt.UTC()).Scan(&feedbackID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("expire attachment upload: %w", err)
+	}
+	if err := updateFeedbackAICompletion(ctx, query, feedbackID, expiredAt.UTC()); err != nil {
+		return err
+	}
+	return nil
+}
+
 func listAttachments(ctx context.Context, query db.Querier, feedbackID string) ([]Attachment, error) {
 	rows, err := query.Query(ctx, `
-		SELECT id, client_attachment_id, kind, storage_key, content_type, size_bytes,
-		       duration_seconds, complete_token_hash, completed_at
+			SELECT id, client_attachment_id, kind, storage_key, content_type, size_bytes,
+			       duration_seconds, complete_token_hash, completed_at, safety_status,
+			       upload_expires_at, safety_checked_at, safety_error_reason,
+			       detected_content_type, verification_generation, verification_enqueued_at,
+			       verification_attempts
 		FROM attachments WHERE feedback_id = $1 ORDER BY created_at, id
 	`, feedbackID)
 	if err != nil {
@@ -320,6 +390,10 @@ func listAttachments(ctx context.Context, query db.Querier, feedbackID string) (
 			&attachment.ID, &attachment.ClientAttachmentID, &attachment.Kind,
 			&attachment.StorageKey, &attachment.ContentType, &attachment.SizeBytes,
 			&attachment.DurationSeconds, &attachment.CompleteTokenHash, &attachment.CompletedAt,
+			&attachment.SafetyStatus, &attachment.UploadExpiresAt, &attachment.SafetyCheckedAt,
+			&attachment.SafetyErrorReason, &attachment.DetectedContentType,
+			&attachment.VerificationGeneration, &attachment.VerificationEnqueuedAt,
+			&attachment.VerificationAttempts,
 		); err != nil {
 			return nil, fmt.Errorf("scan feedback attachment: %w", err)
 		}
@@ -361,6 +435,28 @@ func textProcessingStatus(text *string, plan tenant.Plan) string {
 		return "skipped"
 	}
 	return "pending"
+}
+
+func updateFeedbackAICompletion(
+	ctx context.Context,
+	query db.Querier,
+	feedbackID string,
+	now time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks AS feedback
+		SET ai_processed_at = COALESCE(feedback.ai_processed_at, $2)
+		WHERE feedback.id = $1
+		  AND feedback.text_process_status IN ('completed', 'failed', 'skipped')
+		  AND NOT EXISTS (
+			SELECT 1 FROM attachments AS attachment
+			WHERE attachment.feedback_id = feedback.id
+			  AND attachment.processing_status NOT IN ('completed', 'failed', 'skipped')
+		  )
+	`, feedbackID, now.UTC()); err != nil {
+		return fmt.Errorf("update feedback AI completion: %w", err)
+	}
+	return nil
 }
 
 func NewID() string {

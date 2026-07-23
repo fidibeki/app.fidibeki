@@ -409,6 +409,7 @@ function feedbackDetail(state: MockState, id: string) {
       content_type: 'image/png',
       size_bytes: 2120,
       processing_status: 'failed',
+      safety_status: 'safe',
       error_message: 'Screenshot analysis timed out',
       moderation_flags: [],
       processing_attempts: 1,
@@ -422,6 +423,8 @@ function feedbackDetail(state: MockState, id: string) {
       content_type: 'audio/webm',
       size_bytes: 4096,
       processing_status: 'failed',
+      safety_status: 'expired',
+      safety_error_reason: 'upload_expired',
       error_message: 'attachment upload expired before completion',
       moderation_flags: [],
       processing_attempts: 0,
@@ -1948,7 +1951,6 @@ test('unlinked feedback can be titled and promoted into an editable issue', asyn
 })
 
 test('expired uploads are not offered an AI processing retry', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Attachment retry behavior is viewport independent')
   const state = createMockState()
   const retryRequests: string[] = []
   page.on('request', (request) => {
@@ -1957,14 +1959,20 @@ test('expired uploads are not offered an AI processing retry', async ({ page }, 
   })
   await authenticate(page, state)
   await openPrimary(page, 'Feedback')
-  await page.getByTitle('Open full detail').click()
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('link', { name: 'Open FB-1048' }).click()
+  } else {
+    await page.getByTitle('Open full detail').click()
+  }
   await expect(page).toHaveURL(/\/feedback\/feedback-1$/)
   await expect(page.locator('#attachments')).toContainText('Captured evidence')
 
   const expiredUpload = page.locator('.feedback-attachment-list article').filter({ hasText: 'attachment upload expired before completion' })
   await expect(expiredUpload).toBeVisible()
+  await expect(expiredUpload.locator('.status-pill')).toHaveText('expired')
   await expect(expiredUpload.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   await expect(page.getByText('1 attachment can be retried.')).toBeVisible()
+  await capture(page, testInfo, `attachment-safety-${testInfo.project.name}`)
 
   await page.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect(page.getByRole('status')).toHaveText('Attachment retry queued.')

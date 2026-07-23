@@ -129,6 +129,8 @@ func (s Store) PrepareFeedback(
 		FROM attachments
 		WHERE feedback_id = $1
 		  AND completed_at IS NOT NULL
+		  AND safety_status = 'safe'
+		  AND retention_deleted_at IS NULL
 		  AND kind <> 'replay'
 		  AND processing_status = 'pending'
 		  AND error_message IS NULL
@@ -171,6 +173,7 @@ func (s Store) PrepareFeedback(
 			UPDATE attachments
 			SET processing_status = 'processing', processing_attempts = $2, error_message = NULL
 			WHERE id = $1 AND processing_status = 'pending' AND error_message IS NULL
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
 		`, attachment.id, attempt); err != nil {
 			return nil, false, fmt.Errorf("prepare attachment AI: %w", err)
 		}
@@ -271,6 +274,8 @@ func (s Store) PendingFeedbackIDs(
 					SELECT 1 FROM attachments AS attachment
 					WHERE attachment.feedback_id = feedback.id
 					  AND attachment.completed_at IS NOT NULL
+					  AND attachment.safety_status = 'safe'
+					  AND attachment.retention_deleted_at IS NULL
 					  AND attachment.kind <> 'replay'
 					  AND attachment.processing_status = 'pending'
 					  AND attachment.error_message IS NULL
@@ -311,6 +316,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 			SELECT 'attachment', tenant_id, id, processing_attempts, 0, created_at
 			FROM attachments
 			WHERE processing_status = 'processing'
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
 			UNION ALL
 			SELECT 'file_delete', tenant_id, id, delete_attempts, 0, delete_enqueued_at
 			FROM ai_gemini_files
@@ -344,7 +350,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 
 func (s Store) ExpireIncompleteAttachments(
 	ctx context.Context,
-	staleBefore time.Time,
+	_ time.Time,
 	now time.Time,
 	limit int,
 ) (int, error) {
@@ -360,21 +366,25 @@ func (s Store) ExpireIncompleteAttachments(
 		WITH expired AS (
 			SELECT id
 			FROM attachments
-			WHERE completed_at IS NULL
-			  AND processing_status IN ('pending', 'processing')
-			  AND upload_refreshed_at < $1
-			ORDER BY upload_refreshed_at, id
-			LIMIT $3
+			WHERE safety_status = 'pending'
+			  AND upload_expires_at <= $1
+			ORDER BY upload_expires_at, id
+			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		)
 		UPDATE attachments AS attachment
-		SET processing_status = 'failed',
+		SET complete_token_hash = NULL,
+		    safety_status = 'expired',
+		    safety_checked_at = $1,
+		    safety_error_reason = 'upload_expired',
+		    verification_enqueued_at = NULL,
+		    processing_status = 'failed',
 		    error_message = 'attachment upload expired before completion',
-		    processed_at = $2
+		    processed_at = $1
 		FROM expired
 		WHERE attachment.id = expired.id
 		RETURNING attachment.feedback_id
-	`, staleBefore.UTC(), now.UTC(), limit)
+	`, now.UTC(), limit)
 	if err != nil {
 		return 0, fmt.Errorf("expire incomplete attachments: %w", err)
 	}
@@ -609,6 +619,7 @@ func (s Store) FinalizeExhaustedTask(
 			SET processing_status = 'failed', error_message = $4, processed_at = $5
 			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
 			  AND processing_status IN ('pending', 'processing')
+			  AND safety_status = 'safe'
 			RETURNING feedback_id
 		`, payload.ResourceID, payload.TenantID, payload.Attempt,
 			truncateError(failure), now).Scan(&feedbackID)
@@ -663,9 +674,10 @@ func (s Store) ClaimAttachment(
 	err := s.Database.QueryRow(ctx, `
 		UPDATE attachments
 		SET processing_status = 'processing'
-		WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
-		  AND completed_at IS NOT NULL AND kind <> 'replay'
-		  AND processing_status IN ('pending', 'processing')
+			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
+			  AND completed_at IS NOT NULL AND kind <> 'replay'
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
+			  AND processing_status IN ('pending', 'processing')
 		RETURNING feedback_id, kind, storage_key, content_type
 	`, attachmentID, tenantID, attempt).Scan(
 		&work.FeedbackID, &work.Kind, &work.StorageKey, &work.ContentType,
@@ -726,8 +738,8 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 		UPDATE attachments
 		SET transcription = $4, sentiment_score = $5, moderation_flags = $6,
 		    processing_status = 'completed', error_message = NULL, processed_at = $7
-		WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
-		  AND processing_status = 'processing'
+			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
+			  AND processing_status = 'processing' AND safety_status = 'safe'
 	`, work.AttachmentID, work.TenantID, work.Attempt, nullableText(transcription),
 		result.SentimentScore, moderationFlags(result.ModerationFlags), now)
 	if err != nil {
@@ -819,8 +831,8 @@ func (s Store) FailAttachment(
 		UPDATE attachments
 		SET processing_status = $4::processing_status, error_message = $5,
 		    processed_at = CASE WHEN $7 THEN $6::timestamptz ELSE NULL::timestamptz END
-		WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
-		  AND processing_status = 'processing'
+			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
+			  AND processing_status = 'processing' AND safety_status = 'safe'
 	`, work.AttachmentID, work.TenantID, work.Attempt, status, truncateError(failure), now,
 		permanentFailure); err != nil {
 		return fmt.Errorf("record attachment AI failure: %w", err)
@@ -847,8 +859,9 @@ func (Store) RetryAttachment(
 ) (string, error) {
 	var currentStatus string
 	if err := query.QueryRow(ctx, `
-		SELECT processing_status FROM attachments
-		WHERE id = $1 AND tenant_id = $2 AND completed_at IS NOT NULL AND kind <> 'replay'
+			SELECT processing_status FROM attachments
+			WHERE id = $1 AND tenant_id = $2 AND completed_at IS NOT NULL AND kind <> 'replay'
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
 	`, attachmentID, tenantID).Scan(&currentStatus); errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	} else if err != nil {
@@ -862,8 +875,9 @@ func (Store) RetryAttachment(
 		UPDATE attachments
 		SET processing_status = 'pending', error_message = NULL,
 		    transcription = NULL, sentiment_score = NULL, moderation_flags = '{}', processed_at = NULL
-		WHERE id = $1 AND tenant_id = $2 AND completed_at IS NOT NULL
-		  AND kind <> 'replay' AND processing_status = $3
+			WHERE id = $1 AND tenant_id = $2 AND completed_at IS NOT NULL
+			  AND kind <> 'replay' AND processing_status = $3
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
 		RETURNING feedback_id
 	`, attachmentID, tenantID, currentStatus).Scan(&feedbackID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -939,8 +953,9 @@ func (Store) ReprocessFeedback(
 		    END,
 		    error_message = NULL, transcription = NULL, sentiment_score = NULL,
 		    moderation_flags = '{}', processed_at = NULL
-		WHERE feedback_id = $1 AND tenant_id = $2
-		  AND completed_at IS NOT NULL AND processing_status <> 'processing'
+			WHERE feedback_id = $1 AND tenant_id = $2
+			  AND completed_at IS NOT NULL AND processing_status <> 'processing'
+			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
 	`, feedbackID, tenantID); err != nil {
 		return fmt.Errorf("reset feedback attachments AI: %w", err)
 	}

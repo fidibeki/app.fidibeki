@@ -98,6 +98,7 @@ aggregation, and cross-tenant denial.
 ## Task 6: Attachment Safety Schema
 
 **Depends on:** Task 4
+**Status:** Complete
 
 **Outcome:** Attachments have an explicit declaration expiry and independent safety lifecycle, with
 completed legacy objects preserved as safe.
@@ -112,6 +113,7 @@ lossless rollback.
 ## Task 7: Quarantined Attachment Verifier
 
 **Depends on:** Task 6
+**Status:** Complete
 
 **Outcome:** Completion consumes an unexpired declaration into quarantine and a deterministic worker
 marks only signature-valid bounded objects safe.
@@ -126,6 +128,7 @@ rejection, object cleanup, idempotent reconciliation, and no silent safe state o
 ## Task 8: Safe-Only Attachment Consumers
 
 **Depends on:** Task 7
+**Status:** Complete
 
 **Outcome:** Streaming, previews, exports, and attachment AI can consume only safe objects.
 

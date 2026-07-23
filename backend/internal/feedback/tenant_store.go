@@ -803,7 +803,9 @@ func listTenantAttachments(
 		SELECT id, kind::text, content_type, size_bytes, duration_seconds,
 		       processing_status::text, error_message, transcription,
 		       sentiment_score::double precision, moderation_flags,
-		       processing_attempts, completed_at, processed_at, retention_deleted_at, created_at
+		       processing_attempts, completed_at, processed_at, retention_deleted_at,
+		       safety_status::text, safety_checked_at, safety_error_reason,
+		       detected_content_type, created_at
 		FROM attachments
 		WHERE tenant_id = $1 AND feedback_id = $2
 		ORDER BY created_at, id
@@ -820,7 +822,9 @@ func listTenantAttachments(
 			&attachment.DurationSeconds, &attachment.ProcessingStatus, &attachment.ErrorMessage,
 			&attachment.Transcription, &attachment.SentimentScore, &attachment.ModerationFlags,
 			&attachment.ProcessingAttempts, &attachment.CompletedAt, &attachment.ProcessedAt,
-			&attachment.RetentionDeletedAt, &attachment.CreatedAt,
+			&attachment.RetentionDeletedAt, &attachment.SafetyStatus,
+			&attachment.SafetyCheckedAt, &attachment.SafetyErrorReason,
+			&attachment.DetectedContentType, &attachment.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan tenant feedback attachment: %w", err)
 		}
@@ -844,9 +848,9 @@ func (Store) GetTenantAttachmentObject(
 	err := query.QueryRow(ctx, `
 		SELECT id, kind::text, storage_key, content_type, size_bytes, completed_at, created_at
 		FROM attachments
-		WHERE tenant_id = $1 AND feedback_id = $2 AND id = $3
-		  AND completed_at IS NOT NULL AND retention_deleted_at IS NULL
-		  AND storage_key IS NOT NULL
+			WHERE tenant_id = $1 AND feedback_id = $2 AND id = $3
+			  AND completed_at IS NOT NULL AND retention_deleted_at IS NULL
+			  AND safety_status = 'safe' AND storage_key IS NOT NULL
 	`, tenantID, feedbackID, attachmentID).Scan(
 		&object.ID, &object.Kind, &object.StorageKey, &object.ContentType,
 		&object.SizeBytes, &object.CompletedAt, &object.CreatedAt,

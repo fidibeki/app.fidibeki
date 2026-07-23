@@ -144,15 +144,19 @@ var reporterExportFiles = []exportFile{
 			'id', attachment.id, 'feedback_id', attachment.feedback_id,
 			'kind', attachment.kind, 'content_type', attachment.content_type,
 			'size_bytes', attachment.size_bytes, 'duration_seconds', attachment.duration_seconds,
-			'processing_status', attachment.processing_status,
-			'transcription', attachment.transcription,
-			'completed_at', attachment.completed_at,
-			'retention_deleted_at', attachment.retention_deleted_at,
-			'created_at', attachment.created_at,
-			'object_availability', CASE
-				WHEN attachment.retention_deleted_at IS NOT NULL THEN 'retention_deleted'
-				WHEN attachment.completed_at IS NULL THEN 'not_uploaded'
-				ELSE 'available_not_included' END
+				'processing_status', attachment.processing_status,
+				'transcription', attachment.transcription,
+				'completed_at', attachment.completed_at,
+				'retention_deleted_at', attachment.retention_deleted_at,
+				'safety_status', attachment.safety_status,
+				'safety_checked_at', attachment.safety_checked_at,
+				'safety_error_reason', attachment.safety_error_reason,
+				'detected_content_type', attachment.detected_content_type,
+				'created_at', attachment.created_at,
+				'object_availability', CASE
+					WHEN attachment.retention_deleted_at IS NOT NULL THEN 'retention_deleted'
+					WHEN attachment.safety_status = 'safe' THEN 'available_not_included'
+					ELSE attachment.safety_status::text END
 		)
 		FROM attachments AS attachment
 		JOIN feedbacks AS feedback

@@ -235,9 +235,10 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `
 		INSERT INTO attachments (
 			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, completed_at
+			content_type, size_bytes, processing_status, completed_at,
+			safety_status, safety_checked_at, detected_content_type
 		) VALUES ($1, $2, 'screenshot', gen_random_uuid(), $3,
-		          'image/png', 1024, 'completed', now())
+		          'image/png', 1024, 'completed', now(), 'safe', now(), 'image/png')
 	`, tenantIDs["acme"], feedbackID, "integration/"+feedbackID+"/screenshot.png"); err != nil {
 		t.Fatalf("create feedback attachment: %v", err)
 	}

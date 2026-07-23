@@ -42,6 +42,16 @@ const (
 	AttachmentReplay     AttachmentKind = "replay"
 )
 
+type AttachmentSafetyStatus string
+
+const (
+	AttachmentSafetyPending     AttachmentSafetyStatus = "pending"
+	AttachmentSafetyQuarantined AttachmentSafetyStatus = "quarantined"
+	AttachmentSafetySafe        AttachmentSafetyStatus = "safe"
+	AttachmentSafetyRejected    AttachmentSafetyStatus = "rejected"
+	AttachmentSafetyExpired     AttachmentSafetyStatus = "expired"
+)
+
 type MetadataInput struct {
 	URL            string `json:"url"`
 	Referrer       string `json:"referrer"`
@@ -129,35 +139,47 @@ type AttachmentValues struct {
 }
 
 type Attachment struct {
-	ID                 string
-	FeedbackID         string
-	ClientAttachmentID string
-	Kind               AttachmentKind
-	StorageKey         string
-	ContentType        string
-	SizeBytes          int64
-	DurationSeconds    *int
-	CompleteTokenHash  *string
-	CompletedAt        *time.Time
+	ID                     string
+	FeedbackID             string
+	ClientAttachmentID     string
+	Kind                   AttachmentKind
+	StorageKey             string
+	ContentType            string
+	SizeBytes              int64
+	DurationSeconds        *int
+	CompleteTokenHash      *string
+	CompletedAt            *time.Time
+	SafetyStatus           AttachmentSafetyStatus
+	UploadExpiresAt        time.Time
+	SafetyCheckedAt        *time.Time
+	SafetyErrorReason      *string
+	DetectedContentType    *string
+	VerificationGeneration int
+	VerificationEnqueuedAt *time.Time
+	VerificationAttempts   int
 }
 
 type AttachmentDetail struct {
-	ID                 string         `json:"id"`
-	Kind               AttachmentKind `json:"kind"`
-	ContentType        string         `json:"content_type"`
-	SizeBytes          int64          `json:"size_bytes"`
-	DurationSeconds    *int           `json:"duration_seconds,omitempty"`
-	ProcessingStatus   string         `json:"processing_status"`
-	ErrorMessage       *string        `json:"error_message,omitempty"`
-	Transcription      *string        `json:"transcription,omitempty"`
-	SentimentScore     *float64       `json:"sentiment_score,omitempty"`
-	ModerationFlags    []string       `json:"moderation_flags"`
-	ProcessingAttempts int            `json:"processing_attempts"`
-	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
-	ProcessedAt        *time.Time     `json:"processed_at,omitempty"`
-	RetentionDeletedAt *time.Time     `json:"retention_deleted_at,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
-	ContentURL         *string        `json:"content_url,omitempty"`
+	ID                  string                 `json:"id"`
+	Kind                AttachmentKind         `json:"kind"`
+	ContentType         string                 `json:"content_type"`
+	SizeBytes           int64                  `json:"size_bytes"`
+	DurationSeconds     *int                   `json:"duration_seconds,omitempty"`
+	ProcessingStatus    string                 `json:"processing_status"`
+	ErrorMessage        *string                `json:"error_message,omitempty"`
+	Transcription       *string                `json:"transcription,omitempty"`
+	SentimentScore      *float64               `json:"sentiment_score,omitempty"`
+	ModerationFlags     []string               `json:"moderation_flags"`
+	ProcessingAttempts  int                    `json:"processing_attempts"`
+	CompletedAt         *time.Time             `json:"completed_at,omitempty"`
+	ProcessedAt         *time.Time             `json:"processed_at,omitempty"`
+	RetentionDeletedAt  *time.Time             `json:"retention_deleted_at,omitempty"`
+	SafetyStatus        AttachmentSafetyStatus `json:"safety_status"`
+	SafetyCheckedAt     *time.Time             `json:"safety_checked_at,omitempty"`
+	SafetyErrorReason   *string                `json:"safety_error_reason,omitempty"`
+	DetectedContentType *string                `json:"detected_content_type,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	ContentURL          *string                `json:"content_url,omitempty"`
 }
 
 type AttachmentObject struct {

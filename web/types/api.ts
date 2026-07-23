@@ -345,6 +345,10 @@ export interface FeedbackAttachment {
   size_bytes: number
   duration_seconds?: number
   processing_status: ProcessingStatus
+  safety_status: 'pending' | 'quarantined' | 'safe' | 'rejected' | 'expired'
+  safety_checked_at?: string
+  safety_error_reason?: string
+  detected_content_type?: string
   error_message?: string
   transcription?: string
   sentiment_score?: number

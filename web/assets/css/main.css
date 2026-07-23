@@ -280,7 +280,9 @@ svg {
 }
 
 .status-new::before,
-.status-processing::before {
+.status-processing::before,
+.status-pending::before,
+.status-quarantined::before {
   background: var(--blue);
 }
 
@@ -295,11 +297,15 @@ svg {
 
 .status-resolved::before,
 .status-ready::before,
+.status-safe::before,
+.status-completed::before,
 .status-positive::before {
   background: var(--green);
 }
 
 .status-failed::before,
+.status-rejected::before,
+.status-expired::before,
 .status-negative::before,
 .status-spam::before {
   background: var(--red);

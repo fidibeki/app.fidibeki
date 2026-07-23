@@ -235,6 +235,19 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: aiprocessing.Store{Database: pools.Admin}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
+	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := verificationQueue.Close(); err != nil {
+			logger.Warn("attachment verification queue close failed", "error", err)
+		}
+	}()
+	verificationScheduler := feedback.VerificationScheduler{
+		Store: feedback.VerificationStore{Database: pools.Admin},
+		Queue: verificationQueue, Logger: logger,
+	}
 	replayQueue, err := replay.OpenQueue(settings.RedisURL)
 	if err != nil {
 		return err
@@ -400,7 +413,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Limiter: publicLimiter, Abuse: abuseEvaluator, Diagnostics: abuseDiagnostics,
 		Storage: objectStorage, Logger: logger,
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
-		Scheduler:         aiScheduler, Analytics: widgetanalytics.Store{},
+		Scheduler:         verificationScheduler, Analytics: widgetanalytics.Store{},
 	})
 	widgetanalytics.RegisterPublicRoutes(widgetRoutes, widgetanalytics.PublicHTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App),
@@ -545,6 +558,19 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: aiprocessing.Store{Database: pools.Admin}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
+	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := verificationQueue.Close(); err != nil {
+			logger.Warn("attachment verification queue close failed", "error", err)
+		}
+	}()
+	verificationStore := feedback.VerificationStore{Database: pools.Admin}
+	verificationScheduler := feedback.VerificationScheduler{
+		Store: verificationStore, Queue: verificationQueue, Logger: logger,
+	}
 	replayQueue, err := replay.OpenQueue(settings.RedisURL)
 	if err != nil {
 		return err
@@ -635,27 +661,35 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Limiter: ratelimit.NewRedisLimiter(redisClient.Client()), RPM: settings.GeminiRPM,
 		Logger: logger,
 	}
+	verificationProcessor := feedback.VerificationProcessor{
+		Store: verificationStore, Storage: objectStorage, Scanner: feedback.SignatureScanner{},
+		AI:          aiScheduler,
+		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
+		Logger:      logger,
+	}
 	worker, err := jobworker.New(jobworker.Options{
 		RedisURL: settings.RedisURL, EmailConcurrency: settings.EmailConcurrency,
 		AIConcurrency: settings.AIConcurrency, Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
-		AIErrorHandler:       processor.ErrorHandler(),
-		ReporterHandler:      reporterHandler.Handler(),
-		LifecycleHandler:     lifecycleHandler.Handler(),
-		ReplayMergeHandler:   replayProcessor.MergeHandler(),
-		IntegrationHandler:   integrationHandler.Handler(),
-		PrivacyExportHandler: privacyExporter.Handler(),
+		AIErrorHandler:                processor.ErrorHandler(),
+		ReporterHandler:               reporterHandler.Handler(),
+		LifecycleHandler:              lifecycleHandler.Handler(),
+		ReplayMergeHandler:            replayProcessor.MergeHandler(),
+		AttachmentVerificationHandler: verificationProcessor.Handler(),
+		IntegrationHandler:            integrationHandler.Handler(),
+		PrivacyExportHandler:          privacyExporter.Handler(),
 	})
 	if err != nil {
 		return err
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 10)
+	backgroundDone := make(chan error, 11)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
+	go func() { backgroundDone <- verificationScheduler.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- replayCleaner.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- privacyScheduler.Run(workerCtx, 30*time.Second) }()
 	go func() { backgroundDone <- privacyRetention.Run(workerCtx, 24*time.Hour) }()
@@ -669,7 +703,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		workerErr,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 	)
 }
 

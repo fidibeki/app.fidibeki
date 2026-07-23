@@ -125,7 +125,8 @@ func (h *TenantHTTPHandler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	for index := range found.Attachments {
 		if found.Attachments[index].CompletedAt == nil ||
-			found.Attachments[index].RetentionDeletedAt != nil {
+			found.Attachments[index].RetentionDeletedAt != nil ||
+			found.Attachments[index].SafetyStatus != AttachmentSafetySafe {
 			continue
 		}
 		value := "/v1/feedbacks/" + feedbackID + "/attachments/" + found.Attachments[index].ID + "/content"

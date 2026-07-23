@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 64
+	const latestMigrationVersion = 65
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-5); err != nil {
+	if err := migrator.Steps(-6); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -154,6 +154,107 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply abuse diagnostics migration: %v", err)
+	}
+	var safetyTenantID, safetyProjectID, safetyFeedbackID, safeAttachmentID, expiredAttachmentID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Safety migration', 'safety-migration', 'growth', 'active')
+		RETURNING id
+	`).Scan(&safetyTenantID); err != nil {
+		t.Fatalf("create attachment safety migration tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Safety', 'pk_live_SAFETYABCDEFGHIJKLMNOQ', '{example.test}')
+		RETURNING id
+	`, safetyTenantID).Scan(&safetyProjectID); err != nil {
+		t.Fatalf("create attachment safety migration project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, title, page_url,
+			text_process_status
+		) VALUES (
+			$1, $2, 'fb_Safety01', gen_random_uuid(), 'Safety migration',
+			'https://example.test', 'skipped'
+		) RETURNING id
+	`, safetyTenantID, safetyProjectID).Scan(&safetyFeedbackID); err != nil {
+		t.Fatalf("create attachment safety migration feedback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, completed_at
+		) VALUES (
+			$1, $2, 'screenshot', gen_random_uuid(), 'migration/safe.png',
+			'image/png', 8, 'skipped', now() - interval '1 hour'
+		) RETURNING id
+	`, safetyTenantID, safetyFeedbackID).Scan(&safeAttachmentID); err != nil {
+		t.Fatalf("create completed legacy attachment: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, complete_token_hash,
+			upload_refreshed_at
+		) VALUES (
+			$1, $2, 'audio', gen_random_uuid(), 'migration/expired.webm',
+			'audio/webm', 8, 'pending', 'legacy-token', now() - interval '1 hour'
+		) RETURNING id
+	`, safetyTenantID, safetyFeedbackID).Scan(&expiredAttachmentID); err != nil {
+		t.Fatalf("create incomplete legacy attachment: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply attachment safety migration: %v", err)
+	}
+	var safeStatus, safeDetected string
+	var safeCheckedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, detected_content_type, safety_checked_at
+		FROM attachments WHERE id = $1
+	`, safeAttachmentID).Scan(&safeStatus, &safeDetected, &safeCheckedAt); err != nil {
+		t.Fatalf("read migrated completed attachment: %v", err)
+	}
+	if safeStatus != "safe" || safeDetected != "image/png" || safeCheckedAt == nil {
+		t.Fatalf("migrated completed attachment = %q/%q/%v", safeStatus, safeDetected, safeCheckedAt)
+	}
+	var expiredStatus, expiredReason string
+	var expiredToken *string
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, safety_error_reason, complete_token_hash
+		FROM attachments WHERE id = $1
+	`, expiredAttachmentID).Scan(&expiredStatus, &expiredReason, &expiredToken); err != nil {
+		t.Fatalf("read migrated expired attachment: %v", err)
+	}
+	if expiredStatus != "expired" || expiredReason != "upload_expired" || expiredToken != nil {
+		t.Fatalf("migrated expired attachment = %q/%q/%v", expiredStatus, expiredReason, expiredToken)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back attachment safety migration: %v", err)
+	}
+	var rollbackToken *string
+	if err := root.QueryRow(ctx, `
+		SELECT complete_token_hash FROM attachments WHERE id = $1
+	`, expiredAttachmentID).Scan(&rollbackToken); err != nil {
+		t.Fatalf("read rolled-back attachment: %v", err)
+	}
+	if rollbackToken == nil || *rollbackToken == "" {
+		t.Fatal("rolled-back expired attachment completion token was not restored")
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply attachment safety migration after rollback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, complete_token_hash
+		FROM attachments WHERE id = $1
+	`, expiredAttachmentID).Scan(&expiredStatus, &expiredToken); err != nil {
+		t.Fatalf("read re-migrated expired attachment: %v", err)
+	}
+	if expiredStatus != "expired" || expiredToken != nil {
+		t.Fatalf("re-migrated expired attachment = %q/%v", expiredStatus, expiredToken)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, safetyTenantID); err != nil {
+		t.Fatalf("remove attachment safety migration fixture: %v", err)
 	}
 
 	var tenantA, tenantB string
@@ -607,18 +708,20 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO attachments (
 			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, completed_at
+			content_type, size_bytes, processing_status, completed_at,
+			safety_status, safety_checked_at, detected_content_type
 		) VALUES ($1, $2, 'screenshot', gen_random_uuid(), 'rls/a.png',
-		          'image/png', 1, 'skipped', now()) RETURNING id
+		          'image/png', 1, 'skipped', now(), 'safe', now(), 'image/png') RETURNING id
 	`, tenantA, feedbackA).Scan(&attachmentA); err != nil {
 		t.Fatalf("create tenant A attachment: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO attachments (
 			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, completed_at
+			content_type, size_bytes, processing_status, completed_at,
+			safety_status, safety_checked_at, detected_content_type
 		) VALUES ($1, $2, 'screenshot', gen_random_uuid(), 'rls/b.png',
-		          'image/png', 1, 'skipped', now()) RETURNING id
+		          'image/png', 1, 'skipped', now(), 'safe', now(), 'image/png') RETURNING id
 	`, tenantB, feedbackB).Scan(&attachmentB); err != nil {
 		t.Fatalf("create tenant B attachment: %v", err)
 	}

@@ -19,3 +19,7 @@ aa390e2ccebbc299c7c6015b1c22fa44147c3643:web/tests/e2e/ci-web-server.mjs:generic
 # Deterministic stream API-key fixtures used only by integration tests.
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/feedback/http_integration_test.go:generic-api-key:448
 86e2126c892a597ffee997d31627afb29b5f1cd8:backend/internal/replay/http_integration_test.go:generic-api-key:315
+
+# Deterministic abuse-rotation and encryption fixtures introduced by the public-protection tests.
+bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/abuse/abuse_test.go:generic-api-key:15
+bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/config/config_test.go:generic-api-key:60

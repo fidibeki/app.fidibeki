@@ -338,8 +338,16 @@ was removed from the staging test tenant.
         text when an unavailable limiter denies optional upload grants, and keeps legacy handler
         compatibility. Focused backend, PostgreSQL/Redis concurrency, migration replay, and static
         analysis pass locally; CI and staging remain the slice gate.
-      - [ ] Slice 2: explicit upload expiry, quarantine and deterministic signature verification,
+      - [x] Slice 2: explicit upload expiry, quarantine and deterministic signature verification,
         safe-only preview/AI/export, cleanup/reconciliation, and failure coverage.
+        Migration `65` preserves completed legacy objects as safe and expires abandoned
+        declarations while introducing an independent attachment safety lifecycle. Completion now
+        consumes an unexpired upload into quarantine; a reconciled deterministic worker validates
+        exact size and supported file signatures before promotion, persists rejection before object
+        cleanup, and never marks operational scanner failures safe. Streaming, tenant reads,
+        integration delivery, privacy exports, and attachment AI accept only safe non-retained
+        objects. Migration replay, backend integration/unit/static checks, frontend type/unit/build,
+        full responsive E2E, focused desktop/mobile screenshots, and local gitleaks pass.
       - [ ] Slice 3: coordinated replay protection, verified batch lifecycle and aggregate bounds,
         idempotent tenant/project AI budget, defer behavior, and concurrency coverage.
       - [ ] Slice 4: widget retry/error experience, responsive Submission health diagnostics,

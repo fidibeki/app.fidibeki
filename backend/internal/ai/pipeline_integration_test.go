@@ -117,6 +117,27 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	assertAttachmentState(t, ctx, pool, testScreenshotID, "pending", 0, nil)
 
 	dayTwo := dayOne.Add(24 * time.Hour)
+	if _, err := pool.Exec(ctx, `
+		UPDATE attachments
+		SET safety_status = 'quarantined', safety_checked_at = NULL,
+		    detected_content_type = NULL
+		WHERE id = $1
+	`, testScreenshotID); err != nil {
+		t.Fatalf("quarantine screenshot before AI scheduling: %v", err)
+	}
+	prepared, exhausted, err = store.PrepareFeedback(ctx, testFeedbackID, 2, dayTwo)
+	if err != nil || exhausted || len(prepared) != 0 {
+		t.Fatalf("PrepareFeedback(quarantined) = %#v, exhausted = %t, error = %v",
+			prepared, exhausted, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE attachments
+		SET safety_status = 'safe', safety_checked_at = $2,
+		    detected_content_type = content_type
+		WHERE id = $1
+	`, testScreenshotID, dayTwo); err != nil {
+		t.Fatalf("mark screenshot safe before AI scheduling: %v", err)
+	}
 	prepared, exhausted, err = store.PrepareFeedback(ctx, testFeedbackID, 2, dayTwo)
 	if err != nil || exhausted || len(prepared) != 1 || prepared[0].ResourceID != testScreenshotID {
 		t.Fatalf("PrepareFeedback(day two) = %#v, exhausted = %t, error = %v", prepared, exhausted, err)
@@ -468,15 +489,15 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		t.Fatalf("seed incomplete-upload feedback: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO attachments (
-			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, complete_token_hash,
-			upload_refreshed_at, created_at
-		) VALUES
-			($1, $3, $4, 'screenshot', '60000000-0000-4000-8000-000000000007',
-			 'expired.png', 'image/png', 10, 'pending', 'hash', $6, $6),
-			($2, $3, $5, 'screenshot', '60000000-0000-4000-8000-000000000008',
-			 'recent.png', 'image/png', 10, 'pending', 'hash', $7, $7)
+			INSERT INTO attachments (
+				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+				content_type, size_bytes, processing_status, complete_token_hash,
+				upload_refreshed_at, upload_expires_at, created_at
+			) VALUES
+				($1, $3, $4, 'screenshot', '60000000-0000-4000-8000-000000000007',
+				 'expired.png', 'image/png', 10, 'pending', 'hash', $6, $6::timestamptz + interval '10 minutes', $6),
+				($2, $3, $5, 'screenshot', '60000000-0000-4000-8000-000000000008',
+				 'recent.png', 'image/png', 10, 'pending', 'hash', $7, $7::timestamptz + interval '10 minutes', $7)
 	`, expiredAttachmentID, recentAttachmentID, testTenantID, expiredFeedbackID,
 		recentFeedbackID, daySeven.Add(-20*time.Minute), daySeven.Add(-time.Minute)); err != nil {
 		t.Fatalf("seed incomplete uploads: %v", err)
@@ -532,17 +553,17 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		t.Fatalf("seed concurrent incomplete-upload feedback: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO attachments (
-			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, complete_token_hash,
-			upload_refreshed_at, created_at
-		) VALUES
-			('60000000-0000-4000-8000-000000000011', $1, $2, 'screenshot',
-			 '60000000-0000-4000-8000-000000000012', 'concurrent-a.png', 'image/png',
-			 10, 'pending', 'hash-a', $3, $3),
-			('60000000-0000-4000-8000-000000000013', $1, $2, 'screenshot',
-			 '60000000-0000-4000-8000-000000000014', 'concurrent-b.png', 'image/png',
-			 10, 'pending', 'hash-b', $3, $3)
+			INSERT INTO attachments (
+				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+				content_type, size_bytes, processing_status, complete_token_hash,
+				upload_refreshed_at, upload_expires_at, created_at
+			) VALUES
+				('60000000-0000-4000-8000-000000000011', $1, $2, 'screenshot',
+				 '60000000-0000-4000-8000-000000000012', 'concurrent-a.png', 'image/png',
+				 10, 'pending', 'hash-a', $3, $3::timestamptz + interval '10 minutes', $3),
+				('60000000-0000-4000-8000-000000000013', $1, $2, 'screenshot',
+				 '60000000-0000-4000-8000-000000000014', 'concurrent-b.png', 'image/png',
+				 10, 'pending', 'hash-b', $3, $3::timestamptz + interval '10 minutes', $3)
 	`, testTenantID, concurrentFeedbackID, daySeven.Add(-20*time.Minute)); err != nil {
 		t.Fatalf("seed concurrent incomplete uploads: %v", err)
 	}
@@ -711,16 +732,17 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 			'Um, the checkout is damn confusing', 'https://example.com/checkout', 'pending'
 		)`, args: []any{testFeedbackID, testTenantID, testProjectID, testIssueID}},
 		{query: `
-		INSERT INTO attachments (
-			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, completed_at
-		) VALUES
-			($1, $2, $3, 'audio', '20000000-0000-4000-8000-000000000001', 'audio.webm',
-			 'audio/webm', 10, 'pending', now()),
-			($4, $2, $3, 'screenshot', '20000000-0000-4000-8000-000000000002', 'screen.png',
-			 'image/png', 10, 'pending', now()),
-			($5, $2, $3, 'replay', '20000000-0000-4000-8000-000000000003', 'replay.json',
-			 'application/json', 10, 'pending', now())`, args: []any{
+			INSERT INTO attachments (
+				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+				content_type, size_bytes, processing_status, completed_at,
+				safety_status, safety_checked_at, detected_content_type
+			) VALUES
+				($1, $2, $3, 'audio', '20000000-0000-4000-8000-000000000001', 'audio.webm',
+				 'audio/webm', 10, 'pending', now(), 'safe', now(), 'audio/webm'),
+				($4, $2, $3, 'screenshot', '20000000-0000-4000-8000-000000000002', 'screen.png',
+				 'image/png', 10, 'pending', now(), 'safe', now(), 'image/png'),
+				($5, $2, $3, 'replay', '20000000-0000-4000-8000-000000000003', 'replay.json',
+				 'application/json', 10, 'pending', now(), 'safe', now(), 'application/json')`, args: []any{
 			testAudioID, testTenantID, testFeedbackID, testScreenshotID, testReplayID,
 		}},
 		{query: `
@@ -743,13 +765,14 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 			'Starter feedback', 'https://starter.example.com', 'pending'
 		)`, args: []any{testStarterFeedbackID, testStarterTenantID, testStarterProjectID, testStarterIssueID}},
 		{query: `
-		INSERT INTO attachments (
-			id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
-			content_type, size_bytes, processing_status, completed_at
-		) VALUES (
-			$1, $2, $3, 'screenshot', '30000000-0000-4000-8000-000000000006',
-			'starter.png', 'image/png', 10, 'pending', now()
-		)`, args: []any{testStarterAttachmentID, testStarterTenantID, testStarterFeedbackID}},
+			INSERT INTO attachments (
+				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+				content_type, size_bytes, processing_status, completed_at,
+				safety_status, safety_checked_at, detected_content_type
+			) VALUES (
+				$1, $2, $3, 'screenshot', '30000000-0000-4000-8000-000000000006',
+				'starter.png', 'image/png', 10, 'pending', now(), 'safe', now(), 'image/png'
+			)`, args: []any{testStarterAttachmentID, testStarterTenantID, testStarterFeedbackID}},
 	}
 	for _, statement := range statements {
 		if _, err := pool.Exec(ctx, statement.query, statement.args...); err != nil {

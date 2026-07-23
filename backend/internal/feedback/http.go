@@ -40,8 +40,8 @@ type ObjectStorage interface {
 	Stat(context.Context, string) (storage.ObjectInfo, error)
 }
 
-type AttachmentScheduler interface {
-	ScheduleAttachment(context.Context, string, string) error
+type AttachmentVerificationScheduler interface {
+	ScheduleVerification(context.Context, VerificationTask) error
 }
 
 type SubmissionAnalyticsStore interface {
@@ -65,7 +65,7 @@ type HTTPOptions struct {
 	Diagnostics       AbuseDiagnosticRecorder
 	TrustedProxyCIDRs []netip.Prefix
 	Storage           ObjectStorage
-	Scheduler         AttachmentScheduler
+	Scheduler         AttachmentVerificationScheduler
 	Analytics         SubmissionAnalyticsStore
 	Logger            *slog.Logger
 	Now               func() time.Time
@@ -226,6 +226,7 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		feedbackID := NewID()
 		prepared, err := prepareAttachments(
 			configuration, feedbackID, values.Attachments, definition.Features.AI, rawTokens,
+			h.now().UTC(),
 		)
 		if err != nil {
 			h.writeStoreError(w, r, err)
@@ -323,6 +324,28 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "attachment is already complete", nil)
 		return
 	}
+	now := h.now().UTC()
+	if !now.Before(attachment.UploadExpiresAt) {
+		if err := h.options.Store.ExpireAttachment(
+			r.Context(), tx, attachment.ID, now,
+		); err != nil {
+			h.writeStoreError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeStoreError(w, r, fmt.Errorf("commit attachment expiry: %w", err))
+			return
+		}
+		committed = true
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryUploadSafety, abuse.ReasonUploadExpired,
+		)
+		api.WriteErrorWithOptions(
+			w, http.StatusGone, api.CodeConflict, "attachment upload expired", nil,
+			api.ErrorOptions{Reason: abuse.ReasonUploadExpired},
+		)
+		return
+	}
 	wantHash := auth.HashToken(request.CompleteToken)
 	if subtle.ConstantTimeCompare([]byte(wantHash), []byte(*attachment.CompleteTokenHash)) != 1 {
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "attachment completion denied", nil)
@@ -345,7 +368,7 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 			"attachment upload is invalid", fields)
 		return
 	}
-	if err := h.options.Store.CompleteAttachment(r.Context(), tx, attachment.ID, h.now().UTC()); err != nil {
+	if err := h.options.Store.CompleteAttachment(r.Context(), tx, attachment.ID, now); err != nil {
 		h.writeStoreError(w, r, err)
 		return
 	}
@@ -355,10 +378,14 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 	}
 	committed = true
 	if h.options.Scheduler != nil {
-		if err := h.options.Scheduler.ScheduleAttachment(
-			context.WithoutCancel(r.Context()), attachment.ID, attachment.FeedbackID,
+		if err := h.options.Scheduler.ScheduleVerification(
+			context.WithoutCancel(r.Context()),
+			VerificationTask{
+				TenantID: configuration.TenantID, AttachmentID: attachment.ID,
+				Generation: attachment.VerificationGeneration,
+			},
 		); err != nil {
-			h.logger.ErrorContext(r.Context(), "schedule completed attachment AI", "error", err,
+			h.logger.ErrorContext(r.Context(), "schedule attachment safety verification", "error", err,
 				"attachment_id", attachment.ID, "feedback_id", attachment.FeedbackID)
 		}
 	}
@@ -474,13 +501,17 @@ func (h *HTTPHandler) rotateIncompleteTokens(
 		if err != nil {
 			return err
 		}
-		if err := h.options.Store.RotateCompletionToken(
+		expiresAt, generation, err := h.options.Store.RotateCompletionToken(
 			ctx, query, attachment.ID, tokenHash, h.now().UTC(),
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
 		rawTokens[attachment.ID] = raw
 		attachment.CompleteTokenHash = &tokenHash
+		attachment.UploadExpiresAt = expiresAt
+		attachment.SafetyStatus = AttachmentSafetyPending
+		attachment.VerificationGeneration = generation
 	}
 	return nil
 }
@@ -507,7 +538,6 @@ func (h *HTTPHandler) submissionResponse(
 	rawTokens map[string]string,
 	warnings []SubmissionWarning,
 ) (SubmissionResponse, error) {
-	expiresAt := h.now().UTC().Add(uploadTTL)
 	uploads := make([]AttachmentUpload, 0, len(rawTokens))
 	for _, attachment := range submission.Attachments {
 		raw, exists := rawTokens[attachment.ID]
@@ -522,7 +552,7 @@ func (h *HTTPHandler) submissionResponse(
 			AttachmentID: attachment.ID, ClientAttachmentID: attachment.ClientAttachmentID,
 			PresignedURL: url, Method: http.MethodPut,
 			Headers:       map[string]string{"Content-Type": attachment.ContentType},
-			CompleteToken: raw, ExpiresAt: expiresAt,
+			CompleteToken: raw, ExpiresAt: attachment.UploadExpiresAt,
 		})
 	}
 	return SubmissionResponse{
@@ -664,6 +694,7 @@ func prepareAttachments(
 	values []AttachmentValues,
 	aiEnabled bool,
 	rawTokens map[string]string,
+	now time.Time,
 ) ([]PreparedAttachment, error) {
 	prepared := make([]PreparedAttachment, 0, len(values))
 	status := "skipped"
@@ -686,7 +717,8 @@ func prepareAttachments(
 			Attachment: Attachment{
 				ID: attachmentID, ClientAttachmentID: value.ClientAttachmentID, Kind: value.Kind,
 				StorageKey: key, ContentType: value.ContentType, SizeBytes: value.SizeBytes,
-				DurationSeconds: value.DurationSeconds,
+				DurationSeconds: value.DurationSeconds, SafetyStatus: AttachmentSafetyPending,
+				UploadExpiresAt: now.Add(uploadTTL), VerificationGeneration: 1,
 			},
 			CompleteTokenHash: tokenHash, ProcessingStatus: attachmentStatus,
 		})

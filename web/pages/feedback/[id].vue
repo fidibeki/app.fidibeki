@@ -17,7 +17,7 @@ import {
   Video,
   X,
 } from '@lucide/vue'
-import type { FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
+import type { FeedbackAttachment, FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 
@@ -53,12 +53,12 @@ const configuration = computed(() => data.value?.configuration)
 const description = computed(() => feedback.value?.description || feedback.value?.text || '')
 const transcript = computed(() => feedback.value?.attachments.find((item) => item.transcription)?.transcription)
 const retryableAttachments = computed(() => feedback.value?.attachments.filter((item) => (
-  item.processing_status === 'failed' && Boolean(item.completed_at)
+  item.safety_status === 'safe' && item.processing_status === 'failed' && Boolean(item.completed_at)
 )) || [])
 const replayStatus = computed(() => feedback.value?.session?.status || 'processing')
 const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
 const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some((item) => (
-  item.kind !== 'replay' && Boolean(item.completed_at)
+  item.kind !== 'replay' && item.safety_status === 'safe' && Boolean(item.completed_at)
 )) === true)
 const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.value && hasReprocessableEvidence.value)
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
@@ -66,6 +66,10 @@ const structuredResponses = computed(() => Object.entries(feedback.value?.respon
 
 function responseLabel(key: string) {
   return key.replace(/_/g, ' ').replace(/^./, (character) => character.toUpperCase())
+}
+
+function attachmentStatus(attachment: FeedbackAttachment) {
+  return attachment.safety_status === 'safe' ? attachment.processing_status : attachment.safety_status
 }
 
 const safeDOMSnapshot = computed(() => {
@@ -227,8 +231,8 @@ useHead(() => ({ title: `${feedback.value?.public_id || 'Feedback'} · Fidibeki`
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
                   <div><b>{{ attachmentItem.kind }}</b><span>{{ attachmentItem.content_type }} · {{ (attachmentItem.size_bytes / 1024).toFixed(1) }} KB</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentItem.error_message }}</p></div>
-                  <span class="status-pill" :class="`status-${attachmentItem.processing_status}`">{{ attachmentItem.processing_status }}</span>
-                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
+                  <span class="status-pill" :class="`status-${attachmentStatus(attachmentItem)}`">{{ attachmentStatus(attachmentItem) }}</span>
+                  <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.safety_status === 'safe' && attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">Retry</button></div>
                 </article>
               </div>
               <div v-else class="feedback-evidence-empty"><Camera :size="24" /><p>No media was attached to this feedback.</p></div>

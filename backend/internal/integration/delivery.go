@@ -184,7 +184,9 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 			JOIN feedbacks AS attached_feedback
 			  ON attached_feedback.tenant_id = attachment.tenant_id
 			 AND attached_feedback.id = attachment.feedback_id
-			WHERE attachment.tenant_id = event.tenant_id AND attachment.completed_at IS NOT NULL
+				WHERE attachment.tenant_id = event.tenant_id AND attachment.completed_at IS NOT NULL
+				  AND attachment.safety_status = 'safe'
+				  AND attachment.retention_deleted_at IS NULL
 			  AND (
 			      (event.resource_type = 'feedback' AND attachment.feedback_id = feedback.id)
 			      OR (event.resource_type = 'issue' AND attached_feedback.issue_id = issue.id)

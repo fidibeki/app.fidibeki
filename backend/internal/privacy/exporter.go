@@ -229,10 +229,17 @@ var workspaceExportFiles = []exportFile{
 			'transcription', attachment.transcription,
 			'sentiment_score', attachment.sentiment_score,
 			'moderation_flags', attachment.moderation_flags,
-			'processing_attempts', attachment.processing_attempts,
-			'completed_at', attachment.completed_at, 'processed_at', attachment.processed_at,
-			'created_at', attachment.created_at,
-			'object_availability', CASE WHEN attachment.completed_at IS NULL THEN 'not_uploaded' ELSE 'available_not_included' END
+				'processing_attempts', attachment.processing_attempts,
+				'completed_at', attachment.completed_at, 'processed_at', attachment.processed_at,
+				'safety_status', attachment.safety_status,
+				'safety_checked_at', attachment.safety_checked_at,
+				'safety_error_reason', attachment.safety_error_reason,
+				'detected_content_type', attachment.detected_content_type,
+				'created_at', attachment.created_at,
+				'object_availability', CASE
+					WHEN attachment.retention_deleted_at IS NOT NULL THEN 'retention_deleted'
+					WHEN attachment.safety_status = 'safe' THEN 'available_not_included'
+					ELSE attachment.safety_status::text END
 		)
 		FROM attachments AS attachment
 		WHERE attachment.tenant_id = $1
