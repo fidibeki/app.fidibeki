@@ -377,6 +377,20 @@ was removed from the staging test tenant.
         transactions, bounded disk staging, queue isolation, and indexed AI maintenance. The final
         local regression gate passes; CI and one real staging journey remain.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
+    - Audit result: tenant name, widget appearance inheritance, object storage, member permissions,
+      and append-only access audit already exist. Organization metadata, bounded image processing,
+      versioned identity assets, self profile management, and shared logo/avatar rendering are
+      missing. Extend those contracts rather than adding a separate identity or public upload
+      service.
+    - Approved design:
+      `docs/superpowers/specs/2026-07-23-fidibeki-organization-identity-design.md`.
+    - [ ] Slice 1: forward-compatible tenant/member profile schema, cleanup queue, validation,
+      normalized organization profile updates, audit, and preserved appearance inheritance.
+    - [ ] Slice 2: bounded PNG/JPEG/WebP processing, immutable 64/256 PNG variants, workspace logo
+      and self-avatar lifecycle, RBAC, rate limiting, versioned reads, and retryable cleanup.
+    - [ ] Slice 3: Settings/profile editing and shared navigation, member, assignee, comment,
+      mention, notification, and activity identity rendering with resilient initials fallbacks.
+    - [ ] Slice 4: migration/backend/web/browser/CI and real staging validation.
   - [ ] Complete member-aware internationalization issue #32.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label

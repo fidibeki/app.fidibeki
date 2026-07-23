@@ -212,3 +212,70 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 screenshots, CI, and one staging journey all pass for the same commit.
 
 **Autonomy:** AFK
+
+# Organization Identity And Profile
+
+**Source:** `docs/superpowers/specs/2026-07-23-fidibeki-organization-identity-design.md`
+
+## Task 14: Forward-Compatible Profile Schema
+
+**Depends on:** Task 13
+**Status:** Pending
+
+**Outcome:** Tenant and member records hold organization profile and versioned identity metadata.
+
+**Acceptance:** Migration up/down/up tests prove constraints, RLS, grants, preservation, and
+rollback.
+
+**Autonomy:** AFK
+
+## Task 15: Organization Profile Contract And Inheritance
+
+**Depends on:** Task 14
+**Status:** Pending
+
+**Outcome:** Authorized administrators update organization defaults with audit, and existing project
+and widget overrides remain effective.
+
+**Acceptance:** Backend integration tests prove validation, permissions, audit, clear-to-fallback,
+and organization -> project -> widget inheritance.
+
+**Autonomy:** AFK
+
+## Task 16: Bounded Identity Asset Lifecycle
+
+**Depends on:** Task 14
+**Status:** Pending
+
+**Outcome:** Workspace logos and self-managed avatars are securely normalized, versioned, served,
+replaced, and removed.
+
+**Acceptance:** Image and HTTP integration tests prove supported/invalid inputs, rate limits, RBAC,
+tenant isolation, cache busting, cleanup, and storage failure behavior.
+
+**Autonomy:** AFK
+
+## Task 17: Shared Identity UI
+
+**Depends on:** Tasks 15 and 16
+**Status:** Pending
+
+**Outcome:** Settings and operational surfaces render organization/member identity with immediate
+updates and resilient initials fallbacks.
+
+**Acceptance:** Web unit and browser tests prove edit/upload/remove, field errors, read-only states,
+broken-image fallback, and responsive layouts.
+
+**Autonomy:** AFK
+
+## Task 18: Organization Identity Quality Gate
+
+**Depends on:** Task 17
+**Status:** Pending
+
+**Outcome:** Issues #30 and #31 are fully usable in staging.
+
+**Acceptance:** Migration, backend, web, widget, static, browser, CI, and real staging checks pass
+for the same commit without production work.
+
+**Autonomy:** AFK
