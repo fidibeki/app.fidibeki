@@ -298,12 +298,17 @@ fallback restoration, and no cleanup lock; all temporary identity data was remov
 ## Task 19: Member Regional Preference Schema
 
 **Depends on:** Task 18
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Member records hold nullable locale and timezone preferences without changing existing
 behavior.
 
 **Acceptance:** Migration `up/down/up` proves preservation, constraints, RLS, grants, and rollback.
+
+**Completion:** Migration 72 adds nullable normalized `locale` and syntactically safe IANA
+`timezone` preferences to existing member rows. The migration integration cycle proves defaults,
+supported/invalid values, app grants, tenant-scoped updates, cross-tenant denial, preservation,
+rollback, and clean reapplication.
 
 **Autonomy:** AFK
 
