@@ -279,3 +279,164 @@ broken-image fallback, and responsive layouts.
 for the same commit without production work.
 
 **Autonomy:** AFK
+
+# Member-Aware Localization
+
+**Source:** `docs/superpowers/specs/2026-07-23-fidibeki-member-aware-localization-design.md`
+
+## Task 19: Member Regional Preference Schema
+
+**Depends on:** Task 18
+**Status:** Pending
+
+**Outcome:** Member records hold nullable locale and timezone preferences without changing existing
+behavior.
+
+**Acceptance:** Migration `up/down/up` proves preservation, constraints, RLS, grants, and rollback.
+
+**Autonomy:** AFK
+
+## Task 20: Profile And Session Regional Contract
+
+**Depends on:** Task 19
+**Status:** Pending
+
+**Outcome:** Self-service profile updates and every member/session read expose validated regional
+preferences.
+
+**Acceptance:** Tenant-member integration tests prove partial update, inherit, validation, audit,
+isolation, and refresh propagation.
+
+**Autonomy:** AFK
+
+## Task 21: SSR-Safe Localization Runtime
+
+**Depends on:** Task 20
+**Status:** Pending
+
+**Outcome:** Nuxt resolves reactive no-prefix locales through member, organization, browser, and
+English precedence.
+
+**Acceptance:** Unit/browser tests prove Portuguese fallback, matching SSR hydration, and reactive
+`lang`/`dir`.
+
+**Autonomy:** AFK
+
+## Task 22: Regional Format And Error Helpers
+
+**Depends on:** Task 21
+**Status:** Pending
+
+**Outcome:** Shared locale/timezone-aware formatters and safe localized API errors replace fixed
+English/UTC helpers.
+
+**Acceptance:** Unit tests prove DST/midnight, numeric formats, plurals, known errors, and unknown
+fallback.
+
+**Autonomy:** AFK
+
+## Task 23: Profile And Shared Navigation Localization
+
+**Depends on:** Tasks 20, 21, and 22
+**Status:** Pending
+
+**Outcome:** Members switch preferences without logout and shared shell/account surfaces update
+immediately.
+
+**Acceptance:** Responsive browser tests prove switching, inheritance, accessible copy, and
+identity regression safety.
+
+**Autonomy:** AFK
+
+## Task 24: Authentication And Onboarding Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Public authentication and onboarding surfaces use English/Portuguese catalogs.
+
+**Acceptance:** Browser tests cover the complete public/auth onboarding journey in both languages.
+
+**Autonomy:** AFK
+
+## Task 25: Dashboard And Analytics Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Dashboard and widget analytics copy and metrics use effective regional settings.
+
+**Acceptance:** Unit/browser tests prove localized metrics/states without changing calculations.
+
+**Autonomy:** AFK
+
+## Task 26: Feedback Operations Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Feedback queue, detail, evidence, replay, moderation, triage, and linking use catalogs.
+
+**Acceptance:** Portuguese browser workflows preserve customer-authored content and exact mutations.
+
+**Autonomy:** AFK
+
+## Task 27: Issue Collaboration Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Issue operations, comments, mentions, activity, reporter access, and notifications use
+catalogs.
+
+**Acceptance:** Portuguese collaboration workflows prove copy, plurals, dates, accessibility, and
+mutation parity.
+
+**Autonomy:** AFK
+
+## Task 28: Project And Widget Configuration Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Project and widget configuration UI uses catalogs while customer widget content stays
+independent.
+
+**Acceptance:** Portuguese browser tests preserve customer content and exact API payloads.
+
+**Autonomy:** AFK
+
+## Task 29: Settings, Billing, And Shared Localization
+
+**Depends on:** Tasks 21 and 22
+**Status:** Pending
+
+**Outcome:** Administration, diagnostics, privacy, billing, and remaining shared production
+components use catalogs.
+
+**Acceptance:** Portuguese browser tests preserve permissions and operational behavior.
+
+**Autonomy:** AFK
+
+## Task 30: Catalog And Pseudo-Locale Quality Gate
+
+**Depends on:** Tasks 23 through 29
+**Status:** Pending
+
+**Outcome:** Catalog parity, extraction coverage, and expanded layout resilience are enforced.
+
+**Acceptance:** Static/unit and responsive pseudo-locale tests detect missing keys, literals,
+interpolation loss, clipping, overlap, and overflow.
+
+**Autonomy:** AFK
+
+## Task 31: Localization Staging Gate
+
+**Depends on:** Task 30
+**Status:** Pending
+
+**Outcome:** #32 is fully usable in staging.
+
+**Acceptance:** Full local, CI, and real staging locale/timezone journeys pass on the same commit.
+
+**Autonomy:** AFK

@@ -396,6 +396,21 @@ was removed from the staging test tenant.
       upload/remove flows, and broken-asset fallbacks pass locally. CI and one real staging journey
       remain.
   - [ ] Complete member-aware internationalization issue #32.
+    - Audit result: organization locale/timezone defaults and independent widget localization
+      exist; member preferences, Nuxt i18n, SSR-aware precedence, regional formatters, localized
+      API errors, message catalogs, and extraction enforcement are missing.
+    - Approved design:
+      `docs/superpowers/specs/2026-07-23-fidibeki-member-aware-localization-design.md`.
+    - [ ] Slice 1: additive member locale/timezone schema, self-service profile updates, session
+      propagation, normalization, audit, and clear-to-inherit behavior.
+    - [ ] Slice 2: no-prefix Nuxt i18n runtime, SSR-safe precedence, Portuguese regional fallback,
+      reactive document language/direction, and centralized regional/error formatting.
+    - [ ] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate
+      preference switching.
+    - [ ] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,
+      settings/billing, and shared production catalogs without translating domain content.
+    - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
+      gates, CI, and real staging validation.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.
