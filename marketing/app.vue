@@ -39,6 +39,7 @@ useHead({
       <NuxtPage />
     </main>
     <SiteFooter />
+    <ConsentBanner />
   </div>
 </template>
 

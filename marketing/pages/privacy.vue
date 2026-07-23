@@ -46,6 +46,10 @@ const sections = [
     heading: 'Who processes data on our behalf',
     body: 'Fidibeki runs on managed infrastructure and uses a small set of processors to operate: payment processing (Stripe), transactional email (Resend), error telemetry (Sentry), bot protection on signup (Cloudflare Turnstile), and — only on plans with AI analysis enabled, and never for session replays — AI processing (Google Gemini).',
   },
+  {
+    heading: 'Analytics on this website',
+    body: 'This marketing site uses Umami, a privacy-friendly analytics tool: no cookies, no personal data, no cross-site tracking. It only runs if you allow it in the consent banner, and declining is remembered just as well as accepting.',
+  },
 ]
 </script>
 
