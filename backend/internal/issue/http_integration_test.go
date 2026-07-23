@@ -72,16 +72,18 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	`).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
+	const ownerAvatarVersion = "10000000-0000-4000-8000-000000000001"
+	const triageAvatarVersion = "10000000-0000-4000-8000-000000000002"
 	if err := root.QueryRow(ctx, `
-		INSERT INTO tenant_members (tenant_id, email, permissions)
-		VALUES ($1, 'owner@acme.test', $2) RETURNING id
-	`, tenantID, auth.TenantPermissionStrings()).Scan(&memberID); err != nil {
+		INSERT INTO tenant_members (tenant_id, email, permissions, avatar_version)
+		VALUES ($1, 'owner@acme.test', $2, $3) RETURNING id
+	`, tenantID, auth.TenantPermissionStrings(), ownerAvatarVersion).Scan(&memberID); err != nil {
 		t.Fatalf("create member: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO tenant_members (tenant_id, email, name, permissions)
-		VALUES ($1, 'triage@acme.test', 'Ada Triage', $2) RETURNING id
-	`, tenantID, auth.TenantPermissionStrings()).Scan(&triageMemberID); err != nil {
+		INSERT INTO tenant_members (tenant_id, email, name, permissions, avatar_version)
+		VALUES ($1, 'triage@acme.test', 'Ada Triage', $2, $3) RETURNING id
+	`, tenantID, auth.TenantPermissionStrings(), triageAvatarVersion).Scan(&triageMemberID); err != nil {
 		t.Fatalf("create triage member: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
@@ -181,8 +183,15 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 	if createdComment.Comment.Body != "Please verify this with the checkout team." ||
 		len(createdComment.Comment.Mentions) != 2 ||
+		createdComment.Comment.Author == nil ||
+		createdComment.Comment.Author.AvatarVersion == nil ||
+		*createdComment.Comment.Author.AvatarVersion != ownerAvatarVersion ||
+		createdComment.Comment.Mentions[0].AvatarVersion == nil ||
+		createdComment.Comment.Mentions[1].AvatarVersion == nil ||
 		createdComment.Activity.Kind != "issue.comment_created" ||
-		createdComment.Activity.Actor == nil || createdComment.Activity.Actor.ID != memberID {
+		createdComment.Activity.Actor == nil || createdComment.Activity.Actor.ID != memberID ||
+		createdComment.Activity.Actor.AvatarVersion == nil ||
+		*createdComment.Activity.Actor.AvatarVersion != ownerAvatarVersion {
 		t.Fatalf("standalone comment response = %#v", createdComment)
 	}
 	notificationResponse := issueRequest(
@@ -202,7 +211,9 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if notificationPage.UnreadCount != 1 || len(notificationPage.Notifications) != 1 ||
 		notificationPage.Notifications[0].IssueID != issueID ||
 		notificationPage.Notifications[0].Actor == nil ||
-		notificationPage.Notifications[0].Actor.ID != memberID {
+		notificationPage.Notifications[0].Actor.ID != memberID ||
+		notificationPage.Notifications[0].Actor.AvatarVersion == nil ||
+		*notificationPage.Notifications[0].Actor.AvatarVersion != ownerAvatarVersion {
 		t.Fatalf("mention notifications = %#v", notificationPage)
 	}
 	notificationID := notificationPage.Notifications[0].ID
@@ -333,7 +344,9 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	multiIssue := multiEnvelope.Issue
 	if multiIssue.PublicID != "ACME-2026-0004" || multiIssue.Priority == nil ||
 		string(*multiIssue.Priority) != "urgent" || multiIssue.Assignee == nil ||
-		multiIssue.Assignee.ID != triageMemberID || multiIssue.ReporterEmail == nil ||
+		multiIssue.Assignee.ID != triageMemberID || multiIssue.Assignee.AvatarVersion == nil ||
+		*multiIssue.Assignee.AvatarVersion != triageAvatarVersion ||
+		multiIssue.ReporterEmail == nil ||
 		*multiIssue.ReporterEmail != "reporter3@example.com" || !multiIssue.NotifyReporter ||
 		multiIssue.FeedbackCount != 2 || len(multiIssue.Tags) != 2 ||
 		multiIssue.Tags[0].Name != "Checkout" || multiIssue.Tags[1].Name != "Customer impact" {
@@ -536,6 +549,8 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 	if detailEnvelope.Issue.Priority == nil || string(*detailEnvelope.Issue.Priority) != "urgent" ||
 		detailEnvelope.Issue.Assignee == nil || detailEnvelope.Issue.Assignee.ID != triageMemberID ||
+		detailEnvelope.Issue.Assignee.AvatarVersion == nil ||
+		*detailEnvelope.Issue.Assignee.AvatarVersion != triageAvatarVersion ||
 		len(detailEnvelope.Issue.Tags) != 2 || detailEnvelope.Issue.Tags[0].Name != "Checkout" ||
 		detailEnvelope.Issue.Tags[1].Name != "Regression" {
 		t.Fatalf("updated issue detail metadata = %#v", detailEnvelope.Issue)

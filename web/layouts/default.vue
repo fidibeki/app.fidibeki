@@ -5,7 +5,6 @@ import {
   Bell,
   ChevronDown,
   CircleAlert,
-  CircleUserRound,
   CreditCard,
   FolderKanban,
   House,
@@ -18,6 +17,7 @@ import {
   Search,
   Settings,
   ShieldAlert,
+  UserRoundPen,
   X,
 } from '@lucide/vue'
 import { feedbackQueueFromQuery, type FeedbackQueueID } from '~/utils/feedback-queue'
@@ -35,13 +35,6 @@ const mobileNavCloseButton = ref<HTMLButtonElement | null>(null)
 
 const showQueueRail = computed(() => can('feedback:read') && (route.path.startsWith('/feedback') || route.path === '/'))
 const workspaceHome = computed(() => firstAccessibleWorkspacePath(member.value?.permissions || []))
-const tenantInitials = computed(() =>
-  (tenant.value?.name || 'Workspace')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join(''),
-)
 const displayName = computed(() => member.value?.name || member.value?.email.split('@')[0] || 'Account')
 const trialDays = computed(() => {
   if (!tenant.value?.trial_ends_at) return null
@@ -128,7 +121,7 @@ watch(
         <img src="/brand/fidibeki-color.png" alt="Fidibeki" />
       </NuxtLink>
       <NuxtLink class="app-tenant-switcher" to="/settings" title="Workspace settings">
-        <span>{{ tenantInitials }}</span>
+        <span><WorkspaceMark :tenant-id="tenant?.id || ''" :name="tenant?.name" :logo-version="tenant?.logo_version" /></span>
         <b>{{ tenant?.name || 'Workspace' }}</b>
         <Settings :size="14" />
       </NuxtLink>
@@ -140,9 +133,13 @@ watch(
         <i /> {{ tenant.plan }} trial · {{ trialDays }} days
       </NuxtLink>
       <details ref="accountMenu" class="app-account-menu">
-        <summary><CircleUserRound :size="19" /><span>{{ displayName }}</span><ChevronDown :size="13" /></summary>
+        <summary>
+          <i class="app-account-avatar"><MemberAvatar :member-id="member?.id || ''" :name="member?.name" :email="member?.email" :avatar-version="member?.avatar_version" /></i>
+          <span>{{ displayName }}</span><ChevronDown :size="13" />
+        </summary>
         <div>
           <p><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
+          <NuxtLink to="/profile"><UserRoundPen :size="15" /> Profile</NuxtLink>
           <NuxtLink v-if="can('billing:read') || can('billing:manage')" to="/billing"><CreditCard :size="15" /> Billing</NuxtLink>
           <button type="button" :disabled="loggingOut" @click="logout"><LogOut :size="15" /> Sign out</button>
         </div>

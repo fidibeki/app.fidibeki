@@ -75,6 +75,10 @@ function onTagChange(tagID: string, event: Event) {
 
       <label class="triage-field">
         <span><UserRound :size="13" /> Assignee</span>
+        <span v-if="assignee" class="triage-assignee-current">
+          <i><MemberAvatar :member-id="assignee.id" :name="assignee.name" :email="assignee.email" :avatar-version="assignee.avatar_version" /></i>
+          <b>{{ assigneeName }}</b>
+        </span>
         <select :value="assignee?.id || ''" aria-label="Assignee" :disabled="pending" @change="onAssigneeChange">
           <option value="">Unassigned</option>
           <option v-for="member in members" :key="member.id" :value="member.id">
@@ -103,7 +107,7 @@ function onTagChange(tagID: string, event: Event) {
 
     <dl v-else class="triage-readonly">
       <div><dt>Priority</dt><dd>{{ priority ? priorities.find(item => item.value === priority)?.label : 'Unset' }}</dd></div>
-      <div><dt>Assignee</dt><dd>{{ assigneeName }}</dd></div>
+      <div><dt>Assignee</dt><dd><span v-if="assignee" class="triage-readonly-avatar"><i><MemberAvatar :member-id="assignee.id" :name="assignee.name" :email="assignee.email" :avatar-version="assignee.avatar_version" /></i><b>{{ assigneeName }}</b></span><template v-else>{{ assigneeName }}</template></dd></div>
       <div><dt>Tags</dt><dd><span v-for="tag in tags" :key="tag.id" :style="{ borderColor: tag.color }">{{ tag.name }}</span><template v-if="tags.length === 0">None</template></dd></div>
     </dl>
   </section>
@@ -117,6 +121,9 @@ function onTagChange(tagID: string, event: Event) {
 .triage-field > span,
 .triage-field legend { display: flex; align-items: center; gap: 5px; padding: 0; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .triage-field select { width: 100%; height: 34px; padding: 0 9px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
+.triage-field > .triage-assignee-current { display: flex; min-height: 30px; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 10px; font-weight: 400; text-transform: none; }
+.triage-assignee-current i,
+.triage-readonly-avatar i { display: block; width: 24px; height: 24px; flex: 0 0 24px; overflow: hidden; border-radius: 50%; font-size: 8px; font-style: normal; }
 .triage-priority-control { display: grid; min-height: 34px; grid-template-columns: repeat(4, minmax(0, 1fr)) 32px; }
 .triage-priority-control button { min-width: 0; padding: 0 4px; background: #fff; color: var(--muted); border: 1px solid var(--line); border-right: 0; font-size: 9px; font-weight: 750; }
 .triage-priority-control button:first-child { border-radius: 4px 0 0 4px; }
@@ -137,4 +144,6 @@ function onTagChange(tagID: string, event: Event) {
 .triage-readonly dt { color: var(--muted); font-size: 10px; }
 .triage-readonly dd { display: flex; min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 5px; margin: 0; font-size: 10px; text-align: right; }
 .triage-readonly dd span { padding: 3px 6px; border: 1px solid; border-radius: 4px; }
+.triage-readonly dd .triage-readonly-avatar { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; }
+.triage-readonly-avatar b { font-weight: 400; }
 </style>

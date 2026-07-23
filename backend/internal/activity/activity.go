@@ -17,9 +17,10 @@ const (
 )
 
 type Actor struct {
-	ID    string  `json:"id"`
-	Name  *string `json:"name,omitempty"`
-	Email string  `json:"email"`
+	ID            string  `json:"id"`
+	Name          *string `json:"name,omitempty"`
+	Email         string  `json:"email"`
+	AvatarVersion *string `json:"avatar_version,omitempty"`
 }
 
 type Event struct {
@@ -114,7 +115,7 @@ func GetIssue(
 const activitySelect = `
 	SELECT activity.id, activity.issue_id, activity.kind, activity.visibility,
 	       activity.data, activity.created_at,
-	       actor.id, actor.name, actor.email::text
+	       actor.id, actor.name, actor.email::text, actor.avatar_version::text
 	FROM issue_activities AS activity
 	LEFT JOIN tenant_members AS actor
 	  ON actor.tenant_id = activity.tenant_id AND actor.id = activity.actor_member_id
@@ -127,10 +128,10 @@ type rowScanner interface {
 func scanEvent(row rowScanner) (Event, error) {
 	var event Event
 	var payload []byte
-	var actorID, actorName, actorEmail *string
+	var actorID, actorName, actorEmail, actorAvatarVersion *string
 	if err := row.Scan(
 		&event.ID, &event.IssueID, &event.Kind, &event.Visibility,
-		&payload, &event.CreatedAt, &actorID, &actorName, &actorEmail,
+		&payload, &event.CreatedAt, &actorID, &actorName, &actorEmail, &actorAvatarVersion,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return Event{}, err
@@ -141,7 +142,10 @@ func scanEvent(row rowScanner) (Event, error) {
 		return Event{}, fmt.Errorf("decode issue activity data: %w", err)
 	}
 	if actorID != nil && actorEmail != nil {
-		event.Actor = &Actor{ID: *actorID, Name: actorName, Email: *actorEmail}
+		event.Actor = &Actor{
+			ID: *actorID, Name: actorName, Email: *actorEmail,
+			AvatarVersion: actorAvatarVersion,
+		}
 	}
 	return event, nil
 }

@@ -258,7 +258,7 @@ tenant isolation, cache busting, cleanup, and storage failure behavior.
 ## Task 17: Shared Identity UI
 
 **Depends on:** Tasks 15 and 16
-**Status:** In progress
+**Status:** Complete
 
 **Outcome:** Settings and operational surfaces render organization/member identity with immediate
 updates and resilient initials fallbacks.
@@ -271,7 +271,7 @@ broken-image fallback, and responsive layouts.
 ## Task 18: Organization Identity Quality Gate
 
 **Depends on:** Task 17
-**Status:** Pending
+**Status:** In progress
 
 **Outcome:** Issues #30 and #31 are fully usable in staging.
 

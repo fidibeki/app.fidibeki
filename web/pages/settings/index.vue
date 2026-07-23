@@ -28,6 +28,7 @@ import type {
   IntegrationKind,
   Member,
   MemberDomain,
+  OrganizationProfile,
   Project,
   TenantConfiguration,
   WidgetAppearanceOverrides,
@@ -480,6 +481,31 @@ async function updateWidgetAppearance() {
   }
 }
 
+function applyOrganizationProfile(profile: OrganizationProfile) {
+  if (!data.value) return
+  Object.assign(data.value.configuration.tenant, {
+    name: profile.name,
+    short_name: profile.short_name,
+    website_url: profile.website_url,
+    support_email: profile.support_email,
+    default_locale: profile.default_locale,
+    default_timezone: profile.default_timezone,
+    privacy_policy_url: profile.privacy_policy_url,
+    terms_url: profile.terms_url,
+    logo_version: profile.logo_version,
+  })
+  if (profile.accent_color) {
+    workspaceAppearance.value = {
+      ...workspaceAppearance.value,
+      accent_color: profile.accent_color,
+    }
+  } else {
+    const appearance = { ...workspaceAppearance.value }
+    delete appearance.accent_color
+    workspaceAppearance.value = appearance
+  }
+}
+
 function isExpired(value?: string | null) {
   return value ? new Date(value).getTime() <= Date.now() : false
 }
@@ -502,6 +528,7 @@ useHead({ title: 'Settings - Fidibeki' })
 
     <template v-else-if="data">
       <section v-if="activeTab === 'workspace'" class="settings-workspace">
+        <OrganizationProfile @updated="applyOrganizationProfile" />
         <div class="app-surface settings-section">
           <header><div><p class="app-eyebrow">Workspace</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ data.configuration.tenant.status }}</span></header>
           <dl class="settings-ledger">
@@ -562,7 +589,7 @@ useHead({ title: 'Settings - Fidibeki' })
           <div v-else class="settings-table settings-members">
             <div class="settings-row settings-row--head"><span>Member</span><span>Permissions</span><span>Access</span><span /></div>
             <div v-for="member in data.members" :key="member.id" class="settings-row" :data-muted="member.status !== 'active'">
-              <span class="settings-identity"><i>{{ (member.name || member.email).slice(0, 1).toUpperCase() }}</i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
+              <span class="settings-identity"><i><MemberAvatar :member-id="member.id" :name="member.name" :email="member.email" :avatar-version="member.avatar_version" /></i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
               <span>{{ member.permissions.length }} granted</span>
               <span class="settings-member-access"><b v-if="member.role === 'owner'" class="settings-owner-label">Owner</b><span v-else class="capitalize">{{ member.status }}</span><small v-if="member.id === currentMember?.id">Current session</small></span>
               <span class="settings-member-actions">
@@ -723,7 +750,7 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-row small, .settings-row code { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-row[data-muted='true'] { opacity: .55; }
 .settings-identity { display: flex; align-items: center; gap: 10px; }
-.settings-identity > i { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; background: var(--teal-soft); color: var(--teal); border-radius: 5px; font-style: normal; font-weight: 800; }
+.settings-identity > i { display: block; width: 32px; height: 32px; flex: 0 0 32px; overflow: hidden; border-radius: 5px; font-size: 9px; font-style: normal; }
 .settings-identity > span { min-width: 0; }
 .settings-member-access { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
 .settings-member-access small { margin: 0; }

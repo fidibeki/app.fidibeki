@@ -50,11 +50,6 @@ function formatAge(value: string) {
   return days < 1 ? 'Today' : days === 1 ? '1 day' : `${days} days`
 }
 
-function assigneeInitials(issue: Issue) {
-  const value = issue.assignee?.name || issue.assignee?.email || ''
-  return value.split(/\s+|@/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
-}
-
 function priorityLabel(issue: Issue) {
   return issue.priority ? issue.priority[0].toUpperCase() + issue.priority.slice(1) : ''
 }
@@ -83,7 +78,7 @@ useHead({ title: 'Issues · Fidibeki' })
         <span class="issues-project">{{ projectNames.get(issue.project_id) || 'Project' }}</span>
         <span class="issues-triage">
           <span v-if="issue.priority" class="issue-priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue) }}</span>
-          <span v-if="issue.assignee" class="issue-assignee-mark" :title="issue.assignee.name || issue.assignee.email">{{ assigneeInitials(issue) }}</span>
+          <span v-if="issue.assignee" class="issue-assignee-mark" :title="issue.assignee.name || issue.assignee.email"><MemberAvatar :member-id="issue.assignee.id" :name="issue.assignee.name" :email="issue.assignee.email" :avatar-version="issue.assignee.avatar_version" /></span>
           <span v-if="issue.tags?.length" class="issue-tag-marks" :title="issue.tags.map(tag => tag.name).join(', ')"><i v-for="tag in issue.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
           <span v-if="!issue.priority && !issue.assignee && !issue.tags?.length" class="issue-untriaged">Untriaged</span>
         </span>
@@ -124,7 +119,7 @@ useHead({ title: 'Issues · Fidibeki' })
 .issue-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: #315b52; background: #eaf3f0; border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .issue-priority-mark[data-priority='high'] { color: #8d4918; background: #fff0e3; }
 .issue-priority-mark[data-priority='urgent'] { color: #92333f; background: #fbe9eb; }
-.issue-assignee-mark { display: grid; width: 23px; height: 23px; flex: 0 0 23px; place-items: center; color: #315b52; background: #dce9e6; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; font-weight: 800; }
+.issue-assignee-mark { display: block; width: 23px; height: 23px; flex: 0 0 23px; overflow: hidden; border: 1px solid #c4d8d3; border-radius: 50%; font-size: 8px; }
 .issue-tag-marks { display: flex; min-width: 8px; gap: 2px; }
 .issue-tag-marks i { width: 6px; height: 18px; flex: 0 0 6px; border-radius: 2px; }
 .issue-untriaged { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }

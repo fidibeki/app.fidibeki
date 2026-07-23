@@ -224,7 +224,7 @@ func (Store) ListMemberNotifications(
 	}
 	rows, err := query.Query(ctx, `
 		SELECT notification.id, notification.kind, issue.id, issue.public_id, issue.title,
-		       actor.id, actor.name, actor.email::text,
+		       actor.id, actor.name, actor.email::text, actor.avatar_version::text,
 		       COALESCE(activity.data->>'body', ''), notification.read_at, notification.created_at
 		FROM member_notifications AS notification
 		JOIN issues AS issue
@@ -243,17 +243,20 @@ func (Store) ListMemberNotifications(
 	notifications := make([]MemberNotification, 0)
 	for rows.Next() {
 		var notification MemberNotification
-		var actorID, actorName, actorEmail *string
+		var actorID, actorName, actorEmail, actorAvatarVersion *string
 		if err := rows.Scan(
 			&notification.ID, &notification.Kind, &notification.IssueID,
 			&notification.PublicID, &notification.IssueTitle,
-			&actorID, &actorName, &actorEmail, &notification.Body,
+			&actorID, &actorName, &actorEmail, &actorAvatarVersion, &notification.Body,
 			&notification.ReadAt, &notification.CreatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan member notification: %w", err)
 		}
 		if actorID != nil && actorEmail != nil {
-			notification.Actor = &activity.Actor{ID: *actorID, Name: actorName, Email: *actorEmail}
+			notification.Actor = &activity.Actor{
+				ID: *actorID, Name: actorName, Email: *actorEmail,
+				AvatarVersion: actorAvatarVersion,
+			}
 		}
 		notifications = append(notifications, notification)
 	}
@@ -283,10 +286,13 @@ func (Store) MarkMemberNotificationRead(
 
 const issueCommentSelect = `
 	SELECT comment.id, comment.issue_id, comment.body, comment.created_at,
-	       author.id, author.name, author.email::text,
+	       author.id, author.name, author.email::text, author.avatar_version::text,
 	       COALESCE((
 	           SELECT jsonb_agg(
-	               jsonb_build_object('id', member.id, 'name', member.name, 'email', member.email::text)
+	               jsonb_build_object(
+	                   'id', member.id, 'name', member.name, 'email', member.email::text,
+	                   'avatar_version', member.avatar_version::text
+	               )
 	               ORDER BY lower(COALESCE(member.name, member.email::text)), member.id
 	           )
 	           FROM issue_comment_mentions AS mention
@@ -316,16 +322,19 @@ func getIssueComment(
 
 func scanIssueComment(row rowScanner) (Comment, error) {
 	var comment Comment
-	var actorID, actorName, actorEmail *string
+	var actorID, actorName, actorEmail, actorAvatarVersion *string
 	var mentionsPayload []byte
 	if err := row.Scan(
 		&comment.ID, &comment.IssueID, &comment.Body, &comment.CreatedAt,
-		&actorID, &actorName, &actorEmail, &mentionsPayload,
+		&actorID, &actorName, &actorEmail, &actorAvatarVersion, &mentionsPayload,
 	); err != nil {
 		return Comment{}, err
 	}
 	if actorID != nil && actorEmail != nil {
-		comment.Author = &activity.Actor{ID: *actorID, Name: actorName, Email: *actorEmail}
+		comment.Author = &activity.Actor{
+			ID: *actorID, Name: actorName, Email: *actorEmail,
+			AvatarVersion: actorAvatarVersion,
+		}
 	}
 	if err := json.Unmarshal(mentionsPayload, &comment.Mentions); err != nil {
 		return Comment{}, fmt.Errorf("decode issue comment mentions: %w", err)
@@ -1047,6 +1056,7 @@ const issueSelect = `
 	       CASE WHEN COALESCE(content_moderation.description_moderated, false)
 	            THEN '[MODERATED]' ELSE issue.description END,
 	       issue.status, issue.priority, assignee.id, assignee.name, assignee.email::text,
+	       assignee.avatar_version::text,
 	       COALESCE((
 	           SELECT jsonb_agg(
 	               jsonb_build_object('id', tag.id, 'name', tag.name::text, 'color', tag.color)
@@ -1101,11 +1111,12 @@ type rowScanner interface {
 
 func scanIssue(row rowScanner) (Issue, error) {
 	var found Issue
-	var assigneeID, assigneeName, assigneeEmail *string
+	var assigneeID, assigneeName, assigneeEmail, assigneeAvatarVersion *string
 	var tagPayload []byte
 	if err := row.Scan(
 		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title, &found.Description,
-		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
+		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail,
+		&assigneeAvatarVersion, &tagPayload,
 		&found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
 		&found.NotifyReporter, &found.ReporterConsentGrantedAt, &found.ReporterConsentWithdrawnAt,
 		&found.ResolvedAt, &found.ReporterAccessRevokedAt, &found.FeedbackCount,
@@ -1115,7 +1126,10 @@ func scanIssue(row rowScanner) (Issue, error) {
 		return Issue{}, err
 	}
 	if assigneeID != nil && assigneeEmail != nil {
-		found.Assignee = &triage.Assignee{ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail}
+		found.Assignee = &triage.Assignee{
+			ID: *assigneeID, Name: assigneeName, Email: *assigneeEmail,
+			AvatarVersion: assigneeAvatarVersion,
+		}
 	}
 	tags, err := triage.DecodeTags(tagPayload)
 	if err != nil {

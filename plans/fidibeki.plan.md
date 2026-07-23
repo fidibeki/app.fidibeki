@@ -388,9 +388,13 @@ was removed from the staging test tenant.
       normalized organization profile updates, audit, and preserved appearance inheritance.
     - [x] Slice 2: bounded PNG/JPEG/WebP processing, immutable 64/256 PNG variants, workspace logo
       and self-avatar lifecycle, RBAC, rate limiting, versioned reads, and retryable cleanup.
-    - [ ] Slice 3: Settings/profile editing and shared navigation, member, assignee, comment,
+    - [x] Slice 3: Settings/profile editing and shared navigation, member, assignee, comment,
       mention, notification, and activity identity rendering with resilient initials fallbacks.
     - [ ] Slice 4: migration/backend/web/browser/CI and real staging validation.
+      Migration replay, full backend tests/vet, web unit/type/build/browser suites, widget
+      unit/type/build/browser suites, desktop/mobile identity screenshots, field/read-only states,
+      upload/remove flows, and broken-asset fallbacks pass locally. CI and one real staging journey
+      remain.
   - [ ] Complete member-aware internationalization issue #32.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label

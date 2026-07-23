@@ -183,6 +183,17 @@
   list-style: none;
 }
 
+.app-account-avatar {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  overflow: hidden;
+  border-radius: 50%;
+  font-size: 8px;
+  font-style: normal;
+}
+
 .app-account-menu summary::-webkit-details-marker {
   display: none;
 }
@@ -722,9 +733,19 @@
     display: grid;
   }
 
-  .app-tenant-switcher,
   .app-trial-status,
   .app-topbar > .app-icon-button:not(.app-mobile-menu) {
+    display: none;
+  }
+
+  .app-tenant-switcher {
+    display: flex;
+    width: 38px;
+    min-width: 38px;
+    padding: 0 6px;
+  }
+
+  .app-tenant-switcher > svg {
     display: none;
   }
 
