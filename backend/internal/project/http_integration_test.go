@@ -120,8 +120,9 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	viewerToken, _, _ := jwtManager.IssueTenant(viewerID, acmeID, []string{string(auth.PermissionProjectRead)})
 	betaToken, _, _ := jwtManager.IssueTenant(betaMemberID, betaID, auth.TenantPermissionStrings())
 
+	store := Store{PublicBaseURL: "https://api.staging.fidibeki.com"}
 	routes := chi.NewRouter()
-	RegisterRoutes(routes, HTTPOptions{Store: Store{}, JWT: jwtManager})
+	RegisterRoutes(routes, HTTPOptions{Store: store, JWT: jwtManager})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
@@ -291,7 +292,13 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		createdRule.WidgetRule.IncludeConditions[0].MatcherType != MatcherURLPrefix {
 		t.Errorf("legacy targeting projection = %#v", createdRule.WidgetRule)
 	}
-	publicConfiguration, err := (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
+	logoVersion := "7d7868e4-96e4-4abf-9406-9ca802953284"
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET logo_version = $2 WHERE id = $1
+	`, acmeID, logoVersion); err != nil {
+		t.Fatalf("configure organization logo: %v", err)
+	}
+	publicConfiguration, err := store.LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
 		t.Fatalf("load public configuration: %v", err)
 	}
@@ -302,7 +309,11 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		publicConfiguration.Rules[0].RecurrenceDays == nil ||
 		*publicConfiguration.Rules[0].RecurrenceDays != 30 ||
 		len(publicConfiguration.Rules[0].IncludeConditions) != 1 ||
-		len(publicConfiguration.Rules[0].ExcludeConditions) != 0 {
+		len(publicConfiguration.Rules[0].ExcludeConditions) != 0 ||
+		publicConfiguration.Rules[0].Appearance.LogoURL == nil ||
+		*publicConfiguration.Rules[0].Appearance.LogoURL !=
+			"https://api.staging.fidibeki.com/v1/public/workspace-logo/"+
+				acmeID+"/"+logoVersion+"/256.png" {
 		t.Errorf("public configuration = %#v", publicConfiguration)
 	}
 	gotRule := performProjectRequest(
@@ -379,7 +390,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	`, created.Project.ID); err != nil {
 		t.Fatalf("configure project widget appearance: %v", err)
 	}
-	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
+	publicConfiguration, err = store.LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
 		t.Fatalf("reload public configuration: %v", err)
 	}
@@ -465,7 +476,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	`, createdRule.WidgetRule.ID); err != nil {
 		t.Fatalf("pause widget definition: %v", err)
 	}
-	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
+	publicConfiguration, err = store.LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
 		t.Fatalf("load public configuration with paused definition: %v", err)
 	}

@@ -232,7 +232,7 @@ rollback.
 ## Task 15: Organization Profile Contract And Inheritance
 
 **Depends on:** Task 14
-**Status:** In progress
+**Status:** Complete
 
 **Outcome:** Authorized administrators update organization defaults with audit, and existing project
 and widget overrides remain effective.
@@ -245,7 +245,7 @@ and organization -> project -> widget inheritance.
 ## Task 16: Bounded Identity Asset Lifecycle
 
 **Depends on:** Task 14
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Workspace logos and self-managed avatars are securely normalized, versioned, served,
 replaced, and removed.
@@ -258,7 +258,7 @@ tenant isolation, cache busting, cleanup, and storage failure behavior.
 ## Task 17: Shared Identity UI
 
 **Depends on:** Tasks 15 and 16
-**Status:** Pending
+**Status:** In progress
 
 **Outcome:** Settings and operational surfaces render organization/member identity with immediate
 updates and resilient initials fallbacks.

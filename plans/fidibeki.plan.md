@@ -384,9 +384,9 @@ was removed from the staging test tenant.
       service.
     - Approved design:
       `docs/superpowers/specs/2026-07-23-fidibeki-organization-identity-design.md`.
-    - [ ] Slice 1: forward-compatible tenant/member profile schema, cleanup queue, validation,
+    - [x] Slice 1: forward-compatible tenant/member profile schema, cleanup queue, validation,
       normalized organization profile updates, audit, and preserved appearance inheritance.
-    - [ ] Slice 2: bounded PNG/JPEG/WebP processing, immutable 64/256 PNG variants, workspace logo
+    - [x] Slice 2: bounded PNG/JPEG/WebP processing, immutable 64/256 PNG variants, workspace logo
       and self-avatar lifecycle, RBAC, rate limiting, versioned reads, and retryable cleanup.
     - [ ] Slice 3: Settings/profile editing and shared navigation, member, assignee, comment,
       mention, notification, and activity identity rendering with resilient initials fallbacks.

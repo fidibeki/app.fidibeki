@@ -22,6 +22,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
+	"github.com/acidiney/app.fidibeki/backend/internal/identity"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	"github.com/acidiney/app.fidibeki/backend/internal/logging"
@@ -332,6 +333,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		jwtManager, platformadmin.PlatformQueueAccessCookie, auth.PermissionPlatformTenantRead,
 	)).Mount(queuemonitor.RootPath, queueMonitor)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
+	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
+		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
+	})
 	reporterProgressOptions := issue.PublicHTTPOptions{
 		Store: issue.Store{Database: pools.Admin}, Tokens: reporterTokens, Verifier: resendVerifier,
 		Begin: db.BeginFromPool(pools.Admin), Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
@@ -358,12 +362,17 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
+	identity.RegisterTenantRoutes(tenantRoutes, identity.HTTPOptions{
+		Store: identity.Store{Database: pools.Admin}, JWT: jwtManager, Storage: objectStorage,
+		Limiter: publicLimiter, PublicBaseURL: settings.PublicBaseURL, Logger: logger,
+	})
 	privacy.RegisterRoutes(tenantRoutes, privacy.HTTPOptions{
 		Store: privacy.Store{}, JWT: jwtManager, Storage: objectStorage, Email: emailQueue,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 		From: settings.ResendAuthFrom, Logger: logger,
 	})
-	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: project.Store{}, JWT: jwtManager})
+	projectStore := project.Store{PublicBaseURL: settings.PublicBaseURL}
+	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: projectStore, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})
 	integration.RegisterRoutes(tenantRoutes, integration.HTTPOptions{
 		Store: integration.Store{Cipher: integrationCipher}, JWT: jwtManager,
@@ -413,7 +422,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	tenantRoot.Get("/v1/sessions/{sessionID}/replay", replayStream.ServeHTTP)
 	tenantRoot.Mount("/", transactionalTenantHandler)
 	widgetOptions := widgetapi.HTTPOptions{
-		Store: project.Store{}, Database: pools.Admin, Logger: logger, SentryDSN: settings.SentryDSN,
+		Store: projectStore, Database: pools.Admin, Logger: logger, SentryDSN: settings.SentryDSN,
 	}
 	widgetAuthorizer := widgetapi.Authorizer{
 		Store: widgetOptions.Store, Database: widgetOptions.Database,
@@ -639,6 +648,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	aiBudgetMaintainer := aiprocessing.BudgetMaintainer{
 		Store: aiprocessing.BudgetMaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
+	identityMaintainer := identity.CleanupMaintainer{
+		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -721,7 +733,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 12)
+	backgroundDone := make(chan error, 13)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
@@ -732,6 +744,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- abuseMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- aiBudgetMaintainer.Run(workerCtx, 24*time.Hour) }()
+	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -741,7 +754,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone,
+		<-backgroundDone, <-backgroundDone,
 	)
 }
 

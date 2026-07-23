@@ -147,6 +147,9 @@ func (s Store) UpdateOrganizationProfile(
 	if err != nil {
 		return tenant.OrganizationProfile{}, fmt.Errorf("lock organization profile: %w", err)
 	}
+	if err := requireActiveMemberActor(ctx, query, tenantID, actorMemberID); err != nil {
+		return tenant.OrganizationProfile{}, err
+	}
 	after, err := scanOrganizationProfile(query.QueryRow(ctx, `
 		UPDATE tenants
 		SET name = $2,

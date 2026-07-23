@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/identity"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
@@ -19,7 +20,9 @@ var (
 	ErrPublicKeyConflict = errors.New("project public key collision")
 )
 
-type Store struct{}
+type Store struct {
+	PublicBaseURL string
+}
 
 func (Store) CountProjects(ctx context.Context, query db.Querier, tenantID string) (int, error) {
 	var count int
@@ -342,7 +345,7 @@ func (Store) DeleteWidgetRule(
 	return nil
 }
 
-func (Store) LoadPublicConfiguration(
+func (store Store) LoadPublicConfiguration(
 	ctx context.Context,
 	query db.Querier,
 	publicKey string,
@@ -352,10 +355,12 @@ func (Store) LoadPublicConfiguration(
 	var status string
 	var trialEndsAt pgtype.Timestamptz
 	var deletionRequestedAt pgtype.Timestamptz
+	var logoVersion *string
 	err := query.QueryRow(ctx, `
 		SELECT tenant.id, tenant.slug, project.id, project.default_locale, project.allowed_domains,
 		       tenant.widget_appearance_defaults, project.widget_appearance_overrides,
-		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at
+		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at,
+		       tenant.logo_version::text
 		FROM projects AS project
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
 		WHERE project.public_key = $1
@@ -364,7 +369,7 @@ func (Store) LoadPublicConfiguration(
 		&configuration.ProjectID, &configuration.DefaultLocale, &configuration.AllowedDomains,
 		&configuration.TenantAppearanceDefaults, &configuration.ProjectAppearanceOverrides,
 		&plan, &status, &trialEndsAt,
-		&deletionRequestedAt,
+		&deletionRequestedAt, &logoVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicConfiguration{}, ErrNotFound
@@ -379,6 +384,16 @@ func (Store) LoadPublicConfiguration(
 	}
 	if deletionRequestedAt.Valid {
 		configuration.DeletionRequestedAt = &deletionRequestedAt.Time
+	}
+	var organizationLogo widgetconfig.AppearanceOverrides
+	if logoVersion != nil {
+		logoURL, err := identity.WorkspaceLogoURL(
+			store.PublicBaseURL, configuration.TenantID, *logoVersion, 256,
+		)
+		if err != nil {
+			return PublicConfiguration{}, fmt.Errorf("build workspace logo URL: %w", err)
+		}
+		organizationLogo.LogoURL = &logoURL
 	}
 
 	rows, err := query.Query(ctx, `
@@ -411,6 +426,7 @@ func (Store) LoadPublicConfiguration(
 	}
 	for index := range configuration.Rules {
 		appearance := widgetconfig.Resolve(
+			organizationLogo,
 			configuration.TenantAppearanceDefaults,
 			configuration.ProjectAppearanceOverrides,
 			configuration.Rules[index].AppearanceOverrides,
