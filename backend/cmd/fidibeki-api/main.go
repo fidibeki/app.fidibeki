@@ -28,6 +28,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/observability"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/platformadmin"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
@@ -316,6 +317,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
+	privacy.RegisterRoutes(tenantRoutes, privacy.HTTPOptions{
+		Store: privacy.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
+	})
 	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: project.Store{}, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})
 	integration.RegisterRoutes(tenantRoutes, integration.HTTPOptions{
@@ -532,6 +536,20 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	replayScheduler := replay.Scheduler{Store: replayStore, Queue: replayQueue, Logger: logger}
 	replayProcessor := replay.Processor{Store: replayStore, Storage: objectStorage}
 	replayCleaner := replay.Cleaner{Store: replayStore, Storage: objectStorage, Logger: logger}
+	privacyQueue, err := privacy.OpenQueue(settings.RedisURL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := privacyQueue.Close(); err != nil {
+			logger.Warn("privacy queue close failed", "error", err)
+		}
+	}()
+	privacyStore := privacy.Store{Database: pools.Admin}
+	privacyScheduler := privacy.Scheduler{Store: privacyStore, Queue: privacyQueue, Logger: logger}
+	privacyExporter := privacy.Exporter{
+		Database: pools.Admin, Store: privacyStore, Storage: objectStorage, Logger: logger,
+	}
 	analyticsMaintainer := widgetanalytics.Maintainer{
 		Store: widgetanalytics.MaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
@@ -591,22 +609,24 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		AIConcurrency: settings.AIConcurrency, Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
-		AIErrorHandler:     processor.ErrorHandler(),
-		ReporterHandler:    reporterHandler.Handler(),
-		LifecycleHandler:   lifecycleHandler.Handler(),
-		ReplayMergeHandler: replayProcessor.MergeHandler(),
-		IntegrationHandler: integrationHandler.Handler(),
+		AIErrorHandler:       processor.ErrorHandler(),
+		ReporterHandler:      reporterHandler.Handler(),
+		LifecycleHandler:     lifecycleHandler.Handler(),
+		ReplayMergeHandler:   replayProcessor.MergeHandler(),
+		IntegrationHandler:   integrationHandler.Handler(),
+		PrivacyExportHandler: privacyExporter.Handler(),
 	})
 	if err != nil {
 		return err
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 7)
+	backgroundDone := make(chan error, 8)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- replayCleaner.Run(workerCtx, 24*time.Hour) }()
+	go func() { backgroundDone <- privacyScheduler.Run(workerCtx, 30*time.Second) }()
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
@@ -616,6 +636,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		workerErr,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone,
 	)
 }
 

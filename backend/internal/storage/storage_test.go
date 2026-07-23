@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,38 @@ func TestPresignUsesPublicEndpoint(t *testing.T) {
 	}
 	if !strings.HasPrefix(url, "https://uploads.example.test/fidibeki/tenant/object.webm?") {
 		t.Errorf("presigned URL = %q", url)
+	}
+}
+
+func TestPresignGetUsesPublicEndpointAndDownloadHeaders(t *testing.T) {
+	t.Parallel()
+	client, err := storage.Open(storage.Config{
+		Endpoint: "http://minio.internal:9000", PublicEndpoint: "https://downloads.example.test",
+		Region: "us-east-1", Bucket: "fidibeki", AccessKey: "key", SecretKey: "secret",
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	presignedURL, err := client.PresignGet(
+		context.Background(), "tenants/tenant-id/exports/export-id.zip",
+		"fidibeki-acme-workspace-export-2026-07-23.zip", 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("PresignGet() error = %v", err)
+	}
+	parsed, err := url.Parse(presignedURL)
+	if err != nil {
+		t.Fatalf("parse presigned URL: %v", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "downloads.example.test" ||
+		parsed.Path != "/fidibeki/tenants/tenant-id/exports/export-id.zip" {
+		t.Errorf("presigned URL = %q", presignedURL)
+	}
+	query := parsed.Query()
+	if query.Get("response-content-type") != "application/zip" ||
+		query.Get("response-content-disposition") != `attachment; filename="fidibeki-acme-workspace-export-2026-07-23.zip"` ||
+		query.Get("X-Amz-Expires") != "600" {
+		t.Errorf("presigned query = %#v", query)
 	}
 }
 

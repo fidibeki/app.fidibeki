@@ -24,6 +24,7 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, LifecycleHandler: handler,
 		ReplayMergeHandler: handler, IntegrationHandler: handler,
+		PrivacyExportHandler: handler,
 	}
 	if worker, err := New(valid); err != nil || worker == nil {
 		t.Fatalf("New(valid) = %#v, %v", worker, err)
@@ -87,6 +88,7 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, LifecycleHandler: handler,
 		ReplayMergeHandler: handler, IntegrationHandler: handler,
+		PrivacyExportHandler: handler,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)

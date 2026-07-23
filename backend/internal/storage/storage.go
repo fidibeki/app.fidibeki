@@ -98,6 +98,22 @@ func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration)
 	return presigned.String(), nil
 }
 
+func (s *Storage) PresignGet(
+	ctx context.Context,
+	key string,
+	filename string,
+	ttl time.Duration,
+) (string, error) {
+	parameters := make(url.Values)
+	parameters.Set("response-content-type", "application/zip")
+	parameters.Set("response-content-disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	presigned, err := s.presignClient.PresignedGetObject(ctx, s.bucket, key, ttl, parameters)
+	if err != nil {
+		return "", fmt.Errorf("presign S3 download: %w", err)
+	}
+	return presigned.String(), nil
+}
+
 func (s *Storage) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {

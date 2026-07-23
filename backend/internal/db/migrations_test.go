@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 60
+	const latestMigrationVersion = 61
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-1); err != nil {
+	if err := migrator.Steps(-2); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -142,6 +142,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, legacyTenantID); err != nil {
 		t.Fatalf("remove legacy ownership migration fixture: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply privacy jobs migration: %v", err)
 	}
 
 	var tenantA, tenantB string
@@ -193,6 +196,14 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		`SELECT id FROM tenant_members WHERE tenant_id = $1 AND email = 'owner@beta.test'`, tenantB,
 	).Scan(&memberB); err != nil {
 		t.Fatalf("read tenant B member: %v", err)
+	}
+	for tenantID, memberID := range map[string]string{tenantA: memberA, tenantB: memberB} {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO privacy_jobs (tenant_id, kind, status, actor_member_id)
+			VALUES ($1, 'workspace_export', 'pending', $2)
+		`, tenantID, memberID); err != nil {
+			t.Fatalf("create privacy job for tenant %s: %v", tenantID, err)
+		}
 	}
 	var assigneeA, assigneeB string
 	if err := root.QueryRow(ctx, `
@@ -665,6 +676,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Fatalf("app role without tenant context read %d %s rows, want 0", count, table)
 		}
 	}
+	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM privacy_jobs`).Scan(&count); err != nil {
+		t.Fatalf("query privacy jobs without tenant context: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app role without tenant context read %d privacy jobs, want 0", count)
+	}
 
 	tx, err := appPool.Begin(ctx)
 	if err != nil {
@@ -727,6 +744,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Fatalf("tenant A %s count = %d, error = %v, want 1", table, count, err)
 		}
 	}
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM privacy_jobs`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("tenant A privacy job count = %d, error = %v, want 1", count, err)
+	}
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM tenant_members WHERE tenant_id = $1`, tenantB,
 	).Scan(&count); err != nil {
@@ -748,6 +768,19 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		`INSERT INTO tenant_members (tenant_id, email) VALUES ($1, 'intruder@beta.test')`, tenantB,
 	); err == nil {
 		t.Fatal("cross-tenant insert succeeded, want RLS rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin cross-tenant privacy job transaction: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO privacy_jobs (tenant_id, kind, status, actor_member_id)
+		VALUES ($1, 'reporter_export', 'pending', $2)
+	`, tenantB, memberB); err == nil {
+		t.Fatal("cross-tenant privacy job insert succeeded, want RLS rejection")
 	}
 	_ = tx.Rollback(ctx)
 
@@ -928,6 +961,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM ai_gemini_files`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin Gemini file count = %d, error = %v, want 2", count, err)
+	}
+	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM privacy_jobs`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("admin privacy job count = %d, error = %v, want 2", count, err)
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM issue_updates`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin issue update count = %d, error = %v, want 2", count, err)

@@ -283,6 +283,23 @@ was removed from the staging test tenant.
         versions on every request. PostgreSQL migration replay/isolation, backend coverage, static
         analysis, frontend checks, and desktop/mobile ownership journeys pass locally.
     - [ ] #25: audit and implement data access/export/deletion/retention controls after #24.
+      - Audit result: tenant deletion, plan-based replay cleanup, and bounded analytics retention
+        already exist and must remain the authoritative paths. Completed attachments have no retention
+        cleanup, replay deletion loses its manifest, `notify_reporter` does not preserve consent
+        history, and there is no export or verified reporter-rights workflow.
+      - Approved design:
+        `docs/superpowers/specs/2026-07-23-data-rights-export-retention-design.md`.
+      - [x] Slice 1: durable workspace export jobs, allowlisted JSON/JSONL ZIP generation, private
+        object upload, short-lived signed download, active-human authorization, audit, and retry.
+        PostgreSQL migration/RLS, reconciled deterministic queueing, tenant-atomic claim, consistent
+        archive snapshot, failure recovery, HTTP authorization, signed-download audit, full backend
+        tests, and `go vet` pass locally.
+      - [ ] Slice 2: verified reporter export/anonymization, independent consent history, media and
+        progress-token cleanup, public status, and exact-identifier isolation.
+      - [ ] Slice 3: attachment/replay manifest-preserving retention, export/request expiry,
+        bounded storage reconciliation, effective-retention API, and technical privacy inventory.
+      - [ ] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile
+        E2E, CI, and staging validation.
     - [ ] #26: audit and implement layered public-submission abuse protection after #25.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.

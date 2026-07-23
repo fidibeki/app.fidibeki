@@ -9,25 +9,27 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/hibiken/asynq"
 )
 
 type Options struct {
-	RedisURL           string
-	EmailConcurrency   int
-	AIConcurrency      int
-	Logger             asynq.Logger
-	Sender             email.Sender
-	PipelineHandler    asynq.HandlerFunc
-	TextHandler        asynq.HandlerFunc
-	AttachmentHandler  asynq.HandlerFunc
-	FileDeleteHandler  asynq.HandlerFunc
-	AIErrorHandler     asynq.ErrorHandler
-	ReporterHandler    asynq.HandlerFunc
-	LifecycleHandler   asynq.HandlerFunc
-	ReplayMergeHandler asynq.HandlerFunc
-	IntegrationHandler asynq.HandlerFunc
+	RedisURL             string
+	EmailConcurrency     int
+	AIConcurrency        int
+	Logger               asynq.Logger
+	Sender               email.Sender
+	PipelineHandler      asynq.HandlerFunc
+	TextHandler          asynq.HandlerFunc
+	AttachmentHandler    asynq.HandlerFunc
+	FileDeleteHandler    asynq.HandlerFunc
+	AIErrorHandler       asynq.ErrorHandler
+	ReporterHandler      asynq.HandlerFunc
+	LifecycleHandler     asynq.HandlerFunc
+	ReplayMergeHandler   asynq.HandlerFunc
+	IntegrationHandler   asynq.HandlerFunc
+	PrivacyExportHandler asynq.HandlerFunc
 }
 
 type Worker struct {
@@ -50,7 +52,7 @@ func New(options Options) (*Worker, error) {
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
 		options.AIErrorHandler == nil || options.ReporterHandler == nil || options.LifecycleHandler == nil ||
 		options.ReplayMergeHandler == nil ||
-		options.IntegrationHandler == nil {
+		options.IntegrationHandler == nil || options.PrivacyExportHandler == nil {
 		return nil, fmt.Errorf("all domain and AI handlers are required")
 	}
 	if options.Logger == nil {
@@ -70,6 +72,7 @@ func New(options Options) (*Worker, error) {
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)
 	domainMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
 	domainMux.HandleFunc(integration.TaskDeliver, options.IntegrationHandler)
+	domainMux.HandleFunc(privacy.TaskExport, options.PrivacyExportHandler)
 	aiMux := asynq.NewServeMux()
 	aiMux.HandleFunc(ai.TaskTextProcess, options.TextHandler)
 	aiMux.HandleFunc(ai.TaskAttachmentProcess, options.AttachmentHandler)
