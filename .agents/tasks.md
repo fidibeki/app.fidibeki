@@ -202,7 +202,7 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 ## Task 13: End-To-End Quality Gate
 
 **Depends on:** Tasks 9, 10, 11, and 12
-**Status:** In progress
+**Status:** Complete
 
 **Outcome:** The complete public protection flow is documented, tested, and ready in staging.
 
@@ -210,6 +210,12 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 
 **Acceptance:** Migration replay, full backend/widget/web suites, static checks, responsive
 screenshots, CI, and one staging journey all pass for the same commit.
+
+**Completion:** Commit `4fd55a5` passed backend coverage, formatting, vet, golangci-lint, Compose,
+container, security, and release CI before Railway promoted API and worker in staging. The real
+Tauview widget accepted an independent four-star feedback, persisted one normalized submitted state
+across query/hash and trailing-slash variants, suppressed repeat display, surfaced the unlinked
+feedback in the inbox, completed AI analysis, and allowed the QA record to be archived.
 
 **Autonomy:** AFK
 
@@ -271,12 +277,17 @@ broken-image fallback, and responsive layouts.
 ## Task 18: Organization Identity Quality Gate
 
 **Depends on:** Task 17
-**Status:** In progress
+**Status:** Complete
 
 **Outcome:** Issues #30 and #31 are fully usable in staging.
 
 **Acceptance:** Migration, backend, web, widget, static, browser, CI, and real staging checks pass
 for the same commit without production work.
+
+**Completion:** Commit `92496cd` passed backend, web, security, and release CI. Railway staging
+applied migration 71 and serves the corresponding API/worker/web revisions. Authenticated Tauview
+journeys proved avatar and workspace-logo upload, immutable reads, immediate propagation, removal,
+fallback restoration, and no cleanup lock; all temporary identity data was removed.
 
 **Autonomy:** AFK
 
