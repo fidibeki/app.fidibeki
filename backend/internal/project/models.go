@@ -141,15 +141,16 @@ type WidgetRuleTargetConditionValues struct {
 }
 
 type Project struct {
-	ID               string     `json:"id"`
-	TenantID         string     `json:"tenant_id"`
-	Name             string     `json:"name"`
-	PublicKey        string     `json:"public_key"`
-	AllowedDomains   []string   `json:"allowed_domains"`
-	DefaultLocale    string     `json:"default_locale"`
-	WidgetLastSeenAt *time.Time `json:"widget_last_seen_at"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                    string     `json:"id"`
+	TenantID              string     `json:"tenant_id"`
+	Name                  string     `json:"name"`
+	PublicKey             string     `json:"public_key"`
+	AllowedDomains        []string   `json:"allowed_domains"`
+	DefaultLocale         string     `json:"default_locale"`
+	ReporterAccessEnabled *bool      `json:"reporter_access_enabled"`
+	WidgetLastSeenAt      *time.Time `json:"widget_last_seen_at"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type WidgetRule struct {

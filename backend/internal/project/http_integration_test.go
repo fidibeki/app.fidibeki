@@ -364,12 +364,33 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		t.Errorf("list widget rules status = %d, body = %s", listedRules.Code, listedRules.Body.String())
 	}
 
+	disabledReporterAccess := performProjectRequest(
+		handler, "acme", http.MethodPatch, "/v1/projects/"+created.Project.ID,
+		`{"name":"Acme Web","allowed_domains":["example.com"],"default_locale":"pt-AO",`+
+			`"reporter_access_enabled":false}`, ownerToken,
+	)
+	if disabledReporterAccess.Code != http.StatusOK ||
+		!strings.Contains(disabledReporterAccess.Body.String(), `"reporter_access_enabled":false`) {
+		t.Errorf("disable reporter access status = %d, body = %s",
+			disabledReporterAccess.Code, disabledReporterAccess.Body.String())
+	}
 	updatedProject := performProjectRequest(
 		handler, "acme", http.MethodPatch, "/v1/projects/"+created.Project.ID,
 		`{"name":"Acme App","allowed_domains":["app.example.com"],"default_locale":"pt-AO"}`, ownerToken,
 	)
-	if updatedProject.Code != http.StatusOK || !strings.Contains(updatedProject.Body.String(), "app.example.com") {
+	if updatedProject.Code != http.StatusOK || !strings.Contains(updatedProject.Body.String(), "app.example.com") ||
+		!strings.Contains(updatedProject.Body.String(), `"reporter_access_enabled":false`) {
 		t.Errorf("update project status = %d, body = %s", updatedProject.Code, updatedProject.Body.String())
+	}
+	inheritedReporterAccess := performProjectRequest(
+		handler, "acme", http.MethodPatch, "/v1/projects/"+created.Project.ID,
+		`{"name":"Acme App","allowed_domains":["app.example.com"],"default_locale":"pt-AO",`+
+			`"reporter_access_enabled":null}`, ownerToken,
+	)
+	if inheritedReporterAccess.Code != http.StatusOK ||
+		!strings.Contains(inheritedReporterAccess.Body.String(), `"reporter_access_enabled":null`) {
+		t.Errorf("inherit reporter access status = %d, body = %s",
+			inheritedReporterAccess.Code, inheritedReporterAccess.Body.String())
 	}
 	deleteRule := performProjectRequest(
 		handler, "acme", http.MethodDelete,

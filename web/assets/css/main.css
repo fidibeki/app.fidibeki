@@ -214,6 +214,10 @@ svg {
   background: var(--amber);
 }
 
+.status-needs_info::before {
+  background: var(--amber);
+}
+
 .status-resolved::before,
 .status-ready::before,
 .status-positive::before {

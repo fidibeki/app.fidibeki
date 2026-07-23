@@ -20,7 +20,7 @@ import (
 
 func TestStatusAndReporterDestination(t *testing.T) {
 	t.Parallel()
-	for _, status := range []Status{StatusOpen, StatusInProgress, StatusResolved, StatusClosed} {
+	for _, status := range []Status{StatusOpen, StatusInProgress, StatusNeedsInfo, StatusResolved, StatusClosed} {
 		if !status.Valid() {
 			t.Errorf("Status(%q).Valid() = false", status)
 		}
@@ -39,8 +39,18 @@ func TestStatusAndReporterDestination(t *testing.T) {
 		t.Errorf("destination = %#v", destinations[0])
 	}
 	event.Event = "feedback.created"
+	event.ResourceType = "feedback"
+	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 1 {
+		t.Errorf("Resolve(feedback receipt) = %#v, %v", destinations, err)
+	}
+	event.Event = "feedback.updated"
 	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 0 {
 		t.Errorf("Resolve(unrelated) = %#v, %v", destinations, err)
+	}
+	event.ResourceType = "issue"
+	event.Event = "issue.created"
+	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 1 {
+		t.Errorf("Resolve(issue created) = %#v, %v", destinations, err)
 	}
 }
 
@@ -48,9 +58,10 @@ func TestReporterMessageEscapesContentAndUsesStableIdentity(t *testing.T) {
 	t.Parallel()
 	message := reporterMessage(ReporterNotification{
 		OutboxEventID: "event-id", TenantName: `Acme <script>`, PublicID: "ACME-2026-0001",
-		Title: `<img src=x onerror=alert(1)>`, Status: StatusInProgress,
+		TenantSlug: "acme",
+		Title:      `<img src=x onerror=alert(1)>`, Status: StatusInProgress,
 		ReporterEmail: "reporter@example.com",
-	}, "https://api.fidibeki.com/", "signed token")
+	}, "https://api.fidibeki.com/", "fidibeki.com", "portal-token", "signed token")
 	if message.IdempotencyKey != "reporter:event-id" || message.To != "reporter@example.com" {
 		t.Errorf("message identity = %#v", message)
 	}
@@ -58,7 +69,8 @@ func TestReporterMessageEscapesContentAndUsesStableIdentity(t *testing.T) {
 		t.Errorf("HTML was not escaped: %s", message.HTML)
 	}
 	if !strings.Contains(message.Text, "in progress") ||
-		!strings.Contains(message.Text, "token=signed+token") {
+		!strings.Contains(message.Text, "token=signed+token") ||
+		!strings.Contains(message.Text, "https://acme.fidibeki.com/reporter/portal-token") {
 		t.Errorf("message text = %q", message.Text)
 	}
 	if !strings.Contains(message.From, "Acme <script> via Fidibeki") ||

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
@@ -23,7 +24,10 @@ const TaskReporterNotify = "issue:reporter-notify"
 type OutboxResolver struct{}
 
 func (OutboxResolver) Resolve(_ context.Context, event outbox.Event) ([]outbox.Destination, error) {
-	if event.ResourceType != "issue" || (event.Event != "issue.updated" && event.Event != "issue.resolved") {
+	issueEvent := event.ResourceType == "issue" &&
+		(event.Event == "issue.created" || event.Event == "issue.updated" || event.Event == "issue.resolved")
+	feedbackReceipt := event.ResourceType == "feedback" && event.Event == "feedback.created"
+	if !issueEvent && !feedbackReceipt {
 		return nil, nil
 	}
 	return []outbox.Destination{{
@@ -38,16 +42,20 @@ type ReporterTask struct {
 }
 
 type ReporterNotification struct {
-	OutboxEventID string
-	TenantID      string
-	TenantName    string
-	IssueID       string
-	PublicID      string
-	Title         string
-	Status        Status
-	ReporterEmail string
-	Notify        bool
-	Event         string
+	OutboxEventID  string
+	TenantID       string
+	TenantName     string
+	TenantSlug     string
+	ResourceType   string
+	ResourceID     string
+	IssueID        string
+	PublicID       string
+	Title          string
+	Status         Status
+	ReporterEmail  string
+	Notify         bool
+	Event          string
+	ReporterPrompt string
 }
 
 type DeliveryAttempt struct {
@@ -59,25 +67,59 @@ func (s Store) LoadReporterNotification(
 	ctx context.Context,
 	task ReporterTask,
 ) (ReporterNotification, error) {
+	var resourceType string
+	err := s.Database.QueryRow(ctx, `
+		SELECT resource_type FROM outbox_events
+		WHERE id = $1 AND tenant_id = $2 AND resource_id = $3
+	`, task.OutboxEventID, task.TenantID, task.ResourceID).Scan(&resourceType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReporterNotification{}, ErrNotFound
+	}
+	if err != nil {
+		return ReporterNotification{}, fmt.Errorf("load reporter event: %w", err)
+	}
+	if resourceType == "feedback" {
+		return s.loadFeedbackReceipt(ctx, task)
+	}
+	if resourceType != "issue" {
+		return ReporterNotification{}, ErrNotFound
+	}
+	return s.loadIssueNotification(ctx, task)
+}
+
+func (s Store) loadIssueNotification(
+	ctx context.Context,
+	task ReporterTask,
+) (ReporterNotification, error) {
 	var notification ReporterNotification
 	err := s.Database.QueryRow(ctx, `
-		SELECT event.id, event.tenant_id, tenant.name, issue.id, issue.public_id,
+		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
+		       issue.id, issue.public_id,
 		       issue.title, COALESCE(update.new_status, issue.status), issue.reporter_email,
-		       issue.notify_reporter, event.event
+		       issue.notify_reporter, event.event, COALESCE(clarification.prompt, '')
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN issues AS issue
 		  ON issue.id = event.resource_id AND issue.tenant_id = event.tenant_id
 		LEFT JOIN issue_updates AS update
 		  ON update.id::text = event.event_key AND update.tenant_id = event.tenant_id
+		LEFT JOIN reporter_clarification_requests AS clarification
+		  ON clarification.requested_activity_id::text = (
+		      SELECT activity.id::text FROM issue_activities AS activity
+		      WHERE activity.tenant_id = event.tenant_id
+		        AND activity.issue_id = issue.id
+		        AND activity.data->>'legacy_update_id' = event.event_key
+		      LIMIT 1
+		  )
 		WHERE event.id = $1 AND event.tenant_id = $2 AND event.resource_id = $3
 		  AND event.resource_type = 'issue'
-		  AND event.event IN ('issue.updated', 'issue.resolved')
+		  AND event.event IN ('issue.created', 'issue.updated', 'issue.resolved')
 	`, task.OutboxEventID, task.TenantID, task.ResourceID).Scan(
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
+		&notification.TenantSlug, &notification.ResourceType,
 		&notification.IssueID, &notification.PublicID, &notification.Title,
 		&notification.Status, &notification.ReporterEmail, &notification.Notify,
-		&notification.Event,
+		&notification.Event, &notification.ReporterPrompt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReporterNotification{}, ErrNotFound
@@ -85,6 +127,38 @@ func (s Store) LoadReporterNotification(
 	if err != nil {
 		return ReporterNotification{}, fmt.Errorf("load reporter notification: %w", err)
 	}
+	notification.ResourceID = task.ResourceID
+	return notification, nil
+}
+
+func (s Store) loadFeedbackReceipt(
+	ctx context.Context,
+	task ReporterTask,
+) (ReporterNotification, error) {
+	var notification ReporterNotification
+	err := s.Database.QueryRow(ctx, `
+		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
+		       feedback.public_id, feedback.title, feedback.reporter_email,
+		       feedback.notify_reporter, event.event
+		FROM outbox_events AS event
+		JOIN tenants AS tenant ON tenant.id = event.tenant_id
+		JOIN feedbacks AS feedback
+		  ON feedback.id = event.resource_id AND feedback.tenant_id = event.tenant_id
+		WHERE event.id = $1 AND event.tenant_id = $2 AND event.resource_id = $3
+		  AND event.resource_type = 'feedback' AND event.event = 'feedback.created'
+	`, task.OutboxEventID, task.TenantID, task.ResourceID).Scan(
+		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
+		&notification.TenantSlug, &notification.ResourceType,
+		&notification.PublicID, &notification.Title, &notification.ReporterEmail,
+		&notification.Notify, &notification.Event,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReporterNotification{}, ErrNotFound
+	}
+	if err != nil {
+		return ReporterNotification{}, fmt.Errorf("load reporter feedback receipt: %w", err)
+	}
+	notification.ResourceID = task.ResourceID
 	return notification, nil
 }
 
@@ -106,7 +180,7 @@ func (s Store) StartDeliveryAttempt(
 	err := s.Database.QueryRow(ctx, `
 		INSERT INTO delivery_logs (
 			tenant_id, outbox_event_id, event, resource_type, resource_id, attempt_number
-		) VALUES ($1, $2, $3, 'issue', $4, $5)
+		) VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (outbox_event_id, delivery_key, attempt_number) DO UPDATE
 		SET status = CASE
 		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.status
@@ -118,7 +192,8 @@ func (s Store) StartDeliveryAttempt(
 		    END
 		RETURNING id, status
 	`, notification.TenantID, notification.OutboxEventID, notification.Event,
-		notification.IssueID, attemptNumber).Scan(&attempt.ID, &status)
+		notification.ResourceType, notification.ResourceID, attemptNumber).
+		Scan(&attempt.ID, &status)
 	if err != nil {
 		return DeliveryAttempt{}, fmt.Errorf("start delivery attempt: %w", err)
 	}
@@ -161,6 +236,7 @@ type ReporterHandler struct {
 	Sender        email.Sender
 	Tokens        *auth.JWTManager
 	PublicBaseURL string
+	BaseDomain    string
 	Now           func() time.Time
 }
 
@@ -181,52 +257,135 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 		if !notification.Notify || strings.TrimSpace(notification.ReporterEmail) == "" {
 			return nil
 		}
-		token, _, err := h.Tokens.IssueReporterUnsubscribe(notification.IssueID, notification.TenantID)
-		if err != nil {
-			return fmt.Errorf("issue reporter unsubscribe token: %w", err)
-		}
-		message := reporterMessage(notification, h.PublicBaseURL, token)
 		retryCount, _ := asynq.GetRetryCount(ctx)
 		attempt, err := h.Store.StartDeliveryAttempt(ctx, notification, retryCount+1)
 		if err != nil {
 			return err
 		}
 		if attempt.Completed {
-			return nil
+			return h.Store.RecordReporterNotification(ctx, notification, h.now())
 		}
+		var unsubscribeToken string
+		if notification.ResourceType == "feedback" {
+			unsubscribeToken, _, err = h.Tokens.IssueFeedbackReporterUnsubscribe(
+				notification.ResourceID, notification.TenantID,
+			)
+		} else {
+			unsubscribeToken, _, err = h.Tokens.IssueReporterUnsubscribe(
+				notification.IssueID, notification.TenantID,
+			)
+		}
+		if err != nil {
+			return fmt.Errorf("reporter unsubscribe token: %w", err)
+		}
+		portalToken := ""
+		if notification.IssueID != "" {
+			portalToken, _, err = h.Store.RotateReporterAccess(
+				ctx, notification.TenantID, notification.IssueID, h.now(),
+			)
+			if err != nil {
+				return err
+			}
+		}
+		message := reporterMessage(
+			notification, h.PublicBaseURL, h.BaseDomain, portalToken, unsubscribeToken,
+		)
 		providerID, err := h.Sender.Send(ctx, message)
 		if err != nil {
 			markErr := h.Store.MarkDeliveryFailed(ctx, attempt.ID, err.Error())
 			return errors.Join(fmt.Errorf("send reporter notification: %w", err), markErr)
 		}
-		now := time.Now().UTC()
-		if h.Now != nil {
-			now = h.Now().UTC()
+		now := h.now()
+		if err := h.Store.MarkDeliverySent(ctx, attempt.ID, providerID, now); err != nil {
+			return err
 		}
-		return h.Store.MarkDeliverySent(ctx, attempt.ID, providerID, now)
+		return h.Store.RecordReporterNotification(ctx, notification, now)
 	}
 }
 
-func reporterMessage(notification ReporterNotification, publicBaseURL, token string) email.Message {
+func (h ReporterHandler) now() time.Time {
+	if h.Now != nil {
+		return h.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (s Store) RecordReporterNotification(
+	ctx context.Context,
+	notification ReporterNotification,
+	now time.Time,
+) error {
+	if notification.IssueID == "" {
+		return nil
+	}
+	_, err := activity.Record(ctx, s.Database, activity.RecordInput{
+		ID: notification.OutboxEventID, TenantID: notification.TenantID,
+		IssueID: notification.IssueID, Kind: "reporter.notified",
+		Visibility: activity.VisibilityReporter,
+		Data: map[string]any{
+			"channel": "email", "event": notification.Event, "status": notification.Status,
+		}, CreatedAt: now,
+	})
+	return err
+}
+
+func reporterMessage(
+	notification ReporterNotification,
+	publicBaseURL string,
+	baseDomain string,
+	portalToken string,
+	unsubscribeToken string,
+) email.Message {
 	unsubscribeURL := strings.TrimRight(publicBaseURL, "/") +
-		"/v1/reporter/unsubscribe?token=" + url.QueryEscape(token)
+		"/v1/reporter/unsubscribe?token=" + url.QueryEscape(unsubscribeToken)
+	portalURL := reporterPortalURL(publicBaseURL, baseDomain, notification.TenantSlug, portalToken)
 	status := strings.ReplaceAll(string(notification.Status), "_", " ")
 	from := (&mail.Address{
 		Name: notification.TenantName + " via Fidibeki", Address: "updates@fidibeki.com",
 	}).String()
-	text := fmt.Sprintf(
-		"%s updated issue %s to %s.\n\n%s\n\nUnsubscribe: %s",
-		notification.TenantName, notification.PublicID, status, notification.Title, unsubscribeURL,
-	)
-	htmlBody := fmt.Sprintf(
-		"<p>%s updated issue <strong>%s</strong> to <strong>%s</strong>.</p>"+
-			"<p>%s</p><p><a href=\"%s\">Unsubscribe from updates</a></p>",
-		html.EscapeString(notification.TenantName), html.EscapeString(notification.PublicID),
-		html.EscapeString(status), html.EscapeString(notification.Title), html.EscapeString(unsubscribeURL),
-	)
+	headline := notification.TenantName + " updated issue " + notification.PublicID + " to " + status + "."
+	subject := "Update on " + notification.PublicID
+	if notification.ResourceType == "feedback" {
+		headline = notification.TenantName + " received your feedback " + notification.PublicID + "."
+		subject = "Feedback received: " + notification.PublicID
+	}
+	if notification.Event == "issue.created" {
+		headline = notification.TenantName + " created issue " + notification.PublicID + " from your feedback."
+	}
+	if notification.Status == StatusResolved || notification.Status == StatusClosed {
+		headline = notification.TenantName + " completed issue " + notification.PublicID + "."
+	}
+	textParts := []string{headline, notification.Title}
+	htmlParts := []string{
+		"<p>" + html.EscapeString(headline) + "</p>",
+		"<p>" + html.EscapeString(notification.Title) + "</p>",
+	}
+	if notification.ReporterPrompt != "" {
+		textParts = append(textParts, "Information requested: "+notification.ReporterPrompt)
+		htmlParts = append(htmlParts, "<p><strong>Information requested</strong><br>"+
+			html.EscapeString(notification.ReporterPrompt)+"</p>")
+	}
+	if portalURL != "" {
+		textParts = append(textParts, "View progress: "+portalURL)
+		htmlParts = append(htmlParts, "<p><a href=\""+html.EscapeString(portalURL)+"\">View progress</a></p>")
+	}
+	textParts = append(textParts, "Unsubscribe: "+unsubscribeURL)
+	htmlParts = append(htmlParts, "<p><a href=\""+html.EscapeString(unsubscribeURL)+"\">Unsubscribe from updates</a></p>")
 	return email.Message{
 		From: from, To: notification.ReporterEmail,
-		Subject: "Update on " + notification.PublicID, Text: text, HTML: htmlBody,
+		Subject: subject,
+		Text:    strings.Join(textParts, "\n\n"), HTML: strings.Join(htmlParts, ""),
 		IdempotencyKey: "reporter:" + notification.OutboxEventID,
 	}
+}
+
+func reporterPortalURL(publicBaseURL, baseDomain, tenantSlug, token string) string {
+	if token == "" || baseDomain == "" || tenantSlug == "" {
+		return ""
+	}
+	scheme := "https"
+	if strings.HasPrefix(publicBaseURL, "http://") {
+		scheme = "http"
+	}
+	return scheme + "://" + tenantSlug + "." + baseDomain + "/reporter/" + url.PathEscape(token)
 }

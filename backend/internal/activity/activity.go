@@ -64,6 +64,7 @@ func Record(ctx context.Context, query db.Querier, input RecordInput) (string, e
 		INSERT INTO issue_activities (
 			id, tenant_id, issue_id, actor_member_id, kind, visibility, data, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id) DO NOTHING
 	`, id, input.TenantID, input.IssueID, input.ActorMemberID, input.Kind,
 		visibility, string(payload), input.CreatedAt.UTC()); err != nil {
 		return "", fmt.Errorf("record issue activity: %w", err)

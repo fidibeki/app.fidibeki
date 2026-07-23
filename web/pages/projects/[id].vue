@@ -41,6 +41,7 @@ const notice = ref('')
 const projectName = ref('')
 const projectDomains = ref('')
 const projectDefaultLocale = ref('en')
+const projectReporterAccess = ref<'inherit' | 'enabled' | 'disabled'>('inherit')
 const copied = ref(false)
 const editingLocale = ref('en')
 const newLocale = ref('')
@@ -68,6 +69,9 @@ watch(data, (value) => {
   projectName.value = value.project.name
   projectDomains.value = value.project.allowed_domains.join('\n')
   projectDefaultLocale.value = value.project.default_locale || 'en'
+  projectReporterAccess.value = value.project.reporter_access_enabled == null
+    ? 'inherit'
+    : value.project.reporter_access_enabled ? 'enabled' : 'disabled'
   if (!editingNew.value) {
     const selected = value.rules.find((rule) => rule.id === selectedRuleID.value) || value.rules[0]
     if (selected) selectRule(selected)
@@ -336,6 +340,9 @@ async function saveProject() {
       name: projectName.value,
       allowed_domains: projectDomains.value.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean),
       default_locale: projectDefaultLocale.value.trim(),
+      reporter_access_enabled: projectReporterAccess.value === 'inherit'
+        ? null
+        : projectReporterAccess.value === 'enabled',
     } })
     notice.value = 'Project settings saved.'
     await refresh()
@@ -416,7 +423,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update the collection name and allowed browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update collection, access, and browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Reporter progress access<select v-model="projectReporterAccess" class="app-select"><option value="inherit">Inherit workspace</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label class="wide">Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
@@ -514,6 +521,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-settings > form { padding: 16px; }
 .project-settings > form > fieldset { display: grid; min-width: 0; grid-template-columns: 1fr 1.4fr; gap: 14px; margin: 0; padding: 0; border: 0; }
 .project-settings label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
+.project-settings label.wide { grid-column: 1 / -1; }
 .project-settings textarea { min-height: 96px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 10px; }
 .project-settings > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; background: #fff8f8; border-top: 1px solid #efc2c6; }
 .project-settings footer > div { display: flex; flex-direction: column; gap: 3px; }

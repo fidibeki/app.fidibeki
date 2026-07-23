@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	svix "github.com/svix/svix-webhooks/go"
 )
 
@@ -21,9 +25,12 @@ type WebhookVerifier interface {
 }
 
 type PublicHTTPOptions struct {
-	Store    Store
-	Tokens   *auth.JWTManager
-	Verifier WebhookVerifier
+	Store             Store
+	Tokens            *auth.JWTManager
+	Verifier          WebhookVerifier
+	Begin             db.BeginFunc
+	Limiter           ratelimit.Limiter
+	TrustedProxyCIDRs []netip.Prefix
 }
 
 type PublicHTTPHandler struct {
@@ -41,7 +48,14 @@ func NewWebhookVerifier(secret string) (WebhookVerifier, error) {
 func RegisterPublicRoutes(router chi.Router, options PublicHTTPOptions) {
 	handler := &PublicHTTPHandler{options: options}
 	router.Get("/v1/reporter/unsubscribe", handler.unsubscribe)
+	RegisterReporterProgressRoutes(router, options)
 	router.Post("/v1/webhooks/resend", handler.resendWebhook)
+}
+
+func RegisterReporterProgressRoutes(router chi.Router, options PublicHTTPOptions) {
+	handler := &PublicHTTPHandler{options: options}
+	router.Get("/v1/reporter/progress/{token}", handler.reporterProgress)
+	router.Post("/v1/reporter/progress/{token}/response", handler.reporterResponse)
 }
 
 func (h *PublicHTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +73,10 @@ func (h *PublicHTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request) 
 		writeUnsubscribeError(w)
 		return
 	}
-	found, err := h.options.Store.UnsubscribeReporter(r.Context(), claims.TenantID, claims.Subject)
+	feedbackToken := auth.IsFeedbackReporterUnsubscribe(claims)
+	found, err := h.options.Store.UnsubscribeReporter(
+		r.Context(), claims.TenantID, claims.Subject, feedbackToken,
+	)
 	if err != nil {
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 		return
@@ -71,7 +88,7 @@ func (h *PublicHTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Unsubscribed</title><body><main><h1>Unsubscribed</h1><p>You will no longer receive updates for this issue.</p></main></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Unsubscribed</title><body><main><h1>Unsubscribed</h1><p>You will no longer receive updates for this feedback.</p></main></body></html>`)
 }
 
 func (h *PublicHTTPHandler) resendWebhook(w http.ResponseWriter, r *http.Request) {
@@ -117,8 +134,27 @@ func writeUnsubscribeError(w http.ResponseWriter) {
 	api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "unsubscribe link is invalid or expired", nil)
 }
 
-func (s Store) UnsubscribeReporter(ctx context.Context, tenantID, issueID string) (bool, error) {
+func (s Store) UnsubscribeReporter(
+	ctx context.Context,
+	tenantID string,
+	resourceID string,
+	feedbackResource bool,
+) (bool, error) {
 	var found bool
+	if feedbackResource {
+		err := s.Database.QueryRow(ctx, `
+			UPDATE feedbacks SET notify_reporter = false
+			WHERE tenant_id = $1 AND id = $2
+			RETURNING true
+		`, tenantID, resourceID).Scan(&found)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("unsubscribe feedback reporter: %w", err)
+		}
+		return found, nil
+	}
 	err := s.Database.QueryRow(ctx, `
 		WITH target AS (
 			UPDATE issues SET notify_reporter = false
@@ -130,7 +166,7 @@ func (s Store) UnsubscribeReporter(ctx context.Context, tenantID, issueID string
 			WHERE feedback.tenant_id = target.tenant_id AND feedback.issue_id = target.id
 		)
 		SELECT EXISTS (SELECT 1 FROM target)
-	`, tenantID, issueID).Scan(&found)
+	`, tenantID, resourceID).Scan(&found)
 	if err != nil {
 		return false, fmt.Errorf("unsubscribe reporter: %w", err)
 	}
@@ -156,6 +192,11 @@ func (s Store) ApplyResendEvent(
 			    webhook_event_id = NULLIF($3, '')
 			WHERE provider_message_id = $1
 			RETURNING tenant_id, resource_type, resource_id
+		), direct_feedback_unsubscribed AS (
+			UPDATE feedbacks AS feedback SET notify_reporter = false
+			FROM matched
+			WHERE matched.resource_type = 'feedback'
+			  AND feedback.tenant_id = matched.tenant_id AND feedback.id = matched.resource_id
 		), issues_unsubscribed AS (
 			UPDATE issues AS issue SET notify_reporter = false
 			FROM matched

@@ -294,9 +294,12 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		jwtManager, platformadmin.PlatformQueueAccessCookie, auth.PermissionPlatformTenantRead,
 	)).Mount(queuemonitor.RootPath, queueMonitor)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
-	issue.RegisterPublicRoutes(platformRoutes, issue.PublicHTTPOptions{
+	reporterProgressOptions := issue.PublicHTTPOptions{
 		Store: issue.Store{Database: pools.Admin}, Tokens: reporterTokens, Verifier: resendVerifier,
-	})
+		Begin: db.BeginFromPool(pools.Admin), Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+	}
+	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,
@@ -343,6 +346,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Logger:     logger,
 	})(tenantRoutes)
 	tenantRoot := chi.NewRouter()
+	issue.RegisterReporterProgressRoutes(tenantRoot, reporterProgressOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Store: feedback.Store{}, JWT: jwtManager,
@@ -546,7 +550,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	reporterHandler := issue.ReporterHandler{
 		Store: issue.Store{Database: pools.Admin}, Sender: sender, Tokens: reporterTokens,
-		PublicBaseURL: settings.PublicBaseURL,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
 	integrationHandler := integration.DeliveryHandler{
 		Store: integration.Store{Database: pools.Admin, Cipher: integrationCipher},

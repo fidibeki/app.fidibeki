@@ -138,11 +138,21 @@ was removed from the staging test tenant.
   - Implementation path: first introduce one immutable activity/comment foundation and use it for
     every Issue mutation; add mentions on that contract; then build reporter access/communication and
     finally enrich all integration consumers from the same versioned events.
-- [ ] Add standalone internal comments, member mentions with internal notifications, and immutable
+- [x] Add standalone internal comments, member mentions with internal notifications, and immutable
   activity coverage for every operational mutation and reporter communication.
-- [ ] Complete reporter communication with receipt, important progress, `needs_info`, and final
+  - Migration `56` adds the append-only Issue activity stream, independent comments, mentions, and
+    member notifications. Issue creation, status/metadata/assignment/tags, links, merges, reporter
+    responses, access changes, and delivered reporter messages now share that activity contract.
+- [x] Complete reporter communication with receipt, important progress, `needs_info`, and final
   resolution messages; add secure hashed, scoped, revocable, rate-limited reporter access with
   tenant/project opt-out enforced at request time and a one-response clarification flow.
+  - Migration `57` adds `needs_info`, tenant/project/Issue access policy, hashed resource-scoped
+    tokens, and single-response clarification requests. `feedback.created` sends an idempotent receipt;
+    Issue changes send progress/final messages with tenant-hosted links. Links expose only sanitized
+    progress, remain valid across later emails, and are invalidated immediately by scoped revocation.
+  - Backend tests cover receipt unsubscribe/complaint, policy inheritance compatibility, token
+    revocation, older-link continuity, clarification response idempotency, and migration replay.
+    Web type/unit tests and the complete 97-pass E2E suite cover operator, policy, and public flows.
 - [ ] Enrich Slack Block Kit, Teams, and additive versioned generic webhooks with complete context,
   changes, actors, comments, attachments, timestamps, and environment-aware resource links.
   Interactive Slack/Teams commands remain outside these three phases.

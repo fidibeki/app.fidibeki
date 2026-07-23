@@ -62,6 +62,26 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/member-domains", handler.requestMemberDomainVerification)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberUpdate))...).
 		Patch("/v1/members/{memberID}", handler.updateMember)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
+		Patch("/v1/reporter-access", handler.updateReporterAccess)
+}
+
+func (h *HTTPHandler) updateReporterAccess(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	if err := h.options.Store.UpdateReporterAccess(r.Context(), query, resolved.ID, request.Enabled); err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]bool{"reporter_access_enabled": request.Enabled})
 }
 
 func (h *HTTPHandler) listMemberDomains(w http.ResponseWriter, r *http.Request) {

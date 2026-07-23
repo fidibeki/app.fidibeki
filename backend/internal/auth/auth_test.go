@@ -202,4 +202,13 @@ func TestJWTManagerIssuesReporterUnsubscribeToken(t *testing.T) {
 	if _, _, err := manager.IssueReporterUnsubscribe("issue-id", ""); err == nil {
 		t.Error("IssueReporterUnsubscribe(empty tenant) error = nil")
 	}
+	feedbackToken, _, err := manager.IssueFeedbackReporterUnsubscribe("feedback-id", "tenant-id")
+	if err != nil {
+		t.Fatalf("IssueFeedbackReporterUnsubscribe() error = %v", err)
+	}
+	feedbackClaims, err := manager.Verify(feedbackToken, AudienceReporterUnsubscribe)
+	if err != nil || feedbackClaims.Subject != "feedback-id" ||
+		!IsFeedbackReporterUnsubscribe(feedbackClaims) {
+		t.Fatalf("feedback reporter claims = %#v, error = %v", feedbackClaims, err)
+	}
 }

@@ -317,6 +317,20 @@ async function deleteIntegration(integration: Integration) {
   }
 }
 
+async function updateReporterAccess(enabled: boolean) {
+  if (!canWrite('tenant:update') || !data.value || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    await $apiFetch('/v1/reporter-access', { method: 'PATCH', body: { enabled } })
+    data.value.configuration.tenant.reporter_access_enabled = enabled
+  } catch (accessError) {
+    formError.value = apiErrorMessage(accessError, 'Reporter access policy could not be updated.')
+  } finally {
+    pending.value = false
+  }
+}
+
 function isExpired(value?: string | null) {
   return value ? new Date(value).getTime() <= Date.now() : false
 }
@@ -358,6 +372,11 @@ useHead({ title: 'Settings - Fidibeki' })
           <ul class="settings-features">
             <li v-for="(enabled, feature) in data.configuration.plan.features" :key="feature" :data-enabled="enabled"><component :is="enabled ? Check : X" :size="13" />{{ featureLabels[String(feature)] || String(feature).replaceAll('_', ' ') }}</li>
           </ul>
+        </div>
+        <div class="app-surface settings-section settings-reporter-policy">
+          <header><div><p class="app-eyebrow">Reporter access</p><h2>Progress links</h2></div><span class="settings-domain-mode" :data-enforced="data.configuration.tenant.reporter_access_enabled">{{ data.configuration.tenant.reporter_access_enabled ? 'Enabled' : 'Disabled' }}</span></header>
+          <label><span><b>Reporter progress access</b><small>Applies to every project unless a project disables access.</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" aria-label="Reporter progress access" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
+          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
         </div>
       </section>
 
@@ -474,6 +493,13 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-tabs a[data-active='true'] { color: var(--teal); }
 .settings-tabs a[data-active='true']::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--teal); content: ''; }
 .settings-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
+.settings-reporter-policy { grid-column: 1 / -1; }
+.settings-reporter-policy > label { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 16px; }
+.settings-reporter-policy > label > span { display: flex; flex-direction: column; gap: 4px; }
+.settings-reporter-policy b { font-size: 11px; }
+.settings-reporter-policy small { color: var(--muted); font-size: 9px; }
+.settings-reporter-policy input { width: 18px; height: 18px; accent-color: var(--teal); }
+.settings-reporter-policy .settings-form-error { margin: 0 16px 14px; }
 .settings-members-page { display: grid; gap: 16px; }
 .settings-section { overflow: hidden; }
 .settings-section > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; border-bottom: 1px solid var(--line); }

@@ -42,6 +42,7 @@ func (Store) CreateProject(
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (public_key) DO NOTHING
 		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
+		          reporter_access_enabled,
 		          widget_last_seen_at, created_at, updated_at
 	`, tenantID, name, publicKey, allowedDomains, defaultLocale))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -56,6 +57,7 @@ func (Store) CreateProject(
 func (Store) ListProjects(ctx context.Context, query db.Querier, tenantID string) ([]Project, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
+		       reporter_access_enabled,
 		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 ORDER BY created_at, id
 	`, tenantID)
@@ -85,6 +87,7 @@ func (Store) GetProject(
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
 		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
+		       reporter_access_enabled,
 		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 AND id = $2
 	`, tenantID, projectID))
@@ -105,18 +108,33 @@ func (Store) UpdateProject(
 	name string,
 	allowedDomains []string,
 	defaultLocale string,
+	setReporterAccess bool,
+	reporterAccessEnabled *bool,
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
-		UPDATE projects SET name = $3, allowed_domains = $4, default_locale = $5
+		UPDATE projects SET name = $3, allowed_domains = $4, default_locale = $5,
+		                    reporter_access_enabled = CASE
+		                        WHEN $6 THEN $7::boolean
+		                        ELSE reporter_access_enabled
+		                    END
 		WHERE tenant_id = $1 AND id = $2
 		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
+		          reporter_access_enabled,
 		          widget_last_seen_at, created_at, updated_at
-	`, tenantID, projectID, name, allowedDomains, defaultLocale))
+	`, tenantID, projectID, name, allowedDomains, defaultLocale,
+		setReporterAccess, reporterAccessEnabled))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
 	if err != nil {
 		return Project{}, fmt.Errorf("update project: %w", err)
+	}
+	if setReporterAccess && reporterAccessEnabled != nil && !*reporterAccessEnabled {
+		if _, err := query.Exec(ctx, `
+			DELETE FROM reporter_access_tokens WHERE tenant_id = $1 AND project_id = $2
+		`, tenantID, projectID); err != nil {
+			return Project{}, fmt.Errorf("revoke project reporter access tokens: %w", err)
+		}
 	}
 	return project, nil
 }
@@ -554,7 +572,7 @@ func scanProject(row rowScanner) (Project, error) {
 	var widgetLastSeenAt pgtype.Timestamptz
 	err := row.Scan(
 		&project.ID, &project.TenantID, &project.Name, &project.PublicKey,
-		&project.AllowedDomains, &project.DefaultLocale, &widgetLastSeenAt,
+		&project.AllowedDomains, &project.DefaultLocale, &project.ReporterAccessEnabled, &widgetLastSeenAt,
 		&project.CreatedAt, &project.UpdatedAt,
 	)
 	if widgetLastSeenAt.Valid {

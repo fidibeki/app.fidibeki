@@ -18,7 +18,7 @@ func TestPostgresResolverResolve(t *testing.T) {
 	deletionRequestedAt := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	querier := &resolverQuerier{
 		row: resolverRow{scan: func(destinations ...any) error {
-			if len(destinations) != 7 {
+			if len(destinations) != 8 {
 				return errors.New("unexpected destination count")
 			}
 			*destinations[0].(*string) = "0762af3d-01b4-452f-81ad-dabf7652395f"
@@ -28,6 +28,7 @@ func TestPostgresResolverResolve(t *testing.T) {
 			*destinations[4].(*string) = string(StatusTrial)
 			*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: trialEndsAt, Valid: true}
 			*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: deletionRequestedAt, Valid: true}
+			*destinations[7].(*bool) = true
 			return nil
 		}},
 	}
@@ -51,6 +52,9 @@ func TestPostgresResolverResolve(t *testing.T) {
 	if resolved.DeletionRequestedAt == nil || !resolved.DeletionRequestedAt.Equal(deletionRequestedAt) {
 		t.Errorf("DeletionRequestedAt = %v, want %v", resolved.DeletionRequestedAt, deletionRequestedAt)
 	}
+	if !resolved.ReporterAccessEnabled {
+		t.Error("ReporterAccessEnabled = false, want true")
+	}
 }
 
 func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
@@ -64,6 +68,7 @@ func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
 		*destinations[4].(*string) = string(StatusActive)
 		*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
 		*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+		*destinations[7].(*bool) = true
 		return nil
 	}}}
 

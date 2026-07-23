@@ -67,7 +67,7 @@ useHead({ title: 'Issues · Fidibeki' })
     <header class="app-page-head"><div><p class="app-eyebrow">Product work</p><h1>Issues</h1><span>Resolve feedback-linked work and keep reporters informed.</span></div></header>
     <section class="issues-toolbar app-surface">
       <label><Search :size="15" /><input v-model="search" placeholder="Search issues" aria-label="Search issues" /></label>
-      <select v-model="statusFilter" class="app-select" aria-label="Issue status filter"><option value="">All status</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+      <select v-model="statusFilter" class="app-select" aria-label="Issue status filter"><option value="">All status</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
       <select v-model="projectFilter" class="app-select" aria-label="Issue project filter"><option value="">All projects</option><option v-for="project in data?.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select>
       <span>{{ filteredIssues.length }} issues</span>
     </section>
@@ -88,7 +88,7 @@ useHead({ title: 'Issues · Fidibeki' })
           <span v-if="!issue.priority && !issue.assignee && !issue.tags?.length" class="issue-untriaged">Untriaged</span>
         </span>
         <span class="issues-feedback">{{ issue.feedback_count }}</span>
-        <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+        <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option v-if="issue.status === 'needs_info'" value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
         <time>{{ formatAge(issue.created_at) }}</time>
         <ChevronRight :size="16" />
       </div>

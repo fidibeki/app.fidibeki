@@ -1,6 +1,7 @@
 package project
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -152,9 +153,10 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name           string   `json:"name"`
-		AllowedDomains []string `json:"allowed_domains"`
-		DefaultLocale  string   `json:"default_locale"`
+		Name                  string          `json:"name"`
+		AllowedDomains        []string        `json:"allowed_domains"`
+		DefaultLocale         string          `json:"default_locale"`
+		ReporterAccessEnabled json.RawMessage `json:"reporter_access_enabled"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
@@ -163,6 +165,16 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 	defaultLocale, localeError := ValidateDefaultLocale(request.DefaultLocale)
 	if localeError != "" {
 		fields["default_locale"] = localeError
+	}
+	setReporterAccess := request.ReporterAccessEnabled != nil
+	var reporterAccessEnabled *bool
+	if setReporterAccess && !bytes.Equal(bytes.TrimSpace(request.ReporterAccessEnabled), []byte("null")) {
+		var enabled bool
+		if err := json.Unmarshal(request.ReporterAccessEnabled, &enabled); err != nil {
+			fields["reporter_access_enabled"] = "must be true, false, or null"
+		} else {
+			reporterAccessEnabled = &enabled
+		}
 	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
@@ -174,6 +186,7 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := h.options.Store.UpdateProject(
 		r.Context(), query, resolved.ID, projectID, name, domains, defaultLocale,
+		setReporterAccess, reporterAccessEnabled,
 	)
 	if err != nil {
 		writeStoreError(w, err)

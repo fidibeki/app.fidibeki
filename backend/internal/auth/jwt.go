@@ -15,6 +15,7 @@ const (
 	AudiencePlatform            = "platform"
 	AudienceTenant              = "tenant"
 	AudienceReporterUnsubscribe = "reporter-unsubscribe"
+	reporterFeedbackPermission  = "feedback"
 )
 
 var ErrInvalidAccessToken = errors.New("invalid access token")
@@ -68,6 +69,20 @@ func (m *JWTManager) IssueReporterUnsubscribe(
 		return "", time.Time{}, errors.New("JWT tenant ID is required")
 	}
 	return m.issue(issueID, AudienceReporterUnsubscribe, tenantID, nil)
+}
+
+func (m *JWTManager) IssueFeedbackReporterUnsubscribe(
+	feedbackID string,
+	tenantID string,
+) (string, time.Time, error) {
+	if tenantID == "" {
+		return "", time.Time{}, errors.New("JWT tenant ID is required")
+	}
+	return m.issue(feedbackID, AudienceReporterUnsubscribe, tenantID, []string{reporterFeedbackPermission})
+}
+
+func IsFeedbackReporterUnsubscribe(claims Claims) bool {
+	return len(claims.Permissions) == 1 && claims.Permissions[0] == reporterFeedbackPermission
 }
 
 func (m *JWTManager) DeriveRefreshToken(domain, current string) (string, string, error) {

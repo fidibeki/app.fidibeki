@@ -2,7 +2,7 @@ export type TenantPlan = 'starter' | 'growth' | 'scale' | 'enterprise'
 export type TenantStatus = 'active' | 'trial' | 'suspended' | 'cancelled'
 export type FeedbackStatus = 'open' | 'spam' | 'archived'
 export type ProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped'
-export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+export type IssueStatus = 'open' | 'in_progress' | 'needs_info' | 'resolved' | 'closed'
 export type TriagePriority = 'low' | 'medium' | 'high' | 'urgent'
 
 export interface TriageAssignee {
@@ -45,6 +45,7 @@ export interface TenantSummary {
   status: TenantStatus
   trial_ends_at?: string | null
   deletion_requested_at?: string | null
+  reporter_access_enabled: boolean
 }
 
 export interface AuthResponse {
@@ -78,6 +79,7 @@ export interface Project {
   public_key: string
   allowed_domains: string[]
   default_locale: string
+  reporter_access_enabled?: boolean | null
   widget_last_seen_at?: string | null
   created_at: string
   updated_at: string
@@ -375,6 +377,7 @@ export interface Issue {
   merged_at?: string
   reporter_email?: string
   notify_reporter: boolean
+  reporter_access_revoked_at?: string | null
   resolved_at?: string
   feedback_count: number
   created_at: string
@@ -414,6 +417,28 @@ export interface IssueComment {
   body: string
   mentions: ActivityActor[]
   created_at: string
+}
+
+export interface ReporterProgressEvent {
+  from_status?: IssueStatus | null
+  to_status: IssueStatus
+  created_at: string
+}
+
+export interface ReporterClarification {
+  prompt: string
+  responded: boolean
+  responded_at?: string | null
+}
+
+export interface ReporterProgress {
+  public_id: string
+  title: string
+  status: IssueStatus
+  created_at: string
+  resolved_at?: string | null
+  events: ReporterProgressEvent[]
+  clarification?: ReporterClarification | null
 }
 
 export interface MemberNotification {

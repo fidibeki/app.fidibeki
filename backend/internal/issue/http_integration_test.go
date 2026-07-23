@@ -623,7 +623,53 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	sender := &sequenceSender{}
 	reporter := ReporterHandler{
 		Store: store, Sender: sender, Tokens: reporterTokens,
-		PublicBaseURL: "http://api.fidibeki.localhost:8088", Now: func() time.Time { return now },
+		PublicBaseURL: "http://api.fidibeki.localhost:8088", BaseDomain: "fidibeki.localhost",
+		Now: func() time.Time { return now },
+	}
+	feedbackReceiptSender := &sequenceSender{}
+	feedbackReceiptReporter := reporter
+	feedbackReceiptReporter.Sender = feedbackReceiptSender
+	var feedbackCreatedEvent string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
+		VALUES ($1, 'feedback.created', 'feedback', $2) RETURNING id
+	`, tenantID, feedbackID).Scan(&feedbackCreatedEvent); err != nil {
+		t.Fatalf("create feedback receipt event: %v", err)
+	}
+	if err := feedbackReceiptReporter.Handler()(
+		ctx, reporterTask(t, feedbackCreatedEvent, tenantID, feedbackID),
+	); err != nil {
+		t.Fatalf("send feedback receipt: %v", err)
+	}
+	if len(feedbackReceiptSender.messages) != 1 ||
+		!strings.Contains(feedbackReceiptSender.messages[0].Text, "received your feedback") ||
+		strings.Contains(feedbackReceiptSender.messages[0].Text, "View progress:") {
+		t.Fatalf("feedback receipt = %#v", feedbackReceiptSender.messages)
+	}
+	if err := store.ApplyResendEvent(
+		ctx, feedbackReceiptSender.ids[0], "email.complained", "feedback-complaint",
+	); err != nil {
+		t.Fatalf("apply feedback receipt complaint: %v", err)
+	}
+	var feedbackReceiptNotify bool
+	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM feedbacks WHERE id = $1`, feedbackID).
+		Scan(&feedbackReceiptNotify); err != nil || feedbackReceiptNotify {
+		t.Fatalf("feedback complaint notify = %t, error = %v", feedbackReceiptNotify, err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET notify_reporter = true WHERE id = $1`, feedbackID); err != nil {
+		t.Fatalf("restore feedback after complaint: %v", err)
+	}
+	receiptSender := &sequenceSender{}
+	receiptReporter := reporter
+	receiptReporter.Sender = receiptSender
+	createdEvent := latestIssueEvent(t, ctx, root, createdIssueID)
+	if err := receiptReporter.Handler()(ctx, reporterTask(t, createdEvent, tenantID, createdIssueID)); err != nil {
+		t.Fatalf("send reporter receipt: %v", err)
+	}
+	if len(receiptSender.messages) != 1 ||
+		!strings.Contains(receiptSender.messages[0].Text, "created issue") ||
+		!strings.Contains(receiptSender.messages[0].Text, "View progress:") {
+		t.Fatalf("reporter receipt = %#v", receiptSender.messages)
 	}
 	firstEvent := latestIssueEvent(t, ctx, root, issueID)
 	firstTask := reporterTask(t, firstEvent, tenantID, issueID)
@@ -636,6 +682,7 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if len(sender.messages) != 1 || sender.messages[0].IdempotencyKey != "reporter:"+firstEvent {
 		t.Fatalf("sent messages = %#v", sender.messages)
 	}
+	firstPortalURL := messageLink(t, sender.messages[0].Text, "View progress: ")
 	if err := root.QueryRow(ctx, `SELECT count(*) FROM delivery_logs WHERE outbox_event_id = $1`, firstEvent).
 		Scan(&eventCount); err != nil || eventCount != 1 {
 		t.Fatalf("delivery attempts = %d, error = %v", eventCount, err)
@@ -645,7 +692,27 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	publicRouter := chi.NewRouter()
 	RegisterPublicRoutes(publicRouter, PublicHTTPOptions{
 		Store: store, Tokens: reporterTokens, Verifier: verifierStub{},
+		Begin: db.BeginFromPool(pools.Admin),
 	})
+	feedbackUnsubscribeURL := messageLink(
+		t, feedbackReceiptSender.messages[0].Text, "Unsubscribe: ",
+	)
+	feedbackUnsubscribe := httptest.NewRecorder()
+	publicRouter.ServeHTTP(feedbackUnsubscribe, httptest.NewRequest(
+		http.MethodGet, feedbackUnsubscribeURL, nil,
+	))
+	if feedbackUnsubscribe.Code != http.StatusOK {
+		t.Fatalf("feedback unsubscribe status = %d, body = %s",
+			feedbackUnsubscribe.Code, feedbackUnsubscribe.Body.String())
+	}
+	var feedbackNotify bool
+	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM feedbacks WHERE id = $1`, feedbackID).
+		Scan(&feedbackNotify); err != nil || feedbackNotify {
+		t.Fatalf("feedback receipt unsubscribe notify = %t, error = %v", feedbackNotify, err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET notify_reporter = true WHERE id = $1`, feedbackID); err != nil {
+		t.Fatalf("restore feedback reporter opt-in: %v", err)
+	}
 	unsubscribeRequest := httptest.NewRequest(http.MethodGet, strings.TrimSpace(unsubscribeURL), nil)
 	unsubscribeResponse := httptest.NewRecorder()
 	publicRouter.ServeHTTP(unsubscribeResponse, unsubscribeRequest)
@@ -728,7 +795,8 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	failingSender := &senderStub{err: errors.New("provider unavailable")}
 	failingReporter := ReporterHandler{
 		Store: store, Sender: failingSender, Tokens: reporterTokens,
-		PublicBaseURL: "http://api.fidibeki.localhost:8088", Now: func() time.Time { return now },
+		PublicBaseURL: "http://api.fidibeki.localhost:8088", BaseDomain: "fidibeki.localhost",
+		Now: func() time.Time { return now },
 	}
 	failureTask := reporterTask(t, failureEvent, tenantID, issueID)
 	if err := failingReporter.Handler()(ctx, failureTask); err == nil {
@@ -755,6 +823,103 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if err := reporter.Handler()(ctx, missingTask); !errors.Is(err, asynq.SkipRetry) {
 		t.Errorf("missing reporter event error = %v, want SkipRetry", err)
 	}
+
+	needsInfo := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
+		`{"status":"needs_info","reporter_message":"Which promotion code did you use?"}`)
+	if needsInfo.Code != http.StatusOK {
+		t.Fatalf("request reporter clarification = %d, body = %s", needsInfo.Code, needsInfo.Body.String())
+	}
+	needsInfoEvent := latestIssueEvent(t, ctx, root, issueID)
+	if err := reporter.Handler()(ctx, reporterTask(t, needsInfoEvent, tenantID, issueID)); err != nil {
+		t.Fatalf("send needs-info notification: %v", err)
+	}
+	portalURL := messageLink(t, sender.messages[len(sender.messages)-1].Text, "View progress: ")
+	parsedPortalURL, err := url.Parse(portalURL)
+	if err != nil {
+		t.Fatalf("parse reporter portal URL: %v", err)
+	}
+	portalToken := strings.TrimPrefix(parsedPortalURL.Path, "/reporter/")
+	progressAPIURL := "/v1/reporter/progress/" + portalToken
+	progressResponse := httptest.NewRecorder()
+	publicRouter.ServeHTTP(progressResponse, httptest.NewRequest(http.MethodGet, progressAPIURL, nil))
+	if progressResponse.Code != http.StatusOK ||
+		!strings.Contains(progressResponse.Body.String(), "Which promotion code did you use?") {
+		t.Fatalf("reporter progress = %d, body = %s", progressResponse.Code, progressResponse.Body.String())
+	}
+	parsedReceiptPortalURL, err := url.Parse(firstPortalURL)
+	if err != nil {
+		t.Fatalf("parse receipt reporter portal URL: %v", err)
+	}
+	previousProgress := httptest.NewRecorder()
+	publicRouter.ServeHTTP(previousProgress, httptest.NewRequest(
+		http.MethodGet,
+		"/v1/reporter/progress/"+strings.TrimPrefix(parsedReceiptPortalURL.Path, "/reporter/"),
+		nil,
+	))
+	if previousProgress.Code != http.StatusOK ||
+		!strings.Contains(previousProgress.Body.String(), "needs_info") {
+		t.Fatalf("earlier reporter progress link = %d, body = %s",
+			previousProgress.Code, previousProgress.Body.String())
+	}
+	responseRequest := httptest.NewRequest(
+		http.MethodPost, progressAPIURL+"/response", strings.NewReader(`{"response":"PROMO-25"}`),
+	)
+	responseRequest.Header.Set("Content-Type", "application/json")
+	responseRecorder := httptest.NewRecorder()
+	publicRouter.ServeHTTP(responseRecorder, responseRequest)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("reporter clarification response = %d, body = %s",
+			responseRecorder.Code, responseRecorder.Body.String())
+	}
+	repeatedResponse := httptest.NewRecorder()
+	publicRouter.ServeHTTP(repeatedResponse, httptest.NewRequest(
+		http.MethodPost, progressAPIURL+"/response", strings.NewReader(`{"response":"PROMO-OTHER"}`),
+	))
+	if repeatedResponse.Code != http.StatusNotFound {
+		t.Fatalf("repeated reporter response = %d, body = %s",
+			repeatedResponse.Code, repeatedResponse.Body.String())
+	}
+	var reporterResponseActivityCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_activities
+		WHERE tenant_id = $1 AND issue_id = $2 AND kind = 'reporter.responded'
+	`, tenantID, issueID).Scan(&reporterResponseActivityCount); err != nil || reporterResponseActivityCount != 1 {
+		t.Fatalf("reporter response activity count = %d, error = %v, want 1",
+			reporterResponseActivityCount, err)
+	}
+	revoked := issueRequest(handler, accessToken, http.MethodPatch,
+		"/v1/issues/"+issueID+"/reporter-access", `{"enabled":false}`)
+	if revoked.Code != http.StatusOK {
+		t.Fatalf("revoke reporter access = %d, body = %s", revoked.Code, revoked.Body.String())
+	}
+	revokedProgress := httptest.NewRecorder()
+	publicRouter.ServeHTTP(revokedProgress, httptest.NewRequest(http.MethodGet, progressAPIURL, nil))
+	if revokedProgress.Code != http.StatusNotFound {
+		t.Fatalf("revoked reporter progress = %d, body = %s",
+			revokedProgress.Code, revokedProgress.Body.String())
+	}
+	reenabled := issueRequest(handler, accessToken, http.MethodPatch,
+		"/v1/issues/"+issueID+"/reporter-access", `{"enabled":true}`)
+	if reenabled.Code != http.StatusOK {
+		t.Fatalf("re-enable reporter access = %d, body = %s", reenabled.Code, reenabled.Body.String())
+	}
+	stillRevokedProgress := httptest.NewRecorder()
+	publicRouter.ServeHTTP(stillRevokedProgress, httptest.NewRequest(http.MethodGet, progressAPIURL, nil))
+	if stillRevokedProgress.Code != http.StatusNotFound {
+		t.Fatalf("old reporter token after re-enable = %d, body = %s",
+			stillRevokedProgress.Code, stillRevokedProgress.Body.String())
+	}
+}
+
+func messageLink(t *testing.T, body, prefix string) string {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	t.Fatalf("message link %q not found in %q", prefix, body)
+	return ""
 }
 
 func assertIssueTriageRead(t *testing.T, found Issue, assigneeID string) {

@@ -27,13 +27,14 @@ const (
 )
 
 type Tenant struct {
-	ID                  string
-	Name                string
-	Slug                string
-	Plan                Plan
-	Status              Status
-	TrialEndsAt         *time.Time
-	DeletionRequestedAt *time.Time
+	ID                    string
+	Name                  string
+	Slug                  string
+	Plan                  Plan
+	Status                Status
+	TrialEndsAt           *time.Time
+	DeletionRequestedAt   *time.Time
+	ReporterAccessEnabled bool
 }
 
 type Resolver interface {

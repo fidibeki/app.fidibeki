@@ -587,6 +587,15 @@ func (store Store) UpdateIssue(
 	if mutation.Status != nil && oldStatus == *mutation.Status {
 		return Issue{}, nil, ErrNoStatusChange
 	}
+	if mutation.Status != nil && *mutation.Status == StatusNeedsInfo {
+		allowed, err := reporterAccessAllowed(ctx, query, tenantID, issueID)
+		if err != nil {
+			return Issue{}, nil, err
+		}
+		if !allowed || before.ReporterEmail == nil || !before.NotifyReporter {
+			return Issue{}, nil, ErrReporterAccessUnavailable
+		}
+	}
 	if mutation.SetAssignee && mutation.AssigneeID != nil {
 		var exists bool
 		if err := query.QueryRow(ctx, `
@@ -629,7 +638,7 @@ func (store Store) UpdateIssue(
 		    assignee_id = CASE WHEN $11 THEN $12::uuid ELSE assignee_id END,
 		    resolved_at = CASE
 		        WHEN $3 AND $4::issue_status = 'resolved' THEN $13
-		        WHEN $3 AND $4::issue_status IN ('open', 'in_progress') THEN NULL
+		        WHEN $3 AND $4::issue_status IN ('open', 'in_progress', 'needs_info') THEN NULL
 		        ELSE resolved_at
 		    END
 		WHERE tenant_id = $1 AND id = $2
@@ -699,12 +708,33 @@ func (store Store) UpdateIssue(
 	if mutation.Comment != nil {
 		data["transition_comment"] = *mutation.Comment
 	}
+	if mutation.ReporterMessage != nil {
+		data["reporter_message"] = *mutation.ReporterMessage
+	}
 	actorID := memberID
-	if _, err := activity.Record(ctx, query, activity.RecordInput{
+	activityID, err := activity.Record(ctx, query, activity.RecordInput{
 		TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
 		Kind: "issue.status_changed", Data: data, CreatedAt: now,
-	}); err != nil {
+	})
+	if err != nil {
 		return Issue{}, nil, err
+	}
+	if *mutation.Status == StatusNeedsInfo {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO reporter_clarification_requests (
+				tenant_id, issue_id, requested_activity_id, prompt, created_at
+			) VALUES ($1, $2, $3, $4, $5)
+		`, tenantID, issueID, activityID, *mutation.ReporterMessage, now.UTC()); err != nil {
+			return Issue{}, nil, fmt.Errorf("create reporter clarification request: %w", err)
+		}
+	} else {
+		if _, err := query.Exec(ctx, `
+			UPDATE reporter_clarification_requests SET closed_at = $3
+			WHERE tenant_id = $1 AND issue_id = $2
+			  AND responded_at IS NULL AND closed_at IS NULL
+		`, tenantID, issueID, now.UTC()); err != nil {
+			return Issue{}, nil, fmt.Errorf("close reporter clarification request: %w", err)
+		}
 	}
 	update := &Update{
 		ID: updateID, IssueID: issueID, MemberID: &memberID,
@@ -712,6 +742,32 @@ func (store Store) UpdateIssue(
 		Comment: mutation.Comment, CreatedAt: now.UTC(),
 	}
 	return found, update, nil
+}
+
+func reporterAccessAllowed(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	issueID string,
+) (bool, error) {
+	var allowed bool
+	err := query.QueryRow(ctx, `
+		SELECT tenant.reporter_access_enabled
+		       AND COALESCE(project.reporter_access_enabled, true)
+		       AND issue.reporter_access_revoked_at IS NULL
+		FROM issues AS issue
+		JOIN tenants AS tenant ON tenant.id = issue.tenant_id
+		JOIN projects AS project
+		  ON project.tenant_id = issue.tenant_id AND project.id = issue.project_id
+		WHERE issue.tenant_id = $1 AND issue.id = $2
+	`, tenantID, issueID).Scan(&allowed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolve reporter access policy: %w", err)
+	}
+	return allowed, nil
 }
 
 func issueChanges(before, after Issue) map[string]any {
@@ -911,7 +967,7 @@ const issueSelect = `
 	           WHERE issue_tag.tenant_id = issue.tenant_id AND issue_tag.issue_id = issue.id
 	       ), '[]'::jsonb),
 	       issue.merged_into_id, issue.merged_at, issue.reporter_email,
-	       issue.notify_reporter, issue.resolved_at,
+	       issue.notify_reporter, issue.resolved_at, issue.reporter_access_revoked_at,
 	       (SELECT count(*) FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id),
 	       issue.created_at, issue.updated_at
 	FROM issues AS issue
@@ -931,7 +987,7 @@ func scanIssue(row rowScanner) (Issue, error) {
 		&found.ID, &found.TenantID, &found.ProjectID, &found.PublicID, &found.Title, &found.Description,
 		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
 		&found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
-		&found.NotifyReporter, &found.ResolvedAt, &found.FeedbackCount,
+		&found.NotifyReporter, &found.ResolvedAt, &found.ReporterAccessRevokedAt, &found.FeedbackCount,
 		&found.CreatedAt, &found.UpdatedAt,
 	); err != nil {
 		return Issue{}, err

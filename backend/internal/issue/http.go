@@ -41,6 +41,8 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/issues/{issueID}", handler.get)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueUpdate))...).
 		Post("/v1/issues/{issueID}/comments", handler.createComment)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueUpdate))...).
+		Patch("/v1/issues/{issueID}/reporter-access", handler.setReporterAccess)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
 		Get("/v1/notifications", handler.listNotifications)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
@@ -290,6 +292,36 @@ func (h *HTTPHandler) createComment(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"comment": comment, "activity": event})
 }
 
+func (h *HTTPHandler) setReporterAccess(w http.ResponseWriter, r *http.Request) {
+	issueID, ok := issuePathID(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	updated, err := h.options.Store.SetReporterAccess(
+		r.Context(), query, resolved.ID, issueID, claims.Subject, request.Enabled, h.now(),
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"issue": updated})
+}
+
 func (h *HTTPHandler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	resolved, query, ok := requestState(w, r)
 	if !ok {
@@ -347,15 +379,16 @@ func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Status       *Status  `json:"status"`
-		Comment      *string  `json:"comment"`
-		Title        *string  `json:"title"`
-		Description  *string  `json:"description"`
-		Priority     *string  `json:"priority"`
-		AssigneeID   *string  `json:"assignee_id"`
-		Unassign     bool     `json:"unassign"`
-		AddTagIDs    []string `json:"add_tag_ids"`
-		RemoveTagIDs []string `json:"remove_tag_ids"`
+		Status          *Status  `json:"status"`
+		Comment         *string  `json:"comment"`
+		ReporterMessage *string  `json:"reporter_message"`
+		Title           *string  `json:"title"`
+		Description     *string  `json:"description"`
+		Priority        *string  `json:"priority"`
+		AssigneeID      *string  `json:"assignee_id"`
+		Unassign        bool     `json:"unassign"`
+		AddTagIDs       []string `json:"add_tag_ids"`
+		RemoveTagIDs    []string `json:"remove_tag_ids"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
@@ -363,7 +396,7 @@ func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	fields := make(map[string]string)
 	mutation := Mutation{Status: request.Status}
 	if request.Status != nil && !request.Status.Valid() {
-		fields["status"] = "must be open, in_progress, resolved, or closed"
+		fields["status"] = "must be open, in_progress, needs_info, resolved, or closed"
 	}
 	if request.Comment != nil {
 		trimmed := strings.TrimSpace(*request.Comment)
@@ -374,6 +407,18 @@ func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		} else if trimmed != "" {
 			mutation.Comment = &trimmed
 		}
+	}
+	if request.ReporterMessage != nil {
+		trimmed := strings.TrimSpace(*request.ReporterMessage)
+		if request.Status == nil || *request.Status != StatusNeedsInfo {
+			fields["reporter_message"] = "is only valid when status is needs_info"
+		} else if length := len([]rune(trimmed)); length < 1 || length > 2000 {
+			fields["reporter_message"] = "must be between 1 and 2000 characters"
+		} else {
+			mutation.ReporterMessage = &trimmed
+		}
+	} else if request.Status != nil && *request.Status == StatusNeedsInfo {
+		fields["reporter_message"] = "is required when status is needs_info"
 	}
 	if request.Title != nil {
 		trimmed := strings.TrimSpace(*request.Title)
@@ -584,6 +629,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "feedback is already linked to an issue", nil)
 	case errors.Is(err, ErrProjectMismatch):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback projects do not match", nil)
+	case errors.Is(err, ErrReporterAccessUnavailable):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "reporter progress access is unavailable", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

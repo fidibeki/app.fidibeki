@@ -17,6 +17,28 @@ type Store struct {
 	RefreshRetryGrace time.Duration
 }
 
+func (Store) UpdateReporterAccess(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	enabled bool,
+) error {
+	_, err := query.Exec(ctx, `
+		UPDATE tenants SET reporter_access_enabled = $2 WHERE id = $1
+	`, tenantID, enabled)
+	if err != nil {
+		return fmt.Errorf("update reporter access policy: %w", err)
+	}
+	if !enabled {
+		if _, err := query.Exec(ctx, `
+			DELETE FROM reporter_access_tokens WHERE tenant_id = $1
+		`, tenantID); err != nil {
+			return fmt.Errorf("revoke tenant reporter access tokens: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s Store) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

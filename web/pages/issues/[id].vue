@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, ArrowLeft, AtSign, GitMerge, MessageSquare, Pencil, RotateCcw, Send } from '@lucide/vue'
+import { AlertTriangle, ArrowLeft, AtSign, Eye, EyeOff, GitMerge, MessageSquare, Pencil, RotateCcw, Send } from '@lucide/vue'
 import type { FeedbackPage, Issue, IssueActivity, IssueComment, IssueStatus, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
@@ -10,6 +10,7 @@ const { can, canWrite } = useAuth()
 const issueID = computed(() => String(route.params.id || ''))
 const nextStatus = ref<IssueStatus>('open')
 const comment = ref('')
+const reporterMessage = ref('')
 const mergeTarget = ref('')
 const pending = ref(false)
 const mutationError = ref('')
@@ -111,16 +112,41 @@ function toggleIssueTag(tagID: string, checked: boolean) {
 }
 
 async function updateIssue() {
-  if (!canWrite('issue:update') || !data.value || pending.value || nextStatus.value === data.value.issue.status) return
+  if (!canWrite('issue:update') || !data.value || pending.value || nextStatus.value === data.value.issue.status ||
+    (nextStatus.value === 'needs_info' && !reporterMessage.value.trim())) return
   pending.value = true
   mutationError.value = ''
   try {
-    await $apiFetch(`/v1/issues/${issueID.value}`, { method: 'PATCH', body: { status: nextStatus.value, comment: comment.value.trim() || null } })
+    await $apiFetch(`/v1/issues/${issueID.value}`, {
+      method: 'PATCH',
+      body: {
+        status: nextStatus.value,
+        comment: comment.value.trim() || null,
+        reporter_message: nextStatus.value === 'needs_info' ? reporterMessage.value.trim() : null,
+      },
+    })
     comment.value = ''
+    reporterMessage.value = ''
     await refresh()
   } catch (updateError) {
     mutationError.value = apiErrorMessage(updateError, 'Issue could not be updated.')
   } finally { pending.value = false }
+}
+
+async function setReporterAccess(enabled: boolean) {
+  if (!canWrite('issue:update') || !data.value || pending.value) return
+  pending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ issue: Issue }>(`/v1/issues/${issueID.value}/reporter-access`, {
+      method: 'PATCH', body: { enabled },
+    })
+    data.value.issue = response.issue
+  } catch (accessError) {
+    mutationError.value = apiErrorMessage(accessError, 'Reporter access could not be updated.')
+  } finally {
+    pending.value = false
+  }
 }
 
 async function createComment() {
@@ -202,6 +228,9 @@ function activitySummary(activity: IssueActivity) {
   if (activity.kind === 'issue.merged') return `${actor} merged this issue`
   if (activity.kind === 'issue.merge_received') return `${actor} merged another issue here`
   if (activity.kind === 'issue.unmerged' || activity.kind === 'issue.merge_removed') return `${actor} removed a merge`
+  if (activity.kind === 'reporter.access_changed') return `${actor} changed reporter access`
+  if (activity.kind === 'reporter.responded') return 'Reporter answered the clarification request'
+  if (activity.kind === 'reporter.notified') return 'Reporter notification delivered'
   return activity.kind.replaceAll('_', ' ').replaceAll('.', ' · ')
 }
 
@@ -251,7 +280,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
       <p v-if="mutationError" class="issues-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
       <div class="issue-detail-grid">
         <main>
-          <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select" :disabled="!canWrite('issue:update')"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status" @click="updateIssue">Update issue</button></div></section>
+          <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select" :disabled="!canWrite('issue:update')"><option value="open">Open</option><option value="in_progress">In progress</option><option value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" :disabled="!canWrite('issue:update')" /><textarea v-if="nextStatus === 'needs_info'" v-model="reporterMessage" class="issue-reporter-message" aria-label="Message for reporter" placeholder="Question for the reporter" maxlength="2000" required :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status || (nextStatus === 'needs_info' && !reporterMessage.trim())" @click="updateIssue">Update issue</button></div></section>
           <section class="app-surface issue-comments">
             <header><div><h2>Internal comments</h2><p>Collaborate with workspace members without changing status.</p></div><span>{{ data.comments.length }}</span></header>
             <div v-if="data.comments.length" class="issue-comment-list">
@@ -284,7 +313,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
             @set-assignee="setIssueAssignee"
             @toggle-tag="toggleIssueTag"
           />
-          <section class="app-surface issue-facts"><h2>Issue facts</h2><dl><div><dt>Public ID</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>Reporter</dt><dd>{{ data.issue.reporter_email || 'Anonymous' }}</dd></div><div><dt>Reporter updates</dt><dd>{{ data.issue.notify_reporter ? 'Enabled' : 'Disabled' }}</dd></div><div><dt>Resolved</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : 'Not resolved' }}</dd></div></dl></section>
+          <section class="app-surface issue-facts"><h2>Issue facts</h2><dl><div><dt>Public ID</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>Reporter</dt><dd>{{ data.issue.reporter_email || 'Anonymous' }}</dd></div><div><dt>Reporter updates</dt><dd>{{ data.issue.notify_reporter ? 'Enabled' : 'Disabled' }}</dd></div><div><dt>Progress access</dt><dd>{{ data.issue.reporter_access_revoked_at ? 'Revoked' : 'Enabled' }}</dd></div><div><dt>Resolved</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : 'Not resolved' }}</dd></div></dl><button v-if="data.issue.reporter_email && data.issue.notify_reporter && canWrite('issue:update')" class="app-button issue-reporter-access" :disabled="pending" @click="setReporterAccess(Boolean(data.issue.reporter_access_revoked_at))"><Eye v-if="data.issue.reporter_access_revoked_at" :size="14" /><EyeOff v-else :size="14" />{{ data.issue.reporter_access_revoked_at ? 'Enable progress access' : 'Revoke progress access' }}</button></section>
           <section class="app-surface issue-merge"><h2>Merge issue</h2><template v-if="data.issue.merged_into_id"><p>This issue is merged into another issue.</p><button class="app-button" :disabled="pending || !canWrite('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> Undo merge</button></template><template v-else><p>Move this issue under another issue in the same project.</p><select v-model="mergeTarget" class="app-select" :disabled="!canWrite('issue:merge')"><option value="">Choose target issue</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.public_id }} · {{ candidate.title }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !canWrite('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> Merge</button></template></section>
         </aside>
       </div>
@@ -313,6 +342,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-detail-grid header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
 .issue-update-panel > div { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 14px; }
 .issue-update-panel textarea { min-height: 72px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; }
+.issue-update-panel .issue-reporter-message { grid-column: 2 / 3; border-color: var(--amber); }
 .issue-comments > header > span,
 .issue-history > header > span { color: var(--muted); font-size: 9px; }
 .issue-comment-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
@@ -355,9 +385,10 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-facts dl div { display: flex; min-height: 39px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
 .issue-facts dt { color: var(--muted); font-size: 9px; }
 .issue-facts dd { margin: 0; max-width: 170px; overflow-wrap: anywhere; font-size: 9px; text-align: right; }
+.issue-reporter-access { width: 100%; margin-top: 12px; }
 .issue-merge p { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .issue-merge select { width: 100%; margin-bottom: 8px; font-size: 9px; }
 .issue-merge button { width: 100%; }
 @media (max-width: 900px) { .issue-detail-grid { grid-template-columns: 1fr; } .issue-detail-grid aside { grid-row: 1; display: grid; grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .issue-detail-grid aside { display: flex; } .issue-update-panel > div, .issue-comment-form { grid-template-columns: 1fr; } .issue-comment-form > textarea { grid-column: auto; } .issue-detail-heading { flex-direction: column; } }
+@media (max-width: 700px) { .issue-detail-grid aside { display: flex; } .issue-update-panel > div, .issue-comment-form { grid-template-columns: 1fr; } .issue-update-panel .issue-reporter-message, .issue-comment-form > textarea { grid-column: auto; } .issue-detail-heading { flex-direction: column; } }
 </style>

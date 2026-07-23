@@ -29,6 +29,7 @@ function createMockState() {
     status: 'trial',
     trial_ends_at: '2026-08-04T12:00:00.000Z',
     deletion_requested_at: null as string | null,
+    reporter_access_enabled: true,
   }
   const member = {
     id: 'member-1',
@@ -59,6 +60,8 @@ function createMockState() {
     name: 'Storefront',
     public_key: 'pk_live_storefront',
     allowed_domains: ['shop.acme.test', '*.preview.acme.test'],
+    default_locale: 'en',
+    reporter_access_enabled: null as boolean | null,
     created_at: now,
     updated_at: now,
   }]
@@ -178,6 +181,7 @@ function createMockState() {
     tags: [tags[0]],
     reporter_email: 'customer@example.test',
     notify_reporter: true,
+    reporter_access_revoked_at: null as string | null,
     feedback_count: 3,
     created_at: '2026-07-19T12:00:00.000Z',
     updated_at: now,
@@ -195,6 +199,7 @@ function createMockState() {
     tags: [] as typeof tags,
     reporter_email: 'ops@acme.test',
     notify_reporter: false,
+    reporter_access_revoked_at: null as string | null,
     feedback_count: 7,
     created_at: '2026-07-16T12:00:00.000Z',
     updated_at: now,
@@ -258,6 +263,8 @@ function createMockState() {
     analyticsDelayMs: 0,
     analyticsPagesTotal: 2,
     analyticsRequests: [] as string[],
+    reporterResponse: null as string | null,
+    lastReporterMessage: null as string | null,
     workspaceAccess: 'available' as 'available' | 'unknown' | 'suspended' | 'error',
   }
 }
@@ -478,6 +485,8 @@ async function installMockAPI(page: Page, state: MockState) {
         name: String(input.name),
         public_key: `pk_live_project_${state.projects.length + 1}`,
         allowed_domains: input.allowed_domains as string[],
+        default_locale: 'en',
+        reporter_access_enabled: null as boolean | null,
         created_at: now,
         updated_at: now,
       }
@@ -637,6 +646,7 @@ async function installMockAPI(page: Page, state: MockState) {
         status: 'open', priority: null as 'low' | 'medium' | 'high' | 'urgent' | null,
         assignee: null as { id: string, name?: string, email: string } | null, tags: [] as typeof state.tags,
         reporter_email: feedbackItem?.reporter_email || '', notify_reporter: feedbackItem?.notify_reporter || false,
+        reporter_access_revoked_at: null as string | null,
         feedback_count: 1, created_at: now, updated_at: now, merged_into_id: undefined as string | undefined,
       }
       state.issues.push(issue)
@@ -668,6 +678,7 @@ async function installMockAPI(page: Page, state: MockState) {
         tags: [] as typeof state.tags,
         reporter_email: selectedFeedback[0]?.reporter_email || '',
         notify_reporter: selectedFeedback.some(item => item.notify_reporter),
+        reporter_access_revoked_at: null as string | null,
         feedback_count: selectedFeedback.length,
         created_at: now,
         updated_at: now,
@@ -733,6 +744,13 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       return json(route, { comment, activity }, 201)
     }
+    const issueReporterAccessMatch = path.match(/^\/v1\/issues\/([^/]+)\/reporter-access$/)
+    if (issueReporterAccessMatch && method === 'PATCH') {
+      const issue = state.issues.find(candidate => candidate.id === issueReporterAccessMatch[1])
+      const enabled = Boolean(body().enabled)
+      if (issue) issue.reporter_access_revoked_at = enabled ? null : now
+      return json(route, { issue })
+    }
     const issueMatch = path.match(/^\/v1\/issues\/([^/]+)$/)
     if (issueMatch && method === 'GET') {
       return json(route, {
@@ -775,6 +793,7 @@ async function installMockAPI(page: Page, state: MockState) {
           created_at: now,
         })
         issue.status = String(input.status)
+        state.lastReporterMessage = typeof input.reporter_message === 'string' ? input.reporter_message : null
         state.issueActivities.push({
           id: `activity-${state.issueActivities.length + 1}`,
           issue_id: issue.id,
@@ -817,6 +836,29 @@ async function installMockAPI(page: Page, state: MockState) {
         tenant: state.tenant,
         plan: planCatalog.find(plan => plan.plan === state.tenant.plan),
       })
+    }
+    if (path === '/v1/reporter-access' && method === 'PATCH') {
+      state.tenant.reporter_access_enabled = Boolean(body().enabled)
+      return json(route, { reporter_access_enabled: state.tenant.reporter_access_enabled })
+    }
+    const reporterProgressMatch = path.match(/^\/v1\/reporter\/progress\/([^/]+)$/)
+    if (reporterProgressMatch && method === 'GET') return json(route, { progress: {
+      public_id: state.issues[0].public_id,
+      title: state.issues[0].title,
+      status: 'needs_info',
+      created_at: state.issues[0].created_at,
+      events: [{ from_status: 'open', to_status: 'needs_info', created_at: now }],
+      clarification: {
+        prompt: 'Which promotion code did you use?',
+        responded: state.reporterResponse !== null,
+        responded_at: state.reporterResponse === null ? null : now,
+      },
+    } })
+    const reporterResponseMatch = path.match(/^\/v1\/reporter\/progress\/([^/]+)\/response$/)
+    if (reporterResponseMatch && method === 'POST') {
+      if (state.reporterResponse !== null) return json(route, { error: { code: 'not_found', message: 'progress link is invalid or unavailable' } }, 404)
+      state.reporterResponse = String(body().response)
+      return json(route, { accepted: true })
     }
     if (path === '/v1/members' && method === 'GET') return json(route, { members: state.members })
     if (path === '/v1/member-domains' && method === 'GET') return json(route, { member_domains: state.memberDomains })
@@ -1843,6 +1885,51 @@ test('issue comments mention members without requiring a status change', async (
   expect(state.memberNotifications[0].recipient_member_id).toBe('member-2')
 })
 
+test('issue requests reporter clarification and controls progress access', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The complete clarification workflow is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Issues')
+  await page.locator('.issues-table').getByRole('link', { name: /ISS-101/ }).click()
+
+  const updatePanel = page.locator('.issue-update-panel')
+  await updatePanel.getByRole('combobox').selectOption('needs_info')
+  await expect(updatePanel.getByRole('button', { name: 'Update issue' })).toBeDisabled()
+  await updatePanel.getByLabel('Message for reporter').fill('Which promotion code did you use?')
+  await updatePanel.getByRole('button', { name: 'Update issue' }).click()
+
+  expect(state.issues[0].status).toBe('needs_info')
+  expect(state.lastReporterMessage).toBe('Which promotion code did you use?')
+  await expect(page.locator('.issue-detail-heading .status-pill')).toHaveText('needs info')
+
+  await page.getByRole('button', { name: 'Revoke progress access' }).click()
+  expect(state.issues[0].reporter_access_revoked_at).toBe(now)
+  await expect(page.getByRole('button', { name: 'Enable progress access' })).toBeVisible()
+  await page.getByRole('button', { name: 'Enable progress access' }).click()
+  expect(state.issues[0].reporter_access_revoked_at).toBeNull()
+})
+
+test('reporter progress accepts one clarification response without exposing internal context', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The public response workflow is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '/reporter/test-token')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  await expect(page.getByRole('heading', { name: state.issues[0].title })).toBeVisible()
+  await expect(page.getByText('Which promotion code did you use?')).toBeVisible()
+  await expect(page.getByText('Internal comments')).toHaveCount(0)
+  await page.getByLabel('Your response').fill('SUMMER20')
+  await page.getByRole('button', { name: 'Send response' }).click()
+
+  await expect(page.getByText('Response sent.')).toBeVisible()
+  expect(state.reporterResponse).toBe('SUMMER20')
+  await expect(page.getByLabel('Your response')).toHaveCount(0)
+  await capture(page, testInfo, 'reporter-progress')
+})
+
 test('member notifications open the related issue and become read', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The notification workflow is viewport independent')
   const state = createMockState()
@@ -1958,6 +2045,28 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('workspace and project reporter access policies remain explicit', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Policy persistence is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+
+  const workspacePolicy = page.getByLabel('Reporter progress access')
+  await expect(workspacePolicy).toBeChecked()
+  await workspacePolicy.uncheck()
+  expect(state.tenant.reporter_access_enabled).toBe(false)
+
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+  const projectPolicy = page.getByLabel('Reporter progress access')
+  await expect(projectPolicy).toHaveValue('inherit')
+  await projectPolicy.selectOption('disabled')
+  await page.getByRole('button', { name: 'Save project' }).click()
+
+  expect(state.projects[0].reporter_access_enabled).toBe(false)
+  await expect(page.getByRole('status')).toHaveText('Project settings saved.')
 })
 
 test('settings verifies additional member email domains before invitations', async ({ page }, testInfo) => {
