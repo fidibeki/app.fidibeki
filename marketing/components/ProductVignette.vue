@@ -3,10 +3,11 @@ import { CircleCheck, MailCheck, MonitorPlay, Sparkles } from '@lucide/vue'
 </script>
 
 <template>
-  <!-- Stylized, brand-accurate depiction of the product loop: a feedback
-       submission, its AI analysis, the linked issue, and the reporter update.
-       Purpose-built illustration — every element mirrors a real capability. -->
-  <div class="vignette" role="img" aria-label="Illustration of a feedback report moving through Fidibeki: captured with session replay, analyzed by AI, triaged into an issue, and resolved with an automatic reporter update.">
+  <!-- Stylized, brand-accurate depiction of the product workflow: a feedback
+       submission, optional AI analysis on eligible plans, a manually linked
+       issue, and an update sent to a reporter who opted in.
+       Purpose-built illustration. Every element mirrors a real capability. -->
+  <div class="vignette" role="img" aria-label="Illustration of how a team can move a feedback report through Fidibeki: a reporter can choose to attach a screenshot and session replay when the rule enables those tools; on eligible plans the report may be analyzed by AI; the team triages it into an issue; and an update is sent only to reporters who opted in.">
     <div class="pane pane-feedback">
       <div class="pane-title">
         <span class="dot" aria-hidden="true"></span>
@@ -46,7 +47,7 @@ import { CircleCheck, MailCheck, MonitorPlay, Sparkles } from '@lucide/vue'
       <MailCheck :size="15" aria-hidden="true" class="email-icon" />
       <div>
         <span class="email-title">Reporter update sent</span>
-        <span class="email-body">“Good news — the issue you reported has been resolved.”</span>
+        <span class="email-body">“Good news, the issue you reported has been resolved.”</span>
       </div>
     </div>
   </div>

@@ -15,9 +15,9 @@ useSiteMeta({
 })
 
 const included = [
-  `${trialDays}-day free trial — no credit card required`,
+  `${trialDays} day free trial, no credit card required`,
   'Your own workspace at your-team.fidibeki.com',
-  'Feedback widget, issue triage, and reporter updates from day one',
+  'Feedback widget, issue triage, and reporter update tools from day one',
   'Passwordless sign-in for you and your team',
 ]
 </script>

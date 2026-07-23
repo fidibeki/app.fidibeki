@@ -5,7 +5,7 @@ import { features } from '~/data/features'
 useSiteMeta({
   title: 'Features',
   description:
-    'Feedback widget, session replay, AI analysis, issue triage, reporter updates, and workspace permissions — every Fidibeki capability, explained.',
+    'Feedback widget, optional session replay, AI assisted analysis on eligible plans, issue triage, reporter updates, and workspace permissions. Every Fidibeki capability, explained.',
   path: '/features',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -18,8 +18,8 @@ useSiteMeta({
   <div>
     <PageHero
       eyebrow="Features"
-      title="Every stage of the loop, covered"
-      lede="From the first script tag to the last reporter email — these are the capabilities that move feedback from noise to outcome."
+      title="Every stage of the workflow, covered"
+      lede="From the first script tag to the last reporter email. These are the capabilities that move feedback from noise to outcome."
     >
       <template #breadcrumbs>
         <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Features', path: '/features' }]" />

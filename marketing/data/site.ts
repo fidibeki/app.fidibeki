@@ -5,17 +5,17 @@ import { docSlugs } from './docs'
 
 export const siteName = 'Fidibeki'
 
-export const siteTagline = 'Product feedback, closed-loop.'
+export const siteTagline = 'Product feedback that finishes the job.'
 
 export const siteDescription =
-  'Fidibeki captures in-product feedback with full context, analyzes and triages it, tracks every decision to resolution, and tells reporters how it ended.'
+  'The fastest path from “I found a bug” to “we fixed it.” Fidibeki lets reporters add screenshots, audio, or session replay from inside your product, so your team can triage, track, and update them in one workflow.'
 
 export const loopStages = [
-  { key: 'capture', label: 'Capture', blurb: 'Feedback arrives in-product with screenshots, replay, and context.' },
-  { key: 'analyze', label: 'Analyze', blurb: 'AI cleans, transcribes, and scores every report before you read it.' },
-  { key: 'decide', label: 'Decide', blurb: 'Triage the inbox, link reports to issues, merge duplicates.' },
-  { key: 'track', label: 'Track', blurb: 'Statuses, priorities, and immutable history to resolution.' },
-  { key: 'communicate', label: 'Communicate', blurb: 'Reporters hear the outcome — automatically.' },
+  { key: 'capture', label: 'Collect', blurb: 'Reporters submit feedback and add context on their terms.' },
+  { key: 'analyze', label: 'Understand', blurb: 'On eligible plans, AI can clean, transcribe, and score reports before your team reads them.' },
+  { key: 'decide', label: 'Decide', blurb: 'Triage the inbox, link related reports to one issue, and merge duplicates.' },
+  { key: 'track', label: 'Track', blurb: 'Follow statuses, priorities, and an immutable history until resolution.' },
+  { key: 'communicate', label: 'Close the loop', blurb: 'Send updates to the reporters who opted in.' },
 ] as const
 
 /** Real customers only — never add a logo without the founder's confirmation. */
