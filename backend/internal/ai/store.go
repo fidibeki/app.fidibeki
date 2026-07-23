@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -16,7 +18,14 @@ import (
 )
 
 type Store struct {
-	Database *pgxpool.Pool
+	Database          *pgxpool.Pool
+	ProjectDailyLimit int
+	Diagnostics       DiagnosticRecorder
+	Logger            *slog.Logger
+}
+
+type DiagnosticRecorder interface {
+	Record(context.Context, abuse.DiagnosticEvent) error
 }
 
 func (s Store) PrepareFeedback(
@@ -31,20 +40,22 @@ func (s Store) PrepareFeedback(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var tenantID, planValue, textStatus string
+	var tenantID, projectID, planValue, textStatus string
 	var textGeneration int64
 	var text *string
 	var textEnqueuedAt *time.Time
+	var textDeferredUntil *time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT feedback.tenant_id, tenant.plan, feedback.text,
+		SELECT feedback.tenant_id, feedback.project_id, tenant.plan, feedback.text,
 		       feedback.text_process_status, feedback.ai_job_enqueued_at,
-		       feedback.text_processing_generation
+		       feedback.text_processing_generation, feedback.ai_budget_deferred_until
 		FROM feedbacks AS feedback
 		JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
 		WHERE feedback.id = $1
 		FOR UPDATE OF feedback
 	`, feedbackID).Scan(
-		&tenantID, &planValue, &text, &textStatus, &textEnqueuedAt, &textGeneration,
+		&tenantID, &projectID, &planValue, &text, &textStatus, &textEnqueuedAt,
+		&textGeneration, &textDeferredUntil,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrNotFound
@@ -56,15 +67,17 @@ func (s Store) PrepareFeedback(
 	definition, planExists := config.PlanFor(tenant.Plan(planValue))
 	if !planExists || !definition.Features.AI {
 		if _, err := tx.Exec(ctx, `
-			UPDATE feedbacks
-			SET text_process_status = 'skipped', ai_job_enqueued_at = NULL
-			WHERE id = $1 AND text_process_status IN ('pending', 'processing')
+				UPDATE feedbacks
+				SET text_process_status = 'skipped', ai_job_enqueued_at = NULL,
+				    ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
+				WHERE id = $1 AND text_process_status IN ('pending', 'processing')
 		`, feedbackID); err != nil {
 			return nil, false, fmt.Errorf("skip feedback AI: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE attachments
-			SET processing_status = 'skipped', error_message = NULL
+				UPDATE attachments
+				SET processing_status = 'skipped', error_message = NULL,
+				    ai_budget_deferred_until = NULL
 			WHERE feedback_id = $1 AND processing_status IN ('pending', 'processing')
 		`, feedbackID); err != nil {
 			return nil, false, fmt.Errorf("skip attachment AI: %w", err)
@@ -79,19 +92,27 @@ func (s Store) PrepareFeedback(
 	}
 
 	usageDate := midnightUTC(now)
+	deferredUntil := usageDate.AddDate(0, 0, 1)
 	prepared := make([]PreparedTask, 0)
 	budgetExhausted := false
 	if text == nil || strings.TrimSpace(*text) == "" {
 		if textStatus == "pending" || textStatus == "processing" {
 			if _, err := tx.Exec(ctx, `
-				UPDATE feedbacks SET text_process_status = 'skipped', ai_job_enqueued_at = NULL
+				UPDATE feedbacks
+				SET text_process_status = 'skipped', ai_job_enqueued_at = NULL,
+				    ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
 				WHERE id = $1
 			`, feedbackID); err != nil {
 				return nil, false, fmt.Errorf("skip empty feedback text: %w", err)
 			}
 		}
-	} else if textStatus == "pending" && textEnqueuedAt == nil {
-		reserved, err := reserveBudget(ctx, tx, tenantID, usageDate, dailyLimit)
+	} else if textStatus == "pending" && textEnqueuedAt == nil &&
+		(textDeferredUntil == nil || !textDeferredUntil.After(now)) {
+		nextGeneration := textGeneration + 1
+		reserved, err := reserveBudget(ctx, tx, budgetReservation{
+			TenantID: tenantID, ProjectID: projectID, Kind: TaskKindText,
+			ResourceID: feedbackID, Generation: nextGeneration, UsageDate: usageDate,
+		}, dailyLimit, s.projectDailyLimit(dailyLimit))
 		if err != nil {
 			return nil, false, err
 		}
@@ -100,25 +121,36 @@ func (s Store) PrepareFeedback(
 					UPDATE feedbacks
 					SET text_process_status = 'processing', ai_job_enqueued_at = $2,
 					    text_processing_generation = text_processing_generation + 1,
-					    ai_processed_at = NULL
+					    ai_processed_at = NULL, ai_budget_deferred_until = NULL,
+					    ai_budget_deferred_reason = NULL
 					WHERE id = $1 AND text_process_status = 'pending' AND ai_job_enqueued_at IS NULL
 					RETURNING text_processing_generation
 				`, feedbackID, now).Scan(&textGeneration); err != nil {
 				return nil, false, fmt.Errorf("prepare feedback text AI: %w", err)
 			}
 			prepared = append(prepared, PreparedTask{
-				Kind: TaskKindText, TenantID: tenantID, FeedbackID: feedbackID,
+				Kind: TaskKindText, TenantID: tenantID, ProjectID: projectID,
+				FeedbackID: feedbackID,
 				ResourceID: feedbackID, Generation: textGeneration,
 				EnqueuedAt: now, UsageDate: usageDate,
 			})
 		} else {
 			budgetExhausted = true
+			if _, err := tx.Exec(ctx, `
+					UPDATE feedbacks
+					SET ai_budget_deferred_until = $2, ai_budget_deferred_reason = $3
+					WHERE id = $1 AND text_process_status = 'pending'
+					  AND ai_job_enqueued_at IS NULL
+				`, feedbackID, deferredUntil, budgetDeferredReason); err != nil {
+				return nil, false, fmt.Errorf("defer feedback text AI: %w", err)
+			}
 		}
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE attachments
-		SET processing_status = 'skipped', error_message = NULL
+		SET processing_status = 'skipped', error_message = NULL,
+		    ai_budget_deferred_until = NULL
 		WHERE feedback_id = $1 AND kind = 'replay' AND processing_status IN ('pending', 'processing')
 	`, feedbackID); err != nil {
 		return nil, false, fmt.Errorf("skip replay AI: %w", err)
@@ -133,10 +165,16 @@ func (s Store) PrepareFeedback(
 		  AND retention_deleted_at IS NULL
 		  AND kind <> 'replay'
 		  AND processing_status = 'pending'
-		  AND error_message IS NULL
+		  AND (
+		      error_message IS NULL
+		      OR (
+		          ai_budget_deferred_until IS NOT NULL
+		          AND ai_budget_deferred_until <= $2
+		      )
+		  )
 		ORDER BY created_at, id
 		FOR UPDATE
-	`, feedbackID)
+	`, feedbackID, now)
 	if err != nil {
 		return nil, false, fmt.Errorf("lock pending attachment AI: %w", err)
 	}
@@ -160,25 +198,50 @@ func (s Store) PrepareFeedback(
 	rows.Close()
 
 	for _, attachment := range attachments {
-		reserved, err := reserveBudget(ctx, tx, tenantID, usageDate, dailyLimit)
+		if budgetExhausted {
+			if err := deferAttachmentAI(
+				ctx, tx, attachment.id, deferredUntil,
+			); err != nil {
+				return nil, false, err
+			}
+			continue
+		}
+		attempt := attachment.attempts + 1
+		reserved, err := reserveBudget(ctx, tx, budgetReservation{
+			TenantID: tenantID, ProjectID: projectID, Kind: TaskKindAttachment,
+			ResourceID: attachment.id, Generation: int64(attempt), UsageDate: usageDate,
+		}, dailyLimit, s.projectDailyLimit(dailyLimit))
 		if err != nil {
 			return nil, false, err
 		}
 		if !reserved {
 			budgetExhausted = true
-			break
+			if err := deferAttachmentAI(
+				ctx, tx, attachment.id, deferredUntil,
+			); err != nil {
+				return nil, false, err
+			}
+			continue
 		}
-		attempt := attachment.attempts + 1
 		if _, err := tx.Exec(ctx, `
 			UPDATE attachments
-			SET processing_status = 'processing', processing_attempts = $2, error_message = NULL
-			WHERE id = $1 AND processing_status = 'pending' AND error_message IS NULL
+			SET processing_status = 'processing', processing_attempts = $2,
+			    error_message = NULL, ai_budget_deferred_until = NULL
+			WHERE id = $1 AND processing_status = 'pending'
+			  AND (
+			      error_message IS NULL
+			      OR (
+			          ai_budget_deferred_until IS NOT NULL
+			          AND ai_budget_deferred_until <= $3
+			      )
+			  )
 			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
-		`, attachment.id, attempt); err != nil {
+		`, attachment.id, attempt, now); err != nil {
 			return nil, false, fmt.Errorf("prepare attachment AI: %w", err)
 		}
 		prepared = append(prepared, PreparedTask{
-			Kind: TaskKindAttachment, TenantID: tenantID, FeedbackID: feedbackID,
+			Kind: TaskKindAttachment, TenantID: tenantID, ProjectID: projectID,
+			FeedbackID: feedbackID,
 			ResourceID: attachment.id, Attempt: attempt, EnqueuedAt: now, UsageDate: usageDate,
 		})
 	}
@@ -188,6 +251,12 @@ func (s Store) PrepareFeedback(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit prepared AI work: %w", err)
+	}
+	if budgetExhausted {
+		s.recordDiagnostic(ctx, abuse.DiagnosticEvent{
+			TenantID: tenantID, ProjectID: projectID, Category: abuse.CategoryAIBudget,
+			Reason: budgetDeferredReason, OccurredAt: now,
+		})
 	}
 	return prepared, budgetExhausted, nil
 }
@@ -199,12 +268,13 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var affected int64
-	refundBudget := task.Kind != TaskKindFileDelete
+	shouldRefundBudget := task.Kind != TaskKindFileDelete
 	switch task.Kind {
 	case TaskKindText:
 		tag, err := tx.Exec(ctx, `
 				UPDATE feedbacks
-				SET text_process_status = 'pending', ai_job_enqueued_at = NULL
+				SET text_process_status = 'pending', ai_job_enqueued_at = NULL,
+				    ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
 				WHERE id = $1 AND tenant_id = $2
 				  AND text_process_status = 'processing' AND ai_job_enqueued_at = $3
 				  AND text_processing_generation = $4
@@ -216,7 +286,8 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 	case TaskKindAttachment:
 		tag, err := tx.Exec(ctx, `
 			UPDATE attachments
-			SET processing_status = 'pending', processing_attempts = processing_attempts - 1
+			SET processing_status = 'pending', processing_attempts = processing_attempts - 1,
+			    ai_budget_deferred_until = NULL
 			WHERE id = $1 AND tenant_id = $2
 			  AND processing_status = 'processing' AND processing_attempts = $3
 		`, task.ResourceID, task.TenantID, task.Attempt)
@@ -236,12 +307,18 @@ func (s Store) UndoPrepared(ctx context.Context, task PreparedTask) error {
 		}
 		affected = tag.RowsAffected()
 	}
-	if affected > 0 && refundBudget {
-		if _, err := tx.Exec(ctx, `
-			UPDATE ai_daily_usage SET requests = GREATEST(requests - 1, 0)
-			WHERE tenant_id = $1 AND usage_date = $2
-		`, task.TenantID, task.UsageDate); err != nil {
-			return fmt.Errorf("refund AI daily budget: %w", err)
+	if affected > 0 && shouldRefundBudget {
+		if task.ProjectID == "" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE ai_daily_usage SET requests = GREATEST(requests - 1, 0)
+				WHERE tenant_id = $1 AND usage_date = $2
+			`, task.TenantID, task.UsageDate); err != nil {
+				return fmt.Errorf("refund legacy AI daily budget: %w", err)
+			}
+		} else if err := refundBudget(
+			ctx, tx, budgetReservationForTask(task),
+		); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -266,10 +343,21 @@ func (s Store) PendingFeedbackIDs(
 			JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
 			LEFT JOIN ai_daily_usage AS usage
 			  ON usage.tenant_id = feedback.tenant_id AND usage.usage_date = $2
+			LEFT JOIN ai_project_daily_usage AS project_usage
+			  ON project_usage.project_id = feedback.project_id
+			 AND project_usage.usage_date = $2
 			WHERE tenant.plan IN ('growth', 'scale', 'enterprise')
 			  AND COALESCE(usage.requests, 0) < $3
+			  AND COALESCE(project_usage.requests, 0) < $5
 			  AND (
-				(feedback.text_process_status = 'pending' AND feedback.ai_job_enqueued_at IS NULL)
+				(
+				    feedback.text_process_status = 'pending'
+				    AND feedback.ai_job_enqueued_at IS NULL
+				    AND (
+				        feedback.ai_budget_deferred_until IS NULL
+				        OR feedback.ai_budget_deferred_until <= $4
+				    )
+				)
 				OR EXISTS (
 					SELECT 1 FROM attachments AS attachment
 					WHERE attachment.feedback_id = feedback.id
@@ -278,14 +366,20 @@ func (s Store) PendingFeedbackIDs(
 					  AND attachment.retention_deleted_at IS NULL
 					  AND attachment.kind <> 'replay'
 					  AND attachment.processing_status = 'pending'
-					  AND attachment.error_message IS NULL
+					  AND (
+					      attachment.error_message IS NULL
+					      OR (
+					          attachment.ai_budget_deferred_until IS NOT NULL
+					          AND attachment.ai_budget_deferred_until <= $4
+					      )
+					  )
 				)
 			  )
 		)
 		SELECT id FROM eligible
 		ORDER BY tenant_position, tenant_id, id
 		LIMIT $1
-	`, limit, midnightUTC(now), dailyLimit)
+	`, limit, midnightUTC(now), dailyLimit, now, s.projectDailyLimit(dailyLimit))
 	if err != nil {
 		return nil, fmt.Errorf("list pending AI feedbacks: %w", err)
 	}
@@ -306,21 +400,28 @@ func (s Store) PendingFeedbackIDs(
 
 func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, error) {
 	rows, err := s.Database.Query(ctx, `
-		SELECT kind, tenant_id, resource_id, attempt, generation, enqueued_at
+		SELECT kind, tenant_id, project_id, resource_id, attempt, generation, enqueued_at
 		FROM (
-			SELECT 'text'::text AS kind, tenant_id, id AS resource_id, 0 AS attempt,
+			SELECT 'text'::text AS kind, tenant_id, project_id, id AS resource_id, 0 AS attempt,
 			       text_processing_generation AS generation, ai_job_enqueued_at AS enqueued_at
 			FROM feedbacks
 			WHERE text_process_status = 'processing' AND ai_job_enqueued_at IS NOT NULL
 			UNION ALL
-			SELECT 'attachment', tenant_id, id, processing_attempts, 0, created_at
-			FROM attachments
-			WHERE processing_status = 'processing'
-			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
+			SELECT 'attachment', attachment.tenant_id, feedback.project_id,
+			       attachment.id, attachment.processing_attempts, 0, attachment.created_at
+			FROM attachments AS attachment
+			JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
+			WHERE attachment.processing_status = 'processing'
+			  AND attachment.safety_status = 'safe'
+			  AND attachment.retention_deleted_at IS NULL
 			UNION ALL
-			SELECT 'file_delete', tenant_id, id, delete_attempts, 0, delete_enqueued_at
-			FROM ai_gemini_files
-			WHERE deleted_at IS NULL AND failed_at IS NULL AND delete_enqueued_at IS NOT NULL
+			SELECT 'file_delete', file.tenant_id, feedback.project_id,
+			       file.id, file.delete_attempts, 0, file.delete_enqueued_at
+			FROM ai_gemini_files AS file
+			JOIN attachments AS attachment ON attachment.id = file.attachment_id
+			JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
+			WHERE file.deleted_at IS NULL AND file.failed_at IS NULL
+			  AND file.delete_enqueued_at IS NOT NULL
 		) AS in_flight
 		ORDER BY enqueued_at, resource_id
 		LIMIT $1
@@ -334,7 +435,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 		var kind string
 		var task PreparedTask
 		if err := rows.Scan(
-			&kind, &task.TenantID, &task.ResourceID, &task.Attempt,
+			&kind, &task.TenantID, &task.ProjectID, &task.ResourceID, &task.Attempt,
 			&task.Generation, &task.EnqueuedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan in-flight AI task: %w", err)
@@ -653,8 +754,8 @@ func (s Store) ClaimText(
 		  AND text IS NOT NULL AND btrim(text) <> ''
 		  AND text_process_status IN ('pending', 'processing')
 		  AND text_processing_generation = $3
-		RETURNING text
-	`, feedbackID, tenantID, generation).Scan(&work.Text)
+		RETURNING text, project_id
+	`, feedbackID, tenantID, generation).Scan(&work.Text, &work.ProjectID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TextWork{}, ErrNoWork
 	}
@@ -672,15 +773,20 @@ func (s Store) ClaimAttachment(
 	var work AttachmentWork
 	work.TenantID, work.AttachmentID, work.Attempt = tenantID, attachmentID, attempt
 	err := s.Database.QueryRow(ctx, `
-		UPDATE attachments
+		UPDATE attachments AS attachment
 		SET processing_status = 'processing'
-			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
-			  AND completed_at IS NOT NULL AND kind <> 'replay'
-			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
-			  AND processing_status IN ('pending', 'processing')
-		RETURNING feedback_id, kind, storage_key, content_type
+		FROM feedbacks AS feedback
+			WHERE attachment.id = $1 AND attachment.tenant_id = $2
+			  AND attachment.processing_attempts = $3
+			  AND attachment.completed_at IS NOT NULL AND attachment.kind <> 'replay'
+			  AND attachment.safety_status = 'safe'
+			  AND attachment.retention_deleted_at IS NULL
+			  AND attachment.processing_status IN ('pending', 'processing')
+			  AND feedback.id = attachment.feedback_id
+		RETURNING feedback.id, feedback.project_id, attachment.kind,
+		          attachment.storage_key, attachment.content_type
 	`, attachmentID, tenantID, attempt).Scan(
-		&work.FeedbackID, &work.Kind, &work.StorageKey, &work.ContentType,
+		&work.FeedbackID, &work.ProjectID, &work.Kind, &work.StorageKey, &work.ContentType,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AttachmentWork{}, ErrNoWork
@@ -874,7 +980,8 @@ func (Store) RetryAttachment(
 	err := query.QueryRow(ctx, `
 		UPDATE attachments
 		SET processing_status = 'pending', error_message = NULL,
-		    transcription = NULL, sentiment_score = NULL, moderation_flags = '{}', processed_at = NULL
+		    transcription = NULL, sentiment_score = NULL, moderation_flags = '{}',
+		    processed_at = NULL, ai_budget_deferred_until = NULL
 			WHERE id = $1 AND tenant_id = $2 AND completed_at IS NOT NULL
 			  AND kind <> 'replay' AND processing_status = $3
 			  AND safety_status = 'safe' AND retention_deleted_at IS NULL
@@ -905,10 +1012,11 @@ func (Store) ReprocessFeedback(
 		        ELSE 'pending'::processing_status
 		    END,
 		    text_cleaned = NULL, text_sentiment_score = NULL, text_moderation_flags = '{}',
-		    ai_suggested_title = NULL, ai_actionability = NULL,
-		    ai_category = NULL, ai_priority = NULL,
-		    text_processing_generation = text_processing_generation + 1,
-		    ai_job_enqueued_at = NULL, ai_processed_at = NULL
+			    ai_suggested_title = NULL, ai_actionability = NULL,
+			    ai_category = NULL, ai_priority = NULL,
+			    text_processing_generation = text_processing_generation + 1,
+			    ai_job_enqueued_at = NULL, ai_processed_at = NULL,
+			    ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
 		WHERE feedback.id = $1 AND feedback.tenant_id = $2
 		  AND feedback.text_process_status IN ('completed', 'failed', 'skipped')
 		  AND NOT EXISTS (
@@ -938,6 +1046,22 @@ func (Store) ReprocessFeedback(
 			return fmt.Errorf("read feedback AI status: %w", readErr)
 		}
 		if textStatus == "pending" && !activeAttachments {
+			if _, err := query.Exec(ctx, `
+				UPDATE feedbacks
+				SET ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
+				WHERE id = $1 AND tenant_id = $2 AND text_process_status = 'pending'
+			`, feedbackID, tenantID); err != nil {
+				return fmt.Errorf("clear deferred feedback AI: %w", err)
+			}
+			if _, err := query.Exec(ctx, `
+				UPDATE attachments
+				SET ai_budget_deferred_until = NULL, error_message = NULL
+				WHERE feedback_id = $1 AND tenant_id = $2
+				  AND processing_status = 'pending'
+				  AND ai_budget_deferred_until IS NOT NULL
+			`, feedbackID, tenantID); err != nil {
+				return fmt.Errorf("clear deferred attachment AI: %w", err)
+			}
 			return nil
 		}
 		return ErrAlreadyRunning
@@ -951,7 +1075,8 @@ func (Store) ReprocessFeedback(
 		        WHEN kind = 'replay' THEN 'skipped'::processing_status
 		        ELSE 'pending'::processing_status
 		    END,
-		    error_message = NULL, transcription = NULL, sentiment_score = NULL,
+		    error_message = NULL, ai_budget_deferred_until = NULL,
+		    transcription = NULL, sentiment_score = NULL,
 		    moderation_flags = '{}', processed_at = NULL
 			WHERE feedback_id = $1 AND tenant_id = $2
 			  AND completed_at IS NOT NULL AND processing_status <> 'processing'
@@ -962,29 +1087,192 @@ func (Store) ReprocessFeedback(
 	return nil
 }
 
+type budgetReservation struct {
+	TenantID   string
+	ProjectID  string
+	Kind       TaskKind
+	ResourceID string
+	Generation int64
+	UsageDate  time.Time
+}
+
 func reserveBudget(
 	ctx context.Context,
 	query db.Querier,
-	tenantID string,
-	usageDate time.Time,
-	limit int,
+	reservation budgetReservation,
+	tenantLimit int,
+	projectLimit int,
 ) (bool, error) {
+	if tenantLimit <= 0 || projectLimit <= 0 {
+		return false, errors.New("AI daily budget limits must be positive")
+	}
+	tag, err := query.Exec(ctx, `
+		INSERT INTO ai_work_reservations (
+			tenant_id, project_id, work_kind, resource_id, generation, usage_date
+		) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (tenant_id, work_kind, resource_id, generation) DO NOTHING
+	`, reservation.TenantID, reservation.ProjectID, reservation.Kind,
+		reservation.ResourceID, reservation.Generation, reservation.UsageDate)
+	if err != nil {
+		return false, fmt.Errorf("create AI work reservation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return true, nil
+	}
+
 	var requests int
-	err := query.QueryRow(ctx, `
+	err = query.QueryRow(ctx, `
 		INSERT INTO ai_daily_usage (tenant_id, usage_date, requests)
 		VALUES ($1, $2, 1)
 		ON CONFLICT (tenant_id, usage_date) DO UPDATE
 		SET requests = ai_daily_usage.requests + 1
 		WHERE ai_daily_usage.requests < $3
 		RETURNING requests
-	`, tenantID, usageDate, limit).Scan(&requests)
+	`, reservation.TenantID, reservation.UsageDate, tenantLimit).Scan(&requests)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if cleanupErr := deleteBudgetReservation(ctx, query, reservation); cleanupErr != nil {
+			return false, cleanupErr
+		}
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("reserve tenant AI daily budget: %w", err)
 	}
+
+	err = query.QueryRow(ctx, `
+		INSERT INTO ai_project_daily_usage (
+			tenant_id, project_id, usage_date, requests
+		) VALUES ($1, $2, $3, 1)
+		ON CONFLICT (project_id, usage_date) DO UPDATE
+		SET requests = ai_project_daily_usage.requests + 1
+		WHERE ai_project_daily_usage.requests < $4
+		RETURNING requests
+	`, reservation.TenantID, reservation.ProjectID, reservation.UsageDate,
+		projectLimit).Scan(&requests)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if cleanupErr := decrementTenantBudget(
+			ctx, query, reservation.TenantID, reservation.UsageDate,
+		); cleanupErr != nil {
+			return false, cleanupErr
+		}
+		if cleanupErr := deleteBudgetReservation(ctx, query, reservation); cleanupErr != nil {
+			return false, cleanupErr
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reserve project AI daily budget: %w", err)
+	}
 	return true, nil
+}
+
+func refundBudget(
+	ctx context.Context,
+	query db.Querier,
+	reservation budgetReservation,
+) error {
+	tag, err := query.Exec(ctx, `
+		DELETE FROM ai_work_reservations
+		WHERE tenant_id = $1 AND project_id = $2 AND work_kind = $3
+		  AND resource_id = $4 AND generation = $5 AND usage_date = $6
+	`, reservation.TenantID, reservation.ProjectID, reservation.Kind,
+		reservation.ResourceID, reservation.Generation, reservation.UsageDate)
+	if err != nil {
+		return fmt.Errorf("remove AI work reservation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	if err := decrementTenantBudget(
+		ctx, query, reservation.TenantID, reservation.UsageDate,
+	); err != nil {
+		return err
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_project_daily_usage
+		SET requests = GREATEST(requests - 1, 0)
+		WHERE tenant_id = $1 AND project_id = $2 AND usage_date = $3
+	`, reservation.TenantID, reservation.ProjectID, reservation.UsageDate); err != nil {
+		return fmt.Errorf("refund project AI daily budget: %w", err)
+	}
+	return nil
+}
+
+func deleteBudgetReservation(
+	ctx context.Context,
+	query db.Querier,
+	reservation budgetReservation,
+) error {
+	if _, err := query.Exec(ctx, `
+		DELETE FROM ai_work_reservations
+		WHERE tenant_id = $1 AND work_kind = $2 AND resource_id = $3 AND generation = $4
+	`, reservation.TenantID, reservation.Kind, reservation.ResourceID,
+		reservation.Generation); err != nil {
+		return fmt.Errorf("remove denied AI work reservation: %w", err)
+	}
+	return nil
+}
+
+func decrementTenantBudget(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	usageDate time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_daily_usage SET requests = GREATEST(requests - 1, 0)
+		WHERE tenant_id = $1 AND usage_date = $2
+	`, tenantID, usageDate); err != nil {
+		return fmt.Errorf("refund tenant AI daily budget: %w", err)
+	}
+	return nil
+}
+
+func budgetReservationForTask(task PreparedTask) budgetReservation {
+	generation := task.Generation
+	if task.Kind == TaskKindAttachment {
+		generation = int64(task.Attempt)
+	}
+	return budgetReservation{
+		TenantID: task.TenantID, ProjectID: task.ProjectID, Kind: task.Kind,
+		ResourceID: task.ResourceID, Generation: generation, UsageDate: task.UsageDate,
+	}
+}
+
+func deferAttachmentAI(
+	ctx context.Context,
+	query db.Querier,
+	attachmentID string,
+	deferredUntil time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE attachments
+		SET error_message = $3, ai_budget_deferred_until = $2
+		WHERE id = $1 AND processing_status = 'pending'
+	`, attachmentID, deferredUntil, budgetDeferredReason); err != nil {
+		return fmt.Errorf("defer attachment AI: %w", err)
+	}
+	return nil
+}
+
+func (s Store) projectDailyLimit(tenantLimit int) int {
+	if s.ProjectDailyLimit > 0 {
+		return s.ProjectDailyLimit
+	}
+	return tenantLimit
+}
+
+func (s Store) recordDiagnostic(ctx context.Context, event abuse.DiagnosticEvent) {
+	if s.Diagnostics == nil {
+		return
+	}
+	if err := s.Diagnostics.Record(ctx, event); err != nil {
+		logger := s.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.WarnContext(ctx, "record AI budget diagnostic", "error", err)
+	}
 }
 
 func updateCompletion(ctx context.Context, query db.Querier, feedbackID string, now time.Time) error {

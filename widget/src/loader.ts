@@ -51,9 +51,10 @@ interface ReplayCapture {
 interface ReplayModule {
 	startReplayCapture(options: {
 		rule: WidgetRule
-		publicKey: string
-		apiBase: URL
-		onError(error: unknown): void
+			publicKey: string
+			apiBase: URL
+			visitorID: string
+			onError(error: unknown): void
 	}): Promise<ReplayCapture | null>
 }
 
@@ -313,9 +314,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			const module = (await import(new URL('replay.js', assetBase).href)) as ReplayModule
 			const capture = await module.startReplayCapture({
 				rule,
-				publicKey: key,
-				apiBase: assetBase,
-				onError: (error) => void report(error, 'replay'),
+					publicKey: key,
+					apiBase: assetBase,
+					visitorID: analytics.visitorID,
+					onError: (error) => void report(error, 'replay'),
 			})
 			if (transition !== replayTransition) {
 				if (capture) void capture.stop()

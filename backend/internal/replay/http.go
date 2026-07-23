@@ -9,15 +9,18 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
@@ -40,14 +43,30 @@ type MergeScheduler interface {
 	Schedule(context.Context, string) error
 }
 
+type BatchVerificationScheduler interface {
+	ScheduleBatch(context.Context, BatchVerificationTask) error
+}
+
+type AbuseEvaluator interface {
+	Evaluate(context.Context, abuse.Policy, abuse.Request) (abuse.Decision, error)
+}
+
+type AbuseDiagnosticRecorder interface {
+	Record(context.Context, abuse.DiagnosticEvent) error
+}
+
 type HTTPOptions struct {
-	Authorizer widgetapi.ProjectAuthorizer
-	Begin      db.BeginFunc
-	Store      Store
-	Storage    ObjectStorage
-	Scheduler  MergeScheduler
-	Logger     *slog.Logger
-	Now        func() time.Time
+	Authorizer        widgetapi.ProjectAuthorizer
+	Begin             db.BeginFunc
+	Store             Store
+	Storage           ObjectStorage
+	Scheduler         MergeScheduler
+	Verifier          BatchVerificationScheduler
+	Abuse             AbuseEvaluator
+	Diagnostics       AbuseDiagnosticRecorder
+	TrustedProxyCIDRs []netip.Prefix
+	Logger            *slog.Logger
+	Now               func() time.Time
 }
 
 type HTTPHandler struct {
@@ -84,7 +103,7 @@ func (h *HTTPHandler) preflight(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
-	configuration, _, ok := h.authorizeRequest(w, r)
+	configuration, origin, ok := h.authorizeRequest(w, r)
 	if !ok {
 		return
 	}
@@ -92,12 +111,21 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		SessionID    string `json:"session_id"`
 		WidgetRuleID string `json:"widget_rule_id"`
 		PageURL      string `json:"page_url"`
+		VisitorID    string `json:"visitor_id"`
 	}
 	if !decodeReplayJSON(w, r, &request) {
 		return
 	}
-	rule, valid := h.validateReplayStart(w, configuration, request.SessionID, request.WidgetRuleID, request.PageURL)
+	rule, valid := h.validateReplayStart(
+		w, configuration, request.SessionID, request.WidgetRuleID, request.PageURL, request.VisitorID,
+	)
 	if !valid {
+		return
+	}
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, strings.TrimSpace(request.VisitorID),
+		strings.TrimSpace(request.SessionID), abuse.ReplayStartPolicy, 1,
+	); !allowed {
 		return
 	}
 	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
@@ -134,7 +162,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
-	configuration, _, ok := h.authorizeRequest(w, r)
+	configuration, origin, ok := h.authorizeRequest(w, r)
 	if !ok || !h.requireReplayPlan(w, configuration) {
 		return
 	}
@@ -163,6 +191,17 @@ func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "replay batch is invalid", fields)
+		return
+	}
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, "", sessionID, abuse.ReplayBatchPolicy, 1,
+	); !allowed {
+		return
+	}
+	mebibytes := int((request.SizeBytes + (1 << 20) - 1) / (1 << 20))
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, "", sessionID, abuse.ReplayBytePolicy, mebibytes,
+	); !allowed {
 		return
 	}
 	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
@@ -196,12 +235,12 @@ func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusCreated, BatchUpload{
 		BatchIndex: batch.Index, PresignedURL: presigned, Method: http.MethodPut,
 		Headers:       map[string]string{"Content-Type": batch.ContentType},
-		CompleteToken: token, ExpiresAt: h.now().Add(replayUploadTTL),
+		CompleteToken: token, ExpiresAt: batch.UploadExpiresAt,
 	})
 }
 
 func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
-	configuration, _, ok := h.authorizeRequest(w, r)
+	configuration, origin, ok := h.authorizeRequest(w, r)
 	if !ok || !h.requireReplayPlan(w, configuration) {
 		return
 	}
@@ -222,6 +261,11 @@ func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
 			"replay batch completion is invalid", []map[string]string{replayField("complete_token", "is required")})
 		return
 	}
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, "", sessionID, abuse.ReplayBatchPolicy, 1,
+	); !allowed {
+		return
+	}
 	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
 	if !ok {
 		return
@@ -239,8 +283,28 @@ func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
 		h.writeDomainError(w, r, err)
 		return
 	}
-	if batch.CompletedAt != nil || batch.CompleteTokenHash == nil {
+	if batch.SafetyStatus != BatchSafetyPending || batch.CompletedAt != nil ||
+		batch.CompleteTokenHash == nil {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "replay batch is already complete", nil)
+		return
+	}
+	if !h.now().Before(batch.UploadExpiresAt) {
+		if err := h.options.Store.ExpireBatch(r.Context(), tx, batch.ID, h.now()); err != nil {
+			h.writeDomainError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeStoreError(w, r, fmt.Errorf("commit replay batch expiry: %w", err))
+			return
+		}
+		committed = true
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryUploadSafety, abuse.ReasonUploadExpired,
+		)
+		api.WriteErrorWithOptions(
+			w, http.StatusGone, api.CodeConflict, "replay batch upload expired", nil,
+			api.ErrorOptions{Reason: abuse.ReasonUploadExpired},
+		)
 		return
 	}
 	want := auth.HashToken(request.CompleteToken)
@@ -273,6 +337,17 @@ func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
+	if h.options.Verifier != nil {
+		task := BatchVerificationTask{
+			TenantID: batch.TenantID, BatchID: batch.ID, Generation: batch.Generation,
+		}
+		if err := h.options.Verifier.ScheduleBatch(context.WithoutCancel(r.Context()), task); err != nil {
+			h.logger.ErrorContext(
+				r.Context(), "schedule replay batch verification",
+				"error", err, "batch_id", batch.ID,
+			)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -361,6 +436,7 @@ func (h *HTTPHandler) validateReplayStart(
 	clientSessionID string,
 	widgetRuleID string,
 	pageURL string,
+	visitorID string,
 ) (project.WidgetRule, bool) {
 	if !h.requireReplayPlan(w, configuration) {
 		return project.WidgetRule{}, false
@@ -371,6 +447,11 @@ func (h *HTTPHandler) validateReplayStart(
 	}
 	if !validReplayURL(strings.TrimSpace(pageURL)) {
 		fields = append(fields, replayField("page_url", "must be an absolute HTTP or HTTPS URL"))
+	}
+	if value := strings.TrimSpace(visitorID); value != "" {
+		if _, err := uuid.Parse(value); err != nil {
+			fields = append(fields, replayField("visitor_id", "must be a UUID"))
+		}
 	}
 	var selected *project.WidgetRule
 	for index := range configuration.Rules {
@@ -434,6 +515,100 @@ func (h *HTTPHandler) beginTenantTransaction(
 	return tx, true
 }
 
+func (h *HTTPHandler) enforceAbusePolicy(
+	w http.ResponseWriter,
+	r *http.Request,
+	configuration project.PublicConfiguration,
+	origin string,
+	visitorID string,
+	sessionID string,
+	policy abuse.Policy,
+	cost int,
+) (abuse.Decision, bool) {
+	if h.options.Abuse == nil {
+		return abuse.Decision{Allowed: true, Reason: policy.Reason}, true
+	}
+	decision, err := h.options.Abuse.Evaluate(r.Context(), policy, abuse.Request{
+		Identity: abuse.Identity{
+			TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
+			Origin:    replayOriginHost(origin),
+			Network:   httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
+			VisitorID: visitorID, SessionID: sessionID,
+		},
+		Cost: cost,
+	})
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "replay abuse policy unavailable",
+			"error", err, "policy", policy.Name, "fail_open", decision.Allowed)
+		if decision.Allowed {
+			return decision, true
+		}
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryRateLimit, policy.Name+"_unavailable",
+		)
+		h.writeAbuseError(
+			w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, decision.Reason, 5,
+		)
+		return decision, false
+	}
+	if decision.Allowed {
+		if decision.Limit > 0 {
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(decision.Limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+		}
+		return decision, true
+	}
+	h.recordDiagnostic(r.Context(), configuration, abuse.CategoryRateLimit, decision.Reason)
+	h.writeAbuseError(
+		w, http.StatusTooManyRequests, api.CodeRateLimitExceeded,
+		decision.Reason, abuse.RetryAfterSeconds(decision.RetryAfter),
+	)
+	return decision, false
+}
+
+func (h *HTTPHandler) writeAbuseError(
+	w http.ResponseWriter,
+	status int,
+	code api.ErrorCode,
+	reason string,
+	retrySeconds int,
+) {
+	if retrySeconds < 1 {
+		retrySeconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+	api.WriteErrorWithOptions(
+		w, status, code, "too many replay requests; try again shortly", nil,
+		api.ErrorOptions{Reason: reason, RetryAfterSeconds: retrySeconds},
+	)
+}
+
+func (h *HTTPHandler) recordDiagnostic(
+	ctx context.Context,
+	configuration project.PublicConfiguration,
+	category abuse.Category,
+	reason string,
+) {
+	if h.options.Diagnostics == nil {
+		return
+	}
+	if err := h.options.Diagnostics.Record(ctx, abuse.DiagnosticEvent{
+		TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
+		Category: category, Reason: reason, OccurredAt: h.now(),
+	}); err != nil {
+		h.logger.WarnContext(ctx, "record replay abuse diagnostic",
+			"error", err, "category", category, "reason", reason)
+	}
+}
+
+func replayOriginHost(origin string) string {
+	parsed, err := url.Parse(origin)
+	if err == nil && parsed.Hostname() != "" {
+		return strings.ToLower(parsed.Hostname())
+	}
+	return strings.ToLower(strings.TrimSpace(origin))
+}
+
 func (h *HTTPHandler) writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -445,6 +620,12 @@ func (h *HTTPHandler) writeDomainError(w http.ResponseWriter, r *http.Request, e
 	case errors.Is(err, ErrEventLimit):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
 			"replay session event limit exceeded", []map[string]string{replayField("events_count", "exceeds the session limit")})
+	case errors.Is(err, ErrBatchLimit):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"replay session batch limit exceeded", []map[string]string{replayField("batch_index", "exceeds the session limit")})
+	case errors.Is(err, ErrByteLimit):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"replay session byte limit exceeded", []map[string]string{replayField("size_bytes", "exceeds the session limit")})
 	default:
 		h.writeStoreError(w, r, err)
 	}

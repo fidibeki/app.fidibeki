@@ -43,19 +43,14 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 			return err
 		}
 		if session.MergedAt == nil {
-			completedBatches, recoverErr := p.recoverUploadedBatches(ctx, session, batches)
-			if recoverErr != nil {
-				markErr := p.Store.MarkMergeFailed(ctx, session.ID, recoverErr.Error())
-				return errors.Join(recoverErr, markErr)
-			}
-			if len(completedBatches) == 0 {
+			if len(batches) == 0 {
 				if err := p.Store.MarkUnavailable(ctx, session.ID); err != nil {
 					return err
 				}
 				return fmt.Errorf("replay unavailable: %w", asynq.SkipRetry)
 			}
 			key := fmt.Sprintf("tenants/%s/sessions/%s/replay.json", session.TenantID, session.ID)
-			eventsCount, mergeErr := p.mergeBatches(ctx, key, completedBatches)
+			eventsCount, mergeErr := p.mergeBatches(ctx, key, batches)
 			if mergeErr != nil {
 				markErr := p.Store.MarkMergeFailed(ctx, session.ID, mergeErr.Error())
 				return errors.Join(mergeErr, markErr)
@@ -74,39 +69,6 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 		}
 		return nil
 	}
-}
-
-func (p Processor) recoverUploadedBatches(
-	ctx context.Context,
-	session Session,
-	batches []Batch,
-) ([]Batch, error) {
-	completed := make([]Batch, 0, len(batches))
-	now := p.now()
-	for _, batch := range batches {
-		if batch.CompletedAt != nil {
-			completed = append(completed, batch)
-			continue
-		}
-		object, err := p.Storage.Stat(ctx, batch.StorageKey)
-		if errors.Is(err, storage.ErrObjectNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("stat replay batch %d: %w", batch.Index, err)
-		}
-		if object.Size != batch.SizeBytes ||
-			normalizeReplayContentType(object.ContentType) != batch.ContentType {
-			continue
-		}
-		if err := p.Store.CompleteBatch(ctx, p.Store.Database, session.ID, batch.ID, now); err != nil &&
-			!errors.Is(err, ErrBatchComplete) {
-			return nil, fmt.Errorf("recover uploaded replay batch %d: %w", batch.Index, err)
-		}
-		batch.CompletedAt = &now
-		completed = append(completed, batch)
-	}
-	return completed, nil
 }
 
 func (p Processor) mergeBatches(ctx context.Context, key string, batches []Batch) (int, error) {
@@ -164,40 +126,23 @@ func (p Processor) appendBatch(
 		return 0, fmt.Errorf("open replay batch %d: %w", batch.Index, err)
 	}
 	defer func() { _ = object.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(object, batch.SizeBytes+1))
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('[') {
-		return 0, fmt.Errorf("decode replay batch %d: expected JSON array", batch.Index)
-	}
 	count := 0
-	for decoder.More() {
-		var event json.RawMessage
-		if err := decoder.Decode(&event); err != nil {
-			return 0, fmt.Errorf("decode replay event in batch %d: %w", batch.Index, err)
-		}
+	decoded, err := decodeVerifiedBatch(object, batch, func(event []byte) error {
 		if hasPrevious || count > 0 {
 			if err := writer.WriteByte(','); err != nil {
-				return 0, fmt.Errorf("separate replay events: %w", err)
+				return fmt.Errorf("separate replay events: %w", err)
 			}
 		}
 		if _, err := writer.Write(event); err != nil {
-			return 0, fmt.Errorf("write replay event: %w", err)
+			return fmt.Errorf("write replay event: %w", err)
 		}
 		count++
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("verify replay batch %d: %w", batch.Index, err)
 	}
-	if _, err := decoder.Token(); err != nil {
-		return 0, fmt.Errorf("finish replay batch %d: %w", batch.Index, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return 0, fmt.Errorf("finish replay batch %d: unexpected trailing JSON", batch.Index)
-	}
-	if count != batch.EventsCount {
-		return 0, fmt.Errorf(
-			"replay batch %d declared %d events but contained %d",
-			batch.Index, batch.EventsCount, count,
-		)
-	}
-	return count, nil
+	return decoded, nil
 }
 
 func (p Processor) now() time.Time {

@@ -67,6 +67,7 @@ type Config struct {
 	GeminiModel               string
 	GeminiRPM                 int
 	AIDailyLimit              int
+	AIProjectDailyLimit       int
 	AIReconcileEvery          time.Duration
 	AppDBMaxConns             int32
 	AdminDBMaxConns           int32
@@ -111,6 +112,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	aiConcurrency, aiConcurrencyErr := strconv.Atoi(get("AI_QUEUE_CONCURRENCY", "3"))
 	geminiRPM, geminiRPMErr := strconv.Atoi(get("GEMINI_RPM", "15"))
 	aiDailyLimit, aiDailyLimitErr := strconv.Atoi(get("AI_DAILY_REQUEST_LIMIT", "5000"))
+	aiProjectDailyLimit, aiProjectDailyLimitErr := strconv.Atoi(
+		get("AI_PROJECT_DAILY_REQUEST_LIMIT", "2000"),
+	)
 	aiReconcileEvery, aiReconcileEveryErr := time.ParseDuration(get("AI_RECONCILE_INTERVAL", "5m"))
 	trustedProxyCIDRs, trustedProxyCIDRsErr := parseCIDRs(get("TRUSTED_PROXY_CIDRS", ""))
 	s3Endpoint := get("S3_ENDPOINT", "")
@@ -167,6 +171,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		GeminiModel:               get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		GeminiRPM:                 geminiRPM,
 		AIDailyLimit:              aiDailyLimit,
+		AIProjectDailyLimit:       aiProjectDailyLimit,
 		AIReconcileEvery:          aiReconcileEvery,
 		AppDBMaxConns:             int32(appDBMaxConns),
 		AdminDBMaxConns:           int32(adminDBMaxConns),
@@ -227,6 +232,10 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if aiDailyLimitErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_DAILY_REQUEST_LIMIT: %w", aiDailyLimitErr))
+	}
+	if aiProjectDailyLimitErr != nil {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("AI_PROJECT_DAILY_REQUEST_LIMIT: %w", aiProjectDailyLimitErr))
 	}
 	if aiReconcileEveryErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_RECONCILE_INTERVAL: %w", aiReconcileEveryErr))
@@ -372,6 +381,10 @@ func (c Config) validate() []error {
 	if c.AIDailyLimit <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_DAILY_REQUEST_LIMIT must be positive"))
 	}
+	if c.AIProjectDailyLimit <= 0 {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("AI_PROJECT_DAILY_REQUEST_LIMIT must be positive"))
+	}
 	if c.AIReconcileEvery <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_RECONCILE_INTERVAL must be positive"))
 	}
@@ -460,6 +473,7 @@ func (c Config) Redacted() map[string]any {
 		"gemini_model":                 c.GeminiModel,
 		"gemini_rpm":                   c.GeminiRPM,
 		"ai_daily_limit":               c.AIDailyLimit,
+		"ai_project_daily_limit":       c.AIProjectDailyLimit,
 		"ai_reconcile_every":           c.AIReconcileEvery.String(),
 		"sentry_dsn":                   "[REDACTED]",
 		"app_version":                  c.AppVersion,

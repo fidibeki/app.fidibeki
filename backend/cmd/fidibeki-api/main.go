@@ -232,7 +232,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		}
 	}()
 	aiScheduler := aiprocessing.Scheduler{
-		Store: aiprocessing.Store{Database: pools.Admin}, Queue: aiQueue,
+		Store: aiprocessing.Store{
+			Database: pools.Admin, ProjectDailyLimit: settings.AIProjectDailyLimit,
+			Diagnostics: abuseDiagnostics, Logger: logger,
+		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
 	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
@@ -258,7 +261,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		}
 	}()
 	replayStore := replay.Store{Database: pools.Admin}
-	replayScheduler := replay.Scheduler{Store: replayStore, Queue: replayQueue, Logger: logger}
+	replayScheduler := replay.Scheduler{
+		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue, Logger: logger,
+	}
 	adminStore := platformadmin.Store{
 		Database: pools.Admin, RefreshTTL: settings.RefreshTokenTTL,
 		RefreshRetryGrace: settings.RefreshRetryGrace,
@@ -422,7 +427,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: replay.Store{},
-		Storage: objectStorage, Scheduler: replayScheduler, Logger: logger,
+		Storage: objectStorage, Scheduler: replayScheduler, Verifier: replayScheduler,
+		Abuse: abuseEvaluator, Diagnostics: abuseDiagnostics,
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
 	})
 	widgetRoutes.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
@@ -555,7 +562,11 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		}
 	}()
 	aiScheduler := aiprocessing.Scheduler{
-		Store: aiprocessing.Store{Database: pools.Admin}, Queue: aiQueue,
+		Store: aiprocessing.Store{
+			Database: pools.Admin, ProjectDailyLimit: settings.AIProjectDailyLimit,
+			Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
+			Logger:      logger,
+		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
 	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
@@ -581,8 +592,15 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		}
 	}()
 	replayStore := replay.Store{Database: pools.Admin}
-	replayScheduler := replay.Scheduler{Store: replayStore, Queue: replayQueue, Logger: logger}
+	replayScheduler := replay.Scheduler{
+		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue, Logger: logger,
+	}
 	replayProcessor := replay.Processor{Store: replayStore, Storage: objectStorage}
+	replayVerificationProcessor := replay.BatchVerificationProcessor{
+		Store: replayStore, Storage: objectStorage,
+		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
+		Logger:      logger,
+	}
 	replayCleaner := replay.Cleaner{Store: replayStore, Storage: objectStorage, Logger: logger}
 	privacyQueue, err := privacy.OpenQueue(settings.RedisURL)
 	if err != nil {
@@ -640,7 +658,11 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
-	aiStore := aiprocessing.Store{Database: pools.Admin}
+	aiStore := aiprocessing.Store{
+		Database: pools.Admin, ProjectDailyLimit: settings.AIProjectDailyLimit,
+		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
+		Logger:      logger,
+	}
 	var analyzer aiprocessing.Analyzer = aiprocessing.UnavailableAnalyzer{}
 	fileDeleteHandler := aiprocessing.UnavailableFileDeleteHandler(aiStore)
 	if settings.GeminiAPIKey != "" {
@@ -659,7 +681,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	processor := aiprocessing.Processor{
 		Store: aiStore, Analyzer: analyzer, Storage: objectStorage,
 		Limiter: ratelimit.NewRedisLimiter(redisClient.Client()), RPM: settings.GeminiRPM,
-		Logger: logger,
+		Logger: logger, Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
 	}
 	verificationProcessor := feedback.VerificationProcessor{
 		Store: verificationStore, Storage: objectStorage, Scanner: feedback.SignatureScanner{},
@@ -676,6 +698,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		ReporterHandler:               reporterHandler.Handler(),
 		LifecycleHandler:              lifecycleHandler.Handler(),
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
+		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
 		AttachmentVerificationHandler: verificationProcessor.Handler(),
 		IntegrationHandler:            integrationHandler.Handler(),
 		PrivacyExportHandler:          privacyExporter.Handler(),

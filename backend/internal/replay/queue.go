@@ -61,6 +61,29 @@ func (q *Queue) EnqueueMerge(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func (q *Queue) EnqueueVerification(ctx context.Context, task BatchVerificationTask) error {
+	payload, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("encode replay batch verification task: %w", err)
+	}
+	_, err = q.client.EnqueueContext(
+		ctx,
+		asynq.NewTask(TaskVerifyBatch, payload),
+		asynq.TaskID(fmt.Sprintf("replay:verify:%s:%d", task.BatchID, task.Generation)),
+		asynq.Queue(outbox.QueueName),
+		asynq.MaxRetry(12),
+		asynq.Timeout(2*time.Minute),
+		asynq.Retention(24*time.Hour),
+	)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("enqueue replay batch verification: %w", err)
+	}
+	return nil
+}
+
 func (q *Queue) Close() error {
 	if err := q.client.Close(); err != nil {
 		return fmt.Errorf("close replay queue: %w", err)
@@ -72,11 +95,16 @@ type MergeQueue interface {
 	EnqueueMerge(context.Context, string) error
 }
 
+type BatchVerificationQueue interface {
+	EnqueueVerification(context.Context, BatchVerificationTask) error
+}
+
 type Scheduler struct {
-	Store  Store
-	Queue  MergeQueue
-	Logger *slog.Logger
-	Now    func() time.Time
+	Store             Store
+	Queue             MergeQueue
+	VerificationQueue BatchVerificationQueue
+	Logger            *slog.Logger
+	Now               func() time.Time
 }
 
 func (s Scheduler) Schedule(ctx context.Context, sessionID string) error {
@@ -86,16 +114,51 @@ func (s Scheduler) Schedule(ctx context.Context, sessionID string) error {
 	return s.Store.MarkMergeEnqueued(ctx, sessionID, s.now())
 }
 
+func (s Scheduler) ScheduleBatch(ctx context.Context, task BatchVerificationTask) error {
+	if s.VerificationQueue == nil {
+		return errors.New("replay batch verification queue is unavailable")
+	}
+	now := s.now()
+	if err := s.Store.MarkVerificationEnqueued(ctx, task, now); err != nil {
+		return err
+	}
+	if err := s.VerificationQueue.EnqueueVerification(ctx, task); err != nil {
+		undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		undoErr := s.Store.UndoVerificationEnqueued(undoCtx, task)
+		cancel()
+		return errors.Join(err, undoErr)
+	}
+	return nil
+}
+
 func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 	now := s.now()
+	var result error
+	if s.VerificationQueue != nil {
+		if _, err := s.Store.ExpirePendingBatches(ctx, now, 100); err != nil {
+			result = errors.Join(result, err)
+		}
+		tasks, err := s.Store.PrepareBatchVerifications(ctx, now, 100)
+		if err != nil {
+			result = errors.Join(result, err)
+		} else {
+			for _, task := range tasks {
+				if err := s.VerificationQueue.EnqueueVerification(ctx, task); err != nil {
+					undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					undoErr := s.Store.UndoVerificationEnqueued(undoCtx, task)
+					cancel()
+					result = errors.Join(result, err, undoErr)
+				}
+			}
+		}
+	}
 	if err := s.Store.RecoverAbandoned(ctx, now.Add(-abandonedSessionGrace), now, 100); err != nil {
-		return err
+		result = errors.Join(result, err)
 	}
 	sessions, err := s.Store.PendingMerges(ctx, 100, now.Add(-5*time.Minute))
 	if err != nil {
-		return err
+		return errors.Join(result, err)
 	}
-	var result error
 	for _, session := range sessions {
 		if err := s.Schedule(ctx, session.ID); err != nil {
 			result = errors.Join(result, err)

@@ -1,7 +1,7 @@
 export type TenantPlan = 'starter' | 'growth' | 'scale' | 'enterprise'
 export type TenantStatus = 'active' | 'trial' | 'suspended' | 'cancelled'
 export type FeedbackStatus = 'open' | 'spam' | 'archived'
-export type ProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped'
+export type ProcessingStatus = 'pending' | 'processing' | 'deferred' | 'completed' | 'failed' | 'skipped'
 export type IssueStatus = 'open' | 'in_progress' | 'needs_info' | 'resolved' | 'closed'
 export type TriagePriority = 'low' | 'medium' | 'high' | 'urgent'
 

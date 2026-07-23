@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	feedbackdomain "github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -49,7 +51,8 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	defer cancel()
 	pool := aiTestDatabase(t, ctx)
 	seedAIFeedback(t, ctx, pool)
-	store := Store{Database: pool}
+	diagnostics := &capturingDiagnosticRecorder{}
+	store := Store{Database: pool, Diagnostics: diagnostics}
 	dayOne := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	if _, _, err := store.PrepareFeedback(
 		ctx, "90000000-0000-4000-8000-000000000001", 2, dayOne,
@@ -88,6 +91,13 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	assertAIState(t, ctx, pool, testFeedbackID, "processing", nil)
 	assertAttachmentState(t, ctx, pool, testReplayID, "skipped", 0, nil)
 	assertUsage(t, ctx, pool, dayOne, 2)
+	if len(diagnostics.events) != 1 ||
+		diagnostics.events[0].TenantID != testTenantID ||
+		diagnostics.events[0].ProjectID != testProjectID ||
+		diagnostics.events[0].Category != abuse.CategoryAIBudget ||
+		diagnostics.events[0].Reason != budgetDeferredReason {
+		t.Fatalf("AI budget diagnostics = %#v", diagnostics.events)
+	}
 
 	analyzer := &fakeAnalyzer{}
 	processor := Processor{
@@ -114,7 +124,9 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	assertRecommendations(t, ctx, pool, testFeedbackID,
 		"Checkout is confusing", "actionable", "checkout", "high")
 	assertAttachmentState(t, ctx, pool, testAudioID, "completed", 1, nil)
-	assertAttachmentState(t, ctx, pool, testScreenshotID, "pending", 0, nil)
+	assertAttachmentState(
+		t, ctx, pool, testScreenshotID, "pending", 0, stringPointer(budgetDeferredReason),
+	)
 
 	dayTwo := dayOne.Add(24 * time.Hour)
 	if _, err := pool.Exec(ctx, `
@@ -670,6 +682,192 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		t.Errorf("PendingFeedbackIDs(exhausted tenant) = %#v, %v", eligibleIDs, err)
 	}
 	exerciseAIHTTP(t, ctx, pool)
+	exerciseIdempotentAIBudgets(t, ctx, pool, store, dayEight.Add(24*time.Hour))
+}
+
+func exerciseIdempotentAIBudgets(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	store Store,
+	now time.Time,
+) {
+	t.Helper()
+	usageDate := midnightUTC(now)
+	reservation := budgetReservation{
+		TenantID: testTenantID, ProjectID: testProjectID, Kind: TaskKindText,
+		ResourceID: "60000000-0000-4000-8000-000000000001",
+		Generation: 1, UsageDate: usageDate,
+	}
+	start := make(chan struct{})
+	results := make(chan error, 8)
+	for range 8 {
+		go func() {
+			<-start
+			tx, err := pool.Begin(ctx)
+			if err == nil {
+				var reserved bool
+				reserved, err = reserveBudget(ctx, tx, reservation, 10, 10)
+				if err == nil && !reserved {
+					err = errors.New("idempotent reservation was denied")
+				}
+			}
+			if err == nil {
+				err = tx.Commit(ctx)
+			} else if tx != nil {
+				_ = tx.Rollback(ctx)
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	for range 8 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent idempotent AI reservation: %v", err)
+		}
+	}
+	var tenantRequests, projectRequests, reservations int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT requests FROM ai_daily_usage
+			 WHERE tenant_id = $1 AND usage_date = $3),
+			(SELECT requests FROM ai_project_daily_usage
+			 WHERE project_id = $2 AND usage_date = $3),
+			(SELECT count(*) FROM ai_work_reservations
+			 WHERE tenant_id = $1 AND resource_id = $4 AND generation = 1)
+	`, testTenantID, testProjectID, usageDate, reservation.ResourceID).Scan(
+		&tenantRequests, &projectRequests, &reservations,
+	); err != nil {
+		t.Fatalf("read idempotent AI budget state: %v", err)
+	}
+	if tenantRequests != 1 || projectRequests != 1 || reservations != 1 {
+		t.Fatalf("idempotent AI budget = tenant %d project %d reservations %d",
+			tenantRequests, projectRequests, reservations)
+	}
+
+	deniedReservation := reservation
+	deniedReservation.ResourceID = "60000000-0000-4000-8000-000000000002"
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin project-limit AI reservation: %v", err)
+	}
+	reserved, err := reserveBudget(ctx, tx, deniedReservation, 10, 1)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("reserve exhausted project AI budget: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit exhausted project AI budget: %v", err)
+	}
+	if reserved {
+		t.Fatal("exhausted project AI budget was reserved")
+	}
+
+	secondProjectID := "60000000-0000-4000-8000-000000000003"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
+		VALUES (
+			$1, $2, 'Second budget project',
+			'pk_live_SECONDPROJECTABCDEFGHI', '{second.example.com}'
+		)
+	`, secondProjectID, testTenantID); err != nil {
+		t.Fatalf("create second AI budget project: %v", err)
+	}
+	secondProjectReservation := reservation
+	secondProjectReservation.ProjectID = secondProjectID
+	secondProjectReservation.ResourceID = "60000000-0000-4000-8000-000000000004"
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin second-project AI reservation: %v", err)
+	}
+	reserved, err = reserveBudget(ctx, tx, secondProjectReservation, 10, 1)
+	if err != nil || !reserved {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("reserve second-project AI budget = %t, %v", reserved, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit second-project AI budget: %v", err)
+	}
+
+	deferredFeedbackID := "60000000-0000-4000-8000-000000000005"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO feedbacks (
+			id, tenant_id, project_id, public_id, client_feedback_id,
+			text, title, page_url, text_process_status
+		) VALUES (
+			$1, $2, $3, 'fb_Budget01', gen_random_uuid(),
+			'Please analyze this later', 'Please analyze this later',
+			'https://example.com/budget', 'pending'
+		)
+	`, deferredFeedbackID, testTenantID, testProjectID); err != nil {
+		t.Fatalf("create deferred AI feedback: %v", err)
+	}
+	queue := &capturingTaskQueue{}
+	limitedStore := store
+	limitedStore.ProjectDailyLimit = 1
+	scheduler := Scheduler{
+		Store: limitedStore, Queue: queue, DailyLimit: 10, Now: func() time.Time { return now },
+	}
+	if err := scheduler.ScheduleFeedback(ctx, deferredFeedbackID); err != nil {
+		t.Fatalf("schedule project-exhausted AI feedback: %v", err)
+	}
+	if len(queue.tasks) != 0 {
+		t.Fatalf("project-exhausted AI tasks = %#v", queue.tasks)
+	}
+	var deferredStatus string
+	var deferredReason *string
+	var deferredUntil *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT text_process_status::text, ai_budget_deferred_reason,
+		       ai_budget_deferred_until
+		FROM feedbacks WHERE id = $1
+	`, deferredFeedbackID).Scan(
+		&deferredStatus, &deferredReason, &deferredUntil,
+	); err != nil {
+		t.Fatalf("read deferred AI feedback: %v", err)
+	}
+	if deferredStatus != "pending" || deferredReason == nil ||
+		*deferredReason != budgetDeferredReason || deferredUntil == nil {
+		t.Fatalf("deferred AI state = %s/%v/%v",
+			deferredStatus, deferredReason, deferredUntil)
+	}
+	visible, err := (feedbackdomain.Store{}).GetTenantFeedback(
+		ctx, pool, testTenantID, deferredFeedbackID,
+	)
+	if err != nil {
+		t.Fatalf("read deferred feedback through tenant store: %v", err)
+	}
+	if visible.AIStatus != "deferred" {
+		t.Fatalf("tenant-visible AI status = %q, want deferred", visible.AIStatus)
+	}
+	filtered, err := (feedbackdomain.Store{}).ListTenantFeedback(
+		ctx, pool, testTenantID, feedbackdomain.ListOptions{
+			Processing: "deferred", Limit: 10,
+		},
+	)
+	if err != nil {
+		t.Fatalf("filter deferred feedback through tenant store: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != deferredFeedbackID {
+		t.Fatalf("deferred tenant filter = %#v", filtered)
+	}
+
+	if err := limitedStore.ReprocessFeedback(
+		ctx, pool, testTenantID, deferredFeedbackID,
+	); err != nil {
+		t.Fatalf("retry deferred AI feedback: %v", err)
+	}
+	limitedStore.ProjectDailyLimit = 2
+	scheduler.Store = limitedStore
+	if err := scheduler.ScheduleFeedback(ctx, deferredFeedbackID); err != nil {
+		t.Fatalf("schedule recovered AI feedback: %v", err)
+	}
+	if len(queue.tasks) != 1 || queue.tasks[0].ResourceID != deferredFeedbackID {
+		t.Fatalf("recovered AI tasks = %#v", queue.tasks)
+	}
+	if err := limitedStore.UndoPrepared(ctx, queue.tasks[0]); err != nil {
+		t.Fatalf("undo recovered AI task: %v", err)
+	}
 }
 
 func aiTestDatabase(t *testing.T, ctx context.Context) *pgxpool.Pool {
@@ -960,6 +1158,18 @@ func stringPointer(value string) *string     { return &value }
 type capturingTaskQueue struct {
 	tasks []PreparedTask
 	err   error
+}
+
+type capturingDiagnosticRecorder struct {
+	events []abuse.DiagnosticEvent
+}
+
+func (recorder *capturingDiagnosticRecorder) Record(
+	_ context.Context,
+	event abuse.DiagnosticEvent,
+) error {
+	recorder.events = append(recorder.events, event)
+	return nil
 }
 
 func (q *capturingTaskQueue) Enqueue(_ context.Context, task PreparedTask) error {

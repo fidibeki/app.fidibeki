@@ -10,6 +10,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/hibiken/asynq"
 	"google.golang.org/genai"
@@ -20,13 +21,14 @@ type ObjectSource interface {
 }
 
 type Processor struct {
-	Store    Store
-	Analyzer Analyzer
-	Storage  ObjectSource
-	Limiter  ratelimit.Limiter
-	RPM      int
-	Now      func() time.Time
-	Logger   *slog.Logger
+	Store       Store
+	Analyzer    Analyzer
+	Storage     ObjectSource
+	Limiter     ratelimit.Limiter
+	RPM         int
+	Now         func() time.Time
+	Logger      *slog.Logger
+	Diagnostics DiagnosticRecorder
 }
 
 func (p Processor) TextHandler() asynq.HandlerFunc {
@@ -254,10 +256,14 @@ func (p Processor) ErrorHandler() asynq.ErrorHandler {
 			if decodeErr == nil {
 				attributes = append(attributes,
 					slog.String("tenant_id", payload.TenantID),
+					slog.String("project_id", payload.ProjectID),
 					slog.String("resource_id", payload.ResourceID),
 				)
 			}
 			p.Logger.LogAttrs(ctx, level, "AI task failed", attributes...)
+		}
+		if decodeErr == nil {
+			p.recordProviderDiagnostic(ctx, payload, failure)
 		}
 		if !exhausted || decodeErr != nil {
 			return
@@ -277,6 +283,68 @@ func (p Processor) ErrorHandler() asynq.ErrorHandler {
 			p.Logger.ErrorContext(ctx, "finalize exhausted AI task", "error", err, "task_type", task.Type())
 		}
 	})
+}
+
+func (p Processor) recordProviderDiagnostic(
+	ctx context.Context,
+	payload taskPayload,
+	failure error,
+) {
+	if p.Diagnostics == nil || payload.ProjectID == "" {
+		return
+	}
+	reason := providerDiagnosticReason(failure)
+	if err := p.Diagnostics.Record(ctx, abuse.DiagnosticEvent{
+		TenantID: payload.TenantID, ProjectID: payload.ProjectID,
+		Category: abuse.CategoryProvider, Reason: reason, OccurredAt: p.now(),
+	}); err != nil && p.Logger != nil {
+		p.Logger.WarnContext(ctx, "record AI provider diagnostic", "error", err)
+	}
+}
+
+func providerDiagnosticReason(failure error) string {
+	var apiError genai.APIError
+	if errors.As(failure, &apiError) {
+		switch {
+		case apiError.Code == 401:
+			return "provider_unauthenticated"
+		case apiError.Code == 403:
+			return "provider_forbidden"
+		case apiError.Code == 404:
+			return "provider_not_found"
+		case apiError.Code == 408 || apiError.Code == 504:
+			return "provider_timeout"
+		case apiError.Code == 409:
+			return "provider_conflict"
+		case apiError.Code == 429:
+			return "provider_rate_limited"
+		case apiError.Code >= 500 && apiError.Code <= 599:
+			return "provider_unavailable"
+		case apiError.Code >= 400 && apiError.Code <= 499:
+			return "provider_rejected"
+		default:
+			return "provider_error"
+		}
+	}
+	switch {
+	case errors.Is(failure, ErrUnavailable):
+		return "analyzer_unavailable"
+	case errors.Is(failure, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(failure, context.Canceled):
+		return "canceled"
+	}
+	var networkError net.Error
+	switch {
+	case errors.As(failure, &networkError) && networkError.Timeout():
+		return "network_timeout"
+	case errors.As(failure, &networkError):
+		return "network_error"
+	case IsPermanent(failure):
+		return "permanent_failure"
+	default:
+		return "internal_error"
+	}
 }
 
 func retryExhausted(ctx context.Context) bool {

@@ -468,10 +468,11 @@ func parseTenantFeedbackOptions(r *http.Request) (ListOptions, map[string]string
 	}
 	if raw := query.Get("processing"); raw != "" {
 		allowed := map[string]bool{
-			"pending": true, "processing": true, "completed": true, "failed": true, "skipped": true,
+			"pending": true, "processing": true, "deferred": true,
+			"completed": true, "failed": true, "skipped": true,
 		}
 		if !allowed[raw] {
-			fields["processing"] = "must be pending, processing, completed, failed, or skipped"
+			fields["processing"] = "must be pending, processing, deferred, completed, failed, or skipped"
 		} else {
 			options.Processing = raw
 		}

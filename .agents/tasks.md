@@ -142,6 +142,7 @@ downloaded, exported as available, or claimed by AI while safe objects retain cu
 ## Task 9: Replay Protection And Verification
 
 **Depends on:** Tasks 2, 3, and 7
+**Status:** Complete
 
 **Outcome:** Replay grants are rate/byte bounded, expire, quarantine uploaded batches, and accept only
 bounded structurally valid rrweb arrays.
@@ -156,6 +157,7 @@ consumption, malformed/trailing/event-count rejection, cleanup, and safe-only fi
 ## Task 10: Idempotent AI Cost Budget
 
 **Depends on:** Tasks 3 and 8
+**Status:** Complete
 
 **Outcome:** Text and safe-attachment analysis reserve tenant/project daily units once per work
 generation and defer without losing feedback when unavailable.

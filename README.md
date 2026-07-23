@@ -158,6 +158,7 @@ GEMINI_MODEL=gemini-2.5-flash
 GEMINI_RPM=15
 AI_QUEUE_CONCURRENCY=3
 AI_DAILY_REQUEST_LIMIT=5000
+AI_PROJECT_DAILY_REQUEST_LIMIT=2000
 ```
 
 Without `GEMINI_API_KEY`, local AI jobs remain in Asynq's retry flow while feedback submission and

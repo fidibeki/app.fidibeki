@@ -29,6 +29,7 @@ type Options struct {
 	ReporterHandler               asynq.HandlerFunc
 	LifecycleHandler              asynq.HandlerFunc
 	ReplayMergeHandler            asynq.HandlerFunc
+	ReplayVerificationHandler     asynq.HandlerFunc
 	AttachmentVerificationHandler asynq.HandlerFunc
 	IntegrationHandler            asynq.HandlerFunc
 	PrivacyExportHandler          asynq.HandlerFunc
@@ -53,7 +54,7 @@ func New(options Options) (*Worker, error) {
 	if options.PipelineHandler == nil || options.TextHandler == nil ||
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
 		options.AIErrorHandler == nil || options.ReporterHandler == nil || options.LifecycleHandler == nil ||
-		options.ReplayMergeHandler == nil ||
+		options.ReplayMergeHandler == nil || options.ReplayVerificationHandler == nil ||
 		options.AttachmentVerificationHandler == nil ||
 		options.IntegrationHandler == nil || options.PrivacyExportHandler == nil {
 		return nil, fmt.Errorf("all domain and AI handlers are required")
@@ -74,6 +75,7 @@ func New(options Options) (*Worker, error) {
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)
 	domainMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
+	domainMux.HandleFunc(replay.TaskVerifyBatch, options.ReplayVerificationHandler)
 	domainMux.HandleFunc(feedback.TaskAttachmentVerify, options.AttachmentVerificationHandler)
 	domainMux.HandleFunc(integration.TaskDeliver, options.IntegrationHandler)
 	domainMux.HandleFunc(privacy.TaskExport, options.PrivacyExportHandler)

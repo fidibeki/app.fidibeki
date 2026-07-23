@@ -348,8 +348,16 @@ was removed from the staging test tenant.
         integration delivery, privacy exports, and attachment AI accept only safe non-retained
         objects. Migration replay, backend integration/unit/static checks, frontend type/unit/build,
         full responsive E2E, focused desktop/mobile screenshots, and local gitleaks pass.
-      - [ ] Slice 3: coordinated replay protection, verified batch lifecycle and aggregate bounds,
+      - [x] Slice 3: coordinated replay protection, verified batch lifecycle and aggregate bounds,
         idempotent tenant/project AI budget, defer behavior, and concurrency coverage.
+        Replay grants now share the privacy-preserving project/origin/network/visitor policies,
+        enforce session and weighted-byte limits before storage, expire deterministically, quarantine
+        every uploaded batch, and accept only bounded structurally valid rrweb arrays before
+        finalization. AI text generations and safe-attachment attempts reserve durable tenant/project
+        daily units exactly once across retries, defer intact feedback until the next UTC budget
+        window, expose that state to the inbox, support explicit recovery, and record only aggregate
+        budget/provider diagnostics. PostgreSQL migration replay, Redis/PostgreSQL concurrency,
+        backend integration, widget unit, and static contract checks pass locally.
       - [ ] Slice 4: widget retry/error experience, responsive Submission health diagnostics,
         desktop/mobile E2E, CI, and staging validation.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.

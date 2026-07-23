@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 65
+	const latestMigrationVersion = 67
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-6); err != nil {
+	if err := migrator.Steps(-8); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -255,6 +255,135 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, safetyTenantID); err != nil {
 		t.Fatalf("remove attachment safety migration fixture: %v", err)
+	}
+
+	var replaySafetyTenantID, replaySafetyProjectID, replaySafetySessionID string
+	var safeReplayBatchID, expiredReplayBatchID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Replay safety migration', 'replay-safety-migration', 'growth', 'active')
+		RETURNING id
+	`).Scan(&replaySafetyTenantID); err != nil {
+		t.Fatalf("create replay safety migration tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Replay safety', 'pk_live_SAFETYABCDEFGHIJKLMNOQ', '{example.test}')
+		RETURNING id
+	`, replaySafetyTenantID).Scan(&replaySafetyProjectID); err != nil {
+		t.Fatalf("create replay safety migration project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at, rrweb_version,
+			max_duration_seconds, max_events
+		) VALUES ($1, $2, gen_random_uuid(), now() - interval '1 hour', '2.1.1', 1800, 50000)
+		RETURNING id
+	`, replaySafetyTenantID, replaySafetyProjectID).Scan(&replaySafetySessionID); err != nil {
+		t.Fatalf("create replay safety migration session: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, completed_at, upload_refreshed_at
+		) VALUES (
+			$1, $2, $3, 0, 'migration/replay-safe.json',
+			1, 32, now() - interval '30 minutes', now() - interval '31 minutes'
+		) RETURNING id
+	`, replaySafetyTenantID, replaySafetyProjectID, replaySafetySessionID).Scan(&safeReplayBatchID); err != nil {
+		t.Fatalf("create completed legacy replay batch: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, complete_token_hash, upload_refreshed_at
+		) VALUES (
+			$1, $2, $3, 1, 'migration/replay-expired.json',
+			1, 32, 'legacy-replay-token', now() - interval '1 hour'
+		) RETURNING id
+	`, replaySafetyTenantID, replaySafetyProjectID, replaySafetySessionID).Scan(&expiredReplayBatchID); err != nil {
+		t.Fatalf("create incomplete legacy replay batch: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply replay safety migration: %v", err)
+	}
+	var safeReplayStatus string
+	var safeReplayCheckedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, safety_checked_at
+		FROM session_batches WHERE id = $1
+	`, safeReplayBatchID).Scan(&safeReplayStatus, &safeReplayCheckedAt); err != nil {
+		t.Fatalf("read migrated completed replay batch: %v", err)
+	}
+	if safeReplayStatus != "safe" || safeReplayCheckedAt == nil {
+		t.Fatalf("migrated completed replay batch = %q/%v", safeReplayStatus, safeReplayCheckedAt)
+	}
+	var expiredReplayStatus, expiredReplayReason string
+	var expiredReplayToken *string
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, safety_error_reason, complete_token_hash
+		FROM session_batches WHERE id = $1
+	`, expiredReplayBatchID).Scan(
+		&expiredReplayStatus, &expiredReplayReason, &expiredReplayToken,
+	); err != nil {
+		t.Fatalf("read migrated expired replay batch: %v", err)
+	}
+	if expiredReplayStatus != "expired" || expiredReplayReason != "upload_expired" ||
+		expiredReplayToken != nil {
+		t.Fatalf(
+			"migrated expired replay batch = %q/%q/%v",
+			expiredReplayStatus, expiredReplayReason, expiredReplayToken,
+		)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back replay safety migration: %v", err)
+	}
+	var rollbackReplayToken *string
+	if err := root.QueryRow(ctx, `
+		SELECT complete_token_hash FROM session_batches WHERE id = $1
+	`, expiredReplayBatchID).Scan(&rollbackReplayToken); err != nil {
+		t.Fatalf("read rolled-back replay batch: %v", err)
+	}
+	if rollbackReplayToken == nil || *rollbackReplayToken == "" {
+		t.Fatal("rolled-back expired replay batch completion token was not restored")
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply replay safety migration after rollback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status, complete_token_hash
+		FROM session_batches WHERE id = $1
+	`, expiredReplayBatchID).Scan(&expiredReplayStatus, &expiredReplayToken); err != nil {
+		t.Fatalf("read re-migrated expired replay batch: %v", err)
+	}
+	if expiredReplayStatus != "expired" || expiredReplayToken != nil {
+		t.Fatalf("re-migrated expired replay batch = %q/%v", expiredReplayStatus, expiredReplayToken)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, replaySafetyTenantID); err != nil {
+		t.Fatalf("remove replay safety migration fixture: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply idempotent AI budget migration: %v", err)
+	}
+	var aiBudgetTable *string
+	if err := root.QueryRow(ctx, `
+		SELECT to_regclass('public.ai_work_reservations')::text
+	`).Scan(&aiBudgetTable); err != nil || aiBudgetTable == nil {
+		t.Fatalf("read AI budget migration table = %v, error = %v", aiBudgetTable, err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back idempotent AI budget migration: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT to_regclass('public.ai_work_reservations')::text
+	`).Scan(&aiBudgetTable); err != nil {
+		t.Fatalf("read rolled-back AI budget table: %v", err)
+	}
+	if aiBudgetTable != nil {
+		t.Fatalf("rolled-back AI budget table = %v, want nil", aiBudgetTable)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply idempotent AI budget migration: %v", err)
 	}
 
 	var tenantA, tenantB string
@@ -732,6 +861,24 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("seed AI daily usage: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
+		INSERT INTO ai_project_daily_usage (
+			tenant_id, project_id, usage_date, requests
+		) VALUES
+			($1, $2, CURRENT_DATE, 1),
+			($3, $4, CURRENT_DATE, 1)
+	`, tenantA, projectA, tenantB, projectB); err != nil {
+		t.Fatalf("seed project AI daily usage: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO ai_work_reservations (
+			tenant_id, project_id, work_kind, resource_id, generation, usage_date
+		) VALUES
+			($1, $2, 'text', $3, 1, CURRENT_DATE),
+			($4, $5, 'text', $6, 1, CURRENT_DATE)
+	`, tenantA, projectA, feedbackA, tenantB, projectB, feedbackB); err != nil {
+		t.Fatalf("seed AI work reservations: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
 		INSERT INTO ai_gemini_files (tenant_id, attachment_id, file_name, delete_after)
 		VALUES ($1, $2, 'files/rls-a', now()), ($3, $4, 'files/rls-b', now())
 	`, tenantA, attachmentA, tenantB, attachmentB); err != nil {
@@ -837,6 +984,14 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("app role without tenant context read %d abuse diagnostics, want 0", count)
 	}
+	for _, table := range []string{"ai_project_daily_usage", "ai_work_reservations"} {
+		if err := appPool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil {
+			t.Fatalf("query %s without tenant context: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("app role without tenant context read %d %s rows, want 0", count, table)
+		}
+	}
 
 	tx, err := appPool.Begin(ctx)
 	if err != nil {
@@ -861,6 +1016,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("tenant A AI usage count = %d, want 1", count)
+	}
+	for _, table := range []string{"ai_project_daily_usage", "ai_work_reservations"} {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil ||
+			count != 1 {
+			t.Fatalf("tenant A %s count = %d, error = %v, want 1", table, count, err)
+		}
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM ai_gemini_files`).Scan(&count); err != nil {
 		t.Fatalf("query tenant A Gemini files: %v", err)
@@ -1030,6 +1191,34 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 
 	tx, err = appPool.Begin(ctx)
 	if err != nil {
+		t.Fatalf("begin cross-tenant project AI budget write: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_project_daily_usage (
+			tenant_id, project_id, usage_date, requests
+		) VALUES ($1, $2, CURRENT_DATE + 1, 1)
+	`, tenantB, projectB); err == nil {
+		t.Fatal("cross-tenant project AI usage insert succeeded, want RLS rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin mixed-tenant AI reservation write: %v", err)
+	}
+	setTenantContext(t, ctx, tx, tenantA)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_work_reservations (
+			tenant_id, project_id, work_kind, resource_id, generation, usage_date
+		) VALUES ($1, $2, 'text', gen_random_uuid(), 2, CURRENT_DATE)
+	`, tenantA, projectB); err == nil {
+		t.Fatal("mixed-tenant AI reservation insert succeeded, want composite FK rejection")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
 		t.Fatalf("begin mixed-tenant Gemini file write: %v", err)
 	}
 	setTenantContext(t, ctx, tx, tenantA)
@@ -1139,6 +1328,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM ai_daily_usage`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin AI usage count = %d, error = %v, want 2", count, err)
+	}
+	for _, table := range []string{"ai_project_daily_usage", "ai_work_reservations"} {
+		if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil ||
+			count != 2 {
+			t.Fatalf("admin %s count = %d, error = %v, want 2", table, count, err)
+		}
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM ai_gemini_files`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin Gemini file count = %d, error = %v, want 2", count, err)

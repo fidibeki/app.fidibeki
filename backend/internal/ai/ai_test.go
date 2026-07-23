@@ -432,8 +432,9 @@ func TestProcessorErrorHandlerLogsSafeProviderFailure(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	task := asynq.NewTask(TaskTextProcess, []byte(`{
-		"tenant_id":"tenant-1",
-		"resource_id":"feedback-1",
+			"tenant_id":"tenant-1",
+			"project_id":"project-1",
+			"resource_id":"feedback-1",
 		"generation":2,
 		"text":"`+payloadSecret+`"
 	}`))
@@ -445,7 +446,8 @@ func TestProcessorErrorHandlerLogsSafeProviderFailure(t *testing.T) {
 		asynq.SkipRetry,
 	)
 
-	(Processor{Logger: logger}).ErrorHandler().HandleError(
+	diagnostics := &capturingDiagnosticRecorder{}
+	(Processor{Logger: logger, Diagnostics: diagnostics}).ErrorHandler().HandleError(
 		context.Background(), task, failure,
 	)
 
@@ -455,9 +457,15 @@ func TestProcessorErrorHandlerLogsSafeProviderFailure(t *testing.T) {
 	}
 	expected := map[string]any{
 		"level": "ERROR", "msg": "AI task failed", "task_type": TaskTextProcess,
-		"task_payload_decoded": true, "tenant_id": "tenant-1", "resource_id": "feedback-1",
+		"task_payload_decoded": true, "tenant_id": "tenant-1", "project_id": "project-1",
+		"resource_id":   "feedback-1",
 		"failure_class": "provider_not_found", "failure_permanent": true,
 		"provider_code": float64(404), "retry_disposition": "skip_retry", "will_retry": false,
+	}
+	if len(diagnostics.events) != 1 ||
+		diagnostics.events[0].ProjectID != "project-1" ||
+		diagnostics.events[0].Reason != "provider_not_found" {
+		t.Fatalf("provider diagnostics = %#v", diagnostics.events)
 	}
 	for key, want := range expected {
 		if got := logged[key]; got != want {

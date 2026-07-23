@@ -62,7 +62,8 @@ describe('rrweb replay capture', () => {
     const onError = vi.fn()
     const capture = await startReplayCapture({
       rule: replayRule({ replay_mask_text_selector: '.private' }),
-      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'), onError,
+      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'),
+      visitorID: 'e8b3bb8c-e7ce-4c06-b804-c40f1db21355', onError,
     })
     expect(capture?.sessionID).toBe('server-session')
     const options = recordMock.mock.calls[0]?.[0]
@@ -77,6 +78,12 @@ describe('rrweb replay capture', () => {
 
     await capture?.stop()
     expect(onError).not.toHaveBeenCalled()
+    const sessionRequest = requests.find(({ url }) =>
+      url.endsWith('/v1/replay/sessions?key=pk_live_test'))
+    expect(JSON.parse(String(sessionRequest?.init.body))).toMatchObject({
+      widget_rule_id: expect.any(String),
+      visitor_id: 'e8b3bb8c-e7ce-4c06-b804-c40f1db21355',
+    })
     const declarations = requests.filter(({ url }) => url.endsWith('/batches?key=pk_live_test'))
     expect(declarations).toHaveLength(2)
     expect(declarations.map(({ init }) => JSON.parse(String(init.body)).events_count)).toEqual([50, 1])

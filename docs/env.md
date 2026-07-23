@@ -63,6 +63,7 @@ for both services because configuration is validated before the command starts.
 | `GEMINI_RPM` | no | Provider request limit; default `15`. |
 | `AI_QUEUE_CONCURRENCY` | no | AI worker concurrency; default `3`. |
 | `AI_DAILY_REQUEST_LIMIT` | no | Tenant-independent safety ceiling; default `5000`. |
+| `AI_PROJECT_DAILY_REQUEST_LIMIT` | no | Per-project daily AI safety ceiling; default `2000`. |
 | `AI_RECONCILE_INTERVAL` | no | Stalled-task reconciliation interval; default `5m`. |
 | `SENTRY_DSN` | no | Backend Sentry DSN. Empty disables reporting. |
 

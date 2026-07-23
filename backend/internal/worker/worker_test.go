@@ -23,7 +23,8 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 		Sender: testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, LifecycleHandler: handler,
-		ReplayMergeHandler: handler, IntegrationHandler: handler,
+		ReplayMergeHandler: handler, ReplayVerificationHandler: handler,
+		IntegrationHandler:            handler,
 		AttachmentVerificationHandler: handler, PrivacyExportHandler: handler,
 	}
 	if worker, err := New(valid); err != nil || worker == nil {
@@ -87,7 +88,8 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, LifecycleHandler: handler,
-		ReplayMergeHandler: handler, IntegrationHandler: handler,
+		ReplayMergeHandler: handler, ReplayVerificationHandler: handler,
+		IntegrationHandler:            handler,
 		AttachmentVerificationHandler: handler, PrivacyExportHandler: handler,
 	})
 	if err != nil {

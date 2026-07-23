@@ -287,7 +287,8 @@ svg {
 }
 
 .status-reviewed::before,
-.status-linked::before {
+.status-linked::before,
+.status-deferred::before {
   background: var(--amber);
 }
 

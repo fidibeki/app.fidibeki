@@ -132,9 +132,11 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		t.Errorf("ReadinessTimeout = %s, want 2s", got.ReadinessTimeout)
 	}
 	if got.GeminiModel != "gemini-3.1-flash-lite" || got.GeminiRPM != 15 ||
-		got.AIConcurrency != 3 || got.AIDailyLimit != 5000 || got.AIReconcileEvery != 5*time.Minute {
-		t.Errorf("AI defaults = model %q rpm %d concurrency %d daily %d reconcile %s",
-			got.GeminiModel, got.GeminiRPM, got.AIConcurrency, got.AIDailyLimit, got.AIReconcileEvery)
+		got.AIConcurrency != 3 || got.AIDailyLimit != 5000 ||
+		got.AIProjectDailyLimit != 2000 || got.AIReconcileEvery != 5*time.Minute {
+		t.Errorf("AI defaults = model %q rpm %d concurrency %d daily %d project %d reconcile %s",
+			got.GeminiModel, got.GeminiRPM, got.AIConcurrency, got.AIDailyLimit,
+			got.AIProjectDailyLimit, got.AIReconcileEvery)
 	}
 	if got.ReporterTokenTTL != 90*24*time.Hour {
 		t.Errorf("ReporterTokenTTL = %s, want 2160h", got.ReporterTokenTTL)
@@ -191,40 +193,41 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
-		"APP_ENV":                      "preview",
-		"BASE_DOMAIN":                  "https://fidibeki.localhost/path",
-		"PUBLIC_BASE_URL":              "relative-url",
-		"DATABASE_URL_APP":             "not-a-url",
-		"DATABASE_URL_ADMIN":           "postgres://",
-		"DATABASE_URL_DIRECT":          "://missing-scheme",
-		"REDIS_URL":                    "redis-without-scheme",
-		"S3_ENDPOINT":                  "/relative/storage",
-		"S3_BUCKET":                    "fidibeki",
-		"S3_ACCESS_KEY":                "fidibeki",
-		"S3_SECRET_KEY":                "secret",
-		"JWT_SECRET":                   "too-short",
-		"ABUSE_BUCKET_SECRET":          "short",
-		"ABUSE_BUCKET_PREVIOUS_SECRET": "short",
-		"INTERNAL_PROXY_SECRET":        "too-short",
-		"TRUSTED_PROXY_CIDRS":          "not-a-network",
-		"INTEGRATION_ENCRYPTION_KEY":   "not-base64",
-		"READINESS_TIMEOUT":            "soon",
-		"SHUTDOWN_TIMEOUT":             "0s",
-		"DATABASE_APP_MAX_CONNS":       "many",
-		"DATABASE_ADMIN_MAX_CONNS":     "0",
-		"S3_AUTO_CREATE_BUCKET":        "sometimes",
-		"LOG_LEVEL":                    "verbose",
-		"AUTH_ACCESS_TOKEN_TTL":        "later",
-		"AUTH_MAGIC_LINK_TTL":          "0s",
-		"AUTH_REFRESH_TOKEN_TTL":       "never",
-		"AUTH_REFRESH_RETRY_GRACE":     "31s",
-		"REPORTER_UNSUBSCRIBE_TTL":     "never",
-		"EMAIL_DRIVER":                 "smtp",
-		"EMAIL_QUEUE_CONCURRENCY":      "many",
-		"AI_QUEUE_CONCURRENCY":         "none",
-		"GEMINI_RPM":                   "fast",
-		"AI_DAILY_REQUEST_LIMIT":       "unlimited",
-		"AI_RECONCILE_INTERVAL":        "later",
+		"APP_ENV":                        "preview",
+		"BASE_DOMAIN":                    "https://fidibeki.localhost/path",
+		"PUBLIC_BASE_URL":                "relative-url",
+		"DATABASE_URL_APP":               "not-a-url",
+		"DATABASE_URL_ADMIN":             "postgres://",
+		"DATABASE_URL_DIRECT":            "://missing-scheme",
+		"REDIS_URL":                      "redis-without-scheme",
+		"S3_ENDPOINT":                    "/relative/storage",
+		"S3_BUCKET":                      "fidibeki",
+		"S3_ACCESS_KEY":                  "fidibeki",
+		"S3_SECRET_KEY":                  "secret",
+		"JWT_SECRET":                     "too-short",
+		"ABUSE_BUCKET_SECRET":            "short",
+		"ABUSE_BUCKET_PREVIOUS_SECRET":   "short",
+		"INTERNAL_PROXY_SECRET":          "too-short",
+		"TRUSTED_PROXY_CIDRS":            "not-a-network",
+		"INTEGRATION_ENCRYPTION_KEY":     "not-base64",
+		"READINESS_TIMEOUT":              "soon",
+		"SHUTDOWN_TIMEOUT":               "0s",
+		"DATABASE_APP_MAX_CONNS":         "many",
+		"DATABASE_ADMIN_MAX_CONNS":       "0",
+		"S3_AUTO_CREATE_BUCKET":          "sometimes",
+		"LOG_LEVEL":                      "verbose",
+		"AUTH_ACCESS_TOKEN_TTL":          "later",
+		"AUTH_MAGIC_LINK_TTL":            "0s",
+		"AUTH_REFRESH_TOKEN_TTL":         "never",
+		"AUTH_REFRESH_RETRY_GRACE":       "31s",
+		"REPORTER_UNSUBSCRIBE_TTL":       "never",
+		"EMAIL_DRIVER":                   "smtp",
+		"EMAIL_QUEUE_CONCURRENCY":        "many",
+		"AI_QUEUE_CONCURRENCY":           "none",
+		"GEMINI_RPM":                     "fast",
+		"AI_DAILY_REQUEST_LIMIT":         "unlimited",
+		"AI_PROJECT_DAILY_REQUEST_LIMIT": "unlimited",
+		"AI_RECONCILE_INTERVAL":          "later",
 	}
 
 	_, err := config.FromLookup(func(name string) (string, bool) {
@@ -245,7 +248,8 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"AUTH_REFRESH_RETRY_GRACE",
 		"REPORTER_UNSUBSCRIBE_TTL",
 		"EMAIL_DRIVER", "EMAIL_QUEUE_CONCURRENCY",
-		"AI_QUEUE_CONCURRENCY", "GEMINI_RPM", "AI_DAILY_REQUEST_LIMIT", "AI_RECONCILE_INTERVAL",
+		"AI_QUEUE_CONCURRENCY", "GEMINI_RPM", "AI_DAILY_REQUEST_LIMIT",
+		"AI_PROJECT_DAILY_REQUEST_LIMIT", "AI_RECONCILE_INTERVAL",
 	} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Errorf("error %q does not mention %s", err, expected)

@@ -18,6 +18,7 @@ export interface ReplayCaptureOptions {
   rule: WidgetRule
   publicKey: string
   apiBase: URL
+  visitorID?: string
   onError?: (error: unknown) => void
   random?: () => number
 }
@@ -159,6 +160,7 @@ async function createSession(options: ReplayCaptureOptions, sessionID: string): 
       session_id: sessionID,
       widget_rule_id: options.rule.id,
       page_url: window.location.href,
+      visitor_id: options.visitorID,
     }),
   })
   if (!response.ok) throw new Error(`replay session creation failed with status ${response.status}`)

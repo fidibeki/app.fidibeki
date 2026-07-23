@@ -29,9 +29,12 @@ const (
 	TaskKindFileDelete TaskKind = "file_delete"
 )
 
+const budgetDeferredReason = "ai_daily_budget_exhausted"
+
 type PreparedTask struct {
 	Kind       TaskKind
 	TenantID   string
+	ProjectID  string
 	FeedbackID string
 	ResourceID string
 	Attempt    int
@@ -42,6 +45,7 @@ type PreparedTask struct {
 
 type TextWork struct {
 	TenantID   string
+	ProjectID  string
 	FeedbackID string
 	Text       string
 	Generation int64
@@ -49,6 +53,7 @@ type TextWork struct {
 
 type AttachmentWork struct {
 	TenantID     string
+	ProjectID    string
 	FeedbackID   string
 	AttachmentID string
 	Kind         string

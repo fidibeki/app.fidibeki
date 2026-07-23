@@ -12,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	maximumSessionBatches = 1000
+	maximumSessionBytes   = 128 << 20
+)
+
 type Store struct {
 	Database db.Querier
 }
@@ -144,41 +149,59 @@ func (Store) DeclareBatch(
 	if endedAt != nil {
 		return Batch{}, "", ErrSessionFinalized
 	}
-	var otherEvents int
+	var otherEvents, otherBatches int
+	var otherBytes int64
 	if err := query.QueryRow(ctx, `
-		SELECT COALESCE(sum(events_count), 0) FROM session_batches
+		SELECT COALESCE(sum(events_count), 0)::integer,
+		       COALESCE(sum(size_bytes), 0)::bigint,
+		       count(*)::integer
+		FROM session_batches
 		WHERE session_id = $1 AND batch_index <> $2
-	`, sessionID, batchIndex).Scan(&otherEvents); err != nil {
-		return Batch{}, "", fmt.Errorf("count declared replay events: %w", err)
+	`, sessionID, batchIndex).Scan(&otherEvents, &otherBytes, &otherBatches); err != nil {
+		return Batch{}, "", fmt.Errorf("count declared replay batches: %w", err)
 	}
 	if otherEvents+eventsCount > maxEvents {
 		return Batch{}, "", ErrEventLimit
+	}
+	if otherBatches+1 > maximumSessionBatches {
+		return Batch{}, "", ErrBatchLimit
+	}
+	if otherBytes+sizeBytes > maximumSessionBytes {
+		return Batch{}, "", ErrByteLimit
 	}
 	rawToken, tokenHash, err := auth.NewOpaqueToken()
 	if err != nil {
 		return Batch{}, "", fmt.Errorf("create replay batch completion token: %w", err)
 	}
 	key := fmt.Sprintf("tenants/%s/sessions/%s/batches/%06d.json", tenantID, sessionID, batchIndex)
-	var batch Batch
-	err = query.QueryRow(ctx, `
+	expiresAt := now.UTC().Add(replayUploadTTL)
+	batch, err := scanBatchRow(query.QueryRow(ctx, `
 		INSERT INTO session_batches (
 			id, tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, content_type, complete_token_hash, upload_refreshed_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'application/json', $9, $10)
+			events_count, size_bytes, content_type, complete_token_hash, upload_refreshed_at,
+			upload_expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'application/json', $9, $10, $11)
 		ON CONFLICT (session_id, batch_index) DO UPDATE
-		SET events_count = EXCLUDED.events_count,
-		    size_bytes = EXCLUDED.size_bytes,
-		    complete_token_hash = EXCLUDED.complete_token_hash,
-		    upload_refreshed_at = EXCLUDED.upload_refreshed_at
-		WHERE session_batches.completed_at IS NULL
+		SET complete_token_hash = EXCLUDED.complete_token_hash,
+		    completed_at = NULL,
+		    upload_refreshed_at = EXCLUDED.upload_refreshed_at,
+		    upload_expires_at = EXCLUDED.upload_expires_at,
+		    safety_status = 'pending',
+		    safety_checked_at = NULL,
+		    safety_error_reason = NULL,
+		    verification_generation = session_batches.verification_generation + 1,
+		    verification_enqueued_at = NULL,
+		    verification_attempts = 0
+		WHERE session_batches.events_count = EXCLUDED.events_count
+		  AND session_batches.size_bytes = EXCLUDED.size_bytes
+		  AND session_batches.content_type = EXCLUDED.content_type
+		  AND session_batches.safety_status IN ('pending', 'expired', 'rejected')
 		RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
-		          events_count, size_bytes, content_type, complete_token_hash, completed_at
+		          events_count, size_bytes, content_type, complete_token_hash, completed_at,
+		          safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
+		          verification_generation, verification_enqueued_at, verification_attempts
 	`, uuid.NewString(), tenantID, projectID, sessionID, batchIndex, key,
-		eventsCount, sizeBytes, tokenHash, now.UTC()).Scan(
-		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
-		&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
-		&batch.CompleteTokenHash, &batch.CompletedAt,
-	)
+		eventsCount, sizeBytes, tokenHash, now.UTC(), expiresAt))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Batch{}, "", ErrBatchComplete
 	}
@@ -196,21 +219,28 @@ func (Store) LockBatch(
 	sessionID string,
 	batchIndex int,
 ) (Batch, error) {
-	var batch Batch
 	var endedAt *time.Time
-	err := query.QueryRow(ctx, `
+	row := query.QueryRow(ctx, `
 		SELECT batch.id, batch.tenant_id, batch.project_id, batch.session_id,
 		       batch.batch_index, batch.storage_key, batch.events_count, batch.size_bytes,
-		       batch.content_type, batch.complete_token_hash, batch.completed_at, session.ended_at
+		       batch.content_type, batch.complete_token_hash, batch.completed_at,
+		       batch.safety_status, batch.upload_expires_at, batch.safety_checked_at,
+		       batch.safety_error_reason, batch.verification_generation,
+		       batch.verification_enqueued_at, batch.verification_attempts,
+		       session.ended_at
 		FROM session_batches AS batch
 		JOIN sessions AS session ON session.id = batch.session_id
 		WHERE batch.tenant_id = $1 AND batch.project_id = $2
 		  AND batch.session_id = $3 AND batch.batch_index = $4
 		FOR UPDATE OF batch
-	`, tenantID, projectID, sessionID, batchIndex).Scan(
+	`, tenantID, projectID, sessionID, batchIndex)
+	var batch Batch
+	err := row.Scan(
 		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
 		&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
-		&batch.CompleteTokenHash, &batch.CompletedAt, &endedAt,
+		&batch.CompleteTokenHash, &batch.CompletedAt, &batch.SafetyStatus,
+		&batch.UploadExpiresAt, &batch.SafetyCheckedAt, &batch.SafetyErrorReason,
+		&batch.Generation, &batch.VerificationEnqueuedAt, &batch.VerificationTries, &endedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Batch{}, ErrNotFound
@@ -233,27 +263,17 @@ func (Store) CompleteBatch(
 ) error {
 	tag, err := query.Exec(ctx, `
 		UPDATE session_batches
-		SET completed_at = $3, complete_token_hash = NULL
-		WHERE id = $1 AND session_id = $2 AND completed_at IS NULL
+		SET completed_at = $3, complete_token_hash = NULL,
+		    safety_status = 'quarantined', safety_checked_at = NULL,
+		    safety_error_reason = NULL, verification_enqueued_at = NULL
+		WHERE id = $1 AND session_id = $2
+		  AND safety_status = 'pending' AND completed_at IS NULL
 	`, batchID, sessionID, now.UTC())
 	if err != nil {
 		return fmt.Errorf("complete replay batch: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrBatchComplete
-	}
-	if _, err := query.Exec(ctx, `
-		UPDATE sessions
-		SET events_count = aggregate.events_count,
-		    batches_count = aggregate.batches_count
-		FROM (
-			SELECT COALESCE(sum(events_count), 0)::integer AS events_count,
-			       count(*)::integer AS batches_count
-			FROM session_batches WHERE session_id = $1 AND completed_at IS NOT NULL
-		) AS aggregate
-		WHERE sessions.id = $1
-	`, sessionID); err != nil {
-		return fmt.Errorf("update replay session batch totals: %w", err)
 	}
 	return nil
 }
@@ -287,8 +307,8 @@ func (store Store) Finalize(
 	}
 	var incomplete, completed int
 	if err := query.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE completed_at IS NULL),
-		       count(*) FILTER (WHERE completed_at IS NOT NULL)
+		SELECT count(*) FILTER (WHERE safety_status <> 'safe'),
+		       count(*) FILTER (WHERE safety_status = 'safe')
 		FROM session_batches WHERE session_id = $1
 	`, sessionID).Scan(&incomplete, &completed); err != nil {
 		return Session{}, false, fmt.Errorf("inspect replay batches before finalization: %w", err)
@@ -328,10 +348,17 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 			           session.started_at + session.max_duration_seconds * interval '1 second'
 			       ) AS ended_at,
 			       activity.last_activity_at,
-			       activity.batch_count
+			       activity.safe_count,
+			       activity.invalid_count
 			FROM sessions AS session
 			CROSS JOIN LATERAL (
-				SELECT count(*) AS batch_count,
+				SELECT count(*) FILTER (WHERE batch.safety_status = 'safe') AS safe_count,
+				       count(*) FILTER (
+				           WHERE batch.safety_status IN ('pending', 'quarantined')
+				       ) AS unresolved_count,
+				       count(*) FILTER (
+				           WHERE batch.safety_status IN ('rejected', 'expired')
+				       ) AS invalid_count,
 				       COALESCE(
 				           max(GREATEST(batch.upload_refreshed_at, COALESCE(batch.completed_at, batch.upload_refreshed_at))),
 				           session.started_at
@@ -341,16 +368,27 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 			) AS activity
 			WHERE session.ended_at IS NULL AND session.started_at < $1
 			  AND activity.last_activity_at < $1
+			  AND activity.unresolved_count = 0
 			ORDER BY activity.last_activity_at, session.id
 			LIMIT $2
 			FOR UPDATE OF session SKIP LOCKED
 		)
 		UPDATE sessions AS session
 		SET ended_at = candidates.ended_at,
-		    merge_requested_at = CASE WHEN candidates.batch_count > 0 THEN $3::timestamptz ELSE NULL END,
+		    merge_requested_at = CASE
+		        WHEN candidates.safe_count > 0 AND candidates.invalid_count = 0
+		        THEN $3::timestamptz
+		        ELSE NULL
+		    END,
 		    merge_enqueued_at = NULL,
-		    merge_error = CASE WHEN candidates.batch_count = 0 THEN $4 ELSE NULL END,
-		    merge_attempts = CASE WHEN candidates.batch_count = 0 THEN $5 ELSE session.merge_attempts END
+		    merge_error = CASE
+		        WHEN candidates.safe_count = 0 OR candidates.invalid_count > 0 THEN $4
+		        ELSE NULL
+		    END,
+		    merge_attempts = CASE
+		        WHEN candidates.safe_count = 0 OR candidates.invalid_count > 0 THEN $5
+		        ELSE session.merge_attempts
+		    END
 		FROM candidates
 		WHERE session.id = candidates.id AND session.ended_at IS NULL
 	`, staleBefore.UTC(), limit, now.UTC(), unavailableReplayMessage, terminalMergeAttempts); err != nil {
@@ -404,9 +442,11 @@ func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batc
 	}
 	rows, err := s.Database.Query(ctx, `
 		SELECT id, tenant_id, project_id, session_id, batch_index, storage_key,
-		       events_count, size_bytes, content_type, complete_token_hash, completed_at
+		       events_count, size_bytes, content_type, complete_token_hash, completed_at,
+		       safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
+		       verification_generation, verification_enqueued_at, verification_attempts
 		FROM session_batches
-		WHERE session_id = $1
+		WHERE session_id = $1 AND safety_status = 'safe'
 		ORDER BY batch_index
 	`, sessionID)
 	if err != nil {
@@ -419,7 +459,9 @@ func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batc
 		if err := rows.Scan(
 			&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
 			&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
-			&batch.CompleteTokenHash, &batch.CompletedAt,
+			&batch.CompleteTokenHash, &batch.CompletedAt, &batch.SafetyStatus,
+			&batch.UploadExpiresAt, &batch.SafetyCheckedAt, &batch.SafetyErrorReason,
+			&batch.Generation, &batch.VerificationEnqueuedAt, &batch.VerificationTries,
 		); err != nil {
 			return Session{}, nil, fmt.Errorf("scan replay merge batch: %w", err)
 		}
@@ -495,6 +537,24 @@ const sessionSelect = `
 
 type rowScanner interface {
 	Scan(...any) error
+}
+
+func scanBatchRow(row rowScanner) (Batch, error) {
+	var batch Batch
+	err := row.Scan(
+		&batch.ID, &batch.TenantID, &batch.ProjectID, &batch.SessionID, &batch.Index,
+		&batch.StorageKey, &batch.EventsCount, &batch.SizeBytes, &batch.ContentType,
+		&batch.CompleteTokenHash, &batch.CompletedAt, &batch.SafetyStatus,
+		&batch.UploadExpiresAt, &batch.SafetyCheckedAt, &batch.SafetyErrorReason,
+		&batch.Generation, &batch.VerificationEnqueuedAt, &batch.VerificationTries,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Batch{}, pgx.ErrNoRows
+	}
+	if err != nil {
+		return Batch{}, fmt.Errorf("scan replay batch: %w", err)
+	}
+	return batch, nil
 }
 
 func scanSessionRow(row rowScanner) (Session, error) {

@@ -31,6 +31,11 @@ const feedbackAIStatusExpression = `CASE
 		SELECT 1 FROM attachments AS attachment
 		WHERE attachment.feedback_id = feedback.id AND attachment.processing_status = 'processing'
 	) THEN 'processing'
+	WHEN feedback.ai_budget_deferred_until IS NOT NULL OR EXISTS (
+		SELECT 1 FROM attachments AS attachment
+		WHERE attachment.feedback_id = feedback.id
+		  AND attachment.ai_budget_deferred_until IS NOT NULL
+	) THEN 'deferred'
 	WHEN feedback.text_process_status = 'pending' OR EXISTS (
 		SELECT 1 FROM attachments AS attachment
 		WHERE attachment.feedback_id = feedback.id AND attachment.processing_status = 'pending'

@@ -18,6 +18,19 @@ var (
 	ErrSessionFinalized  = errors.New("replay session is already finalized")
 	ErrIncompleteBatches = errors.New("replay session has incomplete batches")
 	ErrEventLimit        = errors.New("replay session event limit exceeded")
+	ErrBatchLimit        = errors.New("replay session batch limit exceeded")
+	ErrByteLimit         = errors.New("replay session byte limit exceeded")
+	ErrUploadExpired     = errors.New("replay batch upload expired")
+)
+
+type BatchSafetyStatus string
+
+const (
+	BatchSafetyPending     BatchSafetyStatus = "pending"
+	BatchSafetyQuarantined BatchSafetyStatus = "quarantined"
+	BatchSafetySafe        BatchSafetyStatus = "safe"
+	BatchSafetyRejected    BatchSafetyStatus = "rejected"
+	BatchSafetyExpired     BatchSafetyStatus = "expired"
 )
 
 type Session struct {
@@ -61,17 +74,24 @@ func (s Session) Status() string {
 }
 
 type Batch struct {
-	ID                string
-	TenantID          string
-	ProjectID         string
-	SessionID         string
-	Index             int
-	StorageKey        string
-	EventsCount       int
-	SizeBytes         int64
-	ContentType       string
-	CompleteTokenHash *string
-	CompletedAt       *time.Time
+	ID                     string
+	TenantID               string
+	ProjectID              string
+	SessionID              string
+	Index                  int
+	StorageKey             string
+	EventsCount            int
+	SizeBytes              int64
+	ContentType            string
+	CompleteTokenHash      *string
+	CompletedAt            *time.Time
+	SafetyStatus           BatchSafetyStatus
+	UploadExpiresAt        time.Time
+	SafetyCheckedAt        *time.Time
+	SafetyErrorReason      *string
+	Generation             int
+	VerificationEnqueuedAt *time.Time
+	VerificationTries      int
 }
 
 type BatchUpload struct {

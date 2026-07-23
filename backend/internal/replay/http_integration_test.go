@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
@@ -103,8 +104,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 		objects: map[string][]byte{}, contentTypes: map[string]string{}, statErrors: map[string]error{},
 	}
 	mergeQueue := &replayMergeQueueStub{}
+	abuseEvaluator := &replayAbuseEvaluatorStub{}
+	diagnostics := &replayDiagnosticRecorderStub{}
 	scheduler := Scheduler{
-		Store: Store{Database: pools.Admin}, Queue: mergeQueue, Now: func() time.Time { return now },
+		Store: Store{Database: pools.Admin}, Queue: mergeQueue, VerificationQueue: mergeQueue,
+		Now: func() time.Time { return now },
 	}
 	authorizer := widgetapi.Authorizer{
 		Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now },
@@ -112,7 +116,9 @@ func TestReplayHTTPFlow(t *testing.T) {
 	router := chi.NewRouter()
 	RegisterPublicRoutes(router, HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
-		Storage: storageClient, Scheduler: scheduler, Now: func() time.Time { return now },
+		Storage: storageClient, Scheduler: scheduler, Verifier: scheduler,
+		Abuse: abuseEvaluator, Diagnostics: diagnostics,
+		Now: func() time.Time { return now },
 	})
 
 	preflight := replayRequest(router, http.MethodOptions, "/v1/replay/sessions?key="+publicKey, "", "", "https://example.com")
@@ -120,8 +126,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("preflight status = %d, headers = %#v", preflight.Code, preflight.Header())
 	}
 	clientSessionID := "d766f8eb-d58d-42ca-b9fd-349cc9e8e3b4"
-	createBody := fmt.Sprintf(`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/checkout"}`,
-		clientSessionID, ruleID)
+	visitorID := "e8b3bb8c-e7ce-4c06-b804-c40f1db21355"
+	createBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/checkout","visitor_id":%q}`,
+		clientSessionID, ruleID, visitorID,
+	)
 	created := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
 		createBody, publicKey, "https://example.com")
 	if created.Code != http.StatusCreated {
@@ -139,6 +148,51 @@ func TestReplayHTTPFlow(t *testing.T) {
 		createResponse.RRWebVersion != RRWebVersion || createResponse.MaxDurationSeconds != 1800 ||
 		createResponse.MaxEvents != 50000 {
 		t.Fatalf("create response = %#v", createResponse)
+	}
+	if len(abuseEvaluator.calls) != 1 ||
+		abuseEvaluator.calls[0].policy.Name != abuse.ReplayStartPolicy.Name ||
+		abuseEvaluator.calls[0].request.Identity.TenantID != tenantID ||
+		abuseEvaluator.calls[0].request.Identity.ProjectID != projectID ||
+		abuseEvaluator.calls[0].request.Identity.Origin != "example.com" ||
+		abuseEvaluator.calls[0].request.Identity.Network != "192.0.2.1" ||
+		abuseEvaluator.calls[0].request.Identity.VisitorID != visitorID ||
+		abuseEvaluator.calls[0].request.Identity.SessionID != clientSessionID {
+		t.Fatalf("replay start abuse call = %#v", abuseEvaluator.calls)
+	}
+	rateLimitedSessionID := "5bc697f3-229d-44b8-b9ca-d3e236ad592b"
+	rateLimitedBody := strings.Replace(createBody, clientSessionID, rateLimitedSessionID, 1)
+	abuseEvaluator.denyPolicy = abuse.ReplayStartPolicy.Name
+	rateLimited := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		rateLimitedBody, publicKey, "https://example.com")
+	abuseEvaluator.denyPolicy = ""
+	if rateLimited.Code != http.StatusTooManyRequests ||
+		rateLimited.Header().Get("Retry-After") != "3" ||
+		!strings.Contains(rateLimited.Body.String(), `"reason":"replay_rate_limited"`) {
+		t.Fatalf("rate-limited replay start = %d/%s/%s",
+			rateLimited.Code, rateLimited.Header().Get("Retry-After"), rateLimited.Body.String())
+	}
+	var rateLimitedRows int
+	if err := root.QueryRow(ctx,
+		`SELECT count(*) FROM sessions WHERE session_id = $1`, rateLimitedSessionID,
+	).Scan(&rateLimitedRows); err != nil || rateLimitedRows != 0 {
+		t.Fatalf("rate-limited replay rows = %d, error = %v", rateLimitedRows, err)
+	}
+	unavailableSessionID := "da3a13c1-538e-4308-b6f4-22760b7d9186"
+	unavailableBody := strings.Replace(createBody, clientSessionID, unavailableSessionID, 1)
+	abuseEvaluator.failPolicy = abuse.ReplayStartPolicy.Name
+	unavailable := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		unavailableBody, publicKey, "https://example.com")
+	abuseEvaluator.failPolicy = ""
+	if unavailable.Code != http.StatusServiceUnavailable ||
+		unavailable.Header().Get("Retry-After") != "5" ||
+		!strings.Contains(unavailable.Body.String(), `"reason":"replay_rate_limited"`) {
+		t.Fatalf("unavailable replay limiter = %d/%s/%s",
+			unavailable.Code, unavailable.Header().Get("Retry-After"), unavailable.Body.String())
+	}
+	if len(diagnostics.events) != 2 ||
+		diagnostics.events[0].Reason != abuse.ReasonReplayRateLimited ||
+		diagnostics.events[1].Reason != abuse.ReplayStartPolicy.Name+"_unavailable" {
+		t.Fatalf("replay abuse diagnostics = %#v", diagnostics.events)
 	}
 	invalidOrigin := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
 		createBody, publicKey, "https://evil.example")
@@ -170,13 +224,24 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Errorf("invalid batch status = %d, body = %s", invalidBatch.Code, invalidBatch.Body.String())
 	}
 
-	batchData := []byte(`[{"type":2},{}]`)
+	batchData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}},{"type":3,"timestamp":1784800000100,"data":{"source":5}}]`)
 	batchBody := fmt.Sprintf(`{"batch_index":0,"events_count":2,"size_bytes":%d}`, len(batchData))
 	declared := replayRequest(router, http.MethodPost,
 		"/v1/replay/sessions/"+createResponse.ID+"/batches?key="+publicKey,
 		batchBody, publicKey, "https://example.com")
 	if declared.Code != http.StatusCreated {
 		t.Fatalf("declare status = %d, body = %s", declared.Code, declared.Body.String())
+	}
+	if len(abuseEvaluator.calls) < 2 {
+		t.Fatalf("replay batch abuse calls = %#v", abuseEvaluator.calls)
+	}
+	batchCalls := abuseEvaluator.calls[len(abuseEvaluator.calls)-2:]
+	if batchCalls[0].policy.Name != abuse.ReplayBatchPolicy.Name ||
+		batchCalls[0].request.Identity.SessionID != createResponse.ID ||
+		batchCalls[0].request.Cost != 1 ||
+		batchCalls[1].policy.Name != abuse.ReplayBytePolicy.Name ||
+		batchCalls[1].request.Cost != 1 {
+		t.Fatalf("replay batch abuse calls = %#v", batchCalls)
 	}
 	var upload BatchUpload
 	decodeReplayResponse(t, declared, &upload)
@@ -200,6 +265,46 @@ func TestReplayHTTPFlow(t *testing.T) {
 		fmt.Sprintf(`{"complete_token":%q}`, upload.CompleteToken), publicKey, "https://example.com")
 	if completed.Code != http.StatusNoContent {
 		t.Fatalf("complete status = %d, body = %s", completed.Code, completed.Body.String())
+	}
+	if len(mergeQueue.verificationTasks) != 1 {
+		t.Fatalf("scheduled replay batch verifications = %#v", mergeQueue.verificationTasks)
+	}
+	var quarantinedStatus string
+	var quarantinedEvents, quarantinedBatches int
+	if err := root.QueryRow(ctx, `
+		SELECT batch.safety_status::text, session.events_count, session.batches_count
+		FROM session_batches AS batch
+		JOIN sessions AS session ON session.id = batch.session_id
+		WHERE batch.session_id = $1 AND batch.batch_index = 0
+	`, createResponse.ID).Scan(
+		&quarantinedStatus, &quarantinedEvents, &quarantinedBatches,
+	); err != nil {
+		t.Fatalf("read quarantined replay batch: %v", err)
+	}
+	if quarantinedStatus != string(BatchSafetyQuarantined) ||
+		quarantinedEvents != 0 || quarantinedBatches != 0 {
+		t.Fatalf("quarantined replay state = %s/%d/%d",
+			quarantinedStatus, quarantinedEvents, quarantinedBatches)
+	}
+	quarantinedFinalize := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+createResponse.ID+"/finalize?key="+publicKey,
+		`{}`, publicKey, "https://example.com")
+	if quarantinedFinalize.Code != http.StatusConflict {
+		t.Fatalf("quarantined replay finalize = %d, body = %s",
+			quarantinedFinalize.Code, quarantinedFinalize.Body.String())
+	}
+	verificationProcessor := BatchVerificationProcessor{
+		Store: Store{Database: pools.Admin}, Storage: storageClient,
+		Now: func() time.Time { return now },
+	}
+	verificationPayload, err := json.Marshal(mergeQueue.verificationTasks[0])
+	if err != nil {
+		t.Fatalf("encode replay batch verification task: %v", err)
+	}
+	if err := verificationProcessor.Handler()(
+		ctx, asynq.NewTask(TaskVerifyBatch, verificationPayload),
+	); err != nil {
+		t.Fatalf("verify replay batch: %v", err)
 	}
 	alreadyCompleted := replayRequest(router, http.MethodPost, completePath,
 		fmt.Sprintf(`{"complete_token":%q}`, upload.CompleteToken), publicKey, "https://example.com")
@@ -249,6 +354,238 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, emptySession.ID); err != nil {
 		t.Fatalf("delete empty session: %v", err)
+	}
+
+	expiredClientSessionID := "081a7356-97ee-4c89-b7da-44a07a94b80f"
+	expiredCreateBody := strings.Replace(createBody, clientSessionID, expiredClientSessionID, 1)
+	expiredCreated := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		expiredCreateBody, publicKey, "https://example.com")
+	if expiredCreated.Code != http.StatusCreated {
+		t.Fatalf("create expiring replay status = %d, body = %s",
+			expiredCreated.Code, expiredCreated.Body.String())
+	}
+	var expiringSession struct {
+		ID string `json:"id"`
+	}
+	decodeReplayResponse(t, expiredCreated, &expiringSession)
+	expiringData := []byte(`[{"type":3,"timestamp":1784800000200,"data":{"source":5}}]`)
+	expiringDeclared := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+expiringSession.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(expiringData)),
+		publicKey, "https://example.com")
+	if expiringDeclared.Code != http.StatusCreated {
+		t.Fatalf("declare expiring replay status = %d, body = %s",
+			expiringDeclared.Code, expiringDeclared.Body.String())
+	}
+	var expiringUpload BatchUpload
+	decodeReplayResponse(t, expiringDeclared, &expiringUpload)
+	expiringKey := storageClient.presignedKeys[len(storageClient.presignedKeys)-1]
+	storageClient.objects[expiringKey] = expiringData
+	storageClient.contentTypes[expiringKey] = "application/json"
+	now = now.Add(replayUploadTTL + time.Second)
+	expiredCompletion := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+expiringSession.ID+"/batches/0/complete?key="+publicKey,
+		fmt.Sprintf(`{"complete_token":%q}`, expiringUpload.CompleteToken),
+		publicKey, "https://example.com")
+	if expiredCompletion.Code != http.StatusGone ||
+		!strings.Contains(expiredCompletion.Body.String(), `"reason":"upload_expired"`) {
+		t.Fatalf("expired replay completion = %d, body = %s",
+			expiredCompletion.Code, expiredCompletion.Body.String())
+	}
+	var expiredStatus string
+	var expiredToken *string
+	var expiredCompletedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status::text, complete_token_hash, completed_at
+		FROM session_batches WHERE session_id = $1 AND batch_index = 0
+	`, expiringSession.ID).Scan(&expiredStatus, &expiredToken, &expiredCompletedAt); err != nil {
+		t.Fatalf("read expired replay batch: %v", err)
+	}
+	if expiredStatus != string(BatchSafetyExpired) ||
+		expiredToken != nil || expiredCompletedAt != nil {
+		t.Fatalf("expired replay state = %s/%v/%v",
+			expiredStatus, expiredToken, expiredCompletedAt)
+	}
+	redeclaredExpired := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+expiringSession.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(expiringData)),
+		publicKey, "https://example.com")
+	if redeclaredExpired.Code != http.StatusCreated {
+		t.Fatalf("redeclare expired replay = %d, body = %s",
+			redeclaredExpired.Code, redeclaredExpired.Body.String())
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, expiringSession.ID); err != nil {
+		t.Fatalf("delete expired replay session: %v", err)
+	}
+
+	rejectedClientSessionID := "2fc177cf-a0b5-4237-9a52-a06655945e70"
+	rejectedCreateBody := strings.Replace(createBody, clientSessionID, rejectedClientSessionID, 1)
+	rejectedCreated := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		rejectedCreateBody, publicKey, "https://example.com")
+	if rejectedCreated.Code != http.StatusCreated {
+		t.Fatalf("create rejected replay status = %d, body = %s",
+			rejectedCreated.Code, rejectedCreated.Body.String())
+	}
+	var rejectedSession struct {
+		ID string `json:"id"`
+	}
+	decodeReplayResponse(t, rejectedCreated, &rejectedSession)
+	rejectedData := []byte(`[{"type":99,"timestamp":1784800000300,"data":{}}]`)
+	rejectedDeclared := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
+		publicKey, "https://example.com")
+	if rejectedDeclared.Code != http.StatusCreated {
+		t.Fatalf("declare rejected replay status = %d, body = %s",
+			rejectedDeclared.Code, rejectedDeclared.Body.String())
+	}
+	var rejectedUpload BatchUpload
+	decodeReplayResponse(t, rejectedDeclared, &rejectedUpload)
+	rejectedKey := storageClient.presignedKeys[len(storageClient.presignedKeys)-1]
+	storageClient.objects[rejectedKey] = rejectedData
+	storageClient.contentTypes[rejectedKey] = "application/json"
+	rejectedCompletion := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/batches/0/complete?key="+publicKey,
+		fmt.Sprintf(`{"complete_token":%q}`, rejectedUpload.CompleteToken),
+		publicKey, "https://example.com")
+	if rejectedCompletion.Code != http.StatusNoContent {
+		t.Fatalf("complete rejected replay status = %d, body = %s",
+			rejectedCompletion.Code, rejectedCompletion.Body.String())
+	}
+	rejectedTask := mergeQueue.verificationTasks[len(mergeQueue.verificationTasks)-1]
+	rejectedPayload, err := json.Marshal(rejectedTask)
+	if err != nil {
+		t.Fatalf("encode rejected replay task: %v", err)
+	}
+	rejectionProcessor := BatchVerificationProcessor{
+		Store: Store{Database: pools.Admin}, Storage: storageClient, Diagnostics: diagnostics,
+		Now: func() time.Time { return now },
+	}
+	if err := rejectionProcessor.Handler()(
+		ctx, asynq.NewTask(TaskVerifyBatch, rejectedPayload),
+	); err != nil {
+		t.Fatalf("reject unsafe replay batch: %v", err)
+	}
+	var rejectedStatus, rejectedReason string
+	var rejectedEnqueuedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status::text, safety_error_reason, verification_enqueued_at
+		FROM session_batches WHERE session_id = $1 AND batch_index = 0
+	`, rejectedSession.ID).Scan(
+		&rejectedStatus, &rejectedReason, &rejectedEnqueuedAt,
+	); err != nil {
+		t.Fatalf("read rejected replay batch: %v", err)
+	}
+	if rejectedStatus != string(BatchSafetyRejected) ||
+		rejectedReason != "invalid_event" || rejectedEnqueuedAt != nil {
+		t.Fatalf("rejected replay state = %s/%s/%v",
+			rejectedStatus, rejectedReason, rejectedEnqueuedAt)
+	}
+	if _, exists := storageClient.objects[rejectedKey]; exists {
+		t.Fatal("unsafe replay object was not removed")
+	}
+	rejectedFinalize := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/finalize?key="+publicKey,
+		`{}`, publicKey, "https://example.com")
+	if rejectedFinalize.Code != http.StatusConflict {
+		t.Fatalf("rejected replay finalize = %d, body = %s",
+			rejectedFinalize.Code, rejectedFinalize.Body.String())
+	}
+	redeclaredRejected := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
+		publicKey, "https://example.com")
+	if redeclaredRejected.Code != http.StatusCreated {
+		t.Fatalf("redeclare rejected replay = %d, body = %s",
+			redeclaredRejected.Code, redeclaredRejected.Body.String())
+	}
+	var redeclaredStatus string
+	var redeclaredGeneration int
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status::text, verification_generation
+		FROM session_batches WHERE session_id = $1 AND batch_index = 0
+	`, rejectedSession.ID).Scan(&redeclaredStatus, &redeclaredGeneration); err != nil {
+		t.Fatalf("read redeclared replay batch: %v", err)
+	}
+	if redeclaredStatus != string(BatchSafetyPending) || redeclaredGeneration != 2 {
+		t.Fatalf("redeclared replay state = %s/%d", redeclaredStatus, redeclaredGeneration)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, rejectedSession.ID); err != nil {
+		t.Fatalf("delete rejected replay session: %v", err)
+	}
+
+	var aggregateSessionID string
+	aggregateClientSessionID := "f571c651-e016-4760-90b5-c5d7df660fc7"
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, page_url, started_at,
+			rrweb_version, max_duration_seconds, max_events
+		) VALUES ($1, $2, $3, 'https://example.com/aggregate', $4, $5, 1800, 50000)
+		RETURNING id
+	`, tenantID, projectID, aggregateClientSessionID, now, RRWebVersion).Scan(&aggregateSessionID); err != nil {
+		t.Fatalf("create aggregate-limit replay: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, content_type, complete_token_hash,
+			upload_refreshed_at, upload_expires_at
+		)
+		SELECT $1::uuid, $2::uuid, $3::uuid, value,
+		       'aggregate/' || ($3::uuid)::text || '/' || value::text || '.json',
+		       1, $4, 'application/json', 'seed-token-' || value::text,
+		       $5, $5::timestamptz + interval '10 minutes'
+		FROM generate_series(0, 62) AS value
+	`, tenantID, projectID, aggregateSessionID, maximumBatchSize, now); err != nil {
+		t.Fatalf("seed aggregate-limit replay batches: %v", err)
+	}
+	startConcurrentDeclarations := make(chan struct{})
+	declarationResults := make(chan error, 2)
+	for _, batchIndex := range []int{63, 64} {
+		go func(index int) {
+			<-startConcurrentDeclarations
+			tx, err := pools.Admin.Begin(ctx)
+			if err == nil {
+				_, _, err = (Store{}).DeclareBatch(
+					ctx, tx, tenantID, projectID, aggregateSessionID,
+					index, 1, maximumBatchSize, now,
+				)
+			}
+			if err == nil {
+				err = tx.Commit(ctx)
+			} else if tx != nil {
+				_ = tx.Rollback(ctx)
+			}
+			declarationResults <- err
+		}(batchIndex)
+	}
+	close(startConcurrentDeclarations)
+	var successfulDeclarations, byteLimitRejections int
+	for range 2 {
+		switch err := <-declarationResults; {
+		case err == nil:
+			successfulDeclarations++
+		case errors.Is(err, ErrByteLimit):
+			byteLimitRejections++
+		default:
+			t.Fatalf("concurrent aggregate-limit declaration: %v", err)
+		}
+	}
+	var aggregateBatches int
+	var aggregateBytes int64
+	if err := root.QueryRow(ctx, `
+		SELECT count(*), sum(size_bytes)
+		FROM session_batches WHERE session_id = $1
+	`, aggregateSessionID).Scan(&aggregateBatches, &aggregateBytes); err != nil {
+		t.Fatalf("read aggregate-limit replay: %v", err)
+	}
+	if successfulDeclarations != 1 || byteLimitRejections != 1 ||
+		aggregateBatches != 64 || aggregateBytes != maximumSessionBytes {
+		t.Fatalf("aggregate-limit result = success %d rejected %d batches %d bytes %d",
+			successfulDeclarations, byteLimitRejections, aggregateBatches, aggregateBytes)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, aggregateSessionID); err != nil {
+		t.Fatalf("delete aggregate-limit replay session: %v", err)
 	}
 
 	processor := Processor{Store: Store{Database: pools.Admin}, Storage: storageClient, Now: func() time.Time { return now }}
@@ -401,8 +738,9 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, completed_at, created_at
-		) VALUES ($1, $2, $3, 0, $4, 1, 128, $5, $5)
+			events_count, size_bytes, completed_at, created_at,
+			safety_status, safety_checked_at
+		) VALUES ($1, $2, $3, 0, $4, 1, 128, $5, $5, 'safe', $5)
 	`, tenantID, projectID, expiredSessionID, expiredBatchKey, now.Add(-91*24*time.Hour)); err != nil {
 		t.Fatalf("create expired replay batch: %v", err)
 	}
@@ -493,22 +831,23 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("create incomplete abandoned replay: %v", err)
 	}
 	abandonedCompletedKey := "abandoned/completed.json"
-	abandonedIncompleteKey := "abandoned/incomplete.json"
 	activeKey := "active/completed.json"
 	renewedKey := "active/renewed.json"
 	missingIncompleteKey := "abandoned/missing.json"
+	abandonedData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{}}]`)
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, complete_token_hash, completed_at, created_at, upload_refreshed_at
+			events_count, size_bytes, complete_token_hash, completed_at, created_at,
+			upload_refreshed_at, upload_expires_at, safety_status, safety_checked_at
 		) VALUES
-			($1, $2, $3, 0, $4, 1, 4, NULL, $5, $5, $5),
-			($1, $2, $3, 1, $6, 1, 4, 'hash', NULL, $5, $5),
-			($1, $2, $7, 0, $8, 1, 4, NULL, $9, $9, $9),
-			($1, $2, $10, 0, $11, 1, 4, 'hash', NULL, $5, $5)
+			($1, $2, $3, 0, $4, 1, $13, NULL, $5, $5, $5, $6, 'safe', $5),
+			($1, $2, $7, 0, $8, 1, 4, NULL, $9, $9, $9, $10, 'safe', $9),
+			($1, $2, $11, 0, $12, 1, 4, 'hash', NULL, $5, $5, $6, 'pending', NULL)
 	`, tenantID, projectID, abandonedSessionID, abandonedCompletedKey,
-		now.Add(-16*time.Minute), abandonedIncompleteKey, activeSessionID, activeKey,
-		now.Add(-time.Minute), incompleteSessionID, missingIncompleteKey); err != nil {
+		now.Add(-16*time.Minute), now.Add(-6*time.Minute), activeSessionID, activeKey,
+		now.Add(-time.Minute), now.Add(9*time.Minute), incompleteSessionID,
+		missingIncompleteKey, len(abandonedData)); err != nil {
 		t.Fatalf("create replay recovery batches: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
@@ -533,17 +872,18 @@ func TestReplayHTTPFlow(t *testing.T) {
 	for _, sessionID := range got {
 		queued[sessionID] = true
 	}
-	if len(got) != 2 || !queued[abandonedSessionID] || !queued[incompleteSessionID] {
+	if len(got) != 1 || !queued[abandonedSessionID] {
 		t.Fatalf("recovered replay queue = %#v", got)
 	}
 	var abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt, renewedEndedAt *time.Time
 	var emptyEndedAt, emptyMergeRequestedAt, incompleteEndedAt, incompleteMergeRequestedAt *time.Time
-	var emptyMergeError *string
-	var emptyMergeAttempts int
+	var emptyMergeError, incompleteMergeError *string
+	var emptyMergeAttempts, incompleteMergeAttempts int
 	if err := root.QueryRow(ctx, `
 		SELECT abandoned.ended_at, abandoned.merge_requested_at, active.ended_at, renewed.ended_at,
 		       empty.ended_at, empty.merge_requested_at, empty.merge_error, empty.merge_attempts,
-		       incomplete.ended_at, incomplete.merge_requested_at
+		       incomplete.ended_at, incomplete.merge_requested_at,
+		       incomplete.merge_error, incomplete.merge_attempts
 		FROM sessions AS abandoned
 		JOIN sessions AS active ON active.id = $2
 		JOIN sessions AS renewed ON renewed.id = $3
@@ -554,53 +894,25 @@ func TestReplayHTTPFlow(t *testing.T) {
 		&abandonedEndedAt, &abandonedMergeRequestedAt, &activeEndedAt, &renewedEndedAt,
 		&emptyEndedAt, &emptyMergeRequestedAt, &emptyMergeError, &emptyMergeAttempts,
 		&incompleteEndedAt, &incompleteMergeRequestedAt,
+		&incompleteMergeError, &incompleteMergeAttempts,
 	); err != nil {
 		t.Fatalf("read recovered replay state: %v", err)
 	}
 	if abandonedEndedAt == nil || abandonedMergeRequestedAt == nil || activeEndedAt != nil || renewedEndedAt != nil ||
 		emptyEndedAt == nil || emptyMergeRequestedAt != nil || emptyMergeError == nil ||
 		*emptyMergeError != unavailableReplayMessage || emptyMergeAttempts != terminalMergeAttempts ||
-		incompleteEndedAt == nil || incompleteMergeRequestedAt == nil {
-		t.Errorf("recovered replay state = abandoned %v/%v active %v renewed %v empty %v/%v/%v/%d incomplete %v/%v",
+		incompleteEndedAt == nil || incompleteMergeRequestedAt != nil ||
+		incompleteMergeError == nil || *incompleteMergeError != unavailableReplayMessage ||
+		incompleteMergeAttempts != terminalMergeAttempts {
+		t.Errorf("recovered replay state = abandoned %v/%v active %v renewed %v empty %v/%v/%v/%d incomplete %v/%v/%v/%d",
 			abandonedEndedAt, abandonedMergeRequestedAt, activeEndedAt, renewedEndedAt, emptyEndedAt,
 			emptyMergeRequestedAt, emptyMergeError, emptyMergeAttempts,
-			incompleteEndedAt, incompleteMergeRequestedAt)
+			incompleteEndedAt, incompleteMergeRequestedAt, incompleteMergeError, incompleteMergeAttempts)
 	}
 	if _, err := (Store{}).LockBatch(
 		ctx, root, tenantID, projectID, incompleteSessionID, 0,
 	); !errors.Is(err, ErrSessionFinalized) {
 		t.Errorf("LockBatch(terminal replay) error = %v, want ErrSessionFinalized", err)
-	}
-	incompleteTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, incompleteSessionID)))
-	storageFailure := errors.New("storage unavailable")
-	storageClient.statErrors[missingIncompleteKey] = storageFailure
-	if err := processor.MergeHandler()(ctx, incompleteTask); !errors.Is(err, storageFailure) || errors.Is(err, asynq.SkipRetry) {
-		t.Fatalf("transient replay recovery error = %v, want retryable storage failure", err)
-	}
-	var retryMergeError *string
-	var retryMergeAttempts int
-	if err := root.QueryRow(ctx, `
-		SELECT merge_error, merge_attempts FROM sessions WHERE id = $1
-	`, incompleteSessionID).Scan(&retryMergeError, &retryMergeAttempts); err != nil {
-		t.Fatalf("read retryable replay state: %v", err)
-	}
-	if retryMergeError == nil || !strings.Contains(*retryMergeError, storageFailure.Error()) || retryMergeAttempts != 1 {
-		t.Fatalf("retryable replay state = %v/%d", retryMergeError, retryMergeAttempts)
-	}
-	delete(storageClient.statErrors, missingIncompleteKey)
-	if err := processor.MergeHandler()(ctx, incompleteTask); !errors.Is(err, asynq.SkipRetry) {
-		t.Fatalf("unavailable replay merge error = %v, want SkipRetry", err)
-	}
-	var incompleteMergeError *string
-	var incompleteMergeAttempts int
-	if err := root.QueryRow(ctx, `
-		SELECT merge_error, merge_attempts FROM sessions WHERE id = $1
-	`, incompleteSessionID).Scan(&incompleteMergeError, &incompleteMergeAttempts); err != nil {
-		t.Fatalf("read unavailable replay state: %v", err)
-	}
-	if incompleteMergeError == nil || *incompleteMergeError != unavailableReplayMessage ||
-		incompleteMergeAttempts != terminalMergeAttempts {
-		t.Errorf("unavailable replay state = %v/%d", incompleteMergeError, incompleteMergeAttempts)
 	}
 	pendingAfterTerminal, err := retentionStore.PendingMerges(ctx, 100, now.Add(time.Minute))
 	if err != nil {
@@ -611,27 +923,22 @@ func TestReplayHTTPFlow(t *testing.T) {
 			t.Errorf("terminal replay remained pending: %#v", pending)
 		}
 	}
-	storageClient.objects[abandonedCompletedKey] = []byte(`[{}]`)
+	storageClient.objects[abandonedCompletedKey] = abandonedData
 	storageClient.contentTypes[abandonedCompletedKey] = "application/json"
-	storageClient.objects[abandonedIncompleteKey] = []byte(`[{}]`)
-	storageClient.contentTypes[abandonedIncompleteKey] = "application/json"
 	abandonedTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, abandonedSessionID)))
 	if err := processor.MergeHandler()(ctx, abandonedTask); err != nil {
 		t.Fatalf("merge recovered replay: %v", err)
 	}
-	if _, exists := storageClient.objects[abandonedIncompleteKey]; exists {
-		t.Error("incomplete recovered replay object was not removed")
-	}
 	recoveredKey := "tenants/" + tenantID + "/sessions/" + abandonedSessionID + "/replay.json"
-	if got := string(storageClient.objects[recoveredKey]); got != `[{},{}]` {
-		t.Errorf("recovered replay = %s, want two uploaded batches", got)
+	if got := string(storageClient.objects[recoveredKey]); got != string(abandonedData) {
+		t.Errorf("recovered replay = %s, want %s", got, abandonedData)
 	}
 	if err := root.QueryRow(ctx, `SELECT count(*) FROM session_batches WHERE session_id = $1`, abandonedSessionID).
 		Scan(&batchRows); err != nil || batchRows != 0 {
 		t.Fatalf("recovered replay batch rows = %d, error = %v", batchRows, err)
 	}
 	if err := root.QueryRow(ctx, `SELECT events_count, batches_count FROM sessions WHERE id = $1`, abandonedSessionID).
-		Scan(&events, &batches); err != nil || events != 2 || batches != 2 {
+		Scan(&events, &batches); err != nil || events != 1 || batches != 1 {
 		t.Errorf("recovered replay aggregates = %d/%d, error = %v", events, batches, err)
 	}
 
@@ -646,12 +953,12 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("create failed merge session: %v", err)
 	}
 	failedBatchKey := "failed/batch.json"
-	failedBatchData := []byte(`[{}]`)
+	failedBatchData := []byte(`[{"type":2,"timestamp":1784800000000,"data":{}}]`)
 	if _, err := root.Exec(ctx, `
 		INSERT INTO session_batches (
 			tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, completed_at
-		) VALUES ($1, $2, $3, 0, $4, 2, $5, $6)
+			events_count, size_bytes, completed_at, safety_status, safety_checked_at
+		) VALUES ($1, $2, $3, 0, $4, 2, $5, $6, 'safe', $6)
 	`, tenantID, projectID, failedSessionID, failedBatchKey, len(failedBatchData), now); err != nil {
 		t.Fatalf("create failed merge batch: %v", err)
 	}
@@ -667,7 +974,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		Scan(&mergeAttempts, &mergeError); err != nil {
 		t.Fatalf("read failed merge state: %v", err)
 	}
-	if mergeAttempts != 1 || mergeError == nil || !strings.Contains(*mergeError, "declared 2 events") {
+	if mergeAttempts != 1 || mergeError == nil || !strings.Contains(*mergeError, "event_count_mismatch") {
 		t.Errorf("failed merge attempts/error = %d/%v", mergeAttempts, mergeError)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, failedSessionID); err != nil {
@@ -789,11 +1096,61 @@ func (s *replayStorageStub) RemoveObject(_ context.Context, key string) error {
 }
 
 type replayMergeQueueStub struct {
-	sessionIDs []string
+	sessionIDs        []string
+	verificationTasks []BatchVerificationTask
+}
+
+type replayAbuseCall struct {
+	policy  abuse.Policy
+	request abuse.Request
+}
+
+type replayAbuseEvaluatorStub struct {
+	calls      []replayAbuseCall
+	denyPolicy string
+	failPolicy string
+}
+
+func (stub *replayAbuseEvaluatorStub) Evaluate(
+	_ context.Context,
+	policy abuse.Policy,
+	request abuse.Request,
+) (abuse.Decision, error) {
+	stub.calls = append(stub.calls, replayAbuseCall{policy: policy, request: request})
+	if policy.Name == stub.failPolicy {
+		return abuse.Decision{Allowed: false, Reason: policy.Reason}, errors.New("redis unavailable")
+	}
+	if policy.Name == stub.denyPolicy {
+		return abuse.Decision{
+			Allowed: false, Reason: policy.Reason, RetryAfter: 3 * time.Second,
+			Limit: 10, Remaining: 0,
+		}, nil
+	}
+	return abuse.Decision{Allowed: true, Reason: policy.Reason, Limit: 100, Remaining: 99}, nil
+}
+
+type replayDiagnosticRecorderStub struct {
+	events []abuse.DiagnosticEvent
+}
+
+func (stub *replayDiagnosticRecorderStub) Record(
+	_ context.Context,
+	event abuse.DiagnosticEvent,
+) error {
+	stub.events = append(stub.events, event)
+	return nil
 }
 
 func (s *replayMergeQueueStub) EnqueueMerge(_ context.Context, sessionID string) error {
 	s.sessionIDs = append(s.sessionIDs, sessionID)
+	return nil
+}
+
+func (s *replayMergeQueueStub) EnqueueVerification(
+	_ context.Context,
+	task BatchVerificationTask,
+) error {
+	s.verificationTasks = append(s.verificationTasks, task)
 	return nil
 }
 

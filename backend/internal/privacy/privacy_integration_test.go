@@ -702,11 +702,14 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	}
 	batchKey := "tenants/" + tenantID + "/replays/reporter-batch.json"
 	if _, err := database.Exec(ctx, `
-		INSERT INTO session_batches (
-			tenant_id, project_id, session_id, batch_index, storage_key,
-			events_count, size_bytes, completed_at
-		) VALUES ($1, $2, $3, 0, $4, 3, 128, $5::timestamptz - interval '7 minutes')
-	`, tenantID, projectID, sessionID, batchKey, now); err != nil {
+			INSERT INTO session_batches (
+				tenant_id, project_id, session_id, batch_index, storage_key,
+				events_count, size_bytes, completed_at, safety_status, safety_checked_at
+			) VALUES (
+				$1, $2, $3, 0, $4, 3, 128, $5::timestamptz - interval '7 minutes',
+				'safe', $5::timestamptz - interval '7 minutes'
+			)
+		`, tenantID, projectID, sessionID, batchKey, now); err != nil {
 		t.Fatalf("create reporter replay batch: %v", err)
 	}
 	progressTokenHash := sha256.Sum256([]byte("reporter-progress-token"))

@@ -24,8 +24,8 @@ import (
 
 func TestMergeBatchesStreamsOrderedJSONArray(t *testing.T) {
 	storage := &memoryReplayStorage{objects: map[string][]byte{
-		"batch-0": []byte(`[{"type":2},{"type":3}]`),
-		"batch-1": []byte(`[{"type":4}]`),
+		"batch-0": []byte(`[{"type":2,"timestamp":1,"data":{}},{"type":3,"timestamp":2,"data":{}}]`),
+		"batch-1": []byte(`[{"type":4,"timestamp":3,"data":{}}]`),
 	}}
 	processor := Processor{Storage: storage}
 	count, err := processor.mergeBatches(context.Background(), "merged", []Batch{
@@ -35,7 +35,8 @@ func TestMergeBatchesStreamsOrderedJSONArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeBatches() error = %v", err)
 	}
-	if count != 3 || string(storage.objects["merged"]) != `[{"type":2},{"type":3},{"type":4}]` {
+	if count != 3 || string(storage.objects["merged"]) !=
+		`[{"type":2,"timestamp":1,"data":{}},{"type":3,"timestamp":2,"data":{}},{"type":4,"timestamp":3,"data":{}}]` {
 		t.Fatalf("merge result count = %d, body = %s", count, storage.objects["merged"])
 	}
 	if storage.contentTypes["merged"] != "application/json" {
@@ -50,10 +51,10 @@ func TestMergeBatchesRejectsInvalidInput(t *testing.T) {
 		count  int
 		needle string
 	}{
-		{name: "not array", body: `{}`, count: 0, needle: "expected JSON array"},
-		{name: "invalid event", body: `[{]`, count: 1, needle: "decode replay event"},
-		{name: "wrong count", body: `[{"type":2}]`, count: 2, needle: "declared 2 events"},
-		{name: "trailing JSON", body: `[] {}`, count: 0, needle: "unexpected trailing JSON"},
+		{name: "not array", body: `{}`, count: 0, needle: "expected_array"},
+		{name: "invalid event", body: `[{]`, count: 1, needle: "invalid_json"},
+		{name: "wrong count", body: `[{"type":2,"timestamp":1,"data":{}}]`, count: 2, needle: "event_count_mismatch"},
+		{name: "trailing JSON", body: `[] {}`, count: 0, needle: "trailing_json"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -80,7 +81,7 @@ func TestMergeBatchesReportsMissingObject(t *testing.T) {
 }
 
 func TestMergeBatchesReportsOutputFailure(t *testing.T) {
-	body := []byte(`[{}]`)
+	body := []byte(`[{"type":2,"timestamp":1,"data":{}}]`)
 	want := errors.New("storage unavailable")
 	storage := &memoryReplayStorage{objects: map[string][]byte{"batch": body}, putErr: want}
 	processor := Processor{Storage: storage}
@@ -89,20 +90,6 @@ func TestMergeBatchesReportsOutputFailure(t *testing.T) {
 	}})
 	if !errors.Is(err, want) {
 		t.Fatalf("mergeBatches() error = %v, want %v", err, want)
-	}
-}
-
-func TestRecoverUploadedBatchesPropagatesIndeterminateStorageFailure(t *testing.T) {
-	want := errors.New("storage unavailable")
-	processor := Processor{
-		Storage: &memoryReplayStorage{objects: map[string][]byte{}, statErr: want},
-		Now:     func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) },
-	}
-	_, err := processor.recoverUploadedBatches(context.Background(), Session{}, []Batch{{
-		Index: 0, StorageKey: "batch", SizeBytes: 2, ContentType: "application/json",
-	}})
-	if !errors.Is(err, want) {
-		t.Fatalf("recoverUploadedBatches() error = %v, want %v", err, want)
 	}
 }
 
@@ -172,14 +159,32 @@ func TestReplayQueueEnqueuesDeterministically(t *testing.T) {
 		string(client.task.Payload()) != `{"session_id":"session-id"}` {
 		t.Fatalf("enqueued task = %#v payload %s", client.task, client.task.Payload())
 	}
+	verification := BatchVerificationTask{
+		TenantID: "tenant-id", BatchID: "batch-id", Generation: 3,
+	}
+	if err := queue.EnqueueVerification(context.Background(), verification); err != nil {
+		t.Fatalf("EnqueueVerification() error = %v", err)
+	}
+	if client.task == nil || client.task.Type() != TaskVerifyBatch ||
+		string(client.task.Payload()) !=
+			`{"tenant_id":"tenant-id","batch_id":"batch-id","generation":3}` {
+		t.Fatalf("verification task = %#v payload %s", client.task, client.task.Payload())
+	}
 	client.enqueueErr = asynq.ErrTaskIDConflict
 	if err := queue.EnqueueMerge(context.Background(), "session-id"); err != nil {
 		t.Fatalf("EnqueueMerge(conflict) error = %v", err)
+	}
+	if err := queue.EnqueueVerification(context.Background(), verification); err != nil {
+		t.Fatalf("EnqueueVerification(conflict) error = %v", err)
 	}
 	client.enqueueErr = errors.New("redis unavailable")
 	if err := queue.EnqueueMerge(context.Background(), "session-id"); err == nil ||
 		!strings.Contains(err.Error(), "enqueue replay merge") {
 		t.Fatalf("EnqueueMerge(failure) error = %v", err)
+	}
+	if err := queue.EnqueueVerification(context.Background(), verification); err == nil ||
+		!strings.Contains(err.Error(), "enqueue replay batch verification") {
+		t.Fatalf("EnqueueVerification(failure) error = %v", err)
 	}
 	client.closeErr = errors.New("close failed")
 	if err := queue.Close(); err == nil || !strings.Contains(err.Error(), "close replay queue") {

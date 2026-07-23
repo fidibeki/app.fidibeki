@@ -37,6 +37,7 @@ func NewQueue(client taskClient) *Queue {
 
 type taskPayload struct {
 	TenantID   string `json:"tenant_id"`
+	ProjectID  string `json:"project_id,omitempty"`
 	ResourceID string `json:"resource_id"`
 	Attempt    int    `json:"attempt,omitempty"`
 	Generation int64  `json:"generation,omitempty"`
@@ -44,7 +45,7 @@ type taskPayload struct {
 
 func (q *Queue) Enqueue(ctx context.Context, prepared PreparedTask) error {
 	payload, err := json.Marshal(taskPayload{
-		TenantID: prepared.TenantID, ResourceID: prepared.ResourceID,
+		TenantID: prepared.TenantID, ProjectID: prepared.ProjectID, ResourceID: prepared.ResourceID,
 		Attempt: prepared.Attempt, Generation: prepared.Generation,
 	})
 	if err != nil {

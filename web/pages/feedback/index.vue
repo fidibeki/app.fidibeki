@@ -450,7 +450,7 @@ useHead({ title: 'Feedback · Fidibeki' })
           <div>
             <label>Moderation<select v-model="moderation"><option value="">Any</option><option value="flagged">Flagged</option><option value="clean">Clean</option></select></label>
             <label>Issue<select v-model="issue"><option value="">Any</option><option value="linked">Linked</option><option value="unlinked">Unlinked</option></select></label>
-            <label>AI status<select v-model="processing"><option value="">Any</option><option value="failed">Failed</option><option value="processing">Processing</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="skipped">Skipped</option></select></label>
+            <label>AI status<select v-model="processing"><option value="">Any</option><option value="failed">Failed</option><option value="processing">Processing</option><option value="deferred">Deferred</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="skipped">Skipped</option></select></label>
             <label>Sentiment<select v-model="sentiment"><option value="">Any</option><option value="negative">Negative</option><option value="neutral">Neutral</option><option value="positive">Positive</option></select></label>
             <label>From<input v-model="dateFrom" type="date" /></label><label>To<input v-model="dateTo" type="date" /></label>
             <button type="button" @click="clearFilters">Clear filters</button>
