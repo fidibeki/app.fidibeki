@@ -23,11 +23,11 @@
       "pathname": "/"
     },
     {
-      "name": "case and internal repeated slashes are retained",
+      "name": "case is retained and internal repeated slashes collapse",
       "input": "https://example.com/Chart//live/",
       "valid": true,
-      "canonical": "https://example.com/Chart//live",
-      "pathname": "/Chart//live"
+      "canonical": "https://example.com/Chart/live",
+      "pathname": "/Chart/live"
     },
     {
       "name": "default ports are removed",

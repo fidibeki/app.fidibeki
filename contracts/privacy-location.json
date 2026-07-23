@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "projections": [
+    {
+      "name": "exact route drops credentials query hash and trailing separators",
+      "url": "https://user:password@Example.COM:443/chart///?asset=BAI&email=jane.private%40example.test#SECRET",
+      "rule": {
+        "matcher_type": "url_exact",
+        "matcher_value": "https://example.com/chart",
+        "include_conditions": [
+          { "matcher_type": "url_exact", "matcher_value": "https://example.com/chart/" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/chart",
+      "source": "exact"
+    },
+    {
+      "name": "prefix drops personal suffix",
+      "url": "https://example.com/accounts/jane-private/orders/48291?reset_token=SECRET",
+      "rule": {
+        "matcher_type": "url_prefix",
+        "matcher_value": "https://example.com/accounts",
+        "include_conditions": [
+          { "matcher_type": "url_prefix", "matcher_value": "https://example.com/accounts/" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/accounts",
+      "source": "prefix"
+    },
+    {
+      "name": "exact wins over prefix",
+      "url": "https://example.com/checkout/payment?token=SECRET",
+      "rule": {
+        "matcher_type": "url_prefix",
+        "matcher_value": "https://example.com",
+        "include_conditions": [
+          { "matcher_type": "url_prefix", "matcher_value": "https://example.com/checkout" },
+          { "matcher_type": "url_exact", "matcher_value": "https://example.com/checkout/payment" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/checkout/payment",
+      "source": "exact"
+    },
+    {
+      "name": "longest matching prefix wins",
+      "url": "https://example.com/docs/product/private-account-48291",
+      "rule": {
+        "matcher_type": "url_prefix",
+        "matcher_value": "https://example.com/docs",
+        "include_conditions": [
+          { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs" },
+          { "matcher_type": "url_prefix", "matcher_value": "https://example.com/docs/product/" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/docs/product",
+      "source": "prefix"
+    },
+    {
+      "name": "regex falls back to origin",
+      "url": "https://example.com/users/jane.private@example.test/profile?token=SECRET",
+      "rule": {
+        "matcher_type": "url_regex",
+        "matcher_value": "^https://example\\.com/users/",
+        "include_conditions": [
+          { "matcher_type": "url_regex", "matcher_value": "^https://example\\.com/users/" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/",
+      "source": "origin"
+    },
+    {
+      "name": "all pages falls back to origin",
+      "url": "https://example.com/reset/SECRET/account-48291",
+      "rule": {
+        "matcher_type": "all_pages",
+        "matcher_value": null,
+        "include_conditions": [
+          { "matcher_type": "all_pages", "matcher_value": null }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/",
+      "source": "origin"
+    },
+    {
+      "name": "unproven static route falls back to origin",
+      "url": "https://example.com/private/account-48291",
+      "rule": {
+        "matcher_type": "url_prefix",
+        "matcher_value": "https://example.com/public",
+        "include_conditions": [
+          { "matcher_type": "url_prefix", "matcher_value": "https://example.com/public" }
+        ]
+      },
+      "valid": true,
+      "target": "https://example.com/",
+      "source": "origin"
+    },
+    {
+      "name": "legacy exact matcher remains compatible",
+      "url": "https://example.com/chart/?asset=BIC",
+      "rule": {
+        "matcher_type": "url_exact",
+        "matcher_value": "https://example.com/chart/",
+        "include_conditions": []
+      },
+      "valid": true,
+      "target": "https://example.com/chart",
+      "source": "exact"
+    },
+    {
+      "name": "invalid page has no projection",
+      "url": "javascript:alert('SECRET')",
+      "rule": {
+        "matcher_type": "all_pages",
+        "matcher_value": null,
+        "include_conditions": [
+          { "matcher_type": "all_pages", "matcher_value": null }
+        ]
+      },
+      "valid": false,
+      "target": "",
+      "source": ""
+    }
+  ]
+}

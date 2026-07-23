@@ -13,6 +13,7 @@ export default defineConfig({
         'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
         'src/policy.ts',
         'src/submission-errors.ts',
+        'src/privacy-location.ts',
         'contracts/widget-objective-policy.ts',
         'src/modules/replay.ts',
         'src/modules/privacy.ts',
