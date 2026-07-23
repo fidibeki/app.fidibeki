@@ -1,7 +1,7 @@
 import { feedbackMessages } from '../messages/feedback.pt'
 import { adminMessages } from '../messages/admin.pt'
 
-export default defineI18nLocale(() => ({
+export const portugueseMessages = {
   common: {
     workspace: 'Workspace',
     account: 'Conta',
@@ -823,6 +823,7 @@ export default defineI18nLocale(() => ({
       pageDescription: 'Reveja a sua encomenda antes do pagamento.',
       screenshot: 'Captura de ecrã',
       audio: 'Áudio',
+      tellUsMore: 'Conte-nos mais',
     },
     settings: {
       title: 'Definições do projeto',
@@ -1043,4 +1044,6 @@ export default defineI18nLocale(() => ({
       not_verified: 'Este valor ainda não foi verificado.',
     },
   },
-}))
+}
+
+export default defineI18nLocale(() => portugueseMessages)

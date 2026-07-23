@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { visibleLayoutDefects } from './layout-assertions'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 
@@ -88,7 +89,27 @@ test('public SSR and hydration keep browser locale state aligned', async ({ page
   expect(hydrationMessages).toEqual([])
 })
 
-test('member preferences override organization defaults and update reactively', async ({ page }) => {
+test.describe('pseudo-locale layout', () => {
+  test.use({
+    extraHTTPHeaders: { 'Accept-Language': 'en-XA,en;q=0.8' },
+    locale: 'en-XA',
+  })
+
+  test('public authentication remains responsive', async ({ page }, testInfo) => {
+    await page.goto(`${tenantOrigin}/login`)
+
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en-XA')
+    await expect(page.getByRole('heading', { name: /\[/ }).first()).toContainText('~')
+    expect(await visibleLayoutDefects(page)).toEqual([])
+    await page.screenshot({
+      path: testInfo.outputPath('pseudo-auth.png'),
+      animations: 'disabled',
+      fullPage: true,
+    })
+  })
+})
+
+test('member preferences override organization defaults and update reactively', async ({ page }, testInfo) => {
   const tenant = {
     id: 'tenant-1',
     name: 'Acme Studio',
@@ -163,10 +184,17 @@ test('member preferences override organization defaults and update reactively', 
   await expect(page.locator('html')).toHaveAttribute('lang', 'en-XA')
   expect(await runtimeSnapshot(page)).toMatchObject({
     locale: 'en-XA',
-    catalogLanguage: '[Ëñglïsh]',
+    catalogLanguage: '[ËËñg£ïïšh ~~~]',
     regional: {
       locale: 'en-XA',
       localeSource: 'member',
     },
+  })
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('[')
+  expect(await visibleLayoutDefects(page)).toEqual([])
+  await page.screenshot({
+    path: testInfo.outputPath('pseudo-shell.png'),
+    animations: 'disabled',
+    fullPage: true,
   })
 })

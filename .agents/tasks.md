@@ -457,7 +457,7 @@ regional sentiment, replay controls, and preservation of customer-authored conte
 ## Task 27: Issue Collaboration Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Issue operations, comments, mentions, activity, reporter access, and notifications use
 catalogs.
@@ -465,17 +465,29 @@ catalogs.
 **Acceptance:** Portuguese collaboration workflows prove copy, plurals, dates, accessibility, and
 mutation parity.
 
+**Evidence:** Issue list/detail, standalone comments, mentions, notifications, activity, merge,
+reporter access, and public reporter progress use EN/PT catalogs, regional formatting, and safe
+errors. The focused Portuguese collaboration/reporter slice passes eight desktop/mobile journeys
+with exact mutation payloads and customer content preserved; the integrated localization gate,
+unit suite, typecheck, and build also pass.
+
 **Autonomy:** AFK
 
 ## Task 28: Project And Widget Configuration Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Project and widget configuration UI uses catalogs while customer widget content stays
 independent.
 
 **Acceptance:** Portuguese browser tests preserve customer content and exact API payloads.
+
+**Evidence:** Project list/detail, widget targeting, lifecycle, decision diagnostics, response
+blocks, localized customer copy, preview, appearance, replay, and settings use catalogs and regional
+formatting. The Portuguese desktop/mobile journey passes with exact create/update/delete payloads,
+safe provider failures, and customer content preserved. Unit (103), typecheck, build, and the
+integrated 18-journey browser slice pass.
 
 **Autonomy:** AFK
 
@@ -499,12 +511,21 @@ member lifecycle, and the public privacy page.
 ## Task 30: Catalog And Pseudo-Locale Quality Gate
 
 **Depends on:** Tasks 23 through 29
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Catalog parity, extraction coverage, and expanded layout resilience are enforced.
 
 **Acceptance:** Static/unit and responsive pseudo-locale tests detect missing keys, literals,
 interpolation loss, clipping, overlap, and overflow.
+
+**Evidence:** Complete EN/PT catalogs have key and interpolation parity except the intentional
+English fallback probe. A source gate rejects uncatalogued visible production copy, and the
+generated `en-XA` catalog expands every message while preserving plural/interpolation syntax.
+Responsive browser coverage traverses authentication, dashboard, feedback, issue list/detail,
+project list/editor, settings, and profile in desktop/mobile, preserves customer-authored content,
+and detects viewport overflow, clipping, and overlap. The gate fixed compact mobile search and
+wrapped expanded Settings tabs; 103 unit tests, typecheck, build, and 18 integrated E2E journeys
+pass.
 
 **Autonomy:** AFK
 

@@ -1,7 +1,7 @@
 import { feedbackMessages } from '../messages/feedback.en'
 import { adminMessages } from '../messages/admin.en'
 
-export default defineI18nLocale(() => ({
+export const englishMessages = {
   common: {
     workspace: 'Workspace',
     account: 'Account',
@@ -823,6 +823,7 @@ export default defineI18nLocale(() => ({
       pageDescription: 'Review your order before payment.',
       screenshot: 'Screenshot',
       audio: 'Audio',
+      tellUsMore: 'Tell us more',
     },
     settings: {
       title: 'Project settings',
@@ -1044,4 +1045,6 @@ export default defineI18nLocale(() => ({
       not_verified: 'This value has not been verified.',
     },
   },
-}))
+}
+
+export default defineI18nLocale(() => englishMessages)
