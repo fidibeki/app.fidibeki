@@ -500,9 +500,10 @@ func validMP3(body []byte) bool {
 		bitRates := [...]int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}
 		sampleRates := [...]int{44100, 48000, 32000}
 		rate := sampleRates[sampleRate]
-		if version == 2 {
+		switch version {
+		case 2:
 			rate /= 2
-		} else if version == 0 {
+		case 0:
 			rate /= 4
 		}
 		bitsPerSecond := bitRates[bitrate] * 1000
