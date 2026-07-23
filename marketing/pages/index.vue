@@ -102,8 +102,8 @@ const trustPoints = [
           <p class="eyebrow">The loop</p>
           <h2 id="loop-heading">Most tools stop at the inbox. Fidibeki helps you finish the job.</h2>
           <p class="lede">
-            Feedback is only valuable if something happens to it. The person who spoke up deserves
-            to know what did.
+            Reports enter at the top. Decisions narrow in the middle. Updates close it at the
+            bottom. Every stage leaves an audit trail.
           </p>
         </div>
         <LoopDiagram />
