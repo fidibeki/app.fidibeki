@@ -28,6 +28,7 @@ import type {
   IntegrationKind,
   Member,
   MemberDomain,
+  Project,
   TenantConfiguration,
   WidgetAppearanceOverrides,
 } from '~/types/api'
@@ -45,6 +46,7 @@ const tabs = [
   { id: 'members', label: 'Members' },
   { id: 'keys', label: 'API keys' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'health', label: 'Submission health' },
   { id: 'privacy', label: 'Data & privacy' },
 ] as const
 type SettingsTab = typeof tabs[number]['id']
@@ -55,7 +57,7 @@ const activeTab = computed<SettingsTab>(() => {
 })
 
 const { data, status, error, refresh } = await useAsyncData('settings-data', async () => {
-  const [configuration, members, memberDomains, keys, integrations] = await Promise.all([
+  const [configuration, members, memberDomains, keys, integrations, projects] = await Promise.all([
     $apiFetch<TenantConfiguration>('/v1/config'),
     can('member:read')
       ? $apiFetch<{ members: Member[] }>('/v1/members')
@@ -69,6 +71,9 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
     can('integration:read')
       ? $apiFetch<{ integrations: Integration[] }>('/v1/integrations')
       : Promise.resolve({ integrations: [] }),
+    can('project:read')
+      ? $apiFetch<{ projects: Project[] }>('/v1/projects')
+      : Promise.resolve({ projects: [] }),
   ])
   return {
     configuration,
@@ -76,6 +81,7 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
     memberDomains: memberDomains.member_domains,
     keys: keys.api_keys,
     integrations: integrations.integrations,
+    projects: projects.projects,
   }
 })
 
@@ -603,6 +609,7 @@ useHead({ title: 'Settings - Fidibeki' })
         </div>
       </section>
 
+      <SubmissionHealth v-else-if="activeTab === 'health'" :projects="data.projects" />
       <DataPrivacy v-else />
     </template>
 

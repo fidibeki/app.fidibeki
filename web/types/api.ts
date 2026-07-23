@@ -292,6 +292,42 @@ export interface WidgetAnalyticsResultMetadata {
   truncated: boolean
 }
 
+export type SubmissionHealthCategory =
+  | 'rate_limit'
+  | 'spam'
+  | 'plan_quota'
+  | 'upload_safety'
+  | 'ai_budget'
+  | 'provider'
+
+export interface SubmissionHealthTotal {
+  category: SubmissionHealthCategory
+  count: number
+}
+
+export interface SubmissionHealthPoint {
+  project_id: string
+  bucket_start: string
+  category: SubmissionHealthCategory
+  reason: string
+  count: number
+}
+
+export interface SubmissionHealthResponse {
+  range: '24h' | '7d' | '30d'
+  period: {
+    start_at: string
+    end_at: string
+    timezone: 'UTC'
+  }
+  filters: {
+    project_id?: string
+  }
+  total: number
+  totals: SubmissionHealthTotal[]
+  trend: SubmissionHealthPoint[]
+}
+
 export interface FeedbackItem {
   id: string
   public_id: string

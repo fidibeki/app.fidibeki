@@ -319,6 +319,8 @@ function createMockState() {
     analyticsDelayMs: 0,
     analyticsPagesTotal: 2,
     analyticsRequests: [] as string[],
+    submissionHealthMode: 'data' as 'data' | 'empty' | 'error',
+    submissionHealthRequests: [] as string[],
     reporterResponse: null as string | null,
     lastReporterMessage: null as string | null,
     workspaceAccess: 'available' as 'available' | 'unknown' | 'suspended' | 'error',
@@ -383,6 +385,41 @@ function analyticsResponse(state: MockState, url: URL) {
       rule_options: { total: 2, returned: 2, limit: 200, truncated: false },
       page_options: { total: 2, returned: 2, limit: 200, truncated: false },
     },
+  }
+}
+
+function submissionHealthResponse(state: MockState, url: URL) {
+  const empty = state.submissionHealthMode === 'empty'
+  const range = (url.searchParams.get('range') || '7d') as '24h' | '7d' | '30d'
+  const projectID = url.searchParams.get('project_id') || ''
+  const startAt = range === '24h'
+    ? '2026-07-22T13:00:00.000Z'
+    : range === '30d'
+      ? '2026-06-23T13:00:00.000Z'
+      : '2026-07-16T13:00:00.000Z'
+  const totals = [
+    { category: 'rate_limit', count: empty ? 0 : 17 },
+    { category: 'spam', count: empty ? 0 : 2 },
+    { category: 'plan_quota', count: 0 },
+    { category: 'upload_safety', count: empty ? 0 : 5 },
+    { category: 'ai_budget', count: empty ? 0 : 8 },
+    { category: 'provider', count: empty ? 0 : 3 },
+  ]
+  const trend = empty ? [] : [
+    { project_id: 'project-1', bucket_start: '2026-07-22T14:00:00.000Z', category: 'rate_limit', reason: 'submission_rate_limited', count: 11 },
+    { project_id: 'project-1', bucket_start: '2026-07-22T17:00:00.000Z', category: 'rate_limit', reason: 'upload_rate_limited', count: 6 },
+    { project_id: 'project-1', bucket_start: '2026-07-22T19:00:00.000Z', category: 'spam', reason: 'spam_rejected', count: 2 },
+    { project_id: 'project-1', bucket_start: '2026-07-23T02:00:00.000Z', category: 'upload_safety', reason: 'signature_mismatch', count: 5 },
+    { project_id: 'project-1', bucket_start: '2026-07-23T08:00:00.000Z', category: 'ai_budget', reason: 'ai_daily_budget_exhausted', count: 8 },
+    { project_id: 'project-1', bucket_start: '2026-07-23T12:00:00.000Z', category: 'provider', reason: 'provider_timeout', count: 3 },
+  ]
+  return {
+    range,
+    period: { start_at: startAt, end_at: '2026-07-23T13:00:00.000Z', timezone: 'UTC' },
+    filters: { project_id: projectID || undefined },
+    total: totals.reduce((sum, item) => sum + item.count, 0),
+    totals,
+    trend,
   }
 }
 
@@ -539,6 +576,16 @@ async function installMockAPI(page: Page, state: MockState) {
       if (state.analyticsDelayMs) await new Promise(resolve => setTimeout(resolve, state.analyticsDelayMs))
       if (state.analyticsMode === 'error') return json(route, { error: { code: 'service_unavailable', message: 'Analytics are temporarily unavailable.' } }, 503)
       return json(route, analyticsResponse(state, url))
+    }
+
+    if (path === '/v1/abuse/diagnostics' && method === 'GET') {
+      state.submissionHealthRequests.push(url.search)
+      if (state.submissionHealthMode === 'error') {
+        return json(route, {
+          error: { code: 'service_unavailable', message: 'Diagnostics are temporarily unavailable.' },
+        }, 503)
+      }
+      return json(route, submissionHealthResponse(state, url))
     }
 
     if (path === '/v1/projects' && method === 'GET') return json(route, { projects: state.projects })
@@ -2530,6 +2577,66 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('submission health explains pressure and applies period and project filters', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Submission health' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=health$/)
+
+  const health = page.locator('.submission-health')
+  await expect(health.getByRole('heading', { name: 'Submission health' })).toBeVisible()
+  await expect(health.locator('.submission-health-summary strong')).toHaveText('35')
+  await expect(health.locator('.submission-health-categories')).toContainText('Rate limits')
+  await expect(health.locator('.submission-health-categories')).toContainText('Provider pressure')
+  await expect(health.locator('.submission-health-reasons')).toContainText('AI daily budget exhausted')
+
+  await health.getByLabel('Submission health period').selectOption('24h')
+  await expect.poll(() => state.submissionHealthRequests.at(-1)).toContain('range=24h')
+  await health.getByLabel('Submission health project').selectOption('project-1')
+  await expect.poll(() => state.submissionHealthRequests.at(-1)).toContain('project_id=project-1')
+
+  const geometry = await health.evaluate((element) => ({
+    left: element.getBoundingClientRect().left,
+    right: element.getBoundingClientRect().right,
+    viewport: document.documentElement.clientWidth,
+    pageWidth: document.documentElement.scrollWidth,
+  }))
+  expect(geometry.left).toBeGreaterThanOrEqual(0)
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewport)
+  expect(geometry.pageWidth).toBeLessThanOrEqual(geometry.viewport)
+  await capture(page, testInfo, `settings-submission-health-${testInfo.project.name}`)
+})
+
+test('submission health distinguishes empty and recoverable error states', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'State transitions are viewport independent')
+  const state = createMockState()
+  state.submissionHealthMode = 'empty'
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Submission health' }).click()
+  await expect(page.getByText('No pressure recorded in this period.')).toBeVisible()
+  await expect(page.locator('.submission-health-categories article[data-state=\"quiet\"]')).toHaveCount(6)
+
+  state.submissionHealthMode = 'error'
+  await page.getByRole('button', { name: 'Refresh submission health' }).click()
+  await expect(page.getByRole('heading', { name: 'Submission health unavailable' })).toBeVisible()
+  state.submissionHealthMode = 'data'
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.locator('.submission-health-summary strong')).toHaveText('35')
+})
+
+test('submission health does not request diagnostics without workspace read access', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Permission behavior is viewport independent')
+  const state = createMockState()
+  state.member.permissions = state.member.permissions.filter(permission => permission !== 'tenant:read')
+  await authenticate(page, state)
+  await page.goto(`${tenantOrigin}/settings?tab=health`)
+
+  await expect(page.getByRole('heading', { name: 'Sign in to Fidibeki' })).toBeVisible()
+  expect(state.submissionHealthRequests).toHaveLength(0)
 })
 
 test('data privacy controls cover retention, exports, reporter verification, and retries', async ({ page }, testInfo) => {

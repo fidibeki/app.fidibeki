@@ -363,9 +363,11 @@ was removed from the staging test tenant.
         The widget portion is complete locally: stable public reasons map to localized inline copy,
         JSON/`Retry-After` delays drive an accessible countdown, and retry preserves the original
         idempotency ID, responses, reporter contact, and local attachment declarations. Accepted
-        feedback remains successful when optional upload completion fails. The full responsive
-        widget suite passes with 117 unit checks and 34 Chromium journeys; Submission health,
-        coverage recovery, CI, and staging remain.
+        feedback remains successful when optional upload completion fails. Settings now exposes the
+        existing tenant-scoped diagnostics as a compact six-category operational view with bounded
+        hourly trend, top reasons, period/project filters, and explicit empty, retry, and permission
+        states. Focused unit and responsive Chromium coverage passes with inspected desktop/mobile
+        output and no horizontal overflow. Backend coverage recovery, full CI, and staging remain.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.

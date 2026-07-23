@@ -187,6 +187,7 @@ form/client ID/media, and accepted-feedback attachment-failure behavior.
 ## Task 12: Submission Health UI
 
 **Depends on:** Task 5
+**Status:** Complete
 
 **Outcome:** Settings displays a compact responsive breakdown of rate, spam, quota, upload, AI, and
 provider pressure.
