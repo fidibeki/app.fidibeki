@@ -43,6 +43,7 @@ const { can, canWrite, member: currentMember } = useAuth()
 const { t } = useI18n()
 const localizedError = useLocalizedAPIError()
 const { currency, date, integer, plural } = useRegionalFormat()
+const { success: showSuccessToast } = useAppToast()
 
 const tabIDs = ['workspace', 'members', 'keys', 'integrations', 'health', 'privacy'] as const
 type SettingsTab = typeof tabIDs[number]
@@ -118,8 +119,13 @@ const integrationURL = ref('')
 const integrationChannel = ref('')
 const integrationEvents = ref<IntegrationEvent[]>(['feedback.created'])
 const workspaceAppearance = ref<WidgetAppearanceOverrides>({})
-const appearanceNotice = ref('')
 const revealedSecret = ref('')
+type DestructiveSettingAction =
+  | { kind: 'key', resource: APIKey }
+  | { kind: 'integration', resource: Integration }
+const destructiveAction = ref<DestructiveSettingAction | null>(null)
+const destructivePending = ref(false)
+const destructiveError = ref('')
 const workspaceHost = computed(() => {
   const slug = data.value?.configuration.tenant.slug
   if (!slug) return ''
@@ -150,6 +156,22 @@ const modalEyebrow = computed(() => {
   if (modal.value === 'key') return t('admin.settings.modal.machineCredential')
   return t('admin.settings.modal.deliveryEndpoint')
 })
+const destructiveTitle = computed(() => {
+  const action = destructiveAction.value
+  if (!action) return ''
+  return action.kind === 'key'
+    ? t('admin.settings.keys.revokeTitle', { name: action.resource.name })
+    : t('admin.settings.integrations.removeTitle', { name: action.resource.name })
+})
+const destructiveDescription = computed(() => destructiveAction.value?.kind === 'key'
+  ? t('admin.settings.keys.revokeDescription')
+  : t('admin.settings.integrations.removeDescription'))
+const destructiveConfirmLabel = computed(() => destructiveAction.value?.kind === 'key'
+  ? t('admin.settings.keys.revoke')
+  : t('admin.settings.integrations.remove'))
+const destructivePendingLabel = computed(() => destructiveAction.value?.kind === 'key'
+  ? t('admin.settings.keys.revoking')
+  : t('admin.settings.integrations.removing'))
 
 watch(data, (value) => {
   if (!value) return
@@ -399,13 +421,9 @@ async function copySecret() {
 }
 
 async function deleteKey(key: APIKey) {
-  if (!canWrite('api_key:delete') || !window.confirm(t('admin.settings.keys.revokeConfirm', { name: key.name }))) return
-  try {
-    await $apiFetch(`/v1/api-keys/${key.id}`, { method: 'DELETE' })
-    await refresh()
-  } catch (deleteError) {
-    formError.value = localizedError.message(deleteError, 'admin.settings.errors.keyRevoke')
-  }
+  if (!canWrite('api_key:delete')) return
+  destructiveError.value = ''
+  destructiveAction.value = { kind: 'key', resource: key }
 }
 
 function openIntegration() {
@@ -454,12 +472,40 @@ async function createIntegration() {
 }
 
 async function deleteIntegration(integration: Integration) {
-  if (!canWrite('integration:delete') || !window.confirm(t('admin.settings.integrations.removeConfirm', { name: integration.name }))) return
+  if (!canWrite('integration:delete')) return
+  destructiveError.value = ''
+  destructiveAction.value = { kind: 'integration', resource: integration }
+}
+
+function closeDestructiveAction() {
+  if (destructivePending.value) return
+  destructiveAction.value = null
+  destructiveError.value = ''
+}
+
+async function confirmDestructiveAction() {
+  const action = destructiveAction.value
+  if (!action || destructivePending.value) return
+  const permission = action.kind === 'key' ? 'api_key:delete' : 'integration:delete'
+  if (!canWrite(permission)) return
+  destructivePending.value = true
+  destructiveError.value = ''
   try {
-    await $apiFetch(`/v1/integrations/${integration.id}`, { method: 'DELETE' })
+    const path = action.kind === 'key'
+      ? `/v1/api-keys/${action.resource.id}`
+      : `/v1/integrations/${action.resource.id}`
+    await $apiFetch(path, { method: 'DELETE' })
     await refresh()
+    destructiveAction.value = null
   } catch (deleteError) {
-    formError.value = localizedError.message(deleteError, 'admin.settings.errors.integrationRemove')
+    destructiveError.value = localizedError.message(
+      deleteError,
+      action.kind === 'key'
+        ? 'admin.settings.errors.keyRevoke'
+        : 'admin.settings.errors.integrationRemove',
+    )
+  } finally {
+    destructivePending.value = false
   }
 }
 
@@ -481,12 +527,11 @@ async function updateWidgetAppearance() {
   if (!canWrite('tenant:update') || !data.value || pending.value) return
   pending.value = true
   formError.value = ''
-  appearanceNotice.value = ''
   const appearance = cleanAppearanceOverrides(workspaceAppearance.value)
   try {
     await $apiFetch('/v1/widget-appearance', { method: 'PATCH', body: appearance })
     data.value.configuration.tenant.widget_appearance_defaults = appearance
-    appearanceNotice.value = t('admin.settings.notices.appearanceSaved')
+    showSuccessToast(t('admin.settings.notices.appearanceSaved'))
   } catch (appearanceError) {
     formError.value = localizedError.message(appearanceError, 'admin.settings.errors.appearance')
   } finally {
@@ -570,7 +615,6 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
         <form class="app-surface settings-section settings-widget-appearance" @submit.prevent="updateWidgetAppearance">
           <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.widgetEyebrow') }}</p><h2>{{ t('admin.settings.workspace.controlledAppearance') }}</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">{{ t('admin.settings.workspace.saveDefaults') }}</button></header>
           <WidgetAppearanceEditor v-model="workspaceAppearance" :parent="defaultWidgetAppearance" />
-          <p v-if="appearanceNotice" class="settings-domain-notice" role="status">{{ appearanceNotice }}</p>
         </form>
       </section>
 
@@ -703,6 +747,18 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
         </form>
       </section>
     </AppDialog>
+    <AppConfirmationDialog
+      :open="Boolean(destructiveAction)"
+      :title="destructiveTitle"
+      :description="destructiveDescription"
+      :confirm-label="destructiveConfirmLabel"
+      :pending-label="destructivePendingLabel"
+      :cancel-label="t('admin.common.cancel')"
+      :pending="destructivePending"
+      :error="destructiveError"
+      @cancel="closeDestructiveAction"
+      @confirm="confirmDestructiveAction"
+    />
   </div>
 </template>
 

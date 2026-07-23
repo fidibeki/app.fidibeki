@@ -461,6 +461,14 @@ was removed from the staging test tenant.
     - Feedback metadata stores the resolved active locale. Legacy customer copy remains compatible
       while Fidibeki system copy follows supported page languages.
     - Widget unit (124), typecheck, build, and all 38 browser journeys pass locally.
+  - [x] Complete shared transient notification and destructive confirmation issues #34 and #35.
+    - Workspace appearance success uses one global accessible toast without resizing the owning
+      form or stacking repeated saves.
+    - Project, rule, API-key, and integration deletion share one localized native-dialog flow with
+      explicit consequences, initial Cancel focus, backdrop/Escape dismissal, focus restoration,
+      pending guards, and local errors. No production `window.confirm` remains.
+    - Web unit (104), typecheck, build, and focused browser journeys pass locally, including project
+      deletion on desktop and mobile.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

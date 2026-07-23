@@ -67,6 +67,12 @@ const projectAppearance = ref<WidgetAppearanceOverrides>({})
 const ruleAppearance = ref<WidgetAppearanceOverrides>({})
 const diagnosticsRefreshing = ref(false)
 const previewLauncherOpen = ref(false)
+type ProjectDestructiveAction =
+  | { kind: 'rule', id: string, name: string }
+  | { kind: 'project', id: string, name: string }
+const destructiveAction = ref<ProjectDestructiveAction | null>(null)
+const destructivePending = ref(false)
+const destructiveError = ref('')
 
 const ruleForm = reactive<WidgetRuleInput>(defaultWidgetRule())
 
@@ -133,6 +139,22 @@ const previewAppearanceSummary = computed(() => t('projects.preview.appearance',
   theme: t(`projects.appearance.themes.${effectiveAppearance.value.theme}`),
   position: t(`projects.appearance.positions.${positionKeys[effectiveAppearance.value.position || ''] || ''}`),
 }))
+const destructiveTitle = computed(() => {
+  const action = destructiveAction.value
+  if (!action) return ''
+  return action.kind === 'rule'
+    ? t('projects.editor.confirmDelete', { name: action.name })
+    : t('projects.settings.confirmDelete', { name: action.name })
+})
+const destructiveDescription = computed(() => destructiveAction.value?.kind === 'rule'
+  ? t('projects.editor.deleteDescription')
+  : t('projects.settings.confirmDeleteDescription'))
+const destructiveConfirmLabel = computed(() => destructiveAction.value?.kind === 'rule'
+  ? t('projects.editor.delete')
+  : t('projects.settings.delete'))
+const destructivePendingLabel = computed(() => destructiveAction.value?.kind === 'rule'
+  ? t('projects.editor.deleting')
+  : t('projects.settings.deleting'))
 
 function ruleStatus(rule: WidgetRule) {
   return rule.definition_status || (rule.enabled ? 'active' : 'paused')
@@ -389,19 +411,14 @@ async function saveRule() {
   }
 }
 
-async function deleteRule() {
-  if (!canWrite('widget_rule:delete') || !selectedRule.value || pending.value
-    || !window.confirm(t('projects.editor.confirmDelete', { name: selectedRule.value.name }))) return
-  pending.value = true
-  formError.value = ''
-  try {
-    await $apiFetch(`/v1/projects/${projectID.value}/widget-rules/${selectedRule.value.id}`, { method: 'DELETE' })
-    selectedRuleID.value = ''
-    editingNew.value = false
-    await refresh()
-  } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'projects.editor.errors.delete')
-  } finally { pending.value = false }
+function deleteRule() {
+  if (!canWrite('widget_rule:delete') || !selectedRule.value || pending.value) return
+  destructiveError.value = ''
+  destructiveAction.value = {
+    kind: 'rule',
+    id: selectedRule.value.id,
+    name: selectedRule.value.name,
+  }
 }
 
 async function saveProject() {
@@ -430,16 +447,52 @@ async function saveProject() {
   }
 }
 
-async function deleteProject() {
-  if (!canWrite('project:delete') || !data.value || pending.value
-    || !window.confirm(t('projects.settings.confirmDelete', { name: data.value.project.name }))) return
-  pending.value = true
+function deleteProject() {
+  if (!canWrite('project:delete') || !data.value || pending.value) return
+  destructiveError.value = ''
+  destructiveAction.value = {
+    kind: 'project',
+    id: data.value.project.id,
+    name: data.value.project.name,
+  }
+}
+
+function closeDestructiveAction() {
+  if (destructivePending.value) return
+  destructiveAction.value = null
+  destructiveError.value = ''
+}
+
+async function confirmDestructiveAction() {
+  const action = destructiveAction.value
+  if (!action || destructivePending.value) return
+  const permission = action.kind === 'rule' ? 'widget_rule:delete' : 'project:delete'
+  if (!canWrite(permission)) return
+  destructivePending.value = true
+  destructiveError.value = ''
   try {
-    await $apiFetch(`/v1/projects/${projectID.value}`, { method: 'DELETE' })
-    await navigateTo('/projects')
+    const path = action.kind === 'rule'
+      ? `/v1/projects/${projectID.value}/widget-rules/${action.id}`
+      : `/v1/projects/${projectID.value}`
+    await $apiFetch(path, { method: 'DELETE' })
+    destructiveAction.value = null
+    await nextTick()
+    if (action.kind === 'rule') {
+      selectedRuleID.value = ''
+      editingNew.value = false
+      await refresh()
+    } else {
+      await navigateTo('/projects')
+    }
   } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'projects.settings.errors.delete')
-    pending.value = false
+    destructiveError.value = apiErrorMessage(
+      deleteError,
+      action.kind === 'rule'
+        ? 'projects.editor.errors.delete'
+        : 'projects.settings.errors.delete',
+    )
+  } finally {
+    destructivePending.value = false
   }
 }
 
@@ -527,6 +580,18 @@ useHead(() => ({
 
       <section id="project-settings" class="project-settings app-surface"><header><div><h2>{{ t('projects.settings.title') }}</h2><p>{{ t('projects.settings.description') }}</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> {{ t('projects.settings.save') }}</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>{{ t('projects.settings.name') }}<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>{{ t('projects.settings.defaultLanguage') }}<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" :placeholder="t('projects.settings.defaultLanguagePlaceholder')" /></label><label>{{ t('projects.settings.reporterAccess') }}<select v-model="projectReporterAccess" class="app-select"><option value="inherit">{{ t('projects.settings.reporterAccessOptions.inherit') }}</option><option value="enabled">{{ t('projects.settings.reporterAccessOptions.enabled') }}</option><option value="disabled">{{ t('projects.settings.reporterAccessOptions.disabled') }}</option></select></label><label class="wide">{{ t('projects.settings.allowedDomains') }}<textarea v-model="projectDomains" /></label><div class="wide project-appearance"><h3>{{ t('projects.settings.appearanceTitle') }}</h3><WidgetAppearanceEditor v-model="projectAppearance" :parent="workspaceAppearance" allow-logo-reset /></div></fieldset></form><footer><div><b>{{ t('projects.settings.deleteTitle') }}</b><span>{{ t('projects.settings.deleteDescription') }}</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> {{ t('projects.settings.delete') }}</button></footer></section>
     </template>
+    <AppConfirmationDialog
+      :open="Boolean(destructiveAction)"
+      :title="destructiveTitle"
+      :description="destructiveDescription"
+      :confirm-label="destructiveConfirmLabel"
+      :pending-label="destructivePendingLabel"
+      :cancel-label="t('admin.common.cancel')"
+      :pending="destructivePending"
+      :error="destructiveError"
+      @cancel="closeDestructiveAction"
+      @confirm="confirmDestructiveAction"
+    />
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
 </template>

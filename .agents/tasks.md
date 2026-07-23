@@ -610,12 +610,19 @@ labels, and responsive screenshots pass on desktop and mobile.
 ## Task 36: Standardize Confirmations And Transient Notices
 
 **Depends on:** Task 35
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Complete issues #34 and #35 with shared accessible toast and confirmation primitives.
 
 **Acceptance:** Saves do not shift forms or stack stale notices; no production route uses
 `window.confirm`; focus, Escape, pending, backdrop, restore, desktop, and mobile behavior pass.
+
+**Evidence:** Widget appearance saves now use one global live-region toast that replaces repeated
+notices without changing form geometry. Project, rule, API-key, and integration deletion use one
+localized native-dialog confirmation with resource consequences, initial Cancel focus, backdrop and
+Escape dismissal, focus restoration, in-modal errors, and a guarded pending state. No production
+`window.confirm` remains. Web unit (104), typecheck, production build, and focused browser coverage
+pass, including the project flow on desktop and mobile.
 
 **Autonomy:** AFK
 

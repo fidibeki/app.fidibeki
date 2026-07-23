@@ -205,5 +205,6 @@ watch(
     <main class="app-main" tabindex="-1" :inert="mobileNavOpen">
       <slot />
     </main>
+    <AppToast />
   </div>
 </template>

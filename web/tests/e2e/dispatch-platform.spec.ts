@@ -284,6 +284,8 @@ function createMockState() {
     }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
+    destructiveDelayMs: 0,
+    destructiveRequests: [] as string[],
     privacyExports: [{
       id: 'privacy-export-1',
       kind: 'workspace_export' as const,
@@ -743,6 +745,14 @@ async function installMockAPI(page: Page, state: MockState) {
       if (rule) Object.assign(rule, body(), { updated_at: now })
       return json(route, { widget_rule: rule })
     }
+    if (projectRuleMatch && method === 'DELETE') {
+      state.destructiveRequests.push(`rule:${projectRuleMatch[2]}`)
+      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      const index = state.widgetRules.findIndex(candidate =>
+        candidate.project_id === projectRuleMatch[1] && candidate.id === projectRuleMatch[2])
+      if (index >= 0) state.widgetRules.splice(index, 1)
+      return route.fulfill({ status: 204 })
+    }
     const projectMatch = path.match(/^\/v1\/projects\/([^/]+)$/)
     if (projectMatch && method === 'GET') {
       return json(route, { project: state.projects.find(project => project.id === projectMatch[1]) })
@@ -751,6 +761,13 @@ async function installMockAPI(page: Page, state: MockState) {
       const project = state.projects.find(candidate => candidate.id === projectMatch[1])
       if (project) Object.assign(project, body(), { updated_at: now })
       return json(route, { project })
+    }
+    if (projectMatch && method === 'DELETE') {
+      state.destructiveRequests.push(`project:${projectMatch[1]}`)
+      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      const index = state.projects.findIndex(candidate => candidate.id === projectMatch[1])
+      if (index >= 0) state.projects.splice(index, 1)
+      return route.fulfill({ status: 204 })
     }
 
     if (path === '/v1/feedbacks' && method === 'GET') {
@@ -1231,6 +1248,14 @@ async function installMockAPI(page: Page, state: MockState) {
       state.apiKeys.push(key)
       return json(route, { api_key: key, token: 'fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' }, 201)
     }
+    const apiKeyMatch = path.match(/^\/v1\/api-keys\/([^/]+)$/)
+    if (apiKeyMatch && method === 'DELETE') {
+      state.destructiveRequests.push(`key:${apiKeyMatch[1]}`)
+      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      const index = state.apiKeys.findIndex(key => key.id === apiKeyMatch[1])
+      if (index >= 0) state.apiKeys.splice(index, 1)
+      return route.fulfill({ status: 204 })
+    }
     if (path === '/v1/integrations' && method === 'GET') return json(route, { integrations: state.integrations })
     if (path === '/v1/integrations' && method === 'POST') {
       const input = body()
@@ -1241,6 +1266,14 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       state.integrations.push(integration)
       return json(route, { integration, webhook_secret: 'whsec_dispatch_demo' }, 201)
+    }
+    const integrationMatch = path.match(/^\/v1\/integrations\/([^/]+)$/)
+    if (integrationMatch && method === 'DELETE') {
+      state.destructiveRequests.push(`integration:${integrationMatch[1]}`)
+      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      const index = state.integrations.findIndex(integration => integration.id === integrationMatch[1])
+      if (index >= 0) state.integrations.splice(index, 1)
+      return route.fulfill({ status: 204 })
     }
 
     if (path === '/v1/billing' && method === 'GET') return json(route, { billing: {
@@ -1673,8 +1706,16 @@ test('workspace widget defaults can be updated with controlled tokens', async ({
   const appearance = page.locator('.settings-widget-appearance')
   await appearance.getByLabel('Accent color swatch').fill('#005f56')
   await appearance.getByLabel('Logo URL').fill('https://cdn.example.com/acme.svg')
+  const heightBeforeSave = await appearance.evaluate(element => element.getBoundingClientRect().height)
   await appearance.getByRole('button', { name: 'Save defaults' }).click()
-  await expect(appearance.getByRole('status')).toHaveText('Widget appearance saved.')
+  const toast = page.locator('.app-toast')
+  await expect(toast).toHaveRole('status')
+  await expect(toast).toHaveText('Widget appearance saved.')
+  await expect(appearance.getByRole('status')).toHaveCount(0)
+  expect(await appearance.evaluate(element => element.getBoundingClientRect().height)).toBe(heightBeforeSave)
+  await appearance.getByRole('button', { name: 'Save defaults' }).click()
+  await expect(toast).toHaveCount(1)
+  await expect(toast).toHaveText('Widget appearance saved.')
   expect(state.tenant.widget_appearance_defaults).toMatchObject({
     accent_color: '#005f56', logo_url: 'https://cdn.example.com/acme.svg',
   })
@@ -2068,6 +2109,40 @@ test('project settings submit a valid update', async ({ page }, testInfo) => {
 
   await expect(page.getByRole('status')).toHaveText('Project settings saved.')
   expect(state.projects[0].name).toBe('European Storefront')
+})
+
+test('project deletion confirmation restores focus and guards the pending action', async ({ page }) => {
+  const state = createMockState()
+  state.destructiveDelayMs = 250
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const deleteButton = page.getByRole('button', { name: 'Delete project' })
+  await deleteButton.click()
+  const dialog = page.getByRole('dialog', { name: 'Delete Storefront?' })
+  await expect(dialog).toContainText('feedback, issues, attachments, and replay data')
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused()
+
+  await dialog.click({ position: { x: 4, y: 4 } })
+  await expect(dialog).not.toBeVisible()
+  await expect(deleteButton).toBeFocused()
+
+  await deleteButton.click()
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect(deleteButton).toBeFocused()
+
+  await deleteButton.click()
+  const confirm = dialog.locator('.app-confirmation__action')
+  await expect(confirm).toHaveText('Delete project')
+  await confirm.click()
+  await expect(confirm).toBeDisabled()
+  await expect(confirm).toHaveText('Deleting…')
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await expect(page).toHaveURL(/\/projects$/)
+  expect(state.destructiveRequests).toEqual(['project:project-1'])
+  expect(state.projects).toHaveLength(0)
 })
 
 test('widget preview controls stay out of keyboard and accessibility navigation', async ({ page }, testInfo) => {
@@ -2962,6 +3037,58 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('shared confirmations cover rule, key, and integration removal', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Shared confirmation behavior is covered once')
+  const state = createMockState()
+  state.apiKeys.push({
+    id: 'key-1', tenant_id: state.tenant.id, name: 'Reporting',
+    token_prefix: 'fk_live_report', permissions: ['feedback:read'],
+    rate_limit_per_min: 100, expires_at: null, last_used_at: null, created_at: now, updated_at: now,
+  })
+  state.integrations.push({
+    id: 'integration-1', kind: 'webhook', name: 'Operations',
+    webhook_url: 'https://hooks.acme.test/fidibeki', channel: null,
+    webhook_secret_fingerprint: 'sha256:demo', custom_header_names: [],
+    events: ['feedback.created'], is_active: true, created_at: now, updated_at: now,
+  })
+  await authenticate(page, state)
+
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+  const deleteRuleButton = page.getByRole('button', { name: 'Delete rule' })
+  await deleteRuleButton.click()
+  const ruleDialog = page.getByRole('dialog', { name: 'Delete “Checkout pulse”?' })
+  await expect(ruleDialog.getByRole('button', { name: 'Cancel' })).toBeFocused()
+  await ruleDialog.getByRole('button', { name: 'Delete rule' }).click()
+  await expect(ruleDialog).not.toBeVisible()
+  expect(state.widgetRules).toHaveLength(0)
+
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'API keys' }).click()
+  const revokeButton = page.getByTitle('Revoke API key')
+  await revokeButton.click()
+  const keyDialog = page.getByRole('dialog', { name: 'Revoke Reporting?' })
+  await expect(keyDialog).toContainText('Requests using this key will fail immediately.')
+  await keyDialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(revokeButton).toBeFocused()
+  await revokeButton.click()
+  await keyDialog.getByRole('button', { name: 'Revoke API key' }).click()
+  await expect(page.getByText('Reporting')).toHaveCount(0)
+
+  await page.getByRole('link', { name: 'Integrations' }).click()
+  await page.getByTitle('Remove integration').click()
+  const integrationDialog = page.getByRole('dialog', { name: 'Remove Operations?' })
+  await expect(integrationDialog).toContainText('stop sending events to this destination')
+  await integrationDialog.getByRole('button', { name: 'Remove integration' }).click()
+  await expect(page.getByText('Operations')).toHaveCount(0)
+
+  expect(state.destructiveRequests).toEqual([
+    'rule:rule-1',
+    'key:key-1',
+    'integration:integration-1',
+  ])
 })
 
 test('submission health explains pressure and applies period and project filters', async ({ page }, testInfo) => {
