@@ -91,20 +91,53 @@ environment was changed.
     legacy fields and response keys decodable, expose a versioned public definition contract, then
     route automatic/declarative/imperative placement through one runtime before completing the four
     presentations and consented contact end to end.
-- [ ] Add one versioned `WidgetDefinition` shared by `launcher`, `inline`, `reaction`, and `prompt`,
+- [x] Add one versioned `WidgetDefinition` shared by `launcher`, `inline`, `reaction`, and `prompt`,
   including lifecycle, placement, objective, supported response blocks, locale variants, controlled
-  theme tokens, and presentation-specific fatigue guardrails.
-- [ ] Preserve the current automatic embed and add declarative `<fidibeki-widget>` plus imperative
+  theme tokens, and presentation-specific fatigue guardrails. Migrations `000054` and `000055`
+  preserve existing rules and feedback while adding definition revisions, lifecycle, presentations,
+  objectives, structured response blocks, locale variants, project default locale, definition-version
+  capture, structured responses, and comments. Prompt and reaction recurrence receive stricter runtime
+  floors; launcher and inline retain their configured policy.
+- [x] Preserve the current automatic embed and add declarative `<fidibeki-widget>` plus imperative
   `Fidibeki.mount()` placement through the same runtime. Keep `Fidibeki.track()` deferred to #7.
-- [ ] Deliver all four presentations end to end: target and render, resolve locale, respect durable
+  Explicit mounts resolve stable keys, honor targeting/lifecycle/recurrence, return safe disabled
+  results, reuse analytics, replay, submission, attachment, and error paths, and avoid a duplicate
+  automatic mount.
+- [x] Deliver all four presentations end to end: target and render, resolve locale, respect durable
   recurrence, submit one independent Feedback record with optional consented contact and existing
-  attachments, and expose it in the inbox without creating an Issue.
+  attachments, and expose it in the inbox without creating an Issue. The runtime now resolves exact,
+  primary-language, and project-default locale fallbacks; accepts rating, free-text, reaction, and
+  single-choice responses; keeps legacy rating/text synchronized; and uses origin plus normalized path
+  state with an in-memory storage fallback. The backoffice configures blocks, options, required state,
+  consented contact, and locale variants, and the feedback detail exposes the submitted response.
+
+Phase 1 exit gate passed on 2026-07-23 with no production work: migration `up/down/up`, all Go
+packages, backend static analysis, web type/unit/full E2E, 97 widget unit tests, widget build, and all
+25 widget E2E journeys passed. Staging deployed the expected commit across API, worker, web, and
+widget; schema migration `55` is clean; health and post-deploy smoke checks pass. A disposable real
+submission persisted the definition version and structured responses with no Issue relationship, then
+was removed from the staging test tenant.
 
 #### Phase 2: Operations Completion
 
-- [ ] Re-audit inbox, triage, Issues, notifications, outbox, RBAC, and reporter communication as
+- [x] Re-audit inbox, triage, Issues, notifications, outbox, RBAC, and reporter communication as
   complete/partial/missing; preserve implemented filtering, bulk triage, metadata, linking, merge,
   status history, and current delivery paths.
+  - Complete and preserved: inbox filtering/pagination, bulk triage, priority, assignment, tags,
+    independent Issue creation from one or many Feedback records, link/unlink, merge/unmerge, RBAC
+    permission middleware, transactional outbox fan-out, delivery attempts, and signed generic
+    webhooks.
+  - Partial and extended in place: `issue_updates` records status transitions and optional transition
+    comments only; reporter email covers opted-in Issue status changes but not receipt, clarification,
+    portal access, or a complete public lifecycle; Slack and Teams have basic provider-native payloads
+    but omit actor/change/attachment/resource context; generic webhooks are idempotent and signed but
+    lack an explicit schema version and complete change envelope.
+  - Missing: standalone comments, mentions and internal notifications, a complete immutable activity
+    stream, `needs_info`, tenant/project reporter-access policy, opaque hashed/revocable progress
+    tokens, the one-response clarification flow, and reporter receipt/final-resolution history.
+  - Implementation path: first introduce one immutable activity/comment foundation and use it for
+    every Issue mutation; add mentions on that contract; then build reporter access/communication and
+    finally enrich all integration consumers from the same versioned events.
 - [ ] Add standalone internal comments, member mentions with internal notifications, and immutable
   activity coverage for every operational mutation and reporter communication.
 - [ ] Complete reporter communication with receipt, important progress, `needs_info`, and final
