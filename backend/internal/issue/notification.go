@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -287,9 +286,13 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 				return err
 			}
 		}
-		message := reporterMessage(
+		message, err := reporterMessage(
 			notification, h.PublicBaseURL, h.BaseDomain, portalToken, unsubscribeToken,
 		)
+		if err != nil {
+			markErr := h.Store.MarkDeliveryFailed(ctx, attempt.ID, err.Error())
+			return errors.Join(fmt.Errorf("compose reporter notification: %w", err), markErr)
+		}
 		providerID, err := h.Sender.Send(ctx, message)
 		if err != nil {
 			markErr := h.Store.MarkDeliveryFailed(ctx, attempt.ID, err.Error())
@@ -335,7 +338,7 @@ func reporterMessage(
 	baseDomain string,
 	portalToken string,
 	unsubscribeToken string,
-) email.Message {
+) (email.Message, error) {
 	unsubscribeURL := strings.TrimRight(publicBaseURL, "/") +
 		"/v1/reporter/unsubscribe?token=" + url.QueryEscape(unsubscribeToken)
 	portalURL := reporterPortalURL(publicBaseURL, baseDomain, notification.TenantSlug, portalToken)
@@ -355,28 +358,30 @@ func reporterMessage(
 	if notification.Status == StatusResolved || notification.Status == StatusClosed {
 		headline = notification.TenantName + " completed issue " + notification.PublicID + "."
 	}
-	textParts := []string{headline, notification.Title}
-	htmlParts := []string{
-		"<p>" + html.EscapeString(headline) + "</p>",
-		"<p>" + html.EscapeString(notification.Title) + "</p>",
-	}
+	body := []string{headline, notification.Title}
+	metadata := []email.Metadata{{Label: "Reference", Value: notification.PublicID}}
 	if notification.ReporterPrompt != "" {
-		textParts = append(textParts, "Information requested: "+notification.ReporterPrompt)
-		htmlParts = append(htmlParts, "<p><strong>Information requested</strong><br>"+
-			html.EscapeString(notification.ReporterPrompt)+"</p>")
+		body = append(body, "Information requested: "+notification.ReporterPrompt)
 	}
+	var action *email.Link
 	if portalURL != "" {
-		textParts = append(textParts, "View progress: "+portalURL)
-		htmlParts = append(htmlParts, "<p><a href=\""+html.EscapeString(portalURL)+"\">View progress</a></p>")
+		action = &email.Link{Label: "View progress", URL: portalURL}
 	}
-	textParts = append(textParts, "Unsubscribe: "+unsubscribeURL)
-	htmlParts = append(htmlParts, "<p><a href=\""+html.EscapeString(unsubscribeURL)+"\">Unsubscribe from updates</a></p>")
-	return email.Message{
+	logoURL, err := email.BrandLogoURL(publicBaseURL, baseDomain)
+	if err != nil {
+		return email.Message{}, err
+	}
+	return email.Compose(email.Message{
 		From: from, To: notification.ReporterEmail,
-		Subject: subject,
-		Text:    strings.Join(textParts, "\n\n"), HTML: strings.Join(htmlParts, ""),
+		Subject:        subject,
 		IdempotencyKey: "reporter:" + notification.OutboxEventID,
-	}
+	}, email.Content{
+		Preheader: headline, Heading: subject, Workspace: notification.TenantName,
+		Body: body, Metadata: metadata, Action: action,
+		Footer:      "You received this because you asked for updates about this feedback.",
+		FooterLinks: []email.Link{{Label: "Unsubscribe", URL: unsubscribeURL}},
+		LogoURL:     logoURL,
+	})
 }
 
 func reporterPortalURL(publicBaseURL, baseDomain, tenantSlug, token string) string {

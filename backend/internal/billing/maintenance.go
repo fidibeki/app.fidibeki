@@ -98,11 +98,13 @@ func (e DeletionExecutor) Run(ctx context.Context, interval time.Duration) error
 }
 
 type Dunning struct {
-	Store    DunningStore
-	Email    email.Enqueuer
-	AuthFrom string
-	Logger   *slog.Logger
-	Now      func() time.Time
+	Store         DunningStore
+	Email         email.Enqueuer
+	PublicBaseURL string
+	BaseDomain    string
+	AuthFrom      string
+	Logger        *slog.Logger
+	Now           func() time.Time
 }
 
 type DunningStore interface {
@@ -142,11 +144,36 @@ func (d Dunning) Execute(ctx context.Context) error {
 			continue
 		}
 		addresses = appendUnique(addresses, current.BillingEmail)
+		billingURL, err := tenantURL(d.PublicBaseURL, d.BaseDomain, current.Slug, "/settings/billing")
+		if err != nil {
+			joined = errors.Join(joined, err)
+			continue
+		}
+		logoURL, err := email.BrandLogoURL(d.PublicBaseURL, d.BaseDomain)
+		if err != nil {
+			joined = errors.Join(joined, err)
+			continue
+		}
 		for _, address := range addresses {
-			message := email.Message{
+			message, err := email.Compose(email.Message{
 				From: d.AuthFrom, To: address, Subject: "Your Fidibeki trial is ending",
-				Text:           fmt.Sprintf("Your %s trial ends in %d day(s). Add a payment method in billing settings to keep the account active.", current.Name, days),
 				IdempotencyKey: fmt.Sprintf("trial-dunning:%s:%s:%s:%d", current.ID, address, current.TrialEndsAt.UTC().Format("2006-01-02"), days),
+			}, email.Content{
+				Preheader: fmt.Sprintf("%s trial: %d day(s) remaining", current.Name, days),
+				Heading:   "Your trial is ending", Workspace: current.Name,
+				Body: []string{
+					fmt.Sprintf("Your Fidibeki trial ends in %d day(s).", days),
+					"Add a payment method in billing settings to keep the workspace active.",
+				},
+				Metadata:    []email.Metadata{{Label: "Trial ends", Value: current.TrialEndsAt.UTC().Format(time.RFC1123)}},
+				Action:      &email.Link{Label: "Open billing settings", URL: billingURL},
+				Footer:      "You received this mandatory account notice because you administer or manage this workspace.",
+				FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+				LogoURL:     logoURL,
+			})
+			if err != nil {
+				joined = errors.Join(joined, err)
+				continue
 			}
 			if err := d.Email.Enqueue(ctx, message); err != nil {
 				joined = errors.Join(joined, err)

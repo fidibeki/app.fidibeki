@@ -240,7 +240,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
-		PublicBaseURL: settings.PublicBaseURL, AuthFrom: settings.ResendAuthFrom,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		AuthFrom:     settings.ResendAuthFrom,
 		MagicLinkTTL: settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
 	}
 	billingStore := billing.Store{Database: pools.Admin}
@@ -484,7 +485,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: billingStore, Provider: billingProvider, Storage: objectStorage, Logger: logger,
 	}
 	dunning := billing.Dunning{
-		Store: billingStore, Email: billingEmailQueue, AuthFrom: settings.ResendAuthFrom, Logger: logger,
+		Store: billingStore, Email: billingEmailQueue,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		AuthFrom: settings.ResendAuthFrom, Logger: logger,
 	}
 	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL)
 	if err != nil {

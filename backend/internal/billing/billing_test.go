@@ -444,7 +444,11 @@ func TestDeletionAndDunning(t *testing.T) {
 		{ID: "expired", Name: "Expired", TrialEndsAt: &expired},
 	}, emails: []string{"owner@soon.test"}}
 	capture := &emailCapture{}
-	dunning := Dunning{Store: dunningStore, Email: capture, AuthFrom: "auth@fidibeki.com", Now: func() time.Time { return now }}
+	dunning := Dunning{
+		Store: dunningStore, Email: capture,
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
+		AuthFrom: "auth@fidibeki.com", Now: func() time.Time { return now },
+	}
 	if err := dunning.Execute(ctx); err != nil {
 		t.Fatalf("Dunning.Execute() error = %v", err)
 	}
@@ -497,7 +501,11 @@ func TestMaintenanceFailurePaths(t *testing.T) {
 	}
 
 	dunningStore := &dunningStoreStub{trialsErr: errors.New("database down")}
-	dunning := Dunning{Store: dunningStore, Email: &emailCapture{}, AuthFrom: "auth@fidibeki.com"}
+	dunning := Dunning{
+		Store: dunningStore, Email: &emailCapture{},
+		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
+		AuthFrom: "auth@fidibeki.com",
+	}
 	if err := dunning.Execute(ctx); err == nil {
 		t.Fatal("Dunning(trials error) error = nil")
 	}

@@ -27,6 +27,7 @@ type Service struct {
 	JWT           *auth.JWTManager
 	Email         email.Enqueuer
 	PublicBaseURL string
+	BaseDomain    string
 	AuthFrom      string
 	MagicLinkTTL  time.Duration
 	RefreshTTL    time.Duration
@@ -78,10 +79,29 @@ func (s Service) RequestMagicLink(ctx context.Context, rawEmail string) error {
 		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
 		return err
 	}
-	message := email.Message{
-		From: s.AuthFrom, To: admin.Email, Subject: "Sign in to Fidibeki",
-		Text: fmt.Sprintf("Open this link to sign in to Fidibeki: %s\n\nThis link expires in 10 minutes and can only be used once.", link),
-		HTML: fmt.Sprintf(`<p>Open this link to sign in to Fidibeki:</p><p><a href="%s">Sign in to Fidibeki</a></p><p>This link expires in 10 minutes and can only be used once.</p>`, link),
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	if err != nil {
+		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
+		return err
+	}
+	message, err := email.Compose(email.Message{
+		From: s.AuthFrom, To: admin.Email, Subject: "Sign in to Fidibeki administration",
+		IdempotencyKey: "platform-magic-link:" + tokenHash,
+	}, email.Content{
+		Preheader: "Use your secure link to access Fidibeki administration",
+		Heading:   "Sign in to administration",
+		Body: []string{
+			"Use the button below to continue to the Fidibeki administration workspace.",
+			"This security link expires in 10 minutes and can only be used once.",
+		},
+		Action: &email.Link{Label: "Sign in to Fidibeki", URL: link}, ShowActionURL: true,
+		Footer:      "You received this because an administrator sign-in link was requested for this address.",
+		FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+		LogoURL:     logoURL,
+	})
+	if err != nil {
+		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
+		return err
 	}
 	if err := s.Email.Enqueue(ctx, message); err != nil {
 		_ = s.Store.DeleteMagicLink(ctx, tokenHash)

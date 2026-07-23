@@ -245,6 +245,12 @@ was removed from the staging test tenant.
       applies the same projection to Slack, Teams, and signed generic webhooks. Backend integration,
       unit, and responsive browser coverage verifies no raw moderated content crosses these paths.
   - [ ] Complete shared transactional email issue #21.
+    - [x] Add the shared minimal renderer and migrate every existing email family. Structured
+      content now produces escaped, responsive HTML and equivalent plain text with an
+      environment-aware logo, preheader, workspace context, metadata, one CTA, security-link
+      fallback, purpose footer, Reply-To support, and no tracking or arbitrary HTML.
+    - [ ] Add the one-time founder welcome and remaining high-value lifecycle messages, then render
+      and inspect representative desktop/mobile previews before staging validation.
   - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.

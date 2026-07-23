@@ -3,7 +3,6 @@ package tenantmember
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/mail"
 	"net/url"
@@ -128,10 +127,24 @@ func (s Service) RequestMemberDomainVerification(
 	if err != nil {
 		return MemberDomain{}, nil, err
 	}
-	message := email.Message{
+	message, err := s.composeEmail(email.Message{
 		From: s.AuthFrom, To: emailAddress, Subject: "Verify " + domain + " for " + resolved.Name,
-		Text: fmt.Sprintf("Open this link to verify %s for your Fidibeki workspace: %s\n\nThis link expires in 10 minutes and can only be used once.", domain, link),
-		HTML: fmt.Sprintf(`<p>Open this link to verify <strong>%s</strong> for your Fidibeki workspace:</p><p><a href="%s">Verify member domain</a></p><p>This link expires in 10 minutes and can only be used once.</p>`, domain, link),
+		IdempotencyKey: "member-domain-verification:" + memberDomain.ID + ":" +
+			memberDomain.VerificationExpiresAt.UTC().Format(time.RFC3339Nano),
+	}, email.Content{
+		Preheader: "Verify who can join " + resolved.Name,
+		Heading:   "Verify member email domain", Workspace: resolved.Name,
+		Body: []string{
+			"Confirm " + domain + " before using it to invite workspace members.",
+			"This security link expires in 10 minutes and can only be used once.",
+		},
+		Metadata: []email.Metadata{{Label: "Domain", Value: domain}},
+		Action:   &email.Link{Label: "Verify member domain", URL: link}, ShowActionURL: true,
+		Footer:      "You received this because member-domain verification was requested for this workspace.",
+		FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+	})
+	if err != nil {
+		return MemberDomain{}, nil, err
 	}
 	return memberDomain, &message, nil
 }
@@ -169,12 +182,46 @@ func (s Service) createLink(
 	if err != nil {
 		return nil, err
 	}
-	message := email.Message{
-		From: s.AuthFrom, To: emailAddress, Subject: "Sign in to " + resolved.Name + " on Fidibeki",
-		Text: fmt.Sprintf("Open this link to sign in: %s\n\nThis link expires in 10 minutes and can only be used once.", link),
-		HTML: fmt.Sprintf(`<p>Open this link to sign in:</p><p><a href="%s">Sign in to Fidibeki</a></p><p>This link expires in 10 minutes and can only be used once.</p>`, link),
+	subject := "Sign in to " + resolved.Name + " on Fidibeki"
+	content := email.Content{
+		Preheader: "Use your secure link to sign in to " + resolved.Name,
+		Heading:   "Sign in to Fidibeki", Workspace: resolved.Name,
+		Body: []string{
+			"Use the button below to continue to your workspace.",
+			"This security link expires in 10 minutes and can only be used once.",
+		},
+		Action: &email.Link{Label: "Sign in to Fidibeki", URL: link}, ShowActionURL: true,
+		Footer:      "You received this because a sign-in link was requested for your Fidibeki account.",
+		FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+	}
+	if memberID == nil {
+		subject = "You're invited to " + resolved.Name + " on Fidibeki"
+		content.Preheader = "Join " + resolved.Name + " on Fidibeki"
+		content.Heading = "You're invited to a workspace"
+		content.Body = []string{
+			"A workspace administrator invited you to join " + resolved.Name + " on Fidibeki.",
+			"Accept the invitation with this one-time link. It expires in 10 minutes.",
+		}
+		content.Action.Label = "Join " + resolved.Name
+		content.Footer = "You received this because a workspace administrator invited this email address."
+	}
+	message, err := s.composeEmail(email.Message{
+		From: s.AuthFrom, To: emailAddress, Subject: subject,
+		IdempotencyKey: "tenant-magic-link:" + tokenHash,
+	}, content)
+	if err != nil {
+		return nil, err
 	}
 	return &message, nil
+}
+
+func (s Service) composeEmail(message email.Message, content email.Content) (email.Message, error) {
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	if err != nil {
+		return email.Message{}, err
+	}
+	content.LogoURL = logoURL
+	return email.Compose(message, content)
 }
 
 func (s Service) Verify(

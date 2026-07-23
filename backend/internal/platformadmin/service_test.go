@@ -36,7 +36,16 @@ func TestRequestMagicLinkIsNonEnumeratingAndQueuesKnownAdmin(t *testing.T) {
 	if len(queue.messages) != 1 {
 		t.Fatalf("queued messages = %d, want 1", len(queue.messages))
 	}
-	link := strings.Fields(queue.messages[0].Text)[8]
+	link := ""
+	for _, field := range strings.Fields(queue.messages[0].Text) {
+		if strings.HasPrefix(field, "https://") && strings.Contains(field, "/admin/auth/verify") {
+			link = field
+			break
+		}
+	}
+	if link == "" {
+		t.Fatalf("magic link missing from message: %s", queue.messages[0].Text)
+	}
 	parsed, err := url.Parse(link)
 	if err != nil {
 		t.Fatalf("parse magic link: %v", err)

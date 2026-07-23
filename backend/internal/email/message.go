@@ -11,6 +11,7 @@ import (
 type Message struct {
 	From           string `json:"from"`
 	To             string `json:"to"`
+	ReplyTo        string `json:"reply_to,omitempty"`
 	Subject        string `json:"subject"`
 	Text           string `json:"text"`
 	HTML           string `json:"html,omitempty"`
@@ -24,6 +25,11 @@ func (m Message) Validate() error {
 	}
 	if _, err := mail.ParseAddress(m.To); err != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("to: %w", err))
+	}
+	if m.ReplyTo != "" {
+		if _, err := mail.ParseAddress(m.ReplyTo); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("reply-to: %w", err))
+		}
 	}
 	if strings.TrimSpace(m.Subject) == "" {
 		validationErrors = append(validationErrors, errors.New("subject is required"))

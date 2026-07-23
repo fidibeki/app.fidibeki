@@ -97,12 +97,15 @@ func TestModerateIssueActivitiesRedactsHistoricalChanges(t *testing.T) {
 
 func TestReporterMessageEscapesContentAndUsesStableIdentity(t *testing.T) {
 	t.Parallel()
-	message := reporterMessage(ReporterNotification{
+	message, err := reporterMessage(ReporterNotification{
 		OutboxEventID: "event-id", TenantName: `Acme <script>`, PublicID: "ACME-2026-0001",
 		TenantSlug: "acme",
 		Title:      `<img src=x onerror=alert(1)>`, Status: StatusInProgress,
 		ReporterEmail: "reporter@example.com",
 	}, "https://api.fidibeki.com/", "fidibeki.com", "portal-token", "signed token")
+	if err != nil {
+		t.Fatalf("reporterMessage() error = %v", err)
+	}
 	if message.IdempotencyKey != "reporter:event-id" || message.To != "reporter@example.com" {
 		t.Errorf("message identity = %#v", message)
 	}

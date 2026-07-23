@@ -267,12 +267,13 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	if !supportedEvent(notification.Event, notification.ResourceType) || notification.PublicID == "" {
 		return Notification{}, ErrNotFound
 	}
-	if notification.ResourceType == "feedback" {
+	switch notification.ResourceType {
+	case "feedback":
 		if !notification.AIProcessed && notification.FeedbackStatus != "spam" {
 			return Notification{}, ErrNotReady
 		}
 		moderateNotification(&notification)
-	} else if notification.ResourceType == "issue" {
+	case "issue":
 		moderateIssueNotification(&notification)
 	}
 	return notification, nil

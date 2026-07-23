@@ -25,10 +25,14 @@ func (s ResendSender) Send(ctx context.Context, message Message) (string, error)
 	if strings.TrimSpace(s.APIKey) == "" {
 		return "", fmt.Errorf("resend API key is required")
 	}
-	payload, err := json.Marshal(map[string]any{
+	payloadValues := map[string]any{
 		"from": message.From, "to": []string{message.To}, "subject": message.Subject,
 		"text": message.Text, "html": message.HTML,
-	})
+	}
+	if message.ReplyTo != "" {
+		payloadValues["reply_to"] = message.ReplyTo
+	}
+	payload, err := json.Marshal(payloadValues)
 	if err != nil {
 		return "", fmt.Errorf("encode Resend email: %w", err)
 	}

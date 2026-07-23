@@ -76,11 +76,23 @@ func (s Service) Signup(
 		return Tenant{}, err
 	}
 	loginURL += "#token=" + url.QueryEscape(result.Token)
-	message := email.Message{
+	message, err := s.composeEmail(email.Message{
 		From: s.AuthFrom, To: input.Email, Subject: "Start your Fidibeki trial",
-		Text:           fmt.Sprintf("Open this link to sign in: %s\n\nThis link expires in 10 minutes and can only be used once.", loginURL),
-		HTML:           fmt.Sprintf(`<p>Open this link to sign in:</p><p><a href="%s">Sign in to Fidibeki</a></p><p>This link expires in 10 minutes and can only be used once.</p>`, loginURL),
 		IdempotencyKey: "signup:" + result.Tenant.ID,
+	}, email.Content{
+		Preheader: "Activate your " + result.Tenant.Name + " workspace",
+		Heading:   "Start your Fidibeki trial", Workspace: result.Tenant.Name,
+		Body: []string{
+			"Your workspace is ready. Use this secure link to activate the owner account and sign in.",
+			"The link expires in 10 minutes and can only be used once.",
+		},
+		Metadata: []email.Metadata{{Label: "Plan", Value: string(result.Tenant.Plan)}},
+		Action:   &email.Link{Label: "Activate workspace", URL: loginURL}, ShowActionURL: true,
+		Footer:      "You received this because this email address created a Fidibeki workspace.",
+		FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+	})
+	if err != nil {
+		return Tenant{}, err
 	}
 	if s.Email == nil {
 		return Tenant{}, errors.New("email queue is unavailable")
@@ -198,11 +210,28 @@ func (s Service) RequestDeletion(ctx context.Context, tenantID, memberID, confir
 		return time.Time{}, err
 	}
 	executesAt := current.DeletionRequestedAt.Add(DeletionGrace)
+	billingURL, err := s.tenantURL(current.Slug, "/settings/billing")
+	if err != nil {
+		return time.Time{}, err
+	}
 	for _, address := range emails {
-		message := email.Message{
+		message, err := s.composeEmail(email.Message{
 			From: s.AuthFrom, To: address, Subject: "Fidibeki account deletion scheduled",
-			Text:           fmt.Sprintf("The %s account is scheduled for permanent deletion on %s. An admin can cancel this from billing settings before then.", current.Name, executesAt.UTC().Format(time.RFC1123)),
 			IdempotencyKey: "tenant-deletion:" + tenantID + ":" + address,
+		}, email.Content{
+			Preheader: current.Name + " is scheduled for deletion",
+			Heading:   "Account deletion scheduled", Workspace: current.Name,
+			Body: []string{
+				"This workspace is scheduled for permanent deletion. Its data will remain available during the recovery period.",
+				"An authorized administrator can cancel the deletion before the scheduled time.",
+			},
+			Metadata:    []email.Metadata{{Label: "Scheduled for", Value: executesAt.UTC().Format(time.RFC1123)}},
+			Action:      &email.Link{Label: "Review account deletion", URL: billingURL},
+			Footer:      "You received this mandatory account notice because you are a member of this workspace.",
+			FooterLinks: []email.Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
+		})
+		if err != nil {
+			return time.Time{}, err
 		}
 		if err := s.Email.Enqueue(ctx, message); err != nil {
 			return time.Time{}, fmt.Errorf("enqueue tenant deletion email: %w", err)
@@ -211,13 +240,26 @@ func (s Service) RequestDeletion(ctx context.Context, tenantID, memberID, confir
 	return executesAt, nil
 }
 
+func (s Service) composeEmail(message email.Message, content email.Content) (email.Message, error) {
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	if err != nil {
+		return email.Message{}, err
+	}
+	content.LogoURL = logoURL
+	return email.Compose(message, content)
+}
+
 func (s Service) tenantURL(slug, path string) (string, error) {
-	base, err := url.Parse(s.PublicBaseURL)
+	return tenantURL(s.PublicBaseURL, s.BaseDomain, slug, path)
+}
+
+func tenantURL(publicBaseURL, baseDomain, slug, path string) (string, error) {
+	base, err := url.Parse(publicBaseURL)
 	if err != nil || !base.IsAbs() || base.Host == "" {
 		return "", errors.New("public base URL is invalid")
 	}
 	port := base.Port()
-	base.Host = slug + "." + s.BaseDomain
+	base.Host = slug + "." + baseDomain
 	if port != "" {
 		base.Host += ":" + port
 	}
