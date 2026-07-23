@@ -508,14 +508,24 @@ was removed from the staging test tenant.
       including public submit to backoffice visibility and hostile HTML.
     - Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` passed a real reporter API and
       SSR journey in English and Portuguese; its temporary reporter token was removed.
-  - [ ] Complete the new non-postponed privacy issues before continuous improvement.
-    - [ ] #53: make replay anonymous by default across identifiers, locations, rrweb content,
+  - [x] Complete the new non-postponed privacy issues before continuous improvement.
+    - [x] #53: make replay anonymous by default across identifiers, locations, rrweb content,
       canvas, storage, streaming, playback, and deletion.
-    - [ ] #55: require explicit, structured, auditable, revocable reporter-update consent before
+    - [x] #55: require explicit, structured, auditable, revocable reporter-update consent before
       email transmission, persistence, enqueue, or provider delivery.
-    - [ ] #54: reuse the resulting privacy primitives for automatic feedback context, referrers,
+    - [x] #54: reuse the resulting privacy primitives for automatic feedback context, referrers,
       element attachments, backend validation, downstream projections, and existing-data
       remediation.
+    - The three slices are integrated on `main` through `81de75c`. Backend tests and 80.1%
+      coverage, widget unit/typecheck/build and 40 browser journeys, web
+      unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.
+    - Staging API `df9bda9a-f529-4971-ad88-f4f3512ebeb3`, worker
+      `6778eeaf-36f5-4b83-b22b-50978d06d06c`, widget
+      `de1f1549-fb70-42bb-be49-4ab108f6375e`, and web
+      `764af152-e3be-4bcb-9d24-c48a362a4a0a` are healthy with migration 77 clean.
+    - A disposable staging gate verified consent rejection without persistence, exact/prefix/origin
+      URL projection in raw and daily funnel rows, unsafe element-context omission, anonymous replay
+      privacy v2, no leaked sentinels, and complete cleanup without triggering email or text AI.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.
