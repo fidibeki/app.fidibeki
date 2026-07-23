@@ -10,6 +10,7 @@ export default defineConfig({
 			include: [
 				'src/analytics.ts', 'src/analytics-outbox.ts', 'src/config.ts', 'src/targeting.ts',
 				'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
+				'src/policy.ts',
 				'src/modules/replay.ts',
 			],
       reporter: ['text', 'json-summary'],

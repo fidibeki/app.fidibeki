@@ -357,6 +357,20 @@ test('imperative mount resolves a definition key and safely rejects inactive def
   await expect(page.locator('#imperative-widget').getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
 })
 
+test('automatic reaction waits for the configured objective policy', async ({ page }) => {
+  const configuration = definitionConfiguration('reaction', 'policy-reaction')
+  configuration.definitions![0]!.objective = 'after_engagement'
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How was checkout?' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Place order' }).click()
+  await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
+})
+
 test('applies controlled appearance tokens and a privacy-safe logo', async ({ page }) => {
   const configuration = definitionConfiguration('inline')
   configuration.definitions![0]!.appearance = {

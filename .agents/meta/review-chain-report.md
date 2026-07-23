@@ -7,7 +7,7 @@ status: final
 
 # Review Chain Report
 
-**Artifact**: Widget controlled-appearance hierarchy and migration 000058
+**Artifact**: Deterministic widget objective policy
 **Date**: 2026-07-23
 **Rounds**: 2 local review passes
 
@@ -17,35 +17,38 @@ status: final
 
 | # | Severity | Confidence | Location | Problem | Status |
 |---|----------|------------|----------|---------|--------|
-| 1 | major | 10/10 | `backend/internal/project/store.go` | A legacy client update replaced the complete definition appearance object, silently dropping new surface, text, and logo overrides. | Fixed by merging legacy position/theme/accent tokens while explicit new-contract updates still replace the layer. Covered by a PostgreSQL HTTP regression. |
+| 1 | minor | 10/10 | `widget/src/policy.ts` | Empty canonical and description tags increased the content-confidence score. | Fixed by requiring non-empty public metadata attributes, with a regression. |
+| 2 | major | 9/10 | `widget/src/policy.ts` | Ordinary keyboard input counted as engagement even though the policy must avoid observing private input behavior. | Fixed by counting only keyboard activation actions (`Enter` and space); pointer interaction counts remain value-free. |
 
 ## Input Quality Assessment
 
 | Input | Rating | Evidence |
 |-------|--------|----------|
-| Product/domain context | Rich | The approved three-pillar roadmap defines the workspace/project/definition hierarchy and controlled-token boundary. |
-| Requirements clarity | Precise | The slice requires inheritance, safe tokens, preview parity, compatibility, migrations, and backend/web/widget tests. |
-| Upstream artifacts | Fresh | Roadmap, current implementation plan, lifecycle slice, and staging-only decision are all dated 2026-07-22. |
+| Product/domain context | Rich | The approved roadmap defines objectives, allowed signals, presentation behavior, privacy boundaries, and compatibility. |
+| Requirements clarity | Precise | Four objectives, deterministic local scoring, strict interruption policy, no private inputs/content/payloads/fingerprinting. |
+| Upstream artifacts | Fresh | The shared runtime, recurrence, targeting, analytics, lifecycle, and Phase 3 audit are current. |
 
 ## Simplifications Applied
 
-The existing widget-rule table remains the definition store. Three JSONB override objects provide sparse layers,
-and one pure resolver is used per runtime rather than introducing a theme document or arbitrary CSS model.
+One pure evaluator owns scores, reason codes, and presentation thresholds. A small runtime observer supplies only
+bounded counts and booleans. Existing targeting, recurrence, triggers, analytics, and explicit mounting remain
+unchanged and compose with the new decision instead of being duplicated.
 
 ## Changes Made
 
-Added workspace, project, and definition appearance layers; accessible color validation for the new contract;
-HTTPS logo validation; effective public configuration; runtime rendering; backoffice editors and preview; migration
-backfill; legacy-update preservation; and focused PostgreSQL, unit, browser, and responsive visual coverage.
+Added objective-specific scoring, active-time visibility handling, canonical anonymous visit history, public
+metadata and explicit boolean signals, launcher/inline non-interruption guardrails, stronger reaction/prompt
+thresholds, automatic-loader composition, privacy regressions, and a real browser engagement journey.
 
 ## Reviewer's Summary
 
-Authorization remains behind the existing writable tenant/project permissions and RLS boundaries. Inputs are
-restricted to enums, six-digit colors, paired accessible surface/text colors, and escaped HTTPS logo URLs. The
-backend never fetches the logo, so the URL does not create SSRF. Explicit updates can reset a layer, while legacy
-updates preserve fields their clients cannot represent. No unresolved blocking issue remains.
+The policy is deterministic and fails closed for interruptive presentations. It never reads form values, page
+text, network data, identity attributes, or browser entropy. Normal typing is ignored; active time pauses while
+hidden; query strings, hashes, and trailing slashes share visit identity. Analytics keeps `matched` before the
+decision and records `impression` only after a visible mount. No unresolved blocking issue remains.
 
 ## Resolver's Notes
 
-Legacy accent colors retain their historical hex-only validation to avoid breaking existing clients. The stricter
-contrast rule applies to the new controlled appearance contract and all new backoffice writes.
+Legacy definitions without the versioned objective/presentation contract bypass the new policy, preserving old
+installations. Versioned automatic definitions retain their legacy trigger as an additional compatibility gate;
+declarative and imperative mounts remain immediate because placement itself is an explicit host decision.

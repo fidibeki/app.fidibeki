@@ -12,6 +12,7 @@ import {
 } from './analytics'
 import { createAnalyticsOutbox } from './analytics-outbox'
 import { getSessionID, isSuppressed, presentationRecurrencePolicy, recordWidgetState } from './suppression'
+import { armObjectivePolicy, recordObjectiveVisit } from './policy'
 import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -158,10 +159,21 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 				recordAnalytics('matched', rule)
 				void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
 			}
-			await synchronizeReplay(configuration, rule)
+      await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
-      if (!rule || ruleIsSuppressed(durableStorage, configuration, rule, evaluationURL, widgetSessionID)) return
-      cleanupTrigger = armTrigger(rule, () => {
+      if (!rule) return
+      const visitCount = recordObjectiveVisit(durableStorage, {
+        projectID: configuration.project_id,
+        rawURL: evaluationURL,
+        sessionID: widgetSessionID,
+      })
+      if (ruleIsSuppressed(durableStorage, configuration, rule, evaluationURL, widgetSessionID)) return
+      let triggerReady = false
+      let policyReady = rule.objective === undefined && rule.presentation === undefined
+      let mounting = false
+      const mountWhenEligible = () => {
+        if (!triggerReady || !policyReady || mounting) return
+        mounting = true
         void import(new URL('widget.js', assetBase).href)
           .then((module) => {
             if (currentEvaluation !== evaluation) return
@@ -184,7 +196,21 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
             })
           })
           .catch((error: unknown) => report(error, 'mount'))
+      }
+      const cleanupLegacyTrigger = armTrigger(rule, () => {
+        triggerReady = true
+        mountWhenEligible()
       })
+      const cleanupPolicy = policyReady
+        ? () => undefined
+        : armObjectivePolicy(rule, visitCount, () => {
+            policyReady = true
+            mountWhenEligible()
+          })
+      cleanupTrigger = () => {
+        cleanupLegacyTrigger()
+        cleanupPolicy()
+      }
     } catch (error) {
       void report(error, 'configuration')
     }
@@ -224,6 +250,11 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       await synchronizeReplay(configuration, rule)
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       recordAnalytics('matched', rule)
+      recordObjectiveVisit(durableStorage, {
+        projectID: configuration.project_id,
+        rawURL: currentURL,
+        sessionID: widgetSessionID,
+      })
       void reportConnection({ endpoint: connectionEndpoint, publicKey: key, ruleID: rule.id }).catch(() => {})
       if (ruleIsSuppressed(durableStorage, configuration, rule, currentURL, widgetSessionID)) {
         return explicitResult(false, 'suppressed')

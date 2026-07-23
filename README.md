@@ -122,9 +122,18 @@ Embed the widget with the project public key:
 ```
 
 The public widget API requires the project key and an allowed browser `Origin`. Feedback submission
-creates its issue and outbox event atomically, returns 10-minute presigned upload URLs, and verifies
-each attachment's one-time completion token, byte size, and MIME type through S3 HEAD. Redis applies
-both the 10/minute per-IP/project and 100/hour project ceilings and fails open if Redis is unavailable.
+creates one independent Feedback record and its outbox event atomically, returns 10-minute presigned
+upload URLs, and verifies each attachment's one-time completion token, byte size, and MIME type
+through S3 HEAD. Redis applies both the 10/minute per-IP/project and 100/hour project ceilings and
+fails open if Redis is unavailable.
+
+Automatic definitions combine their compatible legacy trigger with a deterministic local objective
+policy. The policy uses active time, scroll depth, interaction counts, anonymous per-page visits,
+public document metadata, and optional boolean attributes on `<html>`:
+`data-fidibeki-engaged`, `data-fidibeki-content`, and `data-fidibeki-friction`. Values `true` and `1`
+activate a signal. The runtime never reads input values, private page text, network payloads, or a
+personal fingerprint. Launcher and inline presentations remain immediately available; reaction and
+prompt presentations require progressively stronger evidence.
 
 Replay-enabled rules lazy-load pinned `rrweb@2.1.1` before the feedback trigger. Recording uses the
 rule's session-level sampling and masking policy, continues across same-rule SPA navigation, and ends

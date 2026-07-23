@@ -184,9 +184,14 @@ was removed from the staging test tenant.
     projection. The resolved public contract adds surface/text colors and an HTTPS-only logo;
     validation enforces paired surface/text tokens, 4.5:1 contrast, and safe URLs. Backoffice forms,
     preview, and the isolated runtime share the same cascade and support explicit inheritance.
-- [ ] Add deterministic objective policies for continuous feedback, after engagement, content
+- [x] Add deterministic objective policies for continuous feedback, after engagement, content
   validation, and friction detection using only non-personal public/browser signals. Apply stricter
   confidence and cooldown rules to more interruptive presentations.
+  - The automatic runtime now combines legacy trigger compatibility with a pure local scoring
+    policy. It observes only active time, scroll depth, event counts, anonymous per-page/session
+    visits, public metadata, and explicit boolean `data-fidibeki-*` signals. Launcher and inline stay
+    immediately available; reaction and prompt use escalating objective-specific thresholds, and
+    hidden-page time does not count. Explicit mounts remain deterministic and immediate.
 - [x] Add `draft`, `active`, `paused`, and `archived` lifecycle behavior while preserving historical
   Feedback, analytics, and configuration; paused/archived widgets must neither render nor record
   impressions.
