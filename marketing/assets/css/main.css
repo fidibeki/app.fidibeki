@@ -1,0 +1,386 @@
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 200 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url('/fonts/bricolage-grotesque-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --font-body: 'Avenir Next', Avenir, 'Segoe UI', sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Avenir Next', Avenir, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 6px;
+  --radius-lg: 14px;
+  --gutter: clamp(1.25rem, 4vw, 4.5rem);
+  --header-height: 64px;
+
+  --teal-fill: #087f73;
+  --teal-fill-strong: #076f65;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --canvas: #f5f7f6;
+  --surface: #ffffff;
+  --surface-soft: #eef3f1;
+  --ink: #17211f;
+  --ink-soft: #35423f;
+  --muted: #5f6e69;
+  --line: #d9e1de;
+  --line-strong: #bdc9c5;
+  --accent: #087f73;
+  --accent-strong: #076f65;
+  --accent-soft: #dff3ef;
+  --accent-text: #077165;
+  --on-accent: #ffffff;
+  --focus-ring: #0a6c62;
+  --shadow-card: 0 1px 2px rgb(20 38 33 / 6%), 0 12px 32px rgb(20 38 33 / 8%);
+  --shadow-overlay: 0 20px 50px rgb(20 38 33 / 14%);
+  --hero-glow: radial-gradient(60% 50% at 50% 0%, rgb(8 127 115 / 9%), transparent 70%);
+  --grid-line: rgb(23 33 31 / 5%);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0b1210;
+  --surface: #121a17;
+  --surface-soft: #172420;
+  --ink: #eef4f1;
+  --ink-soft: #c9d6d0;
+  --muted: #93a7a0;
+  --line: #22302a;
+  --line-strong: #35473f;
+  --accent: #3ec5b2;
+  --accent-strong: #5fd6c6;
+  --accent-soft: #11322c;
+  --accent-text: #4ecdbb;
+  --on-accent: #ffffff;
+  --focus-ring: #5fd6c6;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 35%);
+  --shadow-overlay: 0 20px 50px rgb(0 0 0 / 50%);
+  --hero-glow: radial-gradient(60% 50% at 50% 0%, rgb(62 197 178 / 10%), transparent 70%);
+  --grid-line: rgb(238 244 241 / 4%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.5em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(2.35rem, 1.4rem + 4.2vw, 3.9rem);
+  font-weight: 640;
+}
+
+h2 {
+  font-size: clamp(1.7rem, 1.2rem + 2vw, 2.4rem);
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+p {
+  margin: 0 0 1em;
+}
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+img,
+svg,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+pre {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 1rem;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.skip-link:focus-visible {
+  top: 0.75rem;
+}
+
+/* Fluid container: full viewport width with a proportional gutter. Text
+   blocks (.prose, .lede, .section-head) keep their own max-widths so line
+   length stays readable while the layout breathes edge to edge. */
+.container {
+  width: 100%;
+  padding-inline: var(--gutter);
+}
+
+.section {
+  padding-block: clamp(3.5rem, 3rem + 3vw, 6rem);
+}
+
+.section-head {
+  max-width: 40rem;
+  margin-bottom: clamp(2rem, 1.5rem + 2vw, 3.25rem);
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 640;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+.lede {
+  font-size: 1.15rem;
+  color: var(--ink-soft);
+  max-width: 38rem;
+  text-wrap: pretty;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.68rem 1.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease,
+    color 140ms ease, transform 140ms ease;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--teal-fill);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover {
+  background: var(--teal-fill-strong);
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: transparent;
+}
+
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn-large {
+  padding: 0.85rem 1.6rem;
+  font-size: 1.05rem;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 1.5rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.78rem;
+  font-weight: 640;
+  letter-spacing: 0.02em;
+}
+
+.badge-neutral {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.prose {
+  max-width: 44rem;
+}
+
+.prose h2 {
+  margin-top: 2.2em;
+  font-size: 1.45rem;
+}
+
+.prose h3 {
+  margin-top: 1.6em;
+}
+
+.prose ul {
+  padding-left: 1.2rem;
+  margin: 0 0 1em;
+}
+
+.prose li {
+  margin-bottom: 0.4em;
+}
+
+.prose li::marker {
+  color: var(--accent);
+}
+
+/* Scroll-triggered reveal (v-reveal directive). Hidden state is applied by
+   JavaScript only, so prerendered HTML remains fully visible without it. */
+.reveal-on-scroll {
+  /* Hidden instantly (no transition here) — only the reveal animates. */
+  opacity: 0;
+  transform: translateY(22px);
+}
+
+.reveal-on-scroll.is-revealed {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 640ms cubic-bezier(0.2, 0.65, 0.25, 1),
+    transform 640ms cubic-bezier(0.2, 0.65, 0.25, 1);
+}
+
+/* v-reveal.line — an accent line sweeps across the element's top rule the
+   first time it scrolls into view. */
+.rule-draw {
+  position: relative;
+}
+
+.rule-draw::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 1100ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.rule-draw.is-revealed::after {
+  transform: scaleX(1);
+}
+
+/* Micro-interaction: arrows inside "learn more" affordances slide on hover. */
+.feature-more svg,
+.integration-more svg,
+.usecase-more svg,
+.doc-meta svg {
+  transition: transform 180ms ease;
+}
+
+.feature-card:hover .feature-more svg,
+.feature-row:hover .feature-more svg,
+.integration-card:hover .integration-more svg,
+.usecase-card:hover .usecase-more svg,
+.doc-card:hover .doc-meta svg {
+  transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

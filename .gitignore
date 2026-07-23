@@ -11,6 +11,9 @@ node_modules/
 .nuxt/
 .output/
 dist/
+dist
 coverage/
 playwright-report/
 test-results/
+
+**/.claude/settings.local.json

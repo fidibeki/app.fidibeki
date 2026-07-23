@@ -1,6 +1,7 @@
 packages:
   - widget
   - web
+  - marketing
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
