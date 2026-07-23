@@ -116,9 +116,10 @@ func (store Store) ExpiredExportArchives(
 		SELECT tenant_id, id, object_key
 		FROM privacy_jobs
 		WHERE kind IN ('workspace_export', 'reporter_export')
-		  AND status = 'completed' AND expires_at <= $1
+		  AND status = 'completed'
+		  AND (expires_at <= $1 OR context_privacy_version < 1)
 		  AND object_key IS NOT NULL
-		ORDER BY expires_at, id
+		ORDER BY context_privacy_version, expires_at, id
 		LIMIT $2
 		FOR UPDATE SKIP LOCKED
 	`, now.UTC(), limit)
@@ -152,7 +153,8 @@ func (store Store) MarkExportArchiveExpired(
 			SET status = 'expired', object_key = NULL, updated_at = $4
 			WHERE tenant_id = $1 AND id = $2 AND object_key = $3
 			  AND kind IN ('workspace_export', 'reporter_export')
-			  AND status = 'completed' AND expires_at <= $4
+			  AND status = 'completed'
+			  AND (expires_at <= $4 OR context_privacy_version < 1)
 			RETURNING tenant_id, id, kind, actor_member_id, reporter_request_id
 		), audited AS (
 			INSERT INTO tenant_access_events (

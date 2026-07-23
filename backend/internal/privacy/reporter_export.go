@@ -347,7 +347,8 @@ func (store Store) CompleteReporterExportJob(
 			UPDATE privacy_jobs
 			SET status = 'completed', heartbeat_at = $5, completed_at = $5,
 			    expires_at = $5::timestamptz + interval '7 days',
-			    object_key = $6, object_size_bytes = $7, error_message = NULL
+			    object_key = $6, object_size_bytes = $7, error_message = NULL,
+			    context_privacy_version = 1
 			WHERE id = $1 AND tenant_id = $2 AND reporter_request_id = $3
 			  AND generation = $4 AND kind = 'reporter_export' AND status = 'processing'
 			RETURNING id, reporter_request_id

@@ -325,7 +325,8 @@ func (s Store) CompleteJob(
 			UPDATE privacy_jobs
 			SET status = 'completed', heartbeat_at = $4, completed_at = $4,
 			    expires_at = $4::timestamptz + interval '7 days',
-			    object_key = $5, object_size_bytes = $6, error_message = NULL
+			    object_key = $5, object_size_bytes = $6, error_message = NULL,
+			    context_privacy_version = 1
 			WHERE id = $1 AND tenant_id = $2 AND generation = $3 AND status = 'processing'
 			RETURNING id
 		), audited AS (
@@ -419,7 +420,8 @@ func recordPrivacyAudit(
 const jobSelect = `
 	SELECT job.id, job.tenant_id, job.kind, job.status, job.actor_member_id, job.reporter_request_id,
 	       job.generation, job.attempts, job.enqueued_at, job.started_at,
-	       job.heartbeat_at, job.completed_at, job.expires_at, job.object_key,
+	       job.heartbeat_at, job.completed_at, job.expires_at,
+	       CASE WHEN job.context_privacy_version >= 1 THEN job.object_key END,
 	       job.object_size_bytes, job.error_message, job.created_at, job.updated_at
 	FROM privacy_jobs AS job
 `

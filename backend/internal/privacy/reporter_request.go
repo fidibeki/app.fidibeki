@@ -230,7 +230,9 @@ func loadReporterRequestView(
 		       job.kind, job.status, job.expires_at, request.access_expires_at
 		FROM reporter_privacy_requests AS request
 		LEFT JOIN LATERAL (
-			SELECT privacy_job.kind, privacy_job.status, privacy_job.expires_at
+			SELECT privacy_job.kind, privacy_job.status,
+			       CASE WHEN privacy_job.context_privacy_version >= 1
+			            THEN privacy_job.expires_at END AS expires_at
 			FROM privacy_jobs AS privacy_job
 			WHERE privacy_job.tenant_id = request.tenant_id
 			  AND privacy_job.reporter_request_id = request.id
@@ -277,6 +279,7 @@ func (store Store) LoadReporterDownload(
 		WHERE request.token_hash = $1 AND request.action = 'export'
 		  AND request.status = 'completed' AND request.access_expires_at > $2
 		  AND job.kind = 'reporter_export' AND job.status = 'completed'
+		  AND job.context_privacy_version >= 1
 		  AND job.expires_at > $2 AND job.object_key IS NOT NULL
 	`, tokenHash[:], now.UTC()).Scan(
 		&download.TenantID, &download.RequestID, &download.JobID, &download.ObjectKey,
