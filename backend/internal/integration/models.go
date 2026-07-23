@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-var ErrNotFound = errors.New("integration not found")
+var (
+	ErrNotFound = errors.New("integration not found")
+	ErrNotReady = errors.New("integration content moderation is not complete")
+)
 
 type Kind string
 
@@ -64,47 +67,56 @@ type FieldError struct {
 }
 
 type Notification struct {
-	OutboxEventID        string
-	TenantID             string
-	TenantName           string
-	TenantSlug           string
-	IntegrationID        string
-	Kind                 Kind
-	WebhookURL           string
-	Channel              string
-	CustomHeaders        map[string]string
-	WebhookSecret        string
-	Event                string
-	ResourceType         string
-	ResourceID           string
-	OccurredAt           time.Time
-	PublicID             string
-	Title                string
-	Description          string
-	Text                 string
-	PageURL              string
-	Rating               *int
-	Category             string
-	Actionability        string
-	Priority             string
-	ProjectID            string
-	ProjectName          string
-	FeedbackID           string
-	IssueID              string
-	IssuePublicID        string
-	IssueStatus          string
-	OldStatus            string
-	NewStatus            string
-	Changes              map[string]Change
-	Actor                *NotificationActor
-	Comment              string
-	AttachmentCount      int
-	AttachmentKinds      []string
-	AttachmentFeedbackID string
-	ResourceURL          string
-	IssueURL             string
-	FeedbackURL          string
-	AttachmentsURL       string
+	OutboxEventID             string
+	TenantID                  string
+	TenantName                string
+	TenantSlug                string
+	IntegrationID             string
+	Kind                      Kind
+	WebhookURL                string
+	Channel                   string
+	CustomHeaders             map[string]string
+	WebhookSecret             string
+	Event                     string
+	ResourceType              string
+	ResourceID                string
+	OccurredAt                time.Time
+	PublicID                  string
+	Title                     string
+	Description               string
+	Text                      string
+	SuggestedTitle            string
+	FeedbackStatus            string
+	TextProcessStatus         string
+	TextModerationFlags       []string
+	AIProcessed               bool
+	IssueSuggestedTitle       string
+	IssueTitleModerated       bool
+	IssueDescriptionModerated bool
+	IssueModeratedSources     []string
+	PageURL                   string
+	Rating                    *int
+	Category                  string
+	Actionability             string
+	Priority                  string
+	ProjectID                 string
+	ProjectName               string
+	FeedbackID                string
+	IssueID                   string
+	IssuePublicID             string
+	IssueStatus               string
+	OldStatus                 string
+	NewStatus                 string
+	Changes                   map[string]Change
+	Actor                     *NotificationActor
+	Comment                   string
+	AttachmentCount           int
+	AttachmentKinds           []string
+	AttachmentFeedbackID      string
+	ResourceURL               string
+	IssueURL                  string
+	FeedbackURL               string
+	AttachmentsURL            string
 }
 
 type Change struct {

@@ -1646,6 +1646,34 @@ test('feedback sentiment uses semantic labels with an exact-score disclosure', a
   await capture(page, testInfo, `feedback-sentiment-${testInfo.project.name}`)
 })
 
+test('moderated feedback stays redacted through issue creation', async ({ page }, testInfo) => {
+  const state = createMockState()
+  const moderated = state.feedback[1]
+  Object.assign(moderated as unknown as Record<string, unknown>, {
+    title: 'Checkout feedback needs review', description: '[MODERATED]', text: '[MODERATED]',
+    text_cleaned: '[MODERATED]', ai_suggested_title: 'Checkout feedback needs review',
+    moderation_flags: ['harassment'],
+  })
+
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  const row = page.getByRole('listitem').filter({ hasText: 'FB-1047' })
+  if (testInfo.project.name === 'mobile') {
+    await row.getByRole('link', { name: 'Open FB-1047' }).click()
+  } else {
+    await row.click()
+    await page.getByTitle('Open full detail').click()
+  }
+  await expect(page).toHaveURL(/\/feedback\/feedback-2$/)
+  await expect(page.getByRole('heading', { name: 'Checkout feedback needs review' })).toBeVisible()
+  await expect(page.locator('.feedback-description')).toHaveText('[MODERATED]')
+  await page.getByRole('button', { name: 'Create issue' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Create issue from feedback' })
+  await expect(dialog.getByLabel('Title')).toHaveValue('Checkout feedback needs review')
+  await expect(dialog.getByLabel('Description')).toHaveValue('[MODERATED]')
+  await capture(page, testInfo, `moderated-feedback-${testInfo.project.name}`)
+})
+
 test('feedback status pills remain readable in normal and selected rows', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'This test controls the viewport widths directly')
   const state = createMockState()

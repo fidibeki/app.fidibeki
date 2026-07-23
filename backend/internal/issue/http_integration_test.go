@@ -618,6 +618,40 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	`, tenantID, createdIssueID).Scan(&creationActivityCount); err != nil || creationActivityCount != 1 {
 		t.Fatalf("issue creation activity count = %d, error = %v, want 1", creationActivityCount, err)
 	}
+	const moderatedRaw = "an abusive raw report"
+	var moderatedIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description)
+		VALUES ($1, $2, 'ACME-2026-0099', $3, $3) RETURNING id
+	`, tenantID, projectID, moderatedRaw).Scan(&moderatedIssueID); err != nil {
+		t.Fatalf("create historical moderated issue: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, issue_id, client_feedback_id,
+			title, description, text, text_cleaned, text_moderation_flags,
+			ai_suggested_title, page_url, text_process_status, ai_processed_at
+		) VALUES ($1, $2, 'fb_Mod00001', $3, gen_random_uuid(), $4, $4, $4,
+		          'cleaned but still flagged', '{harassment}', 'Checkout feedback needs review',
+		          'https://example.com/checkout', 'completed', now())
+	`, tenantID, projectID, moderatedIssueID, moderatedRaw); err != nil {
+		t.Fatalf("create historical moderated feedback: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO issue_activities (tenant_id, issue_id, actor_member_id, kind, data)
+		VALUES ($1, $2, $3, 'issue.created', jsonb_build_object('title', $4::text, 'description', $4::text))
+	`, tenantID, moderatedIssueID, memberID, moderatedRaw); err != nil {
+		t.Fatalf("create historical moderated activity: %v", err)
+	}
+	moderatedIssueResponse := issueRequest(
+		handler, accessToken, http.MethodGet, "/v1/issues/"+moderatedIssueID, "",
+	)
+	if moderatedIssueResponse.Code != http.StatusOK ||
+		!strings.Contains(moderatedIssueResponse.Body.String(), "Checkout feedback needs review") ||
+		!strings.Contains(moderatedIssueResponse.Body.String(), `"description":"[MODERATED]"`) ||
+		strings.Contains(moderatedIssueResponse.Body.String(), moderatedRaw) {
+		t.Fatalf("historical moderated issue = %d body = %s", moderatedIssueResponse.Code, moderatedIssueResponse.Body.String())
+	}
 
 	store := Store{Database: pools.Admin}
 	sender := &sequenceSender{}

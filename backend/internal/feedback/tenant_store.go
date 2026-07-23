@@ -10,6 +10,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/jackc/pgx/v5"
 )
@@ -66,6 +67,7 @@ const tenantFeedbackColumns = `
 	feedback.viewport_height, feedback.language, feedback.status::text,
 	` + feedbackAIStatusExpression + `,
 	` + feedbackSentimentExpression + `,
+	feedback.text_moderation_flags,
 	ARRAY(
 		SELECT DISTINCT flag
 		FROM (
@@ -703,7 +705,7 @@ func tenantFeedbackScanTargets(
 		&item.ReporterEmail, &item.NotifyReporter, &item.PageURL, &item.Referrer,
 		&item.UserAgent, &item.OS, &item.Browser, &item.Device, &item.ViewportWidth,
 		&item.ViewportHeight, &item.Language, &item.Status, &item.AIStatus,
-		&item.SentimentScore, &item.ModerationFlags, attachmentKinds,
+		&item.SentimentScore, &item.TextModerationFlags, &item.ModerationFlags, attachmentKinds,
 		&item.CreatedAt, &item.UpdatedAt,
 	}
 }
@@ -732,6 +734,60 @@ func finalizeTenantFeedback(item *Item, attachmentKinds []string) {
 		item.AttachmentKinds[index] = AttachmentKind(kind)
 	}
 	item.HasReplay = item.SessionID != nil
+	moderateFeedback(item)
+}
+
+func moderateFeedback(item *Item) {
+	spam := item.Status == StatusSpam
+	if !spam && len(item.TextModerationFlags) == 0 {
+		return
+	}
+	sources := make([]string, 0, 4)
+	for _, value := range []*string{item.Description, item.Text, item.TextCleaned, item.Comment} {
+		if value != nil {
+			sources = append(sources, *value)
+		}
+	}
+	titleDerived := spam || moderation.IsDerived(item.Title, sources...)
+	if titleDerived {
+		if item.AISuggestedTitle != nil && strings.TrimSpace(*item.AISuggestedTitle) != "" {
+			item.Title = *item.AISuggestedTitle
+		} else {
+			item.Title = moderation.Placeholder
+		}
+	}
+	placeholder := moderation.Placeholder
+	if item.Description != nil || spam {
+		item.Description = &placeholder
+	}
+	if item.Text != nil {
+		item.Text = &placeholder
+	}
+	if item.TextCleaned != nil {
+		item.TextCleaned = &placeholder
+	}
+	if item.Comment != nil {
+		item.Comment = &placeholder
+	}
+	for key, value := range item.Responses {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if spam {
+			item.Responses[key] = moderation.Placeholder
+			continue
+		}
+		item.Responses[key] = moderation.RedactCopies(text, sources...)
+	}
+}
+
+func moderateAttachment(attachment *AttachmentDetail) {
+	if len(attachment.ModerationFlags) == 0 || attachment.Transcription == nil {
+		return
+	}
+	placeholder := moderation.Placeholder
+	attachment.Transcription = &placeholder
 }
 
 func listTenantAttachments(
@@ -766,6 +822,7 @@ func listTenantAttachments(
 			return nil, fmt.Errorf("scan tenant feedback attachment: %w", err)
 		}
 		attachments = append(attachments, attachment)
+		moderateAttachment(&attachments[len(attachments)-1])
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate tenant feedback attachments: %w", err)

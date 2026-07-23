@@ -234,7 +234,16 @@ was removed from the staging test tenant.
       reopen it for editing, or remove it. Capture always stops its media stream, excludes the widget
       surface from the frame, preserves the existing upload contract, and cleans preview resources.
       Browser coverage verifies annotated output pixels plus desktop and mobile presentation.
-  - [ ] Complete moderated-content propagation issue #6.
+  - [x] Complete moderated-content propagation issue #6.
+    - Reporter content remains intact at rest for evidence and audit, while tenant feedback reads
+      replace flagged/spam descriptions, text, copied comments/responses, and flagged attachment
+      transcripts with `[MODERATED]`; a safe AI title remains available when present.
+    - New Issues redact copied unsafe content before persistence, while independent operator-written
+      summaries remain editable. Existing linked Issues and their creation activity are projected
+      safely when their title or description contains moderated feedback content.
+    - Integration delivery waits for the existing AI pass before any external request and then
+      applies the same projection to Slack, Teams, and signed generic webhooks. Backend integration,
+      unit, and responsive browser coverage verifies no raw moderated content crosses these paths.
   - [ ] Complete shared transactional email issue #21.
   - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.

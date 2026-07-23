@@ -717,7 +717,7 @@ func assertTenantFeedbackReadFlow(
 	)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"status":"archived"`) ||
 		!strings.Contains(updated.Body.String(), `"title":"Checkout total changes unexpectedly"`) ||
-		!strings.Contains(updated.Body.String(), `"description":"Checkout was clear"`) {
+		!strings.Contains(updated.Body.String(), `"description":"[MODERATED]"`) {
 		t.Fatalf("update tenant feedback status = %d, body = %s", updated.Code, updated.Body.String())
 	}
 	var needsReviewTagID, otherTenantID, otherTagID string

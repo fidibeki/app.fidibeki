@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -203,11 +204,11 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, issue_id, public_id, client_feedback_id,
-			title, description, page_url, rating, text, text_process_status,
+			title, description, page_url, rating, text, text_process_status, ai_processed_at,
 			priority, ai_category, ai_actionability, ai_priority
 		) VALUES ($1, $2, $3, 'fb_Intg0001', gen_random_uuid(),
 		          'Checkout is confusing', 'The payment step is unclear.',
-		          'https://example.test/checkout', 4, 'The checkout is confusing', 'skipped',
+		          'https://example.test/checkout', 4, 'The checkout is confusing', 'skipped', now(),
 		          'high', 'checkout', 'actionable', 'urgent')
 		RETURNING id
 	`, tenantIDs["acme"], projectID, issueID).Scan(&feedbackID); err != nil {
@@ -256,6 +257,19 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		})
 		return payload
 	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
+		t.Fatalf("mark integration feedback moderation pending: %v", err)
+	}
+	_, err = delivery.Store.LoadNotification(ctx, DeliveryTask{
+		OutboxEventID: outboxID, TenantID: tenantIDs["acme"],
+		ResourceID: feedbackID, IntegrationID: created.Integration.ID,
+	})
+	if !errors.Is(err, ErrNotReady) {
+		t.Fatalf("pending moderation LoadNotification() error = %v, want ErrNotReady", err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = now() WHERE id = $1`, feedbackID); err != nil {
+		t.Fatalf("complete integration feedback moderation: %v", err)
+	}
 	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, taskPayload(created.Integration.ID))); err != nil {
 		t.Fatalf("deliver webhook: %v", err)
 	}
@@ -299,6 +313,34 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	}
 	if sentCount != 2 || failedCount != 1 {
 		t.Errorf("delivery log counts = sent %d failed %d", sentCount, failedCount)
+	}
+	const unsafeDescription = "The payment step is unclear."
+	const unsafeText = "The checkout is confusing"
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET text_moderation_flags = '{profanity}',
+		       ai_suggested_title = 'Checkout feedback needs review', ai_processed_at = now()
+		WHERE id = $1
+	`, feedbackID); err != nil {
+		t.Fatalf("flag integration feedback: %v", err)
+	}
+	var moderatedOutboxID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key)
+		VALUES ($1, 'feedback.created', 'feedback', $2, 'moderated-test') RETURNING id
+	`, tenantIDs["acme"], feedbackID).Scan(&moderatedOutboxID); err != nil {
+		t.Fatalf("create moderated feedback event: %v", err)
+	}
+	moderatedPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: moderatedOutboxID, TenantID: tenantIDs["acme"],
+		ResourceID: feedbackID, IntegrationID: created.Integration.ID,
+	})
+	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, moderatedPayload)); err != nil {
+		t.Fatalf("deliver moderated webhook: %v", err)
+	}
+	if requestCount != 2 || !strings.Contains(string(deliveredBody), "Checkout feedback needs review") ||
+		!strings.Contains(string(deliveredBody), `"description":"[MODERATED]"`) ||
+		strings.Contains(string(deliveredBody), unsafeDescription) || strings.Contains(string(deliveredBody), unsafeText) {
+		t.Fatalf("moderated webhook requests = %d body = %s", requestCount, deliveredBody)
 	}
 
 	var actorID, updateID, issueOutboxID string
@@ -357,7 +399,7 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, issueTaskPayload(created.Integration.ID))); err != nil {
 		t.Fatalf("deliver rich issue webhook: %v", err)
 	}
-	if requestCount != 2 || !strings.Contains(string(deliveredBody), `"name":"Alex Morgan"`) ||
+	if requestCount != 3 || !strings.Contains(string(deliveredBody), `"name":"Alex Morgan"`) ||
 		!strings.Contains(string(deliveredBody), `"comment":"Investigating payment validation"`) ||
 		!strings.Contains(string(deliveredBody), `"status":{"from":"open","to":"in_progress"}`) ||
 		!strings.Contains(string(deliveredBody), `http://acme.localhost/issues/`+issueID) {

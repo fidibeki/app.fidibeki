@@ -163,6 +163,40 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 	}
 }
 
+func TestModerateNotificationRedactsFlaggedFeedbackAcrossProviders(t *testing.T) {
+	t.Parallel()
+	notification := Notification{
+		ResourceType: "feedback", Title: "unsafe title", Description: "unsafe description",
+		Text: "unsafe text", SuggestedTitle: "Checkout feedback needs review",
+		TextModerationFlags: []string{"profanity"}, AIProcessed: true,
+	}
+	moderateNotification(&notification)
+	if notification.Title != "Checkout feedback needs review" || notification.Description != "[MODERATED]" ||
+		notification.Text != "[MODERATED]" {
+		t.Fatalf("moderated notification = %#v", notification)
+	}
+}
+
+func TestModerateIssueNotificationRedactsDerivedContentAndChanges(t *testing.T) {
+	t.Parallel()
+	notification := Notification{
+		ResourceType: "issue", Title: "unsafe title", Description: "unsafe description",
+		IssueSuggestedTitle: "Checkout feedback needs review",
+		IssueTitleModerated: true, IssueDescriptionModerated: true,
+		IssueModeratedSources: []string{"old unsafe", "unsafe title", "unsafe description"},
+		Changes: map[string]Change{
+			"title":       {From: "old unsafe", To: "unsafe title"},
+			"description": {From: "old unsafe", To: "unsafe description"},
+		},
+	}
+	moderateIssueNotification(&notification)
+	if notification.Title != "Checkout feedback needs review" || notification.Description != "[MODERATED]" ||
+		notification.Changes["title"].To != "[MODERATED]" ||
+		notification.Changes["description"].From != "[MODERATED]" {
+		t.Fatalf("moderated issue notification = %#v", notification)
+	}
+}
+
 func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

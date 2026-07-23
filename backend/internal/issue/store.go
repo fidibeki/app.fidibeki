@@ -10,6 +10,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,14 +21,19 @@ type Store struct {
 }
 
 type feedbackIssueState struct {
-	ID             string
-	ProjectID      string
-	IssueID        *string
-	ReporterEmail  *string
-	NotifyReporter bool
-	Priority       *triage.Priority
-	AIPriority     *triage.Priority
-	AssigneeID     *string
+	ID               string
+	ProjectID        string
+	IssueID          *string
+	ReporterEmail    *string
+	NotifyReporter   bool
+	Priority         *triage.Priority
+	AIPriority       *triage.Priority
+	AssigneeID       *string
+	Description      *string
+	Text             *string
+	TextCleaned      *string
+	AISuggestedTitle *string
+	Moderated        bool
 }
 
 func (Store) List(ctx context.Context, query db.Querier, tenantID string) ([]Issue, error) {
@@ -337,7 +343,9 @@ func (store Store) CreateFromFeedback(
 ) (Issue, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, project_id, issue_id, reporter_email, notify_reporter,
-		       priority, ai_priority, assignee_id
+		       priority, ai_priority, assignee_id, description, text, text_cleaned,
+		       ai_suggested_title,
+		       status = 'spam' OR cardinality(text_moderation_flags) > 0 OR text_process_status = 'failed'
 		FROM feedbacks
 		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
 		ORDER BY id
@@ -352,6 +360,8 @@ func (store Store) CreateFromFeedback(
 		if err := rows.Scan(
 			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
 			&state.NotifyReporter, &state.Priority, &state.AIPriority, &state.AssigneeID,
+			&state.Description, &state.Text, &state.TextCleaned, &state.AISuggestedTitle,
+			&state.Moderated,
 		); err != nil {
 			rows.Close()
 			return Issue{}, fmt.Errorf("scan feedback for issue creation: %w", err)
@@ -365,6 +375,7 @@ func (store Store) CreateFromFeedback(
 	if len(states) != len(input.FeedbackIDs) {
 		return Issue{}, ErrNotFound
 	}
+	moderateIssueInput(&input, states)
 	projectID := states[0].ProjectID
 	for _, state := range states {
 		if state.ProjectID != projectID {
@@ -467,6 +478,66 @@ func (store Store) CreateFromFeedback(
 		return Issue{}, fmt.Errorf("create issue outbox event: %w", err)
 	}
 	return store.Get(ctx, query, tenantID, createdID)
+}
+
+func moderateIssueInput(input *CreateFromFeedbackInput, states []feedbackIssueState) {
+	for _, state := range states {
+		if !state.Moderated {
+			continue
+		}
+		sources := make([]string, 0, 3)
+		for _, value := range []*string{state.Description, state.Text, state.TextCleaned} {
+			if value != nil {
+				sources = append(sources, *value)
+			}
+		}
+		redactedTitle := moderation.RedactCopies(input.Title, sources...)
+		titleDerived := moderation.IsDerived(input.Title, sources...)
+		if !titleDerived {
+			input.Title = redactedTitle
+		} else if state.AISuggestedTitle != nil && strings.TrimSpace(*state.AISuggestedTitle) != "" {
+			input.Title = *state.AISuggestedTitle
+		} else {
+			input.Title = moderation.Placeholder
+		}
+		input.Description = moderation.RedactCopies(input.Description, sources...)
+	}
+}
+
+func (Store) ModeratedFeedbackSources(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	issueID string,
+) ([]string, error) {
+	rows, err := query.Query(ctx, `
+		SELECT DISTINCT source.value
+		FROM feedbacks AS feedback
+		CROSS JOIN LATERAL unnest(ARRAY[
+			feedback.description, feedback.text, feedback.text_cleaned
+		]) AS source(value)
+		WHERE feedback.tenant_id = $1 AND feedback.issue_id = $2
+		  AND (feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+		       OR feedback.text_process_status = 'failed')
+		  AND NULLIF(btrim(source.value), '') IS NOT NULL
+		ORDER BY source.value
+	`, tenantID, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("list moderated feedback sources: %w", err)
+	}
+	defer rows.Close()
+	sources := make([]string, 0)
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, fmt.Errorf("scan moderated feedback source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moderated feedback sources: %w", err)
+	}
+	return sources, nil
 }
 
 func highestFeedbackPriority(states []feedbackIssueState, useAI bool) *triage.Priority {
@@ -955,7 +1026,18 @@ func (store Store) Unmerge(
 }
 
 const issueSelect = `
-	SELECT issue.id, issue.tenant_id, issue.project_id, issue.public_id, issue.title, issue.description,
+	SELECT issue.id, issue.tenant_id, issue.project_id, issue.public_id,
+	       CASE WHEN COALESCE(content_moderation.title_moderated, false) THEN COALESCE((
+	           SELECT feedback.ai_suggested_title
+	           FROM feedbacks AS feedback
+	           WHERE feedback.issue_id = issue.id
+	             AND (feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+	                  OR feedback.text_process_status = 'failed')
+	             AND feedback.ai_suggested_title IS NOT NULL
+	           ORDER BY feedback.created_at, feedback.id LIMIT 1
+	       ), '[MODERATED]') ELSE issue.title END,
+	       CASE WHEN COALESCE(content_moderation.description_moderated, false)
+	            THEN '[MODERATED]' ELSE issue.description END,
 	       issue.status, issue.priority, assignee.id, assignee.name, assignee.email::text,
 	       COALESCE((
 	           SELECT jsonb_agg(
@@ -970,10 +1052,37 @@ const issueSelect = `
 	       issue.merged_into_id, issue.merged_at, issue.reporter_email,
 	       issue.notify_reporter, issue.resolved_at, issue.reporter_access_revoked_at,
 	       (SELECT count(*) FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id),
+	       COALESCE(content_moderation.title_moderated, false)
+	           OR COALESCE(content_moderation.description_moderated, false),
 	       issue.created_at, issue.updated_at
 	FROM issues AS issue
 	LEFT JOIN tenant_members AS assignee
 	  ON assignee.tenant_id = issue.tenant_id AND assignee.id = issue.assignee_id
+	LEFT JOIN LATERAL (
+		SELECT
+			bool_or(
+				(feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+				 OR feedback.text_process_status = 'failed')
+				AND (
+					(NULLIF(feedback.description, '') IS NOT NULL AND strpos(issue.title, feedback.description) > 0)
+					OR (NULLIF(feedback.description, '') IS NOT NULL AND strpos(feedback.description, issue.title) > 0)
+					OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(issue.title, feedback.text) > 0)
+					OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(feedback.text, issue.title) > 0)
+					OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(issue.title, feedback.text_cleaned) > 0)
+					OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(feedback.text_cleaned, issue.title) > 0)
+				)
+			) AS title_moderated,
+			bool_or(
+				(feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+				 OR feedback.text_process_status = 'failed')
+				AND (
+					(NULLIF(feedback.description, '') IS NOT NULL AND strpos(issue.description, feedback.description) > 0)
+					OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(issue.description, feedback.text) > 0)
+					OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(issue.description, feedback.text_cleaned) > 0)
+				)
+			) AS description_moderated
+		FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id
+	) AS content_moderation ON true
 `
 
 type rowScanner interface {
@@ -989,6 +1098,7 @@ func scanIssue(row rowScanner) (Issue, error) {
 		&found.Status, &found.Priority, &assigneeID, &assigneeName, &assigneeEmail, &tagPayload,
 		&found.MergedIntoID, &found.MergedAt, &found.ReporterEmail,
 		&found.NotifyReporter, &found.ResolvedAt, &found.ReporterAccessRevokedAt, &found.FeedbackCount,
+		&found.ContentModerated,
 		&found.CreatedAt, &found.UpdatedAt,
 	); err != nil {
 		return Issue{}, err

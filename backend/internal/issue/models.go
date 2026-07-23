@@ -50,6 +50,7 @@ type Issue struct {
 	ResolvedAt              *time.Time       `json:"resolved_at,omitempty"`
 	ReporterAccessRevokedAt *time.Time       `json:"reporter_access_revoked_at,omitempty"`
 	FeedbackCount           int              `json:"feedback_count"`
+	ContentModerated        bool             `json:"-"`
 	CreatedAt               time.Time        `json:"created_at"`
 	UpdatedAt               time.Time        `json:"updated_at"`
 }

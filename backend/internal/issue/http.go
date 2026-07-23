@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/go-chi/chi/v5"
@@ -242,9 +243,49 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	sources, err := h.options.Store.ModeratedFeedbackSources(
+		r.Context(), query, resolved.ID, issueID,
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	moderateIssueActivities(activities, found, sources)
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"issue": found, "updates": updates, "comments": comments, "activities": activities,
 	})
+}
+
+func moderateIssueActivities(events []activity.Event, found Issue, sources []string) {
+	if len(sources) == 0 {
+		return
+	}
+	for index := range events {
+		if value, exists := events[index].Data["title"].(string); exists &&
+			moderation.IsDerived(value, sources...) {
+			events[index].Data["title"] = found.Title
+		}
+		if value, exists := events[index].Data["description"].(string); exists &&
+			moderation.IsDerived(value, sources...) {
+			events[index].Data["description"] = found.Description
+		}
+		changes, exists := events[index].Data["changes"].(map[string]any)
+		if !exists {
+			continue
+		}
+		for _, field := range []string{"title", "description"} {
+			change, exists := changes[field].(map[string]any)
+			if !exists {
+				continue
+			}
+			for _, side := range []string{"from", "to"} {
+				value, exists := change[side].(string)
+				if exists {
+					change[side] = moderation.RedactDerived(value, sources...)
+				}
+			}
+		}
+	}
 }
 
 func (h *HTTPHandler) createComment(w http.ResponseWriter, r *http.Request) {

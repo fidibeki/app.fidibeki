@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -51,6 +53,45 @@ func TestStatusAndReporterDestination(t *testing.T) {
 	event.Event = "issue.created"
 	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 1 {
 		t.Errorf("Resolve(issue created) = %#v, %v", destinations, err)
+	}
+}
+
+func TestModerateIssueInputOnlyReplacesCopiedReporterContent(t *testing.T) {
+	t.Parallel()
+	raw := "an abusive raw report"
+	cleaned := "cleaned wording"
+	suggested := "Checkout feedback needs review"
+	states := []feedbackIssueState{{
+		Description: &raw, Text: &raw, TextCleaned: &cleaned,
+		AISuggestedTitle: &suggested, Moderated: true,
+	}}
+	copied := CreateFromFeedbackInput{Title: "an abusive", Description: "FB-1: " + raw}
+	moderateIssueInput(&copied, states)
+	if copied.Title != suggested || copied.Description != "FB-1: [MODERATED]" {
+		t.Errorf("copied issue input = %#v", copied)
+	}
+	independent := CreateFromFeedbackInput{Title: "Safe title", Description: "A safe operator summary"}
+	moderateIssueInput(&independent, states)
+	if independent.Title != "Safe title" || independent.Description != "A safe operator summary" {
+		t.Errorf("independent issue input = %#v", independent)
+	}
+}
+
+func TestModerateIssueActivitiesRedactsHistoricalChanges(t *testing.T) {
+	t.Parallel()
+	raw := "an abusive raw report with more detail"
+	events := []activity.Event{{Data: map[string]any{
+		"changes": map[string]any{
+			"title":       map[string]any{"from": "an abusive raw report", "to": "Safe title"},
+			"description": map[string]any{"from": "FB-1: " + raw, "to": "Safe summary"},
+		},
+	}}}
+	moderateIssueActivities(events, Issue{}, []string{raw})
+	changes := events[0].Data["changes"].(map[string]any)
+	if changes["title"].(map[string]any)["from"] != moderation.Placeholder ||
+		changes["description"].(map[string]any)["from"] != "FB-1: "+moderation.Placeholder ||
+		changes["title"].(map[string]any)["to"] != "Safe title" {
+		t.Fatalf("moderated activity changes = %#v", changes)
 	}
 }
 

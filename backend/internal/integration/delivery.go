@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
+	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -59,6 +60,11 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		       COALESCE(feedback.title, issue.title, ''),
 		       COALESCE(feedback.description, issue.description, ''),
 		       COALESCE(feedback.text, ''),
+		       COALESCE(feedback.ai_suggested_title, ''),
+		       COALESCE(feedback.status::text, ''),
+		       COALESCE(feedback.text_process_status::text, ''),
+		       COALESCE(feedback.text_moderation_flags, '{}'::text[]),
+		       feedback.ai_processed_at IS NOT NULL,
 		       COALESCE(feedback.page_url, primary_feedback.page_url, ''),
 		       COALESCE(feedback.rating, primary_feedback.rating),
 		       COALESCE(feedback_issue.id::text, issue.id::text, ''),
@@ -81,7 +87,25 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		       COALESCE(issue_activity.kind, ''),
 		       actor.id::text, actor.name, actor.email::text,
 		       evidence.attachment_count, evidence.attachment_kinds,
-		       evidence.attachment_feedback_id
+		       evidence.attachment_feedback_id,
+		       COALESCE(issue_moderation.title_moderated, false),
+		       COALESCE(issue_moderation.description_moderated, false),
+		       COALESCE(issue_moderation.suggested_title, ''),
+		       ARRAY(
+		           SELECT DISTINCT source.value
+		           FROM feedbacks AS moderated_feedback
+		           CROSS JOIN LATERAL unnest(ARRAY[
+		               moderated_feedback.description,
+		               moderated_feedback.text,
+		               moderated_feedback.text_cleaned
+		           ]) AS source(value)
+		           WHERE moderated_feedback.issue_id = issue.id
+		             AND (moderated_feedback.status = 'spam'
+		                  OR cardinality(moderated_feedback.text_moderation_flags) > 0
+		                  OR moderated_feedback.text_process_status = 'failed')
+		             AND NULLIF(btrim(source.value), '') IS NOT NULL
+		           ORDER BY source.value
+		       )
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN integrations AS integration
@@ -108,6 +132,33 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 			ORDER BY linked.created_at, linked.id
 			LIMIT 1
 		) AS primary_feedback ON event.resource_type = 'issue'
+		LEFT JOIN LATERAL (
+			SELECT
+				bool_or(
+					(feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+					 OR feedback.text_process_status = 'failed')
+					AND (
+						(NULLIF(feedback.description, '') IS NOT NULL AND strpos(issue.title, feedback.description) > 0)
+						OR (NULLIF(feedback.description, '') IS NOT NULL AND strpos(feedback.description, issue.title) > 0)
+						OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(issue.title, feedback.text) > 0)
+						OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(feedback.text, issue.title) > 0)
+						OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(issue.title, feedback.text_cleaned) > 0)
+						OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(feedback.text_cleaned, issue.title) > 0)
+					)
+				) AS title_moderated,
+				bool_or(
+					(feedback.status = 'spam' OR cardinality(feedback.text_moderation_flags) > 0
+					 OR feedback.text_process_status = 'failed')
+					AND (
+						(NULLIF(feedback.description, '') IS NOT NULL AND strpos(issue.description, feedback.description) > 0)
+						OR (NULLIF(feedback.text, '') IS NOT NULL AND strpos(issue.description, feedback.text) > 0)
+						OR (NULLIF(feedback.text_cleaned, '') IS NOT NULL AND strpos(issue.description, feedback.text_cleaned) > 0)
+					)
+				) AS description_moderated,
+				(ARRAY_AGG(feedback.ai_suggested_title ORDER BY feedback.created_at, feedback.id)
+				 FILTER (WHERE feedback.ai_suggested_title IS NOT NULL))[1] AS suggested_title
+			FROM feedbacks AS feedback WHERE feedback.issue_id = issue.id
+		) AS issue_moderation ON event.resource_type = 'issue'
 		LEFT JOIN LATERAL (
 			SELECT activity.kind, activity.actor_member_id, activity.data
 			FROM issue_activities AS activity
@@ -148,7 +199,10 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		&notification.WebhookURL, &channel, &headersCiphertext, &secretCiphertext,
 		&notification.Event, &notification.ResourceType, &notification.ResourceID,
 		&notification.OccurredAt, &notification.PublicID, &notification.Title,
-		&notification.Description, &notification.Text, &notification.PageURL, &notification.Rating,
+		&notification.Description, &notification.Text, &notification.SuggestedTitle,
+		&notification.FeedbackStatus, &notification.TextProcessStatus,
+		&notification.TextModerationFlags, &notification.AIProcessed,
+		&notification.PageURL, &notification.Rating,
 		&notification.IssueID, &notification.IssuePublicID, &notification.IssueStatus,
 		&notification.OldStatus, &notification.NewStatus,
 		&notification.ProjectID, &notification.ProjectName, &notification.FeedbackID,
@@ -157,6 +211,8 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		&actorID, &actorName, &actorEmail,
 		&notification.AttachmentCount, &notification.AttachmentKinds,
 		&notification.AttachmentFeedbackID,
+		&notification.IssueTitleModerated, &notification.IssueDescriptionModerated,
+		&notification.IssueSuggestedTitle, &notification.IssueModeratedSources,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Notification{}, ErrNotFound
@@ -211,7 +267,68 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	if !supportedEvent(notification.Event, notification.ResourceType) || notification.PublicID == "" {
 		return Notification{}, ErrNotFound
 	}
+	if notification.ResourceType == "feedback" {
+		if !notification.AIProcessed && notification.FeedbackStatus != "spam" {
+			return Notification{}, ErrNotReady
+		}
+		moderateNotification(&notification)
+	} else if notification.ResourceType == "issue" {
+		moderateIssueNotification(&notification)
+	}
 	return notification, nil
+}
+
+func moderateIssueNotification(notification *Notification) {
+	if notification.IssueTitleModerated {
+		if strings.TrimSpace(notification.IssueSuggestedTitle) != "" {
+			notification.Title = notification.IssueSuggestedTitle
+		} else {
+			notification.Title = moderation.Placeholder
+		}
+		if change, exists := notification.Changes["title"]; exists {
+			change.From, change.To = moderation.Placeholder, moderation.Placeholder
+			notification.Changes["title"] = change
+		}
+	}
+	if notification.IssueDescriptionModerated {
+		notification.Description = moderation.Placeholder
+		if change, exists := notification.Changes["description"]; exists {
+			change.From, change.To = moderation.Placeholder, moderation.Placeholder
+			notification.Changes["description"] = change
+		}
+	}
+	for _, field := range []string{"title", "description"} {
+		change, exists := notification.Changes[field]
+		if !exists {
+			continue
+		}
+		change.From = redactIssueChangeValue(change.From, notification.IssueModeratedSources)
+		change.To = redactIssueChangeValue(change.To, notification.IssueModeratedSources)
+		notification.Changes[field] = change
+	}
+}
+
+func redactIssueChangeValue(value any, sources []string) any {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	return moderation.RedactDerived(text, sources...)
+}
+
+func moderateNotification(notification *Notification) {
+	if notification.ResourceType != "feedback" ||
+		(notification.FeedbackStatus != "spam" && notification.TextProcessStatus != "failed" &&
+			len(notification.TextModerationFlags) == 0) {
+		return
+	}
+	if strings.TrimSpace(notification.SuggestedTitle) != "" {
+		notification.Title = notification.SuggestedTitle
+	} else {
+		notification.Title = moderation.Placeholder
+	}
+	notification.Description = moderation.Placeholder
+	notification.Text = moderation.Placeholder
 }
 
 func (s Store) StartDeliveryAttempt(
