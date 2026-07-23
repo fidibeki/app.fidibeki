@@ -552,9 +552,10 @@ func notificationCopy(notification Notification) (string, string) {
 		return headline, detail
 	}
 	headline := "Issue " + notification.PublicID + " updated"
-	if notification.Event == EventIssueCreated {
+	switch notification.Event {
+	case EventIssueCreated:
 		headline = "New issue " + notification.PublicID
-	} else if notification.Event == EventIssueResolved {
+	case EventIssueResolved:
 		headline = "Issue " + notification.PublicID + " resolved"
 	}
 	detail := notification.Title

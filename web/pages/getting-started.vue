@@ -104,7 +104,12 @@ async function createRule() {
   try {
     await $apiFetch<{ widget_rule: WidgetRule }>(`/v1/projects/${project.value.id}/widget-rules`, {
       method: 'POST',
-      body: { ...defaultWidgetRule(), ...buildTargetingPayload(targetingState.value) },
+      body: {
+        ...defaultWidgetRule(),
+        enabled: true,
+        definition_status: 'active',
+        ...buildTargetingPayload(targetingState.value),
+      },
     })
     stage.value = 'install'
     startPolling()
