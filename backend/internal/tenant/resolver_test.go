@@ -19,19 +19,35 @@ func TestPostgresResolverResolve(t *testing.T) {
 	deletionRequestedAt := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	querier := &resolverQuerier{
 		row: resolverRow{scan: func(destinations ...any) error {
-			if len(destinations) != 9 {
+			if len(destinations) != 17 {
 				return errors.New("unexpected destination count")
 			}
 			*destinations[0].(*string) = "0762af3d-01b4-452f-81ad-dabf7652395f"
 			*destinations[1].(*string) = "Acme"
-			*destinations[2].(*string) = "acme"
-			*destinations[3].(*string) = string(PlanGrowth)
-			*destinations[4].(*string) = string(StatusTrial)
-			*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: trialEndsAt, Valid: true}
-			*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: deletionRequestedAt, Valid: true}
-			*destinations[7].(*bool) = true
+			shortName := "ACME"
+			websiteURL := "https://acme.test"
+			supportEmail := "support@acme.test"
+			defaultLocale := "pt-AO"
+			defaultTimezone := "Africa/Luanda"
+			privacyURL := "https://acme.test/privacy"
+			termsURL := "https://acme.test/terms"
+			logoVersion := "b6988409-e11f-4330-808f-e79e05fb160d"
+			*destinations[2].(**string) = &shortName
+			*destinations[3].(*string) = "acme"
+			*destinations[4].(*string) = string(PlanGrowth)
+			*destinations[5].(*string) = string(StatusTrial)
+			*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: trialEndsAt, Valid: true}
+			*destinations[7].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: deletionRequestedAt, Valid: true}
+			*destinations[8].(*bool) = true
 			accent := "#005f56"
-			*destinations[8].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{AccentColor: &accent}
+			*destinations[9].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{AccentColor: &accent}
+			*destinations[10].(**string) = &websiteURL
+			*destinations[11].(**string) = &supportEmail
+			*destinations[12].(**string) = &defaultLocale
+			*destinations[13].(**string) = &defaultTimezone
+			*destinations[14].(**string) = &privacyURL
+			*destinations[15].(**string) = &termsURL
+			*destinations[16].(**string) = &logoVersion
 			return nil
 		}},
 	}
@@ -61,6 +77,16 @@ func TestPostgresResolverResolve(t *testing.T) {
 	if resolved.WidgetAppearanceDefaults.AccentColor == nil || *resolved.WidgetAppearanceDefaults.AccentColor != "#005f56" {
 		t.Errorf("WidgetAppearanceDefaults = %#v", resolved.WidgetAppearanceDefaults)
 	}
+	if resolved.ShortName == nil || *resolved.ShortName != "ACME" ||
+		resolved.WebsiteURL == nil || *resolved.WebsiteURL != "https://acme.test" ||
+		resolved.SupportEmail == nil || *resolved.SupportEmail != "support@acme.test" ||
+		resolved.DefaultLocale == nil || *resolved.DefaultLocale != "pt-AO" ||
+		resolved.DefaultTimezone == nil || *resolved.DefaultTimezone != "Africa/Luanda" ||
+		resolved.PrivacyPolicyURL == nil || *resolved.PrivacyPolicyURL != "https://acme.test/privacy" ||
+		resolved.TermsURL == nil || *resolved.TermsURL != "https://acme.test/terms" ||
+		resolved.LogoVersion == nil || *resolved.LogoVersion != "b6988409-e11f-4330-808f-e79e05fb160d" {
+		t.Errorf("resolved tenant profile = %#v", resolved)
+	}
 }
 
 func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
@@ -69,13 +95,17 @@ func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
 	querier := &resolverQuerier{row: resolverRow{scan: func(destinations ...any) error {
 		*destinations[0].(*string) = "tenant-id"
 		*destinations[1].(*string) = "Acme"
-		*destinations[2].(*string) = "acme"
-		*destinations[3].(*string) = string(PlanStarter)
-		*destinations[4].(*string) = string(StatusActive)
-		*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+		*destinations[2].(**string) = nil
+		*destinations[3].(*string) = "acme"
+		*destinations[4].(*string) = string(PlanStarter)
+		*destinations[5].(*string) = string(StatusActive)
 		*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
-		*destinations[7].(*bool) = true
-		*destinations[8].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{}
+		*destinations[7].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+		*destinations[8].(*bool) = true
+		*destinations[9].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{}
+		for index := 10; index < 17; index++ {
+			*destinations[index].(**string) = nil
+		}
 		return nil
 	}}}
 

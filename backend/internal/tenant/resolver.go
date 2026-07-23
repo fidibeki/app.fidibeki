@@ -24,13 +24,15 @@ func (r PostgresResolver) Resolve(ctx context.Context, slug string) (Tenant, err
 	var trialEndsAt pgtype.Timestamptz
 	var deletionRequestedAt pgtype.Timestamptz
 	err := r.Admin.QueryRow(ctx, `
-		SELECT id, name, slug, plan, status, trial_ends_at, deletion_requested_at,
-		       reporter_access_enabled, widget_appearance_defaults
+		SELECT id, name, short_name, slug, plan, status, trial_ends_at, deletion_requested_at,
+		       reporter_access_enabled, widget_appearance_defaults, website_url, support_email,
+		       default_locale, default_timezone, privacy_policy_url, terms_url, logo_version
 		FROM tenants
 		WHERE slug = $1
 	`, slug).Scan(
 		&resolved.ID,
 		&resolved.Name,
+		&resolved.ShortName,
 		&resolved.Slug,
 		&plan,
 		&status,
@@ -38,6 +40,13 @@ func (r PostgresResolver) Resolve(ctx context.Context, slug string) (Tenant, err
 		&deletionRequestedAt,
 		&resolved.ReporterAccessEnabled,
 		&resolved.WidgetAppearanceDefaults,
+		&resolved.WebsiteURL,
+		&resolved.SupportEmail,
+		&resolved.DefaultLocale,
+		&resolved.DefaultTimezone,
+		&resolved.PrivacyPolicyURL,
+		&resolved.TermsURL,
+		&resolved.LogoVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tenant{}, ErrUnknownTenant

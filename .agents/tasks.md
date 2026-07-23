@@ -220,7 +220,7 @@ screenshots, CI, and one staging journey all pass for the same commit.
 ## Task 14: Forward-Compatible Profile Schema
 
 **Depends on:** Task 13
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Tenant and member records hold organization profile and versioned identity metadata.
 
@@ -232,7 +232,7 @@ rollback.
 ## Task 15: Organization Profile Contract And Inheritance
 
 **Depends on:** Task 14
-**Status:** Pending
+**Status:** In progress
 
 **Outcome:** Authorized administrators update organization defaults with audit, and existing project
 and widget overrides remain effective.

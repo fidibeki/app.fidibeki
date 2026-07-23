@@ -31,6 +31,7 @@ const (
 type Tenant struct {
 	ID                       string
 	Name                     string
+	ShortName                *string
 	Slug                     string
 	Plan                     Plan
 	Status                   Status
@@ -38,6 +39,13 @@ type Tenant struct {
 	DeletionRequestedAt      *time.Time
 	ReporterAccessEnabled    bool
 	WidgetAppearanceDefaults widgetconfig.AppearanceOverrides
+	WebsiteURL               *string
+	SupportEmail             *string
+	DefaultLocale            *string
+	DefaultTimezone          *string
+	PrivacyPolicyURL         *string
+	TermsURL                 *string
+	LogoVersion              *string
 }
 
 type Resolver interface {
