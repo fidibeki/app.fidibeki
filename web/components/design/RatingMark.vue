@@ -12,7 +12,7 @@ const visibleValue = computed(() => hasRating.value
 </script>
 
 <template>
-  <span class="rating-mark" :class="[hasRating ? `rating-${rating}` : null, { 'rating-mark--compact': compact }]" :title="label">
+  <span class="rating-mark" :class="[hasRating ? `rating-${rating}` : 'rating-mark--empty', { 'rating-mark--compact': compact }]" :title="label">
     <span aria-hidden="true">{{ visibleValue }}</span>
     <span v-if="hasRating && !compact" class="rating-label">/ 5</span>
     <span class="sr-only">{{ label }}</span>
@@ -39,6 +39,7 @@ const visibleValue = computed(() => hasRating.value
 }
 
 .rating-mark--compact { min-width: 36px; }
+.rating-mark--empty { color: var(--muted); font-size: 10px; font-weight: 700; }
 
 .rating-label {
   color: var(--muted);

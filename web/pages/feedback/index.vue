@@ -507,7 +507,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
         <article v-for="item in items" :key="item.id" role="listitem" :data-selected="selected?.id === item.id" @click="selectItem(item)">
           <label v-if="canWrite('feedback:update')" class="feedback-row-check" @click.stop><input type="checkbox" :checked="selectedIds.includes(item.id)" :aria-label="t('feedback.actions.select', { feedback: item.public_id })" @change="toggleSelected(item.id)" /></label>
           <span v-else class="feedback-row-check" aria-hidden="true" />
-          <RatingMark v-if="item.rating" :rating="item.rating" compact /><span v-else class="feedback-no-rating">—</span>
+          <RatingMark :rating="item.rating" compact />
           <div class="feedback-row-copy"><strong>{{ copy(item) }}</strong><span>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</span></div>
           <div class="feedback-triage-markers">
             <span v-if="item.priority" class="feedback-priority-mark" :data-priority="item.priority">{{ priorityLabel(item.priority) }}</span>
@@ -529,7 +529,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 
     <aside v-if="selected" class="feedback-inspector">
       <header><div><span class="app-eyebrow">{{ selected.project_name }}</span><h2>{{ selected.public_id }}</h2></div><div><button :title="t('feedback.actions.previous')" :aria-label="t('feedback.actions.previous')" @click="moveSelection(-1)"><ChevronLeft :size="16" /></button><button :title="t('feedback.actions.next')" :aria-label="t('feedback.actions.next')" @click="moveSelection(1)"><ChevronRight :size="16" /></button><NuxtLink :to="`/feedback/${selected.id}`" :title="t('feedback.actions.openDetail')" :aria-label="t('feedback.actions.openDetail')"><ExternalLink :size="16" /></NuxtLink></div></header>
-      <div class="feedback-inspector-summary"><RatingMark v-if="selected.rating" :rating="selected.rating" /><span v-else class="feedback-no-rating">{{ t('feedback.common.noRating') }}</span><div><b>{{ selected.page_url }}</b><span>{{ formatAge(selected.created_at) }} · {{ selected.browser || t('feedback.common.unknownBrowser') }}</span></div><span class="status-pill" :class="`status-${selected.status}`">{{ statusLabel(selected.status) }}</span></div>
+      <div class="feedback-inspector-summary"><RatingMark :rating="selected.rating" /><div><b>{{ selected.page_url }}</b><span>{{ formatAge(selected.created_at) }} · {{ selected.browser || t('feedback.common.unknownBrowser') }}</span></div><span class="status-pill" :class="`status-${selected.status}`">{{ statusLabel(selected.status) }}</span></div>
       <nav :aria-label="t('feedback.inspector.sections')"><button :data-active="inspectorTab === 'feedback'" @click="inspectorTab = 'feedback'">{{ t('feedback.inspector.feedback') }}</button><button :data-active="inspectorTab === 'evidence'" @click="inspectorTab = 'evidence'">{{ t('feedback.inspector.evidence') }}</button><button :data-active="inspectorTab === 'replay'" @click="inspectorTab = 'replay'">{{ t('feedback.inspector.replay') }}</button></nav>
       <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body">
         <p class="feedback-quote">{{ selected.description || selected.text || t('feedback.common.noWrittenFeedback') }}</p>
@@ -623,7 +623,6 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-stream article > .muted { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-stream article > .status-pill { justify-self: start; overflow: visible; text-overflow: clip; }
 .feedback-stream time { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
-.feedback-no-rating { display: inline-grid; min-width: 34px; height: 28px; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
 .feedback-mobile-open { display: grid; width: 26px; height: 30px; place-items: center; color: var(--muted); border-radius: 4px; }
 .feedback-load-more { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: 7px; background: #f9fbfa; color: var(--teal); border: 0; border-top: 1px solid var(--line); font-size: 11px; font-weight: 750; }
 .feedback-load-more svg { animation: app-spin 700ms linear infinite; }

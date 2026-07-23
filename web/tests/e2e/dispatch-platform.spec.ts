@@ -1400,9 +1400,23 @@ test('dashboard distinguishes unrated feedback from a zero rating', async ({ pag
   const ratedRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1048' })
   const unratedRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1047' })
   await expect(ratedRow.getByTitle('2 out of 5')).toBeVisible()
-  await expect(unratedRow.getByTitle('Not rated')).toBeVisible()
+  await expect(unratedRow.getByTitle('Unrated')).toBeVisible()
   await expect(unratedRow.locator('.rating-mark > [aria-hidden="true"]')).toHaveText('—')
   await expect(page.getByTitle('0 out of 5')).toHaveCount(0)
+
+  await openPrimary(page, 'Feedback')
+  const inboxRow = page.locator('.feedback-stream article').filter({ hasText: 'FB-1047' })
+  await expect(inboxRow.getByTitle('Unrated')).toBeVisible()
+  if (testInfo.project.name === 'mobile') {
+    await inboxRow.locator('.feedback-mobile-open').click()
+  } else {
+    await inboxRow.click()
+    await expect(page.locator('.feedback-inspector-summary').getByTitle('Unrated')).toBeVisible()
+    await page.locator('.feedback-inspector').getByTitle('Open full detail').click()
+  }
+  await expect(page).toHaveURL(/\/feedback\/feedback-2$/)
+  await expect(page.locator('.feedback-detail-heading').getByTitle('Unrated')).toBeVisible()
+  await expectNoPageOverflow(page)
   await capture(page, testInfo, 'dispatch-dashboard-unrated')
 })
 
@@ -2829,6 +2843,29 @@ test('member notifications open the related issue and become read', async ({ pag
   expect(state.memberNotifications[0].read_at).toBe(now)
 })
 
+test('notification empty state shares one centered alignment axis', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Notifications')
+
+  const empty = page.locator('.notifications-empty')
+  await expect(empty.getByRole('heading', { name: 'No notifications' })).toBeVisible()
+  const geometry = await empty.evaluate((element) => {
+    const icon = element.querySelector('svg')!.getBoundingClientRect()
+    const heading = element.querySelector('h2')!.getBoundingClientRect()
+    const copy = element.querySelector('p')!.getBoundingClientRect()
+    return {
+      iconCenter: icon.left + icon.width / 2,
+      headingCenter: heading.left + heading.width / 2,
+      copyCenter: copy.left + copy.width / 2,
+    }
+  })
+  expect(Math.abs(geometry.iconCenter - geometry.headingCenter)).toBeLessThanOrEqual(1)
+  expect(Math.abs(geometry.iconCenter - geometry.copyCenter)).toBeLessThanOrEqual(1)
+  await expectNoPageOverflow(page)
+  await capture(page, testInfo, `notifications-empty-${testInfo.project.name}`)
+})
+
 test('issue status can change without nesting the control inside its detail link', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)
@@ -3028,6 +3065,27 @@ test('data privacy controls cover retention, exports, reporter verification, and
   const confirmButton = dialog.getByRole('button', { name: 'Send anonymization request' })
   await expect(confirmButton).toBeDisabled()
   await dialog.getByLabel(/Type remove\.me@example\.test to confirm/).fill('remove.me@example.test')
+  await confirmButton.hover()
+  const contrast = await confirmButton.evaluate((element) => {
+    function luminance(color: string) {
+      const channels = color.match(/\d+/g)!.slice(0, 3).map(Number).map((value) => {
+        const normalized = value / 255
+        return normalized <= 0.04045
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4
+      })
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+    }
+    const style = getComputedStyle(element)
+    const foreground = luminance(style.color)
+    const background = luminance(style.backgroundColor)
+    return {
+      background: style.backgroundColor,
+      ratio: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05),
+    }
+  })
+  expect(contrast.background).not.toBe('rgb(247, 250, 249)')
+  expect(contrast.ratio).toBeGreaterThanOrEqual(4.5)
   await confirmButton.click()
   await expect(dialog).not.toBeVisible()
   expect(state.privacyRequests[0].action).toBe('anonymize')
@@ -3201,7 +3259,22 @@ test('settings identifies and transfers workspace ownership', async ({ page }, t
   await page.getByRole('link', { name: 'Members' }).click()
 
   const currentOwner = page.locator('.settings-row').filter({ hasText: 'alex@acme.test' })
-  await expect(currentOwner.getByText('Owner', { exact: true })).toBeVisible()
+  const ownerBadge = currentOwner.getByText('Owner', { exact: true })
+  await expect(ownerBadge).toBeVisible()
+  const ownerGeometry = await ownerBadge.evaluate((element) => {
+    const box = element.getBoundingClientRect()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const text = range.getBoundingClientRect()
+    return {
+      horizontalOffset: Math.abs((box.left + box.width / 2) - (text.left + text.width / 2)),
+      verticalOffset: Math.abs((box.top + box.height / 2) - (text.top + text.height / 2)),
+      lineHeight: getComputedStyle(element).lineHeight,
+    }
+  })
+  expect(ownerGeometry.horizontalOffset).toBeLessThanOrEqual(1)
+  expect(ownerGeometry.verticalOffset).toBeLessThanOrEqual(1)
+  expect(ownerGeometry.lineHeight).not.toBe('normal')
   await currentOwner.getByTitle('Transfer ownership').click()
 
   const dialog = page.getByRole('dialog', { name: 'Transfer ownership' })

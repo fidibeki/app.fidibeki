@@ -28,6 +28,7 @@ import type {
 } from '~/types/api'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
 import { cleanAppearanceOverrides, resolveWidgetAppearance } from '~/utils/widget-appearance'
+import { cloneReactive } from '~/utils/reactive-clone'
 import {
   buildTargetingPayload,
   targetingErrorCatalogKey,
@@ -160,7 +161,7 @@ function selectRule(rule: WidgetRule) {
   targetingDiagnostic.value = null
   showTargetingErrors.value = false
   const locale = data.value?.project.default_locale || 'en'
-  const localizations = structuredClone(toRaw(rule.localizations || {}))
+  const localizations = cloneReactive(rule.localizations || {})
   const localized = localizations[locale] || fallbackLocalization(rule.greeting || 'How was your experience?')
   localizations[locale] = localized
   const legacyAppearance: WidgetAppearanceOverrides = {

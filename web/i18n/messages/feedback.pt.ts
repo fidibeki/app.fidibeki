@@ -274,7 +274,7 @@ export const feedbackMessages = {
   },
   rating: {
     value: '{rating} de 5',
-    notRated: 'Sem rating',
+    notRated: 'Sem nota',
   },
   notices: {
     bulkArchived: '1 feedback arquivado. | {count} feedbacks arquivados.',

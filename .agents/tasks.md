@@ -547,13 +547,19 @@ pass.
 ## Task 32: Validate Completed Configuration Refresh Fix
 
 **Depends on:** Task 30
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** Confirm issue #44 is fully covered by the existing raw-clone hydration fix, including
 saved rule values and hard refresh, then close it only if the focused regression passes.
 
 **Acceptance:** Existing configuration hydrates every persisted field, a hard refresh does not
 throw a clone error, focused unit/browser coverage passes, and the GitHub issue records the evidence.
+
+**Evidence:** Rule hydration now routes reactive API data through `cloneReactive`, which unwraps
+the Vue proxy before structured cloning. A focused unit regression clones the complete nested
+localization shape from a real reactive proxy, while the localized desktop/mobile editor journey
+verifies persisted identity, targeting, content, and capture values. Unit (104), typecheck, build,
+and focused browser gates pass; real staging refresh remains part of the deferred staging gate.
 
 **Autonomy:** AFK
 
@@ -587,12 +593,17 @@ supported-browser E2E pass.
 ## Task 35: Complete Focused Visual Regressions
 
 **Depends on:** Task 30
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Complete issues #38, #45, #47, and #48 without changing operational behavior.
 
 **Acceptance:** Owner badge, notification empty state, unrated feedback metadata, and destructive
 hover states remain aligned, legible, accessible, and stable across responsive viewports.
+
+**Evidence:** Issues #38, #45, #47, and #48 now share explicit stable geometry, centered empty-state
+layout, one localized non-interactive rating badge across dashboard/inbox/detail, and a destructive
+hover color whose computed contrast remains at least 4.5:1. Geometry, contrast, overflow, localized
+labels, and responsive screenshots pass on desktop and mobile.
 
 **Autonomy:** AFK
 

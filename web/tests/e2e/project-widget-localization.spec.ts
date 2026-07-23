@@ -304,6 +304,13 @@ test('Portuguese project and widget rule editor preserve customer content and ex
   const statusSelect = page.getByLabel('Estado do ciclo de vida')
   await expect(statusSelect).toHaveValue('active')
   await expect(statusSelect.locator('option[value="active"]')).toHaveText('Ativa')
+  await expect(page.getByLabel('Nome', { exact: true })).toHaveValue('Promoção de Saída')
+  await expect(page.getByLabel('Valor de inclusão 1')).toHaveValue('https://loja.ao/checkout')
+  await expect(page.getByRole('textbox', { name: 'Pergunta', exact: true }))
+    .toHaveValue('Como foi a sua experiência de compra?')
+  await expect(page.getByRole('checkbox', { name: /^Áudio/ })).not.toBeChecked()
+  await expect(page.getByRole('checkbox', { name: /^Captura de ecrã/ })).not.toBeChecked()
+
   await statusSelect.selectOption({ label: 'Rascunho' })
 
   const newPrompt = 'Adorou a compra? Conte-nos em 10 segundos.'

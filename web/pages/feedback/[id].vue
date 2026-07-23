@@ -234,7 +234,7 @@ useHead(() => ({
     <template v-else-if="feedback">
       <section class="feedback-detail-heading">
         <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" :aria-label="t('feedback.detail.titleLabel')" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">{{ t('feedback.actions.save') }}</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">{{ t('feedback.actions.cancel') }}</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" :title="t('feedback.actions.editTitle')" :aria-label="t('feedback.actions.editTitle')" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
-        <RatingMark v-if="feedback.rating" :rating="feedback.rating" /><span v-else class="feedback-detail-no-rating">{{ t('feedback.common.noRating') }}</span>
+        <RatingMark :rating="feedback.rating" />
       </section>
 
       <p v-if="mutationError" class="feedback-detail-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
@@ -324,7 +324,6 @@ useHead(() => ({
 .feedback-title-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; margin: 7px 0 8px; }
 .feedback-description { max-width: 760px; margin: 0 0 9px; color: var(--ink-soft); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .feedback-detail-heading > div > span { color: var(--muted); font-size: 10px; }
-.feedback-detail-no-rating { padding: 7px 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; font-size: 10px; }
 .feedback-detail-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px clamp(16px, 3vw, 38px); background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-detail-tabs { display: flex; min-height: 46px; padding: 0 clamp(16px, 3vw, 38px); background: #fff; border-bottom: 1px solid var(--line); }
 .feedback-detail-tabs button { padding: 0 14px; background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; font-size: 11px; font-weight: 750; }

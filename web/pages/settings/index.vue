@@ -767,7 +767,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-identity > span { min-width: 0; }
 .settings-member-access { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
 .settings-member-access small { margin: 0; }
-.settings-owner-label { display: inline-flex; min-height: 21px; align-items: center; padding: 0 7px; background: var(--teal-soft); color: var(--teal); border-radius: 4px; font-size: 9px; text-transform: uppercase; }
+.settings-member-access > b.settings-owner-label { display: inline-flex; height: 21px; align-items: center; justify-content: center; padding: 0 7px; background: var(--teal-soft); color: var(--teal); border-radius: 4px; font-size: 9px; line-height: 1; text-transform: uppercase; }
 .settings-member-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .settings-danger-icon { color: var(--red); }
 .settings-empty { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 8px; color: var(--muted); }

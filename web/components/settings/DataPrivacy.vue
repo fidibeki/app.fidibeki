@@ -302,6 +302,7 @@ async function createReporterRequest() {
 .privacy-request-form label, .privacy-dialog label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .privacy-request-form .app-button { white-space: nowrap; }
 .privacy-danger-button { background: var(--red); color: #fff; border-color: var(--red); }
+.privacy-danger-button:hover:not(:disabled) { background: #962f3a; color: #fff; border-color: #962f3a; }
 .privacy-review-note { display: flex; min-height: 42px; align-items: center; gap: 8px; margin: 0; padding: 8px 15px; background: #fff9e9; color: #765d1d; border-top: 1px solid #eadcad; font-size: 9px; line-height: 1.5; }
 .privacy-empty { display: grid; min-height: 190px; place-items: center; align-content: center; gap: 7px; padding: 20px; color: var(--muted); text-align: center; }
 .privacy-empty--compact { min-height: 130px; }

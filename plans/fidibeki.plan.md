@@ -442,9 +442,17 @@ was removed from the staging test tenant.
     - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
       gates, CI, and real staging validation.
       The local gate is complete: source coverage, EN/PT parity, interpolation preservation,
-      generated `en-XA`, unit (103), typecheck, build, and 18 integrated responsive browser journeys
+      generated `en-XA`, unit (104), typecheck, build, and 18 integrated responsive browser journeys
       pass. CI and real staging validation remain pending because deployment work is not currently
       authorized unless it directly blocks staging use.
+  - [x] Complete focused follow-up issues #38, #44, #45, #47, and #48.
+    - Reactive widget-rule localization data is unwrapped before cloning and covered with a real
+      Vue Proxy regression; desktop/mobile editor coverage verifies persisted configuration.
+    - Owner badges and notification empty states use explicit centered geometry. Unrated feedback
+      uses one compact localized metadata badge across dashboard, inbox, inspector, and detail.
+      Destructive privacy actions retain a computed WCAG-AA hover contrast.
+    - Unit (104), typecheck, build, focused responsive E2E, overflow assertions, and inspected
+      screenshots pass locally. Staging refresh verification remains deferred with the staging gate.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

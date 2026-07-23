@@ -52,7 +52,7 @@ useHead(() => ({ title: t('notifications.pageTitle') }))
     <p v-if="mutationError" class="notifications-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
     <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>{{ t('notifications.loading') }}</h2></div></section>
     <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('notifications.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'notifications.loadFailed') }}</p></div></section>
-    <section v-else-if="!data?.notifications.length" class="app-surface app-state"><div><Bell :size="24" /><h2>{{ t('notifications.emptyTitle') }}</h2><p>{{ t('notifications.emptyDescription') }}</p></div></section>
+    <section v-else-if="!data?.notifications.length" class="app-surface app-state notifications-empty"><div><Bell :size="24" /><h2>{{ t('notifications.emptyTitle') }}</h2><p>{{ t('notifications.emptyDescription') }}</p></div></section>
     <section v-else class="app-surface notifications-list" :aria-label="t('notifications.listLabel')">
       <header><span>{{ t('notifications.columns.activity') }}</span><span>{{ t('notifications.columns.issue') }}</span><span>{{ t('notifications.columns.received') }}</span><span /></header>
       <button v-for="notification in data.notifications" :key="notification.id" type="button" :data-unread="!notification.read_at" :disabled="Boolean(pendingID)" @click="openNotification(notification)">
@@ -67,6 +67,8 @@ useHead(() => ({ title: t('notifications.pageTitle') }))
 
 <style scoped>
 .notifications-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 5px; font-size: 11px; }
+.notifications-empty > div { display: grid; max-width: 420px; justify-items: center; gap: 8px; }
+.notifications-empty h2, .notifications-empty p { margin: 0; }
 .notifications-list { overflow: hidden; }
 .notifications-list > header,
 .notifications-list > button { display: grid; grid-template-columns: minmax(260px, 1.5fr) minmax(190px, 1fr) 150px 24px; align-items: center; gap: 16px; padding: 0 16px; }
