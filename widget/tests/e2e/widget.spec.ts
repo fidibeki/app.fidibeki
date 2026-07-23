@@ -13,6 +13,20 @@ const browserRule: WidgetRule = {
   replay_max_duration_seconds: 1800, replay_max_events: 50000,
   replay_mask_all_inputs: true, replay_mask_text_selector: null,
   recurrence_mode: 'cooldown', recurrence_days: 30,
+  localizations: {
+    en: {
+      launcher_label: 'Feedback', prompt: 'How clear was checkout?',
+      comment_placeholder: 'Tell us more', contact_label: 'Email address',
+      consent_label: 'Email me about this feedback', submit_label: 'Send feedback',
+      success_message: 'Your feedback was sent.',
+    },
+    pt: {
+      launcher_label: 'Feedback', prompt: 'O checkout foi claro?',
+      comment_placeholder: 'Conta-nos mais', contact_label: 'Endereço de email',
+      consent_label: 'Contactem-me sobre este feedback', submit_label: 'Enviar feedback',
+      success_message: 'O feedback foi enviado.',
+    },
+  },
 }
 
 function browserConfiguration(rule: WidgetRule = browserRule): WidgetConfiguration {
@@ -58,6 +72,17 @@ function definitionConfiguration(presentation: WidgetPresentation, key = 'inline
           option_labels: {
             reaction: { helpful: 'Helpful', not_helpful: 'Not helpful' },
             reason: { fast: 'Fast', clear: 'Clear' },
+          },
+        },
+        pt: {
+          launcher_label: 'Dar feedback', prompt: 'Como foi o checkout?',
+          comment_placeholder: 'Adicionar contexto', contact_label: 'Endereço de email',
+          consent_label: 'Contactem-me sobre este feedback', submit_label: 'Enviar resposta',
+          success_message: 'Resposta recebida.',
+          block_labels: { score: 'Pontuação', reaction: 'Foi útil?', reason: 'Motivo', details: 'Detalhes' },
+          option_labels: {
+            reaction: { helpful: 'Útil', not_helpful: 'Não foi útil' },
+            reason: { fast: 'Rápido', clear: 'Claro' },
           },
         },
       },
@@ -303,6 +328,10 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
       await page.getByRole('button', { name: 'Share feedback' }).click()
     }
     await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
+    await page.evaluate(() => { document.documentElement.lang = 'pt-AO' })
+    await expect(page.getByRole('heading', { name: 'Como foi o checkout?' })).toBeVisible()
+    await page.evaluate(() => { document.documentElement.lang = 'en' })
+    await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
     if (presentation === 'inline') {
       await expect(page.locator('fidibeki-widget[rule="inline-checkout"] > div[id^="fidibeki-widget-host-"]')).toHaveCount(1)
     }
@@ -328,6 +357,99 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
     })
   })
 }
+
+test('uses Portuguese page language before English browser preferences', async ({ page }) => {
+  const configuration = definitionConfiguration('inline')
+  const submissions: Array<Record<string, unknown>> = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/feedback?*', route => {
+    submissions.push(route.request().postDataJSON() as Record<string, unknown>)
+    return route.fulfill({
+      status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_portuguese"}',
+    })
+  })
+  await page.route('**/sample.html', async (route) => {
+    const response = await route.fetch()
+    const body = (await response.text()).replace('<html lang="en">', '<html lang="pt">')
+    await route.fulfill({ response, body })
+  })
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: ['en-US'] })
+    Object.defineProperty(navigator, 'language', { configurable: true, value: 'en-US' })
+  })
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'Como foi o checkout?' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Enviar resposta' })).toBeVisible()
+  await page.getByRole('button', { name: 'Enviar resposta' }).click()
+  await expect(page.getByText('Preenche a resposta obrigatória.')).toBeVisible()
+
+  await page.getByRole('button', { name: '4 de 5' }).click()
+  await page.getByRole('button', { name: 'Útil', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Detalhes' }).fill('A experiência foi clara.')
+  await page.getByRole('button', { name: 'Enviar resposta' }).click()
+  await expect(page.getByText('Resposta recebida.')).toBeVisible()
+
+  expect(submissions[0]?.metadata).toMatchObject({ language: 'pt' })
+})
+
+test('reactive page language preserves an in-progress response and funnel state', async ({ page }) => {
+  const events = await captureAnalytics(page, definitionConfiguration('inline'))
+  const submissions: Array<Record<string, unknown>> = []
+  await page.route('**/v1/feedback?*', route => {
+    submissions.push(route.request().postDataJSON() as Record<string, unknown>)
+    return route.fulfill({
+      status: 201, contentType: 'application/json', body: '{"feedback_id":"fb_reactive_locale"}',
+    })
+  })
+
+  await page.goto('/sample.html')
+  await expect.poll(() => events).toEqual(['matched', 'impression'])
+  await page.getByRole('button', { name: '4 out of 5' }).click()
+  await page.getByRole('button', { name: 'Helpful', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Reason' }).selectOption('fast')
+  const details = page.locator('textarea[name="response_details"]')
+  const email = page.locator('input[name="reporter_email"]')
+  await details.fill('Keep this draft across the language change.')
+  await email.fill('invalid-email')
+  await page.getByRole('button', { name: 'Send response' }).click()
+  await expect(page.getByText('Enter a valid email address.')).toBeVisible()
+  await expect.poll(() => events).toEqual(['matched', 'impression', 'interaction'])
+
+  await page.evaluate(() => { document.documentElement.lang = 'pt-AO' })
+
+  await expect(page.getByRole('heading', { name: 'Como foi o checkout?' })).toBeVisible()
+  await expect(page.getByText('Introduz um endereço de email válido.')).toBeVisible()
+  await expect(details).toHaveValue('Keep this draft across the language change.')
+  await expect(email).toHaveValue('invalid-email')
+  await expect(email).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByRole('button', { name: '4 de 5' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'Útil', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('combobox', { name: 'Motivo' })).toHaveValue('fast')
+  expect(events).toEqual(['matched', 'impression', 'interaction'])
+
+  await email.fill('customer@example.com')
+  await page.getByRole('button', { name: 'Enviar resposta' }).click()
+  await expect(page.getByText('Resposta recebida.')).toBeVisible()
+  expect(submissions[0]?.metadata).toMatchObject({ language: 'pt' })
+})
+
+test('automatic placement reacts to the page language without duplicate funnel events', async ({ page }) => {
+  const events = await captureAnalytics(page, browserConfiguration())
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect.poll(() => events).toEqual(['matched', 'impression'])
+
+  await page.evaluate(() => { document.documentElement.lang = 'pt-AO' })
+
+  await expect(page.getByRole('heading', { name: 'O checkout foi claro?' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Fechar feedback' })).toBeVisible()
+  expect(events).toEqual(['matched', 'impression'])
+})
 
 const contactSubmissionCases = [
   { name: 'disabled', enabled: false, email: '', consent: false, expectedEmail: null, expectedConsent: false },

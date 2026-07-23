@@ -2,7 +2,13 @@ import type { WidgetLocalization, WidgetRule } from './types'
 
 export interface WidgetSystemCopy {
   close: string
+  formLabel: string
   feedback: string
+  feedbackPlaceholder: string
+  rating: string
+  ratingOutOfFive: string
+  attachElement: string
+  elementAttached: string
   sending: string
   sendError: string
   attachmentError: string
@@ -32,7 +38,11 @@ export interface ResolvedWidgetLocalization {
 
 const systemCopy: Record<string, WidgetSystemCopy> = {
   en: {
-    close: 'Close feedback', feedback: 'Feedback', sending: 'Sending...',
+    close: 'Close feedback', formLabel: 'Feedback form', feedback: 'Feedback',
+    feedbackPlaceholder: 'Tell us what worked or what got in the way',
+    rating: 'Rating', ratingOutOfFive: '{value} out of 5',
+    attachElement: 'Attach page element', elementAttached: 'Element attached',
+    sending: 'Sending...',
     sendError: 'Could not send feedback. Please try again.',
     attachmentError: 'One or more attachments could not be uploaded.',
     emailPlaceholder: 'you@example.com', invalidEmail: 'Enter a valid email address.',
@@ -52,7 +62,11 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     providerUnavailable: 'Processing is temporarily unavailable.',
   },
   pt: {
-    close: 'Fechar feedback', feedback: 'Feedback', sending: 'A enviar...',
+    close: 'Fechar feedback', formLabel: 'Formulário de feedback', feedback: 'Feedback',
+    feedbackPlaceholder: 'Conta-nos o que funcionou ou o que dificultou a experiência',
+    rating: 'Classificação', ratingOutOfFive: '{value} de 5',
+    attachElement: 'Anexar elemento da página', elementAttached: 'Elemento anexado',
+    sending: 'A enviar...',
     sendError: 'Não foi possível enviar o feedback. Tenta novamente.',
     attachmentError: 'Não foi possível carregar um ou mais anexos.',
     emailPlaceholder: 'voce@exemplo.com', invalidEmail: 'Introduz um endereço de email válido.',
@@ -82,10 +96,42 @@ export function resolveWidgetLocalization(
   const locales = new Map(entries.map(([locale, content]) => [normalizeLocale(locale), { locale, content }]))
   const fallback = findLocale(locales, [projectDefault]) ?? entries[0]
   const selected = findLocale(locales, preferredLocales) ?? fallback
-  const locale = selected?.[0] ?? (normalizeLocale(projectDefault) || 'en')
+  const locale = selected?.[0] ?? compatibleSystemLocale(preferredLocales, projectDefault)
   const content = selected?.[1] ?? legacyLocalization(rule)
   const language = primaryLanguage(locale)
   return { locale, content, system: systemCopy[language] ?? systemCopy.en! }
+}
+
+export function resolveWidgetLocalizationForPage(
+  rule: WidgetRule,
+  projectDefault = 'en',
+  pageLanguage: string | null = null,
+  browserLocales: readonly string[] = [],
+): ResolvedWidgetLocalization {
+  const declaredLanguage = normalizePageLanguage(pageLanguage)
+  return resolveWidgetLocalization(
+    rule,
+    projectDefault,
+    declaredLanguage ? [declaredLanguage] : browserLocales,
+  )
+}
+
+export function normalizePageLanguage(locale: string | null | undefined): string | null {
+  const candidate = locale?.trim()
+  if (!candidate) return null
+  try {
+    return Intl.getCanonicalLocales(candidate)[0]?.toLowerCase() ?? null
+  } catch {
+    return null
+  }
+}
+
+function compatibleSystemLocale(requested: readonly string[], projectDefault: string): string {
+  for (const candidate of [...requested, projectDefault]) {
+    const normalized = normalizeLocale(candidate)
+    if (normalized && systemCopy[primaryLanguage(normalized)]) return normalized
+  }
+  return 'en'
 }
 
 function findLocale(

@@ -138,9 +138,12 @@ page lifetime and does not claim durable suppression.
 
 ### Localization
 
-The runtime detects the browser locale and resolves the most specific supported variant before
-falling back to the project's default language. For example, `pt-AO` may fall back to `pt` and then
-to the project default.
+The runtime treats the host page's valid `<html lang>` value as authoritative and resolves the most
+specific supported variant before falling back to the project's default language. For example,
+`pt-AO` may fall back to `pt` and then to the project default. Browser preferences are consulted only
+when the page does not declare a usable language. The runtime observes SPA language changes and
+updates mounted widget copy in place without losing draft, presentation, submission, or funnel
+state. Submitted feedback records the resolved active widget locale.
 
 Fidibeki supplies translations for system text. Every customer-authored message can have locale
 variants. A missing custom translation uses the project's default-language value. Customers are not

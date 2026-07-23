@@ -1,6 +1,11 @@
 import { collectMetadata } from './metadata'
 import type { FunnelEvent } from './analytics'
-import { resolveWidgetLocalization, type ResolvedWidgetLocalization } from './localization'
+import {
+  resolveWidgetLocalizationForPage,
+  type ResolvedWidgetLocalization,
+  type WidgetSystemCopy,
+} from './localization'
+import { readPageLanguage, subscribeToPageLanguage } from './page-language'
 import {
 	PublicAPIResponseError,
 	parsePublicAPIError,
@@ -35,7 +40,11 @@ interface MountOptions {
 }
 
 interface RatingModule {
-  createRatingControl(): { element: HTMLElement; value(): number | null }
+  createRatingControl(copy: Pick<WidgetSystemCopy, 'rating' | 'ratingOutOfFive'>): {
+    element: HTMLElement
+    value(): number | null
+    localize(copy: Pick<WidgetSystemCopy, 'rating' | 'ratingOutOfFive'>): void
+  }
 }
 
 interface ElementModule {
@@ -67,10 +76,12 @@ export function mountWidget(options: MountOptions): () => void {
   const appearance = options.rule.appearance
   const accent = appearance?.accent_color ?? options.rule.accent_color ?? '#147d64'
   const side = (appearance?.position ?? options.rule.position) === 'bottom-right' ? 'right' : 'left'
-  const localization = resolveWidgetLocalization(
+  const browserLocales = navigator.languages.length > 0 ? navigator.languages : [navigator.language]
+  let localization = resolveWidgetLocalizationForPage(
     options.rule,
     options.configuration.default_locale,
-    navigator.languages.length > 0 ? navigator.languages : [navigator.language],
+    readPageLanguage(),
+    browserLocales,
   )
   const presentation = options.rule.presentation ?? 'prompt'
   const structured = options.rule.presentation !== undefined && (options.rule.response_blocks?.length ?? 0) > 0
@@ -96,6 +107,8 @@ export function mountWidget(options: MountOptions): () => void {
   const honeypot = requiredElement<HTMLInputElement>(shadow, 'input[name="company_website"]')
   let attachment: ElementAttachment | null = null
   let ratingValue: (() => number | null) | null = null
+  let localizeRating: ((copy: Pick<WidgetSystemCopy, 'rating' | 'ratingOutOfFive'>) => void) | null = null
+  let elementAttachmentButton: HTMLButtonElement | null = null
 	let audioRecording: (() => Promise<Blob | null>) | null = null
 	let videoRecording: (() => Promise<Blob | null>) | null = null
 	let screenshot: (() => Blob | null) | null = null
@@ -108,9 +121,56 @@ export function mountWidget(options: MountOptions): () => void {
 	let submissionAnalytics: Omit<FunnelEvent, 'event_type'> | null = null
 	const clientFeedbackID = randomID()
   const cleanups: Array<() => void> = []
-	const responseControls = structured
-		? createResponseControls(optional, options.rule, localization)
-		: null
+  const responseControls = structured
+    ? createResponseControls(optional, options.rule, localization)
+    : null
+  type MessageCopy = ((current: ResolvedWidgetLocalization) => string) | null
+  let messageCopy: MessageCopy = null
+  let submitCopy: 'default' | 'retry' = 'default'
+  const renderMessage = () => {
+    message.textContent = messageCopy?.(localization) ?? ''
+  }
+  const setMessage = (copy: MessageCopy) => {
+    messageCopy = copy
+    renderMessage()
+  }
+  const applyLocalization = (next: ResolvedWidgetLocalization) => {
+    localization = next
+    const content = localization.content
+    if (launcher) launcher.textContent = content.launcher_label
+    requiredElement<HTMLElement>(shadow, '[data-copy="prompt"]').textContent = content.prompt
+    panel.setAttribute('aria-label', localization.system.formLabel)
+    closeButton.setAttribute('aria-label', localization.system.close)
+    closeButton.title = localization.system.close
+    const legacyLabel = shadow.querySelector<HTMLElement>('[data-copy="legacy-label"]')
+    if (legacyLabel) legacyLabel.textContent = localization.system.feedback
+    if (text) text.placeholder = localization.system.feedbackPlaceholder
+    const commentLabel = shadow.querySelector<HTMLElement>('[data-copy="comment-label"]')
+    if (commentLabel) commentLabel.textContent = content.comment_placeholder
+    if (comment) comment.placeholder = content.comment_placeholder
+    const contactLabel = shadow.querySelector<HTMLElement>('[data-copy="contact-label"]')
+    if (contactLabel) contactLabel.textContent = content.contact_label
+    if (reporterEmail) reporterEmail.placeholder = localization.system.emailPlaceholder
+    const consentLabel = shadow.querySelector<HTMLElement>('[data-copy="consent-label"]')
+    if (consentLabel) consentLabel.textContent = content.consent_label
+    submitButton.textContent = submitCopy === 'retry' ? localization.system.retry : content.submit_label
+    responseControls?.localize(localization)
+    localizeRating?.(localization.system)
+    if (elementAttachmentButton) {
+      elementAttachmentButton.textContent = attachment
+        ? localization.system.elementAttached
+        : localization.system.attachElement
+    }
+    renderMessage()
+  }
+  cleanups.push(subscribeToPageLanguage((pageLanguage) => {
+    applyLocalization(resolveWidgetLocalizationForPage(
+      options.rule,
+      options.configuration.default_locale,
+      pageLanguage,
+      browserLocales,
+    ))
+  }))
 	const messageID = `${hostID}-message`
 	message.id = messageID
 	if (reporterEmail && notifyReporter) {
@@ -119,7 +179,7 @@ export function mountWidget(options: MountOptions): () => void {
 			if (reporterEmail.getAttribute('aria-invalid') !== 'true') return
 			reporterEmail.removeAttribute('aria-invalid')
 			reporterEmail.removeAttribute('data-invalid')
-			message.textContent = ''
+			setMessage(null)
 		}
 		const synchronizeContactRequirement = () => { reporterEmail.required = notifyReporter.checked }
 		reporterEmail.addEventListener('input', clearContactError)
@@ -147,9 +207,10 @@ export function mountWidget(options: MountOptions): () => void {
 
   if (!structured && options.rule.can_rate) {
     void import(new URL('rating.js', options.assetBase).href).then((module) => {
-      const control = (module as RatingModule).createRatingControl()
+      const control = (module as RatingModule).createRatingControl(localization.system)
       optional.prepend(control.element)
       ratingValue = control.value
+      localizeRating = control.localize
     })
   }
 
@@ -164,13 +225,16 @@ export function mountWidget(options: MountOptions): () => void {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'secondary'
-    button.textContent = 'Attach page element'
+    button.textContent = localization.system.attachElement
+    elementAttachmentButton = button
     button.addEventListener('click', async () => {
       const module = (await import(new URL('element-attachment.js', options.assetBase).href)) as ElementModule
       host.style.display = 'none'
       attachment = await module.chooseElement(host)
       host.style.display = ''
-      button.textContent = attachment ? 'Element attached' : 'Attach page element'
+      button.textContent = attachment
+        ? localization.system.elementAttached
+        : localization.system.attachElement
     })
     optional.append(button)
   }
@@ -214,55 +278,57 @@ export function mountWidget(options: MountOptions): () => void {
   })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
-		if (submitting || accepted) return
-		if (responseControls && !responseControls.valid()) {
-			message.textContent = localization.system.required
-			responseControls.focusInvalid()
-			return
-		}
-		if (reporterEmail && notifyReporter) {
-			const email = reporterEmail.value.trim()
-			const contactError = notifyReporter.checked && !email
-				? localization.system.emailRequired
-				: email && reporterEmail.validity.typeMismatch
-					? localization.system.invalidEmail
-					: ''
-			if (contactError) {
-				message.textContent = contactError
-				reporterEmail.setAttribute('aria-invalid', 'true')
-				reporterEmail.setAttribute('data-invalid', 'true')
-				reporterEmail.focus()
-				return
-			}
-		}
-		submitting = true
-		if (retryTimer !== null) {
-			window.clearInterval(retryTimer)
-			retryTimer = null
-		}
-		closeButton.disabled = true
-		reportInteraction()
-		if (!analyticsPrepared) {
-			analyticsPrepared = true
-			try {
-				const analytics = options.submissionAnalytics()
-				if (analytics) {
-					const { event_type: _eventType, ...context } = analytics
-					submissionAnalytics = context
-				}
-			} catch {
-				// Analytics identity failures must not block feedback submission.
-			}
-		}
+    if (submitting || accepted) return
+    if (responseControls && !responseControls.valid()) {
+      setMessage(current => current.system.required)
+      responseControls.focusInvalid()
+      return
+    }
+    if (reporterEmail && notifyReporter) {
+      const email = reporterEmail.value.trim()
+      const contactError = notifyReporter.checked && !email
+        ? 'emailRequired'
+        : email && reporterEmail.validity.typeMismatch
+          ? 'invalidEmail'
+          : null
+      if (contactError) {
+        setMessage(current => current.system[contactError])
+        reporterEmail.setAttribute('aria-invalid', 'true')
+        reporterEmail.setAttribute('data-invalid', 'true')
+        reporterEmail.focus()
+        return
+      }
+    }
+    submitting = true
+    submitCopy = 'default'
+    submitButton.textContent = localization.content.submit_label
+    if (retryTimer !== null) {
+      window.clearInterval(retryTimer)
+      retryTimer = null
+    }
+    closeButton.disabled = true
+    reportInteraction()
+    if (!analyticsPrepared) {
+      analyticsPrepared = true
+      try {
+        const analytics = options.submissionAnalytics()
+        if (analytics) {
+          const { event_type: _eventType, ...context } = analytics
+          submissionAnalytics = context
+        }
+      } catch {
+        // Analytics identity failures must not block feedback submission.
+      }
+    }
     submitButton.disabled = true
-    message.textContent = localization.system.sending
+    setMessage(current => current.system.sending)
     try {
-			pendingAttachments ??= await collectAttachments({ audioRecording, videoRecording, screenshot })
-			const legacyRating = responseControls?.rating() ?? ratingValue?.() ?? null
-			const legacyText = (responseControls?.text() ?? text?.value.trim()) || null
-			const responses = responseControls?.values() ?? legacyResponses(legacyRating, legacyText)
-			const feedbackURL = endpointURL(options, 'feedback')
-			const response = await fetch(feedbackURL, {
+      pendingAttachments ??= await collectAttachments({ audioRecording, videoRecording, screenshot })
+      const legacyRating = responseControls?.rating() ?? ratingValue?.() ?? null
+      const legacyText = (responseControls?.text() ?? text?.value.trim()) || null
+      const responses = responseControls?.values() ?? legacyResponses(legacyRating, legacyText)
+      const feedbackURL = endpointURL(options, 'feedback')
+      const response = await fetch(feedbackURL, {
         method: 'POST',
         mode: 'cors',
         credentials: 'omit',
@@ -271,88 +337,89 @@ export function mountWidget(options: MountOptions): () => void {
           'X-Fidibeki-Public-Key': options.publicKey,
         },
         body: JSON.stringify({
-				client_feedback_id: clientFeedbackID,
+          client_feedback_id: clientFeedbackID,
           widget_rule_id: options.rule.id,
-			session_id: options.replaySessionID,
+          session_id: options.replaySessionID,
           rating: legacyRating,
           text: legacyText,
-			responses,
-			comment: comment?.value.trim() || null,
-			reporter_email: reporterEmail?.value.trim() || null,
-			notify_reporter: notifyReporter?.checked ?? false,
+          responses,
+          comment: comment?.value.trim() || null,
+          reporter_email: reporterEmail?.value.trim() || null,
+          notify_reporter: notifyReporter?.checked ?? false,
           element_attachment: attachment,
           company_website: honeypot.value,
-          metadata: collectMetadata(),
-				attachments: pendingAttachments.map(declarationFor),
-				analytics: submissionAnalytics,
+          metadata: { ...collectMetadata(), language: localization.locale },
+          attachments: pendingAttachments.map(declarationFor),
+          analytics: submissionAnalytics,
         }),
       })
       if (!response.ok) {
-				throw new PublicAPIResponseError(await parsePublicAPIError(response))
-			}
+        throw new PublicAPIResponseError(await parsePublicAPIError(response))
+      }
       accepted = true
-		submitting = false
+      submitting = false
       try {
         options.onSubmitted()
       } catch {
         // Host storage failures must not turn an accepted submission into an error.
       }
       try {
-			  const submission = await response.json() as SubmissionResponse
-				const attachmentWarning = submission.warnings?.find(warning =>
-					warning.reason === 'upload_rate_limited' || warning.code === 'service_unavailable')
-				if (pendingAttachments.length > (submission.attachments?.length ?? 0) && !attachmentWarning) {
-					throw new Error('feedback response omitted attachment upload grants')
-				}
-			  message.textContent = pendingAttachments.length > 0 ? localization.system.sending : ''
-			  await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
-				const warningDetail = attachmentWarning
-					? `<span>${escapeHTML(attachmentWarning.message || localization.system.attachmentError)}</span>`
-					: ''
+        const submission = await response.json() as SubmissionResponse
+        const attachmentWarning = submission.warnings?.find(warning =>
+          warning.reason === 'upload_rate_limited' || warning.code === 'service_unavailable')
+        if (pendingAttachments.length > (submission.attachments?.length ?? 0) && !attachmentWarning) {
+          throw new Error('feedback response omitted attachment upload grants')
+        }
+        setMessage(pendingAttachments.length > 0 ? current => current.system.sending : null)
+        await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
+        const warningDetail = attachmentWarning
+          ? `<span>${escapeHTML(attachmentWarning.message || localization.system.attachmentError)}</span>`
+          : ''
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong>${warningDetail}</div>`
         window.setTimeout(destroy, attachmentWarning ? 3200 : 1800)
       } catch (error) {
-				const detail = error instanceof PublicAPIResponseError
-					? publicFailureMessage(error.failure, localization.system)
-					: localization.system.attachmentError
+        const detail = error instanceof PublicAPIResponseError
+          ? publicFailureMessage(error.failure, localization.system)
+          : localization.system.attachmentError
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(structured ? localization.content.success_message : 'Feedback received.')}</strong><span>${escapeHTML(detail)}</span></div>`
         window.setTimeout(destroy, 3200)
         void reportError(options, error, 'attachments')
       }
     } catch (error) {
-			if (error instanceof PublicAPIResponseError && error.failure.reason) {
-				showSubmissionFailure(error.failure)
-			} else {
-				submitting = false
-				message.textContent = localization.system.sendError
-				submitButton.disabled = false
-				closeButton.disabled = false
-			}
+      if (error instanceof PublicAPIResponseError && error.failure.reason) {
+        showSubmissionFailure(error.failure)
+      } else {
+        submitting = false
+        setMessage(current => current.system.sendError)
+        submitButton.disabled = false
+        closeButton.disabled = false
+      }
       void reportError(options, error, 'submission')
     }
   })
 
-	const showSubmissionFailure = (failure: PublicAPIError) => {
-		submitting = false
-		closeButton.disabled = false
-		submitButton.textContent = localization.system.retry
-		if (failure.retryAfterSeconds <= 0) {
-			message.textContent = publicFailureMessage(failure, localization.system)
-			submitButton.disabled = false
-			return
-		}
-		const retryAt = Date.now() + failure.retryAfterSeconds * 1000
-		const updateCountdown = () => {
-			const remaining = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))
-			message.textContent = publicFailureMessage(failure, localization.system, remaining)
-			submitButton.disabled = remaining > 0
-			if (remaining > 0 || retryTimer === null) return
-			window.clearInterval(retryTimer)
-			retryTimer = null
-		}
-		updateCountdown()
-		retryTimer = window.setInterval(updateCountdown, 250)
-	}
+  const showSubmissionFailure = (failure: PublicAPIError) => {
+    submitting = false
+    closeButton.disabled = false
+    submitCopy = 'retry'
+    submitButton.textContent = localization.system.retry
+    if (failure.retryAfterSeconds <= 0) {
+      setMessage(current => publicFailureMessage(failure, current.system))
+      submitButton.disabled = false
+      return
+    }
+    const retryAt = Date.now() + failure.retryAfterSeconds * 1000
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))
+      setMessage(current => publicFailureMessage(failure, current.system, remaining))
+      submitButton.disabled = remaining > 0
+      if (remaining > 0 || retryTimer === null) return
+      window.clearInterval(retryTimer)
+      retryTimer = null
+    }
+    updateCountdown()
+    retryTimer = window.setInterval(updateCountdown, 250)
+  }
 
 	try {
 		options.onVisible()
@@ -454,6 +521,7 @@ interface ResponseControls {
   text(): string | null
   valid(): boolean
   focusInvalid(): void
+  localize(localization: ResolvedWidgetLocalization): void
 }
 
 interface ResponseControl {
@@ -461,6 +529,7 @@ interface ResponseControl {
   focus: HTMLElement
   container: HTMLElement
   value(): string | number | null
+  localize(localization: ResolvedWidgetLocalization): void
 }
 
 function createResponseControls(
@@ -496,6 +565,9 @@ function createResponseControls(
       return invalid.length === 0
     },
     focusInvalid() { invalidControls()[0]?.focus.focus() },
+    localize(next) {
+      for (const control of controls) control.localize(next)
+    },
   }
 }
 
@@ -514,7 +586,15 @@ function responseControl(
     textarea.required = block.required
     textarea.name = `response_${block.key}`
     wrapper.append(caption, textarea)
-    return { block, container: wrapper, focus: textarea, value: () => textarea.value.trim() || null }
+    return {
+      block,
+      container: wrapper,
+      focus: textarea,
+      value: () => textarea.value.trim() || null,
+      localize: next => {
+        caption.textContent = next.content.block_labels?.[block.key] ?? defaultBlockLabel(block, next)
+      },
+    }
   }
   if (block.type === 'single_choice') {
     const wrapper = document.createElement('label')
@@ -534,7 +614,18 @@ function responseControl(
       select.append(element)
     }
     wrapper.append(caption, select)
-    return { block, container: wrapper, focus: select, value: () => select.value || null }
+    return {
+      block,
+      container: wrapper,
+      focus: select,
+      value: () => select.value || null,
+      localize: next => {
+        caption.textContent = next.content.block_labels?.[block.key] ?? defaultBlockLabel(block, next)
+        for (const option of Array.from(select.options).slice(1)) {
+          option.textContent = optionLabel(next, block.key, option.value)
+        }
+      },
+    }
   }
 
   let selected: string | number | null = null
@@ -544,7 +635,11 @@ function responseControl(
   const row = document.createElement('div')
   row.className = block.type === 'rating' ? 'scale' : 'choices reactions'
   const options = block.type === 'rating'
-    ? [1, 2, 3, 4, 5].map(value => ({ value: String(value), label: '★', title: `${value} out of 5` }))
+    ? [1, 2, 3, 4, 5].map(value => ({
+        value: String(value),
+        label: '★',
+        title: localization.system.ratingOutOfFive.replace('{value}', String(value)),
+      }))
     : (block.options ?? []).map(option => ({
         value: option.value,
         label: optionLabel(localization, block.key, option.value),
@@ -568,12 +663,29 @@ function responseControl(
   }
   fieldset.append(legend, row)
   return {
-    block, container: fieldset, focus: row.querySelector('button') ?? fieldset, value: () => selected,
+    block,
+    container: fieldset,
+    focus: row.querySelector('button') ?? fieldset,
+    value: () => selected,
+    localize(next) {
+      legend.textContent = next.content.block_labels?.[block.key] ?? defaultBlockLabel(block, next)
+      for (const [index, button] of Array.from(row.querySelectorAll<HTMLButtonElement>('button')).entries()) {
+        const value = block.type === 'rating'
+          ? String(index + 1)
+          : block.options?.[index]?.value ?? ''
+        const title = block.type === 'rating'
+          ? next.system.ratingOutOfFive.replace('{value}', value)
+          : optionLabel(next, block.key, value)
+        if (block.type !== 'rating') button.textContent = title
+        button.title = title
+        button.setAttribute('aria-label', title)
+      }
+    },
   }
 }
 
 function defaultBlockLabel(block: WidgetResponseBlock, localization: ResolvedWidgetLocalization): string {
-  if (block.type === 'rating') return 'Rating'
+  if (block.type === 'rating') return localization.system.rating
   if (block.type === 'free_text') return localization.system.feedback
   if (block.type === 'reaction') return localization.content.prompt
   return localization.system.feedback
@@ -604,23 +716,23 @@ function markup(
 ): string {
   const content = localization.content
   const launcher = presentation === 'launcher'
-    ? `<button class="launcher" type="button" data-launcher>${escapeHTML(content.launcher_label)}</button>`
+    ? `<button class="launcher" type="button" data-launcher data-copy="launcher">${escapeHTML(content.launcher_label)}</button>`
     : ''
   const panelHidden = presentation === 'launcher' ? ' hidden' : ''
   const legacyText = !structured && rule.can_write_text
-    ? `<label><span>${escapeHTML(localization.system.feedback)}</span><textarea name="text" rows="4" maxlength="4000" placeholder="Tell us what worked or what got in the way"></textarea></label>`
+    ? `<label><span data-copy="legacy-label">${escapeHTML(localization.system.feedback)}</span><textarea name="text" rows="4" maxlength="4000" placeholder="${escapeHTML(localization.system.feedbackPlaceholder)}"></textarea></label>`
     : ''
   const comment = structured && rule.allow_comment
-    ? `<label><span>${escapeHTML(content.comment_placeholder)}</span><textarea name="comment" rows="3" maxlength="10000" placeholder="${escapeHTML(content.comment_placeholder)}"></textarea></label>`
+    ? `<label><span data-copy="comment-label">${escapeHTML(content.comment_placeholder)}</span><textarea name="comment" rows="3" maxlength="10000" placeholder="${escapeHTML(content.comment_placeholder)}"></textarea></label>`
     : ''
   const contact = structured && rule.collect_contact
-    ? `<label><span>${escapeHTML(content.contact_label)}</span><input type="email" name="reporter_email" maxlength="320" autocomplete="email" placeholder="${escapeHTML(localization.system.emailPlaceholder)}"></label>
-       <label class="consent"><input type="checkbox" name="notify_reporter"><span>${escapeHTML(content.consent_label)}</span></label>`
+    ? `<label><span data-copy="contact-label">${escapeHTML(content.contact_label)}</span><input type="email" name="reporter_email" maxlength="320" autocomplete="email" placeholder="${escapeHTML(localization.system.emailPlaceholder)}"></label>
+       <label class="consent"><input type="checkbox" name="notify_reporter"><span data-copy="consent-label">${escapeHTML(content.consent_label)}</span></label>`
     : ''
-  return `${launcher}<section class="panel ${presentation}" data-panel aria-label="Feedback form"${panelHidden}>
+  return `${launcher}<section class="panel ${presentation}" data-panel aria-label="${escapeHTML(localization.system.formLabel)}"${panelHidden}>
     <header><div>${logoURL
       ? `<img class="brand" src="${escapeHTML(logoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-      : '<span class="eyebrow">FIDIBEKI</span>'}<h2>${escapeHTML(content.prompt)}</h2></div>
+      : '<span class="eyebrow">FIDIBEKI</span>'}<h2 data-copy="prompt">${escapeHTML(content.prompt)}</h2></div>
       <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
     <form novalidate>
       <div data-optional class="optional"></div>

@@ -453,6 +453,14 @@ was removed from the staging test tenant.
       Destructive privacy actions retain a computed WCAG-AA hover contrast.
     - Unit (104), typecheck, build, focused responsive E2E, overflow assertions, and inspected
       screenshots pass locally. Staging refresh verification remains deferred with the staging gate.
+  - [x] Complete reactive page-language-first widget localization from issue #40.
+    - A shared root-language observer updates automatic and explicit/inline mounts without remounting,
+      refetching configuration, losing draft/validation/presentation state, or duplicating funnel
+      events. Exact and primary locale matching precede the project default; browser preferences are
+      used only when the page language is absent or invalid.
+    - Feedback metadata stores the resolved active locale. Legacy customer copy remains compatible
+      while Fidibeki system copy follows supported page languages.
+    - Widget unit (124), typecheck, build, and all 38 browser journeys pass locally.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

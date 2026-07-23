@@ -635,12 +635,20 @@ accessible foreground derivation is deterministic, and backend/web/widget/browse
 ## Task 38: Make Widget Page Language Reactive
 
 **Depends on:** Task 30
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Complete issue #40 using the host page language as the reactive widget locale source.
 
 **Acceptance:** Exact/primary/default/browser precedence, SPA language changes, preserved draft and
 presentation state, event deduplication, metadata, cleanup, and browser coverage pass.
+
+**Evidence:** Issue #40 is complete locally. A shared per-document observer follows valid root
+`lang` changes and is disconnected with the final subscriber. Resolution uses page exact/primary,
+project default, first configured, then browser compatibility fallback only when page language is
+absent or invalid. Mounted copy is patched in place, including validation/retry state and rating
+labels, while selections, draft fields, open state, attachments, recurrence, and funnel identities
+remain intact. Submission metadata stores the resolved locale. Widget unit (124), typecheck, build,
+and all 38 browser journeys pass.
 
 **Autonomy:** AFK
 

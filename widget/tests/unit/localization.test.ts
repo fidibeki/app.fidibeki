@@ -1,4 +1,7 @@
-import { resolveWidgetLocalization } from '../../src/localization'
+import {
+  resolveWidgetLocalization,
+  resolveWidgetLocalizationForPage,
+} from '../../src/localization'
 import type { WidgetLocalization, WidgetRule } from '../../src/types'
 
 const localized = (prompt: string): WidgetLocalization => ({
@@ -34,10 +37,41 @@ describe('widget localization', () => {
     expect(resolveWidgetLocalization(rule, 'de', ['fr-FR']).content.prompt).toBe('English prompt')
   })
 
+  it('uses the declared page locale before browser preferences', () => {
+    const result = resolveWidgetLocalizationForPage(rule, 'en', 'pt-AO', ['en-US'])
+    expect(result.locale).toBe('pt-AO')
+    expect(result.content.prompt).toBe('Pergunta angolana')
+  })
+
+  it('falls back from a regional page locale to its primary language', () => {
+    const result = resolveWidgetLocalizationForPage(rule, 'en', 'pt-MZ', ['en-US'])
+    expect(result.locale).toBe('pt')
+    expect(result.content.prompt).toBe('Pergunta em português')
+  })
+
+  it('uses the project default when a valid page locale is unsupported', () => {
+    const result = resolveWidgetLocalizationForPage(rule, 'en', 'fr-FR', ['pt-AO'])
+    expect(result.locale).toBe('en')
+    expect(result.content.prompt).toBe('English prompt')
+  })
+
+  it('uses browser preferences only when the page locale is absent or invalid', () => {
+    expect(resolveWidgetLocalizationForPage(rule, 'en', '', ['pt-AO']).locale).toBe('pt-AO')
+    expect(resolveWidgetLocalizationForPage(rule, 'en', 'not_a_locale!', ['pt-MZ']).locale).toBe('pt')
+  })
+
   it('preserves the legacy greeting when no localizations exist', () => {
     const { localizations: _localizations, ...legacyRule } = rule
     const result = resolveWidgetLocalization(legacyRule as WidgetRule, 'en', ['en-US'])
     expect(result.content.prompt).toBe('Legacy prompt')
     expect(result.content.submit_label).toBe('Send feedback')
+  })
+
+  it('localizes Fidibeki system copy for legacy rules without replacing customer copy', () => {
+    const { localizations: _localizations, ...legacyRule } = rule
+    const result = resolveWidgetLocalizationForPage(legacyRule as WidgetRule, 'en', 'pt-AO', ['en-US'])
+    expect(result.locale).toBe('pt-ao')
+    expect(result.content.prompt).toBe('Legacy prompt')
+    expect(result.system.close).toBe('Fechar feedback')
   })
 })
