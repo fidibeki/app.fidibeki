@@ -34,10 +34,15 @@ func TestVerificationSchedulerReconcilesExpiryAndStaleWork(t *testing.T) {
 		{TenantID: "tenant", AttachmentID: "one", Generation: 1},
 		{TenantID: "tenant", AttachmentID: "two", Generation: 2},
 	}
-	store := &verificationSchedulingStoreStub{prepared: tasks, expired: 4}
+	expired := []ExpiredUpload{{
+		TenantID: "tenant", AttachmentID: "expired", StorageKey: "expired-object",
+	}}
+	store := &verificationSchedulingStoreStub{prepared: tasks, expired: expired}
 	queue := &verificationQueueStub{}
+	storage := &expiryStorageStub{}
+	store.removed = func() bool { return len(storage.removed) > 0 }
 	scheduler := VerificationScheduler{
-		Store: store, Queue: queue, Now: func() time.Time { return now },
+		Store: store, Queue: queue, Storage: storage, Now: func() time.Time { return now },
 	}
 	if err := scheduler.ReconcileOnce(context.Background()); err != nil {
 		t.Fatalf("ReconcileOnce() error = %v", err)
@@ -46,10 +51,42 @@ func TestVerificationSchedulerReconcilesExpiryAndStaleWork(t *testing.T) {
 		t.Fatalf("reconcile state = expiry %v prepare %v tasks %#v",
 			store.expiredAt, store.preparedAt, queue.tasks)
 	}
+	if len(storage.removed) != 1 || storage.removed[0] != expired[0].StorageKey ||
+		len(store.completed) != 1 || store.completed[0] != expired[0] ||
+		store.completedBeforeRemoval {
+		t.Fatalf("expiry cleanup = removed %#v completed %#v", storage.removed, store.completed)
+	}
 	if VerificationTaskID(tasks[0]) == VerificationTaskID(tasks[1]) ||
 		VerificationTaskID(tasks[0]) != "attachment:verify:one:1" {
 		t.Fatalf("verification task IDs = %q/%q",
 			VerificationTaskID(tasks[0]), VerificationTaskID(tasks[1]))
+	}
+}
+
+func TestVerificationSchedulerRetriesStorageCleanupBeforeTerminalState(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 23, 8, 0, 0, 0, time.UTC)
+	upload := ExpiredUpload{
+		TenantID: "tenant", AttachmentID: "expired", StorageKey: "expired-object",
+	}
+	store := &verificationSchedulingStoreStub{expired: []ExpiredUpload{upload}}
+	storage := &expiryStorageStub{err: errors.New("storage unavailable")}
+	scheduler := VerificationScheduler{
+		Store: store, Queue: &verificationQueueStub{}, Storage: storage,
+		Now: func() time.Time { return now },
+	}
+	if err := scheduler.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("ReconcileOnce(storage failure) error = nil")
+	}
+	if len(store.completed) != 0 {
+		t.Fatalf("storage failure completed terminal state = %#v", store.completed)
+	}
+	storage.err = nil
+	if err := scheduler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce(retry) error = %v", err)
+	}
+	if len(store.completed) != 1 || store.completed[0] != upload {
+		t.Fatalf("retried expiry cleanup = %#v", store.completed)
 	}
 }
 
@@ -109,17 +146,20 @@ func TestVerificationSchedulerRunReconcilesBeforeCanceledShutdown(t *testing.T) 
 }
 
 type verificationSchedulingStoreStub struct {
-	marked       VerificationTask
-	markedAt     time.Time
-	undone       VerificationTask
-	prepared     []VerificationTask
-	preparedAt   time.Time
-	expired      int64
-	expiredAt    time.Time
-	expiryErr    error
-	prepareErr   error
-	expireCalls  int
-	prepareCalls int
+	marked                 VerificationTask
+	markedAt               time.Time
+	undone                 VerificationTask
+	prepared               []VerificationTask
+	preparedAt             time.Time
+	expired                []ExpiredUpload
+	completed              []ExpiredUpload
+	removed                func() bool
+	completedBeforeRemoval bool
+	expiredAt              time.Time
+	expiryErr              error
+	prepareErr             error
+	expireCalls            int
+	prepareCalls           int
 }
 
 func (store *verificationSchedulingStoreStub) MarkEnqueued(
@@ -127,6 +167,9 @@ func (store *verificationSchedulingStoreStub) MarkEnqueued(
 	task VerificationTask,
 	at time.Time,
 ) error {
+	if store.removed != nil && !store.removed() {
+		store.completedBeforeRemoval = true
+	}
 	store.marked, store.markedAt = task, at
 	return nil
 }
@@ -149,14 +192,33 @@ func (store *verificationSchedulingStoreStub) Prepare(
 	return store.prepared, store.prepareErr
 }
 
-func (store *verificationSchedulingStoreStub) ExpirePending(
+func (store *verificationSchedulingStoreStub) ClaimExpired(
 	_ context.Context,
 	at time.Time,
 	_ int,
-) (int64, error) {
+) ([]ExpiredUpload, error) {
 	store.expireCalls++
 	store.expiredAt = at
 	return store.expired, store.expiryErr
+}
+
+func (store *verificationSchedulingStoreStub) CompleteExpiry(
+	_ context.Context,
+	upload ExpiredUpload,
+	_ time.Time,
+) error {
+	store.completed = append(store.completed, upload)
+	return nil
+}
+
+type expiryStorageStub struct {
+	removed []string
+	err     error
+}
+
+func (storage *expiryStorageStub) RemoveObject(_ context.Context, key string) error {
+	storage.removed = append(storage.removed, key)
+	return storage.err
 }
 
 type verificationQueueStub struct {

@@ -187,7 +187,13 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	publicLimiter := ratelimit.NewRedisLimiter(redisClient.Client())
 	abuseEvaluator := abuse.Evaluator{Limiter: publicLimiter, Keyring: abuseKeyring}
-	abuseDiagnostics := abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}}
+	synchronousDiagnostics := abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}}
+	abuseDiagnostics := abuse.NewBufferedRecorder(synchronousDiagnostics, logger)
+	go func() {
+		if err := abuseDiagnostics.Run(ctx, time.Second); err != nil && ctx.Err() == nil {
+			logger.Error("abuse diagnostic buffer stopped", "error", err)
+		}
+	}()
 
 	objectStorage, err := storage.Open(storage.Config{
 		Endpoint: settings.S3Endpoint, PublicEndpoint: settings.S3PublicEndpoint,
@@ -249,7 +255,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}()
 	verificationScheduler := feedback.VerificationScheduler{
 		Store: feedback.VerificationStore{Database: pools.Admin},
-		Queue: verificationQueue, Logger: logger,
+		Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
 	replayQueue, err := replay.OpenQueue(settings.RedisURL)
 	if err != nil {
@@ -262,7 +268,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}()
 	replayStore := replay.Store{Database: pools.Admin}
 	replayScheduler := replay.Scheduler{
-		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue, Logger: logger,
+		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue,
+		Storage: objectStorage, Logger: logger,
 	}
 	adminStore := platformadmin.Store{
 		Database: pools.Admin, RefreshTTL: settings.RefreshTokenTTL,
@@ -580,7 +587,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}()
 	verificationStore := feedback.VerificationStore{Database: pools.Admin}
 	verificationScheduler := feedback.VerificationScheduler{
-		Store: verificationStore, Queue: verificationQueue, Logger: logger,
+		Store: verificationStore, Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
 	replayQueue, err := replay.OpenQueue(settings.RedisURL)
 	if err != nil {
@@ -593,7 +600,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}()
 	replayStore := replay.Store{Database: pools.Admin}
 	replayScheduler := replay.Scheduler{
-		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue, Logger: logger,
+		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue,
+		Storage: objectStorage, Logger: logger,
 	}
 	replayProcessor := replay.Processor{Store: replayStore, Storage: objectStorage}
 	replayVerificationProcessor := replay.BatchVerificationProcessor{
@@ -627,6 +635,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 			Database: pools.Admin, Store: abuse.Store{},
 		}},
 		Logger: logger,
+	}
+	aiBudgetMaintainer := aiprocessing.BudgetMaintainer{
+		Store: aiprocessing.BudgetMaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
 
 	var sender email.Sender
@@ -691,7 +702,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	worker, err := jobworker.New(jobworker.Options{
 		RedisURL: settings.RedisURL, EmailConcurrency: settings.EmailConcurrency,
-		AIConcurrency: settings.AIConcurrency, Logger: logging.NewAsynq(logger), Sender: sender,
+		AIConcurrency: settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
+		MediaConcurrency: settings.MediaConcurrency, PrivacyConcurrency: settings.PrivacyConcurrency,
+		Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
 		AIErrorHandler:                processor.ErrorHandler(),
@@ -708,7 +721,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 11)
+	backgroundDone := make(chan error, 12)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
@@ -718,6 +731,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- privacyRetention.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- abuseMaintainer.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- aiBudgetMaintainer.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -727,6 +741,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone,
 	)
 }
 

@@ -367,9 +367,20 @@ was removed from the staging test tenant.
         existing tenant-scoped diagnostics as a compact six-category operational view with bounded
         hourly trend, top reasons, period/project filters, and explicit empty, retry, and permission
         states. Focused unit and responsive Chromium coverage passes with inspected desktop/mobile
-        output and no horizontal overflow. Backend coverage recovery, full CI, and staging remain.
+        output and no horizontal overflow. The full backend gate now passes at 80.0% internal
+        coverage with every package above 60%; this also exposed and fixed PostgreSQL timestamp
+        inference in stale attachment reconciliation. Web and widget type/unit/build/browser suites,
+        responsive screenshots, `gofmt`, `go vet`, golangci-lint, govulncheck, gitleaks, Compose,
+        and all three local container builds pass. Independent correctness/performance review also
+        drove forward-only migrations `68`/`69`, server-owned immutable media promotion, real
+        container parsing, replay finalization sealing, retryable object cleanup outside API
+        transactions, bounded disk staging, queue isolation, and indexed AI maintenance. The final
+        local regression gate passes; CI and one real staging journey remain.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.
+  - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
+    close work already delivered, and implement every remaining issue without the `postpone` label
+    before starting open-ended continuous improvement.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,

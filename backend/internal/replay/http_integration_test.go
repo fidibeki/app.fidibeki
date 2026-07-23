@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,7 +110,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 	diagnostics := &replayDiagnosticRecorderStub{}
 	scheduler := Scheduler{
 		Store: Store{Database: pools.Admin}, Queue: mergeQueue, VerificationQueue: mergeQueue,
-		Now: func() time.Time { return now },
+		Storage: storageClient, Now: func() time.Time { return now },
 	}
 	authorizer := widgetapi.Authorizer{
 		Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now },
@@ -289,9 +291,18 @@ func TestReplayHTTPFlow(t *testing.T) {
 	quarantinedFinalize := replayRequest(router, http.MethodPost,
 		"/v1/replay/sessions/"+createResponse.ID+"/finalize?key="+publicKey,
 		`{}`, publicKey, "https://example.com")
-	if quarantinedFinalize.Code != http.StatusConflict {
+	if quarantinedFinalize.Code != http.StatusAccepted ||
+		!strings.Contains(quarantinedFinalize.Body.String(), `"status":"processing"`) {
 		t.Fatalf("quarantined replay finalize = %d, body = %s",
 			quarantinedFinalize.Code, quarantinedFinalize.Body.String())
+	}
+	sealedDeclaration := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+createResponse.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":1,"events_count":1,"size_bytes":%d}`, len(batchData)),
+		publicKey, "https://example.com")
+	if sealedDeclaration.Code != http.StatusConflict {
+		t.Fatalf("declare batch after finalization request = %d, body = %s",
+			sealedDeclaration.Code, sealedDeclaration.Body.String())
 	}
 	verificationProcessor := BatchVerificationProcessor{
 		Store: Store{Database: pools.Admin}, Storage: storageClient,
@@ -305,6 +316,32 @@ func TestReplayHTTPFlow(t *testing.T) {
 		ctx, asynq.NewTask(TaskVerifyBatch, verificationPayload),
 	); err != nil {
 		t.Fatalf("verify replay batch: %v", err)
+	}
+	verifiedKey := verifiedBatchKey(
+		storageClient.presignedKeys[0], mergeQueue.verificationTasks[0].Generation, 1,
+	)
+	var persistedVerifiedKey string
+	var safeCleanupEnqueuedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT storage_key, verification_enqueued_at
+		FROM session_batches
+		WHERE session_id = $1 AND batch_index = 0
+	`, createResponse.ID).Scan(&persistedVerifiedKey, &safeCleanupEnqueuedAt); err != nil {
+		t.Fatalf("read verified replay batch storage: %v", err)
+	}
+	if persistedVerifiedKey != verifiedKey || safeCleanupEnqueuedAt == nil ||
+		!bytes.Equal(storageClient.objects[verifiedKey], batchData) {
+		t.Fatalf("verified replay promotion = key %q marker %v body %q",
+			persistedVerifiedKey, safeCleanupEnqueuedAt, storageClient.objects[verifiedKey])
+	}
+	if _, exists := storageClient.objects[storageClient.presignedKeys[0]]; exists {
+		t.Fatal("replay staging object remained after promotion")
+	}
+	storageClient.objects[storageClient.presignedKeys[0]] =
+		[]byte(`[{"type":99,"timestamp":1784800000400,"data":{}}]`)
+	storageClient.contentTypes[storageClient.presignedKeys[0]] = "application/json"
+	if err := scheduler.ReconcileOnce(ctx); err != nil {
+		t.Fatalf("reconcile verified replay finalization: %v", err)
 	}
 	alreadyCompleted := replayRequest(router, http.MethodPost, completePath,
 		fmt.Sprintf(`{"complete_token":%q}`, upload.CompleteToken), publicKey, "https://example.com")
@@ -335,6 +372,103 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	if events != 2 || batches != 1 || endedAt == nil {
 		t.Errorf("session aggregates = events %d batches %d ended %v", events, batches, endedAt)
+	}
+	processor := Processor{
+		Store: Store{Database: pools.Admin}, Storage: storageClient,
+		Now: func() time.Time { return now },
+	}
+	mergeTask := asynq.NewTask(
+		TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, createResponse.ID)),
+	)
+	storageClient.removeErrors = map[string]error{
+		verifiedKey: errors.New("storage cleanup unavailable"),
+	}
+	if err := processor.MergeHandler()(ctx, mergeTask); err == nil ||
+		!strings.Contains(err.Error(), "remove merged replay batch") {
+		t.Fatalf("merge cleanup failure = %v", err)
+	}
+	storageClient.removeErrors = nil
+	if err := processor.MergeHandler()(ctx, mergeTask); err != nil {
+		t.Fatalf("retry merged replay task: %v", err)
+	}
+	mergedKey := "tenants/" + tenantID + "/sessions/" + createResponse.ID + "/replay.json"
+	if string(storageClient.objects[mergedKey]) != string(batchData) {
+		t.Fatalf("merged replay = %s, want %s", storageClient.objects[mergedKey], batchData)
+	}
+	var batchRows int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM session_batches WHERE session_id = $1
+	`, createResponse.ID).Scan(&batchRows); err != nil || batchRows != 1 {
+		t.Fatalf("batch row before upload URL expiry = %d, error = %v", batchRows, err)
+	}
+	var concurrentSessionID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, started_at, rrweb_version,
+			max_duration_seconds, max_events, finalize_requested_at
+		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000, $4)
+		RETURNING id
+	`, tenantID, projectID, now.Add(-time.Minute), now).Scan(&concurrentSessionID); err != nil {
+		t.Fatalf("create concurrent verification session: %v", err)
+	}
+	works := make([]BatchVerificationWork, 0, 2)
+	for index, eventCount := range []int{2, 3} {
+		batch, err := scanBatchRow(root.QueryRow(ctx, `
+			INSERT INTO session_batches (
+				tenant_id, project_id, session_id, batch_index, storage_key,
+				events_count, size_bytes, completed_at, upload_refreshed_at,
+				safety_status, upload_expires_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, 64, $7, $7,
+				'quarantined', $7::timestamptz + interval '10 minutes'
+			)
+			RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
+			          events_count, size_bytes, content_type, complete_token_hash, completed_at,
+			          safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
+			          verification_generation, verification_enqueued_at, verification_attempts
+		`, tenantID, projectID, concurrentSessionID, index,
+			fmt.Sprintf("replay/concurrent-%d.json", index), eventCount, now,
+		))
+		if err != nil {
+			t.Fatalf("create concurrent verification batch: %v", err)
+		}
+		works = append(works, BatchVerificationWork{Batch: batch})
+	}
+	concurrentStore := Store{Database: pools.Admin}
+	var wait sync.WaitGroup
+	errorsByWorker := make(chan error, len(works))
+	for _, work := range works {
+		wait.Add(1)
+		go func(work BatchVerificationWork) {
+			defer wait.Done()
+			errorsByWorker <- concurrentStore.MarkSafe(
+				ctx, work, verifiedBatchKey(work.StorageKey, work.Generation, 1), now,
+			)
+		}(work)
+	}
+	wait.Wait()
+	close(errorsByWorker)
+	for err := range errorsByWorker {
+		if err != nil {
+			t.Fatalf("concurrent MarkSafe() error = %v", err)
+		}
+	}
+	var concurrentEvents, concurrentBatches int
+	var concurrentEndedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT events_count, batches_count, ended_at
+		FROM sessions WHERE id = $1
+	`, concurrentSessionID).Scan(
+		&concurrentEvents, &concurrentBatches, &concurrentEndedAt,
+	); err != nil {
+		t.Fatalf("read concurrent replay counters: %v", err)
+	}
+	if concurrentEvents != 5 || concurrentBatches != 2 || concurrentEndedAt == nil {
+		t.Fatalf("concurrent replay state = events %d batches %d ended %v",
+			concurrentEvents, concurrentBatches, concurrentEndedAt)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, concurrentSessionID); err != nil {
+		t.Fatalf("delete concurrent verification session: %v", err)
 	}
 	emptyCreateBody := fmt.Sprintf(`{"session_id":"66d6b8fc-f79d-46bb-9a46-a8db9cb7ea0c","widget_rule_id":%q,"page_url":"https://example.com/empty"}`, ruleID)
 	emptyCreated := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
@@ -401,10 +535,58 @@ func TestReplayHTTPFlow(t *testing.T) {
 	`, expiringSession.ID).Scan(&expiredStatus, &expiredToken, &expiredCompletedAt); err != nil {
 		t.Fatalf("read expired replay batch: %v", err)
 	}
-	if expiredStatus != string(BatchSafetyExpired) ||
+	if expiredStatus != string(BatchSafetyCleaning) ||
 		expiredToken != nil || expiredCompletedAt != nil {
-		t.Fatalf("expired replay state = %s/%v/%v",
+		t.Fatalf("claimed replay expiry state = %s/%v/%v",
 			expiredStatus, expiredToken, expiredCompletedAt)
+	}
+	if _, exists := storageClient.objects[expiringKey]; !exists ||
+		slices.Contains(storageClient.removedKeys, expiringKey) {
+		t.Fatalf("HTTP expiry cleanup = exists %v removed %#v",
+			exists, storageClient.removedKeys)
+	}
+	now = now.Add(uploadCleanupGrace)
+	if err := scheduler.ReconcileOnce(ctx); err != nil {
+		t.Fatalf("reconcile expired replay cleanup: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT safety_status::text
+		FROM session_batches WHERE session_id = $1 AND batch_index = 0
+	`, expiringSession.ID).Scan(&expiredStatus); err != nil {
+		t.Fatalf("read reconciled replay expiry: %v", err)
+	}
+	if _, exists := storageClient.objects[expiringKey]; expiredStatus != string(BatchSafetyExpired) ||
+		exists || !slices.Contains(storageClient.removedKeys, expiringKey) {
+		t.Fatalf("reconciled replay expiry = status %s exists %v removed %#v",
+			expiredStatus, exists, storageClient.removedKeys)
+	}
+	var verifiedCleanupTask BatchVerificationTask
+	for _, candidate := range mergeQueue.verificationTasks {
+		if candidate.BatchID == mergeQueue.verificationTasks[0].BatchID &&
+			candidate.Generation > mergeQueue.verificationTasks[0].Generation {
+			verifiedCleanupTask = candidate
+		}
+	}
+	if verifiedCleanupTask.BatchID == "" {
+		t.Fatalf("verified replay cleanup task was not scheduled: %#v",
+			mergeQueue.verificationTasks)
+	}
+	verifiedCleanupPayload, err := json.Marshal(verifiedCleanupTask)
+	if err != nil {
+		t.Fatalf("encode verified replay cleanup task: %v", err)
+	}
+	if err := verificationProcessor.Handler()(
+		ctx, asynq.NewTask(TaskVerifyBatch, verifiedCleanupPayload),
+	); err != nil {
+		t.Fatalf("complete verified replay cleanup: %v", err)
+	}
+	if _, exists := storageClient.objects[storageClient.presignedKeys[0]]; exists {
+		t.Fatal("reused replay staging object remained after presigned URL expiry")
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM session_batches WHERE session_id = $1
+	`, createResponse.ID).Scan(&batchRows); err != nil || batchRows != 0 {
+		t.Fatalf("merged batch rows after staging cleanup = %d, error = %v", batchRows, err)
 	}
 	redeclaredExpired := replayRequest(router, http.MethodPost,
 		"/v1/replay/sessions/"+expiringSession.ID+"/batches?key="+publicKey,
@@ -477,7 +659,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("read rejected replay batch: %v", err)
 	}
 	if rejectedStatus != string(BatchSafetyRejected) ||
-		rejectedReason != "invalid_event" || rejectedEnqueuedAt != nil {
+		rejectedReason != "invalid_event" || rejectedEnqueuedAt == nil {
 		t.Fatalf("rejected replay state = %s/%s/%v",
 			rejectedStatus, rejectedReason, rejectedEnqueuedAt)
 	}
@@ -495,8 +677,39 @@ func TestReplayHTTPFlow(t *testing.T) {
 		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
 		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
 		publicKey, "https://example.com")
+	if redeclaredRejected.Code != http.StatusConflict {
+		t.Fatalf("redeclare rejected replay before cleanup = %d, body = %s",
+			redeclaredRejected.Code, redeclaredRejected.Body.String())
+	}
+	now = now.Add(replayUploadTTL + uploadCleanupGrace)
+	if err := scheduler.ReconcileOnce(ctx); err != nil {
+		t.Fatalf("schedule rejected replay final cleanup: %v", err)
+	}
+	var cleanupTask BatchVerificationTask
+	for _, candidate := range mergeQueue.verificationTasks {
+		if candidate.BatchID == rejectedTask.BatchID && candidate.Generation > rejectedTask.Generation {
+			cleanupTask = candidate
+		}
+	}
+	if cleanupTask.BatchID == "" {
+		t.Fatalf("rejected replay cleanup task was not scheduled: %#v",
+			mergeQueue.verificationTasks)
+	}
+	cleanupPayload, err := json.Marshal(cleanupTask)
+	if err != nil {
+		t.Fatalf("encode rejected replay cleanup task: %v", err)
+	}
+	if err := rejectionProcessor.Handler()(
+		ctx, asynq.NewTask(TaskVerifyBatch, cleanupPayload),
+	); err != nil {
+		t.Fatalf("complete rejected replay cleanup: %v", err)
+	}
+	redeclaredRejected = replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
+		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
+		publicKey, "https://example.com")
 	if redeclaredRejected.Code != http.StatusCreated {
-		t.Fatalf("redeclare rejected replay = %d, body = %s",
+		t.Fatalf("redeclare rejected replay after cleanup = %d, body = %s",
 			redeclaredRejected.Code, redeclaredRejected.Body.String())
 	}
 	var redeclaredStatus string
@@ -507,7 +720,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 	`, rejectedSession.ID).Scan(&redeclaredStatus, &redeclaredGeneration); err != nil {
 		t.Fatalf("read redeclared replay batch: %v", err)
 	}
-	if redeclaredStatus != string(BatchSafetyPending) || redeclaredGeneration != 2 {
+	if redeclaredStatus != string(BatchSafetyPending) ||
+		redeclaredGeneration != cleanupTask.Generation+1 {
 		t.Fatalf("redeclared replay state = %s/%d", redeclaredStatus, redeclaredGeneration)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, rejectedSession.ID); err != nil {
@@ -588,28 +802,6 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("delete aggregate-limit replay session: %v", err)
 	}
 
-	processor := Processor{Store: Store{Database: pools.Admin}, Storage: storageClient, Now: func() time.Time { return now }}
-	mergeTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(`{"session_id":%q}`, createResponse.ID)))
-	storageClient.removeErrors = map[string]error{
-		storageClient.presignedKeys[0]: errors.New("storage cleanup unavailable"),
-	}
-	if err := processor.MergeHandler()(ctx, mergeTask); err == nil ||
-		!strings.Contains(err.Error(), "remove merged replay batch") {
-		t.Fatalf("merge cleanup failure = %v", err)
-	}
-	storageClient.removeErrors = nil
-	if err := processor.MergeHandler()(ctx, mergeTask); err != nil {
-		t.Fatalf("retry merged replay task: %v", err)
-	}
-	mergedKey := "tenants/" + tenantID + "/sessions/" + createResponse.ID + "/replay.json"
-	if string(storageClient.objects[mergedKey]) != string(batchData) {
-		t.Fatalf("merged replay = %s, want %s", storageClient.objects[mergedKey], batchData)
-	}
-	var batchRows int
-	if err := root.QueryRow(ctx, `SELECT count(*) FROM session_batches WHERE session_id = $1`, createResponse.ID).
-		Scan(&batchRows); err != nil || batchRows != 0 {
-		t.Fatalf("merged batch rows = %d, error = %v", batchRows, err)
-	}
 	var replayMemberID, restrictedMemberID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)

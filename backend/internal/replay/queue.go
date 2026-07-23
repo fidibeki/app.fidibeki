@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 )
 
-const TaskMerge = "replay:merge"
+const (
+	TaskMerge = "replay:merge"
+	QueueName = "replay-pool"
+)
 
 const abandonedSessionGrace = replayUploadTTL + 5*time.Minute
 
@@ -47,7 +49,7 @@ func (q *Queue) EnqueueMerge(ctx context.Context, sessionID string) error {
 		ctx,
 		asynq.NewTask(TaskMerge, payload),
 		asynq.TaskID("replay:merge:"+sessionID),
-		asynq.Queue(outbox.QueueName),
+		asynq.Queue(QueueName),
 		asynq.MaxRetry(terminalMergeAttempts),
 		asynq.Timeout(10*time.Minute),
 		asynq.Retention(24*time.Hour),
@@ -70,7 +72,7 @@ func (q *Queue) EnqueueVerification(ctx context.Context, task BatchVerificationT
 		ctx,
 		asynq.NewTask(TaskVerifyBatch, payload),
 		asynq.TaskID(fmt.Sprintf("replay:verify:%s:%d", task.BatchID, task.Generation)),
-		asynq.Queue(outbox.QueueName),
+		asynq.Queue(QueueName),
 		asynq.MaxRetry(12),
 		asynq.Timeout(2*time.Minute),
 		asynq.Retention(24*time.Hour),
@@ -99,10 +101,15 @@ type BatchVerificationQueue interface {
 	EnqueueVerification(context.Context, BatchVerificationTask) error
 }
 
+type ExpiredBatchStorage interface {
+	RemoveObject(context.Context, string) error
+}
+
 type Scheduler struct {
 	Store             Store
 	Queue             MergeQueue
 	VerificationQueue BatchVerificationQueue
+	Storage           ExpiredBatchStorage
 	Logger            *slog.Logger
 	Now               func() time.Time
 }
@@ -135,8 +142,23 @@ func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 	now := s.now()
 	var result error
 	if s.VerificationQueue != nil {
-		if _, err := s.Store.ExpirePendingBatches(ctx, now, 100); err != nil {
+		expired, err := s.Store.ClaimExpiredBatches(ctx, now, 100)
+		if err != nil {
 			result = errors.Join(result, err)
+		} else if len(expired) > 0 && s.Storage == nil {
+			result = errors.Join(result, errors.New("replay expiry storage is unavailable"))
+		} else {
+			for _, upload := range expired {
+				if err := s.Storage.RemoveObject(ctx, upload.StorageKey); err != nil {
+					result = errors.Join(result,
+						fmt.Errorf("remove expired replay object %q: %w", upload.StorageKey, err))
+					continue
+				}
+				if err := s.Store.CompleteBatchExpiry(ctx, upload, now); err != nil &&
+					!errors.Is(err, ErrNoBatchVerificationWork) {
+					result = errors.Join(result, err)
+				}
+			}
 		}
 		tasks, err := s.Store.PrepareBatchVerifications(ctx, now, 100)
 		if err != nil {
@@ -151,6 +173,9 @@ func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 				}
 			}
 		}
+	}
+	if err := s.Store.FinalizeReadySessions(ctx, 100); err != nil {
+		result = errors.Join(result, err)
 	}
 	if err := s.Store.RecoverAbandoned(ctx, now.Add(-abandonedSessionGrace), now, 100); err != nil {
 		result = errors.Join(result, err)

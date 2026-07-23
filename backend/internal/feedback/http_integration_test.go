@@ -143,7 +143,10 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if err := analyticsTx.Commit(ctx); err != nil {
 		t.Fatalf("commit feedback matched analytics: %v", err)
 	}
-	audioBody := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, bytes.Repeat([]byte{1}, 2044)...)
+	audioBody := validWebMFixtureOfSize(2048)
+	if len(audioBody) != 2048 {
+		t.Fatalf("audio fixture size = %d, want 2048", len(audioBody))
+	}
 	storageClient := &feedbackStorageStub{
 		stat: storage.ObjectInfo{Size: 2048, ContentType: "audio/webm"},
 		data: audioBody,
@@ -247,6 +250,19 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		!strings.Contains(expiredCompletion.Body.String(), `"reason":"upload_expired"`) {
 		t.Fatalf("expired completion status = %d, body = %s",
 			expiredCompletion.Code, expiredCompletion.Body.String())
+	}
+	if storageClient.removed {
+		t.Fatal("expired attachment object was removed inside the HTTP transaction")
+	}
+	expiryScheduler := VerificationScheduler{
+		Store: VerificationStore{Database: pools.Admin}, Queue: &verificationQueueStub{},
+		Storage: storageClient, Now: func() time.Time { return now },
+	}
+	if err := expiryScheduler.ReconcileOnce(ctx); err != nil {
+		t.Fatalf("reconcile expired attachment cleanup: %v", err)
+	}
+	if !storageClient.removed {
+		t.Fatal("expired attachment object was not removed by the reconciler")
 	}
 
 	idempotent := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
@@ -395,6 +411,21 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		scheduler.task.TenantID != tenantID || scheduler.task.Generation < 1 {
 		t.Errorf("scheduled verification = %#v", scheduler.task)
 	}
+	var persistedGeneration int
+	var verificationEnqueuedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT verification_generation, verification_enqueued_at
+		FROM attachments
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, second.Attachments[0].AttachmentID).Scan(
+		&persistedGeneration, &verificationEnqueuedAt,
+	); err != nil {
+		t.Fatalf("read scheduled attachment verification state: %v", err)
+	}
+	if persistedGeneration != scheduler.task.Generation {
+		t.Fatalf("scheduled verification generation = %d, persisted = %d",
+			scheduler.task.Generation, persistedGeneration)
+	}
 	if _, err := (Store{}).GetTenantAttachmentObject(
 		ctx, root, tenantID, first.FeedbackID, second.Attachments[0].AttachmentID,
 	); !errors.Is(err, ErrNotFound) {
@@ -419,6 +450,28 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		aiAttachmentScheduler.feedbackID != first.FeedbackID {
 		t.Fatalf("verified attachment AI schedule = %q/%q",
 			aiAttachmentScheduler.attachmentID, aiAttachmentScheduler.feedbackID)
+	}
+	verifiedAttachment, err := (Store{}).GetTenantAttachmentObject(
+		ctx, root, tenantID, first.FeedbackID, second.Attachments[0].AttachmentID,
+	)
+	if err != nil {
+		t.Fatalf("read verified attachment object: %v", err)
+	}
+	wantVerifiedKey := verifiedAttachmentKey(
+		storageClient.presignedKeys[0], scheduler.task.Generation, 1,
+	)
+	if verifiedAttachment.StorageKey != wantVerifiedKey ||
+		!bytes.Equal(storageClient.objects[wantVerifiedKey], audioBody) {
+		t.Fatalf("verified attachment promotion = key %q body size %d",
+			verifiedAttachment.StorageKey, len(storageClient.objects[wantVerifiedKey]))
+	}
+	storageClient.objects[storageClient.presignedKeys[0]] = []byte("overwritten staging object")
+	verifiedAttachment, err = (Store{}).GetTenantAttachmentObject(
+		ctx, root, tenantID, first.FeedbackID, second.Attachments[0].AttachmentID,
+	)
+	if err != nil || verifiedAttachment.StorageKey != wantVerifiedKey {
+		t.Fatalf("verified attachment after staging overwrite = %#v, %v",
+			verifiedAttachment, err)
 	}
 	assertAttachmentVerificationStoreLifecycle(
 		t, ctx, root, tenantID, first.FeedbackID, now,
@@ -1098,9 +1151,12 @@ func assertFeedbackTriageRead(t *testing.T, item Item, assigneeID string) {
 }
 
 type feedbackStorageStub struct {
-	stat    storage.ObjectInfo
-	data    []byte
-	removed bool
+	stat          storage.ObjectInfo
+	data          []byte
+	objects       map[string][]byte
+	presignedKeys []string
+	removedKeys   []string
+	removed       bool
 }
 
 type attachmentStreamStorageStub struct {
@@ -1142,6 +1198,7 @@ func (s *attachmentSchedulerStub) ScheduleVerification(
 }
 
 func (s *feedbackStorageStub) PresignPut(_ context.Context, key string, _ time.Duration) (string, error) {
+	s.presignedKeys = append(s.presignedKeys, key)
 	return "https://uploads.example.test/" + key, nil
 }
 
@@ -1149,12 +1206,35 @@ func (s *feedbackStorageStub) Stat(context.Context, string) (storage.ObjectInfo,
 	return s.stat, nil
 }
 
-func (s *feedbackStorageStub) OpenObject(context.Context, string) (io.ReadCloser, error) {
+func (s *feedbackStorageStub) OpenObject(_ context.Context, key string) (io.ReadCloser, error) {
+	if value, exists := s.objects[key]; exists {
+		return io.NopCloser(bytes.NewReader(value)), nil
+	}
 	return io.NopCloser(bytes.NewReader(s.data)), nil
 }
 
-func (s *feedbackStorageStub) RemoveObject(context.Context, string) error {
+func (s *feedbackStorageStub) PutObject(
+	_ context.Context,
+	key string,
+	reader io.Reader,
+	_ int64,
+	_ string,
+) error {
+	value, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	if s.objects == nil {
+		s.objects = make(map[string][]byte)
+	}
+	s.objects[key] = value
+	return nil
+}
+
+func (s *feedbackStorageStub) RemoveObject(_ context.Context, key string) error {
 	s.removed = true
+	s.removedKeys = append(s.removedKeys, key)
+	delete(s.objects, key)
 	return nil
 }
 
@@ -1285,10 +1365,10 @@ func assertAttachmentVerificationStoreLifecycle(
 			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
 			content_type, size_bytes, processing_status, completed_at, safety_status,
 			upload_refreshed_at, upload_expires_at, verification_generation
-		) VALUES (
-			$1, $2, 'screenshot', gen_random_uuid(), $3,
-			'image/png', 8, 'pending', $4, 'quarantined',
-			$4::timestamptz - interval '10 minutes', $4::timestamptz + interval '1 hour', 1
+			) VALUES (
+				$1, $2, 'screenshot', gen_random_uuid(), $3,
+				'image/png', 8, 'pending', $4, 'quarantined',
+				$4::timestamptz - interval '10 minutes', $4::timestamptz - interval '2 minutes', 1
 		)
 		RETURNING id
 	`, tenantID, feedbackID, "verification/quarantined.png", now).Scan(&attachmentID); err != nil {
@@ -1321,7 +1401,7 @@ func assertAttachmentVerificationStoreLifecycle(
 	if err := store.MarkRejected(ctx, work, "signature_mismatch", &detected, now); err != nil {
 		t.Fatalf("MarkRejected() error = %v", err)
 	}
-	if err := store.CompleteRejectedCleanup(ctx, work); err != nil {
+	if err := store.CompleteRejectedCleanup(ctx, work, now); err != nil {
 		t.Fatalf("CompleteRejectedCleanup() error = %v", err)
 	}
 	noWork := task
@@ -1331,8 +1411,39 @@ func assertAttachmentVerificationStoreLifecycle(
 	}
 	if err := store.CompleteRejectedCleanup(ctx, VerificationWork{
 		VerificationTask: noWork,
-	}); !errors.Is(err, ErrNoVerificationWork) {
+	}, now); !errors.Is(err, ErrNoVerificationWork) {
 		t.Fatalf("stale CompleteRejectedCleanup() error = %v", err)
+	}
+	var safeAttachmentID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO attachments (
+			tenant_id, feedback_id, kind, client_attachment_id, storage_key,
+			content_type, size_bytes, processing_status, completed_at, safety_status,
+			upload_refreshed_at, upload_expires_at, safety_checked_at,
+			detected_content_type, verification_generation, verification_enqueued_at
+		) VALUES (
+			$1, $2, 'screenshot', gen_random_uuid(), $3,
+			'image/png', 8, 'pending', $4, 'safe',
+			$4::timestamptz - interval '10 minutes', $4::timestamptz - interval '2 minutes', $4,
+			'image/png', 1, $4::timestamptz - interval '2 minutes'
+		)
+		RETURNING id
+	`, tenantID, feedbackID, "verification/safe.png.verified-1", now).Scan(
+		&safeAttachmentID,
+	); err != nil {
+		t.Fatalf("create safe attachment cleanup fixture: %v", err)
+	}
+	safeWork := VerificationWork{VerificationTask: VerificationTask{
+		TenantID: tenantID, AttachmentID: safeAttachmentID, Generation: 1,
+	}}
+	if err := store.CompleteSafeCleanup(ctx, safeWork, now); err != nil {
+		t.Fatalf("CompleteSafeCleanup() error = %v", err)
+	}
+	if err := store.CompleteSafeCleanup(ctx, safeWork, now); !errors.Is(err, ErrNoVerificationWork) {
+		t.Fatalf("repeated CompleteSafeCleanup() error = %v", err)
+	}
+	if _, err := database.Exec(ctx, `DELETE FROM attachments WHERE id = $1`, safeAttachmentID); err != nil {
+		t.Fatalf("delete safe attachment cleanup fixture: %v", err)
 	}
 	if _, err := store.Prepare(ctx, now, 0); err == nil {
 		t.Fatal("Prepare(invalid limit) error = nil")
@@ -1353,12 +1464,21 @@ func assertAttachmentVerificationStoreLifecycle(
 	`, tenantID, feedbackID, "verification/expired.webm", now).Scan(&pendingID); err != nil {
 		t.Fatalf("create pending attachment: %v", err)
 	}
-	if _, err := store.ExpirePending(ctx, now, 1001); err == nil {
-		t.Fatal("ExpirePending(invalid limit) error = nil")
+	if _, err := store.ClaimExpired(ctx, now, 1001); err == nil {
+		t.Fatal("ClaimExpired(invalid limit) error = nil")
 	}
-	expired, err := store.ExpirePending(ctx, now, 10)
-	if err != nil || expired != 1 {
-		t.Fatalf("ExpirePending() = %d, %v", expired, err)
+	expired, err := store.ClaimExpired(ctx, now, 10)
+	if err != nil || len(expired) != 1 || expired[0].AttachmentID != pendingID {
+		t.Fatalf("ClaimExpired() = %#v, %v", expired, err)
+	}
+	var cleaningStatus string
+	if err := database.QueryRow(ctx,
+		`SELECT safety_status FROM attachments WHERE id = $1`, pendingID,
+	).Scan(&cleaningStatus); err != nil || cleaningStatus != "cleaning" {
+		t.Fatalf("claimed attachment status = %q, %v", cleaningStatus, err)
+	}
+	if err := store.CompleteExpiry(ctx, expired[0], now); err != nil {
+		t.Fatalf("CompleteExpiry() error = %v", err)
 	}
 	var safetyStatus, processingStatus string
 	var completeTokenHash *string

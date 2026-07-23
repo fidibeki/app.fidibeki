@@ -27,6 +27,7 @@ type BatchSafetyStatus string
 
 const (
 	BatchSafetyPending     BatchSafetyStatus = "pending"
+	BatchSafetyCleaning    BatchSafetyStatus = "cleaning"
 	BatchSafetyQuarantined BatchSafetyStatus = "quarantined"
 	BatchSafetySafe        BatchSafetyStatus = "safe"
 	BatchSafetyRejected    BatchSafetyStatus = "rejected"
@@ -34,27 +35,28 @@ const (
 )
 
 type Session struct {
-	ID                 string     `json:"id"`
-	TenantID           string     `json:"tenant_id"`
-	ProjectID          string     `json:"project_id"`
-	FeedbackID         *string    `json:"feedback_id,omitempty"`
-	ClientSessionID    string     `json:"session_id"`
-	PageURL            *string    `json:"page_url,omitempty"`
-	StartedAt          time.Time  `json:"started_at"`
-	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	EventsCount        int        `json:"events_count"`
-	BatchesCount       int        `json:"batches_count"`
-	StorageKey         *string    `json:"-"`
-	RRWebVersion       string     `json:"rrweb_version"`
-	MergedAt           *time.Time `json:"merged_at,omitempty"`
-	MergeRequestedAt   *time.Time `json:"-"`
-	MergeEnqueuedAt    *time.Time `json:"-"`
-	MergeAttempts      int        `json:"merge_attempts"`
-	MergeError         *string    `json:"merge_error,omitempty"`
-	RetentionDeletedAt *time.Time `json:"retention_deleted_at,omitempty"`
-	MaxDurationSeconds int        `json:"-"`
-	MaxEvents          int        `json:"-"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID                  string     `json:"id"`
+	TenantID            string     `json:"tenant_id"`
+	ProjectID           string     `json:"project_id"`
+	FeedbackID          *string    `json:"feedback_id,omitempty"`
+	ClientSessionID     string     `json:"session_id"`
+	PageURL             *string    `json:"page_url,omitempty"`
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	EventsCount         int        `json:"events_count"`
+	BatchesCount        int        `json:"batches_count"`
+	StorageKey          *string    `json:"-"`
+	RRWebVersion        string     `json:"rrweb_version"`
+	MergedAt            *time.Time `json:"merged_at,omitempty"`
+	MergeRequestedAt    *time.Time `json:"-"`
+	FinalizeRequestedAt *time.Time `json:"-"`
+	MergeEnqueuedAt     *time.Time `json:"-"`
+	MergeAttempts       int        `json:"merge_attempts"`
+	MergeError          *string    `json:"merge_error,omitempty"`
+	RetentionDeletedAt  *time.Time `json:"retention_deleted_at,omitempty"`
+	MaxDurationSeconds  int        `json:"-"`
+	MaxEvents           int        `json:"-"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 func (s Session) Status() string {
@@ -67,7 +69,7 @@ func (s Session) Status() string {
 	if s.MergeError != nil && s.MergeAttempts >= terminalMergeAttempts {
 		return "failed"
 	}
-	if s.EndedAt != nil {
+	if s.EndedAt != nil || s.FinalizeRequestedAt != nil {
 		return "processing"
 	}
 	return "recording"

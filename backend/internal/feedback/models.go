@@ -46,6 +46,7 @@ type AttachmentSafetyStatus string
 
 const (
 	AttachmentSafetyPending     AttachmentSafetyStatus = "pending"
+	AttachmentSafetyCleaning    AttachmentSafetyStatus = "cleaning"
 	AttachmentSafetyQuarantined AttachmentSafetyStatus = "quarantined"
 	AttachmentSafetySafe        AttachmentSafetyStatus = "safe"
 	AttachmentSafetyRejected    AttachmentSafetyStatus = "rejected"

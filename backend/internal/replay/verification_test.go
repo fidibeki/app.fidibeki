@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/hibiken/asynq"
 )
 
@@ -73,13 +74,16 @@ func TestBatchVerificationProcessorPromotesOnlyValidBatches(t *testing.T) {
 	store := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
 		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
 		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),
-		SafetyStatus: BatchSafetyQuarantined, Generation: 2,
+		SafetyStatus: BatchSafetyQuarantined, Generation: 2, VerificationTries: 1,
+		UploadExpiresAt: time.Date(2026, 7, 23, 10, 10, 0, 0, time.UTC),
 	}}}
 	storage := &batchVerificationStorageStub{body: body}
 	checkedAt := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
+	current := checkedAt
 	processor := BatchVerificationProcessor{
-		Store: store, Storage: storage, Now: func() time.Time { return checkedAt },
+		Store: store, Storage: storage, Now: func() time.Time { return current },
 	}
+	stagingKey := store.work.StorageKey
 	task := asynq.NewTask(TaskVerifyBatch, []byte(
 		`{"tenant_id":"tenant","batch_id":"batch","generation":2}`,
 	))
@@ -89,8 +93,56 @@ func TestBatchVerificationProcessorPromotesOnlyValidBatches(t *testing.T) {
 	if store.safeAt == nil || !store.safeAt.Equal(checkedAt) || store.rejectedReason != "" {
 		t.Fatalf("verification state = safe %v rejected %q", store.safeAt, store.rejectedReason)
 	}
-	if storage.removed {
-		t.Fatal("valid replay batch object was removed")
+	verifiedKey := verifiedBatchKey(
+		stagingKey, store.work.Generation, store.work.VerificationTries,
+	)
+	if !storage.removed || store.safeCleanupComplete ||
+		!bytes.Equal(storage.objects[verifiedKey], body) {
+		t.Fatalf("valid replay promotion = removed %t cleanup %t objects %#v",
+			storage.removed, store.safeCleanupComplete, storage.objects)
+	}
+	current = store.work.UploadExpiresAt.Add(uploadCleanupGrace)
+	if err := processor.Handler()(context.Background(), task); err != nil {
+		t.Fatalf("Handler(final cleanup) error = %v", err)
+	}
+	if !store.safeCleanupComplete {
+		t.Fatal("verified replay staging cleanup was not sealed after upload expiry")
+	}
+}
+
+func TestVerifiedReplayStorageKeysRejectMalformedValues(t *testing.T) {
+	t.Parallel()
+	firstAttempt := verifiedBatchKey("batch.json", 12, 1)
+	secondAttempt := verifiedBatchKey("batch.json", 12, 2)
+	if firstAttempt == secondAttempt {
+		t.Fatalf("verified keys must differ by claim attempt: %q", firstAttempt)
+	}
+	for _, key := range []string{
+		"batch.json",
+		"batch.json.verified-zero",
+		"batch.json.verified-0",
+		"batch.json.verified-1-zero",
+		"batch.json.verified-1-0",
+		"batch.json.verified-1-2-3",
+	} {
+		if _, err := stagingBatchKey(key); err == nil {
+			t.Fatalf("stagingBatchKey(%q) error = nil", key)
+		}
+	}
+	if got, err := stagingBatchKey("batch.json.verified-12"); err != nil ||
+		got != "batch.json" {
+		t.Fatalf("stagingBatchKey(valid) = %q, %v", got, err)
+	}
+	if got, err := stagingBatchKey(secondAttempt); err != nil ||
+		got != "batch.json" {
+		t.Fatalf("stagingBatchKey(unique attempt) = %q, %v", got, err)
+	}
+}
+
+func TestReplayVerificationStagingRejectsInvalidSize(t *testing.T) {
+	t.Parallel()
+	if _, err := stageBatchVerificationObject(bytes.NewReader(nil), 0); err == nil {
+		t.Fatal("stageBatchVerificationObject(zero size) error = nil")
 	}
 }
 
@@ -142,14 +194,37 @@ func TestBatchVerificationProcessorLeavesOperationalFailuresQuarantined(t *testi
 	if store.safeAt != nil || store.rejectedReason != "" {
 		t.Fatalf("operational failure changed safety = %v/%q", store.safeAt, store.rejectedReason)
 	}
+
+	diagnosticFailure := errors.New("diagnostics unavailable")
+	rejectedStore := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
+		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
+		StorageKey: "batch.json", SizeBytes: 2, EventsCount: 0,
+		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
+	}}}
+	if err := (BatchVerificationProcessor{
+		Store: rejectedStore, Storage: &batchVerificationStorageStub{body: []byte(`{}`)},
+		Diagnostics: batchDiagnosticRecorderFunc(func(
+			context.Context,
+			abuse.DiagnosticEvent,
+		) error {
+			return diagnosticFailure
+		}),
+	}).Handler()(context.Background(), task); err != nil {
+		t.Fatalf("optional diagnostic failure = %v", err)
+	}
+	if rejectedStore.rejectedReason != "expected_array" {
+		t.Fatalf("rejected reason = %q", rejectedStore.rejectedReason)
+	}
 }
 
 type batchVerificationStoreStub struct {
-	work            BatchVerificationWork
-	claimErr        error
-	safeAt          *time.Time
-	rejectedReason  string
-	cleanupComplete bool
+	work                BatchVerificationWork
+	claimErr            error
+	safeAt              *time.Time
+	safeKey             string
+	rejectedReason      string
+	cleanupComplete     bool
+	safeCleanupComplete bool
 }
 
 func (store *batchVerificationStoreStub) Claim(
@@ -162,9 +237,22 @@ func (store *batchVerificationStoreStub) Claim(
 func (store *batchVerificationStoreStub) MarkSafe(
 	_ context.Context,
 	_ BatchVerificationWork,
+	verifiedKey string,
 	at time.Time,
 ) error {
+	store.safeKey = verifiedKey
 	store.safeAt = &at
+	store.work.SafetyStatus = BatchSafetySafe
+	store.work.StorageKey = verifiedKey
+	return nil
+}
+
+func (store *batchVerificationStoreStub) CompleteSafeCleanup(
+	context.Context,
+	BatchVerificationWork,
+	time.Time,
+) error {
+	store.safeCleanupComplete = true
 	return nil
 }
 
@@ -181,6 +269,7 @@ func (store *batchVerificationStoreStub) MarkRejected(
 func (store *batchVerificationStoreStub) CompleteRejectedCleanup(
 	context.Context,
 	BatchVerificationWork,
+	time.Time,
 ) error {
 	store.cleanupComplete = true
 	return nil
@@ -188,9 +277,19 @@ func (store *batchVerificationStoreStub) CompleteRejectedCleanup(
 
 type batchVerificationStorageStub struct {
 	body      []byte
+	objects   map[string][]byte
 	openErr   error
 	removeErr error
 	removed   bool
+}
+
+type batchDiagnosticRecorderFunc func(context.Context, abuse.DiagnosticEvent) error
+
+func (record batchDiagnosticRecorderFunc) Record(
+	ctx context.Context,
+	event abuse.DiagnosticEvent,
+) error {
+	return record(ctx, event)
 }
 
 func (storage *batchVerificationStorageStub) OpenObject(
@@ -201,6 +300,24 @@ func (storage *batchVerificationStorageStub) OpenObject(
 		return nil, storage.openErr
 	}
 	return io.NopCloser(bytes.NewReader(storage.body)), nil
+}
+
+func (storage *batchVerificationStorageStub) PutObject(
+	_ context.Context,
+	key string,
+	reader io.Reader,
+	_ int64,
+	_ string,
+) error {
+	value, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	if storage.objects == nil {
+		storage.objects = make(map[string][]byte)
+	}
+	storage.objects[key] = value
+	return nil
 }
 
 func (storage *batchVerificationStorageStub) RemoveObject(context.Context, string) error {

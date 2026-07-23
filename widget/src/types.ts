@@ -155,4 +155,12 @@ export interface SubmissionResponse {
 	issue_public_id?: string
 	notify_reporter?: boolean
 	attachments?: AttachmentUpload[]
+	warnings?: SubmissionWarning[]
+}
+
+export interface SubmissionWarning {
+	code: string
+	message: string
+	reason?: string
+	retry_after_seconds?: number
 }

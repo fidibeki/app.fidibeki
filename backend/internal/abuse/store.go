@@ -22,12 +22,13 @@ const (
 )
 
 type DiagnosticEvent struct {
-	TenantID   string
-	ProjectID  string
-	Category   Category
-	Reason     string
-	Count      int64
-	OccurredAt time.Time
+	TenantID        string
+	ProjectID       string
+	Category        Category
+	Reason          string
+	Count           int64
+	FirstOccurredAt time.Time
+	OccurredAt      time.Time
 }
 
 func (event DiagnosticEvent) validate() error {
@@ -49,6 +50,9 @@ func (event DiagnosticEvent) validate() error {
 	}
 	if event.OccurredAt.IsZero() {
 		return errors.New("abuse diagnostic occurrence time is required")
+	}
+	if !event.FirstOccurredAt.IsZero() && event.FirstOccurredAt.After(event.OccurredAt) {
+		return errors.New("abuse diagnostic first occurrence must not follow the last occurrence")
 	}
 	return nil
 }
@@ -80,12 +84,16 @@ func (Store) Record(
 		count = 1
 	}
 	occurredAt := event.OccurredAt.UTC()
+	firstOccurredAt := occurredAt
+	if !event.FirstOccurredAt.IsZero() {
+		firstOccurredAt = event.FirstOccurredAt.UTC()
+	}
 	bucketStart := occurredAt.Truncate(time.Hour)
 	if _, err := query.Exec(ctx, `
 		INSERT INTO abuse_diagnostics_hourly (
 			tenant_id, project_id, bucket_start, category, reason, event_count,
 			first_occurred_at, last_occurred_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (project_id, bucket_start, category, reason) DO UPDATE SET
 			event_count = abuse_diagnostics_hourly.event_count + EXCLUDED.event_count,
 			first_occurred_at = LEAST(
@@ -97,7 +105,7 @@ func (Store) Record(
 				EXCLUDED.last_occurred_at
 			)
 	`, event.TenantID, event.ProjectID, bucketStart, event.Category, strings.TrimSpace(event.Reason),
-		count, occurredAt,
+		count, firstOccurredAt, occurredAt,
 	); err != nil {
 		return fmt.Errorf("record abuse diagnostic: %w", err)
 	}

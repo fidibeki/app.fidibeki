@@ -954,10 +954,6 @@ func (s Store) FailAttachment(
 	return nil
 }
 
-func (s Store) UpdateCompletion(ctx context.Context, feedbackID string, now time.Time) error {
-	return updateCompletion(ctx, s.Database, feedbackID, now)
-}
-
 func (Store) RetryAttachment(
 	ctx context.Context,
 	query db.Querier,

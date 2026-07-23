@@ -968,6 +968,57 @@ test('keeps an accepted feedback successful when its attachment upload fails', a
   await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
 })
 
+test('shows degraded-success guidance when attachment grants are unavailable', async ({ page }) => {
+  const attachmentRule = { ...browserRule, can_attach_element: false, can_attach_screenshot: true } satisfies WidgetRule
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(browserConfiguration(attachmentRule)),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/v1/screenshot.js', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/javascript',
+    body: `export function createScreenshotControl() {
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.className = 'secondary'
+      element.textContent = 'Capture screenshot'
+      let screenshot = null
+      element.addEventListener('click', () => {
+        screenshot = new Blob(['image'], { type: 'image/png' })
+        element.textContent = 'Screenshot attached'
+      })
+      return { element, screenshot: () => screenshot }
+    }`,
+  }))
+  await page.route('**/v1/feedback?*', async (route) => {
+    const body = route.request().postDataJSON() as { attachments: unknown[] }
+    expect(body.attachments).toHaveLength(1)
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        feedback_id: 'fb_degraded_attachment',
+        attachments: [],
+        warnings: [{
+          code: 'service_unavailable',
+          reason: 'upload_rate_limited',
+          message: 'Feedback saved without attachments. Try again later.',
+          retry_after_seconds: 5,
+        }],
+      }),
+    })
+  })
+
+  await page.goto('/sample.html')
+  await page.getByRole('button', { name: 'Capture screenshot' }).click()
+  await page.getByRole('button', { name: 'Send feedback' }).click()
+  await expect(page.getByText('Your feedback was sent.')).toBeVisible()
+  await expect(page.getByText('Feedback saved without attachments. Try again later.')).toBeVisible()
+  await expect(page.getByText('Could not send feedback. Please try again.')).toHaveCount(0)
+})
+
 test('preserves the complete draft and offers retry after a public rate decision', async ({ page }, testInfo) => {
   const retryRule = {
     ...definitionConfiguration('prompt').definitions![0]!,

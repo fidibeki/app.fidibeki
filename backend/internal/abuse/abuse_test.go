@@ -171,6 +171,45 @@ func TestKeyringRejectsUnsafeSecrets(t *testing.T) {
 	}
 }
 
+func TestDiagnosticEventRejectsInvalidBoundaries(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	valid := DiagnosticEvent{
+		TenantID: "tenant", ProjectID: "project", Category: CategorySpam,
+		Reason: "spam_rejected", OccurredAt: now,
+	}
+	tests := []DiagnosticEvent{
+		func() DiagnosticEvent {
+			event := valid
+			event.Reason = ""
+			return event
+		}(),
+		func() DiagnosticEvent {
+			event := valid
+			event.Count = -1
+			return event
+		}(),
+		func() DiagnosticEvent {
+			event := valid
+			event.OccurredAt = time.Time{}
+			return event
+		}(),
+		func() DiagnosticEvent {
+			event := valid
+			event.FirstOccurredAt = now.Add(time.Second)
+			return event
+		}(),
+	}
+	for _, event := range tests {
+		if err := event.validate(); err == nil {
+			t.Fatalf("validate(%#v) error = nil", event)
+		}
+	}
+	if RetryAfterSeconds(0) != 1 {
+		t.Fatal("RetryAfterSeconds(0) did not enforce the minimum")
+	}
+}
+
 type limiterStub struct {
 	keys      []string
 	decisions []ratelimit.Decision

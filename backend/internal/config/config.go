@@ -63,6 +63,9 @@ type Config struct {
 	ResendWebhookSecret       string
 	EmailConcurrency          int
 	AIConcurrency             int
+	DomainConcurrency         int
+	MediaConcurrency          int
+	PrivacyConcurrency        int
 	GeminiAPIKey              string
 	GeminiModel               string
 	GeminiRPM                 int
@@ -110,6 +113,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	)
 	emailConcurrency, emailConcurrencyErr := strconv.Atoi(get("EMAIL_QUEUE_CONCURRENCY", "20"))
 	aiConcurrency, aiConcurrencyErr := strconv.Atoi(get("AI_QUEUE_CONCURRENCY", "3"))
+	domainConcurrency, domainConcurrencyErr := strconv.Atoi(get("DOMAIN_QUEUE_CONCURRENCY", "4"))
+	mediaConcurrency, mediaConcurrencyErr := strconv.Atoi(get("MEDIA_QUEUE_CONCURRENCY", "2"))
+	privacyConcurrency, privacyConcurrencyErr := strconv.Atoi(get("PRIVACY_QUEUE_CONCURRENCY", "1"))
 	geminiRPM, geminiRPMErr := strconv.Atoi(get("GEMINI_RPM", "15"))
 	aiDailyLimit, aiDailyLimitErr := strconv.Atoi(get("AI_DAILY_REQUEST_LIMIT", "5000"))
 	aiProjectDailyLimit, aiProjectDailyLimitErr := strconv.Atoi(
@@ -167,6 +173,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		ResendWebhookSecret:       get("RESEND_WEBHOOK_SECRET", ""),
 		EmailConcurrency:          emailConcurrency,
 		AIConcurrency:             aiConcurrency,
+		DomainConcurrency:         domainConcurrency,
+		MediaConcurrency:          mediaConcurrency,
+		PrivacyConcurrency:        privacyConcurrency,
 		GeminiAPIKey:              get("GEMINI_API_KEY", ""),
 		GeminiModel:               get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		GeminiRPM:                 geminiRPM,
@@ -226,6 +235,15 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if aiConcurrencyErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_QUEUE_CONCURRENCY: %w", aiConcurrencyErr))
+	}
+	if domainConcurrencyErr != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("DOMAIN_QUEUE_CONCURRENCY: %w", domainConcurrencyErr))
+	}
+	if mediaConcurrencyErr != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("MEDIA_QUEUE_CONCURRENCY: %w", mediaConcurrencyErr))
+	}
+	if privacyConcurrencyErr != nil {
+		validationErrors = append(validationErrors, fmt.Errorf("PRIVACY_QUEUE_CONCURRENCY: %w", privacyConcurrencyErr))
 	}
 	if geminiRPMErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("GEMINI_RPM: %w", geminiRPMErr))
@@ -372,6 +390,15 @@ func (c Config) validate() []error {
 	if c.AIConcurrency <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_QUEUE_CONCURRENCY must be positive"))
 	}
+	if c.DomainConcurrency <= 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("DOMAIN_QUEUE_CONCURRENCY must be positive"))
+	}
+	if c.MediaConcurrency <= 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("MEDIA_QUEUE_CONCURRENCY must be positive"))
+	}
+	if c.PrivacyConcurrency <= 0 {
+		validationErrors = append(validationErrors, fmt.Errorf("PRIVACY_QUEUE_CONCURRENCY must be positive"))
+	}
 	if c.GeminiModel == "" {
 		validationErrors = append(validationErrors, fmt.Errorf("GEMINI_MODEL is required"))
 	}
@@ -469,6 +496,9 @@ func (c Config) Redacted() map[string]any {
 		"resend_webhook_secret":        "[REDACTED]",
 		"email_concurrency":            c.EmailConcurrency,
 		"ai_concurrency":               c.AIConcurrency,
+		"domain_concurrency":           c.DomainConcurrency,
+		"media_concurrency":            c.MediaConcurrency,
+		"privacy_concurrency":          c.PrivacyConcurrency,
 		"gemini_api_key":               "[REDACTED]",
 		"gemini_model":                 c.GeminiModel,
 		"gemini_rpm":                   c.GeminiRPM,

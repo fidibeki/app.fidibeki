@@ -133,20 +133,20 @@ func (Store) DeclareBatch(
 	sizeBytes int64,
 	now time.Time,
 ) (Batch, string, error) {
-	var endedAt *time.Time
+	var endedAt, finalizeRequestedAt *time.Time
 	var maxEvents int
 	err := query.QueryRow(ctx, `
-		SELECT ended_at, max_events FROM sessions
+		SELECT ended_at, finalize_requested_at, max_events FROM sessions
 		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
 		FOR UPDATE
-	`, tenantID, projectID, sessionID).Scan(&endedAt, &maxEvents)
+	`, tenantID, projectID, sessionID).Scan(&endedAt, &finalizeRequestedAt, &maxEvents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Batch{}, "", ErrNotFound
 	}
 	if err != nil {
 		return Batch{}, "", fmt.Errorf("lock replay session for batch: %w", err)
 	}
-	if endedAt != nil {
+	if endedAt != nil || finalizeRequestedAt != nil {
 		return Batch{}, "", ErrSessionFinalized
 	}
 	var otherEvents, otherBatches int
@@ -195,7 +195,13 @@ func (Store) DeclareBatch(
 		WHERE session_batches.events_count = EXCLUDED.events_count
 		  AND session_batches.size_bytes = EXCLUDED.size_bytes
 		  AND session_batches.content_type = EXCLUDED.content_type
-		  AND session_batches.safety_status IN ('pending', 'expired', 'rejected')
+		  AND (
+		      session_batches.safety_status IN ('pending', 'expired')
+		      OR (
+		          session_batches.safety_status = 'rejected'
+		          AND session_batches.verification_enqueued_at IS NULL
+		      )
+		  )
 		RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
 		          events_count, size_bytes, content_type, complete_token_hash, completed_at,
 		          safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
@@ -305,15 +311,17 @@ func (store Store) Finalize(
 		found, getErr := store.GetSession(ctx, query, tenantID, sessionID)
 		return found, false, getErr
 	}
-	var incomplete, completed int
+	var pending, quarantined, invalid, completed int
 	if err := query.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE safety_status <> 'safe'),
+		SELECT count(*) FILTER (WHERE safety_status IN ('pending', 'cleaning')),
+		       count(*) FILTER (WHERE safety_status = 'quarantined'),
+		       count(*) FILTER (WHERE safety_status IN ('rejected', 'expired')),
 		       count(*) FILTER (WHERE safety_status = 'safe')
 		FROM session_batches WHERE session_id = $1
-	`, sessionID).Scan(&incomplete, &completed); err != nil {
+	`, sessionID).Scan(&pending, &quarantined, &invalid, &completed); err != nil {
 		return Session{}, false, fmt.Errorf("inspect replay batches before finalization: %w", err)
 	}
-	if incomplete > 0 || completed == 0 {
+	if pending > 0 || invalid > 0 || completed+quarantined == 0 {
 		return Session{}, false, ErrIncompleteBatches
 	}
 	ended := now.UTC()
@@ -324,9 +332,21 @@ func (store Store) Finalize(
 	if ended.Before(startedAt) {
 		ended = startedAt
 	}
+	if quarantined > 0 {
+		if _, err := query.Exec(ctx, `
+			UPDATE sessions
+			SET finalize_requested_at = COALESCE(finalize_requested_at, $4)
+			WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+		`, tenantID, projectID, sessionID, ended); err != nil {
+			return Session{}, false, fmt.Errorf("request replay finalization: %w", err)
+		}
+		found, err := store.GetSession(ctx, query, tenantID, sessionID)
+		return found, false, err
+	}
 	if _, err := query.Exec(ctx, `
 		UPDATE sessions
-		SET ended_at = $4, merge_requested_at = $4,
+		SET finalize_requested_at = COALESCE(finalize_requested_at, $4),
+		    ended_at = $4, merge_requested_at = $4,
 		    merge_enqueued_at = NULL, merge_error = NULL
 		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
 	`, tenantID, projectID, sessionID, ended); err != nil {
@@ -354,7 +374,7 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 			CROSS JOIN LATERAL (
 				SELECT count(*) FILTER (WHERE batch.safety_status = 'safe') AS safe_count,
 				       count(*) FILTER (
-				           WHERE batch.safety_status IN ('pending', 'quarantined')
+				           WHERE batch.safety_status IN ('pending', 'cleaning', 'quarantined')
 				       ) AS unresolved_count,
 				       count(*) FILTER (
 				           WHERE batch.safety_status IN ('rejected', 'expired')
@@ -518,7 +538,17 @@ func (s Store) MarkUnavailable(ctx context.Context, sessionID string) error {
 }
 
 func (s Store) DeleteBatch(ctx context.Context, batchID string) error {
-	if _, err := s.Database.Exec(ctx, `DELETE FROM session_batches WHERE id = $1`, batchID); err != nil {
+	if _, err := s.Database.Exec(ctx, `
+		DELETE FROM session_batches AS batch
+		WHERE batch.id = $1
+		  AND batch.verification_enqueued_at IS NULL
+		  AND EXISTS (
+		      SELECT 1
+		      FROM sessions AS session
+		      WHERE session.id = batch.session_id
+		        AND session.merged_at IS NOT NULL
+		  )
+	`, batchID); err != nil {
 		return fmt.Errorf("delete replay batch record: %w", err)
 	}
 	return nil
@@ -529,7 +559,8 @@ const sessionSelect = `
 	       session.session_id, session.page_url, session.started_at, session.ended_at,
 	       session.events_count, session.batches_count, session.storage_key,
 	       session.rrweb_version, session.merged_at, session.merge_requested_at,
-	       session.merge_enqueued_at, session.merge_attempts, session.merge_error,
+	       session.finalize_requested_at, session.merge_enqueued_at,
+	       session.merge_attempts, session.merge_error,
 	       session.retention_deleted_at,
 	       session.max_duration_seconds, session.max_events, session.created_at
 	FROM sessions AS session
@@ -564,7 +595,7 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		&found.ClientSessionID, &found.PageURL, &found.StartedAt, &found.EndedAt,
 		&found.EventsCount, &found.BatchesCount, &found.StorageKey,
 		&found.RRWebVersion, &found.MergedAt, &found.MergeRequestedAt,
-		&found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
+		&found.FinalizeRequestedAt, &found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
 		&found.RetentionDeletedAt,
 		&found.MaxDurationSeconds, &found.MaxEvents, &found.CreatedAt,
 	)

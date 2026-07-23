@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 )
 
-const TaskExport = "privacy:export"
+const (
+	TaskExport = "privacy:export"
+	QueueName  = "privacy-pool"
+)
 
 type taskClient interface {
 	EnqueueContext(context.Context, *asynq.Task, ...asynq.Option) (*asynq.TaskInfo, error)
@@ -49,7 +51,7 @@ func (queue *Queue) Enqueue(ctx context.Context, job PreparedJob) error {
 		ctx,
 		asynq.NewTask(TaskExport, payload),
 		asynq.TaskID(fmt.Sprintf("privacy:export:%s:%d", job.ID, job.Generation)),
-		asynq.Queue(outbox.QueueName),
+		asynq.Queue(QueueName),
 		asynq.MaxRetry(3),
 		asynq.Timeout(30*time.Minute),
 		asynq.Retention(24*time.Hour),

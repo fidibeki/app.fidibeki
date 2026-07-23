@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 67
+	const latestMigrationVersion = 69
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-8); err != nil {
+	if err := migrator.Steps(-10); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -253,10 +253,6 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if expiredStatus != "expired" || expiredToken != nil {
 		t.Fatalf("re-migrated expired attachment = %q/%v", expiredStatus, expiredToken)
 	}
-	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, safetyTenantID); err != nil {
-		t.Fatalf("remove attachment safety migration fixture: %v", err)
-	}
-
 	var replaySafetyTenantID, replaySafetyProjectID, replaySafetySessionID string
 	var safeReplayBatchID, expiredReplayBatchID string
 	if err := root.QueryRow(ctx, `
@@ -268,7 +264,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
-		VALUES ($1, 'Replay safety', 'pk_live_SAFETYABCDEFGHIJKLMNOQ', '{example.test}')
+		VALUES ($1, 'Replay safety', 'pk_live_REPLAYSAFETYABCDEFGHIJ', '{example.test}')
 		RETURNING id
 	`, replaySafetyTenantID).Scan(&replaySafetyProjectID); err != nil {
 		t.Fatalf("create replay safety migration project: %v", err)
@@ -359,9 +355,6 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if expiredReplayStatus != "expired" || expiredReplayToken != nil {
 		t.Fatalf("re-migrated expired replay batch = %q/%v", expiredReplayStatus, expiredReplayToken)
 	}
-	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, replaySafetyTenantID); err != nil {
-		t.Fatalf("remove replay safety migration fixture: %v", err)
-	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("apply idempotent AI budget migration: %v", err)
 	}
@@ -384,6 +377,92 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply idempotent AI budget migration: %v", err)
+	}
+	if version, dirty, err := migrator.Version(); err != nil || version != 67 || dirty {
+		t.Fatalf("pre-forward migration state = version %d dirty %t, error %v", version, dirty, err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply cleanup lifecycle migration from original v67 schema: %v", err)
+	}
+	for resource, query := range map[string]string{
+		"attachment":   `SELECT safety_status FROM attachments WHERE id = $1`,
+		"replay batch": `SELECT safety_status FROM session_batches WHERE id = $1`,
+	} {
+		resourceID := expiredAttachmentID
+		if resource == "replay batch" {
+			resourceID = expiredReplayBatchID
+		}
+		var status string
+		if err := root.QueryRow(ctx, query, resourceID).Scan(&status); err != nil {
+			t.Fatalf("read migrated legacy %s: %v", resource, err)
+		}
+		if status != "cleaning" {
+			t.Fatalf("migrated legacy %s status = %q, want cleaning", resource, status)
+		}
+	}
+	var finalizeColumn, finalizeIndex *string
+	if err := root.QueryRow(ctx, `
+		SELECT to_regclass('public.idx_sessions_finalize_pending')::text
+	`).Scan(&finalizeIndex); err != nil || finalizeIndex == nil {
+		t.Fatalf("read replay finalization index = %v, error = %v", finalizeIndex, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'sessions'
+		  AND column_name = 'finalize_requested_at'
+	`).Scan(&finalizeColumn); err != nil || finalizeColumn == nil {
+		t.Fatalf("read replay finalization column = %v, error = %v", finalizeColumn, err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE attachments
+		SET safety_status = 'expired',
+		    safety_checked_at = now(),
+		    safety_error_reason = 'upload_expired'
+		WHERE id = $1
+	`, expiredAttachmentID); err != nil {
+		t.Fatalf("complete migrated attachment cleanup: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE session_batches
+		SET safety_status = 'expired',
+		    safety_checked_at = now(),
+		    safety_error_reason = 'upload_expired'
+		WHERE id = $1
+	`, expiredReplayBatchID); err != nil {
+		t.Fatalf("complete migrated replay batch cleanup: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back cleanup lifecycle migration after cleanup: %v", err)
+	}
+	var cleaningEnumValues int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_enum AS value
+		JOIN pg_type AS kind ON kind.oid = value.enumtypid
+		WHERE kind.typname IN ('attachment_safety_status', 'replay_batch_safety_status')
+		  AND value.enumlabel = 'cleaning'
+	`).Scan(&cleaningEnumValues); err != nil || cleaningEnumValues != 0 {
+		t.Fatalf("cleaning enum values after rollback = %d, error = %v", cleaningEnumValues, err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply cleanup lifecycle migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, safetyTenantID); err != nil {
+		t.Fatalf("remove attachment safety migration fixture: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, replaySafetyTenantID); err != nil {
+		t.Fatalf("remove replay safety migration fixture: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply AI project cleanup index migration: %v", err)
+	}
+	var aiCleanupIndex *string
+	if err := root.QueryRow(ctx, `
+		SELECT to_regclass('public.idx_ai_project_daily_usage_cleanup')::text
+	`).Scan(&aiCleanupIndex); err != nil || aiCleanupIndex == nil {
+		t.Fatalf("read AI project cleanup index = %v, error = %v", aiCleanupIndex, err)
 	}
 
 	var tenantA, tenantB string

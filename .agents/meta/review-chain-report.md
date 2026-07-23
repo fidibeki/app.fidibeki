@@ -2,60 +2,43 @@
 skill: review-chain
 version: 1
 date: 2026-07-23
-status: pending-ci
+status: pending-ci-staging
 ---
 
 # Review Chain Report
 
-**Artifact**: Data rights, exports, anonymization, and retention (#25)
-**Date**: 2026-07-23
-**Rounds**: 3 local review passes
+**Artifact**: Layered public-submission abuse protection (#26)
+**Rounds**: 2 independent specialist reviews plus resolver verification
 
 ## Verdict: FIXED LOCALLY
 
 ## Issues Found
 
-| # | Severity | Confidence | Location | Problem | Status |
-|---|----------|------------|----------|---------|--------|
-| 1 | major | 10/10 | `web/utils/download.ts` | A signed download URL returned by the API was used directly, allowing a compromised response to supply a non-HTTP executable scheme. | Fixed with a shared parser that permits only credential-free HTTP(S) URLs, plus unit coverage. |
-| 2 | major | 9/10 | `web/nuxt.config.ts` | The public token page added no-referrer/noindex only after client hydration, leaving the initial document response without explicit token-safe headers. | Fixed with route-level no-store, no-referrer, and X-Robots-Tag headers; client meta remains defense in depth. |
-| 3 | minor | 10/10 | `web/components/settings/DataPrivacy.vue` | Mobile retention rows initially hid the effective duration, removing the core decision information from small screens. | Fixed by retaining category and duration while hiding only the policy source. |
-| 4 | minor | 10/10 | `web/pages/settings/index.vue` | The first component reference used the directory-prefixed auto-import name even though this Nuxt project disables component path prefixes. | Fixed by using the generated `DataPrivacy` component name and exercising the route in E2E. |
-
-## Input Quality Assessment
-
-| Input | Rating | Evidence |
-|-------|--------|----------|
-| Product/domain context | Rich | Issue #25 and the approved design define workspace portability, verified reporter rights, retention, expiry, audit, and legal boundaries. |
-| Requirements clarity | Precise | The design specifies exact permissions, token neutrality, allowlisted exports, destructive behavior, retention windows, and responsive states. |
-| Upstream artifacts | Fresh | Tenant deletion, analytics retention, storage, queueing, audit, email, permissions, Settings, and public reporter patterns were audited and reused. |
+| Severity | Location | Problem | Resolution |
+|----------|----------|---------|------------|
+| critical | migrations `65`/`66` | Editing applied migrations would leave upgraded databases without the new lifecycle contract. | Restored the committed files exactly and added forward migrations `68`/`69` with a real version-67 upgrade test. |
+| major | upload lifecycle | Terminal expiry/rejection could precede object cleanup and allow replay redeclaration races. | Added retryable `cleaning`, retained verification ownership through presigned-URL expiry, and sealed redeclaration until cleanup. |
+| major | attachment/replay verification | Signature-marker checks accepted structurally forged media. | Added bounded structural JPEG, MP3, MP4, WebM, RIFF, Ogg, PNG, gzip, JSON, and rrweb validation with malformed/polyglot coverage. |
+| major | verification promotion | Reusable presigned PUTs could overwrite content after verification. | Promote verified bytes to server-owned keys; downstream consumers use only the promoted key. Keys are unique per generation and claim attempt. |
+| major | replay finalization | A concurrent batch declaration could race finalization. | Persist finalization intent, lock the session, seal declarations, and finalize only after every batch is safe. |
+| major | replay merge cleanup | Merge could delete the batch row while its upload URL was still valid, orphaning recreated staging data. | Keep the row until URL expiry, reconcile staging cleanup, then remove the merged batch manifest; recovery covers interruption between those steps. |
+| major | worker performance | Verification buffered large uploads in memory and storage deletion ran inside API transactions. | Stage bounded streams in temporary files, isolate media concurrency, and move object deletion into reconcilers outside request transactions. |
+| major | AI maintenance | Daily usage cleanup lacked a leading date index. | Added `(usage_date, project_id)` in migration `69`. |
+| minor | abuse diagnostics | Buffered aggregation lost the first occurrence timestamp. | Preserve minimum and maximum timestamps and flush both atomically. |
 
 ## Simplifications Applied
 
-The implementation reuses the existing storage, transaction, queue, permission, email, Settings, and public
-reporter foundations. Reporter exports and anonymization share one privacy job state machine, while workspace
-exports use the same reconciler without exposing cross-kind downloads. No parallel identity, storage, or
-production-only path was added.
+The implementation reuses the existing Redis GCRA limiter, tenant transactions, Asynq queues,
+storage client, moderation flow, AI generation call, diagnostics ledger, Settings UI, and widget
+error envelope. It adds no personal fingerprinting, second AI call, production path, or parallel
+upload service.
 
-## Changes Made
+## Verification
 
-Workspace administrators can generate, retry, inspect, and download durable allowlisted exports. Verified
-reporters can request a scoped export or irreversible anonymization; structured identity, media, transcripts,
-DOM evidence, progress tokens, and notification routing are removed while operational history remains.
-Retention now preserves non-downloadable manifests, expires archives and request access, exposes the effective
-plan matrix, and records bounded retryable cleanup. The Dispatch Settings UI and token-safe public status page
-cover all resulting states.
-
-## Reviewer's Summary
-
-The review traced tenant isolation, human-only permissions, hash-only verification tokens, neutral public
-responses, rate limiting, object-before-manifest deletion, snapshot consistency, retry idempotency, consent
-history, signed-download safety, manual-review disclosure, and responsive UI behavior. No unresolved local
-correctness, PII exposure, authorization, data-mutation ordering, or tenant-isolation finding remains.
-
-## Resolver's Notes
-
-Backend migration replay, all Go packages, the 80% coverage gate, `go vet`, lint, Security CI, Release
-Artifacts, and Backend CI pass. Web typecheck, 76 unit tests, Nuxt build, 124 full E2E passes with 44
-intentional matrix skips, and focused privacy journeys pass locally. Web CI and the staging smoke are still
-required before #25 can be closed.
+- Migration replay and a real `67 -> 69 -> 67 -> 69` path pass.
+- Full backend tests and the exact 80% internal coverage gate pass.
+- `gofmt`, `go vet`, and `govulncheck` pass with no called vulnerability.
+- Widget typecheck, 117 unit tests, build, and 35 browser journeys pass.
+- Web typecheck, 79 unit tests, build, and the CI-concurrency E2E matrix pass with 129 tests and
+  45 intentional skips.
+- CI and one real staging journey remain before issue closure.

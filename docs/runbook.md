@@ -31,7 +31,8 @@ customer evidence into chat or tickets.
 
 1. Check Redis memory, connectivity, and worker restarts before changing concurrency.
 2. Sign in with a platform-admin magic link and inspect queue depth and oldest task at
-   `/admin/queues/` for `email-pool`, `ai-pool`, and `domain-pool`.
+   `/admin/queues/` for `email-pool`, `ai-pool`, `domain-pool`, `replay-pool`,
+   `attachment-verification-pool`, and `privacy-pool`.
 3. Scale only the affected worker pool and respect Gemini and provider rate limits.
 4. Preserve failed tasks for diagnosis; retry transient failures and archive malformed permanent jobs.
 5. Alert if queue age continues rising for 15 minutes or Redis persistence reports errors.

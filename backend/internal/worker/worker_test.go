@@ -19,6 +19,7 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	handler := func(context.Context, *asynq.Task) error { return nil }
 	valid := Options{
 		RedisURL: "redis://localhost:6379/0", EmailConcurrency: 2, AIConcurrency: 3,
+		DomainConcurrency: 4, MediaConcurrency: 2, PrivacyConcurrency: 1,
 		Logger: &testAsynqLogger{},
 		Sender: testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
@@ -84,6 +85,7 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 	worker, err := New(Options{
 		RedisURL:         fmt.Sprintf("redis://%s:%s/0", host, port.Port()),
 		EmailConcurrency: 1, AIConcurrency: 1, Sender: testSender{},
+		DomainConcurrency: 1, MediaConcurrency: 1, PrivacyConcurrency: 1,
 		Logger:          logger,
 		PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),

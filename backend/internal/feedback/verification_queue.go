@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 )
 
-const TaskAttachmentVerify = "attachment:verify"
+const (
+	TaskAttachmentVerify  = "attachment:verify"
+	VerificationQueueName = "attachment-verification-pool"
+)
 
 type VerificationTask struct {
 	TenantID     string `json:"tenant_id"`
@@ -52,7 +54,7 @@ func (queue *VerificationQueue) Enqueue(ctx context.Context, task VerificationTa
 		ctx,
 		asynq.NewTask(TaskAttachmentVerify, payload),
 		asynq.TaskID(VerificationTaskID(task)),
-		asynq.Queue(outbox.QueueName),
+		asynq.Queue(VerificationQueueName),
 		asynq.MaxRetry(12),
 		asynq.Timeout(5*time.Minute),
 	)

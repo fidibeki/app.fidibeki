@@ -223,6 +223,36 @@ func TestSchedulerReturnsStoreFailure(t *testing.T) {
 	}
 }
 
+func TestSchedulerCoordinatesReplayVerificationEnqueue(t *testing.T) {
+	t.Parallel()
+	task := BatchVerificationTask{TenantID: "tenant", BatchID: "batch", Generation: 2}
+	if err := (Scheduler{}).ScheduleBatch(context.Background(), task); err == nil {
+		t.Fatal("ScheduleBatch(nil queue) error = nil")
+	}
+	want := errors.New("queue unavailable")
+	if err := (Scheduler{
+		Store:             Store{Database: errorQuerier{err: want}},
+		VerificationQueue: mergeQueueFailureStub{},
+	}).ScheduleBatch(context.Background(), task); !errors.Is(err, want) {
+		t.Fatalf("ScheduleBatch(store failure) error = %v, want %v", err, want)
+	}
+	query := &verificationScheduleQuerier{}
+	if err := (Scheduler{
+		Store: Store{Database: query}, VerificationQueue: mergeQueueFailureStub{err: want},
+	}).ScheduleBatch(context.Background(), task); !errors.Is(err, want) {
+		t.Fatalf("ScheduleBatch(queue failure) error = %v, want %v", err, want)
+	}
+	if query.calls != 2 {
+		t.Fatalf("ScheduleBatch(queue failure) database calls = %d, want mark and undo", query.calls)
+	}
+	if err := (Scheduler{
+		Store:             Store{Database: &verificationScheduleQuerier{}},
+		VerificationQueue: mergeQueueFailureStub{},
+	}).ScheduleBatch(context.Background(), task); err != nil {
+		t.Fatalf("ScheduleBatch(success) error = %v", err)
+	}
+}
+
 func TestDefaultClocksAndTrailingJSON(t *testing.T) {
 	for name, value := range map[string]time.Time{
 		"HTTP":      (&HTTPHandler{}).now(),
@@ -497,6 +527,38 @@ type mergeQueueFailureStub struct {
 
 func (s mergeQueueFailureStub) EnqueueMerge(context.Context, string) error {
 	return s.err
+}
+
+func (s mergeQueueFailureStub) EnqueueVerification(
+	context.Context,
+	BatchVerificationTask,
+) error {
+	return s.err
+}
+
+type verificationScheduleQuerier struct {
+	calls int
+}
+
+func (query *verificationScheduleQuerier) Exec(
+	context.Context,
+	string,
+	...any,
+) (pgconn.CommandTag, error) {
+	query.calls++
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (*verificationScheduleQuerier) Query(
+	context.Context,
+	string,
+	...any,
+) (pgx.Rows, error) {
+	return nil, errors.New("unexpected query")
+}
+
+func (*verificationScheduleQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
+	return nil
 }
 
 type errorQuerier struct {

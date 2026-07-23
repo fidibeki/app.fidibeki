@@ -18,14 +18,22 @@ type VerificationStore struct {
 
 type VerificationWork struct {
 	VerificationTask
+	FeedbackID      string
+	ProjectID       string
+	Kind            AttachmentKind
+	StorageKey      string
+	ContentType     string
+	SizeBytes       int64
+	UploadExpiresAt time.Time
+	Attempt         int
+	SafetyStatus    AttachmentSafetyStatus
+}
+
+type ExpiredUpload struct {
+	TenantID     string
+	AttachmentID string
 	FeedbackID   string
-	ProjectID    string
-	Kind         AttachmentKind
 	StorageKey   string
-	ContentType  string
-	SizeBytes    int64
-	Attempt      int
-	SafetyStatus AttachmentSafetyStatus
 }
 
 func (store VerificationStore) MarkEnqueued(
@@ -78,18 +86,32 @@ func (store VerificationStore) Prepare(
 		WITH candidates AS (
 			SELECT id
 			FROM attachments
-			WHERE safety_status = 'quarantined'
-			  AND (
-			      verification_enqueued_at IS NULL
-			      OR verification_enqueued_at < $1::timestamptz - interval '15 minutes'
-			  )
+			WHERE (
+			        safety_status = 'quarantined'
+			        AND (
+			            verification_enqueued_at IS NULL
+			            OR verification_enqueued_at < $1::timestamptz - interval '15 minutes'
+			        )
+			      )
+			   OR (
+			        safety_status = 'safe'
+			        AND storage_key LIKE '%.verified-%'
+			        AND upload_expires_at + interval '1 minute' <= $1
+			        AND verification_enqueued_at < $1::timestamptz - interval '1 minute'
+			      )
+			   OR (
+			        safety_status = 'rejected'
+			        AND upload_expires_at + interval '1 minute' <= $1
+			        AND verification_enqueued_at < $1::timestamptz - interval '1 minute'
+			      )
 			ORDER BY COALESCE(verification_enqueued_at, completed_at), id
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		)
 		UPDATE attachments AS attachment
 		SET verification_generation = CASE
-		        WHEN verification_enqueued_at IS NULL THEN verification_generation
+		        WHEN safety_status = 'quarantined' AND verification_enqueued_at IS NULL
+		            THEN verification_generation
 		        ELSE verification_generation + 1
 		    END,
 		    verification_enqueued_at = $1
@@ -126,17 +148,17 @@ func (store VerificationStore) Claim(
 		SET verification_attempts = verification_attempts + 1
 		WHERE tenant_id = $1 AND id = $2
 		  AND verification_generation = $3
-		  AND safety_status IN ('quarantined', 'rejected')
+			  AND safety_status IN ('quarantined', 'safe', 'rejected')
 		  AND completed_at IS NOT NULL
 		  AND retention_deleted_at IS NULL
 		  AND storage_key IS NOT NULL
 		RETURNING feedback_id,
 		          (SELECT project_id FROM feedbacks WHERE id = attachments.feedback_id),
-		          kind, storage_key, content_type, size_bytes, verification_attempts,
-		          safety_status
+			          kind, storage_key, content_type, size_bytes, upload_expires_at,
+			          verification_attempts, safety_status
 	`, task.TenantID, task.AttachmentID, task.Generation).Scan(
 		&work.FeedbackID, &work.ProjectID, &work.Kind, &work.StorageKey, &work.ContentType,
-		&work.SizeBytes, &work.Attempt, &work.SafetyStatus,
+		&work.SizeBytes, &work.UploadExpiresAt, &work.Attempt, &work.SafetyStatus,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return VerificationWork{}, ErrNoVerificationWork
@@ -151,6 +173,7 @@ func (store VerificationStore) MarkSafe(
 	ctx context.Context,
 	work VerificationWork,
 	detectedContentType string,
+	verifiedStorageKey string,
 	checkedAt time.Time,
 ) error {
 	var updated int
@@ -158,10 +181,10 @@ func (store VerificationStore) MarkSafe(
 		WITH updated_attachment AS (
 			UPDATE attachments
 			SET safety_status = 'safe',
+			    storage_key = $6,
 			    safety_checked_at = $4,
 			    safety_error_reason = NULL,
-			    detected_content_type = $5,
-			    verification_enqueued_at = NULL
+			    detected_content_type = $5
 			WHERE tenant_id = $1 AND id = $2
 			  AND verification_generation = $3
 			  AND safety_status = 'quarantined'
@@ -180,12 +203,36 @@ func (store VerificationStore) MarkSafe(
 			RETURNING feedback.id
 		)
 		SELECT count(*) FROM updated_attachment
-	`, work.TenantID, work.AttachmentID, work.Generation, checkedAt.UTC(), detectedContentType).
+		`, work.TenantID, work.AttachmentID, work.Generation, checkedAt.UTC(), detectedContentType,
+		verifiedStorageKey).
 		Scan(&updated)
 	if err != nil {
 		return fmt.Errorf("mark attachment safe: %w", err)
 	}
 	if updated != 1 {
+		return ErrNoVerificationWork
+	}
+	return nil
+}
+
+func (store VerificationStore) CompleteSafeCleanup(
+	ctx context.Context,
+	work VerificationWork,
+	cleanedAt time.Time,
+) error {
+	tag, err := store.Database.Exec(ctx, `
+		UPDATE attachments
+		SET verification_enqueued_at = NULL
+		WHERE tenant_id = $1 AND id = $2
+		  AND verification_generation = $3
+		  AND safety_status = 'safe'
+		  AND verification_enqueued_at IS NOT NULL
+		  AND upload_expires_at + interval '1 minute' <= $4
+	`, work.TenantID, work.AttachmentID, work.Generation, cleanedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("complete verified attachment staging cleanup: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
 		return ErrNoVerificationWork
 	}
 	return nil
@@ -242,6 +289,7 @@ func (store VerificationStore) MarkRejected(
 func (store VerificationStore) CompleteRejectedCleanup(
 	ctx context.Context,
 	work VerificationWork,
+	cleanedAt time.Time,
 ) error {
 	tag, err := store.Database.Exec(ctx, `
 		UPDATE attachments
@@ -249,7 +297,9 @@ func (store VerificationStore) CompleteRejectedCleanup(
 		WHERE tenant_id = $1 AND id = $2
 		  AND verification_generation = $3
 		  AND safety_status = 'rejected'
-	`, work.TenantID, work.AttachmentID, work.Generation)
+		  AND verification_enqueued_at IS NOT NULL
+		  AND upload_expires_at + interval '1 minute' <= $4
+	`, work.TenantID, work.AttachmentID, work.Generation, cleanedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("complete rejected attachment cleanup: %w", err)
 	}
@@ -259,55 +309,103 @@ func (store VerificationStore) CompleteRejectedCleanup(
 	return nil
 }
 
-func (store VerificationStore) ExpirePending(
+func (store VerificationStore) ClaimExpired(
 	ctx context.Context,
 	now time.Time,
 	limit int,
-) (int64, error) {
+) ([]ExpiredUpload, error) {
 	if limit < 1 || limit > 1000 {
-		return 0, errors.New("attachment expiry limit must be between 1 and 1000")
+		return nil, errors.New("attachment expiry limit must be between 1 and 1000")
 	}
-	var expired int64
-	err := store.Database.QueryRow(ctx, `
-		WITH expired AS (
+	rows, err := store.Database.Query(ctx, `
+		WITH candidates AS (
 			SELECT id
 			FROM attachments
-			WHERE safety_status = 'pending'
-			  AND upload_expires_at <= $1
+			WHERE (
+			        safety_status = 'pending'
+				        AND upload_expires_at + interval '1 minute' <= $1
+			      )
+			   OR (
+				        safety_status = 'cleaning'
+				        AND upload_expires_at + interval '1 minute' <= $1
+				        AND (
+			            verification_enqueued_at IS NULL
+			            OR verification_enqueued_at < $1::timestamptz - interval '1 minute'
+			        )
+			      )
 			ORDER BY upload_expires_at, id
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
-		),
-		updated_attachments AS (
-			UPDATE attachments AS attachment
-			SET complete_token_hash = NULL,
-			    safety_status = 'expired',
-			    safety_checked_at = $1,
+		)
+		UPDATE attachments AS attachment
+		SET complete_token_hash = NULL,
+		    safety_status = 'cleaning',
+		    verification_enqueued_at = $1
+		FROM candidates
+		WHERE attachment.id = candidates.id
+		RETURNING attachment.tenant_id, attachment.id, attachment.feedback_id,
+		          attachment.storage_key
+	`, now.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("claim expired attachment uploads: %w", err)
+	}
+	defer rows.Close()
+	uploads := make([]ExpiredUpload, 0)
+	for rows.Next() {
+		var upload ExpiredUpload
+		if err := rows.Scan(
+			&upload.TenantID, &upload.AttachmentID, &upload.FeedbackID, &upload.StorageKey,
+		); err != nil {
+			return nil, fmt.Errorf("scan expired attachment upload: %w", err)
+		}
+		uploads = append(uploads, upload)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expired attachment uploads: %w", err)
+	}
+	return uploads, nil
+}
+
+func (store VerificationStore) CompleteExpiry(
+	ctx context.Context,
+	upload ExpiredUpload,
+	expiredAt time.Time,
+) error {
+	var updated int
+	err := store.Database.QueryRow(ctx, `
+		WITH updated_attachment AS (
+			UPDATE attachments
+			SET safety_status = 'expired',
+			    safety_checked_at = $3,
 			    safety_error_reason = 'upload_expired',
+			    verification_enqueued_at = NULL,
 			    processing_status = 'failed',
 			    error_message = 'attachment upload expired before completion',
-			    processed_at = $1
-			FROM expired
-			WHERE attachment.id = expired.id
-			RETURNING attachment.id, attachment.feedback_id
+			    processed_at = $3
+			WHERE tenant_id = $1 AND id = $2
+			  AND safety_status = 'cleaning'
+			RETURNING id, feedback_id
 		),
-		completed_feedbacks AS (
+		completed_feedback AS (
 			UPDATE feedbacks AS feedback
-			SET ai_processed_at = COALESCE(feedback.ai_processed_at, $1)
-			WHERE feedback.id IN (SELECT feedback_id FROM updated_attachments)
+			SET ai_processed_at = COALESCE(feedback.ai_processed_at, $3)
+			WHERE feedback.id IN (SELECT feedback_id FROM updated_attachment)
 			  AND feedback.text_process_status IN ('completed', 'failed', 'skipped')
 			  AND NOT EXISTS (
 				SELECT 1 FROM attachments AS attachment
 				WHERE attachment.feedback_id = feedback.id
 				  AND attachment.processing_status NOT IN ('completed', 'failed', 'skipped')
-				  AND attachment.id NOT IN (SELECT id FROM updated_attachments)
+				  AND attachment.id NOT IN (SELECT id FROM updated_attachment)
 			  )
 			RETURNING feedback.id
 		)
-		SELECT count(*) FROM updated_attachments
-	`, now.UTC(), limit).Scan(&expired)
+		SELECT count(*) FROM updated_attachment
+	`, upload.TenantID, upload.AttachmentID, expiredAt.UTC()).Scan(&updated)
 	if err != nil {
-		return 0, fmt.Errorf("expire pending attachment uploads: %w", err)
+		return fmt.Errorf("complete expired attachment cleanup: %w", err)
 	}
-	return expired, nil
+	if updated != 1 {
+		return ErrNoVerificationWork
+	}
+	return nil
 }

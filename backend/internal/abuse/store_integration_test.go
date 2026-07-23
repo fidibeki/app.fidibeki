@@ -77,6 +77,15 @@ func TestStoreAggregatesConcurrentlyAndCleansInBounds(t *testing.T) {
 	if err != nil || deleted != 1 {
 		t.Fatalf("second bounded cleanup = %d, error = %v", deleted, err)
 	}
+	if err := (Recorder{}).Record(ctx, DiagnosticEvent{}); err == nil {
+		t.Fatal("Recorder.Record(nil database) error = nil")
+	}
+	if err := (Recorder{Database: database}).Record(ctx, DiagnosticEvent{
+		TenantID: tenantID, ProjectID: projectID, Category: CategoryProvider,
+		Reason: "buffer_flush", OccurredAt: now,
+	}); err != nil {
+		t.Fatalf("Recorder.Record() error = %v", err)
+	}
 }
 
 func TestStoreRejectsInvalidOrForeignDiagnostic(t *testing.T) {

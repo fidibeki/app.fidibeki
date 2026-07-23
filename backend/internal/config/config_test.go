@@ -138,6 +138,10 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 			got.GeminiModel, got.GeminiRPM, got.AIConcurrency, got.AIDailyLimit,
 			got.AIProjectDailyLimit, got.AIReconcileEvery)
 	}
+	if got.DomainConcurrency != 4 || got.MediaConcurrency != 2 || got.PrivacyConcurrency != 1 {
+		t.Errorf("queue concurrency defaults = domain %d media %d privacy %d",
+			got.DomainConcurrency, got.MediaConcurrency, got.PrivacyConcurrency)
+	}
 	if got.ReporterTokenTTL != 90*24*time.Hour {
 		t.Errorf("ReporterTokenTTL = %s, want 2160h", got.ReporterTokenTTL)
 	}
@@ -224,6 +228,9 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"EMAIL_DRIVER":                   "smtp",
 		"EMAIL_QUEUE_CONCURRENCY":        "many",
 		"AI_QUEUE_CONCURRENCY":           "none",
+		"DOMAIN_QUEUE_CONCURRENCY":       "none",
+		"MEDIA_QUEUE_CONCURRENCY":        "none",
+		"PRIVACY_QUEUE_CONCURRENCY":      "none",
 		"GEMINI_RPM":                     "fast",
 		"AI_DAILY_REQUEST_LIMIT":         "unlimited",
 		"AI_PROJECT_DAILY_REQUEST_LIMIT": "unlimited",
@@ -248,7 +255,9 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"AUTH_REFRESH_RETRY_GRACE",
 		"REPORTER_UNSUBSCRIBE_TTL",
 		"EMAIL_DRIVER", "EMAIL_QUEUE_CONCURRENCY",
-		"AI_QUEUE_CONCURRENCY", "GEMINI_RPM", "AI_DAILY_REQUEST_LIMIT",
+		"AI_QUEUE_CONCURRENCY", "DOMAIN_QUEUE_CONCURRENCY",
+		"MEDIA_QUEUE_CONCURRENCY", "PRIVACY_QUEUE_CONCURRENCY",
+		"GEMINI_RPM", "AI_DAILY_REQUEST_LIMIT",
 		"AI_PROJECT_DAILY_REQUEST_LIMIT", "AI_RECONCILE_INTERVAL",
 	} {
 		if !strings.Contains(err.Error(), expected) {

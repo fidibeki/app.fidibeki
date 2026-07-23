@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 )
 
@@ -31,7 +30,7 @@ func TestQueueBuildsDeterministicExportTask(t *testing.T) {
 		options[option.Type()] = option.Value()
 	}
 	if options[asynq.TaskIDOpt] != "privacy:export:job-id:4" ||
-		options[asynq.QueueOpt] != outbox.QueueName ||
+		options[asynq.QueueOpt] != QueueName ||
 		options[asynq.MaxRetryOpt] != 3 ||
 		options[asynq.TimeoutOpt] != 30*time.Minute ||
 		options[asynq.RetentionOpt] != 24*time.Hour {

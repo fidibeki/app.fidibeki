@@ -299,10 +299,18 @@ export function mountWidget(options: MountOptions): () => void {
       }
       try {
 			  const submission = await response.json() as SubmissionResponse
+				const attachmentWarning = submission.warnings?.find(warning =>
+					warning.reason === 'upload_rate_limited' || warning.code === 'service_unavailable')
+				if (pendingAttachments.length > (submission.attachments?.length ?? 0) && !attachmentWarning) {
+					throw new Error('feedback response omitted attachment upload grants')
+				}
 			  message.textContent = pendingAttachments.length > 0 ? localization.system.sending : ''
 			  await uploadAttachments(options, pendingAttachments, submission.attachments ?? [])
-        form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong></div>`
-        window.setTimeout(destroy, 1800)
+				const warningDetail = attachmentWarning
+					? `<span>${escapeHTML(attachmentWarning.message || localization.system.attachmentError)}</span>`
+					: ''
+        form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong>${warningDetail}</div>`
+        window.setTimeout(destroy, attachmentWarning ? 3200 : 1800)
       } catch (error) {
 				const detail = error instanceof PublicAPIResponseError
 					? publicFailureMessage(error.failure, localization.system)

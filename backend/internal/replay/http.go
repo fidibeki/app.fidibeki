@@ -37,6 +37,7 @@ const (
 type ObjectStorage interface {
 	PresignPut(context.Context, string, time.Duration) (string, error)
 	Stat(context.Context, string) (storage.ObjectInfo, error)
+	RemoveObject(context.Context, string) error
 }
 
 type MergeScheduler interface {

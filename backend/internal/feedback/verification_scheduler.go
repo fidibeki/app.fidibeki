@@ -17,14 +17,20 @@ type VerificationSchedulingStore interface {
 	MarkEnqueued(context.Context, VerificationTask, time.Time) error
 	UndoEnqueued(context.Context, VerificationTask) error
 	Prepare(context.Context, time.Time, int) ([]VerificationTask, error)
-	ExpirePending(context.Context, time.Time, int) (int64, error)
+	ClaimExpired(context.Context, time.Time, int) ([]ExpiredUpload, error)
+	CompleteExpiry(context.Context, ExpiredUpload, time.Time) error
+}
+
+type ExpiredUploadStorage interface {
+	RemoveObject(context.Context, string) error
 }
 
 type VerificationScheduler struct {
-	Store  VerificationSchedulingStore
-	Queue  VerificationTaskQueue
-	Now    func() time.Time
-	Logger *slog.Logger
+	Store   VerificationSchedulingStore
+	Queue   VerificationTaskQueue
+	Storage ExpiredUploadStorage
+	Now     func() time.Time
+	Logger  *slog.Logger
 }
 
 func (scheduler VerificationScheduler) ScheduleVerification(
@@ -46,11 +52,25 @@ func (scheduler VerificationScheduler) ScheduleVerification(
 
 func (scheduler VerificationScheduler) ReconcileOnce(ctx context.Context) error {
 	now := scheduler.now()
-	_, expiryErr := scheduler.Store.ExpirePending(ctx, now, 100)
+	expired, expiryErr := scheduler.Store.ClaimExpired(ctx, now, 100)
 	tasks, prepareErr := scheduler.Store.Prepare(ctx, now, 100)
 	var scheduleErrors []error
 	if expiryErr != nil {
 		scheduleErrors = append(scheduleErrors, expiryErr)
+	} else if len(expired) > 0 && scheduler.Storage == nil {
+		scheduleErrors = append(scheduleErrors, errors.New("attachment expiry storage is unavailable"))
+	} else {
+		for _, upload := range expired {
+			if err := scheduler.Storage.RemoveObject(ctx, upload.StorageKey); err != nil {
+				scheduleErrors = append(scheduleErrors,
+					fmt.Errorf("remove expired attachment object %q: %w", upload.StorageKey, err))
+				continue
+			}
+			if err := scheduler.Store.CompleteExpiry(ctx, upload, now); err != nil &&
+				!errors.Is(err, ErrNoVerificationWork) {
+				scheduleErrors = append(scheduleErrors, err)
+			}
+		}
 	}
 	if prepareErr != nil {
 		scheduleErrors = append(scheduleErrors, prepareErr)

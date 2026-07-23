@@ -202,6 +202,7 @@ empty/loading/error states, permission behavior, and no horizontal overflow.
 ## Task 13: End-To-End Quality Gate
 
 **Depends on:** Tasks 9, 10, 11, and 12
+**Status:** In progress
 
 **Outcome:** The complete public protection flow is documented, tested, and ready in staging.
 

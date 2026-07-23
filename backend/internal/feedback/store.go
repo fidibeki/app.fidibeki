@@ -343,29 +343,21 @@ func (Store) ExpireAttachment(
 	attachmentID string,
 	expiredAt time.Time,
 ) error {
-	var feedbackID string
-	err := query.QueryRow(ctx, `
+	tag, err := query.Exec(ctx, `
 		UPDATE attachments
 		SET complete_token_hash = NULL,
-		    safety_status = 'expired',
-		    safety_checked_at = $2,
-		    safety_error_reason = 'upload_expired',
-		    verification_enqueued_at = NULL,
-		    processing_status = 'failed',
-		    error_message = 'attachment upload expired before completion',
-		    processed_at = $2
+		    safety_status = 'cleaning',
+		    safety_checked_at = NULL,
+		    safety_error_reason = NULL,
+		    verification_enqueued_at = NULL
 		WHERE id = $1 AND completed_at IS NULL
 		  AND safety_status = 'pending' AND upload_expires_at <= $2
-		RETURNING feedback_id
-	`, attachmentID, expiredAt.UTC()).Scan(&feedbackID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
+	`, attachmentID, expiredAt.UTC())
 	if err != nil {
-		return fmt.Errorf("expire attachment upload: %w", err)
+		return fmt.Errorf("claim attachment upload expiry: %w", err)
 	}
-	if err := updateFeedbackAICompletion(ctx, query, feedbackID, expiredAt.UTC()); err != nil {
-		return err
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -435,28 +427,6 @@ func textProcessingStatus(text *string, plan tenant.Plan) string {
 		return "skipped"
 	}
 	return "pending"
-}
-
-func updateFeedbackAICompletion(
-	ctx context.Context,
-	query db.Querier,
-	feedbackID string,
-	now time.Time,
-) error {
-	if _, err := query.Exec(ctx, `
-		UPDATE feedbacks AS feedback
-		SET ai_processed_at = COALESCE(feedback.ai_processed_at, $2)
-		WHERE feedback.id = $1
-		  AND feedback.text_process_status IN ('completed', 'failed', 'skipped')
-		  AND NOT EXISTS (
-			SELECT 1 FROM attachments AS attachment
-			WHERE attachment.feedback_id = feedback.id
-			  AND attachment.processing_status NOT IN ('completed', 'failed', 'skipped')
-		  )
-	`, feedbackID, now.UTC()); err != nil {
-		return fmt.Errorf("update feedback AI completion: %w", err)
-	}
-	return nil
 }
 
 func NewID() string {

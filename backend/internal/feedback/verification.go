@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +20,7 @@ import (
 
 type VerificationStorage interface {
 	OpenObject(context.Context, string) (io.ReadCloser, error)
+	PutObject(context.Context, string, io.Reader, int64, string) error
 	RemoveObject(context.Context, string) error
 }
 
@@ -31,9 +34,10 @@ type VerifiedAttachmentScheduler interface {
 
 type AttachmentVerificationStore interface {
 	Claim(context.Context, VerificationTask) (VerificationWork, error)
-	MarkSafe(context.Context, VerificationWork, string, time.Time) error
+	MarkSafe(context.Context, VerificationWork, string, string, time.Time) error
+	CompleteSafeCleanup(context.Context, VerificationWork, time.Time) error
 	MarkRejected(context.Context, VerificationWork, string, *string, time.Time) error
-	CompleteRejectedCleanup(context.Context, VerificationWork) error
+	CompleteRejectedCleanup(context.Context, VerificationWork, time.Time) error
 }
 
 type safetyFailure struct {
@@ -55,24 +59,27 @@ func (SignatureScanner) Scan(
 	if work.SizeBytes < 1 {
 		return "", safetyFailure{reason: "empty_upload"}
 	}
+	seeker, cleanup, err := verificationReadSeeker(reader, work.SizeBytes)
+	if err != nil {
+		return "", err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 	if work.Kind == AttachmentReplay && normalizeContentType(work.ContentType) == "application/json" {
-		body, err := io.ReadAll(io.LimitReader(reader, work.SizeBytes+1))
-		if err != nil {
-			return "", fmt.Errorf("read replay attachment: %w", err)
-		}
-		if int64(len(body)) != work.SizeBytes {
-			return "", safetyFailure{reason: "size_mismatch"}
-		}
-		trimmed := bytes.TrimSpace(body)
-		if len(trimmed) == 0 || trimmed[0] != '[' || !json.Valid(trimmed) {
+		if !validJSONStream(seeker, work.SizeBytes) {
 			return "", safetyFailure{reason: "invalid_json"}
 		}
 		return "application/json", nil
 	}
 
-	header, err := readVerificationHeader(reader, work.SizeBytes)
-	if err != nil {
-		return "", err
+	headerSize := min(work.SizeBytes, 512)
+	header := make([]byte, headerSize)
+	if _, err := io.ReadFull(seeker, header); err != nil {
+		return "", fmt.Errorf("read attachment header: %w", err)
+	}
+	if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind attachment header: %w", err)
 	}
 	detected := detectContentType(header)
 	if detected == "" {
@@ -85,32 +92,71 @@ func (SignatureScanner) Scan(
 	if !kindMatches(work.Kind, detected) {
 		return "", safetyFailure{reason: "kind_mismatch", detected: detected}
 	}
+	if !validMediaStructureReader(seeker, work.SizeBytes, detected) {
+		return "", safetyFailure{reason: "invalid_structure", detected: detected}
+	}
 	return detected, nil
 }
 
-func readVerificationHeader(reader io.Reader, declaredSize int64) ([]byte, error) {
-	headerCapacity := int64(512)
-	if declaredSize+1 < headerCapacity {
-		headerCapacity = declaredSize + 1
+type verificationReader interface {
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+}
+
+func verificationReadSeeker(
+	reader io.Reader,
+	declaredSize int64,
+) (verificationReader, func(), error) {
+	if declaredSize < 1 || declaredSize > maxAttachmentBytes {
+		return nil, nil, safetyFailure{reason: "size_mismatch"}
 	}
-	header := make([]byte, headerCapacity)
-	read, readErr := io.ReadFull(io.LimitReader(reader, declaredSize+1), header)
-	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("read attachment body: %w", readErr)
-	}
-	header = header[:read]
-	total := int64(read)
-	if total <= declaredSize {
-		copied, err := io.Copy(io.Discard, io.LimitReader(reader, declaredSize-total+1))
+	if seeker, ok := reader.(verificationReader); ok {
+		size, err := seeker.Seek(0, io.SeekEnd)
 		if err != nil {
-			return nil, fmt.Errorf("read attachment body: %w", err)
+			return nil, nil, fmt.Errorf("measure attachment body: %w", err)
 		}
-		total += copied
+		if size != declaredSize {
+			return nil, nil, safetyFailure{reason: "size_mismatch"}
+		}
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return nil, nil, fmt.Errorf("rewind attachment body: %w", err)
+		}
+		return seeker, nil, nil
 	}
-	if total != declaredSize {
-		return nil, safetyFailure{reason: "size_mismatch"}
+	temporary, err := stageVerificationObject(reader, declaredSize)
+	if err != nil {
+		return nil, nil, err
 	}
-	return header, nil
+	return temporary, func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+	}, nil
+}
+
+func validJSONStream(reader io.ReadSeeker, size int64) bool {
+	if size < 2 || size > attachmentRules[AttachmentReplay].maxBytes {
+		return false
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		return false
+	}
+	decoder := json.NewDecoder(io.LimitReader(reader, size+1))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') {
+		return false
+	}
+	for decoder.More() {
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return false
+		}
+	}
+	if token, err = decoder.Token(); err != nil || token != json.Delim(']') {
+		return false
+	}
+	var trailing json.RawMessage
+	return errors.Is(decoder.Decode(&trailing), io.EOF)
 }
 
 func detectContentType(header []byte) string {
@@ -201,11 +247,27 @@ func (processor VerificationProcessor) Handler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
+		if work.SafetyStatus == AttachmentSafetySafe {
+			stagingKey, err := stagingAttachmentKey(work.StorageKey)
+			if err != nil {
+				return err
+			}
+			if err := processor.Storage.RemoveObject(ctx, stagingKey); err != nil {
+				return err
+			}
+			if processor.now().Before(work.UploadExpiresAt.Add(uploadCleanupGrace)) {
+				return nil
+			}
+			return processor.Store.CompleteSafeCleanup(ctx, work, processor.now())
+		}
 		if work.SafetyStatus == AttachmentSafetyRejected {
 			if err := processor.Storage.RemoveObject(ctx, work.StorageKey); err != nil {
 				return err
 			}
-			return processor.Store.CompleteRejectedCleanup(ctx, work)
+			if processor.now().Before(work.UploadExpiresAt.Add(uploadCleanupGrace)) {
+				return nil
+			}
+			return processor.Store.CompleteRejectedCleanup(ctx, work, processor.now())
 		}
 		if processor.Scanner == nil {
 			return errors.New("attachment safety scanner is unavailable")
@@ -214,36 +276,46 @@ func (processor VerificationProcessor) Handler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		detected, scanErr := processor.Scanner.Scan(ctx, work, reader)
+		temporary, stageErr := stageVerificationObject(reader, work.SizeBytes)
 		closeErr := reader.Close()
-		if closeErr != nil && scanErr == nil {
-			scanErr = fmt.Errorf("close attachment verification stream: %w", closeErr)
+		if closeErr != nil && stageErr == nil {
+			stageErr = fmt.Errorf("close attachment verification stream: %w", closeErr)
 		}
+		if stageErr != nil {
+			return processor.rejectUnsafe(ctx, work, stageErr)
+		}
+		defer func() {
+			_ = temporary.Close()
+			_ = os.Remove(temporary.Name())
+		}()
+		detected, scanErr := processor.Scanner.Scan(ctx, work, temporary)
 		if scanErr != nil {
-			var unsafe safetyFailure
-			if !errors.As(scanErr, &unsafe) {
-				return scanErr
-			}
-			var detectedType *string
-			if unsafe.detected != "" {
-				detectedType = &unsafe.detected
-			}
-			if err := processor.Store.MarkRejected(
-				ctx, work, unsafe.reason, detectedType, processor.now(),
-			); err != nil {
-				return err
-			}
-			if err := processor.Storage.RemoveObject(ctx, work.StorageKey); err != nil {
-				return err
-			}
-			if err := processor.Store.CompleteRejectedCleanup(ctx, work); err != nil {
-				return err
-			}
-			processor.recordRejected(ctx, work, unsafe.reason)
-			return nil
+			return processor.rejectUnsafe(ctx, work, scanErr)
 		}
-		if err := processor.Store.MarkSafe(ctx, work, detected, processor.now()); err != nil {
+		if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind verified attachment: %w", err)
+		}
+		verifiedKey := verifiedAttachmentKey(work.StorageKey, work.Generation, work.Attempt)
+		if err := processor.Storage.PutObject(
+			ctx, verifiedKey, temporary, work.SizeBytes, detected,
+		); err != nil {
 			return err
+		}
+		if err := processor.Store.MarkSafe(
+			ctx, work, detected, verifiedKey, processor.now(),
+		); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			cleanupErr := processor.Storage.RemoveObject(cleanupCtx, verifiedKey)
+			cancel()
+			return errors.Join(err, cleanupErr)
+		}
+		if err := processor.Storage.RemoveObject(ctx, work.StorageKey); err != nil {
+			return err
+		}
+		if !processor.now().Before(work.UploadExpiresAt.Add(uploadCleanupGrace)) {
+			if err := processor.Store.CompleteSafeCleanup(ctx, work, processor.now()); err != nil {
+				return err
+			}
 		}
 		if processor.AI != nil {
 			if err := processor.AI.ScheduleAttachment(
@@ -255,6 +327,87 @@ func (processor VerificationProcessor) Handler() asynq.HandlerFunc {
 		}
 		return nil
 	}
+}
+
+const uploadCleanupGrace = time.Minute
+
+func stageVerificationObject(reader io.Reader, declaredSize int64) (*os.File, error) {
+	if declaredSize < 1 || declaredSize > maxAttachmentBytes {
+		return nil, safetyFailure{reason: "size_mismatch"}
+	}
+	temporary, err := os.CreateTemp("", "fidibeki-attachment-verification-*")
+	if err != nil {
+		return nil, fmt.Errorf("create attachment verification file: %w", err)
+	}
+	written, copyErr := io.Copy(temporary, io.LimitReader(reader, declaredSize+1))
+	if copyErr != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, fmt.Errorf("stage attachment verification body: %w", copyErr)
+	}
+	if written != declaredSize {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, safetyFailure{reason: "size_mismatch"}
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporary.Name())
+		return nil, fmt.Errorf("rewind attachment verification body: %w", err)
+	}
+	return temporary, nil
+}
+
+func verifiedAttachmentKey(stagingKey string, generation int, attempt int) string {
+	return fmt.Sprintf("%s.verified-%d-%d", stagingKey, generation, attempt)
+}
+
+func stagingAttachmentKey(verifiedKey string) (string, error) {
+	marker := strings.LastIndex(verifiedKey, ".verified-")
+	if marker < 1 {
+		return "", errors.New("verified attachment storage key is invalid")
+	}
+	parts := strings.Split(verifiedKey[marker+len(".verified-"):], "-")
+	if len(parts) < 1 || len(parts) > 2 {
+		return "", errors.New("verified attachment storage key is invalid")
+	}
+	for _, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 1 {
+			return "", errors.New("verified attachment storage key is invalid")
+		}
+	}
+	return verifiedKey[:marker], nil
+}
+
+func (processor VerificationProcessor) rejectUnsafe(
+	ctx context.Context,
+	work VerificationWork,
+	scanErr error,
+) error {
+	var unsafe safetyFailure
+	if !errors.As(scanErr, &unsafe) {
+		return scanErr
+	}
+	var detectedType *string
+	if unsafe.detected != "" {
+		detectedType = &unsafe.detected
+	}
+	if err := processor.Store.MarkRejected(
+		ctx, work, unsafe.reason, detectedType, processor.now(),
+	); err != nil {
+		return err
+	}
+	if err := processor.Storage.RemoveObject(ctx, work.StorageKey); err != nil {
+		return err
+	}
+	if !processor.now().Before(work.UploadExpiresAt.Add(uploadCleanupGrace)) {
+		if err := processor.Store.CompleteRejectedCleanup(ctx, work, processor.now()); err != nil {
+			return err
+		}
+	}
+	processor.recordRejected(ctx, work, unsafe.reason)
+	return nil
 }
 
 func decodeVerificationTask(payload []byte) (VerificationTask, error) {

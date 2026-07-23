@@ -1,0 +1,1 @@
+DROP INDEX idx_ai_project_daily_usage_cleanup;

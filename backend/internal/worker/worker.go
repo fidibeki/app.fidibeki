@@ -19,6 +19,9 @@ type Options struct {
 	RedisURL                      string
 	EmailConcurrency              int
 	AIConcurrency                 int
+	DomainConcurrency             int
+	MediaConcurrency              int
+	PrivacyConcurrency            int
 	Logger                        asynq.Logger
 	Sender                        email.Sender
 	PipelineHandler               asynq.HandlerFunc
@@ -36,12 +39,16 @@ type Options struct {
 }
 
 type Worker struct {
-	emailServer  *asynq.Server
-	domainServer *asynq.Server
-	aiServer     *asynq.Server
-	emailMux     *asynq.ServeMux
-	domainMux    *asynq.ServeMux
-	aiMux        *asynq.ServeMux
+	emailServer   *asynq.Server
+	domainServer  *asynq.Server
+	mediaServer   *asynq.Server
+	privacyServer *asynq.Server
+	aiServer      *asynq.Server
+	emailMux      *asynq.ServeMux
+	domainMux     *asynq.ServeMux
+	mediaMux      *asynq.ServeMux
+	privacyMux    *asynq.ServeMux
+	aiMux         *asynq.ServeMux
 }
 
 func New(options Options) (*Worker, error) {
@@ -50,6 +57,10 @@ func New(options Options) (*Worker, error) {
 	}
 	if options.AIConcurrency <= 0 {
 		return nil, fmt.Errorf("AI worker concurrency must be positive")
+	}
+	if options.DomainConcurrency <= 0 || options.MediaConcurrency <= 0 ||
+		options.PrivacyConcurrency <= 0 {
+		return nil, fmt.Errorf("domain, media, and privacy worker concurrency must be positive")
 	}
 	if options.PipelineHandler == nil || options.TextHandler == nil ||
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
@@ -74,11 +85,18 @@ func New(options Options) (*Worker, error) {
 	emailMux.HandleFunc(email.TaskLifecycleEmail, options.LifecycleHandler)
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)
+	domainMux.HandleFunc(integration.TaskDeliver, options.IntegrationHandler)
+	// Keep pre-upgrade domain-pool tasks runnable while new work uses isolated queues.
 	domainMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
 	domainMux.HandleFunc(replay.TaskVerifyBatch, options.ReplayVerificationHandler)
 	domainMux.HandleFunc(feedback.TaskAttachmentVerify, options.AttachmentVerificationHandler)
-	domainMux.HandleFunc(integration.TaskDeliver, options.IntegrationHandler)
 	domainMux.HandleFunc(privacy.TaskExport, options.PrivacyExportHandler)
+	mediaMux := asynq.NewServeMux()
+	mediaMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
+	mediaMux.HandleFunc(replay.TaskVerifyBatch, options.ReplayVerificationHandler)
+	mediaMux.HandleFunc(feedback.TaskAttachmentVerify, options.AttachmentVerificationHandler)
+	privacyMux := asynq.NewServeMux()
+	privacyMux.HandleFunc(privacy.TaskExport, options.PrivacyExportHandler)
 	aiMux := asynq.NewServeMux()
 	aiMux.HandleFunc(ai.TaskTextProcess, options.TextHandler)
 	aiMux.HandleFunc(ai.TaskAttachmentProcess, options.AttachmentHandler)
@@ -89,19 +107,32 @@ func New(options Options) (*Worker, error) {
 			Logger: options.Logger,
 		}),
 		domainServer: asynq.NewServer(redisOptions, asynq.Config{
-			Concurrency: 1, Queues: map[string]int{outbox.QueueName: 1},
+			Concurrency: options.DomainConcurrency, Queues: map[string]int{outbox.QueueName: 1},
 			Logger: options.Logger,
+		}),
+		mediaServer: asynq.NewServer(redisOptions, asynq.Config{
+			Concurrency: options.MediaConcurrency,
+			Queues: map[string]int{
+				replay.QueueName: 1, feedback.VerificationQueueName: 1,
+			},
+			Logger: options.Logger,
+		}),
+		privacyServer: asynq.NewServer(redisOptions, asynq.Config{
+			Concurrency: options.PrivacyConcurrency,
+			Queues:      map[string]int{privacy.QueueName: 1},
+			Logger:      options.Logger,
 		}),
 		aiServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.AIConcurrency, Queues: map[string]int{ai.QueueName: 1},
 			ErrorHandler: options.AIErrorHandler, Logger: options.Logger,
 		}),
-		emailMux: emailMux, domainMux: domainMux, aiMux: aiMux,
+		emailMux: emailMux, domainMux: domainMux, mediaMux: mediaMux,
+		privacyMux: privacyMux, aiMux: aiMux,
 	}, nil
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	started := make([]*asynq.Server, 0, 3)
+	started := make([]*asynq.Server, 0, 5)
 	servers := []struct {
 		name   string
 		server *asynq.Server
@@ -109,6 +140,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	}{
 		{name: "email", server: w.emailServer, mux: w.emailMux},
 		{name: "domain", server: w.domainServer, mux: w.domainMux},
+		{name: "media", server: w.mediaServer, mux: w.mediaMux},
+		{name: "privacy", server: w.privacyServer, mux: w.privacyMux},
 		{name: "AI", server: w.aiServer, mux: w.aiMux},
 	}
 	for _, item := range servers {

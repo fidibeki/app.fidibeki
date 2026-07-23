@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.12
 
 require (
+	github.com/Eyevinn/mp4ff v0.54.0
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-redis/redis_rate/v10 v10.0.1

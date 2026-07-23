@@ -46,6 +46,9 @@ for both services because configuration is validated before the command starts.
 | `EMAIL_DRIVER` | yes | `capture` locally or `resend` in production. |
 | `EMAIL_CAPTURE_DIR` | capture | Local captured-email directory. |
 | `EMAIL_QUEUE_CONCURRENCY` | no | Email worker concurrency; default `20`. |
+| `DOMAIN_QUEUE_CONCURRENCY` | no | Outbox and integration worker concurrency; default `4`. |
+| `MEDIA_QUEUE_CONCURRENCY` | no | Fair shared concurrency for replay and attachment verification queues; default `2`. |
+| `PRIVACY_QUEUE_CONCURRENCY` | no | Workspace/reporter export worker concurrency; default `1`. |
 | `RESEND_API_KEY` | resend | Resend API token. |
 | `RESEND_AUTH_FROM` | resend | Auth sender, including display name. |
 | `RESEND_WELCOME_FROM` | resend | Founder-welcome sender; verify this address/domain with Resend before enabling staging delivery. |
