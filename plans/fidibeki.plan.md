@@ -222,7 +222,12 @@ was removed from the staging test tenant.
       internally scrolling body. Optional reporter email is represented in configuration and live
       preview, validates inline without losing prepared feedback, and has explicit coverage for
       disabled, empty, email-only, and email-plus-consent payloads.
-  - [ ] Complete Settings quality issues #13 and #16.
+  - [x] Complete Settings quality issues #13 and #16.
+    - Member and API-key forms now share a compact, responsive permission editor with explicit
+      presets, custom-selection state, grouped native checkboxes, and inherited permission limits.
+      Invitation email/domain failures remain adjacent to the email field with focus and ARIA error
+      state, while transport failures stay at form level. Typecheck, unit, build, and responsive E2E
+      coverage pass; one unrelated magic-link history timeout passed twice when rerun in isolation.
   - [ ] Complete screenshot annotation issue #14.
   - [ ] Complete moderated-content propagation issue #6.
   - [ ] Complete shared transactional email issue #21.

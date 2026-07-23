@@ -266,6 +266,7 @@ function createMockState() {
     }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
+    memberInviteFailure: null as null | { status: number; code: string; message: string },
     billingDeletionRequestedAt: null as string | null,
     failedReplayFeedbackIDs: new Set<string>(),
     failNextBulkFeedbackUpdate: false,
@@ -891,7 +892,15 @@ async function installMockAPI(page: Page, state: MockState) {
       return json(route, { member_domain: memberDomain }, 202)
     }
     if (path === '/v1/tags' && method === 'GET') return json(route, { tags: state.tags })
-    if (path === '/auth/invite' && method === 'POST') return json(route, {}, 202)
+    if (path === '/auth/invite' && method === 'POST') {
+      if (state.memberInviteFailure) {
+        return json(route, { error: {
+          code: state.memberInviteFailure.code,
+          message: state.memberInviteFailure.message,
+        } }, state.memberInviteFailure.status)
+      }
+      return json(route, {}, 202)
+    }
     if (path === '/v1/api-keys' && method === 'GET') return json(route, { api_keys: state.apiKeys })
     if (path === '/v1/api-keys' && method === 'POST') {
       const input = body()
@@ -2324,6 +2333,74 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('member and API key permissions share a compact custom-aware editor', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Members' }).click()
+  await page.getByRole('button', { name: 'Invite member' }).click()
+
+  const memberDialog = page.getByRole('dialog', { name: 'Invite member' })
+  const memberEditor = memberDialog.locator('.permission-editor')
+  await expect(memberEditor).toBeVisible()
+  await expect(memberEditor.locator('fieldset')).toHaveCount(9)
+  await memberEditor.getByRole('button', { name: 'Admin' }).click()
+  await expect(memberEditor.getByRole('button', { name: 'Admin' })).toHaveAttribute('data-active', 'true')
+  await memberEditor.getByRole('checkbox', { name: 'Delete project' }).uncheck()
+  await expect(memberEditor).toContainText('Custom selection')
+  await expect(memberEditor.locator('[data-active="true"]')).toHaveCount(0)
+  await expectNoPageOverflow(page)
+  await capture(page, testInfo, `settings-permissions-${testInfo.project.name}`)
+
+  await memberDialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('link', { name: 'API keys' }).click()
+  await page.getByRole('button', { name: 'Create key' }).click()
+  const keyDialog = page.getByRole('dialog', { name: 'Create API key' })
+  const keyEditor = keyDialog.locator('.permission-editor')
+  await expect(keyEditor).toBeVisible()
+  await expect(keyEditor.locator('fieldset')).toHaveCount(9)
+  await expect(keyEditor.getByRole('button', { name: 'Viewer' })).toHaveAttribute('data-active', 'true')
+  await expectNoPageOverflow(page)
+})
+
+test('member invitation keeps email errors beside the field and general errors separate', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.memberInviteFailure = {
+    status: 422,
+    code: 'validation_error',
+    message: 'email domain is not verified for this workspace',
+  }
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Members' }).click()
+  await page.getByRole('button', { name: 'Invite member' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Invite member' })
+  const email = dialog.getByLabel('Email')
+  await email.fill('blocked@other.test')
+  await dialog.getByRole('button', { name: 'Send invitation' }).click()
+
+  const emailError = dialog.locator('#member-email-error')
+  await expect(emailError).toHaveText('email domain is not verified for this workspace')
+  await expect(email).toBeFocused()
+  await expect(email).toHaveAttribute('aria-invalid', 'true')
+  await expect(email).toHaveAttribute('aria-describedby', 'member-email-error')
+  const placement = await dialog.locator('.member-email-field').evaluate((field) => {
+    const error = field.querySelector('#member-email-error')!.getBoundingClientRect()
+    const permissions = field.parentElement!.querySelector('.permission-editor')!.getBoundingClientRect()
+    return { adjacent: error.bottom <= permissions.top }
+  })
+  expect(placement.adjacent).toBe(true)
+  await capture(page, testInfo, `settings-invite-email-error-${testInfo.project.name}`)
+
+  state.memberInviteFailure = { status: 503, code: 'service_unavailable', message: 'service unavailable' }
+  await email.fill('member@acme.test')
+  await dialog.getByRole('button', { name: 'Send invitation' }).click()
+  await expect(emailError).toHaveCount(0)
+  await expect(email).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(dialog.locator('.settings-form-error[role="alert"]')).toHaveText('service unavailable')
 })
 
 test('workspace and project reporter access policies remain explicit', async ({ page }, testInfo) => {

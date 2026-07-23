@@ -14,7 +14,6 @@ import {
   X,
 } from '@lucide/vue'
 import {
-  permissionLabel,
   permissionPresets,
   tenantPermissionGroups,
   type PermissionPreset,
@@ -79,10 +78,13 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
 const modal = ref<'member' | 'key' | 'integration' | null>(null)
 const pending = ref(false)
 const formError = ref('')
+const memberEmailError = ref('')
+const memberEmailInput = ref<HTMLInputElement | null>(null)
 const memberMode = ref<'invite' | 'edit'>('invite')
 const selectedMember = ref<Member | null>(null)
 const memberEmail = ref('')
-const memberPreset = ref<PermissionPreset>('viewer')
+type PermissionSelection = PermissionPreset | 'custom'
+const memberPreset = ref<PermissionSelection>('viewer')
 const memberPermissions = ref<string[]>([])
 const domainVerificationEmail = ref('')
 const domainVerificationPending = ref(false)
@@ -91,7 +93,7 @@ const domainVerificationNotice = ref('')
 const keyName = ref('')
 const keyRateLimit = ref(1000)
 const keyExpiry = ref('never')
-const keyPreset = ref<PermissionPreset>('viewer')
+const keyPreset = ref<PermissionSelection>('viewer')
 const keyPermissions = ref<string[]>([])
 const revealedToken = ref('')
 const tokenCopied = ref(false)
@@ -147,21 +149,35 @@ function applyPreset(target: 'member' | 'key', preset: PermissionPreset) {
   }
 }
 
+function matchingPreset(permissions: string[]): PermissionSelection {
+  const allowed = new Set(currentMember.value?.permissions || [])
+  const selected = new Set(permissions)
+  for (const preset of ['admin', 'editor', 'viewer'] as PermissionPreset[]) {
+    const expected = permissionPresets[preset].filter(permission => allowed.has(permission))
+    if (expected.length === selected.size && expected.every(permission => selected.has(permission))) return preset
+  }
+  return 'custom'
+}
+
 function togglePermission(target: 'member' | 'key', permission: string) {
   const permissions = target === 'member' ? memberPermissions : keyPermissions
   permissions.value = permissions.value.includes(permission)
     ? permissions.value.filter((value) => value !== permission)
     : [...permissions.value, permission]
+  if (target === 'member') memberPreset.value = matchingPreset(memberPermissions.value)
+  else keyPreset.value = matchingPreset(keyPermissions.value)
 }
 
 function openMember(member?: Member) {
   if (!canWrite(member ? 'member:update' : 'member:invite')) return
   formError.value = ''
+  memberEmailError.value = ''
   selectedMember.value = member || null
   memberMode.value = member ? 'edit' : 'invite'
   memberEmail.value = member?.email || ''
   if (member) {
     memberPermissions.value = [...member.permissions]
+    memberPreset.value = matchingPreset(memberPermissions.value)
   } else {
     applyPreset('member', 'viewer')
   }
@@ -173,6 +189,7 @@ async function saveMember() {
   if (!canWrite(permission) || pending.value) return
   pending.value = true
   formError.value = ''
+  memberEmailError.value = ''
   try {
     if (memberMode.value === 'invite') {
       await $apiFetch('/auth/invite', {
@@ -186,11 +203,20 @@ async function saveMember() {
     modal.value = null
     await refresh()
   } catch (saveError) {
-    formError.value = apiErrorMessage(saveError, 'Member settings could not be saved.')
+    const message = apiErrorMessage(saveError, 'Member settings could not be saved.')
+    if (memberMode.value === 'invite' && /email|domain|member already exists/i.test(message)) {
+      memberEmailError.value = message
+      await nextTick()
+      memberEmailInput.value?.focus()
+    } else {
+      formError.value = message
+    }
   } finally {
     pending.value = false
   }
 }
+
+watch(memberEmail, () => { memberEmailError.value = '' })
 
 async function requestDomainVerification() {
   if (!canWrite('member:invite') || domainVerificationPending.value || !domainVerificationEmail.value) return
@@ -486,9 +512,8 @@ useHead({ title: 'Settings - Fidibeki' })
         <header><div><p class="app-eyebrow">{{ modal === 'member' ? 'Access policy' : modal === 'key' ? 'Machine credential' : 'Delivery endpoint' }}</p><h2 id="settings-modal-title">{{ modal === 'member' ? (memberMode === 'invite' ? 'Invite member' : 'Edit member') : modal === 'key' ? 'Create API key' : 'Add integration' }}</h2></div><button class="app-icon-button" title="Close" @click="modal = null"><X :size="18" /></button></header>
 
         <form v-if="modal === 'member'" @submit.prevent="saveMember">
-          <label>Email<input v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus /></label>
-          <div class="permission-presets" role="group" aria-label="Permission preset"><button v-for="preset in (['admin', 'editor', 'viewer'] as PermissionPreset[])" :key="preset" type="button" :data-active="memberPreset === preset" @click="applyPreset('member', preset)">{{ preset }}</button></div>
-          <div class="permission-grid"><fieldset v-for="group in availablePermissionGroups" :key="group.label"><legend>{{ group.label }}</legend><label v-for="permission in group.permissions" :key="permission"><input type="checkbox" :checked="memberPermissions.includes(permission)" @change="togglePermission('member', permission)" />{{ permissionLabel(permission) }}</label></fieldset></div>
+          <label class="member-email-field">Email<input ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" /><span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span></label>
+          <PermissionEditor label="Member permissions" :groups="availablePermissionGroups" :permissions="memberPermissions" :active-preset="memberPreset" @apply-preset="applyPreset('member', $event)" @toggle-permission="togglePermission('member', $event)" />
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !memberEmail || !memberPermissions.length">{{ pending ? 'Saving...' : memberMode === 'invite' ? 'Send invitation' : 'Save permissions' }}</button></footer>
         </form>
@@ -497,8 +522,7 @@ useHead({ title: 'Settings - Fidibeki' })
           <div v-if="revealedToken" class="settings-secret"><ShieldCheck :size="20" /><h3>API key created</h3><code>{{ revealedToken }}</code><button class="app-button" type="button" @click="copyToken"><component :is="tokenCopied ? Check : Copy" :size="15" />{{ tokenCopied ? 'Copied' : 'Copy key' }}</button></div>
           <template v-else>
             <div class="settings-form-grid"><label>Name<input v-model.trim="keyName" class="app-input" required maxlength="120" placeholder="Production exporter" autofocus /></label><label>Expires<select v-model="keyExpiry" class="app-select"><option value="never">Never</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label><label>Rate limit / minute<input v-model.number="keyRateLimit" class="app-input" type="number" min="1" max="100000" required /></label></div>
-            <div class="permission-presets" role="group" aria-label="Permission preset"><button v-for="preset in (['admin', 'editor', 'viewer'] as PermissionPreset[])" :key="preset" type="button" :data-active="keyPreset === preset" @click="applyPreset('key', preset)">{{ preset }}</button></div>
-            <div class="permission-grid"><fieldset v-for="group in availablePermissionGroups" :key="group.label"><legend>{{ group.label }}</legend><label v-for="permission in group.permissions" :key="permission"><input type="checkbox" :checked="keyPermissions.includes(permission)" @change="togglePermission('key', permission)" />{{ permissionLabel(permission) }}</label></fieldset></div>
+            <PermissionEditor label="API key permissions" :groups="availablePermissionGroups" :permissions="keyPermissions" :active-preset="keyPreset" @apply-preset="applyPreset('key', $event)" @toggle-permission="togglePermission('key', $event)" />
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedToken ? 'Done' : 'Cancel' }}</button><button v-if="!revealedToken" class="app-button app-button--primary" type="submit" :disabled="pending || !keyName || !keyPermissions.length">{{ pending ? 'Creating...' : 'Create key' }}</button></footer>
@@ -587,24 +611,19 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-modal form > label, .settings-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .settings-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .settings-form-grid .wide { grid-column: 1 / -1; }
-.permission-presets { display: inline-flex; margin: 16px 0 12px; border: 1px solid var(--line-strong); border-radius: 5px; overflow: hidden; }
-.permission-presets button { min-height: 34px; padding: 0 14px; background: #fff; color: var(--muted); border: 0; border-right: 1px solid var(--line); font-size: 10px; font-weight: 750; text-transform: capitalize; }
-.permission-presets button:last-child { border-right: 0; }
-.permission-presets button[data-active='true'] { background: var(--teal-soft); color: var(--teal); }
-.permission-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 5px; }
-.permission-grid fieldset { min-width: 0; margin: 0; padding: 11px; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.permission-grid fieldset:nth-child(3n) { border-right: 0; }
-.permission-grid legend, .settings-events legend { padding: 0; color: var(--ink); font-size: 10px; font-weight: 800; }
-.permission-grid label, .settings-events label { display: flex; min-height: 26px; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; text-transform: capitalize; }
-.permission-grid input, .settings-events input { accent-color: var(--teal); }
+.settings-events legend { padding: 0; color: var(--ink); font-size: 10px; font-weight: 800; }
+.settings-events label { display: flex; min-height: 26px; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; text-transform: capitalize; }
+.settings-events input { accent-color: var(--teal); }
 .settings-events { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 10px; margin: 15px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
 .settings-events legend { padding: 0 4px; }
 .settings-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px -16px -16px; padding: 12px 16px; background: #f8faf9; border-top: 1px solid var(--line); }
 .settings-form-error { padding: 9px 10px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; }
+.settings-field-error { color: var(--red); font-size: 9px; font-weight: 650; line-height: 1.4; }
+.member-email-field input[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
 .settings-secret { display: grid; place-items: center; gap: 10px; padding: 25px; text-align: center; }
 .settings-secret h3 { margin: 0; font-size: 14px; }
 .settings-secret code { width: 100%; padding: 10px; overflow-wrap: anywhere; background: #f3f6f5; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; }
 .capitalize { text-transform: capitalize; }
 @media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row, .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) 38px; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } }
-@media (max-width: 650px) { .settings-tabs { gap: 15px; overflow-x: auto; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .permission-grid, .settings-form-grid, .settings-events, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } .permission-grid fieldset, .permission-grid fieldset:nth-child(3n) { border-right: 0; } }
+@media (max-width: 650px) { .settings-tabs { gap: 15px; overflow-x: auto; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
 </style>
