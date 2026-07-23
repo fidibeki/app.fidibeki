@@ -172,6 +172,7 @@ isolation, no provider call after denial/failure, visible defer state, and expli
 ## Task 11: Widget Retry Experience
 
 **Depends on:** Tasks 1 and 4
+**Status:** Complete
 
 **Outcome:** The widget maps stable reasons to inline states, honors retry delay, and retains all
 entered content and local attachments.

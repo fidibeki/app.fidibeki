@@ -10,6 +10,18 @@ export interface WidgetSystemCopy {
   invalidEmail: string
   emailRequired: string
   required: string
+  retry: string
+  retryInSecond: string
+  retryInSeconds: string
+  submissionRateLimited: string
+  uploadRateLimited: string
+  replayRateLimited: string
+  spamRejected: string
+  planQuotaExhausted: string
+  uploadExpired: string
+  uploadInvalid: string
+  uploadUnsafe: string
+  providerUnavailable: string
 }
 
 export interface ResolvedWidgetLocalization {
@@ -26,6 +38,18 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailPlaceholder: 'you@example.com', invalidEmail: 'Enter a valid email address.',
     emailRequired: 'Enter an email address to receive updates.',
     required: 'Please complete the required response.',
+    retry: 'Retry',
+    retryInSecond: 'Try again in {seconds} second.',
+    retryInSeconds: 'Try again in {seconds} seconds.',
+    submissionRateLimited: 'Too many feedback attempts.',
+    uploadRateLimited: 'Attachments are temporarily busy.',
+    replayRateLimited: 'Session recording is temporarily busy.',
+    spamRejected: 'This feedback could not be accepted.',
+    planQuotaExhausted: 'This workspace has reached its feedback limit.',
+    uploadExpired: 'The attachment upload expired.',
+    uploadInvalid: 'An attachment could not be validated.',
+    uploadUnsafe: 'An attachment could not be accepted.',
+    providerUnavailable: 'Processing is temporarily unavailable.',
   },
   pt: {
     close: 'Fechar feedback', feedback: 'Feedback', sending: 'A enviar...',
@@ -34,6 +58,18 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailPlaceholder: 'voce@exemplo.com', invalidEmail: 'Introduz um endereço de email válido.',
     emailRequired: 'Introduz um endereço de email para receber atualizações.',
     required: 'Preenche a resposta obrigatória.',
+    retry: 'Tentar novamente',
+    retryInSecond: 'Tenta novamente dentro de {seconds} segundo.',
+    retryInSeconds: 'Tenta novamente dentro de {seconds} segundos.',
+    submissionRateLimited: 'Foram feitas demasiadas tentativas de feedback.',
+    uploadRateLimited: 'Os anexos estão temporariamente indisponíveis.',
+    replayRateLimited: 'A gravação da sessão está temporariamente indisponível.',
+    spamRejected: 'Não foi possível aceitar este feedback.',
+    planQuotaExhausted: 'Este espaço de trabalho atingiu o limite de feedback.',
+    uploadExpired: 'O envio do anexo expirou.',
+    uploadInvalid: 'Não foi possível validar um anexo.',
+    uploadUnsafe: 'Não foi possível aceitar um anexo.',
+    providerUnavailable: 'O processamento está temporariamente indisponível.',
   },
 }
 

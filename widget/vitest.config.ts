@@ -12,6 +12,7 @@ export default defineConfig({
 				'src/analytics.ts', 'src/analytics-outbox.ts', 'src/config.ts', 'src/targeting.ts',
 				'src/triggers.ts', 'src/suppression.ts', 'src/metadata.ts',
 				'src/policy.ts',
+				'src/submission-errors.ts',
 				'contracts/widget-objective-policy.ts',
 				'src/modules/replay.ts',
 			],

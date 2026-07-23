@@ -967,3 +967,101 @@ test('keeps an accepted feedback successful when its attachment upload fails', a
   await page.goto('/sample.html?asset=BIC')
   await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
 })
+
+test('preserves the complete draft and offers retry after a public rate decision', async ({ page }, testInfo) => {
+  const retryRule = {
+    ...definitionConfiguration('prompt').definitions![0]!,
+    can_attach_screenshot: true,
+  } satisfies WidgetRule
+  const configuration = {
+    ...definitionConfiguration('prompt'),
+    definitions: [retryRule],
+  } satisfies WidgetConfiguration
+  const payloads: Array<{
+    client_feedback_id: string
+    responses: Record<string, string | number>
+    reporter_email: string
+    notify_reporter: boolean
+    attachments: Array<{ client_attachment_id: string; kind: string }>
+  }> = []
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+  await page.route('**/v1/screenshot.js', (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/javascript',
+    body: `export function createScreenshotControl() {
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.className = 'secondary'
+      element.textContent = 'Capture screenshot'
+      let screenshot = null
+      element.addEventListener('click', () => {
+        screenshot = new Blob(['image'], { type: 'image/png' })
+        element.textContent = 'Screenshot attached'
+      })
+      return { element, screenshot: () => screenshot }
+    }`,
+  }))
+  await page.route('**/v1/feedback?*', async (route) => {
+    payloads.push(route.request().postDataJSON())
+    if (payloads.length === 1) {
+      await route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        headers: { 'Retry-After': '2' },
+        body: JSON.stringify({
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'server copy must not be displayed',
+            reason: 'submission_rate_limited',
+            retry_after_seconds: 4,
+          },
+        }),
+      })
+      return
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ feedback_id: 'fb_retry', attachments: [] }),
+    })
+  })
+  await page.route('**/api/1/envelope/**', (route) => route.fulfill({ status: 200, body: '' }))
+
+  await page.goto('/sample.html')
+  await page.getByRole('button', { name: '5 out of 5' }).click()
+  await page.getByRole('button', { name: 'Helpful', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Details' }).fill('Keep this complete draft.')
+  await page.getByRole('textbox', { name: 'Email address' }).fill('reporter@example.test')
+  await page.getByRole('checkbox', { name: 'Email me about this feedback' }).check()
+  await page.getByRole('button', { name: 'Capture screenshot' }).click()
+  await page.getByRole('button', { name: 'Send response' }).click()
+
+  await expect(page.getByText('Too many feedback attempts. Try again in 4 seconds.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeDisabled()
+  await expect(page.getByRole('textbox', { name: 'Details' })).toHaveValue('Keep this complete draft.')
+  await expect(page.getByRole('textbox', { name: 'Email address' })).toHaveValue('reporter@example.test')
+  await expect(page.getByRole('checkbox', { name: 'Email me about this feedback' })).toBeChecked()
+  await expect(page.getByRole('button', { name: 'Screenshot attached' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '5 out of 5' })).toHaveAttribute('aria-pressed', 'true')
+  await page.screenshot({ path: testInfo.outputPath('retry-state-desktop.png'), animations: 'disabled' })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('retry-state-mobile.png'), animations: 'disabled' })
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeEnabled({ timeout: 6_000 })
+  await page.getByRole('button', { name: 'Retry' }).click()
+  await expect(page.getByText('Response received.')).toBeVisible()
+
+  expect(payloads).toHaveLength(2)
+  expect(payloads[1]?.client_feedback_id).toBe(payloads[0]?.client_feedback_id)
+  expect(payloads[1]?.responses).toEqual(payloads[0]?.responses)
+  expect(payloads[1]?.reporter_email).toBe('reporter@example.test')
+  expect(payloads[1]?.notify_reporter).toBe(true)
+  expect(payloads[1]?.attachments).toEqual(payloads[0]?.attachments)
+  expect(payloads[1]?.attachments).toHaveLength(1)
+})

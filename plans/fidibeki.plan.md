@@ -360,6 +360,12 @@ was removed from the staging test tenant.
         backend integration, widget unit, and static contract checks pass locally.
       - [ ] Slice 4: widget retry/error experience, responsive Submission health diagnostics,
         desktop/mobile E2E, CI, and staging validation.
+        The widget portion is complete locally: stable public reasons map to localized inline copy,
+        JSON/`Retry-After` delays drive an accessible countdown, and retry preserves the original
+        idempotency ID, responses, reporter contact, and local attachment declarations. Accepted
+        feedback remains successful when optional upload completion fails. The full responsive
+        widget suite passes with 117 unit checks and 34 Chromium journeys; Submission health,
+        coverage recovery, CI, and staging remain.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
