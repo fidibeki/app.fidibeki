@@ -2,6 +2,7 @@ package tenantmember
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -12,8 +13,63 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/text/language"
 )
+
+func NormalizeMemberName(input *string) (*string, string) {
+	name := optionalTrim(input)
+	if name != nil && utf8.RuneCountInString(*name) > 120 {
+		return nil, "must be at most 120 characters"
+	}
+	return name, ""
+}
+
+func (s Store) UpdateOwnProfile(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, memberID string,
+	name *string,
+) (Member, error) {
+	var previous *string
+	if err := query.QueryRow(ctx, `
+		SELECT name
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE
+	`, tenantID, memberID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
+		return Member{}, ErrMemberActorInvalid
+	} else if err != nil {
+		return Member{}, fmt.Errorf("lock member profile: %w", err)
+	}
+	member, err := scanMemberWithRole(query.QueryRow(ctx, `
+		WITH updated AS (
+			UPDATE tenant_members
+			SET name = $3
+			WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+			RETURNING *
+		)
+		SELECT updated.id, updated.tenant_id, updated.email, updated.name,
+		       updated.avatar_version, updated.permissions, updated.status,
+		       updated.authorization_version, updated.id = tenant.owner_member_id,
+		       updated.last_login_at IS NOT NULL
+		FROM updated
+		JOIN tenants AS tenant ON tenant.id = updated.tenant_id
+	`, tenantID, memberID, name))
+	if err != nil {
+		return Member{}, fmt.Errorf("update member profile: %w", err)
+	}
+	if optionalStringsEqual(previous, member.Name) {
+		return member, nil
+	}
+	if err := recordTenantAccessEvent(
+		ctx, query, tenantID, "member.profile_updated", &memberID, &memberID,
+		map[string]any{"previous_name": previous, "name": member.Name},
+	); err != nil {
+		return Member{}, err
+	}
+	return member, nil
+}
 
 func ValidateOrganizationProfile(
 	input tenant.OrganizationProfile,

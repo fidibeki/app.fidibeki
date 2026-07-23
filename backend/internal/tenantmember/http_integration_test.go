@@ -338,6 +338,40 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	if viewerForbidden.Code != http.StatusForbidden {
 		t.Errorf("viewer members status = %d", viewerForbidden.Code)
 	}
+	viewerOwnProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"name":"  Jamie Analyst  "}`, viewerSession.AccessToken, nil,
+	)
+	if viewerOwnProfile.Code != http.StatusOK ||
+		!strings.Contains(viewerOwnProfile.Body.String(), `"name":"Jamie Analyst"`) {
+		t.Fatalf("viewer own profile status = %d, body = %s",
+			viewerOwnProfile.Code, viewerOwnProfile.Body.String())
+	}
+	var viewerProfileName string
+	var viewerProfileAudit int
+	if err := root.QueryRow(ctx, `
+		SELECT name FROM tenant_members WHERE tenant_id = $1 AND id = $2
+	`, tenantID, viewerSession.Member.ID).Scan(&viewerProfileName); err != nil ||
+		viewerProfileName != "Jamie Analyst" {
+		t.Fatalf("viewer profile name = %q, error = %v", viewerProfileName, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.profile_updated'
+		  AND actor_member_id = $2 AND subject_member_id = $2
+	`, tenantID, viewerSession.Member.ID).Scan(&viewerProfileAudit); err != nil ||
+		viewerProfileAudit != 1 {
+		t.Fatalf("viewer profile audit = %d, error = %v", viewerProfileAudit, err)
+	}
+	invalidViewerProfile := performTenantRequest(
+		handler, http.MethodPatch, "/v1/profile",
+		`{"name":"`+strings.Repeat("x", 121)+`"}`, viewerSession.AccessToken, nil,
+	)
+	if invalidViewerProfile.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(invalidViewerProfile.Body.String(), `"name"`) {
+		t.Fatalf("invalid viewer profile status = %d, body = %s",
+			invalidViewerProfile.Code, invalidViewerProfile.Body.String())
+	}
 	viewerProfileUpdate := performTenantRequest(
 		handler, http.MethodPatch, "/v1/organization-profile",
 		`{"name":"Unauthorized"}`, viewerSession.AccessToken, nil,

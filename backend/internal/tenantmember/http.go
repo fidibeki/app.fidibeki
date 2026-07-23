@@ -58,6 +58,8 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/auth/invite", handler.invite)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
 		Get("/v1/members", handler.listMembers)
+	router.With(append(protected, appmiddleware.RequireWritable)...).
+		Patch("/v1/profile", handler.updateProfile)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionTenantRead))...).
 		Get("/v1/organization-profile", handler.getOrganizationProfile)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionMemberRead))...).
@@ -370,6 +372,34 @@ func (h *HTTPHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"members": members})
+}
+
+func (h *HTTPHandler) updateProfile(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name *string `json:"name"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	name, fieldError := NormalizeMemberName(request.Name)
+	if fieldError != "" {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed",
+			map[string]string{"name": fieldError})
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
+	member, err := h.options.Store.UpdateOwnProfile(
+		r.Context(), query, resolved.ID, claims.Subject, name,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
 }
 
 func (h *HTTPHandler) updateMember(w http.ResponseWriter, r *http.Request) {
