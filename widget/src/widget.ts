@@ -58,8 +58,9 @@ export function mountWidget(options: MountOptions): () => void {
   const host = document.createElement('div')
   host.id = hostID
   const shadow = host.attachShadow({ mode: 'open' })
-  const accent = options.rule.accent_color ?? '#147d64'
-  const side = options.rule.position === 'bottom-right' ? 'right' : 'left'
+  const appearance = options.rule.appearance
+  const accent = appearance?.accent_color ?? options.rule.accent_color ?? '#147d64'
+  const side = (appearance?.position ?? options.rule.position) === 'bottom-right' ? 'right' : 'left'
   const localization = resolveWidgetLocalization(
     options.rule,
     options.configuration.default_locale,
@@ -67,8 +68,11 @@ export function mountWidget(options: MountOptions): () => void {
   )
   const presentation = options.rule.presentation ?? 'prompt'
   const structured = options.rule.presentation !== undefined && (options.rule.response_blocks?.length ?? 0) > 0
-  shadow.innerHTML = `<style>${styles(accent, side, options.rule.theme)}</style>${markup(
-    options.rule, localization, presentation, structured,
+  shadow.innerHTML = `<style>${styles(
+    accent, side, appearance?.theme ?? options.rule.theme,
+    appearance?.surface_color, appearance?.text_color,
+  )}</style>${markup(
+    options.rule, localization, presentation, structured, appearance?.logo_url,
   )}`
   ;(options.target ?? document.body).append(host)
 
@@ -514,6 +518,7 @@ function markup(
   localization: ResolvedWidgetLocalization,
   presentation: NonNullable<WidgetRule['presentation']>,
   structured: boolean,
+  logoURL?: string,
 ): string {
   const content = localization.content
   const launcher = presentation === 'launcher'
@@ -531,7 +536,9 @@ function markup(
        <label class="consent"><input type="checkbox" name="notify_reporter"><span>${escapeHTML(content.consent_label)}</span></label>`
     : ''
   return `${launcher}<section class="panel ${presentation}" data-panel aria-label="Feedback form"${panelHidden}>
-    <header><div><span class="eyebrow">FIDIBEKI</span><h2>${escapeHTML(content.prompt)}</h2></div>
+    <header><div>${logoURL
+      ? `<img class="brand" src="${escapeHTML(logoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : '<span class="eyebrow">FIDIBEKI</span>'}<h2>${escapeHTML(content.prompt)}</h2></div>
       <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
     <form>
       <div data-optional class="optional"></div>
@@ -542,14 +549,20 @@ function markup(
   </section>`
 }
 
-function styles(accent: string, side: 'left' | 'right', theme: WidgetRule['theme']): string {
+function styles(
+  accent: string,
+  side: 'left' | 'right',
+  theme: WidgetRule['theme'],
+  surface?: string,
+  text?: string,
+): string {
   const dark = theme === 'dark'
-  const automatic = theme === 'auto'
-  return `:host{--fb-accent:${accent};--fb-bg:${dark ? '#171918' : '#fff'};--fb-fg:${dark ? '#f5f7f6' : '#171a19'};--fb-muted:${dark ? '#aeb8b4' : '#63706b'};--fb-line:${dark ? '#3b413e' : '#d9dfdc'};all:initial;display:block;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
+  const automatic = theme === 'auto' && !surface && !text
+  return `:host{--fb-accent:${accent};--fb-bg:${surface ?? (dark ? '#171918' : '#fff')};--fb-fg:${text ?? (dark ? '#f5f7f6' : '#171a19')};--fb-muted:${dark ? '#aeb8b4' : '#63706b'};--fb-line:${dark ? '#3b413e' : '#d9dfdc'};all:initial;display:block;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
   [hidden]{display:none!important}.launcher{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;min-height:44px;padding:0 16px;border:1px solid var(--fb-accent);border-radius:6px;background:var(--fb-accent);color:#fff;font:700 13px/1 sans-serif;letter-spacing:0;box-shadow:0 10px 28px rgba(0,0,0,.18);cursor:pointer}
   .panel{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;width:min(368px,calc(100vw - 32px));box-sizing:border-box;background:var(--fb-bg);color:var(--fb-fg);border:1px solid var(--fb-line);border-top:4px solid var(--fb-accent);border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.2);overflow:hidden}
   .panel.inline{position:relative;inset:auto;width:100%;max-width:720px;box-shadow:none}.panel.reaction{width:min(420px,calc(100vw - 32px))}
-  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
+  header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}.brand{display:block;width:auto;max-width:132px;height:24px;object-fit:contain;object-position:left center;margin-bottom:7px}form{padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:#fff;padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
   ${automatic ? '@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}' : ''}
   @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:12px}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`

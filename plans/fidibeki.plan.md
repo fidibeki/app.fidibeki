@@ -177,8 +177,13 @@ was removed from the staging test tenant.
   - Implementation path: close the lifecycle contract first; then add controlled inherited
     appearance; then deterministic objective policies; finally expose faithful preview, decision
     reasons, and installation diagnostics without replacing the targeting/runtime foundations.
-- [ ] Add controlled colors, logo, localized copy, language defaults, position, and presentation
+- [x] Add controlled colors, logo, localized copy, language defaults, position, and presentation
   configuration without arbitrary CSS, DOM injection, or a general form builder.
+  - Migration `58` adds typed JSON appearance layers at workspace, project, and definition scope,
+    backfills legacy definition tokens, and retains the legacy public position/theme/accent
+    projection. The resolved public contract adds surface/text colors and an HTTPS-only logo;
+    validation enforces paired surface/text tokens, 4.5:1 contrast, and safe URLs. Backoffice forms,
+    preview, and the isolated runtime share the same cascade and support explicit inheritance.
 - [ ] Add deterministic objective policies for continuous feedback, after engagement, content
   validation, and friction detection using only non-personal public/browser signals. Apply stricter
   confidence and cooldown rules to more interruptive presentations.

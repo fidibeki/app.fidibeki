@@ -14,6 +14,8 @@ import {
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type {
   Project,
+  TenantConfiguration,
+  WidgetAppearanceOverrides,
   WidgetLocalization,
   WidgetResponseBlock,
   WidgetRule,
@@ -22,6 +24,7 @@ import type {
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 import { defaultWidgetRule, widgetEmbedCode } from '~/utils/widget-setup'
+import { cleanAppearanceOverrides, resolveWidgetAppearance } from '~/utils/widget-appearance'
 import {
   buildTargetingPayload,
   targetingFromRule,
@@ -49,19 +52,22 @@ const newLocale = ref('')
 const showTargetingErrors = ref(false)
 const showArchivedRules = ref(false)
 const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
+const projectAppearance = ref<WidgetAppearanceOverrides>({})
+const ruleAppearance = ref<WidgetAppearanceOverrides>({})
 
 const ruleForm = reactive<WidgetRuleInput>(defaultWidgetRule())
 
 const { data, status, error, refresh } = await useAsyncData(
   () => `project:${projectID.value}`,
   async () => {
-    const [project, rules] = await Promise.all([
+    const [project, rules, configuration] = await Promise.all([
       $apiFetch<{ project: Project }>(`/v1/projects/${projectID.value}`),
       can('widget_rule:read')
         ? $apiFetch<{ widget_rules: WidgetRule[] }>(`/v1/projects/${projectID.value}/widget-rules`)
         : Promise.resolve({ widget_rules: [] as WidgetRule[] }),
+      $apiFetch<TenantConfiguration>('/v1/config'),
     ])
-    return { project: project.project, rules: rules.widget_rules }
+    return { project: project.project, rules: rules.widget_rules, configuration }
   },
   { watch: [projectID] },
 )
@@ -74,6 +80,7 @@ watch(data, (value) => {
   projectReporterAccess.value = value.project.reporter_access_enabled == null
     ? 'inherit'
     : value.project.reporter_access_enabled ? 'enabled' : 'disabled'
+  projectAppearance.value = { ...(value.project.widget_appearance_overrides || {}) }
   if (!editingNew.value) {
     const selected = value.rules.find((rule) => rule.id === selectedRuleID.value)
       || value.rules.find((rule) => rule.definition_status !== 'archived')
@@ -94,6 +101,18 @@ const embedCode = computed(() => widgetEmbedCode(
   String(config.public.baseDomain || 'fidibeki.com'),
 ))
 const connectedAt = computed(() => data.value?.project.widget_last_seen_at || '')
+const workspaceAppearance = computed(() => resolveWidgetAppearance(
+  data.value?.configuration.tenant.widget_appearance_defaults,
+))
+const projectEffectiveAppearance = computed(() => resolveWidgetAppearance(
+  data.value?.configuration.tenant.widget_appearance_defaults,
+  projectAppearance.value,
+))
+const effectiveAppearance = computed(() => resolveWidgetAppearance(
+  data.value?.configuration.tenant.widget_appearance_defaults,
+  projectAppearance.value,
+  ruleAppearance.value,
+))
 
 function selectRule(rule: WidgetRule) {
   selectedRuleID.value = rule.id
@@ -104,6 +123,10 @@ function selectRule(rule: WidgetRule) {
   const localizations = structuredClone(rule.localizations || {})
   const localized = localizations[locale] || fallbackLocalization(rule.greeting || 'How was your experience?')
   localizations[locale] = localized
+  const legacyAppearance: WidgetAppearanceOverrides = {
+    position: rule.position, theme: rule.theme, accent_color: rule.accent_color || undefined,
+  }
+  ruleAppearance.value = { ...(rule.appearance_overrides || legacyAppearance) }
   Object.assign(ruleForm, {
     name: rule.name, priority: rule.priority,
     enabled: (rule.definition_status || (rule.enabled ? 'active' : 'paused')) === 'active',
@@ -135,6 +158,7 @@ function startNewRule() {
   targetingState.value = { mode: null, includes: [], excludes: [] }
   showTargetingErrors.value = false
   Object.assign(ruleForm, defaultWidgetRule())
+  ruleAppearance.value = {}
   editingLocale.value = projectDefaultLocale.value || 'en'
 }
 
@@ -161,6 +185,7 @@ function normalizedRule(): WidgetRuleInput {
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
     definition_key: ruleForm.definition_key.trim().toLowerCase(),
     definition_status: ruleForm.definition_status,
+    appearance_overrides: cleanAppearanceOverrides(ruleAppearance.value, ruleAppearance.value.logo_url === ''),
     response_blocks: responseBlocks,
     localizations: { ...ruleForm.localizations, [locale]: localized },
   }
@@ -348,6 +373,9 @@ async function saveProject() {
       reporter_access_enabled: projectReporterAccess.value === 'inherit'
         ? null
         : projectReporterAccess.value === 'enabled',
+      widget_appearance_overrides: cleanAppearanceOverrides(
+        projectAppearance.value, projectAppearance.value.logo_url === '',
+      ),
     } })
     notice.value = 'Project settings saved.'
     await refresh()
@@ -416,19 +444,19 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
             <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
             <section><h3>Feedback methods</h3><div class="project-capability-grid"><label><input v-model="ruleForm.can_rate" type="checkbox" /><span><b>Rating</b><small>Collect a 1–5 score</small></span></label><label><input v-model="ruleForm.can_write_text" type="checkbox" /><span><b>Written feedback</b><small>Allow free-form detail</small></span></label><label><input type="checkbox" :checked="hasResponseType('reaction')" :disabled="!hasResponseType('reaction') && ruleForm.response_blocks.length >= 4" @change="setResponseType('reaction', !hasResponseType('reaction'))" /><span><b>Reaction</b><small>Collect a compact sentiment</small></span></label><label><input type="checkbox" :checked="hasResponseType('single_choice')" :disabled="!hasResponseType('single_choice') && ruleForm.response_blocks.length >= 4" @change="setResponseType('single_choice', !hasResponseType('single_choice'))" /><span><b>Single choice</b><small>Offer configured options</small></span></label><label><input v-model="ruleForm.allow_comment" type="checkbox" /><span><b>Optional comment</b><small>Add context to compact responses</small></span></label><label><input v-model="ruleForm.collect_contact" type="checkbox" /><span><b>Contact with consent</b><small>Offer optional reporter email</small></span></label><label :data-locked="!supportsAudio"><input v-model="ruleForm.can_record_audio" type="checkbox" :disabled="!supportsAudio" /><span><b>Audio</b><small>{{ supportsAudio ? 'Capture a voice note' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsVideo"><input v-model="ruleForm.can_record_video" type="checkbox" :disabled="!supportsVideo" /><span><b>Video</b><small>{{ supportsVideo ? 'Capture camera video' : 'Scale plan required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_element" type="checkbox" :disabled="!supportsDOM" /><span><b>Page element</b><small>{{ supportsDOM ? 'Attach selected DOM context' : 'Upgrade required' }}</small></span></label><label :data-locked="!supportsDOM"><input v-model="ruleForm.can_attach_screenshot" type="checkbox" :disabled="!supportsDOM" /><span><b>Screenshot</b><small>{{ supportsDOM ? 'Capture the current view' : 'Upgrade required' }}</small></span></label></div></section>
             <section><h3>Response blocks</h3><div class="response-block-list"><div v-for="block in ruleForm.response_blocks" :key="block.type" class="response-block-row"><div class="response-block-head"><span>{{ block.type.replaceAll('_', ' ') }}</span><label><input v-model="block.required" type="checkbox" /> Required</label><button type="button" title="Remove response block" :aria-label="`Remove ${block.type} block`" @click="removeResponseBlock(block.type)"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>Response key<input v-model.trim="block.key" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" /></label><label>Label ({{ editingLocale }})<input class="app-input" maxlength="240" :value="editingLocalization.block_labels?.[block.key] || ''" @input="setBlockLabel(block.key, ($event.target as HTMLInputElement).value)" /></label></div><div v-if="block.options" class="response-option-list"><div v-for="(option, optionIndex) in block.options" :key="optionIndex"><input v-model.trim="option.value" class="app-input" required maxlength="32" pattern="[a-z0-9_]{1,32}" aria-label="Option key" /><input class="app-input" maxlength="120" aria-label="Localized option label" :value="editingLocalization.option_labels?.[block.key]?.[option.value] || ''" @input="setOptionLabel(block.key, option.value, ($event.target as HTMLInputElement).value)" /><button type="button" title="Remove option" aria-label="Remove option" :disabled="block.options.length <= 2" @click="removeResponseOption(block, optionIndex)"><Trash2 :size="13" /></button></div><button type="button" class="app-button" :disabled="block.options.length >= (block.type === 'reaction' ? 5 : 10)" @click="addResponseOption(block)"><Plus :size="13" /> Add option</button></div></div></div></section>
-            <section><h3>Content and appearance</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" aria-label="Editing language"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale }}{{ locale === projectDefaultLocale ? ' · default' : '' }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" placeholder="pt-ao" aria-label="New language" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> Add</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" title="Remove language" aria-label="Remove language" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid"><label>Launcher label<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">Prompt<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>Comment placeholder<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>Contact label<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">Consent label<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>Submit label<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>Success message<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label><label>Position<select v-model="ruleForm.position" class="app-select"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label><label>Theme<select v-model="ruleForm.theme" class="app-select"><option value="light">Light</option><option value="dark">Dark</option><option value="auto">System</option></select></label><label>Accent color<input v-model="ruleForm.accent_color" class="app-input" type="color" /></label></div></section>
+            <section><h3>Content and appearance</h3><div class="localization-toolbar"><select v-model="editingLocale" class="app-select" aria-label="Editing language"><option v-for="(_, locale) in ruleForm.localizations" :key="locale" :value="locale">{{ locale }}{{ locale === projectDefaultLocale ? ' · default' : '' }}</option></select><input v-model.trim="newLocale" class="app-input" maxlength="32" placeholder="pt-ao" aria-label="New language" /><button type="button" class="app-button" @click="addLocalization"><Plus :size="13" /> Add</button><button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" title="Remove language" aria-label="Remove language" @click="removeLocalization"><Trash2 :size="13" /></button></div><div class="project-form-grid localization-fields"><label>Launcher label<input v-model="editingLocalization.launcher_label" class="app-input" required maxlength="120" /></label><label class="wide">Prompt<input v-model="editingLocalization.prompt" class="app-input" required maxlength="500" /></label><label>Comment placeholder<input v-model="editingLocalization.comment_placeholder" class="app-input" required maxlength="240" /></label><label>Contact label<input v-model="editingLocalization.contact_label" class="app-input" required maxlength="120" /></label><label class="wide">Consent label<input v-model="editingLocalization.consent_label" class="app-input" required maxlength="240" /></label><label>Submit label<input v-model="editingLocalization.submit_label" class="app-input" required maxlength="120" /></label><label>Success message<input v-model="editingLocalization.success_message" class="app-input" required maxlength="500" /></label></div><WidgetAppearanceEditor v-model="ruleAppearance" :parent="projectEffectiveAppearance" allow-logo-reset /></section>
             <section><h3>Session replay</h3><div class="project-form-grid"><label>Replay mode<select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay"><option value="none">Disabled</option><option value="full">Every session</option><option value="sampling">Sample sessions</option></select></label><label v-if="ruleForm.replay_mode === 'sampling'">Sampling percent<input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" /></label><label>Max duration (seconds)<input v-model.number="ruleForm.replay_max_duration_seconds" class="app-input" type="number" min="1" max="1800" /></label><label>Max events<input v-model.number="ruleForm.replay_max_events" class="app-input" type="number" min="1" max="50000" /></label><label class="project-toggle wide"><input v-model="ruleForm.replay_mask_all_inputs" type="checkbox" /><span>Mask all input values</span></label><label class="wide">Additional text mask selector<input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" /></label></div></section>
             </fieldset>
           </form>
         </main>
 
         <aside class="project-widget-preview">
-          <header><span>Live preview</span><small>{{ ruleForm.theme }} · {{ ruleForm.position }}</small></header>
-          <div class="widget-preview-page" :data-theme="ruleForm.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>Checkout</b><span>Review your order before payment.</span><div /></div><button v-if="ruleForm.presentation === 'launcher'" class="widget-preview-trigger" :style="{ background: ruleForm.accent_color || '#087f73' }">{{ previewLocalization.launcher_label }}</button><section class="widget-preview-modal" :data-presentation="ruleForm.presentation"><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || 'Tell us more'" /><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">Screenshot</span><span v-if="ruleForm.can_record_audio">Audio</span><button :style="{ background: ruleForm.accent_color || '#087f73' }">{{ previewLocalization.submit_label }}</button></div></section></div>
+          <header><span>Live preview</span><small>{{ effectiveAppearance.theme }} · {{ effectiveAppearance.position }}</small></header>
+          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>Checkout</b><span>Review your order before payment.</span><div /></div><button v-if="ruleForm.presentation === 'launcher'" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.launcher_label }}</button><section class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || 'Tell us more'" /><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">Screenshot</span><span v-if="ruleForm.can_record_audio">Audio</span><button :style="{ background: effectiveAppearance.accent_color }">{{ previewLocalization.submit_label }}</button></div></section></div>
         </aside>
       </div>
 
-      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update collection, access, and browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Reporter progress access<select v-model="projectReporterAccess" class="app-select"><option value="inherit">Inherit workspace</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label class="wide">Allowed domains<textarea v-model="projectDomains" /></label></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
+      <section id="project-settings" class="project-settings app-surface"><header><div><h2>Project settings</h2><p>Update collection, access, and browser origins.</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> Save project</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>Project name<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>Default language<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" placeholder="en" /></label><label>Reporter progress access<select v-model="projectReporterAccess" class="app-select"><option value="inherit">Inherit workspace</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label class="wide">Allowed domains<textarea v-model="projectDomains" /></label><div class="wide project-appearance"><h3>Widget appearance</h3><WidgetAppearanceEditor v-model="projectAppearance" :parent="workspaceAppearance" allow-logo-reset /></div></fieldset></form><footer><div><b>Delete project</b><span>Permanently removes its rules, feedback, issues, and replay data.</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> Delete project</button></footer></section>
     </template>
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
@@ -503,6 +531,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .response-option-list > div { display: grid; grid-template-columns: minmax(100px, .7fr) minmax(140px, 1.3fr) 30px; gap: 7px; }
 .response-option-list > .app-button { justify-self: start; }
 .localization-toolbar { display: grid; grid-template-columns: minmax(100px, .8fr) minmax(100px, 1fr) auto 34px; gap: 7px; margin-bottom: 13px; }
+.localization-fields { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .project-widget-preview { position: sticky; top: 56px; height: calc(100vh - 56px); min-height: 620px; background: #edf2f0; }
 .project-widget-preview > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 0 14px; background: #f8faf9; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .project-widget-preview header small { font-size: 8px; font-weight: 500; }
@@ -515,7 +544,8 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .widget-preview-copy > span { color: var(--muted); font-size: 9px; }
 .widget-preview-copy div { height: 170px; margin-top: 10px; background: #edf2f0; border-radius: 5px; }
 .widget-preview-trigger { position: absolute; right: 18px; bottom: 18px; min-height: 38px; padding: 0 13px; color: #fff; border: 0; border-radius: 5px; font-size: 10px; font-weight: 750; }
-.widget-preview-modal { position: absolute; right: 18px; bottom: 66px; left: 18px; padding: 14px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.widget-preview-modal { position: absolute; right: 18px; bottom: 66px; left: 18px; padding: 14px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-top-width: 4px; border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.widget-preview-logo { display: block; width: auto; max-width: 120px; height: 22px; margin-bottom: 8px; object-fit: contain; object-position: left center; }
 .widget-preview-modal p { margin: 0 0 10px; font-size: 11px; font-weight: 700; }
 .widget-preview-ratings { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
 .widget-preview-ratings button { height: 30px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
@@ -531,6 +561,9 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-settings > form > fieldset { display: grid; min-width: 0; grid-template-columns: 1fr 1.4fr; gap: 14px; margin: 0; padding: 0; border: 0; }
 .project-settings label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .project-settings label.wide { grid-column: 1 / -1; }
+.project-settings .wide { grid-column: 1 / -1; }
+.project-appearance { padding-top: 14px; border-top: 1px solid var(--line); }
+.project-appearance h3 { margin: 0 0 12px; font-size: 11px; }
 .project-settings textarea { min-height: 96px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 10px; }
 .project-settings > footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; background: #fff8f8; border-top: 1px solid #efc2c6; }
 .project-settings footer > div { display: flex; flex-direction: column; gap: 3px; }

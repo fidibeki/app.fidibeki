@@ -46,6 +46,7 @@ export interface TenantSummary {
   trial_ends_at?: string | null
   deletion_requested_at?: string | null
   reporter_access_enabled: boolean
+  widget_appearance_defaults?: WidgetAppearanceOverrides
 }
 
 export interface AuthResponse {
@@ -80,6 +81,7 @@ export interface Project {
   allowed_domains: string[]
   default_locale: string
   reporter_access_enabled?: boolean | null
+  widget_appearance_overrides?: WidgetAppearanceOverrides
   widget_last_seen_at?: string | null
   created_at: string
   updated_at: string
@@ -95,6 +97,24 @@ export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
 export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
 export type WidgetObjective = 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
 export type WidgetResponseBlockType = 'free_text' | 'rating' | 'reaction' | 'single_choice'
+
+export interface WidgetAppearanceOverrides {
+  position?: WidgetPosition
+  theme?: WidgetTheme
+  accent_color?: string
+  surface_color?: string
+  text_color?: string
+  logo_url?: string
+}
+
+export interface WidgetAppearance {
+  position: WidgetPosition
+  theme: WidgetTheme
+  accent_color: string
+  surface_color?: string
+  text_color?: string
+  logo_url?: string
+}
 
 export interface WidgetResponseOption {
   value: string
@@ -171,6 +191,8 @@ export interface WidgetRule {
   localizations: Record<string, WidgetLocalization>
   allow_comment: boolean
   collect_contact: boolean
+  appearance_overrides?: WidgetAppearanceOverrides
+  appearance?: WidgetAppearance
   created_at: string
   updated_at: string
 }

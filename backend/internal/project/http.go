@@ -14,6 +14,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -153,10 +154,11 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Name                  string          `json:"name"`
-		AllowedDomains        []string        `json:"allowed_domains"`
-		DefaultLocale         string          `json:"default_locale"`
-		ReporterAccessEnabled json.RawMessage `json:"reporter_access_enabled"`
+		Name                      string                            `json:"name"`
+		AllowedDomains            []string                          `json:"allowed_domains"`
+		DefaultLocale             string                            `json:"default_locale"`
+		ReporterAccessEnabled     json.RawMessage                   `json:"reporter_access_enabled"`
+		WidgetAppearanceOverrides *widgetconfig.AppearanceOverrides `json:"widget_appearance_overrides"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
@@ -176,6 +178,14 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 			reporterAccessEnabled = &enabled
 		}
 	}
+	setWidgetAppearance := request.WidgetAppearanceOverrides != nil
+	widgetAppearance := widgetconfig.AppearanceOverrides{}
+	if setWidgetAppearance {
+		widgetAppearance = widgetconfig.Normalize(*request.WidgetAppearanceOverrides)
+		for field, message := range widgetconfig.Validate(widgetAppearance) {
+			fields["widget_appearance_overrides."+field] = message
+		}
+	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
@@ -187,6 +197,7 @@ func (h *HTTPHandler) updateProject(w http.ResponseWriter, r *http.Request) {
 	updated, err := h.options.Store.UpdateProject(
 		r.Context(), query, resolved.ID, projectID, name, domains, defaultLocale,
 		setReporterAccess, reporterAccessEnabled,
+		setWidgetAppearance, widgetAppearance,
 	)
 	if err != nil {
 		writeStoreError(w, err)

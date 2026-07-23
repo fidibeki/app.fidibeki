@@ -9,6 +9,15 @@ export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
 export type WidgetObjective = 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
 export type WidgetResponseBlockType = 'free_text' | 'rating' | 'reaction' | 'single_choice'
 
+export interface WidgetAppearance {
+  position: WidgetPosition
+  theme: WidgetTheme
+  accent_color: string
+  surface_color?: string
+  text_color?: string
+  logo_url?: string
+}
+
 export interface WidgetResponseBlock {
   key: string
   type: WidgetResponseBlockType
@@ -83,6 +92,7 @@ export interface WidgetRule {
   localizations?: Record<string, WidgetLocalization>
   allow_comment?: boolean
   collect_contact?: boolean
+  appearance?: WidgetAppearance
 }
 
 export interface WidgetConfiguration {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -18,7 +19,7 @@ func TestPostgresResolverResolve(t *testing.T) {
 	deletionRequestedAt := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	querier := &resolverQuerier{
 		row: resolverRow{scan: func(destinations ...any) error {
-			if len(destinations) != 8 {
+			if len(destinations) != 9 {
 				return errors.New("unexpected destination count")
 			}
 			*destinations[0].(*string) = "0762af3d-01b4-452f-81ad-dabf7652395f"
@@ -29,6 +30,8 @@ func TestPostgresResolverResolve(t *testing.T) {
 			*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: trialEndsAt, Valid: true}
 			*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{Time: deletionRequestedAt, Valid: true}
 			*destinations[7].(*bool) = true
+			accent := "#005f56"
+			*destinations[8].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{AccentColor: &accent}
 			return nil
 		}},
 	}
@@ -55,6 +58,9 @@ func TestPostgresResolverResolve(t *testing.T) {
 	if !resolved.ReporterAccessEnabled {
 		t.Error("ReporterAccessEnabled = false, want true")
 	}
+	if resolved.WidgetAppearanceDefaults.AccentColor == nil || *resolved.WidgetAppearanceDefaults.AccentColor != "#005f56" {
+		t.Errorf("WidgetAppearanceDefaults = %#v", resolved.WidgetAppearanceDefaults)
+	}
 }
 
 func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
@@ -69,6 +75,7 @@ func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
 		*destinations[5].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
 		*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
 		*destinations[7].(*bool) = true
+		*destinations[8].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{}
 		return nil
 	}}}
 

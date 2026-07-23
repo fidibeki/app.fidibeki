@@ -357,6 +357,32 @@ test('imperative mount resolves a definition key and safely rejects inactive def
   await expect(page.locator('#imperative-widget').getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
 })
 
+test('applies controlled appearance tokens and a privacy-safe logo', async ({ page }) => {
+  const configuration = definitionConfiguration('inline')
+  configuration.definitions![0]!.appearance = {
+    position: 'bottom-left', theme: 'dark', accent_color: '#005f56',
+    surface_color: '#101817', text_color: '#f7faf9',
+    logo_url: 'https://cdn.example.com/fidibeki-mark.svg',
+  }
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('https://cdn.example.com/fidibeki-mark.svg', route => route.fulfill({
+    status: 200, contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="24"><rect width="120" height="24" fill="#005f56"/></svg>',
+  }))
+
+  await page.goto('/sample.html')
+  const widget = page.locator('fidibeki-widget[rule="inline-checkout"]')
+  const logo = widget.locator('img.brand')
+  await expect(logo).toHaveAttribute('src', 'https://cdn.example.com/fidibeki-mark.svg')
+  await expect(logo).toHaveAttribute('referrerpolicy', 'no-referrer')
+  await expect(widget.locator('.panel')).toHaveCSS('background-color', 'rgb(16, 24, 23)')
+  await expect(widget.locator('.panel')).toHaveCSS('color', 'rgb(247, 250, 249)')
+  await expect(widget.getByRole('button', { name: 'Send response' })).toHaveCSS('background-color', 'rgb(0, 95, 86)')
+})
+
 test('loads the matching rule and serializes feedback through the public contract', async ({ page }) => {
   const loadedScripts: string[] = []
   const submissions: Array<Record<string, unknown>> = []

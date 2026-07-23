@@ -25,6 +25,7 @@ export function defaultWidgetRule(): WidgetRuleInput {
       },
     },
     allow_comment: false, collect_contact: false,
+    appearance_overrides: {},
   }
 }
 

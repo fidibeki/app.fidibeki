@@ -2,11 +2,13 @@ package tenantmember
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -15,6 +17,24 @@ type Store struct {
 	Now               func() time.Time
 	RefreshTTL        time.Duration
 	RefreshRetryGrace time.Duration
+}
+
+func (Store) UpdateWidgetAppearance(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	appearance widgetconfig.AppearanceOverrides,
+) error {
+	payload, err := json.Marshal(appearance)
+	if err != nil {
+		return fmt.Errorf("encode widget appearance defaults: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE tenants SET widget_appearance_defaults = $2::jsonb WHERE id = $1
+	`, tenantID, string(payload)); err != nil {
+		return fmt.Errorf("update widget appearance defaults: %w", err)
+	}
+	return nil
 }
 
 func (Store) UpdateReporterAccess(

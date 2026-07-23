@@ -14,6 +14,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -87,6 +88,7 @@ type PublicWidgetRule struct {
 	Localizations            map[string]project.WidgetLocalization `json:"localizations"`
 	AllowComment             bool                                  `json:"allow_comment"`
 	CollectContact           bool                                  `json:"collect_contact"`
+	Appearance               widgetconfig.Appearance               `json:"appearance"`
 }
 
 func NewHTTPHandler(options HTTPOptions) http.Handler {
@@ -310,6 +312,6 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
 		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,
 		Localizations: rule.Localizations, AllowComment: rule.AllowComment,
-		CollectContact: rule.CollectContact,
+		CollectContact: rule.CollectContact, Appearance: rule.Appearance,
 	}
 }

@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 57
+	const latestMigrationVersion = 58
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -939,21 +939,26 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
 		t.Fatalf("reapply widget definition migration: %v", err)
 	}
-	var localizedPrompt string
+	var localizedPrompt, appearancePosition, appearanceTheme string
 	if err := root.QueryRow(ctx, `
 		SELECT definition_key, definition_version, definition_status, presentation,
-		       localizations->'en'->>'prompt'
+		       localizations->'en'->>'prompt',
+		       widget_appearance_overrides->>'position',
+		       widget_appearance_overrides->>'theme'
 		FROM widget_rules WHERE id = $1
 	`, widgetRuleA).Scan(
 		&definitionKey, &definitionVersion, &definitionStatus, &presentation, &localizedPrompt,
+		&appearancePosition, &appearanceTheme,
 	); err != nil {
 		t.Fatalf("read backfilled widget definition: %v", err)
 	}
 	if definitionKey == "" || definitionVersion != 1 || definitionStatus != "paused" ||
-		presentation != "prompt" || localizedPrompt != "Legacy localized prompt" {
+		presentation != "prompt" || localizedPrompt != "Legacy localized prompt" ||
+		appearancePosition == "" || appearanceTheme == "" {
 		t.Fatalf(
-			"backfilled widget definition = %q/%d/%q/%q/%q",
+			"backfilled widget definition = %q/%d/%q/%q/%q appearance %q/%q",
 			definitionKey, definitionVersion, definitionStatus, presentation, localizedPrompt,
+			appearancePosition, appearanceTheme,
 		)
 	}
 	var responseRating *int

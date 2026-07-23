@@ -9,6 +9,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -42,7 +43,7 @@ func (Store) CreateProject(
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (public_key) DO NOTHING
 		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
-		          reporter_access_enabled,
+		          reporter_access_enabled, widget_appearance_overrides,
 		          widget_last_seen_at, created_at, updated_at
 	`, tenantID, name, publicKey, allowedDomains, defaultLocale))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -57,7 +58,7 @@ func (Store) CreateProject(
 func (Store) ListProjects(ctx context.Context, query db.Querier, tenantID string) ([]Project, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
-		       reporter_access_enabled,
+		       reporter_access_enabled, widget_appearance_overrides,
 		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 ORDER BY created_at, id
 	`, tenantID)
@@ -87,7 +88,7 @@ func (Store) GetProject(
 ) (Project, error) {
 	project, err := scanProject(query.QueryRow(ctx, `
 		SELECT id, tenant_id, name, public_key, allowed_domains, default_locale,
-		       reporter_access_enabled,
+		       reporter_access_enabled, widget_appearance_overrides,
 		       widget_last_seen_at, created_at, updated_at
 		FROM projects WHERE tenant_id = $1 AND id = $2
 	`, tenantID, projectID))
@@ -110,19 +111,29 @@ func (Store) UpdateProject(
 	defaultLocale string,
 	setReporterAccess bool,
 	reporterAccessEnabled *bool,
+	setWidgetAppearance bool,
+	widgetAppearance widgetconfig.AppearanceOverrides,
 ) (Project, error) {
+	appearancePayload, err := json.Marshal(widgetAppearance)
+	if err != nil {
+		return Project{}, fmt.Errorf("encode project widget appearance: %w", err)
+	}
 	project, err := scanProject(query.QueryRow(ctx, `
 		UPDATE projects SET name = $3, allowed_domains = $4, default_locale = $5,
 		                    reporter_access_enabled = CASE
 		                        WHEN $6 THEN $7::boolean
 		                        ELSE reporter_access_enabled
+		                    END,
+		                    widget_appearance_overrides = CASE
+		                        WHEN $8 THEN $9::jsonb
+		                        ELSE widget_appearance_overrides
 		                    END
 		WHERE tenant_id = $1 AND id = $2
 		RETURNING id, tenant_id, name, public_key, allowed_domains, default_locale,
-		          reporter_access_enabled,
+		          reporter_access_enabled, widget_appearance_overrides,
 		          widget_last_seen_at, created_at, updated_at
 	`, tenantID, projectID, name, allowedDomains, defaultLocale,
-		setReporterAccess, reporterAccessEnabled))
+		setReporterAccess, reporterAccessEnabled, setWidgetAppearance, string(appearancePayload)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -167,16 +178,17 @@ func (Store) CreateWidgetRule(
 			trigger_type, trigger_delay_seconds, trigger_scroll_percent,
 			can_rate, can_write_text, can_record_audio, can_record_video,
 			can_attach_element, can_attach_screenshot, greeting, position, theme,
-				accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
-				replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
-				recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
-				response_blocks, localizations, allow_comment, collect_contact
-			)
+			accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
+			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
+			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
+			response_blocks, localizations, allow_comment, collect_contact,
+			widget_appearance_overrides
+		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
 			       $27, $28,
 			       COALESCE(NULLIF($29, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
-			       $30, $31, $32, $33::jsonb, $34::jsonb, $35, $36
+			       $30, $31, $32, $33::jsonb, $34::jsonb, $35, $36, $37::jsonb
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -267,6 +279,7 @@ func (Store) UpdateWidgetRule(
 		return WidgetRule{}, err
 	}
 	arguments := append([]any{tenantID, projectID, ruleID}, valueArguments...)
+	arguments = append(arguments, values.ExplicitAppearance)
 	rule, err := scanWidgetRule(query.QueryRow(ctx, `
 		UPDATE widget_rules AS rule SET
 			name = $4, priority = $5, enabled = $6, matcher_type = $7, matcher_value = $8,
@@ -281,7 +294,11 @@ func (Store) UpdateWidgetRule(
 				definition_version = rule.definition_version + 1,
 				definition_status = $31, presentation = $32, objective = $33,
 				response_blocks = $34::jsonb, localizations = $35::jsonb,
-				allow_comment = $36, collect_contact = $37
+				allow_comment = $36, collect_contact = $37,
+				widget_appearance_overrides = CASE
+					WHEN $39 THEN $38::jsonb
+					ELSE rule.widget_appearance_overrides || $38::jsonb
+				END
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
 		  AND project.id = rule.project_id AND project.tenant_id = $1
@@ -337,6 +354,7 @@ func (Store) LoadPublicConfiguration(
 	var deletionRequestedAt pgtype.Timestamptz
 	err := query.QueryRow(ctx, `
 		SELECT tenant.id, tenant.slug, project.id, project.default_locale, project.allowed_domains,
+		       tenant.widget_appearance_defaults, project.widget_appearance_overrides,
 		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at
 		FROM projects AS project
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
@@ -344,6 +362,7 @@ func (Store) LoadPublicConfiguration(
 	`, publicKey).Scan(
 		&configuration.TenantID, &configuration.TenantSlug,
 		&configuration.ProjectID, &configuration.DefaultLocale, &configuration.AllowedDomains,
+		&configuration.TenantAppearanceDefaults, &configuration.ProjectAppearanceOverrides,
 		&plan, &status, &trialEndsAt,
 		&deletionRequestedAt,
 	)
@@ -389,6 +408,17 @@ func (Store) LoadPublicConfiguration(
 	)
 	if err != nil {
 		return PublicConfiguration{}, err
+	}
+	for index := range configuration.Rules {
+		appearance := widgetconfig.Resolve(
+			configuration.TenantAppearanceDefaults,
+			configuration.ProjectAppearanceOverrides,
+			configuration.Rules[index].AppearanceOverrides,
+		)
+		configuration.Rules[index].Appearance = appearance
+		configuration.Rules[index].Position = WidgetPosition(appearance.Position)
+		configuration.Rules[index].Theme = WidgetTheme(appearance.Theme)
+		configuration.Rules[index].AccentColor = stringPointer(appearance.AccentColor)
 	}
 	return configuration, nil
 }
@@ -502,6 +532,7 @@ const widgetRuleColumns = `
 		replay_mask_all_inputs, replay_mask_text_selector, recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
 		response_blocks, localizations, allow_comment, collect_contact,
+		widget_appearance_overrides,
 		created_at, updated_at`
 
 func prefixedWidgetRuleColumns(alias string) string {
@@ -514,6 +545,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"replay_mask_text_selector", "recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
 		"response_blocks", "localizations", "allow_comment", "collect_contact",
+		"widget_appearance_overrides",
 		"created_at", "updated_at",
 	}
 	for index := range columns {
@@ -550,6 +582,10 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode widget localizations: %w", err)
 	}
+	appearance, err := json.Marshal(values.AppearanceOverrides)
+	if err != nil {
+		return nil, fmt.Errorf("encode widget appearance overrides: %w", err)
+	}
 	return []any{
 		values.Name, values.Priority, values.Enabled, values.MatcherType, values.MatcherValue,
 		values.TriggerType, values.TriggerDelaySeconds, values.TriggerScrollPercent,
@@ -560,6 +596,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		values.ReplayMaskTextSelector, values.RecurrenceMode, values.RecurrenceDays,
 		values.DefinitionKey, values.DefinitionStatus, values.Presentation, values.Objective,
 		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
+		string(appearance),
 	}, nil
 }
 
@@ -572,7 +609,8 @@ func scanProject(row rowScanner) (Project, error) {
 	var widgetLastSeenAt pgtype.Timestamptz
 	err := row.Scan(
 		&project.ID, &project.TenantID, &project.Name, &project.PublicKey,
-		&project.AllowedDomains, &project.DefaultLocale, &project.ReporterAccessEnabled, &widgetLastSeenAt,
+		&project.AllowedDomains, &project.DefaultLocale, &project.ReporterAccessEnabled,
+		&project.WidgetAppearanceOverrides, &widgetLastSeenAt,
 		&project.CreatedAt, &project.UpdatedAt,
 	)
 	if widgetLastSeenAt.Valid {
@@ -594,7 +632,12 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.DefinitionKey, &rule.DefinitionVersion, &rule.DefinitionStatus,
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
 		&rule.AllowComment, &rule.CollectContact,
+		&rule.AppearanceOverrides,
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	return rule, err
+}
+
+func stringPointer(value string) *string {
+	return &value
 }

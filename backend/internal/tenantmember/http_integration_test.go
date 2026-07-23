@@ -140,6 +140,20 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	if ownerCookie.Path != "/" {
 		t.Fatalf("tenant refresh cookie path = %q, want / for server-rendered route refresh", ownerCookie.Path)
 	}
+	appearance := performTenantRequest(
+		handler, http.MethodPatch, "/v1/widget-appearance",
+		`{"theme":"dark","accent_color":"#005f56","surface_color":"#101817","text_color":"#f7faf9",`+
+			`"logo_url":"https://cdn.example.com/acme.svg"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if appearance.Code != http.StatusOK || !strings.Contains(appearance.Body.String(), `"accent_color":"#005f56"`) {
+		t.Fatalf("widget appearance status = %d, body = %s", appearance.Code, appearance.Body.String())
+	}
+	var storedAppearance string
+	if err := root.QueryRow(ctx, `SELECT widget_appearance_defaults::text FROM tenants WHERE id = $1`, tenantID).
+		Scan(&storedAppearance); err != nil || !strings.Contains(storedAppearance, `"logo_url"`) {
+		t.Fatalf("stored widget appearance = %q, error = %v", storedAppearance, err)
+	}
 	secondVerify := performTenantRequest(handler, http.MethodPost, "/auth/verify", `{"token":"`+ownerMagicToken+`"}`, "", nil)
 	if secondVerify.Code != http.StatusUnauthorized {
 		t.Errorf("second verify status = %d", secondVerify.Code)

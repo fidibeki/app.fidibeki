@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 )
 
 type MatcherType string
@@ -141,75 +142,34 @@ type WidgetRuleTargetConditionValues struct {
 }
 
 type Project struct {
-	ID                    string     `json:"id"`
-	TenantID              string     `json:"tenant_id"`
-	Name                  string     `json:"name"`
-	PublicKey             string     `json:"public_key"`
-	AllowedDomains        []string   `json:"allowed_domains"`
-	DefaultLocale         string     `json:"default_locale"`
-	ReporterAccessEnabled *bool      `json:"reporter_access_enabled"`
-	WidgetLastSeenAt      *time.Time `json:"widget_last_seen_at"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	ID                        string                           `json:"id"`
+	TenantID                  string                           `json:"tenant_id"`
+	Name                      string                           `json:"name"`
+	PublicKey                 string                           `json:"public_key"`
+	AllowedDomains            []string                         `json:"allowed_domains"`
+	DefaultLocale             string                           `json:"default_locale"`
+	ReporterAccessEnabled     *bool                            `json:"reporter_access_enabled"`
+	WidgetAppearanceOverrides widgetconfig.AppearanceOverrides `json:"widget_appearance_overrides"`
+	WidgetLastSeenAt          *time.Time                       `json:"widget_last_seen_at"`
+	CreatedAt                 time.Time                        `json:"created_at"`
+	UpdatedAt                 time.Time                        `json:"updated_at"`
 }
 
 type WidgetRule struct {
-	ID                       string                        `json:"id"`
-	ProjectID                string                        `json:"project_id"`
-	Name                     string                        `json:"name"`
-	Priority                 int                           `json:"priority"`
-	Enabled                  bool                          `json:"enabled"`
-	MatcherType              MatcherType                   `json:"matcher_type"`
-	MatcherValue             *string                       `json:"matcher_value"`
-	IncludeConditions        []WidgetRuleTargetCondition   `json:"include_conditions"`
-	ExcludeConditions        []WidgetRuleTargetCondition   `json:"exclude_conditions"`
-	TriggerType              TriggerType                   `json:"trigger_type"`
-	TriggerDelaySeconds      *int                          `json:"trigger_delay_seconds"`
-	TriggerScrollPercent     *int                          `json:"trigger_scroll_percent"`
-	CanRate                  bool                          `json:"can_rate"`
-	CanWriteText             bool                          `json:"can_write_text"`
-	CanRecordAudio           bool                          `json:"can_record_audio"`
-	CanRecordVideo           bool                          `json:"can_record_video"`
-	CanAttachElement         bool                          `json:"can_attach_element"`
-	CanAttachScreenshot      bool                          `json:"can_attach_screenshot"`
-	Greeting                 *string                       `json:"greeting"`
-	Position                 WidgetPosition                `json:"position"`
-	Theme                    WidgetTheme                   `json:"theme"`
-	AccentColor              *string                       `json:"accent_color"`
-	ReplayMode               ReplayMode                    `json:"replay_mode"`
-	ReplaySamplingRate       int                           `json:"replay_sampling_rate"`
-	ReplayMaxDurationSeconds int                           `json:"replay_max_duration_seconds"`
-	ReplayMaxEvents          int                           `json:"replay_max_events"`
-	ReplayMaskAllInputs      bool                          `json:"replay_mask_all_inputs"`
-	ReplayMaskTextSelector   *string                       `json:"replay_mask_text_selector"`
-	RecurrenceMode           RecurrenceMode                `json:"recurrence_mode"`
-	RecurrenceDays           *int                          `json:"recurrence_days"`
-	DefinitionKey            string                        `json:"definition_key"`
-	DefinitionVersion        int                           `json:"definition_version"`
-	DefinitionStatus         WidgetDefinitionStatus        `json:"definition_status"`
-	Presentation             WidgetPresentation            `json:"presentation"`
-	Objective                WidgetObjective               `json:"objective"`
-	ResponseBlocks           []WidgetResponseBlock         `json:"response_blocks"`
-	Localizations            map[string]WidgetLocalization `json:"localizations"`
-	AllowComment             bool                          `json:"allow_comment"`
-	CollectContact           bool                          `json:"collect_contact"`
-	CreatedAt                time.Time                     `json:"created_at"`
-	UpdatedAt                time.Time                     `json:"updated_at"`
-}
-
-type WidgetRuleInput struct {
+	ID                       string                           `json:"id"`
+	ProjectID                string                           `json:"project_id"`
 	Name                     string                           `json:"name"`
 	Priority                 int                              `json:"priority"`
-	Enabled                  *bool                            `json:"enabled"`
+	Enabled                  bool                             `json:"enabled"`
 	MatcherType              MatcherType                      `json:"matcher_type"`
 	MatcherValue             *string                          `json:"matcher_value"`
-	IncludeConditions        []WidgetRuleTargetConditionInput `json:"include_conditions"`
-	ExcludeConditions        []WidgetRuleTargetConditionInput `json:"exclude_conditions"`
+	IncludeConditions        []WidgetRuleTargetCondition      `json:"include_conditions"`
+	ExcludeConditions        []WidgetRuleTargetCondition      `json:"exclude_conditions"`
 	TriggerType              TriggerType                      `json:"trigger_type"`
 	TriggerDelaySeconds      *int                             `json:"trigger_delay_seconds"`
 	TriggerScrollPercent     *int                             `json:"trigger_scroll_percent"`
-	CanRate                  *bool                            `json:"can_rate"`
-	CanWriteText             *bool                            `json:"can_write_text"`
+	CanRate                  bool                             `json:"can_rate"`
+	CanWriteText             bool                             `json:"can_write_text"`
 	CanRecordAudio           bool                             `json:"can_record_audio"`
 	CanRecordVideo           bool                             `json:"can_record_video"`
 	CanAttachElement         bool                             `json:"can_attach_element"`
@@ -222,18 +182,63 @@ type WidgetRuleInput struct {
 	ReplaySamplingRate       int                              `json:"replay_sampling_rate"`
 	ReplayMaxDurationSeconds int                              `json:"replay_max_duration_seconds"`
 	ReplayMaxEvents          int                              `json:"replay_max_events"`
-	ReplayMaskAllInputs      *bool                            `json:"replay_mask_all_inputs"`
+	ReplayMaskAllInputs      bool                             `json:"replay_mask_all_inputs"`
 	ReplayMaskTextSelector   *string                          `json:"replay_mask_text_selector"`
 	RecurrenceMode           RecurrenceMode                   `json:"recurrence_mode"`
 	RecurrenceDays           *int                             `json:"recurrence_days"`
 	DefinitionKey            string                           `json:"definition_key"`
+	DefinitionVersion        int                              `json:"definition_version"`
 	DefinitionStatus         WidgetDefinitionStatus           `json:"definition_status"`
 	Presentation             WidgetPresentation               `json:"presentation"`
 	Objective                WidgetObjective                  `json:"objective"`
 	ResponseBlocks           []WidgetResponseBlock            `json:"response_blocks"`
 	Localizations            map[string]WidgetLocalization    `json:"localizations"`
-	AllowComment             *bool                            `json:"allow_comment"`
+	AllowComment             bool                             `json:"allow_comment"`
 	CollectContact           bool                             `json:"collect_contact"`
+	AppearanceOverrides      widgetconfig.AppearanceOverrides `json:"appearance_overrides"`
+	Appearance               widgetconfig.Appearance          `json:"appearance"`
+	CreatedAt                time.Time                        `json:"created_at"`
+	UpdatedAt                time.Time                        `json:"updated_at"`
+}
+
+type WidgetRuleInput struct {
+	Name                     string                            `json:"name"`
+	Priority                 int                               `json:"priority"`
+	Enabled                  *bool                             `json:"enabled"`
+	MatcherType              MatcherType                       `json:"matcher_type"`
+	MatcherValue             *string                           `json:"matcher_value"`
+	IncludeConditions        []WidgetRuleTargetConditionInput  `json:"include_conditions"`
+	ExcludeConditions        []WidgetRuleTargetConditionInput  `json:"exclude_conditions"`
+	TriggerType              TriggerType                       `json:"trigger_type"`
+	TriggerDelaySeconds      *int                              `json:"trigger_delay_seconds"`
+	TriggerScrollPercent     *int                              `json:"trigger_scroll_percent"`
+	CanRate                  *bool                             `json:"can_rate"`
+	CanWriteText             *bool                             `json:"can_write_text"`
+	CanRecordAudio           bool                              `json:"can_record_audio"`
+	CanRecordVideo           bool                              `json:"can_record_video"`
+	CanAttachElement         bool                              `json:"can_attach_element"`
+	CanAttachScreenshot      bool                              `json:"can_attach_screenshot"`
+	Greeting                 *string                           `json:"greeting"`
+	Position                 WidgetPosition                    `json:"position"`
+	Theme                    WidgetTheme                       `json:"theme"`
+	AccentColor              *string                           `json:"accent_color"`
+	ReplayMode               ReplayMode                        `json:"replay_mode"`
+	ReplaySamplingRate       int                               `json:"replay_sampling_rate"`
+	ReplayMaxDurationSeconds int                               `json:"replay_max_duration_seconds"`
+	ReplayMaxEvents          int                               `json:"replay_max_events"`
+	ReplayMaskAllInputs      *bool                             `json:"replay_mask_all_inputs"`
+	ReplayMaskTextSelector   *string                           `json:"replay_mask_text_selector"`
+	RecurrenceMode           RecurrenceMode                    `json:"recurrence_mode"`
+	RecurrenceDays           *int                              `json:"recurrence_days"`
+	DefinitionKey            string                            `json:"definition_key"`
+	DefinitionStatus         WidgetDefinitionStatus            `json:"definition_status"`
+	Presentation             WidgetPresentation                `json:"presentation"`
+	Objective                WidgetObjective                   `json:"objective"`
+	ResponseBlocks           []WidgetResponseBlock             `json:"response_blocks"`
+	Localizations            map[string]WidgetLocalization     `json:"localizations"`
+	AllowComment             *bool                             `json:"allow_comment"`
+	CollectContact           bool                              `json:"collect_contact"`
+	AppearanceOverrides      *widgetconfig.AppearanceOverrides `json:"appearance_overrides"`
 }
 
 type WidgetRuleValues struct {
@@ -274,17 +279,21 @@ type WidgetRuleValues struct {
 	Localizations            map[string]WidgetLocalization
 	AllowComment             bool
 	CollectContact           bool
+	AppearanceOverrides      widgetconfig.AppearanceOverrides
+	ExplicitAppearance       bool
 }
 
 type PublicConfiguration struct {
-	TenantID            string
-	TenantSlug          string
-	ProjectID           string
-	DefaultLocale       string
-	AllowedDomains      []string
-	Plan                tenant.Plan
-	Status              tenant.Status
-	TrialEndsAt         *time.Time
-	DeletionRequestedAt *time.Time
-	Rules               []WidgetRule
+	TenantID                   string
+	TenantSlug                 string
+	ProjectID                  string
+	DefaultLocale              string
+	AllowedDomains             []string
+	Plan                       tenant.Plan
+	Status                     tenant.Status
+	TrialEndsAt                *time.Time
+	DeletionRequestedAt        *time.Time
+	TenantAppearanceDefaults   widgetconfig.AppearanceOverrides
+	ProjectAppearanceOverrides widgetconfig.AppearanceOverrides
+	Rules                      []WidgetRule
 }

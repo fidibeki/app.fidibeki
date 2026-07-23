@@ -30,6 +30,7 @@ function createMockState() {
     trial_ends_at: '2026-08-04T12:00:00.000Z',
     deletion_requested_at: null as string | null,
     reporter_access_enabled: true,
+    widget_appearance_defaults: {} as Record<string, string>,
   }
   const member = {
     id: 'member-1',
@@ -62,6 +63,7 @@ function createMockState() {
     allowed_domains: ['shop.acme.test', '*.preview.acme.test'],
     default_locale: 'en',
     reporter_access_enabled: null as boolean | null,
+    widget_appearance_overrides: {} as Record<string, string>,
     created_at: now,
     updated_at: now,
   }]
@@ -104,6 +106,9 @@ function createMockState() {
     replay_mask_text_selector: '.private',
     recurrence_mode: 'cooldown' as 'cooldown' | 'session' | 'never',
     recurrence_days: 30 as number | null,
+    appearance_overrides: {
+      position: 'bottom-right', theme: 'light', accent_color: '#087f73',
+    } as Record<string, string>,
     created_at: now,
     updated_at: now,
   }]
@@ -487,6 +492,7 @@ async function installMockAPI(page: Page, state: MockState) {
         allowed_domains: input.allowed_domains as string[],
         default_locale: 'en',
         reporter_access_enabled: null as boolean | null,
+        widget_appearance_overrides: {} as Record<string, string>,
         created_at: now,
         updated_at: now,
       }
@@ -840,6 +846,10 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/reporter-access' && method === 'PATCH') {
       state.tenant.reporter_access_enabled = Boolean(body().enabled)
       return json(route, { reporter_access_enabled: state.tenant.reporter_access_enabled })
+    }
+    if (path === '/v1/widget-appearance' && method === 'PATCH') {
+      state.tenant.widget_appearance_defaults = body() as Record<string, string>
+      return json(route, { widget_appearance_defaults: state.tenant.widget_appearance_defaults })
     }
     const reporterProgressMatch = path.match(/^\/v1\/reporter\/progress\/([^/]+)$/)
     if (reporterProgressMatch && method === 'GET') return json(route, { progress: {
@@ -1278,6 +1288,67 @@ test('widget lifecycle exposes every status and hides archived rules by default'
   await page.getByRole('button', { name: 'Save rule' }).click()
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[1]).toMatchObject({ definition_status: 'paused', enabled: false })
+})
+
+test('widget appearance resolves workspace, project, and definition overrides', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Appearance configuration is viewport independent')
+  const state = createMockState()
+  state.tenant.widget_appearance_defaults = { theme: 'dark', accent_color: '#005f56' }
+  state.projects[0].widget_appearance_overrides = {
+    surface_color: '#101817', text_color: '#f7faf9', logo_url: 'https://cdn.example.com/acme.svg',
+  }
+  state.widgetRules[0].appearance_overrides = { position: 'bottom-left', logo_url: '' }
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await expect(page.locator('.project-widget-preview > header')).toContainText('dark · bottom-left')
+  await expect(page.locator('.widget-preview-logo')).toHaveCount(0)
+  await expect(page.locator('.widget-preview-modal')).toHaveCSS('background-color', 'rgb(16, 24, 23)')
+  await expect(page.locator('.widget-preview-modal')).toHaveCSS('color', 'rgb(247, 250, 249)')
+  await capture(page, testInfo, 'widget-appearance-hierarchy')
+
+  await page.locator('.project-rule-editor').getByLabel('Accent color swatch').fill('#004c45')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0].appearance_overrides).toMatchObject({
+    position: 'bottom-left', accent_color: '#004c45', logo_url: '',
+  })
+})
+
+test('workspace widget defaults can be updated with controlled tokens', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Workspace appearance is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+
+  const appearance = page.locator('.settings-widget-appearance')
+  await appearance.getByLabel('Accent color swatch').fill('#005f56')
+  await appearance.getByLabel('Logo URL').fill('https://cdn.example.com/acme.svg')
+  await appearance.getByRole('button', { name: 'Save defaults' }).click()
+  await expect(appearance.getByRole('status')).toHaveText('Widget appearance saved.')
+  expect(state.tenant.widget_appearance_defaults).toMatchObject({
+    accent_color: '#005f56', logo_url: 'https://cdn.example.com/acme.svg',
+  })
+})
+
+test('widget appearance controls fit the mobile editor', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile layout check')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const editor = page.locator('.project-rule-editor .appearance-editor')
+  await editor.scrollIntoViewIfNeeded()
+  await expect(editor).toBeVisible()
+  const geometry = await editor.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    return { left: rect.left, right: rect.right, viewport: document.documentElement.clientWidth }
+  })
+  expect(geometry.left).toBeGreaterThanOrEqual(0)
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewport + 1)
+  await capture(page, testInfo, 'widget-appearance-mobile')
 })
 
 test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {

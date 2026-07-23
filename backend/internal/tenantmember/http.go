@@ -18,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -64,6 +65,29 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Patch("/v1/members/{memberID}", handler.updateMember)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
 		Patch("/v1/reporter-access", handler.updateReporterAccess)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
+		Patch("/v1/widget-appearance", handler.updateWidgetAppearance)
+}
+
+func (h *HTTPHandler) updateWidgetAppearance(w http.ResponseWriter, r *http.Request) {
+	var request widgetconfig.AppearanceOverrides
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	request = widgetconfig.Normalize(request)
+	if fields := widgetconfig.Validate(request); len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "validation failed", fields)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	if err := h.options.Store.UpdateWidgetAppearance(r.Context(), query, resolved.ID, request); err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"widget_appearance_defaults": request})
 }
 
 func (h *HTTPHandler) updateReporterAccess(w http.ResponseWriter, r *http.Request) {

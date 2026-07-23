@@ -331,7 +331,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"comment_placeholder":"Tell us more","contact_label":"Email",`+
 			`"consent_label":"Email me about this feedback","submit_label":"Send",`+
 			`"success_message":"Feedback received."}},`+
-			`"allow_comment":true,"collect_contact":true}`, ownerToken,
+			`"allow_comment":true,"collect_contact":true,`+
+			`"appearance_overrides":{"logo_url":""}}`, ownerToken,
 	)
 	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) ||
 		!strings.Contains(updatedRule.Body.String(), `"recurrence_mode":"session"`) ||
@@ -341,8 +342,23 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(updatedRule.Body.String(), `"exclude_conditions":[{"id":`) ||
 		!strings.Contains(updatedRule.Body.String(), `"definition_version":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"presentation":"reaction"`) ||
-		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) {
+		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"appearance_overrides":{"logo_url":""}`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET widget_appearance_defaults =
+			'{"position":"bottom-right","theme":"dark","accent_color":"#005f56"}'::jsonb
+		WHERE id = $1
+	`, acmeID); err != nil {
+		t.Fatalf("configure tenant widget appearance: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE projects SET widget_appearance_overrides =
+			'{"surface_color":"#101817","text_color":"#f7faf9","logo_url":"https://cdn.example.com/project.svg"}'::jsonb
+		WHERE id = $1
+	`, created.Project.ID); err != nil {
+		t.Fatalf("configure project widget appearance: %v", err)
 	}
 	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
 	if err != nil {
@@ -354,7 +370,13 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		*publicConfiguration.Rules[0].ExcludeConditions[0].MatcherValue != "https://example.com/docs/private" ||
 		publicConfiguration.Rules[0].DefinitionKey != "checkout-reaction" ||
 		publicConfiguration.Rules[0].DefinitionVersion != 2 ||
-		publicConfiguration.Rules[0].Presentation != PresentationReaction {
+		publicConfiguration.Rules[0].Presentation != PresentationReaction ||
+		publicConfiguration.Rules[0].Position != PositionBottomRight ||
+		publicConfiguration.Rules[0].Theme != ThemeDark ||
+		publicConfiguration.Rules[0].AccentColor == nil || *publicConfiguration.Rules[0].AccentColor != "#005f56" ||
+		publicConfiguration.Rules[0].Appearance.SurfaceColor == nil ||
+		*publicConfiguration.Rules[0].Appearance.SurfaceColor != "#101817" ||
+		publicConfiguration.Rules[0].Appearance.LogoURL != nil {
 		t.Errorf("updated public targeting = %#v", publicConfiguration.Rules)
 	}
 	listedRules := performProjectRequest(
@@ -391,6 +413,33 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(inheritedReporterAccess.Body.String(), `"reporter_access_enabled":null`) {
 		t.Errorf("inherit reporter access status = %d, body = %s",
 			inheritedReporterAccess.Code, inheritedReporterAccess.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET widget_appearance_overrides = widget_appearance_overrides ||
+			'{"surface_color":"#101817","text_color":"#f7faf9","logo_url":"https://cdn.example.com/rule.svg"}'::jsonb
+		WHERE id = $1
+	`, createdRule.WidgetRule.ID); err != nil {
+		t.Fatalf("configure rule appearance before legacy edit: %v", err)
+	}
+	legacyAppearanceUpdate := performProjectRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID,
+		`{"name":"Legacy appearance edit","matcher_type":"all_pages","trigger_type":"exit_intent",`+
+			`"position":"bottom-left","theme":"dark","accent_color":"#005f56"}`, ownerToken,
+	)
+	if legacyAppearanceUpdate.Code != http.StatusOK {
+		t.Fatalf("legacy appearance update status = %d, body = %s",
+			legacyAppearanceUpdate.Code, legacyAppearanceUpdate.Body.String())
+	}
+	var legacySurface, legacyLogo string
+	if err := root.QueryRow(ctx, `
+		SELECT widget_appearance_overrides->>'surface_color', widget_appearance_overrides->>'logo_url'
+		FROM widget_rules WHERE id = $1
+	`, createdRule.WidgetRule.ID).Scan(&legacySurface, &legacyLogo); err != nil {
+		t.Fatalf("read appearance after legacy edit: %v", err)
+	}
+	if legacySurface != "#101817" || legacyLogo != "https://cdn.example.com/rule.svg" {
+		t.Errorf("legacy edit dropped appearance overrides: surface = %q, logo = %q", legacySurface, legacyLogo)
 	}
 	if _, err := root.Exec(ctx, `
 		UPDATE widget_rules SET enabled = false, definition_status = 'paused' WHERE id = $1

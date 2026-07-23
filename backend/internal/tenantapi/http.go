@@ -48,8 +48,9 @@ func configHandler(resolve ContextResolver) http.HandlerFunc {
 			"tenant": map[string]any{
 				"id": resolved.ID, "name": resolved.Name, "slug": resolved.Slug,
 				"plan": resolved.Plan, "status": resolved.Status, "trial_ends_at": resolved.TrialEndsAt,
-				"deletion_requested_at":   resolved.DeletionRequestedAt,
-				"reporter_access_enabled": resolved.ReporterAccessEnabled,
+				"deletion_requested_at":      resolved.DeletionRequestedAt,
+				"reporter_access_enabled":    resolved.ReporterAccessEnabled,
+				"widget_appearance_defaults": resolved.WidgetAppearanceDefaults,
 			},
 			"plan": definition,
 		})

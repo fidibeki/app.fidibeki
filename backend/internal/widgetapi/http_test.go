@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 )
 
 func TestOriginAllowedUsesExactAndLeadingWildcardMatches(t *testing.T) {
@@ -76,6 +77,9 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 				"pt-ao": {LauncherLabel: "Opinião", Prompt: "Como correu?"},
 			},
 			AllowComment: true, CollectContact: true,
+			Appearance: widgetconfig.Appearance{
+				Position: "bottom-right", Theme: "dark", AccentColor: "#005f56",
+			},
 		}, {
 			ID: "paused-rule-id", Name: "Paused", MatcherType: project.MatcherAllPages,
 			DefinitionKey: "paused-feedback", DefinitionStatus: project.DefinitionPaused,
@@ -107,6 +111,7 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
+		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56"}`,
 	} {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)

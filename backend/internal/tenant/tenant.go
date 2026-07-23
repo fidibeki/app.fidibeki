@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 )
 
 var ErrUnknownTenant = errors.New("unknown tenant")
@@ -27,14 +29,15 @@ const (
 )
 
 type Tenant struct {
-	ID                    string
-	Name                  string
-	Slug                  string
-	Plan                  Plan
-	Status                Status
-	TrialEndsAt           *time.Time
-	DeletionRequestedAt   *time.Time
-	ReporterAccessEnabled bool
+	ID                       string
+	Name                     string
+	Slug                     string
+	Plan                     Plan
+	Status                   Status
+	TrialEndsAt              *time.Time
+	DeletionRequestedAt      *time.Time
+	ReporterAccessEnabled    bool
+	WidgetAppearanceDefaults widgetconfig.AppearanceOverrides
 }
 
 type Resolver interface {

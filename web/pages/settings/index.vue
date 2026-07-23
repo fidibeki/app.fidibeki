@@ -27,9 +27,11 @@ import type {
   Member,
   MemberDomain,
   TenantConfiguration,
+  WidgetAppearanceOverrides,
 } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDate, formatMonthlyEuro, formatWholeNumber } from '~/utils/format'
+import { cleanAppearanceOverrides, defaultWidgetAppearance } from '~/utils/widget-appearance'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -98,6 +100,8 @@ const integrationName = ref('')
 const integrationURL = ref('')
 const integrationChannel = ref('')
 const integrationEvents = ref<IntegrationEvent[]>(['feedback.created'])
+const workspaceAppearance = ref<WidgetAppearanceOverrides>({})
+const appearanceNotice = ref('')
 const revealedSecret = ref('')
 const workspaceHost = computed(() => {
   const slug = data.value?.configuration.tenant.slug
@@ -105,6 +109,11 @@ const workspaceHost = computed(() => {
   return `${slug}.${String(runtimeConfig.public.baseDomain || 'fidibeki.com')}`
 })
 const hasVerifiedMemberDomains = computed(() => data.value?.memberDomains.some(domain => domain.status === 'verified') === true)
+
+watch(data, (value) => {
+  if (!value) return
+  workspaceAppearance.value = { ...(value.configuration.tenant.widget_appearance_defaults || {}) }
+}, { immediate: true })
 
 const availablePermissionGroups = computed(() => tenantPermissionGroups.map((group) => ({
   ...group,
@@ -331,6 +340,23 @@ async function updateReporterAccess(enabled: boolean) {
   }
 }
 
+async function updateWidgetAppearance() {
+  if (!canWrite('tenant:update') || !data.value || pending.value) return
+  pending.value = true
+  formError.value = ''
+  appearanceNotice.value = ''
+  const appearance = cleanAppearanceOverrides(workspaceAppearance.value)
+  try {
+    await $apiFetch('/v1/widget-appearance', { method: 'PATCH', body: appearance })
+    data.value.configuration.tenant.widget_appearance_defaults = appearance
+    appearanceNotice.value = 'Widget appearance saved.'
+  } catch (appearanceError) {
+    formError.value = apiErrorMessage(appearanceError, 'Widget appearance could not be updated.')
+  } finally {
+    pending.value = false
+  }
+}
+
 function isExpired(value?: string | null) {
   return value ? new Date(value).getTime() <= Date.now() : false
 }
@@ -378,6 +404,11 @@ useHead({ title: 'Settings - Fidibeki' })
           <label><span><b>Reporter progress access</b><small>Applies to every project unless a project disables access.</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" aria-label="Reporter progress access" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
         </div>
+        <form class="app-surface settings-section settings-widget-appearance" @submit.prevent="updateWidgetAppearance">
+          <header><div><p class="app-eyebrow">Widget defaults</p><h2>Controlled appearance</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">Save defaults</button></header>
+          <WidgetAppearanceEditor v-model="workspaceAppearance" :parent="defaultWidgetAppearance" />
+          <p v-if="appearanceNotice" class="settings-domain-notice" role="status">{{ appearanceNotice }}</p>
+        </form>
       </section>
 
       <div v-else-if="activeTab === 'members'" class="settings-members-page">
@@ -494,6 +525,8 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-tabs a[data-active='true']::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--teal); content: ''; }
 .settings-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
 .settings-reporter-policy { grid-column: 1 / -1; }
+.settings-widget-appearance { grid-column: 1 / -1; }
+.settings-widget-appearance > :deep(.appearance-editor) { padding: 16px; }
 .settings-reporter-policy > label { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 16px; }
 .settings-reporter-policy > label > span { display: flex; flex-direction: column; gap: 4px; }
 .settings-reporter-policy b { font-size: 11px; }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 )
 
 const publicKeyAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -158,6 +159,15 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	}
 	if values.Theme == "" {
 		values.Theme = ThemeLight
+	}
+	values.ExplicitAppearance = input.AppearanceOverrides != nil
+	if values.ExplicitAppearance {
+		values.AppearanceOverrides = widgetconfig.Normalize(*input.AppearanceOverrides)
+	} else {
+		position, theme := string(values.Position), string(values.Theme)
+		values.AppearanceOverrides = widgetconfig.Normalize(widgetconfig.AppearanceOverrides{
+			Position: &position, Theme: &theme, AccentColor: values.AccentColor,
+		})
 	}
 	if values.ReplayMode == "" {
 		values.ReplayMode = ReplayNone
@@ -445,6 +455,11 @@ func validateAppearance(values WidgetRuleValues, fields FieldErrors) {
 	}
 	if values.AccentColor != nil && !accentColorPattern.MatchString(*values.AccentColor) {
 		fields["accent_color"] = "must be a six-digit hex color"
+	}
+	if values.ExplicitAppearance {
+		for field, message := range widgetconfig.Validate(values.AppearanceOverrides) {
+			fields["appearance_overrides."+field] = message
+		}
 	}
 	if values.ReplayMaskTextSelector != nil && len(*values.ReplayMaskTextSelector) > 1000 {
 		fields["replay_mask_text_selector"] = "must not exceed 1000 characters"
