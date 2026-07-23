@@ -434,10 +434,17 @@ was removed from the staging test tenant.
       public errors remain safe; regional dates, numbers, plan limits, titles, validation, and
       accessible names update consistently. Responsive English/Portuguese journeys plus unit,
       typecheck, build, and the complete browser suite pass.
-    - [ ] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,
+    - [x] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,
       settings/billing, and shared production catalogs without translating domain content.
+      English and Portuguese catalogs now cover these surfaces while customer-authored content,
+      exact API mutations, and regional formatting remain intact. Focused desktop/mobile workflows,
+      unit tests, typecheck, and the Nuxt build pass.
     - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
       gates, CI, and real staging validation.
+      The local gate is complete: source coverage, EN/PT parity, interpolation preservation,
+      generated `en-XA`, unit (103), typecheck, build, and 18 integrated responsive browser journeys
+      pass. CI and real staging validation remain pending because deployment work is not currently
+      authorized unless it directly blocks staging use.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

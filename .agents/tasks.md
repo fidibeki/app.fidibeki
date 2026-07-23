@@ -539,3 +539,135 @@ pass.
 **Acceptance:** Full local, CI, and real staging locale/timezone journeys pass on the same commit.
 
 **Autonomy:** AFK
+
+# Open GitHub Issue Reconciliation
+
+**Source:** Open non-`postpone` issues in `acidiney/app.fidibeki`, audited on 2026-07-23.
+
+## Task 32: Validate Completed Configuration Refresh Fix
+
+**Depends on:** Task 30
+**Status:** In Progress
+
+**Outcome:** Confirm issue #44 is fully covered by the existing raw-clone hydration fix, including
+saved rule values and hard refresh, then close it only if the focused regression passes.
+
+**Acceptance:** Existing configuration hydrates every persisted field, a hard refresh does not
+throw a clone error, focused unit/browser coverage passes, and the GitHub issue records the evidence.
+
+**Autonomy:** AFK
+
+## Task 33: Repair Privacy Request Journeys
+
+**Depends on:** Task 30
+**Status:** In Progress
+
+**Outcome:** Resolve workspace export generation, reporter anonymization creation, and reporter
+verification link failures in issues #46, #49, and #50.
+
+**Acceptance:** Backend integration coverage proves durable idempotent job creation and one-time,
+tenant-scoped verification URL handling; browser coverage proves success and actionable retry
+states. Staging validation is deferred unless the fix directly requires it.
+
+**Autonomy:** AFK
+
+## Task 34: Repair Replay Fullscreen
+
+**Depends on:** Task 30
+**Status:** In Progress
+
+**Outcome:** Complete issue #33 with responsive fullscreen sizing and browser/fullscreen state
+synchronization.
+
+**Acceptance:** Aspect ratio, controls, Escape/control exit, repeated cycles, listener cleanup, and
+supported-browser E2E pass.
+
+**Autonomy:** AFK
+
+## Task 35: Complete Focused Visual Regressions
+
+**Depends on:** Task 30
+**Status:** Pending
+
+**Outcome:** Complete issues #38, #45, #47, and #48 without changing operational behavior.
+
+**Acceptance:** Owner badge, notification empty state, unrated feedback metadata, and destructive
+hover states remain aligned, legible, accessible, and stable across responsive viewports.
+
+**Autonomy:** AFK
+
+## Task 36: Standardize Confirmations And Transient Notices
+
+**Depends on:** Task 35
+**Status:** Pending
+
+**Outcome:** Complete issues #34 and #35 with shared accessible toast and confirmation primitives.
+
+**Acceptance:** Saves do not shift forms or stack stale notices; no production route uses
+`window.confirm`; focus, Escape, pending, backdrop, restore, desktop, and mobile behavior pass.
+
+**Autonomy:** AFK
+
+## Task 37: Complete Appearance And Validation Contracts
+
+**Depends on:** Task 36
+**Status:** Pending
+
+**Outcome:** Complete issues #36, #37, and #39 through one consistent structured field-error and
+accent-foreground contract across API, backoffice preview, and widget.
+
+**Acceptance:** Errors stay in their owning forms and fields, nested rule paths remain actionable,
+accessible foreground derivation is deterministic, and backend/web/widget/browser tests pass.
+
+**Autonomy:** AFK
+
+## Task 38: Make Widget Page Language Reactive
+
+**Depends on:** Task 30
+**Status:** Pending
+
+**Outcome:** Complete issue #40 using the host page language as the reactive widget locale source.
+
+**Acceptance:** Exact/primary/default/browser precedence, SPA language changes, preserved draft and
+presentation state, event deduplication, metadata, cleanup, and browser coverage pass.
+
+**Autonomy:** AFK
+
+## Task 39: Add Explicit Canvas Replay Policy
+
+**Depends on:** Task 34
+**Status:** Pending
+
+**Outcome:** Complete issue #41 with opt-in canvas recording, privacy exclusions, bounded resource
+use, and faithful playback.
+
+**Acceptance:** Configuration, API/runtime projection, rrweb events, playback, failure behavior,
+privacy guidance, performance measurement, and automated coverage pass.
+
+**Autonomy:** AFK
+
+## Task 40: Complete Reporter Progress Experience
+
+**Depends on:** Task 30
+**Status:** Pending
+
+**Outcome:** Complete issues #42 and #43 with a Dispatch-aligned public progress page and visible,
+safe clarification responses in the issue timeline.
+
+**Acceptance:** Public states are localized and private by construction; responses persist and
+render with attribution/order/newlines; desktop/mobile browser journeys pass.
+
+**Autonomy:** AFK
+
+## Task 41: Reconcile Remaining Open Issues
+
+**Depends on:** Tasks 31 through 40
+**Status:** Pending
+
+**Outcome:** Close materially completed issues with test evidence and leave only explicitly
+postponed or genuinely staging-gated work open.
+
+**Acceptance:** GitHub state matches the code and test evidence; no production, deployment, or
+infrastructure work is performed without renewed authorization.
+
+**Autonomy:** AFK
