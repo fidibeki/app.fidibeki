@@ -482,12 +482,17 @@ independent.
 ## Task 29: Settings, Billing, And Shared Localization
 
 **Depends on:** Tasks 21 and 22
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Administration, diagnostics, privacy, billing, and remaining shared production
 components use catalogs.
 
 **Acceptance:** Portuguese browser tests preserve permissions and operational behavior.
+
+**Evidence:** 93 unit tests, typecheck, and production build pass. The focused administration
+suite passes 35 browser tests with 13 intentional skips, plus two Portuguese desktop/mobile
+journeys covering exact permissions, privacy mutations, submission-health filters, billing,
+member lifecycle, and the public privacy page.
 
 **Autonomy:** AFK
 

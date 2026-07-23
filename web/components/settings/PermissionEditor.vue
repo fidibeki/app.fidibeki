@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { permissionLabel, type PermissionPreset } from '~/data/permissions'
+import type { PermissionPreset } from '~/data/permissions'
 
 type PermissionSelection = PermissionPreset | 'custom'
 
@@ -16,13 +16,26 @@ const emit = defineEmits<{
 }>()
 
 const presets: PermissionPreset[] = ['admin', 'editor', 'viewer']
+const { t } = useI18n()
+
+function groupLabel(permissions: readonly string[]) {
+  const resource = permissions[0]?.split(':')[0] || 'tenant'
+  return t(`admin.permissions.groups.${resource}`)
+}
+
+function localizedPermission(permission: string) {
+  const [resource = 'tenant', action = 'read'] = permission.split(':')
+  return t(`admin.permissions.actions.${action}`, {
+    resource: t(`admin.permissions.resources.${resource}`),
+  })
+}
 </script>
 
 <template>
   <section class="permission-editor" :aria-label="label">
     <header>
-      <div><b>Permissions</b><span>{{ activePreset === 'custom' ? 'Custom selection' : `${activePreset} preset` }}</span></div>
-      <div class="permission-presets" role="group" aria-label="Permission preset">
+      <div><b>{{ t('admin.permissions.title') }}</b><span>{{ activePreset === 'custom' ? t('admin.permissions.customSelection') : t('admin.permissions.preset', { preset: t(`admin.permissions.presets.${activePreset}`) }) }}</span></div>
+      <div class="permission-presets" role="group" :aria-label="t('admin.permissions.presetGroup')">
         <button
           v-for="preset in presets"
           :key="preset"
@@ -30,15 +43,15 @@ const presets: PermissionPreset[] = ['admin', 'editor', 'viewer']
           :data-active="activePreset === preset"
           :aria-pressed="activePreset === preset"
           @click="emit('applyPreset', preset)"
-        >{{ preset }}</button>
+        >{{ t(`admin.permissions.presets.${preset}`) }}</button>
       </div>
     </header>
     <div class="permission-groups">
       <fieldset v-for="group in groups" :key="group.label">
-        <legend>{{ group.label }} <small>{{ group.permissions.filter(permission => permissions.includes(permission)).length }}/{{ group.permissions.length }}</small></legend>
+        <legend>{{ groupLabel(group.permissions) }} <small>{{ group.permissions.filter(permission => permissions.includes(permission)).length }}/{{ group.permissions.length }}</small></legend>
         <label v-for="permission in group.permissions" :key="permission" :data-granted="permissions.includes(permission)">
           <input type="checkbox" :checked="permissions.includes(permission)" @change="emit('togglePermission', permission)" />
-          <span>{{ permissionLabel(permission) }}</span>
+          <span>{{ localizedPermission(permission) }}</span>
         </label>
       </fieldset>
     </div>

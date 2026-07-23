@@ -1,4 +1,5 @@
 import { feedbackMessages } from '../messages/feedback.en'
+import { adminMessages } from '../messages/admin.en'
 
 export default defineI18nLocale(() => ({
   common: {
@@ -407,6 +408,7 @@ export default defineI18nLocale(() => ({
     },
   },
   feedback: feedbackMessages,
+  admin: adminMessages,
   runtime: {
     catalogLanguage: 'English',
     fallbackProbe: 'English fallback',

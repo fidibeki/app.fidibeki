@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowUpRight, Check, Clock3, CreditCard, ShieldAlert, Trash2, X } from '@lucide/vue'
 import type { BillingSummary, PlanCatalogResponse, PlanDefinition, TenantPlan } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate, formatDateTime, formatEuro } from '~/utils/format'
 
 const route = useRoute()
 const { $apiFetch, $refreshSession } = useNuxtApp()
 const { can, canWrite, tenant } = useAuth()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { currency, date, dateTime, plural } = useRegionalFormat()
 const pendingAction = ref('')
 const actionError = ref('')
 const deleteOpen = ref(false)
@@ -43,11 +44,19 @@ const deletionDate = computed(() => {
 })
 
 function planLabel(plan: TenantPlan) {
-  return plan.charAt(0).toUpperCase() + plan.slice(1)
+  return t(`admin.plans.${plan}`)
 }
 
 function planLimit(value: number) {
-  return value < 0 ? 'Custom' : String(value)
+  return value < 0 ? t('admin.common.custom') : String(value)
+}
+
+function statusLabel(value: string) {
+  return t(`admin.statuses.${value}`)
+}
+
+function planPrice(cents: number) {
+  return currency(cents / 100, 'EUR')
 }
 
 async function checkout(plan: TenantPlan) {
@@ -64,7 +73,7 @@ async function checkout(plan: TenantPlan) {
     })
     window.location.assign(response.url)
   } catch (checkoutError) {
-    actionError.value = apiErrorMessage(checkoutError, 'Checkout could not be started.')
+    actionError.value = localizedError.message(checkoutError, 'admin.billing.errors.checkout')
     pendingAction.value = ''
   }
 }
@@ -77,7 +86,7 @@ async function openPortal() {
     const response = await $apiFetch<{ url: string }>('/v1/billing/portal', { method: 'POST' })
     window.location.assign(response.url)
   } catch (portalError) {
-    actionError.value = apiErrorMessage(portalError, 'Billing portal could not be opened.')
+    actionError.value = localizedError.message(portalError, 'admin.billing.errors.portal')
     pendingAction.value = ''
   }
 }
@@ -94,7 +103,7 @@ async function requestDeletion() {
     confirmation.value = ''
     await Promise.all([refresh(), $refreshSession()])
   } catch (deleteError) {
-    actionError.value = apiErrorMessage(deleteError, 'Deletion could not be scheduled.')
+    actionError.value = localizedError.message(deleteError, 'admin.billing.errors.deletion')
   } finally {
     pendingAction.value = ''
   }
@@ -108,50 +117,50 @@ async function cancelDeletion() {
     await $apiFetch('/v1/billing/cancel-deletion', { method: 'POST' })
     await Promise.all([refresh(), $refreshSession()])
   } catch (cancelError) {
-    actionError.value = apiErrorMessage(cancelError, 'Deletion could not be cancelled.')
+    actionError.value = localizedError.message(cancelError, 'admin.billing.errors.cancellation')
   } finally {
     pendingAction.value = ''
   }
 }
 
-useHead({ title: 'Billing - Fidibeki' })
+useHead(() => ({ title: t('admin.billing.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page billing-page">
     <header class="app-page-head">
-      <div><p class="app-eyebrow">Account</p><h1>Billing</h1><span>Plan, payment, and workspace lifecycle.</span></div>
-      <NuxtLink class="app-button" to="/settings">Back to settings</NuxtLink>
+      <div><p class="app-eyebrow">{{ t('admin.billing.eyebrow') }}</p><h1>{{ t('admin.billing.title') }}</h1><span>{{ t('admin.billing.description') }}</span></div>
+      <NuxtLink class="app-button" to="/settings">{{ t('admin.billing.back') }}</NuxtLink>
     </header>
 
-    <p v-if="route.query.checkout === 'success'" class="billing-notice billing-notice--success"><Check :size="15" /> Checkout completed. Subscription changes appear after Stripe confirms the payment.</p>
-    <p v-else-if="route.query.checkout === 'cancelled'" class="billing-notice"><Clock3 :size="15" /> Checkout was cancelled.</p>
+    <p v-if="route.query.checkout === 'success'" class="billing-notice billing-notice--success"><Check :size="15" /> {{ t('admin.billing.checkoutCompleted') }}</p>
+    <p v-else-if="route.query.checkout === 'cancelled'" class="billing-notice"><Clock3 :size="15" /> {{ t('admin.billing.checkoutCancelled') }}</p>
     <p v-if="actionError" class="billing-notice billing-notice--error" role="alert"><AlertTriangle :size="15" />{{ actionError }}</p>
 
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading billing</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Billing unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
+    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>{{ t('admin.billing.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>{{ t('admin.billing.unavailable') }}</h2><p>{{ localizedError.message(error, 'admin.billing.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('admin.common.tryAgain') }}</button></div></section>
 
     <template v-else-if="billing">
       <section v-if="billing.deletion_requested_at" class="billing-deletion-banner">
         <ShieldAlert :size="20" />
-        <div><b>Deletion scheduled</b><span>Workspace removal is scheduled for {{ deletionDate ? formatDateTime(deletionDate) : '' }}.</span></div>
-        <button v-if="can('billing:manage')" class="app-button" :disabled="pendingAction === 'cancel-delete'" @click="cancelDeletion">{{ pendingAction === 'cancel-delete' ? 'Restoring...' : 'Cancel deletion' }}</button>
+        <div><b>{{ t('admin.billing.deletionScheduled') }}</b><span>{{ t('admin.billing.removalScheduled', { date: deletionDate ? dateTime(deletionDate) : '' }) }}</span></div>
+        <button v-if="can('billing:manage')" class="app-button" :disabled="pendingAction === 'cancel-delete'" @click="cancelDeletion">{{ pendingAction === 'cancel-delete' ? t('admin.billing.restoring') : t('admin.billing.cancelDeletion') }}</button>
       </section>
 
       <section class="billing-summary app-surface">
-        <div><p class="app-eyebrow">Current plan</p><h2 class="capitalize">{{ billing.plan }}</h2><span v-if="billing.pending_plan">Changes to {{ billing.pending_plan }} next period</span><span v-else>{{ billing.status }}</span></div>
-        <div><p class="app-eyebrow">Trial</p><h2>{{ trialDays == null ? 'Not active' : `${trialDays} days` }}</h2><span>{{ billing.trial_ends_at ? formatDate(billing.trial_ends_at) : 'No trial end date' }}</span></div>
-        <div><p class="app-eyebrow">Payment account</p><h2>{{ billing.has_customer ? 'Connected' : 'Not created' }}</h2><span>{{ billing.has_subscription ? 'Subscription active' : 'No subscription' }}</span></div>
-        <button v-if="canWrite('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? 'Opening...' : 'Billing portal' }}<ArrowUpRight :size="13" /></button>
+        <div><p class="app-eyebrow">{{ t('admin.billing.currentPlan') }}</p><h2>{{ planLabel(billing.plan) }}</h2><span v-if="billing.pending_plan">{{ t('admin.billing.changesNextPeriod', { plan: planLabel(billing.pending_plan) }) }}</span><span v-else>{{ statusLabel(billing.status) }}</span></div>
+        <div><p class="app-eyebrow">{{ t('admin.billing.trial') }}</p><h2>{{ trialDays == null ? t('admin.billing.notActive') : plural('admin.common.days', trialDays, { count: trialDays }) }}</h2><span>{{ billing.trial_ends_at ? date(billing.trial_ends_at) : t('admin.billing.noTrialEnd') }}</span></div>
+        <div><p class="app-eyebrow">{{ t('admin.billing.paymentAccount') }}</p><h2>{{ billing.has_customer ? t('admin.billing.connected') : t('admin.billing.notCreated') }}</h2><span>{{ billing.has_subscription ? t('admin.billing.subscriptionActive') : t('admin.billing.noSubscription') }}</span></div>
+        <button v-if="canWrite('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? t('admin.common.opening') : t('admin.billing.portal') }}<ArrowUpRight :size="13" /></button>
       </section>
 
       <section class="billing-plans">
         <article v-for="plan in plans" :key="plan.plan" class="billing-plan app-surface" :data-current="billing.plan === plan.plan">
-          <header><span v-if="billing.plan === plan.plan">Current</span><p>{{ planLabel(plan.plan) }}</p><h2>{{ plan.monthly_price_cents == null ? 'Custom' : formatEuro(plan.monthly_price_cents) }}<small v-if="plan.plan !== 'enterprise'"> / month</small></h2></header>
+          <header><span v-if="billing.plan === plan.plan">{{ t('admin.billing.current') }}</span><p>{{ planLabel(plan.plan) }}</p><h2>{{ plan.monthly_price_cents == null ? t('admin.common.custom') : planPrice(plan.monthly_price_cents) }}<small v-if="plan.plan !== 'enterprise'">{{ t('admin.billing.perMonth') }}</small></h2></header>
           <dl>
-            <div><dt>Projects</dt><dd>{{ planLimit(plan.limits.projects) }}</dd></div>
-            <div><dt>Members</dt><dd>{{ planLimit(plan.limits.users) }}</dd></div>
-            <div><dt>AI and replay</dt><dd>{{ plan.features.ai && plan.features.session_replay ? 'Included' : 'No' }}</dd></div>
+            <div><dt>{{ t('admin.billing.projects') }}</dt><dd>{{ planLimit(plan.limits.projects) }}</dd></div>
+            <div><dt>{{ t('admin.billing.members') }}</dt><dd>{{ planLimit(plan.limits.users) }}</dd></div>
+            <div><dt>{{ t('admin.billing.aiReplay') }}</dt><dd>{{ plan.features.ai && plan.features.session_replay ? t('admin.billing.included') : t('admin.billing.no') }}</dd></div>
           </dl>
           <button
             v-if="canWrite('billing:manage') && billing.plan !== plan.plan"
@@ -160,25 +169,25 @@ useHead({ title: 'Billing - Fidibeki' })
             :disabled="Boolean(pendingAction) || Boolean(billing.deletion_requested_at)"
             @click="billing.has_subscription && plan.plan !== 'enterprise' ? openPortal() : checkout(plan.plan)"
           >
-            {{ pendingAction === `checkout:${plan.plan}` ? 'Opening...' : plan.plan === 'enterprise' ? 'Contact sales' : billing.has_subscription ? 'Change in portal' : 'Choose plan' }}
+            {{ pendingAction === `checkout:${plan.plan}` ? t('admin.common.opening') : plan.plan === 'enterprise' ? t('admin.billing.contactSales') : billing.has_subscription ? t('admin.billing.changeInPortal') : t('admin.billing.choosePlan') }}
           </button>
-          <span v-else-if="billing.plan === plan.plan" class="billing-current"><Check :size="14" /> Active plan</span>
+          <span v-else-if="billing.plan === plan.plan" class="billing-current"><Check :size="14" /> {{ t('admin.billing.activePlan') }}</span>
         </article>
       </section>
 
       <section class="billing-danger app-surface">
-        <div><p class="app-eyebrow">Danger zone</p><h2>Delete workspace</h2><span>Seven-day recovery window before permanent deletion.</span></div>
-        <button v-if="canWrite('billing:manage') && !billing.deletion_requested_at" class="app-button billing-delete-button" @click="deleteOpen = true"><Trash2 :size="15" /> Schedule deletion</button>
+        <div><p class="app-eyebrow">{{ t('admin.billing.dangerEyebrow') }}</p><h2>{{ t('admin.billing.deleteWorkspace') }}</h2><span>{{ t('admin.billing.recoveryWindow') }}</span></div>
+        <button v-if="canWrite('billing:manage') && !billing.deletion_requested_at" class="app-button billing-delete-button" @click="deleteOpen = true"><Trash2 :size="15" /> {{ t('admin.billing.scheduleDeletion') }}</button>
       </section>
     </template>
 
     <AppDialog :open="deleteOpen" aria-labelledby="delete-title" @close="deleteOpen = false">
       <section class="billing-modal">
-        <header><div><p class="app-eyebrow">Irreversible after grace</p><h2 id="delete-title">Schedule workspace deletion</h2></div><button class="app-icon-button" title="Close" @click="deleteOpen = false"><X :size="18" /></button></header>
+        <header><div><p class="app-eyebrow">{{ t('admin.billing.irreversible') }}</p><h2 id="delete-title">{{ t('admin.billing.scheduleDeletion') }}</h2></div><button class="app-icon-button" :title="t('admin.common.close')" @click="deleteOpen = false"><X :size="18" /></button></header>
         <form @submit.prevent="requestDeletion">
-          <label>Type <code>{{ tenant?.slug }}</code> to confirm<input v-model.trim="confirmation" class="app-input" required autocomplete="off" autofocus /></label>
+          <label>{{ t('admin.billing.typeToConfirm', { value: tenant?.slug }) }}<input v-model.trim="confirmation" class="app-input" required autocomplete="off" autofocus /></label>
           <p v-if="actionError" class="billing-form-error">{{ actionError }}</p>
-          <footer><button class="app-button" type="button" @click="deleteOpen = false">Cancel</button><button class="app-button billing-delete-button" type="submit" :disabled="pendingAction === 'delete' || confirmation !== tenant?.slug">{{ pendingAction === 'delete' ? 'Scheduling...' : 'Schedule deletion' }}</button></footer>
+          <footer><button class="app-button" type="button" @click="deleteOpen = false">{{ t('admin.common.cancel') }}</button><button class="app-button billing-delete-button" type="submit" :disabled="pendingAction === 'delete' || confirmation !== tenant?.slug">{{ pendingAction === 'delete' ? t('admin.billing.scheduling') : t('admin.billing.scheduleDeletion') }}</button></footer>
         </form>
       </section>
     </AppDialog>

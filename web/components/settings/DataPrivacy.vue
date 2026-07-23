@@ -15,13 +15,15 @@ import type {
   PrivacyExport,
   ReporterPrivacyAction,
   ReporterPrivacyRequest,
+  RetentionPolicy,
 } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
 import { triggerSignedDownload } from '~/utils/download'
-import { formatDateTime } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite } = useAuth()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { dateTime, decimal, plural } = useRegionalFormat()
 const canReadRetention = computed(() => can('tenant:read'))
 const canManagePrivacy = computed(() => can('tenant:update'))
 
@@ -52,7 +54,7 @@ const anonymizeDialogOpen = ref(false)
 const anonymizeConfirmation = ref('')
 
 function statusLabel(value: string) {
-  return value.replaceAll('_', ' ')
+  return t(`admin.statuses.${value}`)
 }
 
 function statusTone(value: string) {
@@ -71,7 +73,34 @@ function formatBytes(value?: number) {
     amount /= 1024
     index += 1
   }
-  return `${amount.toFixed(amount >= 10 ? 0 : 1)} ${units[index]}`
+  return `${decimal(amount, { maximumFractionDigits: amount >= 10 ? 0 : 1 })} ${units[index]}`
+}
+
+function retentionLabel(policy: RetentionPolicy) {
+  return t(`admin.privacy.settings.category.${policy.category}`)
+}
+
+function retentionDuration(policy: RetentionPolicy) {
+  if (policy.category === 'workflow_metadata') return t('admin.privacy.settings.duration.workspaceLifetime')
+  if (policy.category === 'unverified_requests') {
+    return plural('admin.privacy.settings.duration.hours', 48, { count: 48 })
+  }
+  if (policy.duration_days != null) {
+    return plural('admin.privacy.settings.duration.days', policy.duration_days, { count: policy.duration_days })
+  }
+  return t('admin.common.custom')
+}
+
+function retentionSource(source: string) {
+  if (source === 'Workspace lifecycle') return t('admin.privacy.settings.source.workspaceLifecycle')
+  if (source === 'Plan storage limit') return t('admin.privacy.settings.source.planStorageLimit')
+  return t('admin.privacy.settings.source.platformDefault')
+}
+
+function actionLabel(action: ReporterPrivacyAction) {
+  return t(action === 'anonymize'
+    ? 'admin.privacy.settings.actionAnonymize'
+    : 'admin.privacy.settings.actionExport')
 }
 
 async function runAction(key: string, operation: () => Promise<void>) {
@@ -82,7 +111,7 @@ async function runAction(key: string, operation: () => Promise<void>) {
   try {
     await operation()
   } catch (operationError) {
-    actionError.value = apiErrorMessage(operationError, 'The privacy action could not be completed.')
+    actionError.value = localizedError.message(operationError, 'admin.privacy.settings.error')
   } finally {
     actionPending.value = ''
   }
@@ -93,8 +122,8 @@ async function createWorkspaceExport() {
   await runAction('create-export', async () => {
     const response = await $apiFetch<{ created: boolean }>('/v1/privacy/exports', { method: 'POST' })
     actionNotice.value = response.created
-      ? 'Workspace export queued.'
-      : 'An active workspace export already exists.'
+      ? t('admin.privacy.settings.notices.exportQueued')
+      : t('admin.privacy.settings.notices.exportExists')
     await refresh()
   })
 }
@@ -110,7 +139,7 @@ async function retryJob(jobID: string) {
   if (!canWrite('tenant:update')) return
   await runAction(`retry:${jobID}`, async () => {
     await $apiFetch(`/v1/privacy/exports/${jobID}/retry`, { method: 'POST' })
-    actionNotice.value = 'Privacy job queued again.'
+    actionNotice.value = t('admin.privacy.settings.notices.retryQueued')
     await refresh()
   })
 }
@@ -133,7 +162,7 @@ async function createReporterRequest() {
       method: 'POST',
       body: { email, action: reporterAction.value },
     })
-    actionNotice.value = `Verification email queued for ${email}.`
+    actionNotice.value = t('admin.privacy.settings.notices.verificationQueued', { email })
     anonymizeDialogOpen.value = false
     anonymizeConfirmation.value = ''
     reporterEmail.value = ''
@@ -146,10 +175,10 @@ async function createReporterRequest() {
 <template>
   <div class="privacy-settings">
     <section v-if="status === 'pending'" class="app-surface app-state">
-      <div><span class="app-spinner" /><h2>Loading data controls</h2></div>
+      <div><span class="app-spinner" /><h2>{{ t('admin.privacy.settings.loading') }}</h2></div>
     </section>
     <section v-else-if="error" class="app-surface app-state">
-      <div><AlertTriangle :size="24" /><h2>Data controls unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div>
+      <div><AlertTriangle :size="24" /><h2>{{ t('admin.privacy.settings.unavailable') }}</h2><p>{{ localizedError.message(error, 'admin.privacy.settings.error') }}</p><button class="app-button" @click="refresh()">{{ t('admin.common.tryAgain') }}</button></div>
     </section>
     <template v-else-if="data">
       <p v-if="actionError" class="privacy-alert privacy-alert--error" role="alert"><AlertTriangle :size="15" />{{ actionError }}</p>
@@ -157,87 +186,87 @@ async function createReporterRequest() {
 
       <section class="app-surface privacy-section">
         <header>
-          <div><p class="app-eyebrow">Effective policy</p><h2>Retention schedule</h2></div>
-          <span v-if="data.retention" class="privacy-plan">{{ data.retention.plan }} plan</span>
+          <div><p class="app-eyebrow">{{ t('admin.privacy.settings.policyEyebrow') }}</p><h2>{{ t('admin.privacy.settings.retention') }}</h2></div>
+          <span v-if="data.retention" class="privacy-plan">{{ t('admin.privacy.settings.plan', { plan: t(`admin.plans.${data.retention.plan}`) }) }}</span>
         </header>
-        <div v-if="!canReadRetention" class="privacy-empty"><ShieldCheck :size="22" /><h3>Workspace read access required</h3></div>
+        <div v-if="!canReadRetention" class="privacy-empty"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.readRequired') }}</h3></div>
         <div v-else class="privacy-table privacy-retention-table">
-          <div class="privacy-row privacy-row--head"><span>Data category</span><span>Retention</span><span>Source</span></div>
+          <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.category') }}</span><span>{{ t('admin.privacy.settings.columns.retention') }}</span><span>{{ t('admin.privacy.settings.columns.source') }}</span></div>
           <div v-for="policy in data.retention?.policies || []" :key="policy.category" class="privacy-row">
-            <span><b>{{ policy.label }}</b><small>{{ policy.category.replaceAll('_', ' ') }}</small></span>
-            <span>{{ policy.duration }}</span>
-            <span>{{ policy.source }}</span>
+            <span><b>{{ retentionLabel(policy) }}</b><small>{{ policy.category }}</small></span>
+            <span>{{ retentionDuration(policy) }}</span>
+            <span>{{ retentionSource(policy.source) }}</span>
           </div>
         </div>
       </section>
 
       <section class="app-surface privacy-section">
         <header>
-          <div><p class="app-eyebrow">Workspace portability</p><h2>Workspace exports</h2></div>
+          <div><p class="app-eyebrow">{{ t('admin.privacy.settings.portabilityEyebrow') }}</p><h2>{{ t('admin.privacy.settings.exports') }}</h2></div>
           <button v-if="canWrite('tenant:update')" class="app-button app-button--primary" :disabled="Boolean(actionPending)" @click="createWorkspaceExport">
-            <FileArchive :size="15" />{{ actionPending === 'create-export' ? 'Queuing...' : 'Generate export' }}
+            <FileArchive :size="15" />{{ actionPending === 'create-export' ? t('admin.common.queuing') : t('admin.privacy.settings.generateExport') }}
           </button>
         </header>
-        <div v-if="!canManagePrivacy" class="privacy-empty"><ShieldCheck :size="22" /><h3>Workspace administration required</h3></div>
-        <div v-else-if="!data.exports.length" class="privacy-empty"><FileArchive :size="22" /><h3>No workspace exports</h3><p>Exports are encrypted in transit and expire after seven days.</p></div>
+        <div v-if="!canManagePrivacy" class="privacy-empty"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.administrationRequired') }}</h3></div>
+        <div v-else-if="!data.exports.length" class="privacy-empty"><FileArchive :size="22" /><h3>{{ t('admin.privacy.settings.noExports') }}</h3><p>{{ t('admin.privacy.settings.exportsDescription') }}</p></div>
         <div v-else class="privacy-table privacy-export-table">
-          <div class="privacy-row privacy-row--head"><span>Created</span><span>Status</span><span>Archive</span><span>Expires</span><span /></div>
+          <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.created') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.columns.archive') }}</span><span>{{ t('admin.privacy.settings.columns.expires') }}</span><span /></div>
           <div v-for="item in data.exports" :key="item.id" class="privacy-row">
-            <span><b>{{ formatDateTime(item.created_at) }}</b><small>{{ item.attempts }} attempt{{ item.attempts === 1 ? '' : 's' }}</small></span>
+            <span><b>{{ dateTime(item.created_at) }}</b><small>{{ plural('admin.common.attempts', item.attempts, { count: item.attempts }) }}</small></span>
             <span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span>
             <span>{{ formatBytes(item.object_size_bytes) }}</span>
-            <span>{{ item.expires_at ? formatDateTime(item.expires_at) : '—' }}</span>
+            <span>{{ item.expires_at ? dateTime(item.expires_at) : '—' }}</span>
             <span class="privacy-actions">
-              <button v-if="item.status === 'completed'" class="app-icon-button" title="Download workspace export" :disabled="Boolean(actionPending)" @click="downloadWorkspaceExport(item)"><Download :size="16" /></button>
-              <button v-if="item.status === 'failed' || item.status === 'expired'" class="app-icon-button" title="Retry workspace export" :disabled="Boolean(actionPending)" @click="retryJob(item.id)"><RefreshCw :size="16" /></button>
+              <button v-if="item.status === 'completed'" class="app-icon-button" :title="t('admin.privacy.settings.downloadExport')" :disabled="Boolean(actionPending)" @click="downloadWorkspaceExport(item)"><Download :size="16" /></button>
+              <button v-if="item.status === 'failed' || item.status === 'expired'" class="app-icon-button" :title="t('admin.privacy.settings.retryExport')" :disabled="Boolean(actionPending)" @click="retryJob(item.id)"><RefreshCw :size="16" /></button>
             </span>
           </div>
         </div>
       </section>
 
       <section class="app-surface privacy-section">
-        <header><div><p class="app-eyebrow">Reporter rights</p><h2>Data requests</h2></div></header>
-        <div v-if="!canManagePrivacy" class="privacy-empty"><ShieldCheck :size="22" /><h3>Workspace administration required</h3></div>
+        <header><div><p class="app-eyebrow">{{ t('admin.privacy.settings.reporterEyebrow') }}</p><h2>{{ t('admin.privacy.settings.requests') }}</h2></div></header>
+        <div v-if="!canManagePrivacy" class="privacy-empty"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.administrationRequired') }}</h3></div>
         <template v-else>
           <form class="privacy-request-form" @submit.prevent="startReporterRequest">
-            <label>Reporter email<input v-model.trim="reporterEmail" class="app-input" type="email" maxlength="320" required placeholder="reporter@example.com" /></label>
-            <label>Request type<select v-model="reporterAction" class="app-select"><option value="export">Export reporter data</option><option value="anonymize">Anonymize reporter data</option></select></label>
+            <label>{{ t('admin.privacy.settings.reporterEmail') }}<input v-model.trim="reporterEmail" class="app-input" type="email" maxlength="320" required placeholder="reporter@example.com" /></label>
+            <label>{{ t('admin.privacy.settings.requestType') }}<select v-model="reporterAction" class="app-select"><option value="export">{{ t('admin.privacy.settings.exportReporter') }}</option><option value="anonymize">{{ t('admin.privacy.settings.anonymizeReporter') }}</option></select></label>
             <button class="app-button" :class="reporterAction === 'anonymize' ? 'privacy-danger-button' : 'app-button--primary'" type="submit" :disabled="Boolean(actionPending) || !reporterEmail">
               <ShieldAlert v-if="reporterAction === 'anonymize'" :size="15" /><FileArchive v-else :size="15" />
-              {{ actionPending === 'create-request' ? 'Queuing...' : reporterAction === 'anonymize' ? 'Review anonymization' : 'Send verification' }}
+              {{ actionPending === 'create-request' ? t('admin.common.queuing') : reporterAction === 'anonymize' ? t('admin.privacy.settings.reviewAnonymization') : t('admin.privacy.settings.sendVerification') }}
             </button>
           </form>
-          <div v-if="!data.requests.length" class="privacy-empty privacy-empty--compact"><ShieldCheck :size="22" /><h3>No reporter requests</h3><p>The reporter must verify ownership before any data is exported or changed.</p></div>
+          <div v-if="!data.requests.length" class="privacy-empty privacy-empty--compact"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.noRequests') }}</h3><p>{{ t('admin.privacy.settings.noRequestsDescription') }}</p></div>
           <div v-else class="privacy-table privacy-request-table">
-            <div class="privacy-row privacy-row--head"><span>Reporter</span><span>Request</span><span>Status</span><span>Access</span><span /></div>
+            <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.reporter') }}</span><span>{{ t('admin.privacy.settings.columns.request') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.columns.access') }}</span><span /></div>
             <div v-for="item in data.requests" :key="item.id" class="privacy-row">
-              <span><b>{{ item.reporter_email || 'Identity removed' }}</b><small>{{ formatDateTime(item.created_at) }}</small></span>
-              <span class="privacy-action-label">{{ item.action }}</span>
+              <span><b>{{ item.reporter_email || t('admin.privacy.settings.identityRemoved') }}</b><small>{{ dateTime(item.created_at) }}</small></span>
+              <span class="privacy-action-label">{{ actionLabel(item.action) }}</span>
               <span>
                 <span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span>
-                <small v-if="item.job_status && item.job_status !== item.status">Job: {{ statusLabel(item.job_status) }}</small>
+                <small v-if="item.job_status && item.job_status !== item.status">{{ t('admin.privacy.settings.jobStatus', { status: statusLabel(item.job_status) }) }}</small>
               </span>
               <span>
-                {{ item.access_expires_at ? formatDateTime(item.access_expires_at) : formatDateTime(item.verification_expires_at) }}
-                <small v-if="item.manual_review_count">Manual review: {{ item.manual_review_count }}</small>
+                {{ item.access_expires_at ? dateTime(item.access_expires_at) : dateTime(item.verification_expires_at) }}
+                <small v-if="item.manual_review_count">{{ t('admin.privacy.settings.manualReview', { count: item.manual_review_count }) }}</small>
               </span>
               <span class="privacy-actions">
-                <button v-if="item.job_id && (item.status === 'failed' || item.job_status === 'failed')" class="app-icon-button" title="Retry reporter request" :disabled="Boolean(actionPending)" @click="retryJob(item.job_id)"><RefreshCw :size="16" /></button>
+                <button v-if="item.job_id && (item.status === 'failed' || item.job_status === 'failed')" class="app-icon-button" :title="t('admin.privacy.settings.retryRequest')" :disabled="Boolean(actionPending)" @click="retryJob(item.job_id)"><RefreshCw :size="16" /></button>
               </span>
             </div>
           </div>
-          <p class="privacy-review-note"><Clock3 :size="14" />Free-form text may still contain personal data. Completed anonymization requests report any records that require manual review.</p>
+          <p class="privacy-review-note"><Clock3 :size="14" />{{ t('admin.privacy.settings.reviewNote') }}</p>
         </template>
       </section>
     </template>
 
     <AppDialog :open="anonymizeDialogOpen" aria-labelledby="privacy-anonymize-title" @close="anonymizeDialogOpen = false">
       <section class="privacy-dialog">
-        <header><div><p class="app-eyebrow">Destructive data action</p><h2 id="privacy-anonymize-title">Confirm reporter anonymization</h2></div><button class="app-icon-button" title="Close" @click="anonymizeDialogOpen = false"><X :size="18" /></button></header>
+        <header><div><p class="app-eyebrow">{{ t('admin.privacy.settings.destructiveEyebrow') }}</p><h2 id="privacy-anonymize-title">{{ t('admin.privacy.settings.confirmAnonymization') }}</h2></div><button class="app-icon-button" :title="t('admin.common.close')" @click="anonymizeDialogOpen = false"><X :size="18" /></button></header>
         <form @submit.prevent="createReporterRequest">
-          <p>This request irreversibly removes structured identity data after the reporter verifies ownership. Operational records remain, and free-form content may require manual review.</p>
-          <label><span>Type <b>{{ reporterEmail }}</b> to confirm</span><input v-model.trim="anonymizeConfirmation" class="app-input" autocomplete="off" required autofocus /></label>
-          <footer><button class="app-button" type="button" @click="anonymizeDialogOpen = false">Cancel</button><button class="app-button privacy-danger-button" type="submit" :disabled="Boolean(actionPending) || anonymizeConfirmation !== reporterEmail">{{ actionPending === 'create-request' ? 'Queuing...' : 'Send anonymization request' }}</button></footer>
+          <p>{{ t('admin.privacy.settings.anonymizationDescription') }}</p>
+          <label><span>{{ t('admin.privacy.settings.typeToConfirm', { value: reporterEmail }) }}</span><input v-model.trim="anonymizeConfirmation" class="app-input" autocomplete="off" required autofocus /></label>
+          <footer><button class="app-button" type="button" @click="anonymizeDialogOpen = false">{{ t('admin.common.cancel') }}</button><button class="app-button privacy-danger-button" type="submit" :disabled="Boolean(actionPending) || anonymizeConfirmation !== reporterEmail">{{ actionPending === 'create-request' ? t('admin.common.queuing') : t('admin.privacy.settings.sendAnonymization') }}</button></footer>
         </form>
       </section>
     </AppDialog>
@@ -298,6 +327,7 @@ async function createReporterRequest() {
 @media (max-width: 650px) {
   .privacy-section > header { align-items: flex-start; flex-direction: column; }
   .privacy-section > header .app-button { width: 100%; }
+  .privacy-row b { overflow: visible; line-height: 1.35; text-overflow: clip; white-space: normal; }
   .privacy-retention-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto; }
   .privacy-retention-table .privacy-row > span:last-child { display: none; }
   .privacy-export-table .privacy-row, .privacy-request-table .privacy-row { grid-template-columns: minmax(0, 1fr) 38px; }

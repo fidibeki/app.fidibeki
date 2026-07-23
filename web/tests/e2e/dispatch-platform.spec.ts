@@ -3006,7 +3006,7 @@ test('data privacy controls cover retention, exports, reporter verification, and
   expect(state.privacyDownloadCount).toBe(1)
 
   await page.getByTitle('Retry reporter request').click()
-  await expect(page.locator('.privacy-request-table')).toContainText('processing')
+  await expect(page.locator('.privacy-request-table')).toContainText('Processing')
   expect(state.privacyRequests[0].job_status).toBe('pending')
 
   await page.getByRole('button', { name: 'Generate export' }).click()
@@ -3031,6 +3031,96 @@ test('data privacy controls cover retention, exports, reporter verification, and
   await confirmButton.click()
   await expect(dialog).not.toBeVisible()
   expect(state.privacyRequests[0].action).toBe('anonymize')
+})
+
+test('Portuguese administration preserves permissions and operational mutations', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.member.locale = 'pt-AO'
+  state.member.timezone = 'Africa/Luanda'
+  await installMockAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=administration-portuguese-token`)
+  await expect(page.getByRole('heading', { name: 'Boa tarde, Alex' })).toBeVisible()
+
+  if (testInfo.project.name === 'mobile') await page.getByTitle('Abrir navegação').click()
+  await page
+    .getByRole('navigation', { name: 'Navegação principal' })
+    .getByRole('link', { name: 'Definições', exact: true })
+    .click()
+  await expect(page).toHaveURL(`${tenantOrigin}/settings`)
+  await expect(page).toHaveTitle('Definições - Fidibeki')
+  await expect(page.getByRole('heading', { name: 'Identidade e predefinições públicas' })).toBeVisible()
+  await expect(page.getByLabel('Nome público')).toHaveValue('Acme Studio')
+
+  await page.getByRole('link', { name: 'Chaves de API' }).click()
+  await page.getByRole('button', { name: 'Criar chave' }).click()
+  const keyDialog = page.getByRole('dialog', { name: 'Criar chave de API' })
+  await expect(keyDialog).toContainText('Predefinição Leitor')
+  await keyDialog.getByLabel('Nome').fill('Warehouse exporter')
+  await keyDialog.getByRole('button', { name: 'Criar chave' }).click()
+  await expect(keyDialog.getByRole('heading', { name: 'Chave de API criada' })).toBeVisible()
+  expect(state.apiKeys.at(-1)).toMatchObject({
+    name: 'Warehouse exporter',
+    permissions: [
+      'project:read',
+      'widget_rule:read',
+      'feedback:read',
+      'issue:read',
+      'session:read',
+      'member:read',
+      'integration:read',
+      'billing:read',
+      'tenant:read',
+    ],
+    rate_limit_per_min: 1000,
+  })
+  await keyDialog.getByRole('button', { name: 'Concluído' }).click()
+
+  await page.getByRole('link', { name: 'Dados e privacidade' }).click()
+  await expect(page.getByRole('heading', { name: 'Calendário de retenção' })).toBeVisible()
+  await expect(page.locator('.privacy-retention-table')).toContainText('90 dias')
+  await expect(page.locator('.privacy-request-table')).toContainText('former.customer@example.test')
+  const requestForm = page.locator('.privacy-request-form')
+  await requestForm.getByLabel('Email do reporter').fill('requester@example.test')
+  await requestForm.getByLabel('Tipo de pedido').selectOption('export')
+  await requestForm.getByRole('button', { name: 'Enviar verificação' }).click()
+  await expect(page.getByRole('status')).toContainText('requester@example.test')
+  expect(state.privacyRequests[0]).toMatchObject({
+    action: 'export',
+    reporter_email: 'requester@example.test',
+  })
+  await capture(page, testInfo, `settings-portuguese-privacy-${testInfo.project.name}`)
+
+  await page.getByRole('link', { name: 'Saúde das submissões' }).click()
+  const health = page.locator('.submission-health')
+  await expect(health).toContainText('Orçamento diário da IA esgotado')
+  await health.getByLabel('Período da saúde das submissões').selectOption('24h')
+  await health.getByLabel('Projeto da saúde das submissões').selectOption('project-1')
+  await expect.poll(() => state.submissionHealthRequests.at(-1)).toContain('range=24h')
+  await expect.poll(() => state.submissionHealthRequests.at(-1)).toContain('project_id=project-1')
+
+  state.tenant.deletion_requested_at = now
+  state.billingDeletionRequestedAt = now
+  await page.getByRole('link', { name: 'Workspace', exact: true }).click()
+  await page.getByRole('link', { name: 'Gerir faturação' }).click()
+  await expect(page.getByRole('heading', { name: 'Faturação', exact: true })).toBeVisible()
+  await expect(page.getByText('Eliminação agendada', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Cancelar eliminação' }).click()
+  await expect(page.getByText('Eliminação agendada', { exact: true })).toHaveCount(0)
+  expect(state.billingDeletionRequestedAt).toBeNull()
+
+  await page.context().addCookies([
+    { name: 'fidibeki_browser_locale', value: 'pt-AO', url: tenantOrigin },
+    { name: 'fidibeki_browser_timezone', value: 'Africa/Luanda', url: tenantOrigin },
+  ])
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'language', { get: () => 'pt-AO' })
+    Object.defineProperty(navigator, 'languages', { get: () => ['pt-AO', 'pt'] })
+  })
+  await page.goto(`${tenantOrigin}/privacy/privacy-token`)
+  await expect(page.getByRole('heading', { name: 'Pedido de exportação de dados' })).toBeVisible()
+  await expect(page.getByText('14 registos correspondentes')).toBeVisible()
+  await page.getByRole('button', { name: 'Descarregar arquivo de dados' }).click()
+  expect(state.privacyDownloadCount).toBe(1)
 })
 
 test('verified reporter can follow and download a completed data export', async ({ page }, testInfo) => {
@@ -3143,14 +3233,14 @@ test('settings manages non-owner member lifecycle', async ({ page }, testInfo) =
   await dialog.getByRole('button', { name: 'Deactivate member' }).click()
 
   memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
-  await expect(memberRow.getByText('deactivated', { exact: true })).toBeVisible()
+  await expect(memberRow.getByText('Deactivated', { exact: true })).toBeVisible()
   expect(state.members[1].permissions).toEqual([])
   await memberRow.getByTitle('Reactivate member').click()
   dialog = page.getByRole('dialog', { name: 'Reactivate member' })
   await dialog.getByRole('button', { name: 'Reactivate member' }).click()
 
   memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
-  await expect(memberRow.getByText('active', { exact: true })).toBeVisible()
+  await expect(memberRow.getByText('Active', { exact: true })).toBeVisible()
   await memberRow.getByTitle('Remove member').click()
   dialog = page.getByRole('dialog', { name: 'Remove member' })
   await expect(dialog).toContainText('Removal is permanent')
@@ -3158,7 +3248,7 @@ test('settings manages non-owner member lifecycle', async ({ page }, testInfo) =
   await dialog.getByRole('button', { name: 'Remove member' }).click()
 
   memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
-  await expect(memberRow.getByText('removed', { exact: true })).toBeVisible()
+  await expect(memberRow.getByText('Removed', { exact: true })).toBeVisible()
   await expect(memberRow.locator('button')).toHaveCount(0)
 })
 
@@ -3180,7 +3270,7 @@ test('member invitation keeps email errors beside the field and general errors s
   await dialog.getByRole('button', { name: 'Send invitation' }).click()
 
   const emailError = dialog.locator('#member-email-error')
-  await expect(emailError).toHaveText('email domain is not verified for this workspace')
+  await expect(emailError).toHaveText('Enter an email from a verified workspace domain.')
   await expect(email).toBeFocused()
   await expect(email).toHaveAttribute('aria-invalid', 'true')
   await expect(email).toHaveAttribute('aria-describedby', 'member-email-error')
@@ -3197,7 +3287,7 @@ test('member invitation keeps email errors beside the field and general errors s
   await dialog.getByRole('button', { name: 'Send invitation' }).click()
   await expect(emailError).toHaveCount(0)
   await expect(email).not.toHaveAttribute('aria-invalid', 'true')
-  await expect(dialog.locator('.settings-form-error[role="alert"]')).toHaveText('service unavailable')
+  await expect(dialog.locator('.settings-form-error[role="alert"]')).toHaveText('This service is temporarily unavailable.')
 })
 
 test('workspace and project reporter access policies remain explicit', async ({ page }, testInfo) => {
@@ -3237,7 +3327,7 @@ test('settings verifies additional member email domains before invitations', asy
 
   await expect(page.getByRole('status')).toContainText('Verification sent to security@other.test')
   await expect(page.getByText('other.test', { exact: true })).toBeVisible()
-  await expect(page.getByText('pending', { exact: true })).toBeVisible()
+  await expect(page.getByText('Pending', { exact: true })).toBeVisible()
   await capture(page, testInfo, 'settings-member-domains')
 })
 

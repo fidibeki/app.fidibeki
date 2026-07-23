@@ -1,4 +1,5 @@
 import { feedbackMessages } from '../messages/feedback.pt'
+import { adminMessages } from '../messages/admin.pt'
 
 export default defineI18nLocale(() => ({
   common: {
@@ -407,6 +408,7 @@ export default defineI18nLocale(() => ({
     },
   },
   feedback: feedbackMessages,
+  admin: adminMessages,
   runtime: {
     catalogLanguage: 'Português',
     itemCount: 'um item | {count} itens',

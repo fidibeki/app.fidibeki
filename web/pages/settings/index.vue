@@ -34,27 +34,26 @@ import type {
   WidgetAppearanceOverrides,
 } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDate, formatMonthlyEuro, formatWholeNumber } from '~/utils/format'
 import { cleanAppearanceOverrides, defaultWidgetAppearance } from '~/utils/widget-appearance'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite, member: currentMember } = useAuth()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { currency, date, integer, plural } = useRegionalFormat()
 
-const tabs = [
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'members', label: 'Members' },
-  { id: 'keys', label: 'API keys' },
-  { id: 'integrations', label: 'Integrations' },
-  { id: 'health', label: 'Submission health' },
-  { id: 'privacy', label: 'Data & privacy' },
-] as const
-type SettingsTab = typeof tabs[number]['id']
+const tabIDs = ['workspace', 'members', 'keys', 'integrations', 'health', 'privacy'] as const
+type SettingsTab = typeof tabIDs[number]
+const tabs = computed(() => tabIDs.map(id => ({
+  id,
+  label: t(`admin.settings.tabs.${id}`),
+})))
 
 const activeTab = computed<SettingsTab>(() => {
   const value = typeof route.query.tab === 'string' ? route.query.tab : 'workspace'
-  return tabs.some((tab) => tab.id === value) ? value as SettingsTab : 'workspace'
+  return tabIDs.includes(value as SettingsTab) ? value as SettingsTab : 'workspace'
 })
 
 const { data, status, error, refresh } = await useAsyncData('settings-data', async () => {
@@ -132,22 +131,24 @@ const isCurrentOwner = computed(() => currentWorkspaceMember.value?.role === 'ow
 const transferCandidates = computed(() => (data.value?.members || []).filter(member =>
   member.id !== currentMember.value?.id && member.status === 'active' && member.verified && member.role !== 'owner'))
 const modalTitle = computed(() => {
-  if (modal.value === 'member') return memberMode.value === 'invite' ? 'Invite member' : 'Edit member'
+  if (modal.value === 'member') return memberMode.value === 'invite'
+    ? t('admin.settings.modal.inviteMember')
+    : t('admin.settings.modal.editMember')
   if (modal.value === 'member-lifecycle') {
-    if (memberAction.value === 'deactivate') return 'Deactivate member'
-    if (memberAction.value === 'reactivate') return 'Reactivate member'
-    return 'Remove member'
+    if (memberAction.value === 'deactivate') return t('admin.settings.modal.deactivateMember')
+    if (memberAction.value === 'reactivate') return t('admin.settings.modal.reactivateMember')
+    return t('admin.settings.modal.removeMember')
   }
-  if (modal.value === 'transfer') return 'Transfer ownership'
-  if (modal.value === 'key') return 'Create API key'
-  return 'Add integration'
+  if (modal.value === 'transfer') return t('admin.settings.modal.transferOwnership')
+  if (modal.value === 'key') return t('admin.settings.modal.createKey')
+  return t('admin.settings.modal.addIntegration')
 })
 const modalEyebrow = computed(() => {
-  if (modal.value === 'member') return 'Access policy'
-  if (modal.value === 'member-lifecycle') return 'Member lifecycle'
-  if (modal.value === 'transfer') return 'Workspace owner'
-  if (modal.value === 'key') return 'Machine credential'
-  return 'Delivery endpoint'
+  if (modal.value === 'member') return t('admin.settings.modal.accessPolicy')
+  if (modal.value === 'member-lifecycle') return t('admin.settings.modal.memberLifecycle')
+  if (modal.value === 'transfer') return t('admin.settings.modal.workspaceOwner')
+  if (modal.value === 'key') return t('admin.settings.modal.machineCredential')
+  return t('admin.settings.modal.deliveryEndpoint')
 })
 
 watch(data, (value) => {
@@ -162,17 +163,29 @@ const availablePermissionGroups = computed(() => tenantPermissionGroups.map((gro
 
 const planPrice = computed(() => {
   const cents = data.value?.configuration.plan.monthly_price_cents
-  return formatMonthlyEuro(cents)
+  return cents == null ? t('admin.common.custom') : `${currency(cents / 100, 'EUR')}${t('admin.billing.perMonth')}`
 })
 
-const featureLabels: Record<string, string> = {
-  ai: 'AI',
-  session_replay: 'Session Replay',
-  slack: 'Slack',
-  video: 'Video',
-  audio: 'Audio',
-  dom_capture: 'DOM Capture',
-  custom_domain: 'Custom Domain',
+function statusLabel(value: string) {
+  return t(`admin.statuses.${value}`)
+}
+
+function planLabel(value: string) {
+  return t(`admin.plans.${value}`)
+}
+
+function featureLabel(value: string) {
+  return t(`admin.features.${value}`)
+}
+
+function eventLabel(value: IntegrationEvent) {
+  const key = {
+    'feedback.created': 'feedbackCreated',
+    'issue.created': 'issueCreated',
+    'issue.updated': 'issueUpdated',
+    'issue.resolved': 'issueResolved',
+  }[value]
+  return t(`admin.settings.integrations.event.${key}`)
 }
 
 function applyPreset(target: 'member' | 'key', preset: PermissionPreset) {
@@ -255,7 +268,7 @@ async function changeMemberLifecycle() {
     modal.value = null
     await refresh()
   } catch (memberFailure) {
-    memberActionError.value = apiErrorMessage(memberFailure, 'Member access could not be changed.')
+    memberActionError.value = localizedError.message(memberFailure, 'admin.settings.errors.memberLifecycle')
   } finally {
     pending.value = false
   }
@@ -276,7 +289,7 @@ async function transferOwnership() {
     modal.value = null
     await refresh()
   } catch (transferFailure) {
-    transferError.value = apiErrorMessage(transferFailure, 'Workspace ownership could not be transferred.')
+    transferError.value = localizedError.message(transferFailure, 'admin.settings.errors.ownership')
   } finally {
     pending.value = false
   }
@@ -301,13 +314,13 @@ async function saveMember() {
     modal.value = null
     await refresh()
   } catch (saveError) {
-    const message = apiErrorMessage(saveError, 'Member settings could not be saved.')
-    if (memberMode.value === 'invite' && /email|domain|member already exists/i.test(message)) {
-      memberEmailError.value = message
+    const diagnostic = apiErrorMessage(saveError, '')
+    if (memberMode.value === 'invite' && /email|domain|member already exists/i.test(diagnostic)) {
+      memberEmailError.value = t('admin.settings.members.inviteEmailInvalid')
       await nextTick()
       memberEmailInput.value?.focus()
     } else {
-      formError.value = message
+      formError.value = localizedError.message(saveError, 'admin.settings.errors.memberSave')
     }
   } finally {
     pending.value = false
@@ -325,11 +338,11 @@ async function requestDomainVerification() {
     await $apiFetch('/v1/member-domains', {
       method: 'POST', body: { email: domainVerificationEmail.value },
     })
-    domainVerificationNotice.value = `Verification sent to ${domainVerificationEmail.value}.`
+    domainVerificationNotice.value = t('admin.settings.notices.verificationSent', { email: domainVerificationEmail.value })
     domainVerificationEmail.value = ''
     await refresh()
   } catch (requestError) {
-    domainVerificationError.value = apiErrorMessage(requestError, 'Domain verification could not be started.')
+    domainVerificationError.value = localizedError.message(requestError, 'admin.settings.errors.domainVerification')
   } finally {
     domainVerificationPending.value = false
   }
@@ -369,7 +382,7 @@ async function createKey() {
     revealedToken.value = response.token
     await refresh()
   } catch (createError) {
-    formError.value = apiErrorMessage(createError, 'API key could not be created.')
+    formError.value = localizedError.message(createError, 'admin.settings.errors.keyCreate')
   } finally {
     pending.value = false
   }
@@ -386,12 +399,12 @@ async function copySecret() {
 }
 
 async function deleteKey(key: APIKey) {
-  if (!canWrite('api_key:delete') || !window.confirm(`Revoke ${key.name}? Requests using this key will fail immediately.`)) return
+  if (!canWrite('api_key:delete') || !window.confirm(t('admin.settings.keys.revokeConfirm', { name: key.name }))) return
   try {
     await $apiFetch(`/v1/api-keys/${key.id}`, { method: 'DELETE' })
     await refresh()
   } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'API key could not be revoked.')
+    formError.value = localizedError.message(deleteError, 'admin.settings.errors.keyRevoke')
   }
 }
 
@@ -434,19 +447,19 @@ async function createIntegration() {
     await refresh()
     if (!revealedSecret.value) modal.value = null
   } catch (createError) {
-    formError.value = apiErrorMessage(createError, 'Integration could not be created.')
+    formError.value = localizedError.message(createError, 'admin.settings.errors.integrationCreate')
   } finally {
     pending.value = false
   }
 }
 
 async function deleteIntegration(integration: Integration) {
-  if (!canWrite('integration:delete') || !window.confirm(`Remove ${integration.name}?`)) return
+  if (!canWrite('integration:delete') || !window.confirm(t('admin.settings.integrations.removeConfirm', { name: integration.name }))) return
   try {
     await $apiFetch(`/v1/integrations/${integration.id}`, { method: 'DELETE' })
     await refresh()
   } catch (deleteError) {
-    formError.value = apiErrorMessage(deleteError, 'Integration could not be removed.')
+    formError.value = localizedError.message(deleteError, 'admin.settings.errors.integrationRemove')
   }
 }
 
@@ -458,7 +471,7 @@ async function updateReporterAccess(enabled: boolean) {
     await $apiFetch('/v1/reporter-access', { method: 'PATCH', body: { enabled } })
     data.value.configuration.tenant.reporter_access_enabled = enabled
   } catch (accessError) {
-    formError.value = apiErrorMessage(accessError, 'Reporter access policy could not be updated.')
+    formError.value = localizedError.message(accessError, 'admin.settings.errors.reporterAccess')
   } finally {
     pending.value = false
   }
@@ -473,9 +486,9 @@ async function updateWidgetAppearance() {
   try {
     await $apiFetch('/v1/widget-appearance', { method: 'PATCH', body: appearance })
     data.value.configuration.tenant.widget_appearance_defaults = appearance
-    appearanceNotice.value = 'Widget appearance saved.'
+    appearanceNotice.value = t('admin.settings.notices.appearanceSaved')
   } catch (appearanceError) {
-    formError.value = apiErrorMessage(appearanceError, 'Widget appearance could not be updated.')
+    formError.value = localizedError.message(appearanceError, 'admin.settings.errors.appearance')
   } finally {
     pending.value = false
   }
@@ -510,52 +523,52 @@ function isExpired(value?: string | null) {
   return value ? new Date(value).getTime() <= Date.now() : false
 }
 
-useHead({ title: 'Settings - Fidibeki' })
+useHead(() => ({ title: t('admin.settings.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page settings-page">
     <header class="app-page-head">
-      <div><p class="app-eyebrow">Administration</p><h1>Settings</h1><span>Workspace access, credentials, and delivery connections.</span></div>
+      <div><p class="app-eyebrow">{{ t('admin.settings.eyebrow') }}</p><h1>{{ t('admin.settings.title') }}</h1><span>{{ t('admin.settings.description') }}</span></div>
     </header>
 
-    <nav class="settings-tabs" aria-label="Settings sections">
+    <nav class="settings-tabs" :aria-label="t('admin.settings.sections')">
       <NuxtLink v-for="tab in tabs" :key="tab.id" :to="{ path: '/settings', query: tab.id === 'workspace' ? {} : { tab: tab.id } }" :data-active="activeTab === tab.id">{{ tab.label }}</NuxtLink>
     </nav>
 
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading settings</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Settings unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
+    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>{{ t('admin.settings.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>{{ t('admin.settings.unavailable') }}</h2><p>{{ localizedError.message(error, 'admin.settings.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('admin.common.tryAgain') }}</button></div></section>
 
     <template v-else-if="data">
       <section v-if="activeTab === 'workspace'" class="settings-workspace">
         <OrganizationProfile @updated="applyOrganizationProfile" />
         <div class="app-surface settings-section">
-          <header><div><p class="app-eyebrow">Workspace</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ data.configuration.tenant.status }}</span></header>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.eyebrow') }}</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ statusLabel(data.configuration.tenant.status) }}</span></header>
           <dl class="settings-ledger">
-            <div><dt>Subdomain</dt><dd>{{ workspaceHost }}</dd></div>
-            <div><dt>Plan</dt><dd class="capitalize">{{ data.configuration.plan.plan }}</dd></div>
-            <div><dt>Rate</dt><dd>{{ planPrice }}</dd></div>
-            <div><dt>Retention</dt><dd>{{ data.configuration.plan.limits.storage_days < 0 ? 'Custom' : `${data.configuration.plan.limits.storage_days} days` }}</dd></div>
+            <div><dt>{{ t('admin.settings.workspace.subdomain') }}</dt><dd>{{ workspaceHost }}</dd></div>
+            <div><dt>{{ t('admin.settings.workspace.plan') }}</dt><dd>{{ planLabel(data.configuration.plan.plan) }}</dd></div>
+            <div><dt>{{ t('admin.settings.workspace.rate') }}</dt><dd>{{ planPrice }}</dd></div>
+            <div><dt>{{ t('admin.settings.workspace.retention') }}</dt><dd>{{ data.configuration.plan.limits.storage_days < 0 ? t('admin.common.custom') : plural('admin.common.days', data.configuration.plan.limits.storage_days, { count: data.configuration.plan.limits.storage_days }) }}</dd></div>
           </dl>
         </div>
         <div class="app-surface settings-section">
-          <header><div><p class="app-eyebrow">Entitlements</p><h2>Capacity and capture</h2></div><NuxtLink class="app-button" to="/billing">Manage billing</NuxtLink></header>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.entitlements') }}</p><h2>{{ t('admin.settings.workspace.capacity') }}</h2></div><NuxtLink class="app-button" to="/billing">{{ t('admin.settings.workspace.manageBilling') }}</NuxtLink></header>
           <div class="settings-entitlements">
-            <div><b>{{ data.configuration.plan.limits.projects < 0 ? 'Unlimited' : data.configuration.plan.limits.projects }}</b><span>Projects</span></div>
-            <div><b>{{ data.configuration.plan.limits.feedback_per_month < 0 ? 'Unlimited' : formatWholeNumber(data.configuration.plan.limits.feedback_per_month) }}</b><span>Feedback / month</span></div>
-            <div><b>{{ data.configuration.plan.limits.users < 0 ? 'Unlimited' : data.configuration.plan.limits.users }}</b><span>Members</span></div>
+            <div><b>{{ data.configuration.plan.limits.projects < 0 ? t('admin.common.unlimited') : integer(data.configuration.plan.limits.projects) }}</b><span>{{ t('admin.settings.workspace.projects') }}</span></div>
+            <div><b>{{ data.configuration.plan.limits.feedback_per_month < 0 ? t('admin.common.unlimited') : integer(data.configuration.plan.limits.feedback_per_month) }}</b><span>{{ t('admin.settings.workspace.feedbackPerMonth') }}</span></div>
+            <div><b>{{ data.configuration.plan.limits.users < 0 ? t('admin.common.unlimited') : integer(data.configuration.plan.limits.users) }}</b><span>{{ t('admin.settings.workspace.members') }}</span></div>
           </div>
           <ul class="settings-features">
-            <li v-for="(enabled, feature) in data.configuration.plan.features" :key="feature" :data-enabled="enabled"><component :is="enabled ? Check : X" :size="13" />{{ featureLabels[String(feature)] || String(feature).replaceAll('_', ' ') }}</li>
+            <li v-for="(enabled, feature) in data.configuration.plan.features" :key="feature" :data-enabled="enabled"><component :is="enabled ? Check : X" :size="13" />{{ featureLabel(String(feature)) }}</li>
           </ul>
         </div>
         <div class="app-surface settings-section settings-reporter-policy">
-          <header><div><p class="app-eyebrow">Reporter access</p><h2>Progress links</h2></div><span class="settings-domain-mode" :data-enforced="data.configuration.tenant.reporter_access_enabled">{{ data.configuration.tenant.reporter_access_enabled ? 'Enabled' : 'Disabled' }}</span></header>
-          <label><span><b>Reporter progress access</b><small>Applies to every project unless a project disables access.</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" aria-label="Reporter progress access" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.reporterEyebrow') }}</p><h2>{{ t('admin.settings.workspace.progressLinks') }}</h2></div><span class="settings-domain-mode" :data-enforced="data.configuration.tenant.reporter_access_enabled">{{ data.configuration.tenant.reporter_access_enabled ? t('admin.common.enabled') : t('admin.common.disabled') }}</span></header>
+          <label><span><b>{{ t('admin.settings.workspace.reporterProgress') }}</b><small>{{ t('admin.settings.workspace.reporterDescription') }}</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" :aria-label="t('admin.settings.workspace.reporterProgress')" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
         </div>
         <form class="app-surface settings-section settings-widget-appearance" @submit.prevent="updateWidgetAppearance">
-          <header><div><p class="app-eyebrow">Widget defaults</p><h2>Controlled appearance</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">Save defaults</button></header>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.widgetEyebrow') }}</p><h2>{{ t('admin.settings.workspace.controlledAppearance') }}</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">{{ t('admin.settings.workspace.saveDefaults') }}</button></header>
           <WidgetAppearanceEditor v-model="workspaceAppearance" :parent="defaultWidgetAppearance" />
           <p v-if="appearanceNotice" class="settings-domain-notice" role="status">{{ appearanceNotice }}</p>
         </form>
@@ -563,19 +576,19 @@ useHead({ title: 'Settings - Fidibeki' })
 
       <div v-else-if="activeTab === 'members'" class="settings-members-page">
         <section class="app-surface settings-section settings-domain-policy">
-          <header><div><p class="app-eyebrow">Membership policy</p><h2>Allowed email domains</h2></div><span class="settings-domain-mode" :data-enforced="hasVerifiedMemberDomains">{{ hasVerifiedMemberDomains ? 'Enforced' : 'Open policy' }}</span></header>
-          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.members.policyEyebrow') }}</p><h2>{{ t('admin.settings.members.allowedDomains') }}</h2></div><span class="settings-domain-mode" :data-enforced="hasVerifiedMemberDomains">{{ hasVerifiedMemberDomains ? t('admin.settings.members.enforced') : t('admin.settings.members.openPolicy') }}</span></header>
+          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.members.accessRequired') }}</h3></div>
           <template v-else>
             <ul v-if="data.memberDomains.length" class="settings-domain-list">
               <li v-for="domain in data.memberDomains" :key="domain.id">
                 <MailCheck :size="16" />
-                <span><b>{{ domain.domain }}</b><small>{{ domain.status === 'verified' ? `Verified ${formatDate(domain.verified_at!)}` : `Verification sent to ${domain.verification_email}` }}</small></span>
-                <span class="status-pill" :class="domain.status === 'verified' ? 'status-completed' : 'status-pending'">{{ domain.status }}</span>
+                <span><b>{{ domain.domain }}</b><small>{{ domain.status === 'verified' ? t('admin.settings.members.verifiedAt', { date: date(domain.verified_at!) }) : t('admin.settings.members.verificationSentTo', { email: domain.verification_email }) }}</small></span>
+                <span class="status-pill" :class="domain.status === 'verified' ? 'status-completed' : 'status-pending'">{{ statusLabel(domain.status) }}</span>
               </li>
             </ul>
             <form v-if="canWrite('member:invite')" class="settings-domain-form" @submit.prevent="requestDomainVerification">
-              <label>Verification email<input v-model.trim="domainVerificationEmail" class="app-input" type="email" required placeholder="security@company.com" /></label>
-              <button class="app-button" type="submit" :disabled="domainVerificationPending || !domainVerificationEmail"><MailCheck :size="15" /> {{ domainVerificationPending ? 'Sending...' : 'Verify domain' }}</button>
+              <label>{{ t('admin.settings.members.verificationEmail') }}<input v-model.trim="domainVerificationEmail" class="app-input" type="email" required placeholder="security@company.com" /></label>
+              <button class="app-button" type="submit" :disabled="domainVerificationPending || !domainVerificationEmail"><MailCheck :size="15" /> {{ domainVerificationPending ? t('admin.settings.members.sending') : t('admin.settings.members.verifyDomain') }}</button>
             </form>
             <p v-if="domainVerificationNotice" class="settings-domain-notice" role="status">{{ domainVerificationNotice }}</p>
             <p v-if="domainVerificationError" class="settings-form-error" role="alert">{{ domainVerificationError }}</p>
@@ -583,21 +596,21 @@ useHead({ title: 'Settings - Fidibeki' })
         </section>
 
         <section class="app-surface settings-section">
-          <header><div><p class="app-eyebrow">Access</p><h2>Members</h2></div><button v-if="canWrite('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> Invite member</button></header>
-          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Member access required</h3></div>
-          <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>No members found</h3></div>
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.members.accessEyebrow') }}</p><h2>{{ t('admin.settings.members.title') }}</h2></div><button v-if="canWrite('member:invite')" class="app-button app-button--primary" @click="openMember()"><UserPlus :size="15" /> {{ t('admin.settings.members.invite') }}</button></header>
+          <div v-if="!can('member:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.members.accessRequired') }}</h3></div>
+          <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>{{ t('admin.settings.members.none') }}</h3></div>
           <div v-else class="settings-table settings-members">
-            <div class="settings-row settings-row--head"><span>Member</span><span>Permissions</span><span>Access</span><span /></div>
+            <div class="settings-row settings-row--head"><span>{{ t('admin.settings.members.columns.member') }}</span><span>{{ t('admin.settings.members.columns.permissions') }}</span><span>{{ t('admin.settings.members.columns.access') }}</span><span /></div>
             <div v-for="member in data.members" :key="member.id" class="settings-row" :data-muted="member.status !== 'active'">
               <span class="settings-identity"><i><MemberAvatar :member-id="member.id" :name="member.name" :email="member.email" :avatar-version="member.avatar_version" /></i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
-              <span>{{ member.permissions.length }} granted</span>
-              <span class="settings-member-access"><b v-if="member.role === 'owner'" class="settings-owner-label">Owner</b><span v-else class="capitalize">{{ member.status }}</span><small v-if="member.id === currentMember?.id">Current session</small></span>
+              <span>{{ t('admin.settings.members.granted', { count: integer(member.permissions.length) }) }}</span>
+              <span class="settings-member-access"><b v-if="member.role === 'owner'" class="settings-owner-label">{{ t('admin.common.owner') }}</b><span v-else>{{ statusLabel(member.status) }}</span><small v-if="member.id === currentMember?.id">{{ t('admin.common.currentSession') }}</small></span>
               <span class="settings-member-actions">
-                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
-                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" title="Deactivate member" @click="openMemberLifecycle(member, 'deactivate')"><UserX :size="16" /></button>
-                <button v-if="member.role !== 'owner' && member.status === 'deactivated' && canWrite('member:update')" class="app-icon-button" title="Reactivate member" @click="openMemberLifecycle(member, 'reactivate')"><UserCheck :size="16" /></button>
-                <button v-if="member.role !== 'owner' && member.status !== 'removed' && canWrite('member:remove')" class="app-icon-button settings-danger-icon" title="Remove member" @click="openMemberLifecycle(member, 'remove')"><Trash2 :size="16" /></button>
-                <button v-if="member.role === 'owner' && member.id === currentMember?.id && canWrite('member:update') && canWrite('tenant:update')" class="app-icon-button" title="Transfer ownership" @click="openOwnershipTransfer"><ArrowRightLeft :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" :title="t('admin.settings.members.editPermissions')" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" :title="t('admin.settings.members.deactivate')" @click="openMemberLifecycle(member, 'deactivate')"><UserX :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status === 'deactivated' && canWrite('member:update')" class="app-icon-button" :title="t('admin.settings.members.reactivate')" @click="openMemberLifecycle(member, 'reactivate')"><UserCheck :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status !== 'removed' && canWrite('member:remove')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.members.remove')" @click="openMemberLifecycle(member, 'remove')"><Trash2 :size="16" /></button>
+                <button v-if="member.role === 'owner' && member.id === currentMember?.id && canWrite('member:update') && canWrite('tenant:update')" class="app-icon-button" :title="t('admin.settings.members.transfer')" @click="openOwnershipTransfer"><ArrowRightLeft :size="16" /></button>
               </span>
             </div>
           </div>
@@ -605,33 +618,33 @@ useHead({ title: 'Settings - Fidibeki' })
       </div>
 
       <section v-else-if="activeTab === 'keys'" class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Machine access</p><h2>API keys</h2></div><button v-if="canWrite('api_key:create')" class="app-button app-button--primary" @click="openKey"><Plus :size="15" /> Create key</button></header>
-        <div v-if="!can('api_key:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>API key access required</h3></div>
-        <div v-else-if="!data.keys.length" class="settings-empty"><KeyRound :size="23" /><h3>No API keys</h3></div>
+        <header><div><p class="app-eyebrow">{{ t('admin.settings.keys.eyebrow') }}</p><h2>{{ t('admin.settings.keys.title') }}</h2></div><button v-if="canWrite('api_key:create')" class="app-button app-button--primary" @click="openKey"><Plus :size="15" /> {{ t('admin.settings.keys.create') }}</button></header>
+        <div v-if="!can('api_key:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.keys.accessRequired') }}</h3></div>
+        <div v-else-if="!data.keys.length" class="settings-empty"><KeyRound :size="23" /><h3>{{ t('admin.settings.keys.none') }}</h3></div>
         <div v-else class="settings-table settings-keys">
-          <div class="settings-row settings-row--head"><span>Key</span><span>Scope</span><span>Last used</span><span>Expiry</span><span /></div>
+          <div class="settings-row settings-row--head"><span>{{ t('admin.settings.keys.columns.key') }}</span><span>{{ t('admin.settings.keys.columns.scope') }}</span><span>{{ t('admin.settings.keys.columns.lastUsed') }}</span><span>{{ t('admin.settings.keys.columns.expiry') }}</span><span /></div>
           <div v-for="key in data.keys" :key="key.id" class="settings-row" :data-muted="isExpired(key.expires_at)">
             <span><b>{{ key.name }}</b><code>{{ key.token_prefix }}</code></span>
-            <span>{{ key.permissions.length }} perms · {{ formatWholeNumber(key.rate_limit_per_min) }}/min</span>
-            <span>{{ key.last_used_at ? formatDate(key.last_used_at) : 'Never' }}</span>
-            <span>{{ key.expires_at ? formatDate(key.expires_at) : 'Never' }}</span>
-            <button v-if="canWrite('api_key:delete')" class="app-icon-button settings-danger-icon" title="Revoke API key" @click="deleteKey(key)"><Trash2 :size="16" /></button>
+            <span>{{ t('admin.settings.keys.scope', { permissions: integer(key.permissions.length), limit: integer(key.rate_limit_per_min) }) }}</span>
+            <span>{{ key.last_used_at ? date(key.last_used_at) : t('admin.common.never') }}</span>
+            <span>{{ key.expires_at ? date(key.expires_at) : t('admin.common.never') }}</span>
+            <button v-if="canWrite('api_key:delete')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.keys.revoke')" @click="deleteKey(key)"><Trash2 :size="16" /></button>
           </div>
         </div>
       </section>
 
       <section v-else-if="activeTab === 'integrations'" class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">Delivery</p><h2>Integrations</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> Add integration</button></header>
-        <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Integration access required</h3></div>
-        <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>No integrations</h3></div>
+        <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></header>
+        <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.integrations.accessRequired') }}</h3></div>
+        <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>{{ t('admin.settings.integrations.none') }}</h3></div>
         <div v-else class="settings-table settings-integrations">
-          <div class="settings-row settings-row--head"><span>Integration</span><span>Endpoint</span><span>Events</span><span>Status</span><span /></div>
+          <div class="settings-row settings-row--head"><span>{{ t('admin.settings.integrations.columns.integration') }}</span><span>{{ t('admin.settings.integrations.columns.endpoint') }}</span><span>{{ t('admin.settings.integrations.columns.events') }}</span><span>{{ t('admin.settings.integrations.columns.status') }}</span><span /></div>
           <div v-for="integration in data.integrations" :key="integration.id" class="settings-row">
-            <span><b>{{ integration.name }}</b><small class="capitalize">{{ integration.kind }}</small></span>
+            <span><b>{{ integration.name }}</b><small>{{ integration.kind }}</small></span>
             <code>{{ integration.webhook_url }}</code>
-            <span>{{ integration.events.length }} subscribed</span>
-            <span class="settings-state"><i />{{ integration.is_active ? 'Active' : 'Paused' }}</span>
-            <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" title="Remove integration" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
+            <span>{{ t('admin.settings.integrations.subscribed', { count: integer(integration.events.length) }) }}</span>
+            <span class="settings-state"><i />{{ integration.is_active ? t('admin.common.active') : t('admin.common.paused') }}</span>
+            <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.integrations.remove')" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
           </div>
         </div>
       </section>
@@ -642,51 +655,51 @@ useHead({ title: 'Settings - Fidibeki' })
 
     <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">
       <section v-if="modal" class="settings-modal">
-        <header><div><p class="app-eyebrow">{{ modalEyebrow }}</p><h2 id="settings-modal-title">{{ modalTitle }}</h2></div><button class="app-icon-button" title="Close" @click="modal = null"><X :size="18" /></button></header>
+        <header><div><p class="app-eyebrow">{{ modalEyebrow }}</p><h2 id="settings-modal-title">{{ modalTitle }}</h2></div><button class="app-icon-button" :title="t('admin.common.close')" @click="modal = null"><X :size="18" /></button></header>
 
         <form v-if="modal === 'member'" @submit.prevent="saveMember">
-          <label class="member-email-field">Email<input ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" /><span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span></label>
-          <PermissionEditor label="Member permissions" :groups="availablePermissionGroups" :permissions="memberPermissions" :active-preset="memberPreset" @apply-preset="applyPreset('member', $event)" @toggle-permission="togglePermission('member', $event)" />
+          <label class="member-email-field">{{ t('admin.settings.members.email') }}<input ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" /><span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span></label>
+          <PermissionEditor :label="t('admin.settings.members.permissions')" :groups="availablePermissionGroups" :permissions="memberPermissions" :active-preset="memberPreset" @apply-preset="applyPreset('member', $event)" @toggle-permission="togglePermission('member', $event)" />
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
-          <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !memberEmail || !memberPermissions.length">{{ pending ? 'Saving...' : memberMode === 'invite' ? 'Send invitation' : 'Save permissions' }}</button></footer>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !memberEmail || !memberPermissions.length">{{ pending ? t('admin.common.saving') : memberMode === 'invite' ? t('admin.settings.members.sendInvitation') : t('admin.settings.members.savePermissions') }}</button></footer>
         </form>
 
         <form v-else-if="modal === 'member-lifecycle'" class="settings-lifecycle-form" @submit.prevent="changeMemberLifecycle">
           <div v-if="selectedMember" class="settings-action-subject"><span>{{ (selectedMember.name || selectedMember.email).slice(0, 1).toUpperCase() }}</span><div><b>{{ selectedMember.name || selectedMember.email }}</b><small>{{ selectedMember.email }}</small></div></div>
-          <p v-if="memberAction === 'deactivate'">This member will lose all permissions and every active session will end immediately.</p>
-          <p v-else-if="memberAction === 'reactivate'">This member will become active without permissions. Assign the required access separately.</p>
-          <p v-else>Removal is permanent. Existing history remains attributed, while permissions, sessions, and pending sign-in links are revoked.</p>
+          <p v-if="memberAction === 'deactivate'">{{ t('admin.settings.members.deactivateDescription') }}</p>
+          <p v-else-if="memberAction === 'reactivate'">{{ t('admin.settings.members.reactivateDescription') }}</p>
+          <p v-else>{{ t('admin.settings.members.removeDescription') }}</p>
           <p v-if="memberActionError" class="settings-form-error" role="alert">{{ memberActionError }}</p>
-          <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button" :class="memberAction === 'remove' ? 'settings-danger-button' : 'app-button--primary'" type="submit" :disabled="pending">{{ pending ? 'Saving...' : modalTitle }}</button></footer>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button" :class="memberAction === 'remove' ? 'settings-danger-button' : 'app-button--primary'" type="submit" :disabled="pending">{{ pending ? t('admin.common.saving') : modalTitle }}</button></footer>
         </form>
 
         <form v-else-if="modal === 'transfer'" class="settings-transfer-form" @submit.prevent="transferOwnership">
-          <p>Choose an active, verified member. Their current sessions will end and they will receive full workspace administration access.</p>
-          <label>New owner<select v-model="transferTargetID" class="app-select" required autofocus><option v-for="member in transferCandidates" :key="member.id" :value="member.id">{{ member.name || member.email }} · {{ member.email }}</option></select></label>
-          <label><span>Type <b>{{ data?.configuration.tenant.slug }}</b> to confirm</span><input v-model.trim="transferConfirmation" class="app-input" required autocomplete="off" /></label>
-          <p v-if="!transferCandidates.length" class="settings-form-error" role="alert">Invite and activate another member before transferring ownership.</p>
+          <p>{{ t('admin.settings.members.transferDescription') }}</p>
+          <label>{{ t('admin.settings.members.newOwner') }}<select v-model="transferTargetID" class="app-select" required autofocus><option v-for="member in transferCandidates" :key="member.id" :value="member.id">{{ member.name || member.email }} · {{ member.email }}</option></select></label>
+          <label><span>{{ t('admin.settings.members.typeToConfirm', { value: data?.configuration.tenant.slug }) }}</span><input v-model.trim="transferConfirmation" class="app-input" required autocomplete="off" /></label>
+          <p v-if="!transferCandidates.length" class="settings-form-error" role="alert">{{ t('admin.settings.members.transferUnavailable') }}</p>
           <p v-else-if="transferError" class="settings-form-error" role="alert">{{ transferError }}</p>
-          <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !transferTargetID || transferConfirmation !== data?.configuration.tenant.slug">{{ pending ? 'Transferring...' : 'Transfer ownership' }}</button></footer>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !transferTargetID || transferConfirmation !== data?.configuration.tenant.slug">{{ pending ? t('admin.settings.members.transferring') : t('admin.settings.members.transfer') }}</button></footer>
         </form>
 
         <form v-else-if="modal === 'key'" @submit.prevent="createKey">
-          <div v-if="revealedToken" class="settings-secret"><ShieldCheck :size="20" /><h3>API key created</h3><code>{{ revealedToken }}</code><button class="app-button" type="button" @click="copyToken"><component :is="tokenCopied ? Check : Copy" :size="15" />{{ tokenCopied ? 'Copied' : 'Copy key' }}</button></div>
+          <div v-if="revealedToken" class="settings-secret"><ShieldCheck :size="20" /><h3>{{ t('admin.settings.keys.created') }}</h3><code>{{ revealedToken }}</code><button class="app-button" type="button" @click="copyToken"><component :is="tokenCopied ? Check : Copy" :size="15" />{{ tokenCopied ? t('admin.common.copied') : t('admin.settings.keys.copy') }}</button></div>
           <template v-else>
-            <div class="settings-form-grid"><label>Name<input v-model.trim="keyName" class="app-input" required maxlength="120" placeholder="Production exporter" autofocus /></label><label>Expires<select v-model="keyExpiry" class="app-select"><option value="never">Never</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label><label>Rate limit / minute<input v-model.number="keyRateLimit" class="app-input" type="number" min="1" max="100000" required /></label></div>
-            <PermissionEditor label="API key permissions" :groups="availablePermissionGroups" :permissions="keyPermissions" :active-preset="keyPreset" @apply-preset="applyPreset('key', $event)" @toggle-permission="togglePermission('key', $event)" />
+            <div class="settings-form-grid"><label>{{ t('admin.settings.keys.name') }}<input v-model.trim="keyName" class="app-input" required maxlength="120" :placeholder="t('admin.settings.keys.placeholder')" autofocus /></label><label>{{ t('admin.settings.keys.expires') }}<select v-model="keyExpiry" class="app-select"><option value="never">{{ t('admin.common.never') }}</option><option value="30">{{ t('admin.settings.keys.expiry30') }}</option><option value="90">{{ t('admin.settings.keys.expiry90') }}</option><option value="365">{{ t('admin.settings.keys.expiryYear') }}</option></select></label><label>{{ t('admin.settings.keys.rateLimit') }}<input v-model.number="keyRateLimit" class="app-input" type="number" min="1" max="100000" required /></label></div>
+            <PermissionEditor :label="t('admin.settings.keys.permissions')" :groups="availablePermissionGroups" :permissions="keyPermissions" :active-preset="keyPreset" @apply-preset="applyPreset('key', $event)" @toggle-permission="togglePermission('key', $event)" />
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
-          <footer><button class="app-button" type="button" @click="modal = null">{{ revealedToken ? 'Done' : 'Cancel' }}</button><button v-if="!revealedToken" class="app-button app-button--primary" type="submit" :disabled="pending || !keyName || !keyPermissions.length">{{ pending ? 'Creating...' : 'Create key' }}</button></footer>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ revealedToken ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedToken" class="app-button app-button--primary" type="submit" :disabled="pending || !keyName || !keyPermissions.length">{{ pending ? t('admin.common.creating') : t('admin.settings.keys.create') }}</button></footer>
         </form>
 
         <form v-else @submit.prevent="createIntegration">
-          <div v-if="revealedSecret" class="settings-secret"><ShieldCheck :size="20" /><h3>Signing secret</h3><code>{{ revealedSecret }}</code><button class="app-button" type="button" @click="copySecret"><Copy :size="15" /> Copy secret</button></div>
+          <div v-if="revealedSecret" class="settings-secret"><ShieldCheck :size="20" /><h3>{{ t('admin.settings.integrations.signingSecret') }}</h3><code>{{ revealedSecret }}</code><button class="app-button" type="button" @click="copySecret"><Copy :size="15" /> {{ t('admin.settings.integrations.copySecret') }}</button></div>
           <template v-else>
-            <div class="settings-form-grid"><label>Type<select v-model="integrationKind" class="app-select" autofocus><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="teams">Teams</option></select></label><label>Name<input v-model.trim="integrationName" class="app-input" required maxlength="100" placeholder="Operations" /></label><label class="wide">Webhook URL<input v-model.trim="integrationURL" class="app-input" type="url" required placeholder="https://hooks.example.com/..." /></label><label v-if="integrationKind === 'slack'" class="wide">Channel<input v-model.trim="integrationChannel" class="app-input" required placeholder="#feedback" /></label></div>
-            <fieldset class="settings-events"><legend>Events</legend><label v-for="event in (['feedback.created', 'issue.created', 'issue.updated', 'issue.resolved'] as IntegrationEvent[])" :key="event"><input type="checkbox" :checked="integrationEvents.includes(event)" @change="toggleEvent(event)" />{{ event }}</label></fieldset>
+            <div class="settings-form-grid"><label>{{ t('admin.settings.integrations.type') }}<select v-model="integrationKind" class="app-select" autofocus><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="teams">Teams</option></select></label><label>{{ t('admin.settings.integrations.name') }}<input v-model.trim="integrationName" class="app-input" required maxlength="100" :placeholder="t('admin.settings.integrations.namePlaceholder')" /></label><label class="wide">{{ t('admin.settings.integrations.webhookURL') }}<input v-model.trim="integrationURL" class="app-input" type="url" required placeholder="https://hooks.example.com/..." /></label><label v-if="integrationKind === 'slack'" class="wide">{{ t('admin.settings.integrations.channel') }}<input v-model.trim="integrationChannel" class="app-input" required placeholder="#feedback" /></label></div>
+            <fieldset class="settings-events"><legend>{{ t('admin.settings.integrations.events') }}</legend><label v-for="event in (['feedback.created', 'issue.created', 'issue.updated', 'issue.resolved'] as IntegrationEvent[])" :key="event"><input type="checkbox" :checked="integrationEvents.includes(event)" @change="toggleEvent(event)" />{{ eventLabel(event) }}</label></fieldset>
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
-          <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? 'Done' : 'Cancel' }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? 'Connecting...' : 'Add integration' }}</button></footer>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? t('admin.common.connecting') : t('admin.settings.integrations.add') }}</button></footer>
         </form>
       </section>
     </AppDialog>

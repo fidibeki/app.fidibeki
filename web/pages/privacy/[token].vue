@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2, Clock3, Download, FileSearch, ShieldCheck } from '@lucide/vue'
 import type { ReporterPrivacyView } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
 import { triggerSignedDownload } from '~/utils/download'
-import { formatDateTime } from '~/utils/format'
 
 definePageMeta({ layout: false })
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { dateTime, plural } = useRegionalFormat()
 const token = computed(() => String(route.params.token || ''))
 const request = ref<ReporterPrivacyView | null>(null)
 const loading = ref(true)
@@ -21,7 +22,7 @@ const isProcessing = computed(() => request.value?.status === 'processing' ||
   request.value?.job_status === 'pending' || request.value?.job_status === 'processing')
 
 function statusLabel(value: string) {
-  return value.replaceAll('_', ' ')
+  return t(`admin.statuses.${value}`)
 }
 
 function schedulePoll() {
@@ -45,7 +46,7 @@ async function verify() {
       ? Number((verifyError as { statusCode?: number }).statusCode)
       : 0
     unavailable.value = statusCode === 404
-    if (!unavailable.value) transientError.value = apiErrorMessage(verifyError, 'The data request could not be verified.')
+    if (!unavailable.value) transientError.value = localizedError.message(verifyError, 'admin.privacy.public.errors.verify')
   } finally {
     loading.value = false
   }
@@ -64,7 +65,7 @@ async function loadStatus() {
       ? Number((statusError as { statusCode?: number }).statusCode)
       : 0
     if (statusCode === 404) unavailable.value = true
-    else transientError.value = apiErrorMessage(statusError, 'The latest request status could not be loaded.')
+    else transientError.value = localizedError.message(statusError, 'admin.privacy.public.errors.status')
   }
 }
 
@@ -79,7 +80,7 @@ async function downloadExport() {
     )
     triggerSignedDownload(response.url, 'fidibeki-reporter-data.zip')
   } catch (downloadError) {
-    transientError.value = apiErrorMessage(downloadError, 'Your data archive could not be downloaded.')
+    transientError.value = localizedError.message(downloadError, 'admin.privacy.public.errors.download')
   } finally {
     downloading.value = false
   }
@@ -90,50 +91,50 @@ onBeforeUnmount(() => {
   if (pollTimer) clearTimeout(pollTimer)
 })
 
-useHead({
-  title: 'Data request - Fidibeki',
+useHead(() => ({
+  title: t('admin.privacy.public.pageTitle'),
   meta: [
     { name: 'robots', content: 'noindex,nofollow' },
     { name: 'referrer', content: 'no-referrer' },
   ],
-})
+}))
 </script>
 
 <template>
   <div class="privacy-page">
     <header class="privacy-brand"><span>F</span><b>Fidibeki</b></header>
     <main>
-      <section v-if="loading" class="privacy-state" aria-live="polite"><span class="privacy-spinner" /><h1>Verifying data request</h1><p>This normally takes only a moment.</p></section>
-      <section v-else-if="unavailable" class="privacy-state"><AlertTriangle :size="28" /><h1>Data request unavailable</h1><p>This link is invalid, expired, or no longer available.</p></section>
-      <section v-else-if="!request" class="privacy-state"><AlertTriangle :size="28" /><h1>Verification interrupted</h1><p>{{ transientError || 'The data request could not be verified.' }}</p><button class="privacy-button privacy-button--secondary" @click="verify">Try again</button></section>
+      <section v-if="loading" class="privacy-state" aria-live="polite"><span class="privacy-spinner" /><h1>{{ t('admin.privacy.public.verifying') }}</h1><p>{{ t('admin.privacy.public.verifyingDescription') }}</p></section>
+      <section v-else-if="unavailable" class="privacy-state"><AlertTriangle :size="28" /><h1>{{ t('admin.privacy.public.unavailable') }}</h1><p>{{ t('admin.privacy.public.unavailableDescription') }}</p></section>
+      <section v-else-if="!request" class="privacy-state"><AlertTriangle :size="28" /><h1>{{ t('admin.privacy.public.interrupted') }}</h1><p>{{ transientError || t('admin.privacy.public.errors.verify') }}</p><button class="privacy-button privacy-button--secondary" @click="verify">{{ t('admin.privacy.public.tryAgain') }}</button></section>
       <template v-else>
         <header class="privacy-heading">
-          <div><p>Reporter data rights</p><h1>{{ request.action === 'anonymize' ? 'Data anonymization request' : 'Data export request' }}</h1><span>Secure access expires {{ formatDateTime(request.access_expires_at) }}</span></div>
+          <div><p>{{ t('admin.privacy.public.eyebrow') }}</p><h1>{{ request.action === 'anonymize' ? t('admin.privacy.public.anonymizationRequest') : t('admin.privacy.public.exportRequest') }}</h1><span>{{ t('admin.privacy.public.accessExpires', { date: dateTime(request.access_expires_at) }) }}</span></div>
           <span class="privacy-status" :data-status="request.status">{{ statusLabel(request.status) }}</span>
         </header>
 
         <p v-if="transientError" class="privacy-error" role="alert"><AlertTriangle :size="15" />{{ transientError }}</p>
 
         <section v-if="isProcessing" class="privacy-result">
-          <Clock3 :size="24" /><div><h2>Your request is processing</h2><p>The workspace is preparing the requested operation. This page refreshes automatically.</p></div>
+          <Clock3 :size="24" /><div><h2>{{ t('admin.privacy.public.processing') }}</h2><p>{{ t('admin.privacy.public.processingDescription') }}</p></div>
         </section>
         <section v-else-if="request.status === 'completed' && request.action === 'export'" class="privacy-result">
-          <FileSearch :size="24" /><div><h2>Your data archive is ready</h2><p>{{ request.record_count || 0 }} matching records were included. The download link is short-lived and this request expires {{ formatDateTime(request.access_expires_at) }}.</p><button class="privacy-button" :disabled="downloading || !request.download_available" @click="downloadExport"><Download :size="16" />{{ downloading ? 'Preparing...' : 'Download data archive' }}</button></div>
+          <FileSearch :size="24" /><div><h2>{{ t('admin.privacy.public.archiveReady') }}</h2><p>{{ t('admin.privacy.public.archiveDescription', { records: plural('admin.common.records', request.record_count || 0, { count: request.record_count || 0 }), date: dateTime(request.access_expires_at) }) }}</p><button class="privacy-button" :disabled="downloading || !request.download_available" @click="downloadExport"><Download :size="16" />{{ downloading ? t('admin.common.preparing') : t('admin.privacy.public.download') }}</button></div>
         </section>
         <section v-else-if="request.status === 'completed'" class="privacy-result">
-          <CheckCircle2 :size="24" /><div><h2>Anonymization completed</h2><p>Structured reporter identity was removed from {{ request.record_count || 0 }} matching records.</p><p v-if="request.manual_review_count" class="privacy-review">{{ request.manual_review_count }} free-form record{{ request.manual_review_count === 1 ? '' : 's' }} may still contain personal data and require manual workspace review.</p></div>
+          <CheckCircle2 :size="24" /><div><h2>{{ t('admin.privacy.public.anonymizationCompleted') }}</h2><p>{{ t('admin.privacy.public.anonymizationDescription', { records: plural('admin.common.records', request.record_count || 0, { count: request.record_count || 0 }) }) }}</p><p v-if="request.manual_review_count" class="privacy-review">{{ t('admin.privacy.public.manualReview', { records: plural('admin.common.manualReviewRecords', request.manual_review_count, { count: request.manual_review_count }) }) }}</p></div>
         </section>
         <section v-else-if="request.status === 'failed'" class="privacy-result">
-          <AlertTriangle :size="24" /><div><h2>The request needs attention</h2><p>The workspace administrator has been asked to retry this operation. This secure link remains valid until {{ formatDateTime(request.access_expires_at) }}.</p></div>
+          <AlertTriangle :size="24" /><div><h2>{{ t('admin.privacy.public.needsAttention') }}</h2><p>{{ t('admin.privacy.public.needsAttentionDescription', { date: dateTime(request.access_expires_at) }) }}</p></div>
         </section>
         <section v-else class="privacy-result">
-          <AlertTriangle :size="24" /><div><h2>Data request expired</h2><p>Ask the workspace administrator to create a new verified request.</p></div>
+          <AlertTriangle :size="24" /><div><h2>{{ t('admin.privacy.public.expired') }}</h2><p>{{ t('admin.privacy.public.expiredDescription') }}</p></div>
         </section>
 
-        <section class="privacy-security"><ShieldCheck :size="18" /><div><h2>Verified access</h2><p>This page contains no account login and reveals only the status of this specific data request.</p></div></section>
+        <section class="privacy-security"><ShieldCheck :size="18" /><div><h2>{{ t('admin.privacy.public.verifiedAccess') }}</h2><p>{{ t('admin.privacy.public.verifiedDescription') }}</p></div></section>
       </template>
     </main>
-    <footer>Data rights handled securely by Fidibeki</footer>
+    <footer>{{ t('admin.privacy.public.footer') }}</footer>
   </div>
 </template>
 

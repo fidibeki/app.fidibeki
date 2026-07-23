@@ -6,7 +6,7 @@ import {
   Trash2,
 } from '@lucide/vue'
 import type { OrganizationProfile } from '~/types/api'
-import { apiErrorMessage, apiFieldErrors } from '~/utils/api-fetch'
+import { apiFieldErrors } from '~/utils/api-fetch'
 
 const emit = defineEmits<{
   updated: [profile: OrganizationProfile]
@@ -14,6 +14,9 @@ const emit = defineEmits<{
 
 const { $apiFetch } = useNuxtApp()
 const { canWrite, session, tenant } = useAuth()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { dateTime } = useRegionalFormat()
 const uploadInput = ref<HTMLInputElement | null>(null)
 const saving = ref(false)
 const uploading = ref(false)
@@ -51,7 +54,7 @@ const previewDate = computed(() => {
       timeZone,
     }).format(new Date('2026-07-23T12:00:00Z'))
   } catch {
-    return 'Jul 23, 2026, 12:00 PM'
+    return dateTime('2026-07-23T12:00:00Z')
   }
 })
 
@@ -125,12 +128,12 @@ async function save() {
     data.value = response
     setForm(response.organization_profile)
     syncSession(response.organization_profile)
-    notice.value = 'Organization profile saved.'
+    notice.value = t('admin.organization.notices.saved')
   } catch (saveError) {
     fields.value = apiFieldErrors(saveError)
     failure.value = Object.keys(fields.value).length
       ? ''
-      : apiErrorMessage(saveError, 'Organization profile could not be saved.')
+      : localizedError.message(saveError, 'admin.organization.errors.save')
   } finally {
     saving.value = false
   }
@@ -159,12 +162,12 @@ async function uploadLogo(event: Event) {
       },
     }
     syncSession(data.value.organization_profile)
-    notice.value = 'Workspace logo updated.'
+    notice.value = t('admin.organization.notices.logoUpdated')
   } catch (uploadError) {
     fields.value = apiFieldErrors(uploadError)
     failure.value = Object.keys(fields.value).length
       ? ''
-      : apiErrorMessage(uploadError, 'Workspace logo could not be uploaded.')
+      : localizedError.message(uploadError, 'admin.organization.errors.upload')
   } finally {
     uploading.value = false
   }
@@ -184,9 +187,9 @@ async function removeLogo() {
       },
     }
     syncSession(data.value.organization_profile)
-    notice.value = 'Workspace logo removed.'
+    notice.value = t('admin.organization.notices.logoRemoved')
   } catch (removeError) {
-    failure.value = apiErrorMessage(removeError, 'Workspace logo could not be removed.')
+    failure.value = localizedError.message(removeError, 'admin.organization.errors.remove')
   } finally {
     removingLogo.value = false
   }
@@ -197,8 +200,8 @@ async function removeLogo() {
   <section class="app-surface organization-profile">
     <header>
       <div>
-        <p class="app-eyebrow">Organization profile</p>
-        <h2>Identity and public defaults</h2>
+        <p class="app-eyebrow">{{ t('admin.organization.eyebrow') }}</p>
+        <h2>{{ t('admin.organization.title') }}</h2>
       </div>
       <button
         v-if="status === 'success'"
@@ -207,17 +210,17 @@ async function removeLogo() {
         form="organization-profile-form"
         :disabled="saving || !writable"
       >
-        <Save :size="14" /> {{ saving ? 'Saving...' : 'Save profile' }}
+        <Save :size="14" /> {{ saving ? t('admin.common.saving') : t('admin.organization.save') }}
       </button>
     </header>
 
     <div v-if="status === 'pending'" class="organization-state">
       <span class="app-spinner" />
-      <span>Loading organization profile</span>
+      <span>{{ t('admin.organization.loading') }}</span>
     </div>
     <div v-else-if="error" class="organization-state organization-state--error">
-      <span>{{ apiErrorMessage(error, 'Organization profile is unavailable.') }}</span>
-      <button class="app-button" @click="refresh()">Try again</button>
+      <span>{{ localizedError.message(error, 'admin.organization.unavailable') }}</span>
+      <button class="app-button" @click="refresh()">{{ t('admin.common.tryAgain') }}</button>
     </div>
 
     <form
@@ -233,7 +236,7 @@ async function removeLogo() {
             :name="form.name"
             :logo-version="profile.logo_version"
             :size="256"
-            :alt="form.name ? `${form.name} logo` : 'Workspace logo'"
+            :alt="form.name ? t('admin.organization.logoAlt', { name: form.name }) : t('admin.organization.logo')"
           />
         </div>
         <div class="organization-logo-actions">
@@ -243,7 +246,7 @@ async function removeLogo() {
             type="file"
             accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
             :disabled="!writable || uploading"
-            aria-label="Workspace logo file"
+            :aria-label="t('admin.organization.logoFile')"
             @change="uploadLogo"
           />
           <button
@@ -252,13 +255,13 @@ async function removeLogo() {
             :disabled="!writable || uploading"
             @click="uploadInput?.click()"
           >
-            <ImagePlus :size="14" /> {{ uploading ? 'Uploading...' : profile.logo_version ? 'Replace logo' : 'Upload logo' }}
+            <ImagePlus :size="14" /> {{ uploading ? t('admin.organization.uploading') : profile.logo_version ? t('admin.organization.replaceLogo') : t('admin.organization.uploadLogo') }}
           </button>
           <button
             v-if="profile.logo_version"
             class="app-icon-button organization-remove"
             type="button"
-            title="Remove workspace logo"
+            :title="t('admin.organization.removeLogo')"
             :disabled="!writable || removingLogo"
             @click="removeLogo"
           >
@@ -268,12 +271,12 @@ async function removeLogo() {
         <p v-if="fields.image" class="organization-field-error" role="alert">{{ fields.image }}</p>
 
         <div class="organization-customer-preview" :style="{ '--organization-accent': form.accent_color }">
-          <span>Customer-facing preview</span>
-          <b>{{ form.name || 'Workspace name' }}</b>
-          <small>{{ form.support_email || 'Fidibeki support fallback' }}</small>
+          <span>{{ t('admin.organization.preview') }}</span>
+          <b>{{ form.name || t('admin.organization.workspaceName') }}</b>
+          <small>{{ form.support_email || t('admin.organization.supportFallback') }}</small>
           <time>{{ previewDate }}</time>
           <a v-if="form.website_url" :href="form.website_url" target="_blank" rel="noreferrer">
-            Website <ExternalLink :size="11" />
+            {{ t('admin.organization.website') }} <ExternalLink :size="11" />
           </a>
         </div>
       </aside>
@@ -281,38 +284,38 @@ async function removeLogo() {
       <fieldset :disabled="!writable || saving">
         <div class="organization-form-grid">
           <label>
-            Public name
+            {{ t('admin.organization.publicName') }}
             <input v-model.trim="form.name" class="app-input" required maxlength="120" />
             <small v-if="fields.name" class="organization-field-error">{{ fields.name }}</small>
           </label>
           <label>
-            Short name
+            {{ t('admin.organization.shortName') }}
             <input v-model.trim="form.short_name" class="app-input" maxlength="32" placeholder="ACME" />
             <small v-if="fields.short_name" class="organization-field-error">{{ fields.short_name }}</small>
           </label>
           <label>
-            Website
+            {{ t('admin.organization.website') }}
             <input v-model.trim="form.website_url" class="app-input" type="url" maxlength="2048" placeholder="https://example.com" />
             <small v-if="fields.website_url" class="organization-field-error">{{ fields.website_url }}</small>
           </label>
           <label>
-            Support email
+            {{ t('admin.organization.supportEmail') }}
             <input v-model.trim="form.support_email" class="app-input" type="email" maxlength="320" placeholder="support@example.com" />
             <small v-if="fields.support_email" class="organization-field-error">{{ fields.support_email }}</small>
           </label>
           <label>
-            Default language
+            {{ t('admin.organization.defaultLanguage') }}
             <select v-model="form.default_locale" class="app-select">
-              <option value="">Browser / Fidibeki default</option>
-              <option value="en">English</option>
-              <option value="pt">Portuguese</option>
-              <option value="pt-AO">Portuguese (Angola)</option>
-              <option value="pt-PT">Portuguese (Portugal)</option>
+              <option value="">{{ t('admin.organization.browserDefault') }}</option>
+              <option value="en">{{ t('admin.organization.english') }}</option>
+              <option value="pt">{{ t('admin.organization.portuguese') }}</option>
+              <option value="pt-AO">{{ t('admin.organization.portugueseAngola') }}</option>
+              <option value="pt-PT">{{ t('admin.organization.portuguesePortugal') }}</option>
             </select>
             <small v-if="fields.default_locale" class="organization-field-error">{{ fields.default_locale }}</small>
           </label>
           <label>
-            Default timezone
+            {{ t('admin.organization.defaultTimezone') }}
             <input v-model.trim="form.default_timezone" class="app-input" list="organization-timezones" maxlength="100" placeholder="Europe/Lisbon" />
             <datalist id="organization-timezones">
               <option value="Africa/Luanda" />
@@ -324,25 +327,25 @@ async function removeLogo() {
             <small v-if="fields.default_timezone" class="organization-field-error">{{ fields.default_timezone }}</small>
           </label>
           <label class="organization-accent-field">
-            Brand accent
+            {{ t('admin.organization.brandAccent') }}
             <span>
-              <input v-model="form.accent_color" type="color" aria-label="Brand accent swatch" />
+              <input v-model="form.accent_color" type="color" :aria-label="t('admin.organization.brandAccentSwatch')" />
               <input v-model.trim="form.accent_color" class="app-input" pattern="^#[0-9A-Fa-f]{6}$" maxlength="7" />
             </span>
             <small v-if="fields.accent_color" class="organization-field-error">{{ fields.accent_color }}</small>
           </label>
           <label>
-            Privacy policy
+            {{ t('admin.organization.privacyPolicy') }}
             <input v-model.trim="form.privacy_policy_url" class="app-input" type="url" maxlength="2048" placeholder="https://example.com/privacy" />
             <small v-if="fields.privacy_policy_url" class="organization-field-error">{{ fields.privacy_policy_url }}</small>
           </label>
           <label class="wide">
-            Terms of use
+            {{ t('admin.organization.terms') }}
             <input v-model.trim="form.terms_url" class="app-input" type="url" maxlength="2048" placeholder="https://example.com/terms" />
             <small v-if="fields.terms_url" class="organization-field-error">{{ fields.terms_url }}</small>
           </label>
         </div>
-        <p v-if="!writable" class="organization-readonly">Organization profile is read-only for this account.</p>
+        <p v-if="!writable" class="organization-readonly">{{ t('admin.organization.readOnly') }}</p>
         <p v-if="failure" class="settings-form-error" role="alert">{{ failure }}</p>
         <p v-if="notice" class="organization-notice" role="status">{{ notice }}</p>
       </fieldset>

@@ -5,18 +5,18 @@ import type {
   SubmissionHealthCategory,
   SubmissionHealthResponse,
 } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatWholeNumber } from '~/utils/format'
 import {
   buildSubmissionHealthTrend,
   submissionHealthCategories,
-  submissionHealthReasonLabel,
 } from '~/utils/submission-health'
 
 defineProps<{ projects: Project[] }>()
 
 const { $apiFetch } = useNuxtApp()
 const { can } = useAuth()
+const { t } = useI18n()
+const localizedError = useLocalizedAPIError()
+const { integer } = useRegionalFormat()
 const permitted = computed(() => can('tenant:read'))
 const canFilterProjects = computed(() => can('project:read'))
 const range = ref<'24h' | '7d' | '30d'>('7d')
@@ -62,8 +62,24 @@ const reasonRows = computed(() => {
     .slice(0, 6)
 })
 
+const knownReasons = new Set([
+  'submission_rate_limited',
+  'upload_rate_limited',
+  'replay_rate_limited',
+  'spam_rejected',
+  'signature_mismatch',
+  'ai_daily_budget_exhausted',
+  'provider_timeout',
+])
+
 const categoryLabel = (category: SubmissionHealthCategory) =>
-  submissionHealthCategories.find(candidate => candidate.id === category)?.label ?? category
+  t(`admin.health.categories.${category}.label`)
+
+const categoryDescription = (category: SubmissionHealthCategory) =>
+  t(`admin.health.categories.${category}.description`)
+
+const reasonLabel = (reason: string) =>
+  t(`admin.health.reasons.${knownReasons.has(reason) ? reason : 'unclassified'}`)
 
 async function loadHealth() {
   const requestGeneration = ++generation
@@ -86,7 +102,7 @@ async function loadHealth() {
   } catch (loadError) {
     if (requestGeneration !== generation) return
     health.value = null
-    failure.value = apiErrorMessage(loadError, 'Submission diagnostics could not be loaded.')
+    failure.value = localizedError.message(loadError, 'admin.health.error')
     loadState.value = 'error'
   }
 }
@@ -98,31 +114,31 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
   <section class="app-surface submission-health">
     <header class="submission-health-head">
       <div>
-        <p class="app-eyebrow">Public intake</p>
-        <h2>Submission health</h2>
-        <span>Aggregate operational pressure without visitor identifiers.</span>
+        <p class="app-eyebrow">{{ t('admin.health.eyebrow') }}</p>
+        <h2>{{ t('admin.health.title') }}</h2>
+        <span>{{ t('admin.health.description') }}</span>
       </div>
       <div v-if="permitted" class="submission-health-actions">
         <label>
-          <span>Period</span>
-          <select v-model="range" class="app-select" aria-label="Submission health period">
-            <option value="24h">Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
+          <span>{{ t('admin.health.period') }}</span>
+          <select v-model="range" class="app-select" :aria-label="t('admin.health.periodLabel')">
+            <option value="24h">{{ t('admin.health.last24Hours') }}</option>
+            <option value="7d">{{ t('admin.health.last7Days') }}</option>
+            <option value="30d">{{ t('admin.health.last30Days') }}</option>
           </select>
         </label>
         <label v-if="canFilterProjects">
-          <span>Project</span>
-          <select v-model="projectID" class="app-select" aria-label="Submission health project">
-            <option value="">All projects</option>
+          <span>{{ t('admin.health.project') }}</span>
+          <select v-model="projectID" class="app-select" :aria-label="t('admin.health.projectLabel')">
+            <option value="">{{ t('admin.health.allProjects') }}</option>
             <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
           </select>
         </label>
         <button
           class="app-icon-button"
           type="button"
-          title="Refresh submission health"
-          aria-label="Refresh submission health"
+          :title="t('admin.health.refresh')"
+          :aria-label="t('admin.health.refresh')"
           :disabled="loadState === 'loading'"
           @click="loadHealth"
         >
@@ -133,30 +149,30 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
 
     <div v-if="loadState === 'forbidden'" class="submission-health-state">
       <ShieldCheck :size="24" />
-      <h3>Workspace read access required</h3>
-      <p>Submission diagnostics are available to members with workspace read permission.</p>
+      <h3>{{ t('admin.health.accessRequired') }}</h3>
+      <p>{{ t('admin.health.accessDescription') }}</p>
     </div>
     <div v-else-if="loadState === 'loading' && !health" class="submission-health-state" role="status">
       <span class="app-spinner" />
-      <h3>Loading submission health</h3>
+      <h3>{{ t('admin.health.loading') }}</h3>
     </div>
     <div v-else-if="loadState === 'error'" class="submission-health-state">
       <AlertTriangle :size="24" />
-      <h3>Submission health unavailable</h3>
+      <h3>{{ t('admin.health.unavailable') }}</h3>
       <p>{{ failure }}</p>
-      <button class="app-button" type="button" @click="loadHealth">Try again</button>
+      <button class="app-button" type="button" @click="loadHealth">{{ t('admin.common.tryAgain') }}</button>
     </div>
     <template v-else-if="health">
       <div class="submission-health-summary" :data-empty="health.total === 0">
         <div>
-          <span>Recorded signals</span>
-          <strong>{{ formatWholeNumber(health.total) }}</strong>
+          <span>{{ t('admin.health.recordedSignals') }}</span>
+          <strong>{{ integer(health.total) }}</strong>
         </div>
-        <p v-if="health.total === 0"><ShieldCheck :size="17" /> No pressure recorded in this period.</p>
-        <p v-else><Activity :size="17" /> Signals are aggregate operational events, not unique visitors.</p>
+        <p v-if="health.total === 0"><ShieldCheck :size="17" /> {{ t('admin.health.noPressure') }}</p>
+        <p v-else><Activity :size="17" /> {{ t('admin.health.aggregateDescription') }}</p>
       </div>
 
-      <div class="submission-health-categories" aria-label="Submission health categories">
+      <div class="submission-health-categories" :aria-label="t('admin.health.categoriesLabel')">
         <article
           v-for="category in categoryRows"
           :key="category.id"
@@ -164,32 +180,32 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
           :data-state="category.count > 0 ? 'attention' : 'quiet'"
         >
           <i />
-          <div><h3>{{ category.label }}</h3><p>{{ category.description }}</p></div>
-          <strong>{{ formatWholeNumber(category.count) }}</strong>
+          <div><h3>{{ categoryLabel(category.id) }}</h3><p>{{ categoryDescription(category.id) }}</p></div>
+          <strong>{{ integer(category.count) }}</strong>
         </article>
       </div>
 
       <div class="submission-health-trend">
         <header>
-          <div><span>Activity</span><strong>{{ range === '24h' ? 'Hourly' : 'Across the selected period' }}</strong></div>
+          <div><span>{{ t('admin.health.activity') }}</span><strong>{{ range === '24h' ? t('admin.health.hourly') : t('admin.health.selectedPeriod') }}</strong></div>
           <small>UTC</small>
         </header>
         <div
           v-if="health.total > 0"
           class="submission-health-bars"
           role="img"
-          :aria-label="`${health.total} recorded submission health signals across ${trend.length} time buckets`"
+          :aria-label="t('admin.health.chartLabel', { count: integer(health.total), buckets: integer(trend.length) })"
         >
           <span
             v-for="bucket in trend"
             :key="bucket.startAt"
-            :aria-label="`${bucket.label}: ${bucket.count}`"
-            :title="`${bucket.label}: ${bucket.count}`"
+            :aria-label="t('admin.health.bucketLabel', { label: bucket.label, count: integer(bucket.count) })"
+            :title="t('admin.health.bucketLabel', { label: bucket.label, count: integer(bucket.count) })"
           >
             <i :style="{ height: `${bucket.count > 0 ? Math.max(7, bucket.heightPercent) : 2}%` }" />
           </span>
         </div>
-        <div v-else class="submission-health-no-trend">No activity to plot.</div>
+        <div v-else class="submission-health-no-trend">{{ t('admin.health.noActivity') }}</div>
         <div v-if="trend.length" class="submission-health-trend-labels">
           <span>{{ trend[0]?.label }}</span>
           <span>{{ trend[Math.floor(trend.length / 2)]?.label }}</span>
@@ -198,10 +214,10 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
       </div>
 
       <div v-if="reasonRows.length" class="submission-health-reasons">
-        <header><span>Top reasons</span><span>Events</span></header>
+        <header><span>{{ t('admin.health.topReasons') }}</span><span>{{ t('admin.health.events') }}</span></header>
         <div v-for="row in reasonRows" :key="`${row.category}:${row.reason}`">
-          <span><strong>{{ submissionHealthReasonLabel(row.reason) }}</strong><small>{{ categoryLabel(row.category) }}</small></span>
-          <b>{{ formatWholeNumber(row.count) }}</b>
+          <span><strong>{{ reasonLabel(row.reason) }}</strong><small>{{ categoryLabel(row.category) }}</small></span>
+          <b>{{ integer(row.count) }}</b>
         </div>
       </div>
     </template>
