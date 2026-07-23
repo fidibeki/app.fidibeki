@@ -131,14 +131,16 @@ interface ReplayEventLike {
 }
 
 /**
- * Sanitizes one serialized rrweb event in place for anonymity: canonicalizes the internal
- * Meta event's `href`, and strips non-allowlisted attributes from full-snapshot and
- * newly-added DOM nodes (rrweb has no built-in hook for this). Returns `null` when the event
- * cannot be safely processed so the caller fails closed and drops it instead of uploading it.
+ * Sanitizes one serialized rrweb event in place for anonymity: pins Meta/navigation URLs to
+ * the server-verifiable session projection, and strips non-allowlisted attributes from
+ * full-snapshot and newly-added DOM nodes (rrweb has no built-in hook for this). Returns
+ * `null` when the event cannot be safely processed so the caller fails closed.
  */
-export function sanitizeReplayEvent(event: unknown): unknown | null {
+export function sanitizeReplayEvent(event: unknown, sessionPageURL: string): unknown | null {
   if (!event || typeof event !== 'object') return null
   try {
+    const canonicalSessionPageURL = canonicalizeReplayURL(sessionPageURL)
+    if (!canonicalSessionPageURL || canonicalSessionPageURL !== sessionPageURL) return null
     const candidate = event as ReplayEventLike
     if (
       candidate.type === EVENT_TYPE_DOM_CONTENT_LOADED ||
@@ -148,7 +150,7 @@ export function sanitizeReplayEvent(event: unknown): unknown | null {
       if (!candidate.data || typeof candidate.data.href !== 'string') return null
       const canonical = canonicalizeReplayURL(candidate.data.href)
       if (!canonical) return null
-      candidate.data.href = canonical
+      candidate.data.href = canonicalSessionPageURL
       return candidate
     }
     if (candidate.type === EVENT_TYPE_FULL_SNAPSHOT) {
@@ -193,7 +195,7 @@ export function sanitizeReplayEvent(event: unknown): unknown | null {
       if (typeof payload.url !== 'string') return null
       const canonical = canonicalizeReplayURL(payload.url)
       if (!canonical) return null
-      candidate.data.payload = { url: canonical }
+      candidate.data.payload = { url: canonicalSessionPageURL }
       return candidate
     }
     return null

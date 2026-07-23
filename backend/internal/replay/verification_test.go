@@ -22,7 +22,7 @@ func TestDecodeVerifiedBatchAcceptsBoundedRRWebEvents(t *testing.T) {
 	var decoded [][]byte
 	count, err := decodeVerifiedBatch(bytes.NewReader(body), Batch{
 		Index: 4, SizeBytes: int64(len(body)), EventsCount: 2,
-	}, func(event []byte) error {
+	}, "https://example.com/chart", func(event []byte) error {
 		decoded = append(decoded, append([]byte(nil), event...))
 		return nil
 	})
@@ -61,12 +61,29 @@ func TestDecodeVerifiedBatchRejectsUnsafePayloads(t *testing.T) {
 			}
 			_, err := decodeVerifiedBatch(strings.NewReader(test.body), Batch{
 				Index: 1, SizeBytes: test.size, EventsCount: test.count,
-			}, nil)
+			}, "https://example.com/chart", nil)
 			var unsafe unsafeReplayBatch
 			if err == nil || !errors.As(err, &unsafe) || unsafe.reason != test.reason {
 				t.Fatalf("decodeVerifiedBatch() error = %#v, want reason %q", err, test.reason)
 			}
 		})
+	}
+}
+
+func TestDecodeVerifiedBatchRejectsUntrustedSessionLocation(t *testing.T) {
+	body := `[
+		{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0}}}
+	]`
+	_, err := decodeVerifiedBatch(
+		strings.NewReader(body),
+		Batch{Index: 1, SizeBytes: int64(len(body)), EventsCount: 1},
+		"https://user:pass@example.com/accounts?token=secret",
+		nil,
+	)
+	var unsafe unsafeReplayBatch
+	if err == nil || !errors.As(err, &unsafe) ||
+		unsafe.reason != "invalid_session_page" {
+		t.Fatalf("decodeVerifiedBatch() error = %#v, want invalid_session_page", err)
 	}
 }
 
@@ -99,6 +116,60 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			name:  "canonical navigation",
 			event: `{"type":5,"timestamp":1784800000000,"data":{"tag":"navigation","payload":{"url":"https://example.com/chart"}}}`,
 			valid: true,
+		},
+		{
+			name: "masked mutation",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"adds":[{"parentId":1,"nextId":null,"node":{"type":2,"id":2,"tagName":"div",` +
+				`"attributes":{"data-fidibeki-safe-text":""}}}],` +
+				`"removes":[{"parentId":1,"id":3}],` +
+				`"texts":[{"id":4,"value":"****"}],` +
+				`"attributes":[{"id":2,"attributes":{"data-fidibeki-safe-text":null}}],` +
+				`"isAttachIframe":false}}`,
+			valid: true,
+		},
+		{
+			name:  "mouse movement",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":1,"positions":[{"x":10,"y":20,"id":2,"timeOffset":5}]}}`,
+			valid: true,
+		},
+		{
+			name:  "mouse interaction",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":2,"type":0,"id":2,"x":10,"y":20,"pointerType":"mouse"}}`,
+			valid: true,
+		},
+		{
+			name:  "scroll position",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":3,"id":2,"x":10,"y":20}}`,
+			valid: true,
+		},
+		{
+			name:  "viewport resize",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":4,"width":1280,"height":720}}`,
+			valid: true,
+		},
+		{
+			name:  "masked input",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":2,"text":"****","isChecked":true,"userTriggered":false}}`,
+			valid: true,
+		},
+		{
+			name:  "media interaction",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"currentTime":12.5,"volume":0.5,"muted":false}}`,
+			valid: true,
+		},
+		{
+			name:  "selection",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":14,"ranges":[{"start":2,"startOffset":0,"end":2,"endOffset":4}]}}`,
+			valid: true,
+		},
+		{
+			name:  "different canonical metadata path",
+			event: `{"type":4,"timestamp":1784800000000,"data":{"href":"https://example.com/users/jane-private"}}`,
+		},
+		{
+			name:  "different canonical navigation path",
+			event: `{"type":5,"timestamp":1784800000000,"data":{"tag":"navigation","payload":{"url":"https://example.com/users/jane-private"}}}`,
 		},
 		{
 			name:  "raw visible text",
@@ -143,7 +214,10 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := validRRWebEvent(json.RawMessage(test.event)); got != test.valid {
+			if got := validRRWebEvent(
+				json.RawMessage(test.event),
+				"https://example.com/chart",
+			); got != test.valid {
 				t.Fatalf("validRRWebEvent() = %t, want %t for %s", got, test.valid, test.event)
 			}
 		})
@@ -157,7 +231,7 @@ func TestBatchVerificationProcessorRejectsIdentityBearingBatch(t *testing.T) {
 		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
 		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),
 		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
-	}}}
+	}, PageURL: "https://example.com/chart"}}
 	storage := &batchVerificationStorageStub{body: body}
 	processor := BatchVerificationProcessor{Store: store, Storage: storage}
 	task := asynq.NewTask(TaskVerifyBatch, []byte(
@@ -181,7 +255,7 @@ func TestBatchVerificationProcessorPromotesOnlyValidBatches(t *testing.T) {
 		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),
 		SafetyStatus: BatchSafetyQuarantined, Generation: 2, VerificationTries: 1,
 		UploadExpiresAt: time.Date(2026, 7, 23, 10, 10, 0, 0, time.UTC),
-	}}}
+	}, PageURL: "https://example.com/chart"}}
 	storage := &batchVerificationStorageStub{body: body}
 	checkedAt := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
 	current := checkedAt
@@ -256,7 +330,7 @@ func TestBatchVerificationProcessorPersistsRejectionBeforeCleanup(t *testing.T) 
 		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
 		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: 2,
 		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
-	}}}
+	}, PageURL: "https://example.com/chart"}}
 	storage := &batchVerificationStorageStub{body: []byte(`{}`), removeErr: errors.New("storage unavailable")}
 	processor := BatchVerificationProcessor{Store: store, Storage: storage}
 	task := asynq.NewTask(TaskVerifyBatch, []byte(
@@ -286,7 +360,7 @@ func TestBatchVerificationProcessorLeavesOperationalFailuresQuarantined(t *testi
 	store := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
 		ID: "batch", TenantID: "tenant", StorageKey: "batch.json",
 		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
-	}}}
+	}, PageURL: "https://example.com/chart"}}
 	processor := BatchVerificationProcessor{
 		Store: store, Storage: &batchVerificationStorageStub{openErr: want},
 	}
@@ -305,7 +379,7 @@ func TestBatchVerificationProcessorLeavesOperationalFailuresQuarantined(t *testi
 		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
 		StorageKey: "batch.json", SizeBytes: 2, EventsCount: 0,
 		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
-	}}}
+	}, PageURL: "https://example.com/chart"}}
 	if err := (BatchVerificationProcessor{
 		Store: rejectedStore, Storage: &batchVerificationStorageStub{body: []byte(`{}`)},
 		Diagnostics: batchDiagnosticRecorderFunc(func(

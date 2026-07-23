@@ -18,6 +18,7 @@ import {
   X,
 } from '@lucide/vue'
 import type { FeedbackAttachment, FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
+import { specificPageLocation } from '~/utils/privacy-location'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,6 +65,7 @@ const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some
 const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.value && hasReprocessableEvidence.value)
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 const structuredResponses = computed(() => Object.entries(feedback.value?.responses || {}))
+const specificPageURL = computed(() => specificPageLocation(feedback.value?.page_url))
 
 function responseLabel(key: string) {
   return key.replace(/_/g, ' ').replace(/^./, (character) => character.toUpperCase())
@@ -285,7 +287,7 @@ useHead(() => ({
 
           <section v-else class="feedback-environment">
             <h2>{{ t('feedback.detail.environment') }}</h2>
-            <dl><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a :href="feedback.page_url" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a></dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
+            <dl><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a v-if="specificPageURL" :href="specificPageURL" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a><span v-else>{{ feedback.page_url }}</span></dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
           </section>
         </main>
 

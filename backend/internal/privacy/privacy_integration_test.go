@@ -320,10 +320,10 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	}
 	if _, err := database.Exec(ctx, `
 		UPDATE privacy_jobs
-		SET status = 'completed', started_at = $2::timestamptz, heartbeat_at = $2::timestamptz,
-		    completed_at = $2::timestamptz, expires_at = $2::timestamptz + interval '7 days',
-		    object_key = 'tenants/' || tenant_id::text || '/exports/' || id::text || '.zip',
-		    object_size_bytes = 2048
+			SET status = 'completed', started_at = $2::timestamptz, heartbeat_at = $2::timestamptz,
+			    completed_at = $2::timestamptz, expires_at = $2::timestamptz + interval '7 days',
+			    object_key = 'tenants/' || tenant_id::text || '/exports/' || id::text || '.zip',
+			    object_size_bytes = 2048, context_privacy_version = 1
 		WHERE id = $1
 	`, createdEnvelope.Export.ID, now); err != nil {
 		t.Fatalf("complete HTTP privacy export: %v", err)

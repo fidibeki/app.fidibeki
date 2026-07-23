@@ -128,6 +128,8 @@ not recreate removed data.
 - replace existing feedback, replay, funnel-event, and daily-aggregate page URLs
   with origin-only projections unless a later worker can prove a configured
   static projection transactionally;
+- invalidate replay objects captured before the rule-safe URL contract, advance
+  the replay privacy version, and remove those objects through replay retention;
 - set all stored feedback referrers to null;
 - set all stored raw user-agent values to null while retaining the coarse
   browser, operating system, device, language, and viewport fields;

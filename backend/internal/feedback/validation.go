@@ -113,9 +113,6 @@ func validateSubmissionAt(
 			values.PageURL = location.Target
 		}
 	}
-	if values.Referrer != nil && !validHTTPURL(*values.Referrer, 4096) {
-		fields = append(fields, field("metadata.referrer", "must be an absolute HTTP or HTTPS URL"))
-	}
 	if values.Device != nil && *values.Device != "desktop" && *values.Device != "tablet" && *values.Device != "mobile" {
 		fields = append(fields, field("metadata.device", "must be desktop, tablet, or mobile"))
 	}

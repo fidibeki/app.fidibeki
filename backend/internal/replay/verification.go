@@ -33,6 +33,7 @@ type BatchVerificationTask struct {
 
 type BatchVerificationWork struct {
 	Batch
+	PageURL string
 }
 
 type BatchVerificationStore interface {
@@ -112,7 +113,7 @@ func (processor BatchVerificationProcessor) Handler() asynq.HandlerFunc {
 			_ = temporary.Close()
 			_ = os.Remove(temporary.Name())
 		}()
-		_, verifyErr := decodeVerifiedBatch(temporary, work.Batch, nil)
+		_, verifyErr := decodeVerifiedBatch(temporary, work.Batch, work.PageURL, nil)
 		if verifyErr != nil {
 			return processor.rejectUnsafe(ctx, work, verifyErr)
 		}
@@ -270,10 +271,15 @@ func (failure unsafeReplayBatch) Error() string {
 func decodeVerifiedBatch(
 	reader io.Reader,
 	batch Batch,
+	expectedPageURL string,
 	consume func([]byte) error,
 ) (int, error) {
 	if batch.SizeBytes < 1 || batch.SizeBytes > maximumBatchSize {
 		return 0, unsafeReplayBatch{reason: "size_mismatch"}
+	}
+	canonicalPageURL, validPageURL := canonicalReplayURL(expectedPageURL)
+	if !validPageURL || canonicalPageURL != expectedPageURL {
+		return 0, unsafeReplayBatch{reason: "invalid_session_page"}
 	}
 	body, err := io.ReadAll(io.LimitReader(reader, batch.SizeBytes+1))
 	if err != nil {
@@ -294,7 +300,7 @@ func decodeVerifiedBatch(
 		if err := decoder.Decode(&event); err != nil {
 			return 0, unsafeReplayBatch{reason: "invalid_json"}
 		}
-		if !validRRWebEvent(event) {
+		if !validRRWebEvent(event, expectedPageURL) {
 			return 0, unsafeReplayBatch{reason: "invalid_event"}
 		}
 		if consume != nil {
@@ -319,7 +325,7 @@ func decodeVerifiedBatch(
 	return count, nil
 }
 
-func validRRWebEvent(raw json.RawMessage) bool {
+func validRRWebEvent(raw json.RawMessage, expectedPageURL string) bool {
 	event, ok := decodeReplayObject(raw)
 	if !ok || !hasOnlyKeys(event, "type", "timestamp", "data") {
 		return false
@@ -350,9 +356,9 @@ func validRRWebEvent(raw json.RawMessage) bool {
 	case 3:
 		return validReplayIncrementalData(data)
 	case 4:
-		return validReplayMetaData(data)
+		return validReplayMetaData(data, expectedPageURL)
 	case 5:
-		return validReplayCustomData(data)
+		return validReplayCustomData(data, expectedPageURL)
 	default:
 		return false
 	}
@@ -440,7 +446,7 @@ func validReplayNumberObject(value any, keys ...string) bool {
 	return true
 }
 
-func validReplayMetaData(data map[string]any) bool {
+func validReplayMetaData(data map[string]any, expectedPageURL string) bool {
 	if !hasOnlyKeys(data, "href", "width", "height") {
 		return false
 	}
@@ -449,7 +455,7 @@ func validReplayMetaData(data map[string]any) bool {
 		return false
 	}
 	canonical, valid := canonicalReplayURL(href)
-	if !valid || canonical != href {
+	if !valid || canonical != href || href != expectedPageURL {
 		return false
 	}
 	for _, key := range []string{"width", "height"} {
@@ -463,7 +469,7 @@ func validReplayMetaData(data map[string]any) bool {
 	return true
 }
 
-func validReplayCustomData(data map[string]any) bool {
+func validReplayCustomData(data map[string]any, expectedPageURL string) bool {
 	if !hasOnlyKeys(data, "tag", "payload") || data["tag"] != "navigation" {
 		return false
 	}
@@ -476,7 +482,7 @@ func validReplayCustomData(data map[string]any) bool {
 		return false
 	}
 	canonical, valid := canonicalReplayURL(rawURL)
-	return valid && canonical == rawURL
+	return valid && canonical == rawURL && rawURL == expectedPageURL
 }
 
 func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {

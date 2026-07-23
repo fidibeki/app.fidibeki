@@ -182,6 +182,25 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if first.FeedbackID == "" || first.FeedbackPublicID == "" || first.IssuePublicID != "" {
 		t.Errorf("created response = %#v", first)
 	}
+	if len(first.Warnings) != 1 ||
+		first.Warnings[0].Code != "context_omitted" ||
+		first.Warnings[0].Reason != "element_privacy_policy" {
+		t.Fatalf("unsafe element context warning = %#v", first.Warnings)
+	}
+	var omittedHTML, omittedStyles *string
+	if err := root.QueryRow(ctx, `
+		SELECT dom_snapshot_html, dom_snapshot_styles
+		FROM feedbacks
+		WHERE id = $1
+	`, first.FeedbackID).Scan(&omittedHTML, &omittedStyles); err != nil ||
+		omittedHTML != nil || omittedStyles != nil {
+		t.Fatalf(
+			"unsafe element context persisted = html %v styles %v, error = %v",
+			omittedHTML,
+			omittedStyles,
+			err,
+		)
+	}
 	if len(first.Attachments) != 1 || first.Attachments[0].CompleteToken == "" ||
 		!strings.Contains(first.Attachments[0].PresignedURL, "/tenants/"+tenantID+"/feedbacks/"+first.FeedbackID) {
 		t.Errorf("attachment response = %#v", first.Attachments)
@@ -604,6 +623,60 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		degradedSubmission.FeedbackID,
 	).Scan(&savedText); err != nil || savedText != "Keep this feedback" {
 		t.Errorf("degraded saved text=%q error=%v", savedText, err)
+	}
+
+	safeContextBody := fmt.Sprintf(`{
+		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f909628635e",
+		"widget_rule_id":%q,
+		"text":"Safe element context",
+		"element_attachment":{
+			"selector":"main > section",
+			"html":"<section><div><span></span></div></section>",
+			"styles":{"display":"grid","width":"640px"}
+		},
+			"metadata":{
+				"url":"https://example.com/private/account-48291",
+				"viewport_width":1280,
+				"viewport_height":720
+			}
+	}`, ruleID)
+	safeContextResponse := performFeedbackRequest(
+		handler,
+		http.MethodPost,
+		"/v1/feedback?key="+publicKey,
+		safeContextBody,
+		publicKey,
+		"https://example.com",
+	)
+	if safeContextResponse.Code != http.StatusCreated {
+		t.Fatalf(
+			"safe element context status = %d, body = %s",
+			safeContextResponse.Code,
+			safeContextResponse.Body.String(),
+		)
+	}
+	var safeContextSubmission SubmissionResponse
+	decodeFeedbackResponse(t, safeContextResponse, &safeContextSubmission)
+	if len(safeContextSubmission.Warnings) != 0 {
+		t.Fatalf("safe element context warnings = %#v", safeContextSubmission.Warnings)
+	}
+	var persistedHTML, persistedStyles string
+	if err := root.QueryRow(ctx, `
+		SELECT dom_snapshot_html, dom_snapshot_styles
+		FROM feedbacks
+		WHERE id = $1
+	`, safeContextSubmission.FeedbackID).Scan(
+		&persistedHTML,
+		&persistedStyles,
+	); err != nil ||
+		persistedHTML != "<section><div><span></span></div></section>" ||
+		persistedStyles != `{"display":"grid","width":"640px"}` {
+		t.Fatalf(
+			"safe element context persisted = html %q styles %q, error = %v",
+			persistedHTML,
+			persistedStyles,
+			err,
+		)
 	}
 
 	if _, err := root.Exec(ctx, `UPDATE tenants SET plan = 'starter' WHERE id = $1`, tenantID); err != nil {

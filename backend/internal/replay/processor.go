@@ -50,7 +50,11 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 				return fmt.Errorf("replay unavailable: %w", asynq.SkipRetry)
 			}
 			key := fmt.Sprintf("tenants/%s/sessions/%s/replay.json", session.TenantID, session.ID)
-			eventsCount, mergeErr := p.mergeBatches(ctx, key, batches)
+			pageURL := ""
+			if session.PageURL != nil {
+				pageURL = *session.PageURL
+			}
+			eventsCount, mergeErr := p.mergeBatches(ctx, key, pageURL, batches)
 			if mergeErr != nil {
 				markErr := p.Store.MarkMergeFailed(ctx, session.ID, mergeErr.Error())
 				return errors.Join(mergeErr, markErr)
@@ -71,7 +75,12 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 	}
 }
 
-func (p Processor) mergeBatches(ctx context.Context, key string, batches []Batch) (int, error) {
+func (p Processor) mergeBatches(
+	ctx context.Context,
+	key string,
+	expectedPageURL string,
+	batches []Batch,
+) (int, error) {
 	temporary, err := os.CreateTemp("", "fidibeki-replay-*.json")
 	if err != nil {
 		return 0, fmt.Errorf("create replay merge file: %w", err)
@@ -87,7 +96,7 @@ func (p Processor) mergeBatches(ctx context.Context, key string, batches []Batch
 	}
 	total := 0
 	for _, batch := range batches {
-		count, err := p.appendBatch(ctx, writer, batch, total > 0)
+		count, err := p.appendBatch(ctx, writer, batch, expectedPageURL, total > 0)
 		if err != nil {
 			return 0, err
 		}
@@ -119,6 +128,7 @@ func (p Processor) appendBatch(
 	ctx context.Context,
 	writer *bufio.Writer,
 	batch Batch,
+	expectedPageURL string,
 	hasPrevious bool,
 ) (int, error) {
 	object, err := p.Storage.OpenObject(ctx, batch.StorageKey)
@@ -127,7 +137,7 @@ func (p Processor) appendBatch(
 	}
 	defer func() { _ = object.Close() }()
 	count := 0
-	decoded, err := decodeVerifiedBatch(object, batch, func(event []byte) error {
+	decoded, err := decodeVerifiedBatch(object, batch, expectedPageURL, func(event []byte) error {
 		if hasPrevious || count > 0 {
 			if err := writer.WriteByte(','); err != nil {
 				return fmt.Errorf("separate replay events: %w", err)

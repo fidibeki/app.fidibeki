@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 76
+	const latestMigrationVersion = 77
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2063,6 +2063,192 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		  AND indexname IN ('idx_feedbacks_reporter_consent_active', 'idx_issues_reporter_consent_active')
 	`).Scan(&evidenceIndexCount); err != nil || evidenceIndexCount != 2 {
 		t.Fatalf("reporter consent evidence index count = %d, error = %v, want 2", evidenceIndexCount, err)
+	}
+
+	if err := migrateToVersion(migrator, 76); err != nil {
+		t.Fatalf("roll back automatic context remediation migration: %v", err)
+	}
+	const unsafeContextURL = "https://sentinel-user:sentinel-pa@ss@A.EXAMPLE.COM:443/private/account-48291?email=jane@example.com&token=SECRET#PRIVATE"
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks
+		SET page_url = $2,
+		    referrer = 'https://referrer.example/private?reporter=jane@example.com',
+		    user_agent = 'Sentinel Browser jane@example.com',
+		    dom_snapshot_html = '<div data-email="jane@example.com">SECRET</div>',
+		    dom_snapshot_styles = '{"background-image":"url(https://avatar.example/jane.png)"}'
+		WHERE id = $1
+	`, feedbackA, unsafeContextURL); err != nil {
+		t.Fatalf("seed legacy feedback automatic context: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE sessions SET page_url = $2 WHERE id = $1
+	`, sessionA, unsafeContextURL); err != nil {
+		t.Fatalf("seed legacy replay location: %v", err)
+	}
+	var priorReplayContractID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, page_url, started_at, ended_at,
+			events_count, batches_count, storage_key, rrweb_version, merged_at,
+			merge_requested_at, max_duration_seconds, max_events,
+			replay_privacy_version
+		) VALUES (
+			$1, $2, gen_random_uuid(), $3, now() - interval '1 minute', now(),
+			1, 1, 'tenants/sentinel-user/sessions/SECRET/replay.json', '2.1.1',
+			now(), now(), 1800, 50000, 1
+		)
+		RETURNING id
+	`, tenantA, projectA, unsafeContextURL).Scan(&priorReplayContractID); err != nil {
+		t.Fatalf("seed prior replay context privacy contract: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_events (
+			event_id, tenant_id, project_id, rule_id, rule_name, event_type,
+			visitor_id, page_view_id, page_url, page_key, occurred_at
+		) VALUES (
+			'00000000-0000-4000-8000-000000000501', $1, $2, $3,
+			'Legacy context', 'matched', gen_random_uuid(), gen_random_uuid(),
+			$4, digest($4, 'sha256'), now()
+		)
+	`, tenantA, projectA, widgetRuleA, unsafeContextURL); err != nil {
+		t.Fatalf("seed legacy funnel event location: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		DELETE FROM widget_funnel_daily WHERE tenant_id = $1 AND rule_id = $2
+	`, tenantA, widgetRuleA); err != nil {
+		t.Fatalf("clear funnel aggregates before remediation fixture: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_funnel_daily (
+			tenant_id, project_id, rule_id, rule_name, page_url, page_key,
+			event_date, matched_count, impression_count
+		) VALUES
+			($1, $3, $2, 'Replay limits', $4, digest($4, 'sha256'), CURRENT_DATE, 1, 2),
+			($1, $3, $2, 'Replay limits', $5, digest($5, 'sha256'), CURRENT_DATE, 3, 4)
+	`, tenantA, widgetRuleA, projectA,
+		"https://a.example.com/private/jane@example.com?token=SECRET",
+		"https://a.example.com/accounts/account-48291#PRIVATE",
+	); err != nil {
+		t.Fatalf("seed colliding legacy funnel aggregates: %v", err)
+	}
+	var legacyExportJobID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO privacy_jobs (
+			tenant_id, kind, status, actor_member_id, started_at, heartbeat_at,
+			completed_at, expires_at, object_key, object_size_bytes
+		) VALUES (
+			$1, 'workspace_export', 'completed', $2, now() - interval '1 minute', now(),
+			now(), now() + interval '7 days',
+			'tenants/sentinel-user/exports/SECRET.zip', 128
+		)
+		RETURNING id
+	`, tenantA, memberA).Scan(&legacyExportJobID); err != nil {
+		t.Fatalf("seed legacy export archive: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply automatic context remediation migration: %v", err)
+	}
+
+	var remediatedPage string
+	var remediatedReferrer, remediatedUserAgent, remediatedHTML, remediatedStyles *string
+	if err := root.QueryRow(ctx, `
+		SELECT page_url, referrer, user_agent, dom_snapshot_html, dom_snapshot_styles
+		FROM feedbacks WHERE id = $1
+	`, feedbackA).Scan(
+		&remediatedPage, &remediatedReferrer, &remediatedUserAgent,
+		&remediatedHTML, &remediatedStyles,
+	); err != nil {
+		t.Fatalf("read remediated feedback context: %v", err)
+	}
+	if remediatedPage != "https://a.example.com/" ||
+		remediatedReferrer != nil || remediatedUserAgent != nil ||
+		remediatedHTML != nil || remediatedStyles != nil {
+		t.Fatalf(
+			"remediated feedback context = page %q referrer %v user agent %v html %v styles %v",
+			remediatedPage, remediatedReferrer, remediatedUserAgent,
+			remediatedHTML, remediatedStyles,
+		)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT page_url FROM sessions WHERE id = $1
+	`, sessionA).Scan(&remediatedPage); err != nil || remediatedPage != "https://a.example.com/" {
+		t.Fatalf("remediated replay location = %q, error = %v", remediatedPage, err)
+	}
+	var priorReplayPrivacyVersion int
+	if err := root.QueryRow(ctx, `
+		SELECT page_url, replay_privacy_version
+		FROM sessions
+		WHERE id = $1
+	`, priorReplayContractID).Scan(
+		&remediatedPage,
+		&priorReplayPrivacyVersion,
+	); err != nil || remediatedPage != "https://a.example.com/" ||
+		priorReplayPrivacyVersion != 0 {
+		t.Fatalf(
+			"prior replay context privacy = page %q version %d, error = %v",
+			remediatedPage,
+			priorReplayPrivacyVersion,
+			err,
+		)
+	}
+	var currentReplayPrivacyVersion int
+	if err := root.QueryRow(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, page_url, started_at, rrweb_version,
+			max_duration_seconds, max_events
+		) VALUES (
+			$1, $2, gen_random_uuid(), 'https://a.example.com/', now(),
+			'2.1.1', 1800, 50000
+		)
+		RETURNING replay_privacy_version
+	`, tenantA, projectA).Scan(
+		&currentReplayPrivacyVersion,
+	); err != nil || currentReplayPrivacyVersion != 2 {
+		t.Fatalf(
+			"current replay context privacy version = %d, error = %v, want 2",
+			currentReplayPrivacyVersion,
+			err,
+		)
+	}
+	var funnelKeyMatches bool
+	if err := root.QueryRow(ctx, `
+		SELECT page_url, page_key = digest(page_url, 'sha256')
+		FROM widget_funnel_events
+		WHERE event_id = '00000000-0000-4000-8000-000000000501'
+	`).Scan(&remediatedPage, &funnelKeyMatches); err != nil ||
+		remediatedPage != "https://a.example.com/" || !funnelKeyMatches {
+		t.Fatalf(
+			"remediated funnel event = page %q key matches %t, error = %v",
+			remediatedPage, funnelKeyMatches, err,
+		)
+	}
+	var aggregateCount, matchedCount, impressionCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*), sum(matched_count), sum(impression_count)
+		FROM widget_funnel_daily
+		WHERE tenant_id = $1 AND rule_id = $2 AND event_date = CURRENT_DATE
+	`, tenantA, widgetRuleA).Scan(
+		&aggregateCount, &matchedCount, &impressionCount,
+	); err != nil || aggregateCount != 1 || matchedCount != 4 || impressionCount != 6 {
+		t.Fatalf(
+			"remediated funnel aggregates = rows %d matched %d impressions %d, error = %v",
+			aggregateCount, matchedCount, impressionCount, err,
+		)
+	}
+	var legacyContextVersion int
+	if err := root.QueryRow(ctx, `
+		SELECT context_privacy_version FROM privacy_jobs WHERE id = $1
+	`, legacyExportJobID).Scan(&legacyContextVersion); err != nil || legacyContextVersion != 0 {
+		t.Fatalf(
+			"legacy export context privacy version = %d, error = %v, want 0",
+			legacyContextVersion, err,
+		)
+	}
+	var contextCleanupIndex *string
+	if err := root.QueryRow(ctx, `
+		SELECT to_regclass('public.idx_privacy_jobs_context_privacy_cleanup')::text
+	`).Scan(&contextCleanupIndex); err != nil || contextCleanupIndex == nil {
+		t.Fatalf("context privacy cleanup index = %v, error = %v", contextCleanupIndex, err)
 	}
 
 	pools.Close()

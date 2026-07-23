@@ -8,16 +8,25 @@ STRICT
 AS $$
 DECLARE
     parts text[];
+    scheme text;
+    host text;
 BEGIN
     parts := regexp_match(
         btrim(value),
-        '^(https?)://([^/@]*@)?([^/?#[:space:]]+)',
+        '^(https?)://([^/?#[:space:]]*@)?([^/?#@[:space:]]+)',
         'i'
     );
     IF parts IS NULL THEN
         RETURN 'https://invalid.invalid/';
     END IF;
-    RETURN lower(parts[1]) || '://' || lower(parts[3]) || '/';
+    scheme := lower(parts[1]);
+    host := lower(parts[3]);
+    IF scheme = 'https' THEN
+        host := regexp_replace(host, ':443$', '');
+    ELSIF scheme = 'http' THEN
+        host := regexp_replace(host, ':80$', '');
+    END IF;
+    RETURN scheme || '://' || host || '/';
 END;
 $$;
 
@@ -37,6 +46,29 @@ UPDATE sessions
 SET page_url = fidibeki_privacy_safe_origin(page_url)
 WHERE page_url IS NOT NULL
   AND page_url <> fidibeki_privacy_safe_origin(page_url);
+
+-- Replay objects accepted by privacy contract v1 can contain an origin + real pathname
+-- inside rrweb Meta/navigation events. Their configured rule projection cannot be proven
+-- after capture, so expire every v1 manifest and let the durable replay retention worker
+-- remove both merged and batch objects. New sessions use v2 and pin those events to the
+-- server-validated rule-safe session location.
+ALTER TABLE sessions
+    DROP CONSTRAINT sessions_replay_privacy_version_check,
+    ADD CONSTRAINT sessions_replay_privacy_version_check
+        CHECK (replay_privacy_version BETWEEN 0 AND 2);
+
+UPDATE sessions
+SET replay_privacy_version = 0
+WHERE replay_privacy_version < 2;
+
+ALTER TABLE sessions
+    ALTER COLUMN replay_privacy_version SET DEFAULT 2;
+
+DROP INDEX idx_sessions_replay_privacy_cleanup;
+
+CREATE INDEX idx_sessions_replay_privacy_cleanup
+    ON sessions (id)
+    WHERE retention_deleted_at IS NULL AND replay_privacy_version < 2;
 
 UPDATE widget_funnel_events
 SET page_url = fidibeki_privacy_safe_origin(page_url),

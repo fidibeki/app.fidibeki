@@ -3,7 +3,7 @@ import {
   canonicalizeReplayURL,
   createReplayMaskTextFn,
   replayMaskTextSelector,
-  sanitizeReplayEvent,
+  sanitizeReplayEvent as sanitizeReplayEventForSession,
 } from '../../src/modules/privacy'
 
 describe('canonicalizeReplayURL', () => {
@@ -64,10 +64,14 @@ describe('createReplayMaskTextFn', () => {
 })
 
 describe('sanitizeReplayEvent', () => {
-  it('canonicalizes the internal Meta event href', () => {
+  const sessionPageURL = 'https://example.com/accounts'
+  const sanitizeReplayEvent = (event: unknown) =>
+    sanitizeReplayEventForSession(event, sessionPageURL)
+
+  it('replaces the internal Meta event href with the safe session location', () => {
     const event = { type: 4, timestamp: 1, data: { href: 'https://user:pass@example.com/dashboard?token=secret#frag' } }
     const sanitized = sanitizeReplayEvent(event) as typeof event
-    expect(sanitized?.data.href).toBe('https://example.com/dashboard')
+    expect(sanitized?.data.href).toBe(sessionPageURL)
   })
 
   it('drops a Meta event whose href cannot be canonicalized', () => {
@@ -190,7 +194,7 @@ describe('sanitizeReplayEvent', () => {
     expect(sanitizeReplayEvent(event)).toBeNull()
   })
 
-  it('canonicalizes the only supported navigation custom event', () => {
+  it('pins the only supported navigation custom event to the safe session location', () => {
     const event = {
       type: 5, timestamp: 1,
       data: {
@@ -200,8 +204,15 @@ describe('sanitizeReplayEvent', () => {
     }
     expect(sanitizeReplayEvent(event)).toEqual({
       type: 5, timestamp: 1,
-      data: { tag: 'navigation', payload: { url: 'https://example.com/account/jane' } },
+      data: { tag: 'navigation', payload: { url: sessionPageURL } },
     })
+  })
+
+  it('fails closed when the safe session location is not canonical', () => {
+    expect(sanitizeReplayEventForSession(
+      { type: 0, timestamp: 1, data: {} },
+      'https://user:pass@example.com/accounts?token=secret',
+    )).toBeNull()
   })
 
   it('suppresses canvas, string-bearing, and unknown incremental sources', () => {

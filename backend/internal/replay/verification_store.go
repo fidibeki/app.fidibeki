@@ -133,27 +133,46 @@ func (store Store) Claim(
 	ctx context.Context,
 	task BatchVerificationTask,
 ) (BatchVerificationWork, error) {
-	batch, err := scanBatchRow(store.Database.QueryRow(ctx, `
-		UPDATE session_batches
-		SET verification_attempts = verification_attempts + 1
-		WHERE tenant_id = $1 AND id = $2
-		  AND verification_generation = $3
-		  AND safety_status IN ('quarantined', 'safe', 'rejected')
-		  AND completed_at IS NOT NULL
-		  AND retention_deleted_at IS NULL
-		  AND storage_key IS NOT NULL
-		RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
-		          events_count, size_bytes, content_type, complete_token_hash, completed_at,
-		          safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
-		          verification_generation, verification_enqueued_at, verification_attempts
-	`, task.TenantID, task.BatchID, task.Generation))
+	var work BatchVerificationWork
+	err := store.Database.QueryRow(ctx, `
+		WITH claimed AS (
+			UPDATE session_batches
+			SET verification_attempts = verification_attempts + 1
+			WHERE tenant_id = $1 AND id = $2
+			  AND verification_generation = $3
+			  AND safety_status IN ('quarantined', 'safe', 'rejected')
+			  AND completed_at IS NOT NULL
+			  AND retention_deleted_at IS NULL
+			  AND storage_key IS NOT NULL
+			RETURNING id, tenant_id, project_id, session_id, batch_index, storage_key,
+			          events_count, size_bytes, content_type, complete_token_hash, completed_at,
+			          safety_status, upload_expires_at, safety_checked_at, safety_error_reason,
+			          verification_generation, verification_enqueued_at, verification_attempts
+		)
+		SELECT claimed.id, claimed.tenant_id, claimed.project_id, claimed.session_id,
+		       claimed.batch_index, claimed.storage_key, claimed.events_count,
+		       claimed.size_bytes, claimed.content_type, claimed.complete_token_hash,
+		       claimed.completed_at, claimed.safety_status, claimed.upload_expires_at,
+		       claimed.safety_checked_at, claimed.safety_error_reason,
+		       claimed.verification_generation, claimed.verification_enqueued_at,
+		       claimed.verification_attempts, COALESCE(session.page_url, '')
+		FROM claimed
+		JOIN sessions AS session ON session.id = claimed.session_id
+	`, task.TenantID, task.BatchID, task.Generation).Scan(
+		&work.ID, &work.TenantID, &work.ProjectID, &work.SessionID, &work.Index,
+		&work.StorageKey, &work.EventsCount, &work.SizeBytes, &work.ContentType,
+		&work.CompleteTokenHash, &work.CompletedAt, &work.SafetyStatus,
+		&work.UploadExpiresAt, &work.SafetyCheckedAt, &work.SafetyErrorReason,
+		&work.Generation, &work.VerificationEnqueuedAt, &work.VerificationTries,
+		&work.PageURL,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BatchVerificationWork{}, ErrNoBatchVerificationWork
 	}
 	if err != nil {
 		return BatchVerificationWork{}, fmt.Errorf("claim replay batch verification: %w", err)
 	}
-	return BatchVerificationWork{Batch: batch}, nil
+	return work, nil
 }
 
 func (store Store) MarkSafe(

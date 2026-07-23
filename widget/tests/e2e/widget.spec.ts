@@ -140,8 +140,8 @@ test('emits matched once per canonical page view before suppression', async ({ p
 
   const matchedEvents = events.filter(event => event.event_type === 'matched')
   expect(matchedEvents.map(event => event.page_url)).toEqual([
-    'http://127.0.0.1:4173/sample.html',
-    'http://127.0.0.1:4173/sample.html',
+    'http://127.0.0.1:4173/sample',
+    'http://127.0.0.1:4173/sample',
   ])
   expect(matchedEvents[1]?.visitor_id).toBe(matchedEvents[0]?.visitor_id)
   expect(matchedEvents[1]?.page_view_id).not.toBe(matchedEvents[0]?.page_view_id)
@@ -700,30 +700,34 @@ test('loads the matching rule and serializes feedback through the public contrac
   await expect(page.getByText('Your feedback was sent.')).toBeVisible()
 
   const submission = submissions[0]
-	expect(submissions[1]?.client_feedback_id).toBe(submission?.client_feedback_id)
-	expect(submissions[1]?.analytics).toEqual(submission?.analytics)
+  expect(submissions[1]?.client_feedback_id).toBe(submission?.client_feedback_id)
+  expect(submissions[1]?.analytics).toEqual(submission?.analytics)
   expect(submission).toMatchObject({
     widget_rule_id: 'rule-browser',
     rating: 5,
     text: 'The delivery date was easy to understand.',
     company_website: '',
     metadata: {
-      url: 'http://127.0.0.1:4173/sample.html',
+      url: 'http://127.0.0.1:4173/sample',
       viewport_width: 1280,
       viewport_height: 720,
     },
-    element_attachment: { selector: '#checkout-summary' },
-		analytics: {
-			event_id: expect.any(String),
-			visitor_id: expect.any(String),
-			page_view_id: expect.any(String),
-			rule_id: 'rule-browser',
-			page_url: 'http://127.0.0.1:4173/sample.html',
-			occurred_at: expect.any(String),
-		},
+    element_attachment: {
+      selector: 'main > article',
+      html: '<article><h1></h1><p></p></article>',
+    },
+    analytics: {
+      event_id: expect.any(String),
+      visitor_id: expect.any(String),
+      page_view_id: expect.any(String),
+      rule_id: 'rule-browser',
+      page_url: 'http://127.0.0.1:4173/sample',
+      occurred_at: expect.any(String),
+    },
   })
   expect((submission?.analytics as Record<string, unknown>).event_type).toBeUndefined()
-  expect(String((submission?.element_attachment as { html?: string }).html)).toContain('Checkout summary')
+  expect(JSON.stringify(submission?.element_attachment)).not.toContain('checkout-summary')
+  expect(JSON.stringify(submission?.element_attachment)).not.toContain('Checkout summary')
   expect(loadedScripts.some((url) => url.endsWith('/v1/widget.js'))).toBe(true)
   expect(loadedScripts.some((url) => url.endsWith('/v1/rating.js'))).toBe(true)
   expect(loadedScripts.some((url) => url.endsWith('/v1/element-attachment.js'))).toBe(true)
@@ -883,7 +887,7 @@ test('replay capture is anonymous: no sentinel identity value reaches an uploade
     'SENTINEL-TITLE-Jane', 'SENTINEL-ARIA-Jane', 'SENTINEL-ALT-Jane',
     'SENTINEL-AVATAR-jane', 'SENTINEL-ID-jane-42', 'SENTINEL-DATA-jane',
     'SENTINEL-QUERY-jane.doe', 'SENTINEL-QUERY-TOKEN', 'SENTINEL-HASH-fragment',
-    'SENTINEL-NAV-SECRET', 'SENTINEL-NAV-HASH',
+    'SENTINEL-PATH-jane-private', 'SENTINEL-NAV-SECRET', 'SENTINEL-NAV-HASH',
   ]
   const safeTextMarker = 'SAFE-TEXT-Powered-By-Fidibeki'
 
@@ -965,13 +969,22 @@ test('replay capture is anonymous: no sentinel identity value reaches an uploade
   await page.goto('/sample.html?email=SENTINEL-QUERY-jane.doe%40example.com&token=SENTINEL-QUERY-TOKEN#SENTINEL-HASH-fragment')
   await page.waitForTimeout(300)
   await page.evaluate(() => {
-    history.pushState({}, '', '/sample.html?token=SENTINEL-NAV-SECRET#SENTINEL-NAV-HASH')
+    history.pushState(
+      {},
+      '',
+      '/users/SENTINEL-PATH-jane-private?token=SENTINEL-NAV-SECRET#SENTINEL-NAV-HASH',
+    )
     window.dispatchEvent(new Event('fidibeki:navigation'))
   })
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
   await expect.poll(() => uploadedBatches.length).toBeGreaterThan(0)
 
   expect(sessionRequests.length).toBeGreaterThan(0)
+  for (const request of sessionRequests) {
+    expect((JSON.parse(request) as { page_url: string }).page_url).toBe(
+      'http://127.0.0.1:4173/sample',
+    )
+  }
   const serializedBatches = uploadedBatches.join('\n')
   for (const sentinel of sentinels) {
     for (const request of sessionRequests) expect(request).not.toContain(sentinel)

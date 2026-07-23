@@ -194,13 +194,34 @@ func TestReplayHTTPFlow(t *testing.T) {
 	).Scan(&storedPageURL); err != nil {
 		t.Fatalf("read canonicalized replay page URL: %v", err)
 	}
-	if storedPageURL != "https://example.com/checkout" {
-		t.Fatalf("stored replay page URL = %q, want https://example.com/checkout with credentials/query/hash stripped", storedPageURL)
+	if storedPageURL != "https://example.com/" {
+		t.Fatalf("stored replay page URL = %q, want the all-pages rule-safe origin", storedPageURL)
 	}
 	for _, sentinel := range []string{"sentinel-user", "sentinel-pass", "jane.doe", "secret-token", "fragment-secret"} {
 		if strings.Contains(canonicalized.Body.String(), sentinel) {
 			t.Fatalf("replay session response leaked sentinel URL content %q: %s", sentinel, canonicalized.Body.String())
 		}
+	}
+	foreignPageSessionID := "af32b9ea-c011-42fd-8cdb-c214a26b4959"
+	foreignPageBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://other.example/private"}`,
+		foreignPageSessionID, ruleID,
+	)
+	foreignPage := replayRequest(
+		router,
+		http.MethodPost,
+		"/v1/replay/sessions?key="+publicKey,
+		foreignPageBody,
+		publicKey,
+		"https://example.com",
+	)
+	if foreignPage.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(foreignPage.Body.String(), `"field":"page_url"`) {
+		t.Fatalf(
+			"foreign replay page = %d/%s, want page_url validation",
+			foreignPage.Code,
+			foreignPage.Body.String(),
+		)
 	}
 	rateLimitedSessionID := "5bc697f3-229d-44b8-b9ca-d3e236ad592b"
 	rateLimitedBody := strings.Replace(createBody, clientSessionID, rateLimitedSessionID, 1)
@@ -1094,10 +1115,10 @@ func TestReplayHTTPFlow(t *testing.T) {
 
 	var abandonedSessionID, activeSessionID, renewedSessionID, emptySessionID, incompleteSessionID string
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at, events_count, batches_count,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, page_url, started_at, events_count, batches_count,
+				rrweb_version, max_duration_seconds, max_events
+			) VALUES ($1, $2, gen_random_uuid(), 'https://example.com/', $3, 1, 1, '2.1.1', 1800, 50000)
 		RETURNING id
 	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&abandonedSessionID); err != nil {
 		t.Fatalf("create abandoned replay: %v", err)
@@ -1252,10 +1273,13 @@ func TestReplayHTTPFlow(t *testing.T) {
 
 	var failedSessionID string
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at, ended_at, rrweb_version,
-			merge_requested_at, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, $3, '2.1.1', $3, 1800, 50000)
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, page_url, started_at, ended_at, rrweb_version,
+				merge_requested_at, max_duration_seconds, max_events
+			) VALUES (
+				$1, $2, gen_random_uuid(), 'https://example.com/',
+				$3, $3, '2.1.1', $3, 1800, 50000
+			)
 		RETURNING id
 	`, tenantID, projectID, now).Scan(&failedSessionID); err != nil {
 		t.Fatalf("create failed merge session: %v", err)

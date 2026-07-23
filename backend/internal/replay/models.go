@@ -7,7 +7,7 @@ import (
 
 const (
 	RRWebVersion                = "2.1.1"
-	CurrentReplayPrivacyVersion = 1
+	CurrentReplayPrivacyVersion = 2
 )
 
 const (

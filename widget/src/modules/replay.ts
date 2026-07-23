@@ -1,6 +1,7 @@
 import { record } from 'rrweb'
+import { privacySafeLocation } from '../privacy-location'
 import type { WidgetRule } from '../types'
-import { canonicalizeReplayURL, createReplayMaskTextFn, replayMaskTextSelector, sanitizeReplayEvent } from './privacy'
+import { createReplayMaskTextFn, replayMaskTextSelector, sanitizeReplayEvent } from './privacy'
 
 const batchEventLimit = 50
 const batchTargetBytes = 200 * 1024
@@ -51,7 +52,9 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   if (!sampled) return null
 
   const clientSessionID = randomID()
-  const session = await createSession(options, clientSessionID)
+  const location = privacySafeLocation(window.location.href, options.rule)
+  if (!location) throw new Error('replay session page URL could not be projected safely')
+  const session = await createSession(options, clientSessionID, location.target)
   let stopped = false
   let stopPromise: Promise<void> | null = null
   let eventCount = 0
@@ -87,7 +90,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   const captureEvent = (event: unknown) => {
     if (stopped || eventCount >= maxEvents) return
-    const sanitized = sanitizeReplayEvent(event)
+    const sanitized = sanitizeReplayEvent(event, location.target)
     if (sanitized === null) {
       options.onError?.(new Error('replay event failed anonymity sanitization and was dropped'))
       return
@@ -124,10 +127,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     idleTimer = window.setTimeout(() => void stop(), idleTimeoutMilliseconds)
   }
   const onNavigation = () => {
-    const canonical = canonicalizeReplayURL(window.location.href)
-    // Fail closed: an un-canonicalizable URL (credentials/query/hash cannot be verified
-    // stripped) is dropped rather than recorded, matching the batch-level sanitization policy.
-    if (canonical) record.addCustomEvent('navigation', { url: canonical })
+    record.addCustomEvent('navigation', { url: location.target })
   }
   const onPageHide = () => void stop()
   const activityEvents: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'scroll', 'touchstart']
@@ -166,9 +166,11 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   return { sessionID: session.id, stop }
 }
 
-async function createSession(options: ReplayCaptureOptions, sessionID: string): Promise<SessionResponse> {
-  const pageURL = canonicalizeReplayURL(window.location.href)
-  if (!pageURL) throw new Error('replay session page URL could not be sanitized for anonymity')
+async function createSession(
+  options: ReplayCaptureOptions,
+  sessionID: string,
+  pageURL: string,
+): Promise<SessionResponse> {
   const response = await widgetFetch(options, 'replay/sessions', {
     method: 'POST',
     body: JSON.stringify({

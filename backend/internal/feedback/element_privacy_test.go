@@ -76,6 +76,19 @@ func TestSanitizeElementAttachmentFailsClosedAtStructuralBounds(t *testing.T) {
 		t.Fatal("oversized element structure was retained")
 	}
 
+	var tooDeep strings.Builder
+	for range maximumElementDepth + 1 {
+		tooDeep.WriteString("<div>")
+	}
+	for range maximumElementDepth + 1 {
+		tooDeep.WriteString("</div>")
+	}
+	if _, _, ok := sanitizeElementAttachment(ElementAttachmentInput{
+		Selector: "div", HTML: tooDeep.String(),
+	}); ok {
+		t.Fatal("element structure beyond the depth limit was retained")
+	}
+
 	if _, _, ok := sanitizeElementAttachment(ElementAttachmentInput{
 		Selector: "div", HTML: `<div><span>`,
 	}); !ok {

@@ -85,6 +85,15 @@ describe('privacy-safe element attachment', () => {
     const root = document.createElement('div')
     for (let index = 0; index < 140; index++) root.append(document.createElement('span'))
     expect(buildSafeElementAttachment(root, styleReader({ display: 'block' }))).toBeNull()
+
+    const tooDeep = document.createElement('div')
+    let current = tooDeep
+    for (let index = 0; index < 12; index++) {
+      const child = document.createElement('div')
+      current.append(child)
+      current = child
+    }
+    expect(buildSafeElementAttachment(tooDeep, styleReader({ display: 'block' }))).toBeNull()
   })
 
   it.each([

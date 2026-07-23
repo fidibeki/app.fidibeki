@@ -2,43 +2,58 @@
 skill: review-chain
 version: 1
 date: 2026-07-23
-status: pending-ci-staging
+status: final
 ---
 
 # Review Chain Report
 
-**Artifact**: Layered public-submission abuse protection (#26)
-**Rounds**: 2 independent specialist reviews plus resolver verification
+**Artifact**: Automatic feedback context privacy (#54)
+**Date**: 2026-07-23
+**Rounds**: 2 independent Claude Sonnet reviews
 
-## Verdict: FIXED LOCALLY
+## Verdict: FIXED
 
 ## Issues Found
 
-| Severity | Location | Problem | Resolution |
-|----------|----------|---------|------------|
-| critical | migrations `65`/`66` | Editing applied migrations would leave upgraded databases without the new lifecycle contract. | Restored the committed files exactly and added forward migrations `68`/`69` with a real version-67 upgrade test. |
-| major | upload lifecycle | Terminal expiry/rejection could precede object cleanup and allow replay redeclaration races. | Added retryable `cleaning`, retained verification ownership through presigned-URL expiry, and sealed redeclaration until cleanup. |
-| major | attachment/replay verification | Signature-marker checks accepted structurally forged media. | Added bounded structural JPEG, MP3, MP4, WebM, RIFF, Ogg, PNG, gzip, JSON, and rrweb validation with malformed/polyglot coverage. |
-| major | verification promotion | Reusable presigned PUTs could overwrite content after verification. | Promote verified bytes to server-owned keys; downstream consumers use only the promoted key. Keys are unique per generation and claim attempt. |
-| major | replay finalization | A concurrent batch declaration could race finalization. | Persist finalization intent, lock the session, seal declarations, and finalize only after every batch is safe. |
-| major | replay merge cleanup | Merge could delete the batch row while its upload URL was still valid, orphaning recreated staging data. | Keep the row until URL expiry, reconcile staging cleanup, then remove the merged batch manifest; recovery covers interruption between those steps. |
-| major | worker performance | Verification buffered large uploads in memory and storage deletion ran inside API transactions. | Stage bounded streams in temporary files, isolate media concurrency, and move object deletion into reconcilers outside request transactions. |
-| major | AI maintenance | Daily usage cleanup lacked a leading date index. | Added `(usage_date, project_id)` in migration `69`. |
-| minor | abuse diagnostics | Buffered aggregation lost the first occurrence timestamp. | Preserve minimum and maximum timestamps and flush both atomically. |
+| # | Severity | Confidence | Location | Problem | Status |
+|---|----------|------------|----------|---------|--------|
+| 1 | major | 9/10 | migration `77` | The historical-origin regex could retain part of credentials containing multiple `@` characters as a hostname. | Fixed with a last-`@` boundary and a destructive sentinel migration fixture. |
+| 2 | minor | 9/10 | feedback/logging tests | DOM context omission, depth-only bounds, and `dom_snapshot_html` log redaction lacked direct coverage. | Fixed with unit and HTTP integration coverage. |
+| 3 | minor | 9/10 | `feedback/validation.go` | A referrer validation branch was unreachable after automatic metadata minimisation. | Fixed by removing the dead branch. |
+| 4 | major | 9/10 | `web/pages/feedback/[id].vue` | Origin-only context remained a clickable page link in the backoffice. | Fixed: origin-only context is plain text; only a specific safe path is linked. |
+
+## Input Quality Assessment
+
+| Input | Rating | Evidence |
+|-------|--------|----------|
+| Product/domain context | Rich | Approved roadmap, issue contract, privacy data map, and replay threat model were available. |
+| Requirements clarity | Precise | The safe-location projection, prohibited fields, downstream boundaries, and migration behavior were explicit. |
+| Upstream artifacts | Fresh | The approved issue #54 design and related privacy documents were written on 2026-07-23. |
 
 ## Simplifications Applied
 
-The implementation reuses the existing Redis GCRA limiter, tenant transactions, Asynq queues,
-storage client, moderation flow, AI generation call, diagnostics ledger, Settings UI, and widget
-error envelope. It adds no personal fingerprinting, second AI call, production path, or parallel
-upload service.
+The widget, API, replay verifier, integrations, and web UI reuse one rule-safe location model.
+The backend rejects or omits unsafe context instead of trying to repair identity-bearing payloads,
+and historical data is reduced to origin rather than guessed from old rules.
 
-## Verification
+## Changes Made
 
-- Migration replay and a real `67 -> 69 -> 67 -> 69` path pass.
-- Full backend tests and the exact 80% internal coverage gate pass.
-- `gofmt`, `go vet`, and `govulncheck` pass with no called vulnerability.
-- Widget typecheck, 117 unit tests, build, and 35 browser journeys pass.
-- Web typecheck, 79 unit tests, build, and the CI-concurrency E2E matrix pass with 129 tests and
-  45 intentional skips.
-- CI and one real staging journey remain before issue closure.
+- Pinned rrweb metadata and navigation events to the server-validated session location at capture,
+  verification, and merge.
+- Remediated historical feedback, funnel, replay, and export data in migration `77`.
+- Added structural DOM limits, log redaction, HTTP boundary tests, migration collision coverage,
+  and positive coverage for every permitted incremental rrweb event.
+- Raised the branch back above the backend CI coverage gate without lowering thresholds.
+- Removed clickable links for origin-only context in notifications and the backoffice.
+
+## Reviewer's Summary
+
+After the fixes, no remaining correctness, privacy, migration, or boundary finding survived
+verification at confidence 8/10 or higher. Widget and Go projections stay aligned through their
+shared contract, and replay URLs are pinned independently at each trust boundary.
+
+## Resolver's Notes
+
+The existing string-prefix targeting semantics were not changed because both runtime
+implementations and the approved product behavior already define `url_prefix` that way. Migration
+rollback intentionally does not restore deleted personal context.

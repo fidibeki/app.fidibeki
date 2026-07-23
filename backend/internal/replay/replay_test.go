@@ -28,10 +28,11 @@ func TestMergeBatchesStreamsOrderedJSONArray(t *testing.T) {
 		"batch-1": []byte(`[{"type":4,"timestamp":3,"data":{"href":"https://example.com/chart"}}]`),
 	}}
 	processor := Processor{Storage: storage}
-	count, err := processor.mergeBatches(context.Background(), "merged", []Batch{
-		{Index: 0, StorageKey: "batch-0", SizeBytes: int64(len(storage.objects["batch-0"])), EventsCount: 2},
-		{Index: 1, StorageKey: "batch-1", SizeBytes: int64(len(storage.objects["batch-1"])), EventsCount: 1},
-	})
+	count, err := processor.mergeBatches(
+		context.Background(), "merged", "https://example.com/chart", []Batch{
+			{Index: 0, StorageKey: "batch-0", SizeBytes: int64(len(storage.objects["batch-0"])), EventsCount: 2},
+			{Index: 1, StorageKey: "batch-1", SizeBytes: int64(len(storage.objects["batch-1"])), EventsCount: 1},
+		})
 	if err != nil {
 		t.Fatalf("mergeBatches() error = %v", err)
 	}
@@ -53,6 +54,12 @@ func TestMergeBatchesRejectsInvalidInput(t *testing.T) {
 	}{
 		{name: "not array", body: `{}`, count: 0, needle: "expected_array"},
 		{name: "invalid event", body: `[{]`, count: 1, needle: "invalid_json"},
+		{
+			name:   "different canonical page",
+			body:   `[{"type":4,"timestamp":1,"data":{"href":"https://example.com/users/jane-private"}}]`,
+			count:  1,
+			needle: "invalid_event",
+		},
 		{name: "wrong count", body: `[{"type":2,"timestamp":1,"data":{"node":{"type":0}}}]`, count: 2, needle: "event_count_mismatch"},
 		{name: "trailing JSON", body: `[] {}`, count: 0, needle: "trailing_json"},
 	}
@@ -60,9 +67,10 @@ func TestMergeBatchesRejectsInvalidInput(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			storage := &memoryReplayStorage{objects: map[string][]byte{"batch": []byte(test.body)}}
 			processor := Processor{Storage: storage}
-			_, err := processor.mergeBatches(context.Background(), "merged", []Batch{{
-				Index: 0, StorageKey: "batch", SizeBytes: int64(len(test.body)), EventsCount: test.count,
-			}})
+			_, err := processor.mergeBatches(
+				context.Background(), "merged", "https://example.com/chart", []Batch{{
+					Index: 0, StorageKey: "batch", SizeBytes: int64(len(test.body)), EventsCount: test.count,
+				}})
 			if err == nil || !strings.Contains(err.Error(), test.needle) {
 				t.Fatalf("mergeBatches() error = %v, want containing %q", err, test.needle)
 			}
@@ -72,9 +80,10 @@ func TestMergeBatchesRejectsInvalidInput(t *testing.T) {
 
 func TestMergeBatchesReportsMissingObject(t *testing.T) {
 	processor := Processor{Storage: &memoryReplayStorage{objects: map[string][]byte{}}}
-	_, err := processor.mergeBatches(context.Background(), "merged", []Batch{{
-		Index: 0, StorageKey: "missing", SizeBytes: 2, EventsCount: 1,
-	}})
+	_, err := processor.mergeBatches(
+		context.Background(), "merged", "https://example.com/chart", []Batch{{
+			Index: 0, StorageKey: "missing", SizeBytes: 2, EventsCount: 1,
+		}})
 	if err == nil || !strings.Contains(err.Error(), "open replay batch") {
 		t.Fatalf("mergeBatches() error = %v", err)
 	}
@@ -85,9 +94,10 @@ func TestMergeBatchesReportsOutputFailure(t *testing.T) {
 	want := errors.New("storage unavailable")
 	storage := &memoryReplayStorage{objects: map[string][]byte{"batch": body}, putErr: want}
 	processor := Processor{Storage: storage}
-	_, err := processor.mergeBatches(context.Background(), "merged", []Batch{{
-		Index: 0, StorageKey: "batch", SizeBytes: int64(len(body)), EventsCount: 1,
-	}})
+	_, err := processor.mergeBatches(
+		context.Background(), "merged", "https://example.com/chart", []Batch{{
+			Index: 0, StorageKey: "batch", SizeBytes: int64(len(body)), EventsCount: 1,
+		}})
 	if !errors.Is(err, want) {
 		t.Fatalf("mergeBatches() error = %v, want %v", err, want)
 	}

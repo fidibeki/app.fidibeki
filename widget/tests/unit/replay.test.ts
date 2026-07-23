@@ -79,7 +79,10 @@ describe('rrweb replay capture', () => {
       emit({ type: 3, timestamp: index + 1, data: { source: 3, id: 1, x: index, y: 0 } })
     }
     window.dispatchEvent(new Event('fidibeki:navigation'))
-    expect(recordMock.addCustomEvent).toHaveBeenCalledWith('navigation', { url: window.location.href })
+    expect(recordMock.addCustomEvent).toHaveBeenCalledWith(
+      'navigation',
+      { url: `${window.location.origin}/` },
+    )
 
     await capture?.stop()
     expect(onError).not.toHaveBeenCalled()
@@ -112,9 +115,13 @@ describe('rrweb replay capture', () => {
     await capture?.stop()
   })
 
-  it('canonicalizes the session page URL and navigation URLs, stripping credentials, query, and hash', async () => {
-    window.history.replaceState({}, '', '/checkout?token=secret&email=jane.doe%40example.com#fragment-secret')
-    const expectedCanonicalURL = `${window.location.origin}/checkout`
+  it('projects session and navigation URLs to the configured safe prefix', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/accounts/jane-private/orders/48291?token=secret&email=jane.doe%40example.com#fragment-secret',
+    )
+    const expectedSafeURL = `${window.location.origin}/accounts`
     const requests: Array<{ url: string; init: RequestInit }> = []
     vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo, init: RequestInit = {}) => {
       const url = input.toString()
@@ -126,21 +133,28 @@ describe('rrweb replay capture', () => {
       throw new Error(`unexpected request ${url}`)
     }))
     const capture = await startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule({
+        matcher_type: 'url_prefix',
+        matcher_value: expectedSafeURL,
+      }),
+      publicKey: 'key',
+      apiBase: new URL('https://widget.example/v1/'),
     })
     const sessionRequest = requests.find(({ url }) => url.endsWith('/replay/sessions?key=key'))
     const sessionBody = JSON.parse(String(sessionRequest?.init.body)) as { page_url: string }
-    expect(sessionBody.page_url).toBe(expectedCanonicalURL)
+    expect(sessionBody.page_url).toBe(expectedSafeURL)
     expect(sessionBody.page_url).not.toContain('token')
     expect(sessionBody.page_url).not.toContain('jane.doe')
+    expect(sessionBody.page_url).not.toContain('jane-private')
+    expect(sessionBody.page_url).not.toContain('48291')
     expect(sessionBody.page_url).not.toContain('fragment-secret')
 
     window.dispatchEvent(new Event('fidibeki:navigation'))
-    expect(recordMock.addCustomEvent).toHaveBeenCalledWith('navigation', { url: expectedCanonicalURL })
+    expect(recordMock.addCustomEvent).toHaveBeenCalledWith('navigation', { url: expectedSafeURL })
     await capture?.stop()
   })
 
-  it('drops the navigation custom event instead of emitting an uncanonicalizable URL', async () => {
+  it('pins navigation events to the safe session location', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
       const url = input.toString()
       if (url.endsWith('/replay/sessions?key=key')) {
@@ -153,8 +167,13 @@ describe('rrweb replay capture', () => {
     })
     // afterEach() calls vi.unstubAllGlobals(), so this override does not leak into later tests.
     vi.stubGlobal('location', { href: 'not a valid url' })
+    recordMock.addCustomEvent.mockClear()
     window.dispatchEvent(new Event('fidibeki:navigation'))
-    expect(recordMock.addCustomEvent).not.toHaveBeenCalled()
+    expect(recordMock.addCustomEvent).toHaveBeenCalledTimes(1)
+    expect(recordMock.addCustomEvent).toHaveBeenCalledWith(
+      'navigation',
+      { url: 'http://localhost:3000/' },
+    )
     await capture?.stop()
   })
 
