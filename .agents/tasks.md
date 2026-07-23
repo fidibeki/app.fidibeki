@@ -335,13 +335,22 @@ isolation, and refresh propagation; the full package test and `go vet` pass.
 ## Task 21: SSR-Safe Localization Runtime
 
 **Depends on:** Task 20
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Nuxt resolves reactive no-prefix locales through member, organization, browser, and
 English precedence.
 
 **Acceptance:** Unit/browser tests prove Portuguese fallback, matching SSR hydration, and reactive
 `lang`/`dir`.
+
+**Completion:** Nuxt now uses `@nuxtjs/i18n` with unchanged `no_prefix` routes and lazy English,
+Portuguese, regional Portuguese, and pseudo-locale catalogs. A shared regional context resolves
+locale and timezone independently through member, organization, browser, and safe defaults; SSR
+uses `Accept-Language` plus first-party browser cookies and defers first-client detection until
+mount. The auth middleware applies the resolved locale before render, catalog switching is atomic,
+and root `lang`/`dir` attributes react to preference changes. Unit normalization/precedence tests,
+typecheck, production build, 139 full browser tests with CI-equivalent concurrency, and four
+production-build SSR/hydration tests pass across desktop and mobile.
 
 **Autonomy:** AFK
 

@@ -24,6 +24,8 @@ export interface Member {
   email: string
   name?: string | null
   avatar_version?: string | null
+  locale?: string | null
+  timezone?: string | null
   permissions: string[]
   status: 'active' | 'deactivated' | 'removed'
   role: 'owner' | 'member'
