@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { proxyHostForRequest } from '../../server/utils/proxy-host'
 
 describe('proxyHostForRequest', () => {
-  it('uses the trusted platform host only for the public catalog and signup', () => {
+  it('uses the trusted platform host for platform-scoped public requests', () => {
     expect(proxyHostForRequest('GET', '/v1/plans', 'staging.fidibeki.com', 'staging.fidibeki.com'))
       .toBe('api.staging.fidibeki.com')
     expect(proxyHostForRequest('POST', '/v1/signup', 'staging.fidibeki.com', 'staging.fidibeki.com'))
       .toBe('api.staging.fidibeki.com')
+    expect(proxyHostForRequest(
+      'GET',
+      '/v1/public/workspace-logo/tenant-id/version/64.png',
+      'acme.staging.fidibeki.com',
+      'staging.fidibeki.com',
+    )).toBe('api.staging.fidibeki.com')
   })
 
   it('preserves tenant routing for every other method and path', () => {
@@ -16,5 +22,17 @@ describe('proxyHostForRequest', () => {
       .toBe('acme.staging.fidibeki.com')
     expect(proxyHostForRequest('POST', '/v1/plans', 'acme.staging.fidibeki.com', 'staging.fidibeki.com'))
       .toBe('acme.staging.fidibeki.com')
+    expect(proxyHostForRequest(
+      'POST',
+      '/v1/public/workspace-logo/tenant-id/version/64.png',
+      'acme.staging.fidibeki.com',
+      'staging.fidibeki.com',
+    )).toBe('acme.staging.fidibeki.com')
+    expect(proxyHostForRequest(
+      'GET',
+      '/v1/public/workspace-logos',
+      'acme.staging.fidibeki.com',
+      'staging.fidibeki.com',
+    )).toBe('acme.staging.fidibeki.com')
   })
 })
