@@ -57,7 +57,7 @@ CREATE INDEX idx_reporter_privacy_requests_awaiting_review
 -- documented decision instead of silently keeping a false "completed" status.
 WITH legacy AS (
     UPDATE reporter_privacy_requests
-    SET status = 'awaiting_manual_review'
+    SET status = 'awaiting_manual_review', completed_at = NULL
     WHERE action = 'anonymize' AND status = 'completed' AND manual_review_count > 0
     RETURNING id, tenant_id
 ), reopened_jobs AS (

@@ -959,9 +959,41 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		t.Fatalf("retained_exception comment body = %q, error=%v", commentBodyAfterDecision, err)
 	}
 
-	completed, pending, err := store.FinalizeReporterAnonymization(ctx, database, tenantID, anonymizeRequest.ID, now)
-	if err != nil || !completed || pending != 0 {
-		t.Fatalf("finalize reporter anonymization = completed=%t pending=%d error=%v", completed, pending, err)
+	barrier := &finalizeBarrierQuerier{
+		Querier: database,
+		ready:   make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	type finalizeResult struct {
+		completed bool
+		pending   int
+		err       error
+	}
+	results := make(chan finalizeResult, 2)
+	for range 2 {
+		go func() {
+			completed, pending, err := store.FinalizeReporterAnonymization(
+				ctx, barrier, tenantID, anonymizeRequest.ID, now,
+			)
+			results <- finalizeResult{completed: completed, pending: pending, err: err}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-barrier.ready:
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent reporter finalizations did not reach completion barrier")
+		}
+	}
+	close(barrier.release)
+	for range 2 {
+		result := <-results
+		if result.err != nil || !result.completed || result.pending != 0 {
+			t.Fatalf(
+				"concurrent finalize reporter anonymization = completed=%t pending=%d error=%v",
+				result.completed, result.pending, result.err,
+			)
+		}
 	}
 	if completed, pending, err := store.FinalizeReporterAnonymization(
 		ctx, database, tenantID, anonymizeRequest.ID, now,
@@ -978,6 +1010,24 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	if err != nil || finalJob.Status != JobCompleted || finalJob.CompletedAt == nil {
 		t.Fatalf("completed anonymization job = %#v, error=%v", finalJob, err)
 	}
+}
+
+type finalizeBarrierQuerier struct {
+	db.Querier
+	ready   chan struct{}
+	release chan struct{}
+}
+
+func (query *finalizeBarrierQuerier) QueryRow(
+	ctx context.Context,
+	statement string,
+	arguments ...any,
+) pgx.Row {
+	if strings.Contains(statement, "WITH completed_job AS") {
+		query.ready <- struct{}{}
+		<-query.release
+	}
+	return query.Querier.QueryRow(ctx, statement, arguments...)
 }
 
 func reporterRequestJob(

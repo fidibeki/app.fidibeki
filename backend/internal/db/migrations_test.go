@@ -2251,6 +2251,77 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("context privacy cleanup index = %v, error = %v", contextCleanupIndex, err)
 	}
 
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply reporter privacy review queue migration: %v", err)
+	}
+	var legacyReviewRequestID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO reporter_privacy_requests (
+			tenant_id, action, status, reporter_email, email_digest, token_hash,
+			verification_expires_at, verified_at, access_expires_at, completed_at,
+			record_count, manual_review_count
+		) VALUES (
+			$1, 'anonymize', 'completed', NULL, digest('legacy-review-email', 'sha256'),
+			digest('legacy-review-token', 'sha256'), now() + interval '1 day',
+			now() - interval '2 hours', now() + interval '30 days',
+			now() - interval '1 hour', 1, 1
+		)
+		RETURNING id
+	`, tenantA).Scan(&legacyReviewRequestID); err != nil {
+		t.Fatalf("seed legacy completed reporter privacy request: %v", err)
+	}
+	var legacyReviewJobID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO privacy_jobs (
+			tenant_id, kind, status, actor_member_id, reporter_request_id,
+			started_at, heartbeat_at, completed_at, expires_at, object_size_bytes
+		) VALUES (
+			$1, 'reporter_anonymize', 'completed', $2, $3,
+			now() - interval '2 hours', now() - interval '1 hour',
+			now() - interval '1 hour', now() + interval '7 days', 0
+		)
+		RETURNING id
+	`, tenantA, memberA, legacyReviewRequestID).Scan(&legacyReviewJobID); err != nil {
+		t.Fatalf("seed legacy completed reporter privacy job: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply reporter privacy review lifecycle migration: %v", err)
+	}
+	var legacyRequestStatus, legacyJobStatus string
+	var legacyRequestCompletedAt, legacyJobCompletedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, completed_at
+		FROM reporter_privacy_requests
+		WHERE id = $1
+	`, legacyReviewRequestID).Scan(&legacyRequestStatus, &legacyRequestCompletedAt); err != nil {
+		t.Fatalf("read reconciled reporter privacy request: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, completed_at
+		FROM privacy_jobs
+		WHERE id = $1
+	`, legacyReviewJobID).Scan(&legacyJobStatus, &legacyJobCompletedAt); err != nil {
+		t.Fatalf("read reconciled reporter privacy job: %v", err)
+	}
+	if legacyRequestStatus != "awaiting_manual_review" || legacyRequestCompletedAt != nil ||
+		legacyJobStatus != "awaiting_manual_review" || legacyJobCompletedAt != nil {
+		t.Fatalf(
+			"legacy privacy reconciliation = request %q/%v job %q/%v",
+			legacyRequestStatus, legacyRequestCompletedAt, legacyJobStatus, legacyJobCompletedAt,
+		)
+	}
+	var legacyReviewItems int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM reporter_privacy_review_items
+		WHERE tenant_id = $1 AND reporter_request_id = $2
+		  AND privacy_job_id = $3 AND resource_type = 'legacy_unlinked'
+		  AND status = 'pending'
+	`, tenantA, legacyReviewRequestID, legacyReviewJobID).Scan(&legacyReviewItems); err != nil ||
+		legacyReviewItems != 1 {
+		t.Fatalf("legacy privacy review items = %d, error = %v", legacyReviewItems, err)
+	}
+
 	pools.Close()
 	if err := migrator.Down(); err != nil {
 		t.Fatalf("migrate down: %v", err)

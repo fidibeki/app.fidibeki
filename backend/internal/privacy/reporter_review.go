@@ -313,6 +313,18 @@ func (Store) FinalizeReporterAnonymization(
 		SELECT completed_request.id FROM completed_request
 	`, tenantID, requestID, now.UTC()).Scan(&completedID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if statusErr := query.QueryRow(ctx, `
+			SELECT status
+			FROM reporter_privacy_requests
+			WHERE tenant_id = $1 AND id = $2
+		`, tenantID, requestID).Scan(&status); statusErr == nil && status == ReporterCompleted {
+			return true, 0, nil
+		} else if statusErr != nil && !errors.Is(statusErr, pgx.ErrNoRows) {
+			return false, 0, fmt.Errorf(
+				"recheck reporter anonymization after concurrent completion: %w",
+				statusErr,
+			)
+		}
 		return false, 0, ErrJobUnavailable
 	}
 	if err != nil {

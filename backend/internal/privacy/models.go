@@ -62,7 +62,6 @@ var (
 	ErrInvalidRequest      = errors.New("privacy request is invalid")
 	ErrReviewItemDecided   = errors.New("privacy review item is already decided")
 	ErrReviewReasonMissing = errors.New("privacy review decision requires a reason")
-	ErrReviewPending       = errors.New("privacy review has pending items")
 )
 
 type Job struct {
