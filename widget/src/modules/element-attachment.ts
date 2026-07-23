@@ -29,6 +29,7 @@ const allowedStyleKeywords = new Set([
 const maximumNodes = 128
 const maximumDepth = 12
 const maximumSelectorSegments = 6
+const maximumStyleScalar = 10_000
 
 export function chooseElement(excludedHost: HTMLElement): Promise<ElementAttachment | null> {
   return new Promise((resolve) => {
@@ -102,7 +103,10 @@ export function sanitizeCapturedStyle(input: string): string | null {
     return value
   }
   const length = String.raw`-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|%|em|rem|vh|vw)?`
-  if (new RegExp(`^${length}(?:\\s+${length}){0,3}$`).test(value)) return value
+  if (new RegExp(`^${length}(?:\\s+${length}){0,3}$`).test(value)) {
+    const numbers = value.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/g) ?? []
+    if (numbers.every(number => Math.abs(Number(number)) <= maximumStyleScalar)) return value
+  }
   return null
 }
 

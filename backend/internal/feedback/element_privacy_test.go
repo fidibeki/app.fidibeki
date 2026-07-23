@@ -87,6 +87,8 @@ func TestSanitizeElementStyleValueMatchesWidgetPolicy(t *testing.T) {
 	t.Parallel()
 	tests := map[string]bool{
 		"12px": true, "rgb(1, 2, 3)": true, "solid": true,
+		"10000px": true,
+		"48291px": false,
 		"url(https://private.example/avatar.png)":            false,
 		"var(--customer-secret)":                             false,
 		`"Jane Private"`:                                     false,

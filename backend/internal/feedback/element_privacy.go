@@ -3,7 +3,9 @@ package feedback
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -13,6 +15,7 @@ import (
 const (
 	maximumElementNodes = 128
 	maximumElementDepth = 12
+	maximumStyleScalar  = 10000
 )
 
 var (
@@ -62,6 +65,7 @@ var (
 		`^-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|%|em|rem|vh|vw)?` +
 			`(?:\s+-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|%|em|rem|vh|vw)?){0,3}$`,
 	)
+	elementStyleNumberPattern = regexp.MustCompile(`-?(?:\d+(?:\.\d+)?|\.\d+)`)
 )
 
 func sanitizeElementAttachment(input ElementAttachmentInput) (string, string, bool) {
@@ -164,8 +168,16 @@ func sanitizeElementStyleValue(input string) (string, bool) {
 	if _, allowed := allowedElementStyleKeywords[value]; allowed {
 		return value, true
 	}
-	if elementStyleHexPattern.MatchString(value) || elementStyleRGBPattern.MatchString(value) ||
-		elementStyleLengthPattern.MatchString(value) {
+	if elementStyleHexPattern.MatchString(value) || elementStyleRGBPattern.MatchString(value) {
+		return value, true
+	}
+	if elementStyleLengthPattern.MatchString(value) {
+		for _, rawNumber := range elementStyleNumberPattern.FindAllString(value, -1) {
+			number, err := strconv.ParseFloat(rawNumber, 64)
+			if err != nil || math.Abs(number) > maximumStyleScalar {
+				return "", false
+			}
+		}
 		return value, true
 	}
 	return "", false

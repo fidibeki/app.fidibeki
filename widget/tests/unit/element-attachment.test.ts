@@ -89,6 +89,8 @@ describe('privacy-safe element attachment', () => {
 
   it.each([
     ['12px', '12px'],
+    ['10000px', '10000px'],
+    ['48291px', null],
     ['rgb(1, 2, 3)', 'rgb(1, 2, 3)'],
     ['solid', 'solid'],
     ['url(https://private.example/avatar.png)', null],
