@@ -34,8 +34,6 @@ export const portugueseMessages = {
       unlinked: 'Sem issue',
       archived: 'Arquivados',
     },
-    attentionQueue: 'Fila de atenção',
-    attentionDescription: 'Os sinais da IA e de moderação permanecem visíveis aqui.',
     deletionPending: 'Este workspace aguarda eliminação e está em modo de leitura.',
     reviewDeletion: 'Rever eliminação',
   },

@@ -225,46 +225,54 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
               <h3>{{ t('profile.regionalTitle') }}</h3>
               <p>{{ t('profile.regionalDescription') }}</p>
             </div>
-            <div class="profile-field">
-              <label for="profile-language">{{ t('profile.language') }}</label>
-              <select id="profile-language" v-model="locale" class="app-select">
-                <option value="">{{ t('profile.languageInherit') }}</option>
-                <option value="en">{{ t('profile.languages.en') }}</option>
-                <option value="pt">{{ t('profile.languages.pt') }}</option>
-                <option value="pt-AO">{{ t('profile.languages.ptAO') }}</option>
-                <option value="pt-PT">{{ t('profile.languages.ptPT') }}</option>
-                <option v-if="locale === 'en-XA'" value="en-XA">{{ t('profile.languages.pseudo') }}</option>
-              </select>
-              <small>{{ t('profile.effectivePreference', {
-                value: languageLabel(regional.effectiveLocale.value),
-                source: sourceLabel(regional.localeSource.value),
-              }) }}</small>
-              <small v-if="fields.locale" class="profile-field-error">{{ fields.locale }}</small>
-            </div>
-            <div class="profile-field">
-              <label for="profile-timezone">{{ t('profile.timezone') }}</label>
-              <label class="profile-checkbox">
-                <input v-model="inheritTimezone" type="checkbox" @change="updateTimezoneMode" />
-                <span>{{ t('profile.timezoneInherit') }}</span>
-              </label>
-              <input
-                id="profile-timezone"
-                v-model="timezone"
-                class="app-input"
-                list="profile-timezones"
-                maxlength="100"
-                :required="!inheritTimezone"
-                :disabled="inheritTimezone"
-                :placeholder="t('profile.timezonePlaceholder')"
-              />
-              <datalist id="profile-timezones">
-                <option v-for="suggestion in timezoneSuggestions" :key="suggestion" :value="suggestion" />
-              </datalist>
-              <small>{{ t('profile.effectivePreference', {
-                value: regional.timezone.value,
-                source: sourceLabel(regional.timezoneSource.value),
-              }) }}</small>
-              <small v-if="fields.timezone" class="profile-field-error">{{ fields.timezone }}</small>
+            <div class="profile-regional-grid">
+              <div class="profile-field profile-preference">
+                <label for="profile-language">{{ t('profile.language') }}</label>
+                <select
+                  id="profile-language"
+                  v-model="locale"
+                  class="app-select"
+                  aria-describedby="profile-language-status"
+                >
+                  <option value="">{{ t('profile.languageInherit') }}</option>
+                  <option value="en">{{ t('profile.languages.en') }}</option>
+                  <option value="pt">{{ t('profile.languages.pt') }}</option>
+                  <option value="pt-AO">{{ t('profile.languages.ptAO') }}</option>
+                  <option value="pt-PT">{{ t('profile.languages.ptPT') }}</option>
+                  <option v-if="locale === 'en-XA'" value="en-XA">{{ t('profile.languages.pseudo') }}</option>
+                </select>
+                <small id="profile-language-status" class="profile-preference-status">{{ t('profile.effectivePreference', {
+                  value: languageLabel(regional.effectiveLocale.value),
+                  source: sourceLabel(regional.localeSource.value),
+                }) }}</small>
+                <small v-if="fields.locale" class="profile-field-error">{{ fields.locale }}</small>
+              </div>
+              <div class="profile-field profile-preference">
+                <label for="profile-timezone">{{ t('profile.timezone') }}</label>
+                <input
+                  id="profile-timezone"
+                  v-model="timezone"
+                  class="app-input"
+                  list="profile-timezones"
+                  maxlength="100"
+                  :required="!inheritTimezone"
+                  :disabled="inheritTimezone"
+                  aria-describedby="profile-timezone-mode profile-timezone-status"
+                  :placeholder="t('profile.timezonePlaceholder')"
+                />
+                <datalist id="profile-timezones">
+                  <option v-for="suggestion in timezoneSuggestions" :key="suggestion" :value="suggestion" />
+                </datalist>
+                <label id="profile-timezone-mode" class="profile-checkbox">
+                  <input v-model="inheritTimezone" type="checkbox" @change="updateTimezoneMode" />
+                  <span>{{ t('profile.timezoneInherit') }}</span>
+                </label>
+                <small id="profile-timezone-status" class="profile-preference-status">{{ t('profile.effectivePreference', {
+                  value: regional.timezone.value,
+                  source: sourceLabel(regional.timezoneSource.value),
+                }) }}</small>
+                <small v-if="fields.timezone" class="profile-field-error">{{ fields.timezone }}</small>
+              </div>
             </div>
           </fieldset>
           <div class="profile-form-footer">
@@ -367,6 +375,30 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   flex-direction: column;
   gap: 6px;
 }
+.profile-regional-grid {
+  display: grid;
+  width: 100%;
+  max-width: 640px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.profile-preference {
+  min-width: 0;
+}
+.profile-preference > .app-input,
+.profile-preference > .app-select {
+  width: 100%;
+  min-height: 38px;
+}
+.profile-preference > .app-input:disabled {
+  background: #eef1f0;
+  color: var(--muted);
+  border-color: var(--line);
+  cursor: not-allowed;
+  opacity: 1;
+}
 .profile-field > label:first-child {
   color: var(--ink-soft);
   font-size: 10px;
@@ -383,6 +415,7 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   font-weight: 650;
 }
 .profile-checkbox input {
+  flex: 0 0 auto;
   width: 14px;
   height: 14px;
   margin: 0;
@@ -394,6 +427,9 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   font-size: 9px;
   font-weight: 500;
   line-height: 1.4;
+}
+.profile-preference-status {
+  min-height: 26px;
 }
 .profile-section-heading {
   grid-column: 1 / -1;
@@ -478,6 +514,10 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   }
   .profile-body dl {
     grid-column: auto;
+  }
+  .profile-regional-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
   }
   .profile-form-footer {
     align-items: stretch;

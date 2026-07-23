@@ -34,8 +34,6 @@ export const englishMessages = {
       unlinked: 'Unlinked',
       archived: 'Archived',
     },
-    attentionQueue: 'Attention queue',
-    attentionDescription: 'AI and moderation signals stay visible here.',
     deletionPending: 'This workspace is pending deletion and is read-only.',
     reviewDeletion: 'Review deletion',
   },

@@ -1,6 +1,6 @@
 .app-shell {
   --app-topbar: 56px;
-  --app-global-rail: 64px;
+  --app-global-rail: 80px;
   --app-queue-rail: 216px;
   display: grid;
   min-height: 100vh;
@@ -287,22 +287,27 @@
 }
 
 .app-global-rail nav a {
-  display: flex;
+  display: grid;
   width: 100%;
-  min-height: 50px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 3px;
-  padding: 4px;
+  min-height: 54px;
+  grid-template-rows: 20px minmax(20px, auto);
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  padding: 5px 4px;
   color: var(--muted);
   border-radius: 5px;
+  text-align: center;
   text-decoration: none;
 }
 
 .app-global-rail nav a span {
+  min-width: 0;
+  max-width: 100%;
   font-size: 9px;
   font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: break-word;
 }
 
 .app-global-rail nav a:hover,
@@ -364,34 +369,6 @@
 .app-queue-rail nav a[data-active='true'] {
   background: #e6efec;
   color: var(--teal);
-}
-
-.app-queue-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 18px;
-  padding: 10px 8px;
-  color: var(--amber);
-  border-top: 1px solid var(--line);
-}
-
-.app-queue-note p {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-}
-
-.app-queue-note b {
-  color: var(--ink-soft);
-  font-size: 11px;
-}
-
-.app-queue-note span {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.45;
 }
 
 .app-main {
@@ -830,14 +807,17 @@
   }
 
   .app-global-rail nav a {
+    grid-template-columns: 20px minmax(0, 1fr);
+    grid-template-rows: 1fr;
+    justify-items: start;
     min-height: 44px;
-    justify-content: flex-start;
-    flex-direction: row;
     gap: 12px;
     padding: 0 12px;
+    text-align: left;
   }
 
   .app-global-rail nav a span {
+    overflow-wrap: normal;
     font-size: 12px;
   }
 

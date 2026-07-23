@@ -191,10 +191,6 @@ watch(
           <span>{{ t(item.labelKey) }}</span>
         </NuxtLink>
       </nav>
-      <div class="app-queue-note">
-        <CircleAlert :size="15" />
-        <p><b>{{ t('navigation.attentionQueue') }}</b><span>{{ t('navigation.attentionDescription') }}</span></p>
-      </div>
     </aside>
 
     <div v-if="tenant?.deletion_requested_at" class="app-readonly-banner" role="status" :inert="mobileNavOpen">

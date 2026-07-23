@@ -1974,9 +1974,29 @@ test('member profile switches regional preferences immediately and persists inhe
   await page.locator('.app-account-menu summary').click()
   await page.getByRole('link', { name: 'Profile', exact: true }).click()
 
+  const regionalPreferences = page.locator('.profile-regional-grid')
+  const timezoneInput = page.getByLabel('Timezone', { exact: true })
+  await expect(regionalPreferences).toBeVisible()
+  await expect(timezoneInput).toBeDisabled()
+  const preferenceGeometry = await regionalPreferences.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const controls = [...element.querySelectorAll('select, input.app-input')]
+      .map(control => control.getBoundingClientRect())
+    return {
+      left: rect.left,
+      right: rect.right,
+      viewport: document.documentElement.clientWidth,
+      controlHeights: controls.map(control => control.height),
+    }
+  })
+  expect(preferenceGeometry.left).toBeGreaterThanOrEqual(0)
+  expect(preferenceGeometry.right).toBeLessThanOrEqual(preferenceGeometry.viewport + 1)
+  expect(Math.max(...preferenceGeometry.controlHeights) - Math.min(...preferenceGeometry.controlHeights)).toBeLessThanOrEqual(1)
+
   await page.getByLabel('Language', { exact: true }).selectOption('pt-AO')
   await page.getByLabel('Inherit workspace/browser timezone').uncheck()
-  await page.getByLabel('Timezone', { exact: true }).fill('Africa/Luanda')
+  await expect(timezoneInput).toBeEnabled()
+  await timezoneInput.fill('Africa/Luanda')
   await page.getByRole('button', { name: 'Save profile' }).click()
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-AO')
@@ -2014,7 +2034,53 @@ test('member profile switches regional preferences immediately and persists inhe
   await expect(page.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible()
   await expect(page.getByLabel('Language', { exact: true })).toHaveValue('')
   await expect(page.getByLabel('Inherit workspace/browser timezone')).toBeChecked()
+  await expect(page.getByLabel('Timezone', { exact: true })).toBeDisabled()
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+})
+
+test('localized navigation contains active labels and removes the static attention note', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.member.locale = 'pt-AO'
+  await installMockAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=test-token`)
+  await expect(page.getByRole('heading', { name: /Boa tarde/ })).toBeVisible()
+
+  if (testInfo.project.name === 'mobile') {
+    await page.getByTitle('Abrir navegação').click()
+  }
+  let navigation = page.getByRole('navigation', { name: 'Navegação principal' })
+  await navigation.getByRole('link', { name: 'Notificações', exact: true }).click()
+  await expect(page).toHaveURL(/\/notifications(?:\?|$)/)
+  if (testInfo.project.name === 'mobile') {
+    await page.getByTitle('Abrir navegação').click()
+  }
+  navigation = page.getByRole('navigation', { name: 'Navegação principal' })
+  const notifications = navigation.getByRole('link', { name: 'Notificações', exact: true })
+  await expect(notifications).toHaveAttribute('data-active', 'true')
+  const geometry = await notifications.evaluate((element) => {
+    const item = element.getBoundingClientRect()
+    const rail = element.closest('.app-global-rail')!.getBoundingClientRect()
+    const icon = element.querySelector('svg')!.getBoundingClientRect()
+    const label = element.querySelector('span')!.getBoundingClientRect()
+    return {
+      item: { left: item.left, right: item.right },
+      rail: { left: rail.left, right: rail.right },
+      icon: { left: icon.left, right: icon.right },
+      label: { left: label.left, right: label.right },
+    }
+  })
+  expect(geometry.item.left).toBeGreaterThanOrEqual(geometry.rail.left)
+  expect(geometry.item.right).toBeLessThanOrEqual(geometry.rail.right + 1)
+  expect(geometry.icon.left).toBeGreaterThanOrEqual(geometry.item.left)
+  expect(geometry.icon.right).toBeLessThanOrEqual(geometry.item.right + 1)
+  expect(geometry.label.left).toBeGreaterThanOrEqual(geometry.item.left)
+  expect(geometry.label.right).toBeLessThanOrEqual(geometry.item.right + 1)
+  await capture(page, testInfo, `localized-navigation-${testInfo.project.name}`)
+
+  await navigation.getByRole('link', { name: 'Feedback', exact: true }).click()
+  await expect(page).toHaveURL(/\/feedback(?:\?|$)/)
+  await expect(page.locator('.app-queue-note')).toHaveCount(0)
+  await expect(page.getByText('Os sinais da IA e de moderação permanecem visíveis aqui.')).toHaveCount(0)
 })
 
 test('widget appearance controls fit the mobile editor', async ({ page }, testInfo) => {
