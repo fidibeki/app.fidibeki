@@ -192,8 +192,7 @@ func normalizeSubmission(input SubmissionRequest) SubmissionValues {
 		Text:            trimOptional(input.Text), Comment: trimOptional(input.Comment),
 		Responses: "{}", ReporterEmail: lowerOptional(input.ReporterEmail),
 		NotifyReporter: input.NotifyReporter, PageURL: strings.TrimSpace(input.Metadata.URL),
-		Referrer: trimString(input.Metadata.Referrer), UserAgent: trimString(input.Metadata.UserAgent),
-		OS: trimString(input.Metadata.OS), Browser: trimString(input.Metadata.Browser),
+		Referrer: nil, UserAgent: nil, OS: trimString(input.Metadata.OS), Browser: trimString(input.Metadata.Browser),
 		Device: trimString(input.Metadata.Device), Language: trimString(input.Metadata.Language),
 		Attachments: make([]AttachmentValues, len(input.Attachments)),
 	}
