@@ -10,6 +10,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type feedbackIssueState struct {
 	ReporterEmail        *string
 	NotifyReporter       bool
 	ConsentGrantedAt     *time.Time
+	ConsentWithdrawnAt   *time.Time
 	ConsentPurpose       *string
 	ConsentNoticeVersion *string
 	ConsentLocale        *string
@@ -357,7 +359,7 @@ func (store Store) CreateFromFeedback(
 ) (Issue, error) {
 	rows, err := query.Query(ctx, `
 		SELECT id, project_id, issue_id, reporter_email, notify_reporter,
-		       reporter_consent_granted_at,
+		       reporter_consent_granted_at, reporter_consent_withdrawn_at,
 		       reporter_consent_purpose, reporter_consent_notice_version,
 		       reporter_consent_locale, reporter_consent_source,
 		       priority, ai_priority, assignee_id, description, text, text_cleaned,
@@ -376,7 +378,7 @@ func (store Store) CreateFromFeedback(
 		var state feedbackIssueState
 		if err := rows.Scan(
 			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
-			&state.NotifyReporter, &state.ConsentGrantedAt,
+			&state.NotifyReporter, &state.ConsentGrantedAt, &state.ConsentWithdrawnAt,
 			&state.ConsentPurpose, &state.ConsentNoticeVersion,
 			&state.ConsentLocale, &state.ConsentSource,
 			&state.Priority, &state.AIPriority, &state.AssigneeID,
@@ -607,26 +609,45 @@ type consensusReporter struct {
 }
 
 func consensusFeedbackReporter(states []feedbackIssueState) consensusReporter {
-	if len(states) == 0 || !states[0].NotifyReporter || states[0].ReporterEmail == nil {
+	if len(states) == 0 || !activeFeedbackReporterConsent(states[0]) {
 		return consensusReporter{}
 	}
-	candidate := *states[0].ReporterEmail
-	grantedAt := states[0].ConsentGrantedAt
+	first := states[0]
+	candidate := *first.ReporterEmail
+	grantedAt := first.ConsentGrantedAt
 	for _, state := range states[1:] {
-		if !state.NotifyReporter || state.ReporterEmail == nil ||
-			!strings.EqualFold(*state.ReporterEmail, candidate) {
+		if !activeFeedbackReporterConsent(state) ||
+			!strings.EqualFold(*state.ReporterEmail, candidate) ||
+			*state.ConsentPurpose != *first.ConsentPurpose ||
+			*state.ConsentNoticeVersion != *first.ConsentNoticeVersion ||
+			!strings.EqualFold(*state.ConsentLocale, *first.ConsentLocale) ||
+			*state.ConsentSource != *first.ConsentSource {
 			return consensusReporter{}
 		}
-		if state.ConsentGrantedAt != nil && (grantedAt == nil || state.ConsentGrantedAt.Before(*grantedAt)) {
+		if state.ConsentGrantedAt.Before(*grantedAt) {
 			grantedAt = state.ConsentGrantedAt
 		}
 	}
-	first := states[0]
 	return consensusReporter{
 		Email: &candidate, NotifyReporter: true, ConsentGrantedAt: grantedAt,
 		ConsentPurpose: first.ConsentPurpose, ConsentNoticeVersion: first.ConsentNoticeVersion,
 		ConsentLocale: first.ConsentLocale, ConsentSource: first.ConsentSource,
 	}
+}
+
+func activeFeedbackReporterConsent(state feedbackIssueState) bool {
+	return state.NotifyReporter &&
+		state.ReporterEmail != nil &&
+		state.ConsentGrantedAt != nil &&
+		state.ConsentWithdrawnAt == nil &&
+		state.ConsentPurpose != nil &&
+		*state.ConsentPurpose == feedback.ReporterConsentPurposeFeedbackUpdates &&
+		state.ConsentNoticeVersion != nil &&
+		*state.ConsentNoticeVersion == feedback.ReporterConsentNoticeVersion &&
+		state.ConsentLocale != nil &&
+		feedback.SupportedReporterConsentLocale(*state.ConsentLocale) &&
+		state.ConsentSource != nil &&
+		*state.ConsentSource == feedback.ReporterConsentSourceWidget
 }
 
 func feedbackTagUnion(

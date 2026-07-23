@@ -27,6 +27,9 @@ const (
 // Any other purpose value is an unknown/contradictory payload and is rejected.
 const ReporterConsentPurposeFeedbackUpdates = "feedback_updates"
 
+// ReporterConsentNoticeVersion is the consent notice revision currently accepted by the API.
+const ReporterConsentNoticeVersion = "2026-07"
+
 // ReporterConsentSourceWidget identifies the widget submission flow as the origin of a consent
 // grant. It is assigned by the server, never accepted from the client.
 const ReporterConsentSourceWidget = "widget_submission"
@@ -34,7 +37,7 @@ const ReporterConsentSourceWidget = "widget_submission"
 // reporterConsentNoticeVersions are the notice/copy revisions the backend currently recognizes.
 // Submissions asserting any other version are rejected as unknown so a future notice-copy change
 // can be rolled out without silently accepting evidence for a notice the reporter never saw.
-var reporterConsentNoticeVersions = set("2026-07")
+var reporterConsentNoticeVersions = set(ReporterConsentNoticeVersion)
 
 var localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
@@ -166,8 +169,8 @@ func validateReporterConsent(input SubmissionRequest, values *SubmissionValues) 
 		fields = append(fields, field("consent.notice_version", "is not a supported notice version"))
 	}
 	locale := strings.TrimSpace(input.Consent.Locale)
-	if locale == "" || len(locale) > maxLocaleLength || !localePattern.MatchString(locale) {
-		fields = append(fields, field("consent.locale", "must be a valid locale identifier"))
+	if !SupportedReporterConsentLocale(locale) {
+		fields = append(fields, field("consent.locale", "must identify a supported locale"))
 	}
 	if len(fields) == 0 {
 		source := ReporterConsentSourceWidget
@@ -177,6 +180,20 @@ func validateReporterConsent(input SubmissionRequest, values *SubmissionValues) 
 		values.ReporterConsentSource = &source
 	}
 	return fields
+}
+
+// SupportedReporterConsentLocale reports whether the consent notice exists for this locale.
+func SupportedReporterConsentLocale(locale string) bool {
+	locale = strings.TrimSpace(locale)
+	if locale == "" || len(locale) > maxLocaleLength || !localePattern.MatchString(locale) {
+		return false
+	}
+	switch strings.ToLower(strings.SplitN(locale, "-", 2)[0]) {
+	case "en", "pt":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeSubmission(input SubmissionRequest) SubmissionValues {

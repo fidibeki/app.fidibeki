@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/go-chi/chi/v5"
@@ -30,29 +31,50 @@ func TestStatusAndReporterDestination(t *testing.T) {
 	if Status("invalid").Valid() {
 		t.Error("Status(invalid).Valid() = true")
 	}
-	event := outbox.Event{
-		ID: "event", Event: "issue.updated", ResourceType: "issue", ResourceID: "issue",
-	}
-	destinations, err := (OutboxResolver{}).Resolve(context.Background(), event)
-	if err != nil || len(destinations) != 1 {
-		t.Fatalf("Resolve() = %#v, %v", destinations, err)
-	}
-	if destinations[0].TaskType != TaskReporterNotify || destinations[0].Queue != email.QueueName {
-		t.Errorf("destination = %#v", destinations[0])
-	}
-	event.Event = "feedback.created"
-	event.ResourceType = "feedback"
-	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 1 {
-		t.Errorf("Resolve(feedback receipt) = %#v, %v", destinations, err)
-	}
-	event.Event = "feedback.updated"
-	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 0 {
+	event := outbox.Event{Event: "feedback.updated", ResourceType: "feedback"}
+	if destinations, err := (OutboxResolver{}).Resolve(
+		context.Background(), event,
+	); err != nil || len(destinations) != 0 {
 		t.Errorf("Resolve(unrelated) = %#v, %v", destinations, err)
 	}
 	event.ResourceType = "issue"
 	event.Event = "issue.created"
-	if destinations, err := (OutboxResolver{}).Resolve(context.Background(), event); err != nil || len(destinations) != 1 {
-		t.Errorf("Resolve(issue created) = %#v, %v", destinations, err)
+	if destinations, err := (OutboxResolver{}).Resolve(
+		context.Background(), event,
+	); err == nil || len(destinations) != 0 {
+		t.Errorf("Resolve(issue created without database) = %#v, %v", destinations, err)
+	}
+}
+
+func TestConsensusFeedbackReporterRequiresMatchingCompleteActiveEvidence(t *testing.T) {
+	t.Parallel()
+	emailAddress := "reporter@example.com"
+	purpose := feedback.ReporterConsentPurposeFeedbackUpdates
+	version := feedback.ReporterConsentNoticeVersion
+	locale := "pt-PT"
+	source := feedback.ReporterConsentSourceWidget
+	grantedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	active := func() feedbackIssueState {
+		return feedbackIssueState{
+			ReporterEmail: &emailAddress, NotifyReporter: true, ConsentGrantedAt: &grantedAt,
+			ConsentPurpose: &purpose, ConsentNoticeVersion: &version,
+			ConsentLocale: &locale, ConsentSource: &source,
+		}
+	}
+
+	if got := consensusFeedbackReporter([]feedbackIssueState{active(), active()}); !got.NotifyReporter {
+		t.Fatalf("complete matching consent did not produce a reporter: %#v", got)
+	}
+	incomplete := active()
+	incomplete.ConsentNoticeVersion = nil
+	if got := consensusFeedbackReporter([]feedbackIssueState{active(), incomplete}); got.NotifyReporter {
+		t.Fatalf("incomplete consent produced a reporter: %#v", got)
+	}
+	mismatched := active()
+	otherLocale := "en"
+	mismatched.ConsentLocale = &otherLocale
+	if got := consensusFeedbackReporter([]feedbackIssueState{active(), mismatched}); got.NotifyReporter {
+		t.Fatalf("mismatched consent produced a reporter: %#v", got)
 	}
 }
 

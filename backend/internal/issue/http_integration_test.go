@@ -19,6 +19,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -104,8 +105,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO issues (tenant_id, project_id, public_id, title)
-		VALUES ($1, $2, 'ACME-2026-0002', 'Target issue') RETURNING id
+		INSERT INTO issues (
+			tenant_id, project_id, public_id, title, reporter_email, notify_reporter
+		)
+		VALUES (
+			$1, $2, 'ACME-2026-0002', 'Target issue', 'legacy@example.com', true
+		) RETURNING id
 	`, tenantID, projectID).Scan(&targetID); err != nil {
 		t.Fatalf("create merge target: %v", err)
 	}
@@ -320,11 +325,14 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		if err := root.QueryRow(ctx, `
 			INSERT INTO feedbacks (
 				tenant_id, project_id, public_id, client_feedback_id, title, description,
-				priority, assignee_id, reporter_email, notify_reporter, page_url, text_process_status
+				priority, assignee_id, reporter_email, notify_reporter, page_url, text_process_status,
+				reporter_consent_purpose, reporter_consent_notice_version,
+				reporter_consent_locale, reporter_consent_source
 			) VALUES (
 				$1, $2, $3, gen_random_uuid(), 'Repeated checkout failure',
 				'The checkout fails after applying a promotion.', $4, $5,
-				'reporter3@example.com', true, 'https://example.com/checkout', 'completed'
+				'reporter3@example.com', true, 'https://example.com/checkout', 'completed',
+				'feedback_updates', '2026-07', 'en', 'widget_submission'
 			) RETURNING id
 		`, tenantID, projectID, publicID, input.priority, triageMemberID).Scan(input.destination); err != nil {
 			t.Fatalf("create multi-issue feedback %s: %v", publicID, err)
@@ -678,6 +686,31 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 
 	store := Store{Database: pools.Admin}
+	resolver := OutboxResolver{Database: pools.Admin}
+	for _, event := range []outbox.Event{
+		{
+			TenantID: tenantID, Event: "issue.updated",
+			ResourceType: "issue", ResourceID: issueID,
+		},
+		{
+			TenantID: tenantID, Event: "feedback.created",
+			ResourceType: "feedback", ResourceID: feedbackID,
+		},
+	} {
+		destinations, err := resolver.Resolve(ctx, event)
+		if err != nil || len(destinations) != 1 ||
+			destinations[0].TaskType != TaskReporterNotify ||
+			destinations[0].Queue != email.QueueName {
+			t.Fatalf("resolve active reporter destination = %#v, %v", destinations, err)
+		}
+	}
+	if destinations, err := resolver.Resolve(ctx, outbox.Event{
+		TenantID: tenantID, Event: "issue.created",
+		ResourceType: "issue", ResourceID: targetID,
+	}); err != nil || len(destinations) != 0 {
+		t.Fatalf("resolve inactive reporter destination = %#v, %v", destinations, err)
+	}
+
 	sender := &sequenceSender{}
 	reporter := ReporterHandler{
 		Store: store, Sender: sender, Tokens: reporterTokens,
@@ -709,19 +742,8 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	); err != nil {
 		t.Fatalf("apply feedback receipt complaint: %v", err)
 	}
-	var feedbackReceiptNotify bool
-	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM feedbacks WHERE id = $1`, feedbackID).
-		Scan(&feedbackReceiptNotify); err != nil || feedbackReceiptNotify {
-		t.Fatalf("feedback complaint notify = %t, error = %v", feedbackReceiptNotify, err)
-	}
-	if _, err := root.Exec(ctx, `
-		UPDATE feedbacks SET notify_reporter = true, reporter_consent_purpose = 'feedback_updates',
-		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
-		    reporter_consent_source = 'widget_submission'
-		WHERE id = $1
-	`, feedbackID); err != nil {
-		t.Fatalf("restore feedback after complaint: %v", err)
-	}
+	assertReporterOptIn(t, ctx, root, issueID, feedbackID, false)
+	setReporterOptIn(t, ctx, root, issueID, feedbackID, true)
 	receiptSender := &sequenceSender{}
 	receiptReporter := reporter
 	receiptReporter.Sender = receiptSender
@@ -772,19 +794,8 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("feedback unsubscribe status = %d, body = %s",
 			feedbackUnsubscribe.Code, feedbackUnsubscribe.Body.String())
 	}
-	var feedbackNotify bool
-	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM feedbacks WHERE id = $1`, feedbackID).
-		Scan(&feedbackNotify); err != nil || feedbackNotify {
-		t.Fatalf("feedback receipt unsubscribe notify = %t, error = %v", feedbackNotify, err)
-	}
-	if _, err := root.Exec(ctx, `
-		UPDATE feedbacks SET notify_reporter = true, reporter_consent_purpose = 'feedback_updates',
-		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
-		    reporter_consent_source = 'widget_submission'
-		WHERE id = $1
-	`, feedbackID); err != nil {
-		t.Fatalf("restore feedback reporter opt-in: %v", err)
-	}
+	assertReporterOptIn(t, ctx, root, issueID, feedbackID, false)
+	setReporterOptIn(t, ctx, root, issueID, feedbackID, true)
 	unsubscribeRequest := httptest.NewRequest(http.MethodGet, strings.TrimSpace(unsubscribeURL), nil)
 	unsubscribeResponse := httptest.NewRecorder()
 	publicRouter.ServeHTTP(unsubscribeResponse, unsubscribeRequest)
@@ -805,6 +816,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Errorf("missing unsubscribe issue status = %d", missingUnsubscribe.Code)
 	}
 	assertReporterOptIn(t, ctx, root, issueID, feedbackID, false)
+	if destinations, err := resolver.Resolve(ctx, outbox.Event{
+		TenantID: tenantID, Event: "issue.updated",
+		ResourceType: "issue", ResourceID: issueID,
+	}); err != nil || len(destinations) != 0 {
+		t.Fatalf("resolve withdrawn reporter destination = %#v, %v", destinations, err)
+	}
 	if err := reporter.Handler()(ctx, firstTask); err != nil {
 		t.Fatalf("skip unsubscribed reporter notification: %v", err)
 	}
@@ -928,9 +945,8 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		"/v1/reporter/progress/"+strings.TrimPrefix(parsedReceiptPortalURL.Path, "/reporter/"),
 		nil,
 	))
-	if previousProgress.Code != http.StatusOK ||
-		!strings.Contains(previousProgress.Body.String(), "needs_info") {
-		t.Fatalf("earlier reporter progress link = %d, body = %s",
+	if previousProgress.Code != http.StatusNotFound {
+		t.Fatalf("withdrawn reporter progress link = %d, body = %s",
 			previousProgress.Code, previousProgress.Body.String())
 	}
 	reporterResponseText := "PROMO-25\nOrder placed on the café terrace kiosk."
@@ -1225,21 +1241,26 @@ func setReporterOptIn(
 	enabled bool,
 ) {
 	t.Helper()
-	// Re-enabling always re-asserts full consent evidence, matching a fresh opt-in submission;
-	// disabling only flips notify_reporter and leaves prior evidence as historical audit trail.
-	evidence := ""
+	issueValues := ""
+	feedbackValues := ""
 	if enabled {
-		evidence = `, reporter_consent_purpose = 'feedback_updates',
+		issueValues = `, reporter_email = 'reporter@example.com',
+		    reporter_access_revoked_at = NULL,
+		    reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
+		    reporter_consent_source = 'widget_submission'`
+		feedbackValues = `, reporter_email = 'reporter@example.com',
+		    reporter_consent_purpose = 'feedback_updates',
 		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
 		    reporter_consent_source = 'widget_submission'`
 	}
 	if _, err := root.Exec(ctx,
-		`UPDATE issues SET notify_reporter = $2`+evidence+` WHERE id = $1`, issueID, enabled,
+		`UPDATE issues SET notify_reporter = $2`+issueValues+` WHERE id = $1`, issueID, enabled,
 	); err != nil {
 		t.Fatalf("set issue reporter opt-in: %v", err)
 	}
 	if _, err := root.Exec(ctx,
-		`UPDATE feedbacks SET notify_reporter = $2`+evidence+` WHERE id = $1`, feedbackID, enabled,
+		`UPDATE feedbacks SET notify_reporter = $2`+feedbackValues+` WHERE id = $1`, feedbackID, enabled,
 	); err != nil {
 		t.Fatalf("set feedback reporter opt-in: %v", err)
 	}
@@ -1254,14 +1275,62 @@ func assertReporterOptIn(
 ) {
 	t.Helper()
 	var issueOptIn, feedbackOptIn bool
-	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM issues WHERE id = $1`, issueID).Scan(&issueOptIn); err != nil {
+	var issueEmail, feedbackEmail *string
+	var issueWithdrawnAt, feedbackWithdrawnAt, reporterAccessRevokedAt *time.Time
+	var issuePurpose, issueVersion, issueLocale, issueSource *string
+	var feedbackPurpose, feedbackVersion, feedbackLocale, feedbackSource *string
+	if err := root.QueryRow(ctx, `
+		SELECT notify_reporter, reporter_email, reporter_consent_withdrawn_at,
+		       reporter_access_revoked_at, reporter_consent_purpose,
+		       reporter_consent_notice_version, reporter_consent_locale,
+		       reporter_consent_source
+		FROM issues WHERE id = $1
+	`, issueID).Scan(
+		&issueOptIn, &issueEmail, &issueWithdrawnAt, &reporterAccessRevokedAt,
+		&issuePurpose, &issueVersion, &issueLocale, &issueSource,
+	); err != nil {
 		t.Fatalf("read issue opt-in: %v", err)
 	}
-	if err := root.QueryRow(ctx, `SELECT notify_reporter FROM feedbacks WHERE id = $1`, feedbackID).Scan(&feedbackOptIn); err != nil {
+	if err := root.QueryRow(ctx, `
+		SELECT notify_reporter, reporter_email, reporter_consent_withdrawn_at,
+		       reporter_consent_purpose, reporter_consent_notice_version,
+		       reporter_consent_locale, reporter_consent_source
+		FROM feedbacks WHERE id = $1
+	`, feedbackID).Scan(
+		&feedbackOptIn, &feedbackEmail, &feedbackWithdrawnAt,
+		&feedbackPurpose, &feedbackVersion, &feedbackLocale, &feedbackSource,
+	); err != nil {
 		t.Fatalf("read feedback opt-in: %v", err)
 	}
 	if issueOptIn != want || feedbackOptIn != want {
 		t.Errorf("opt-in = issue %t feedback %t, want %t", issueOptIn, feedbackOptIn, want)
+	}
+	if !want {
+		if issueEmail != nil || feedbackEmail != nil ||
+			issueWithdrawnAt == nil || feedbackWithdrawnAt == nil ||
+			reporterAccessRevokedAt == nil {
+			t.Errorf(
+				"withdrawn reporter state = issue email %v feedback email %v issue withdrawn %v feedback withdrawn %v access revoked %v",
+				issueEmail, feedbackEmail, issueWithdrawnAt, feedbackWithdrawnAt,
+				reporterAccessRevokedAt,
+			)
+		}
+		for name, value := range map[string]*string{
+			"issue purpose": issuePurpose, "issue version": issueVersion,
+			"issue locale": issueLocale, "issue source": issueSource,
+			"feedback purpose": feedbackPurpose, "feedback version": feedbackVersion,
+			"feedback locale": feedbackLocale, "feedback source": feedbackSource,
+		} {
+			if value == nil || *value == "" {
+				t.Errorf("withdrawal discarded %s audit evidence", name)
+			}
+		}
+		var tokenCount int
+		if err := root.QueryRow(
+			ctx, `SELECT count(*) FROM reporter_access_tokens WHERE issue_id = $1`, issueID,
+		).Scan(&tokenCount); err != nil || tokenCount != 0 {
+			t.Errorf("withdrawn reporter access token count = %d, error = %v", tokenCount, err)
+		}
 	}
 }
 

@@ -173,9 +173,51 @@ func (s Store) UnsubscribeReporter(
 	var locale *string
 	if feedbackResource {
 		err := s.Database.QueryRow(ctx, `
-			UPDATE feedbacks SET notify_reporter = false
-			WHERE tenant_id = $1 AND id = $2
-			RETURNING true, reporter_consent_locale
+			WITH target AS MATERIALIZED (
+				SELECT tenant_id, id, issue_id, reporter_email, reporter_consent_locale
+				FROM feedbacks
+				WHERE tenant_id = $1 AND id = $2
+			), feedback_updated AS (
+				UPDATE feedbacks AS feedback
+				SET reporter_email = NULL,
+				    notify_reporter = false,
+				    reporter_consent_withdrawn_at = COALESCE(
+				        feedback.reporter_consent_withdrawn_at, now()
+				    )
+				FROM target
+				WHERE feedback.tenant_id = target.tenant_id
+				  AND (
+				      feedback.id = target.id
+				      OR (
+				          target.issue_id IS NOT NULL
+				          AND feedback.issue_id = target.issue_id
+				          AND target.reporter_email IS NOT NULL
+				          AND lower(feedback.reporter_email) = lower(target.reporter_email)
+				      )
+				  )
+			), issue_updated AS (
+				UPDATE issues AS issue
+				SET reporter_email = NULL,
+				    notify_reporter = false,
+				    reporter_consent_withdrawn_at = COALESCE(
+				        issue.reporter_consent_withdrawn_at, now()
+				    ),
+				    reporter_access_revoked_at = COALESCE(
+				        issue.reporter_access_revoked_at, now()
+				    )
+				FROM target
+				WHERE target.issue_id IS NOT NULL
+				  AND issue.tenant_id = target.tenant_id
+				  AND issue.id = target.issue_id
+				  AND target.reporter_email IS NOT NULL
+				  AND lower(issue.reporter_email) = lower(target.reporter_email)
+				RETURNING issue.tenant_id, issue.id
+			), tokens_deleted AS (
+				DELETE FROM reporter_access_tokens AS token
+				USING issue_updated AS issue
+				WHERE token.tenant_id = issue.tenant_id AND token.issue_id = issue.id
+			)
+			SELECT true, reporter_consent_locale FROM target
 		`, tenantID, resourceID).Scan(&found, &locale)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil, nil
@@ -186,14 +228,39 @@ func (s Store) UnsubscribeReporter(
 		return found, locale, nil
 	}
 	err := s.Database.QueryRow(ctx, `
-		WITH target AS (
-			UPDATE issues SET notify_reporter = false
+		WITH target AS MATERIALIZED (
+			SELECT tenant_id, id, reporter_email, reporter_consent_locale
+			FROM issues
 			WHERE tenant_id = $1 AND id = $2
-			RETURNING tenant_id, id, reporter_consent_locale
-		), feedback AS (
-			UPDATE feedbacks AS feedback SET notify_reporter = false
+		), issue_updated AS (
+			UPDATE issues AS issue
+			SET reporter_email = NULL,
+			    notify_reporter = false,
+			    reporter_consent_withdrawn_at = COALESCE(
+			        issue.reporter_consent_withdrawn_at, now()
+			    ),
+			    reporter_access_revoked_at = COALESCE(
+			        issue.reporter_access_revoked_at, now()
+			    )
 			FROM target
-			WHERE feedback.tenant_id = target.tenant_id AND feedback.issue_id = target.id
+			WHERE issue.tenant_id = target.tenant_id AND issue.id = target.id
+			RETURNING issue.tenant_id, issue.id
+		), feedback_updated AS (
+			UPDATE feedbacks AS feedback
+			SET reporter_email = NULL,
+			    notify_reporter = false,
+			    reporter_consent_withdrawn_at = COALESCE(
+			        feedback.reporter_consent_withdrawn_at, now()
+			    )
+			FROM target
+			WHERE feedback.tenant_id = target.tenant_id
+			  AND feedback.issue_id = target.id
+			  AND target.reporter_email IS NOT NULL
+			  AND lower(feedback.reporter_email) = lower(target.reporter_email)
+		), tokens_deleted AS (
+			DELETE FROM reporter_access_tokens AS token
+			USING target
+			WHERE token.tenant_id = target.tenant_id AND token.issue_id = target.id
 		)
 		SELECT EXISTS (SELECT 1 FROM target), (SELECT reporter_consent_locale FROM target)
 	`, tenantID, resourceID).Scan(&found, &locale)
@@ -212,33 +279,44 @@ func (s Store) ApplyResendEvent(
 	if eventType != "email.bounced" && eventType != "email.complained" {
 		return errors.New("unsupported Resend event type")
 	}
-	if _, err := s.Database.Exec(ctx, `
-		WITH matched AS (
-			UPDATE delivery_logs
-			SET status = CASE
-			        WHEN $2 = 'email.bounced' THEN 'bounced'::delivery_status
-			        ELSE status
-			    END,
-			    webhook_event_id = NULLIF($3, '')
-			WHERE provider_message_id = $1
-			RETURNING tenant_id, resource_type, resource_id
-		), direct_feedback_unsubscribed AS (
-			UPDATE feedbacks AS feedback SET notify_reporter = false
-			FROM matched
-			WHERE matched.resource_type = 'feedback'
-			  AND feedback.tenant_id = matched.tenant_id AND feedback.id = matched.resource_id
-		), issues_unsubscribed AS (
-			UPDATE issues AS issue SET notify_reporter = false
-			FROM matched
-			WHERE matched.resource_type = 'issue'
-			  AND issue.tenant_id = matched.tenant_id AND issue.id = matched.resource_id
-			RETURNING issue.tenant_id, issue.id
-		)
-		UPDATE feedbacks AS feedback SET notify_reporter = false
-		FROM issues_unsubscribed AS issue
-		WHERE feedback.tenant_id = issue.tenant_id AND feedback.issue_id = issue.id
-	`, providerMessageID, eventType, webhookEventID); err != nil {
+	rows, err := s.Database.Query(ctx, `
+		UPDATE delivery_logs
+		SET status = CASE
+		        WHEN $2 = 'email.bounced' THEN 'bounced'::delivery_status
+		        ELSE status
+		    END,
+		    webhook_event_id = NULLIF($3, '')
+		WHERE provider_message_id = $1
+		RETURNING tenant_id, resource_type, resource_id
+	`, providerMessageID, eventType, webhookEventID)
+	if err != nil {
 		return fmt.Errorf("apply Resend delivery event: %w", err)
+	}
+	type target struct {
+		tenantID, resourceType, resourceID string
+	}
+	targets := make([]target, 0, 1)
+	for rows.Next() {
+		var found target
+		if err := rows.Scan(&found.tenantID, &found.resourceType, &found.resourceID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan Resend delivery target: %w", err)
+		}
+		targets = append(targets, found)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate Resend delivery targets: %w", err)
+	}
+	for _, target := range targets {
+		if target.resourceType != "feedback" && target.resourceType != "issue" {
+			continue
+		}
+		if _, _, err := s.UnsubscribeReporter(
+			ctx, target.tenantID, target.resourceID, target.resourceType == "feedback",
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }

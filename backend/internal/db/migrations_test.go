@@ -2026,8 +2026,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, feedbackA); err == nil {
 		t.Fatal("partial consent evidence write was accepted")
 	}
+	for name, query := range map[string]string{
+		"unknown purpose": `
+			UPDATE feedbacks SET reporter_consent_purpose = 'marketing' WHERE id = $1`,
+		"unknown notice version": `
+			UPDATE feedbacks SET reporter_consent_notice_version = '1999-01' WHERE id = $1`,
+		"unsupported locale": `
+			UPDATE feedbacks SET reporter_consent_locale = 'fr' WHERE id = $1`,
+		"unknown source": `
+			UPDATE feedbacks SET reporter_consent_source = 'import' WHERE id = $1`,
+	} {
+		if _, err := root.Exec(ctx, query, feedbackA); err == nil {
+			t.Fatalf("%s consent evidence was accepted", name)
+		}
+	}
 	if _, err := root.Exec(ctx, `UPDATE issues SET priority = 'low' WHERE id = $1`, issueA); err != nil {
 		t.Fatalf("unrelated update to legacy-consent issue row after evidence migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issues SET reporter_email = 'reporter@example.com', notify_reporter = true,
+		    reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'pt-AO',
+		    reporter_consent_source = 'widget_submission'
+		WHERE id = $1
+	`, issueA); err != nil {
+		t.Fatalf("apply full issue consent evidence: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issues SET reporter_consent_source = 'import' WHERE id = $1
+	`, issueA); err == nil {
+		t.Fatal("unknown issue consent source was accepted")
 	}
 	var evidenceIndexCount int
 	if err := root.QueryRow(ctx, `

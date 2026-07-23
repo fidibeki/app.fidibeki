@@ -12,6 +12,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
@@ -21,13 +22,40 @@ import (
 
 const TaskReporterNotify = "issue:reporter-notify"
 
-type OutboxResolver struct{}
+type OutboxResolver struct {
+	Database db.Querier
+}
 
-func (OutboxResolver) Resolve(_ context.Context, event outbox.Event) ([]outbox.Destination, error) {
+func (r OutboxResolver) Resolve(
+	ctx context.Context,
+	event outbox.Event,
+) ([]outbox.Destination, error) {
 	issueEvent := event.ResourceType == "issue" &&
 		(event.Event == "issue.created" || event.Event == "issue.updated" || event.Event == "issue.resolved")
 	feedbackReceipt := event.ResourceType == "feedback" && event.Event == "feedback.created"
 	if !issueEvent && !feedbackReceipt {
+		return nil, nil
+	}
+	if r.Database == nil {
+		return nil, errors.New("reporter outbox resolver database is required")
+	}
+	table := "issues"
+	if feedbackReceipt {
+		table = "feedbacks"
+	}
+	var active bool
+	err := r.Database.QueryRow(ctx, `
+		SELECT (`+reporterConsentActiveExpression("resource")+`)
+		FROM `+table+` AS resource
+		WHERE resource.tenant_id = $1 AND resource.id = $2
+	`, event.TenantID, event.ResourceID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve reporter destination: %w", err)
+	}
+	if !active {
 		return nil, nil
 	}
 	return []outbox.Destination{{
@@ -60,14 +88,17 @@ type ReporterNotification struct {
 }
 
 // reporterConsentActiveExpression evaluates to true only when notify_reporter is set AND the
-// grant/withdrawal timestamps and consent purpose all agree consent is currently in force. A
-// legacy row consented before structured evidence existed (reporter_consent_purpose IS NULL) never
-// satisfies this expression, so it fails closed until the reporter re-confirms through a fresh
-// opt-in submission. Table alias must be "issue" or "feedback".
+// grant/withdrawal timestamps and every structured evidence field agree consent is currently in
+// force. A legacy or partially corrupted row never satisfies this expression, so delivery fails
+// closed until the reporter re-confirms through a fresh opt-in submission.
 func reporterConsentActiveExpression(alias string) string {
-	return alias + `.notify_reporter AND ` + alias + `.reporter_consent_granted_at IS NOT NULL
+	return `COALESCE(` + alias + `.notify_reporter AND ` + alias + `.reporter_email IS NOT NULL
+		AND ` + alias + `.reporter_consent_granted_at IS NOT NULL
 		AND ` + alias + `.reporter_consent_withdrawn_at IS NULL
-		AND ` + alias + `.reporter_consent_purpose = '` + feedback.ReporterConsentPurposeFeedbackUpdates + `'`
+		AND ` + alias + `.reporter_consent_purpose = '` + feedback.ReporterConsentPurposeFeedbackUpdates + `'
+		AND ` + alias + `.reporter_consent_notice_version = '` + feedback.ReporterConsentNoticeVersion + `'
+		AND ` + alias + `.reporter_consent_source = '` + feedback.ReporterConsentSourceWidget + `'
+		AND lower(split_part(` + alias + `.reporter_consent_locale, '-', 1)) IN ('en', 'pt'), false)`
 }
 
 type DeliveryAttempt struct {
@@ -107,7 +138,8 @@ func (s Store) loadIssueNotification(
 	err := s.Database.QueryRow(ctx, `
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
 		       issue.id, issue.public_id,
-		       issue.title, COALESCE(update.new_status, issue.status), issue.reporter_email,
+		       issue.title, COALESCE(update.new_status, issue.status),
+		       COALESCE(issue.reporter_email, ''),
 		       (`+reporterConsentActiveExpression("issue")+`),
 		       issue.reporter_consent_locale, event.event, COALESCE(clarification.prompt, '')
 		FROM outbox_events AS event
@@ -152,7 +184,7 @@ func (s Store) loadFeedbackReceipt(
 	var notification ReporterNotification
 	err := s.Database.QueryRow(ctx, `
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
-		       feedback.public_id, feedback.title, feedback.reporter_email,
+		       feedback.public_id, feedback.title, COALESCE(feedback.reporter_email, ''),
 		       (`+reporterConsentActiveExpression("feedback")+`),
 		       feedback.reporter_consent_locale, event.event
 		FROM outbox_events AS event

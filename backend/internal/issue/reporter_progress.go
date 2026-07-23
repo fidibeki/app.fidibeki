@@ -69,6 +69,9 @@ func (s Store) RotateReporterAccess(
 		  AND issue.reporter_consent_granted_at IS NOT NULL
 		  AND issue.reporter_consent_withdrawn_at IS NULL
 		  AND issue.reporter_consent_purpose = '`+feedback.ReporterConsentPurposeFeedbackUpdates+`'
+		  AND issue.reporter_consent_notice_version = '`+feedback.ReporterConsentNoticeVersion+`'
+		  AND issue.reporter_consent_source = '`+feedback.ReporterConsentSourceWidget+`'
+		  AND lower(split_part(issue.reporter_consent_locale, '-', 1)) IN ('en', 'pt')
 		  AND issue.reporter_access_revoked_at IS NULL
 		  AND tenant.status IN ('active', 'trial')
 		  AND tenant.reporter_access_enabled = true

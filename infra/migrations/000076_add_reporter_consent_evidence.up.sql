@@ -24,8 +24,15 @@ ALTER TABLE feedbacks
     ADD CONSTRAINT feedbacks_reporter_consent_evidence_consistent CHECK (
         (reporter_consent_purpose IS NULL AND reporter_consent_notice_version IS NULL
             AND reporter_consent_locale IS NULL AND reporter_consent_source IS NULL)
-        OR (reporter_consent_purpose IS NOT NULL AND reporter_consent_notice_version IS NOT NULL
-            AND reporter_consent_locale IS NOT NULL AND reporter_consent_source IS NOT NULL
+        OR (reporter_consent_purpose IS NOT NULL
+            AND reporter_consent_notice_version IS NOT NULL
+            AND reporter_consent_locale IS NOT NULL
+            AND reporter_consent_source IS NOT NULL
+            AND reporter_consent_purpose = 'feedback_updates'
+            AND reporter_consent_notice_version = '2026-07'
+            AND reporter_consent_locale ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+            AND lower(split_part(reporter_consent_locale, '-', 1)) IN ('en', 'pt')
+            AND reporter_consent_source = 'widget_submission'
             AND reporter_consent_granted_at IS NOT NULL)
     );
 
@@ -33,14 +40,33 @@ ALTER TABLE issues
     ADD CONSTRAINT issues_reporter_consent_evidence_consistent CHECK (
         (reporter_consent_purpose IS NULL AND reporter_consent_notice_version IS NULL
             AND reporter_consent_locale IS NULL AND reporter_consent_source IS NULL)
-        OR (reporter_consent_purpose IS NOT NULL AND reporter_consent_notice_version IS NOT NULL
-            AND reporter_consent_locale IS NOT NULL AND reporter_consent_source IS NOT NULL
+        OR (reporter_consent_purpose IS NOT NULL
+            AND reporter_consent_notice_version IS NOT NULL
+            AND reporter_consent_locale IS NOT NULL
+            AND reporter_consent_source IS NOT NULL
+            AND reporter_consent_purpose = 'feedback_updates'
+            AND reporter_consent_notice_version = '2026-07'
+            AND reporter_consent_locale ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+            AND lower(split_part(reporter_consent_locale, '-', 1)) IN ('en', 'pt')
+            AND reporter_consent_source = 'widget_submission'
             AND reporter_consent_granted_at IS NOT NULL)
     );
 
 CREATE INDEX idx_feedbacks_reporter_consent_active
     ON feedbacks (tenant_id, id)
-    WHERE notify_reporter = true AND reporter_consent_purpose IS NOT NULL;
+    WHERE notify_reporter = true
+      AND reporter_email IS NOT NULL
+      AND reporter_consent_granted_at IS NOT NULL
+      AND reporter_consent_withdrawn_at IS NULL
+      AND reporter_consent_purpose = 'feedback_updates'
+      AND reporter_consent_notice_version = '2026-07'
+      AND reporter_consent_source = 'widget_submission';
 CREATE INDEX idx_issues_reporter_consent_active
     ON issues (tenant_id, id)
-    WHERE notify_reporter = true AND reporter_consent_purpose IS NOT NULL;
+    WHERE notify_reporter = true
+      AND reporter_email IS NOT NULL
+      AND reporter_consent_granted_at IS NOT NULL
+      AND reporter_consent_withdrawn_at IS NULL
+      AND reporter_consent_purpose = 'feedback_updates'
+      AND reporter_consent_notice_version = '2026-07'
+      AND reporter_consent_source = 'widget_submission';

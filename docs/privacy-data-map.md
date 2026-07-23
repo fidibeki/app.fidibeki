@@ -91,7 +91,7 @@ be verified independently.
   when the send is enqueued and again immediately before the provider call, closing the race where
   a reporter withdraws between those two points. Every such email carries a feedback-scoped
   unsubscribe link and a link to the published privacy policy.
-- Rows consented before the structured-evidence migration (`000074`) have no purpose/notice
+- Rows consented before the structured-evidence migration (`000076`) have no purpose/notice
   version/locale/source recorded. They are not treated as actively consented for new deliveries;
   only feedback carrying full evidence is eligible for reporter email until the reporter re-opts in
   through a fresh submission.

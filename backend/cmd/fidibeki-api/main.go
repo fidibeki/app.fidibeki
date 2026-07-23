@@ -565,7 +565,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	dispatcher := outbox.Dispatcher{
 		Store: outbox.Store{Database: pools.Admin},
 		Resolver: outbox.MultiResolver{
-			outbox.FeedbackResolver{}, issue.OutboxResolver{}, email.LifecycleResolver{},
+			outbox.FeedbackResolver{}, issue.OutboxResolver{Database: pools.Admin},
+			email.LifecycleResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
 		},
 		Enqueuer: outboxQueue, Logger: logger,

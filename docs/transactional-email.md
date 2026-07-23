@@ -40,7 +40,7 @@ notification is enqueued from the outbox event, and again immediately before the
 withdrawal that happens while the message is being composed still prevents delivery. Every reporter
 email carries a feedback- or issue-scoped unsubscribe link and a link to the published privacy
 policy in its footer; withdrawal is idempotent, takes effect immediately, and never deletes the
-underlying feedback. Rows consented before consent evidence existed (pre-migration `000074`) are
+underlying feedback. Rows consented before consent evidence existed (pre-migration `000076`) are
 treated as not actively consented until the reporter opts in again through a new submission.
 
 ## Reliability

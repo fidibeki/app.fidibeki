@@ -229,6 +229,17 @@ func TestValidateReporterConsentRejectsContradictoryAndUnknownPayloads(t *testin
 			fields: []string{"consent.locale"},
 		},
 		{
+			name: "unsupported locale",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+				consent := validConsent
+				consent.Locale = "fr"
+				r.Consent = &consent
+			},
+			fields: []string{"consent.locale"},
+		},
+		{
 			name: "notify_reporter true without an email",
 			mutate: func(r *SubmissionRequest) {
 				r.NotifyReporter = true
