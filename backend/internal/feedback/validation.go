@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,7 +20,23 @@ const (
 	maxElementHTMLBytes = 200000
 	maxElementCSSBytes  = 100000
 	maxAttachmentBytes  = 125 << 20
+	maxLocaleLength     = 35
 )
+
+// ReporterConsentPurposeFeedbackUpdates is the only supported consent purpose for reporter emails.
+// Any other purpose value is an unknown/contradictory payload and is rejected.
+const ReporterConsentPurposeFeedbackUpdates = "feedback_updates"
+
+// ReporterConsentSourceWidget identifies the widget submission flow as the origin of a consent
+// grant. It is assigned by the server, never accepted from the client.
+const ReporterConsentSourceWidget = "widget_submission"
+
+// reporterConsentNoticeVersions are the notice/copy revisions the backend currently recognizes.
+// Submissions asserting any other version are rejected as unknown so a future notice-copy change
+// can be rolled out without silently accepting evidence for a notice the reporter never saw.
+var reporterConsentNoticeVersions = set("2026-07")
+
+var localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
 var attachmentRules = map[AttachmentKind]struct {
 	maxBytes     int64
@@ -62,12 +79,7 @@ func ValidateSubmissionAt(
 	if values.Text != nil && len(*values.Text) > maxTextLength {
 		fields = append(fields, field("text", fmt.Sprintf("must not exceed %d characters", maxTextLength)))
 	}
-	if values.ReporterEmail != nil && !validEmail(*values.ReporterEmail) {
-		fields = append(fields, field("reporter_email", "must be a valid email address"))
-	}
-	if values.NotifyReporter && values.ReporterEmail == nil {
-		fields = append(fields, field("reporter_email", "is required when notify_reporter is true"))
-	}
+	fields = append(fields, validateReporterConsent(input, &values)...)
 	if !validHTTPURL(values.PageURL, 4096) {
 		fields = append(fields, field("metadata.url", "must be an absolute HTTP or HTTPS URL"))
 	}
@@ -115,6 +127,56 @@ func ValidateSubmissionAt(
 		}
 	}
 	return values, fields
+}
+
+// validateReporterConsent enforces the explicit, auditable consent contract: an unchecked/absent
+// opt-in must carry no email and no consent assertion, and an opt-in must carry a valid email plus
+// complete, recognized consent evidence. Contradictory or unknown payloads are rejected outright
+// rather than silently normalized, so the backend never has to guess reporter intent. Evidence
+// fields on values are only populated once the payload is fully valid.
+func validateReporterConsent(input SubmissionRequest, values *SubmissionValues) []FieldError {
+	fields := make([]FieldError, 0)
+	if values.ReporterEmail != nil && !validEmail(*values.ReporterEmail) {
+		fields = append(fields, field("reporter_email", "must be a valid email address"))
+	}
+	if !input.NotifyReporter {
+		if values.ReporterEmail != nil {
+			fields = append(fields, field("reporter_email", "must not be submitted without granted consent"))
+		}
+		if input.Consent != nil {
+			fields = append(fields, field("consent", "must not be submitted when notify_reporter is false"))
+		}
+		return fields
+	}
+	if values.ReporterEmail == nil {
+		fields = append(fields, field("reporter_email", "is required when notify_reporter is true"))
+	}
+	if input.Consent == nil {
+		return append(fields, field("consent", "is required when notify_reporter is true"))
+	}
+	if !input.Consent.Granted {
+		fields = append(fields, field("consent.granted", "must be true when notify_reporter is true"))
+	}
+	purpose := strings.TrimSpace(input.Consent.Purpose)
+	if purpose != ReporterConsentPurposeFeedbackUpdates {
+		fields = append(fields, field("consent.purpose", "must be feedback_updates"))
+	}
+	noticeVersion := strings.TrimSpace(input.Consent.NoticeVersion)
+	if _, supported := reporterConsentNoticeVersions[noticeVersion]; !supported {
+		fields = append(fields, field("consent.notice_version", "is not a supported notice version"))
+	}
+	locale := strings.TrimSpace(input.Consent.Locale)
+	if locale == "" || len(locale) > maxLocaleLength || !localePattern.MatchString(locale) {
+		fields = append(fields, field("consent.locale", "must be a valid locale identifier"))
+	}
+	if len(fields) == 0 {
+		source := ReporterConsentSourceWidget
+		values.ReporterConsentPurpose = &purpose
+		values.ReporterConsentNoticeVersion = &noticeVersion
+		values.ReporterConsentLocale = &locale
+		values.ReporterConsentSource = &source
+	}
+	return fields
 }
 
 func normalizeSubmission(input SubmissionRequest) SubmissionValues {

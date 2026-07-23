@@ -82,6 +82,10 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 			"details":  json.RawMessage(`"The checkout was clear"`),
 		},
 		Comment: &comment, ReporterEmail: &email, NotifyReporter: true,
+		Consent: &ReporterConsentInput{
+			Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: "2026-07",
+			Locale: "en", Granted: true,
+		},
 		Metadata: MetadataInput{
 			URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
 		},
@@ -112,12 +116,170 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 	if values.ReporterEmail == nil || *values.ReporterEmail != "customer@example.com" {
 		t.Errorf("reporter email = %v", values.ReporterEmail)
 	}
+	if values.ReporterConsentPurpose == nil || *values.ReporterConsentPurpose != ReporterConsentPurposeFeedbackUpdates ||
+		values.ReporterConsentNoticeVersion == nil || *values.ReporterConsentNoticeVersion != "2026-07" ||
+		values.ReporterConsentLocale == nil || *values.ReporterConsentLocale != "en" ||
+		values.ReporterConsentSource == nil || *values.ReporterConsentSource != ReporterConsentSourceWidget {
+		t.Errorf("consent evidence = purpose %v version %v locale %v source %v",
+			values.ReporterConsentPurpose, values.ReporterConsentNoticeVersion,
+			values.ReporterConsentLocale, values.ReporterConsentSource)
+	}
 	var responses map[string]any
 	if err := json.Unmarshal([]byte(values.Responses), &responses); err != nil {
 		t.Fatalf("decode normalized responses: %v", err)
 	}
 	if len(responses) != 4 || responses["reaction"] != "helpful" || responses["reason"] != "fast" {
 		t.Errorf("normalized responses = %#v", responses)
+	}
+}
+
+func TestValidateReporterConsentRejectsContradictoryAndUnknownPayloads(t *testing.T) {
+	t.Parallel()
+	baseConfiguration := project.PublicConfiguration{
+		Plan: tenant.PlanGrowth,
+		Rules: []project.WidgetRule{{
+			ID: "1341b36b-d02c-4398-ab29-ca935e73539a", CollectContact: true,
+		}},
+	}
+	validConsent := ReporterConsentInput{
+		Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: "2026-07",
+		Locale: "en", Granted: true,
+	}
+	email := "customer@example.com"
+	baseRequest := func() SubmissionRequest {
+		return SubmissionRequest{
+			ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
+			WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
+			Metadata: MetadataInput{
+				URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
+			},
+		}
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*SubmissionRequest)
+		fields  []string
+		wantNil []string
+	}{
+		{
+			name: "email without granted consent",
+			mutate: func(r *SubmissionRequest) {
+				r.ReporterEmail = &email
+			},
+			fields: []string{"reporter_email"},
+		},
+		{
+			name: "consent without notify_reporter",
+			mutate: func(r *SubmissionRequest) {
+				consent := validConsent
+				r.Consent = &consent
+			},
+			fields: []string{"consent"},
+		},
+		{
+			name: "notify_reporter true without any evidence",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+			},
+			fields: []string{"consent"},
+		},
+		{
+			name: "notify_reporter true with granted false",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+				consent := validConsent
+				consent.Granted = false
+				r.Consent = &consent
+			},
+			fields: []string{"consent.granted"},
+		},
+		{
+			name: "unknown consent purpose",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+				consent := validConsent
+				consent.Purpose = "marketing"
+				r.Consent = &consent
+			},
+			fields: []string{"consent.purpose"},
+		},
+		{
+			name: "unknown notice version",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+				consent := validConsent
+				consent.NoticeVersion = "1999-01"
+				r.Consent = &consent
+			},
+			fields: []string{"consent.notice_version"},
+		},
+		{
+			name: "invalid locale",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				r.ReporterEmail = &email
+				consent := validConsent
+				consent.Locale = "not a locale!"
+				r.Consent = &consent
+			},
+			fields: []string{"consent.locale"},
+		},
+		{
+			name: "notify_reporter true without an email",
+			mutate: func(r *SubmissionRequest) {
+				r.NotifyReporter = true
+				consent := validConsent
+				r.Consent = &consent
+			},
+			fields: []string{"reporter_email"},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			request := baseRequest()
+			testCase.mutate(&request)
+			values, fields := ValidateSubmission(request, baseConfiguration)
+			for _, expected := range testCase.fields {
+				if !hasField(fields, expected) {
+					t.Errorf("fields = %#v, missing %q", fields, expected)
+				}
+			}
+			if values.ReporterConsentPurpose != nil || values.ReporterConsentNoticeVersion != nil ||
+				values.ReporterConsentLocale != nil || values.ReporterConsentSource != nil {
+				t.Errorf("rejected payload must not populate consent evidence, got %#v", values)
+			}
+		})
+	}
+}
+
+func TestValidateSubmissionAcceptsUncheckedConsentEvenWithPriorEmailInState(t *testing.T) {
+	t.Parallel()
+	request := SubmissionRequest{
+		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
+		WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
+		NotifyReporter:   false, ReporterEmail: nil, Consent: nil,
+		Metadata: MetadataInput{
+			URL: "https://example.com/checkout", ViewportWidth: 1280, ViewportHeight: 720,
+		},
+	}
+	configuration := project.PublicConfiguration{
+		Plan: tenant.PlanGrowth,
+		Rules: []project.WidgetRule{{
+			ID: request.WidgetRuleID, CollectContact: true,
+		}},
+	}
+	values, fields := ValidateSubmission(request, configuration)
+	if len(fields) != 0 {
+		t.Fatalf("anonymous submission fields = %#v", fields)
+	}
+	if values.ReporterEmail != nil || values.NotifyReporter ||
+		values.ReporterConsentPurpose != nil || values.ReporterConsentSource != nil {
+		t.Errorf("anonymous submission values = %#v", values)
 	}
 }
 

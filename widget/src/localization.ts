@@ -15,6 +15,8 @@ export interface WidgetSystemCopy {
   emailPlaceholder: string
   invalidEmail: string
   emailRequired: string
+  consentNotice: string
+  privacyPolicy: string
   required: string
   retry: string
   retryInSecond: string
@@ -47,6 +49,8 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     attachmentError: 'One or more attachments could not be uploaded.',
     emailPlaceholder: 'you@example.com', invalidEmail: 'Enter a valid email address.',
     emailRequired: 'Enter an email address to receive updates.',
+    consentNotice: "We'll only use your email for updates about this feedback. Unsubscribe anytime.",
+    privacyPolicy: 'Privacy policy',
     required: 'Please complete the required response.',
     retry: 'Retry',
     retryInSecond: 'Try again in {seconds} second.',
@@ -71,6 +75,8 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     attachmentError: 'Não foi possível carregar um ou mais anexos.',
     emailPlaceholder: 'voce@exemplo.com', invalidEmail: 'Introduz um endereço de email válido.',
     emailRequired: 'Introduz um endereço de email para receber atualizações.',
+    consentNotice: 'Utilizamos o teu email apenas para atualizações sobre este feedback. Cancela quando quiseres.',
+    privacyPolicy: 'Política de privacidade',
     required: 'Preenche a resposta obrigatória.',
     retry: 'Tentar novamente',
     retryInSecond: 'Tenta novamente dentro de {seconds} segundo.',
@@ -156,7 +162,7 @@ function legacyLocalization(rule: WidgetRule): WidgetLocalization {
     prompt: rule.greeting ?? 'How was your experience?',
     comment_placeholder: 'Tell us more',
     contact_label: 'Email address',
-    consent_label: 'Email me about this feedback',
+    consent_label: 'Email me updates about this feedback',
     submit_label: 'Send feedback',
     success_message: 'Your feedback was sent.',
   }

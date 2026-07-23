@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 75
+	const latestMigrationVersion = 76
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1982,6 +1982,59 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 				t.Fatalf("roll back replay cap migration after cycle 1: %v", err)
 			}
 		}
+	}
+
+	if err := migrateToVersion(migrator, 75); err != nil {
+		t.Fatalf("roll back reporter consent evidence migration: %v", err)
+	}
+	// Seed a pre-migration ("legacy") consented row exactly as migration 000062 already produces:
+	// notify_reporter=true with a grant timestamp, but no structured evidence.
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET reporter_email = 'legacy-reporter@example.com', notify_reporter = true
+		WHERE id = $1
+	`, feedbackA); err != nil {
+		t.Fatalf("seed legacy consented feedback before evidence migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply reporter consent evidence migration: %v", err)
+	}
+	var legacyPurpose *string
+	var legacyGrantedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT reporter_consent_purpose, reporter_consent_granted_at FROM feedbacks WHERE id = $1
+	`, feedbackA).Scan(&legacyPurpose, &legacyGrantedAt); err != nil {
+		t.Fatalf("read legacy feedback after evidence migration: %v", err)
+	}
+	if legacyPurpose != nil || legacyGrantedAt == nil {
+		t.Fatalf("legacy consent row after migration = purpose %v granted_at %v, want no evidence with the grant timestamp preserved",
+			legacyPurpose, legacyGrantedAt)
+	}
+	// A fresh, fully-evidenced grant is accepted...
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
+		    reporter_consent_source = 'widget_submission'
+		WHERE id = $1
+	`, feedbackA); err != nil {
+		t.Fatalf("apply full consent evidence: %v", err)
+	}
+	// ...but a partial evidence write is rejected by the all-or-nothing evidence constraint,
+	// and an unrelated later update to the still evidence-free legacy issue row must not be
+	// blocked by that same constraint (it never touches the evidence columns).
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET reporter_consent_notice_version = NULL WHERE id = $1
+	`, feedbackA); err == nil {
+		t.Fatal("partial consent evidence write was accepted")
+	}
+	if _, err := root.Exec(ctx, `UPDATE issues SET priority = 'low' WHERE id = $1`, issueA); err != nil {
+		t.Fatalf("unrelated update to legacy-consent issue row after evidence migration: %v", err)
+	}
+	var evidenceIndexCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'
+		  AND indexname IN ('idx_feedbacks_reporter_consent_active', 'idx_issues_reporter_consent_active')
+	`).Scan(&evidenceIndexCount); err != nil || evidenceIndexCount != 2 {
+		t.Fatalf("reporter consent evidence index count = %d, error = %v, want 2", evidenceIndexCount, err)
 	}
 
 	pools.Close()

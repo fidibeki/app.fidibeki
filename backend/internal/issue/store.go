@@ -21,20 +21,24 @@ type Store struct {
 }
 
 type feedbackIssueState struct {
-	ID               string
-	ProjectID        string
-	IssueID          *string
-	ReporterEmail    *string
-	NotifyReporter   bool
-	ConsentGrantedAt *time.Time
-	Priority         *triage.Priority
-	AIPriority       *triage.Priority
-	AssigneeID       *string
-	Description      *string
-	Text             *string
-	TextCleaned      *string
-	AISuggestedTitle *string
-	Moderated        bool
+	ID                   string
+	ProjectID            string
+	IssueID              *string
+	ReporterEmail        *string
+	NotifyReporter       bool
+	ConsentGrantedAt     *time.Time
+	ConsentPurpose       *string
+	ConsentNoticeVersion *string
+	ConsentLocale        *string
+	ConsentSource        *string
+	Priority             *triage.Priority
+	AIPriority           *triage.Priority
+	AssigneeID           *string
+	Description          *string
+	Text                 *string
+	TextCleaned          *string
+	AISuggestedTitle     *string
+	Moderated            bool
 }
 
 func (Store) List(ctx context.Context, query db.Querier, tenantID string) ([]Issue, error) {
@@ -354,6 +358,8 @@ func (store Store) CreateFromFeedback(
 	rows, err := query.Query(ctx, `
 		SELECT id, project_id, issue_id, reporter_email, notify_reporter,
 		       reporter_consent_granted_at,
+		       reporter_consent_purpose, reporter_consent_notice_version,
+		       reporter_consent_locale, reporter_consent_source,
 		       priority, ai_priority, assignee_id, description, text, text_cleaned,
 		       ai_suggested_title,
 		       status = 'spam' OR cardinality(text_moderation_flags) > 0 OR text_process_status = 'failed'
@@ -371,6 +377,8 @@ func (store Store) CreateFromFeedback(
 		if err := rows.Scan(
 			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
 			&state.NotifyReporter, &state.ConsentGrantedAt,
+			&state.ConsentPurpose, &state.ConsentNoticeVersion,
+			&state.ConsentLocale, &state.ConsentSource,
 			&state.Priority, &state.AIPriority, &state.AssigneeID,
 			&state.Description, &state.Text, &state.TextCleaned, &state.AISuggestedTitle,
 			&state.Moderated,
@@ -437,7 +445,7 @@ func (store Store) CreateFromFeedback(
 			return Issue{}, ErrNotFound
 		}
 	}
-	reporterEmail, notifyReporter, consentGrantedAt := consensusFeedbackReporter(states)
+	reporter := consensusFeedbackReporter(states)
 	sequence, err := allocateIssueSequence(ctx, query, tenantID, now.Year())
 	if err != nil {
 		return Issue{}, err
@@ -448,10 +456,13 @@ func (store Store) CreateFromFeedback(
 		INSERT INTO issues (
 			id, tenant_id, project_id, public_id, title, description,
 			priority, assignee_id, reporter_email, notify_reporter,
-			reporter_consent_granted_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			reporter_consent_granted_at, reporter_consent_purpose,
+			reporter_consent_notice_version, reporter_consent_locale, reporter_consent_source
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`, createdID, tenantID, projectID, publicID, input.Title, input.Description,
-		priority, assigneeID, reporterEmail, notifyReporter, consentGrantedAt); err != nil {
+		priority, assigneeID, reporter.Email, reporter.NotifyReporter, reporter.ConsentGrantedAt,
+		reporter.ConsentPurpose, reporter.ConsentNoticeVersion, reporter.ConsentLocale,
+		reporter.ConsentSource); err != nil {
 		return Issue{}, fmt.Errorf("create issue from feedback: %w", err)
 	}
 	if len(tagIDs) > 0 {
@@ -581,22 +592,41 @@ func consensusFeedbackAssignee(states []feedbackIssueState) *string {
 	return &candidate
 }
 
-func consensusFeedbackReporter(states []feedbackIssueState) (*string, bool, *time.Time) {
+// consensusReporter is the reporter identity and consent evidence an issue inherits from the
+// feedback it is created from. Only unanimous, currently-consented feedback yields a non-empty
+// reporter; any dissent (a different email, or any feedback lacking active consent) drops the
+// issue back to anonymous so the issue never attributes consent evidence to a mismatched reporter.
+type consensusReporter struct {
+	Email                *string
+	NotifyReporter       bool
+	ConsentGrantedAt     *time.Time
+	ConsentPurpose       *string
+	ConsentNoticeVersion *string
+	ConsentLocale        *string
+	ConsentSource        *string
+}
+
+func consensusFeedbackReporter(states []feedbackIssueState) consensusReporter {
 	if len(states) == 0 || !states[0].NotifyReporter || states[0].ReporterEmail == nil {
-		return nil, false, nil
+		return consensusReporter{}
 	}
 	candidate := *states[0].ReporterEmail
 	grantedAt := states[0].ConsentGrantedAt
 	for _, state := range states[1:] {
 		if !state.NotifyReporter || state.ReporterEmail == nil ||
 			!strings.EqualFold(*state.ReporterEmail, candidate) {
-			return nil, false, nil
+			return consensusReporter{}
 		}
 		if state.ConsentGrantedAt != nil && (grantedAt == nil || state.ConsentGrantedAt.Before(*grantedAt)) {
 			grantedAt = state.ConsentGrantedAt
 		}
 	}
-	return &candidate, true, grantedAt
+	first := states[0]
+	return consensusReporter{
+		Email: &candidate, NotifyReporter: true, ConsentGrantedAt: grantedAt,
+		ConsentPurpose: first.ConsentPurpose, ConsentNoticeVersion: first.ConsentNoticeVersion,
+		ConsentLocale: first.ConsentLocale, ConsentSource: first.ConsentSource,
+	}
 }
 
 func feedbackTagUnion(

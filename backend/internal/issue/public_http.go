@@ -74,7 +74,7 @@ func (h *PublicHTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	feedbackToken := auth.IsFeedbackReporterUnsubscribe(claims)
-	found, err := h.options.Store.UnsubscribeReporter(
+	found, locale, err := h.options.Store.UnsubscribeReporter(
 		r.Context(), claims.TenantID, claims.Subject, feedbackToken,
 	)
 	if err != nil {
@@ -88,7 +88,32 @@ func (h *PublicHTTPHandler) unsubscribe(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Unsubscribed</title><body><main><h1>Unsubscribed</h1><p>You will no longer receive updates for this feedback.</p></main></body></html>`)
+	_, _ = io.WriteString(w, unsubscribeConfirmationHTML(locale))
+}
+
+// unsubscribedCopy carries the bilingual confirmation copy for the unsubscribe landing page. It is
+// selected by the consent locale recorded at opt-in time, defaulting to English when the resource
+// predates locale capture or the locale is unsupported.
+type unsubscribedCopy struct {
+	lang, title, heading, body string
+}
+
+var unsubscribedLocales = map[string]unsubscribedCopy{
+	"en": {lang: "en", title: "Unsubscribed", heading: "Unsubscribed",
+		body: "You will no longer receive updates for this feedback."},
+	"pt": {lang: "pt", title: "Subscrição cancelada", heading: "Subscrição cancelada",
+		body: "Deixará de receber atualizações sobre este feedback."},
+}
+
+func unsubscribeConfirmationHTML(locale *string) string {
+	selected := unsubscribedLocales["en"]
+	if locale != nil {
+		if match, ok := unsubscribedLocales[strings.ToLower((*locale)[:min(2, len(*locale))])]; ok {
+			selected = match
+		}
+	}
+	return `<!doctype html><html lang="` + selected.lang + `"><meta charset="utf-8"><title>` + selected.title +
+		`</title><body><main><h1>` + selected.heading + `</h1><p>` + selected.body + `</p></main></body></html>`
 }
 
 func (h *PublicHTTPHandler) resendWebhook(w http.ResponseWriter, r *http.Request) {
@@ -134,43 +159,48 @@ func writeUnsubscribeError(w http.ResponseWriter) {
 	api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "unsubscribe link is invalid or expired", nil)
 }
 
+// UnsubscribeReporter withdraws consent for the target feedback/issue (and, for an issue-scoped
+// token, every feedback linked to it), leaving the underlying feedback intact. It is idempotent:
+// unsubscribing an already-withdrawn resource still matches and returns found=true. The returned
+// locale (the locale recorded at opt-in, if any) drives the bilingual confirmation page.
 func (s Store) UnsubscribeReporter(
 	ctx context.Context,
 	tenantID string,
 	resourceID string,
 	feedbackResource bool,
-) (bool, error) {
+) (bool, *string, error) {
 	var found bool
+	var locale *string
 	if feedbackResource {
 		err := s.Database.QueryRow(ctx, `
 			UPDATE feedbacks SET notify_reporter = false
 			WHERE tenant_id = $1 AND id = $2
-			RETURNING true
-		`, tenantID, resourceID).Scan(&found)
+			RETURNING true, reporter_consent_locale
+		`, tenantID, resourceID).Scan(&found, &locale)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return false, nil, nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("unsubscribe feedback reporter: %w", err)
+			return false, nil, fmt.Errorf("unsubscribe feedback reporter: %w", err)
 		}
-		return found, nil
+		return found, locale, nil
 	}
 	err := s.Database.QueryRow(ctx, `
 		WITH target AS (
 			UPDATE issues SET notify_reporter = false
 			WHERE tenant_id = $1 AND id = $2
-			RETURNING tenant_id, id
+			RETURNING tenant_id, id, reporter_consent_locale
 		), feedback AS (
 			UPDATE feedbacks AS feedback SET notify_reporter = false
 			FROM target
 			WHERE feedback.tenant_id = target.tenant_id AND feedback.issue_id = target.id
 		)
-		SELECT EXISTS (SELECT 1 FROM target)
-	`, tenantID, resourceID).Scan(&found)
+		SELECT EXISTS (SELECT 1 FROM target), (SELECT reporter_consent_locale FROM target)
+	`, tenantID, resourceID).Scan(&found, &locale)
 	if err != nil {
-		return false, fmt.Errorf("unsubscribe reporter: %w", err)
+		return false, nil, fmt.Errorf("unsubscribe reporter: %w", err)
 	}
-	return found, nil
+	return found, locale, nil
 }
 
 func (s Store) ApplyResendEvent(

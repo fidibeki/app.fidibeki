@@ -24,7 +24,7 @@ same monitored address.
 | Member-domain verification | Authorized verification request | Verification address | Security, requested |
 | Founder welcome | First owner activation for a new workspace | Activating owner | Account, one time |
 | Trial ending | Trial reaches reminder window | Workspace members | Account, mandatory |
-| Feedback receipt | Feedback accepted with explicit reporter consent | Reporter | Consent-controlled |
+| Feedback receipt | Feedback accepted with explicit, evidenced reporter consent | Reporter | Consent-controlled |
 | Reporter progress and resolution | Material Issue lifecycle update | Consented reporter | Consent/unsubscribe-controlled |
 | Payment failed or recovered | Persisted billing access transition | Billing managers and billing contact | Billing, mandatory |
 | Subscription activation, plan change, or cancellation | Material persisted subscription change | Billing managers and billing contact | Billing, mandatory |
@@ -33,6 +33,15 @@ same monitored address.
 Bounced or complained addresses are excluded where recipient state is available. Billing contacts
 are deduplicated against authorized administrators. Later assignment, mention, security-change, and
 digest emails remain deferred until member notification preferences exist.
+
+Reporter emails require explicit, structured consent evidence (purpose, notice version, locale,
+affirmative state), not just a boolean preference. Consent is checked twice: once when the
+notification is enqueued from the outbox event, and again immediately before the Resend call, so a
+withdrawal that happens while the message is being composed still prevents delivery. Every reporter
+email carries a feedback- or issue-scoped unsubscribe link and a link to the published privacy
+policy in its footer; withdrawal is idempotent, takes effect immediately, and never deletes the
+underlying feedback. Rows consented before consent evidence existed (pre-migration `000074`) are
+treated as not actively consented until the reporter opts in again through a new submission.
 
 ## Reliability
 

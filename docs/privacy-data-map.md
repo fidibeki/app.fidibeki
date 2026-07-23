@@ -15,7 +15,7 @@ customer-facing claims.
 | Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Operational lifecycle; secrets and hashes are never exported |
 | Projects and widget configuration | Domains, rules, targeting, appearance, form blocks | Decide where and how feedback is collected | PostgreSQL | Workspace lifetime |
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | Workspace lifetime until explicit workspace deletion or supported anonymization |
-| Reporter contact and consent | Normalized email, notification preference, consent granted/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Until supported anonymization, workspace deletion, or request expiry where applicable |
+| Reporter contact and consent | Normalized email; notification preference; structured consent evidence (purpose, notice version, locale, source); server-authoritative grant/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Email and preference until anonymization, workspace deletion, or unsubscribe; non-identifying evidence metadata (purpose/notice version/locale/source/timestamps) is retained after withdrawal or anonymization as the minimum audit record proving consent was collected and honored |
 | Attachments and derived analysis | Screenshot/audio/video objects, transcript, sentiment, moderation flags, declared metadata | Give operational context to feedback | Private S3-compatible object storage and PostgreSQL manifest | Objects and derived transcript: plan storage limit (30/90/365 days); manifest retained with workflow |
 | Session replay | rrweb batches/merged object; session-scoped random identifier; canonicalized page URL (origin + normalized pathname only, credentials/query/fragment stripped); timing and event counts; no canvas pixels | Reproduce the reported page experience without exposing the authenticated user's identity | Private S3-compatible object storage and PostgreSQL manifest | Anonymous by enforced contract: visible text and form values are masked; serialized attributes are empty except the explicit `data-fidibeki-safe-text` marker; canvas, stylesheets, fonts, logs, and unknown custom sources are dropped. The backend structurally validates every event before promotion or merge. Pre-contract objects are not playable and are selected for object-first retention cleanup. `data-fidibeki-block` excludes a subtree; `data-fidibeki-safe-text` explicitly opts known-safe static text back in. Objects otherwise follow the plan limit (30/90/365 days); manifests remain with workflow. See `docs/superpowers/specs/2026-07-23-replay-identity-threat-model.md`. |
 | Anonymous widget analytics | Visitor/page-view/event IDs, page path, funnel event and daily counts | Measure matched, impression, interaction, submit, and dismiss funnels | PostgreSQL | Raw events 90 days; daily aggregates 730 days |
@@ -82,6 +82,19 @@ be verified independently.
 - Replay objects captured before the current anonymous-event contract have privacy version zero.
   Tenant metadata reports them as expired, stream and merge paths refuse them, and the retention
   cleaner deletes their referenced objects before nulling the manifest keys.
+- Reporter email is only collected and only enters the notification pipeline after an explicit,
+  unchecked-by-default opt-in carrying structured consent evidence (purpose `feedback_updates`, a
+  recognized notice version, locale, and affirmative state). Unknown or contradictory combinations
+  (email without consent, consent without notify, an unsupported notice version) are rejected by
+  the public API, not silently normalized.
+- Every reporter notification/status/clarification/resolution email re-checks active consent both
+  when the send is enqueued and again immediately before the provider call, closing the race where
+  a reporter withdraws between those two points. Every such email carries a feedback-scoped
+  unsubscribe link and a link to the published privacy policy.
+- Rows consented before the structured-evidence migration (`000074`) have no purpose/notice
+  version/locale/source recorded. They are not treated as actively consented for new deliveries;
+  only feedback carrying full evidence is eligible for reporter email until the reporter re-opts in
+  through a fresh submission.
 
 ## Customer Responsibilities
 
@@ -98,3 +111,6 @@ page URLs, and clarification responses can contain identifiers and may require h
   require separate review.
 - Accounting/legal retention for billing and security audit records requires an explicit policy.
 - A manual-review procedure is required for personal data embedded in free-form operational history.
+- No self-service reconfirmation flow exists yet for reporters whose consent predates structured
+  evidence; today they simply stop receiving reporter email until they submit new feedback with a
+  fresh opt-in. A dedicated reconfirmation prompt is a candidate follow-up, not yet built.

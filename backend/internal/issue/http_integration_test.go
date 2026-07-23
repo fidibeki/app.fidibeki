@@ -94,8 +94,11 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO issues (
-			tenant_id, project_id, public_id, title, reporter_email, notify_reporter
-		) VALUES ($1, $2, 'ACME-2026-0001', 'Checkout is confusing', 'reporter@example.com', true)
+			tenant_id, project_id, public_id, title, reporter_email, notify_reporter,
+			reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+			reporter_consent_source
+		) VALUES ($1, $2, 'ACME-2026-0001', 'Checkout is confusing', 'reporter@example.com', true,
+		          'feedback_updates', '2026-07', 'en', 'widget_submission')
 		RETURNING id
 	`, tenantID, projectID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -109,9 +112,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, public_id, issue_id, client_feedback_id,
-			text, reporter_email, notify_reporter, page_url, text_process_status
+			text, reporter_email, notify_reporter, page_url, text_process_status,
+			reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+			reporter_consent_source
 		) VALUES ($1, $2, 'fb_Issue001', $3, gen_random_uuid(), 'Checkout is confusing',
-		          'reporter@example.com', true, 'https://example.com/checkout', 'pending')
+		          'reporter@example.com', true, 'https://example.com/checkout', 'pending',
+		          'feedback_updates', '2026-07', 'en', 'widget_submission')
 		RETURNING id
 	`, tenantID, projectID, issueID).Scan(&feedbackID); err != nil {
 		t.Fatalf("create feedback: %v", err)
@@ -244,12 +250,15 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, public_id, client_feedback_id, title, description, text,
-			reporter_email, notify_reporter, page_url, text_process_status
+			reporter_email, notify_reporter, page_url, text_process_status,
+			reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+			reporter_consent_source
 		) VALUES (
 			$1, $2, 'fb_Unlinked', gen_random_uuid(), 'Checkout freezes after promotion',
 			'The checkout freezes after I apply a promotion code.',
 			'The checkout freezes after I apply a promotion code.',
-			'reporter2@example.com', true, 'https://example.com/checkout', 'completed'
+			'reporter2@example.com', true, 'https://example.com/checkout', 'completed',
+			'feedback_updates', '2026-07', 'en', 'widget_submission'
 		) RETURNING id
 	`, tenantID, projectID).Scan(&unlinkedFeedbackID); err != nil {
 		t.Fatalf("create unlinked feedback: %v", err)
@@ -705,7 +714,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		Scan(&feedbackReceiptNotify); err != nil || feedbackReceiptNotify {
 		t.Fatalf("feedback complaint notify = %t, error = %v", feedbackReceiptNotify, err)
 	}
-	if _, err := root.Exec(ctx, `UPDATE feedbacks SET notify_reporter = true WHERE id = $1`, feedbackID); err != nil {
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET notify_reporter = true, reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
+		    reporter_consent_source = 'widget_submission'
+		WHERE id = $1
+	`, feedbackID); err != nil {
 		t.Fatalf("restore feedback after complaint: %v", err)
 	}
 	receiptSender := &sequenceSender{}
@@ -737,7 +751,11 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("delivery attempts = %d, error = %v", eventCount, err)
 	}
 
-	unsubscribeURL := strings.TrimPrefix(strings.Split(sender.messages[0].Text, "Unsubscribe: ")[1], " ")
+	unsubscribeURL := messageLink(t, sender.messages[0].Text, "Unsubscribe: ")
+	privacyURL := messageLink(t, sender.messages[0].Text, "Privacy: ")
+	if !strings.HasSuffix(privacyURL, "/privacy") {
+		t.Fatalf("reporter email privacy link = %q", privacyURL)
+	}
 	publicRouter := chi.NewRouter()
 	RegisterPublicRoutes(publicRouter, PublicHTTPOptions{
 		Store: store, Tokens: reporterTokens, Verifier: verifierStub{},
@@ -759,7 +777,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		Scan(&feedbackNotify); err != nil || feedbackNotify {
 		t.Fatalf("feedback receipt unsubscribe notify = %t, error = %v", feedbackNotify, err)
 	}
-	if _, err := root.Exec(ctx, `UPDATE feedbacks SET notify_reporter = true WHERE id = $1`, feedbackID); err != nil {
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks SET notify_reporter = true, reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
+		    reporter_consent_source = 'widget_submission'
+		WHERE id = $1
+	`, feedbackID); err != nil {
 		t.Fatalf("restore feedback reporter opt-in: %v", err)
 	}
 	unsubscribeRequest := httptest.NewRequest(http.MethodGet, strings.TrimSpace(unsubscribeURL), nil)
@@ -992,6 +1015,132 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	}
 }
 
+// TestReporterHandlerClosesConsentRevocationRace proves the acceptance requirement that consent is
+// checked both when enqueueing and immediately before provider delivery: a reporter who withdraws
+// consent during the window between the worker's initial load and the provider call must not
+// receive the email, even though the task was already enqueued while consent was active.
+func TestReporterHandlerClosesConsentRevocationRace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	directURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL connection string: %v", err)
+	}
+	migrator, err := db.NewMigrator(directURL, issueMigrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	root, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect as root: %v", err)
+	}
+	t.Cleanup(func() { _ = root.Close(ctx) })
+	if _, err := root.Exec(ctx, `ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password'`); err != nil {
+		t.Fatalf("enable app role: %v", err)
+	}
+
+	var tenantID, projectID, feedbackID, eventID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Acme', 'acme', 'growth', 'active') RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Acme Web', 'pk_live_RACEFEEDBACKTESTKEY001', '{example.com}') RETURNING id
+	`, tenantID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, title, text,
+			reporter_email, notify_reporter, page_url, text_process_status,
+			reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+			reporter_consent_source
+		) VALUES (
+			$1, $2, 'fb_Race0001', gen_random_uuid(), 'Race condition feedback',
+			'Checking withdrawal races.', 'reporter@example.com', true,
+			'https://example.com/checkout', 'skipped',
+			'feedback_updates', '2026-07', 'en', 'widget_submission'
+		) RETURNING id
+	`, tenantID, projectID).Scan(&feedbackID); err != nil {
+		t.Fatalf("create feedback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
+		VALUES ($1, 'feedback.created', 'feedback', $2) RETURNING id
+	`, tenantID, feedbackID).Scan(&eventID); err != nil {
+		t.Fatalf("create feedback receipt event: %v", err)
+	}
+
+	pools, err := db.OpenPools(ctx, issueRoleURL(t, directURL), directURL, 4, 2)
+	if err != nil {
+		t.Fatalf("open pools: %v", err)
+	}
+	t.Cleanup(pools.Close)
+	store := Store{Database: pools.Admin}
+	sender := &sequenceSender{}
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	reporter := ReporterHandler{
+		Store: store, Sender: sender, Tokens: newTestJWT(t, 90*24*time.Hour),
+		PublicBaseURL: "http://api.fidibeki.localhost:8088", BaseDomain: "fidibeki.localhost",
+		Now: func() time.Time { return now },
+		BeforeDelivery: func() {
+			// Simulate the reporter withdrawing consent during the window between the worker's
+			// initial load (which observed active consent) and the provider call.
+			if _, err := root.Exec(ctx,
+				`UPDATE feedbacks SET notify_reporter = false WHERE id = $1`, feedbackID,
+			); err != nil {
+				t.Fatalf("simulate mid-flight withdrawal: %v", err)
+			}
+		},
+	}
+	task := reporterTask(t, eventID, tenantID, feedbackID)
+	if err := reporter.Handler()(ctx, task); err != nil {
+		t.Fatalf("reporter handler with mid-flight withdrawal: %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("provider received %d messages despite mid-flight withdrawal", len(sender.messages))
+	}
+	var deliveryStatus, deliveryError string
+	if err := root.QueryRow(ctx, `
+		SELECT status, error_message FROM delivery_logs WHERE outbox_event_id = $1
+	`, eventID).Scan(&deliveryStatus, &deliveryError); err != nil {
+		t.Fatalf("read race delivery log: %v", err)
+	}
+	if deliveryStatus != "failed" || !strings.Contains(deliveryError, "consent") {
+		t.Fatalf("race delivery log = status %q error %q, want failed/consent", deliveryStatus, deliveryError)
+	}
+
+	// A retry of the same task, now that the DB is consistently withdrawn, must also skip
+	// delivery via the ordinary enqueue-time gate (not just the pre-send recheck).
+	if err := reporter.Handler()(ctx, task); err != nil {
+		t.Fatalf("reporter handler retry after withdrawal: %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("retry after withdrawal delivered %d messages", len(sender.messages))
+	}
+}
+
 func messageLink(t *testing.T, body, prefix string) string {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
@@ -1076,10 +1225,22 @@ func setReporterOptIn(
 	enabled bool,
 ) {
 	t.Helper()
-	if _, err := root.Exec(ctx, `UPDATE issues SET notify_reporter = $2 WHERE id = $1`, issueID, enabled); err != nil {
+	// Re-enabling always re-asserts full consent evidence, matching a fresh opt-in submission;
+	// disabling only flips notify_reporter and leaves prior evidence as historical audit trail.
+	evidence := ""
+	if enabled {
+		evidence = `, reporter_consent_purpose = 'feedback_updates',
+		    reporter_consent_notice_version = '2026-07', reporter_consent_locale = 'en',
+		    reporter_consent_source = 'widget_submission'`
+	}
+	if _, err := root.Exec(ctx,
+		`UPDATE issues SET notify_reporter = $2`+evidence+` WHERE id = $1`, issueID, enabled,
+	); err != nil {
 		t.Fatalf("set issue reporter opt-in: %v", err)
 	}
-	if _, err := root.Exec(ctx, `UPDATE feedbacks SET notify_reporter = $2 WHERE id = $1`, feedbackID, enabled); err != nil {
+	if _, err := root.Exec(ctx,
+		`UPDATE feedbacks SET notify_reporter = $2`+evidence+` WHERE id = $1`, feedbackID, enabled,
+	); err != nil {
 		t.Fatalf("set feedback reporter opt-in: %v", err)
 	}
 }

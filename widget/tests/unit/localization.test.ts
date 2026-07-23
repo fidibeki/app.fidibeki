@@ -74,4 +74,20 @@ describe('widget localization', () => {
     expect(result.content.prompt).toBe('Legacy prompt')
     expect(result.system.close).toBe('Fechar feedback')
   })
+
+  it('provides the required consent notice and privacy link copy in every supported system locale', () => {
+    for (const locale of ['en', 'pt']) {
+      const result = resolveWidgetLocalization(rule, 'en', [locale])
+      expect(result.system.consentNotice.length).toBeGreaterThan(0)
+      expect(result.system.privacyPolicy.length).toBeGreaterThan(0)
+    }
+    expect(resolveWidgetLocalization(rule, 'en', ['en']).system.consentNotice)
+      .not.toBe(resolveWidgetLocalization(rule, 'en', ['pt']).system.consentNotice)
+  })
+
+  it('falls back to English consent copy for the legacy default localization', () => {
+    const { localizations: _localizations, ...legacyRule } = rule
+    const result = resolveWidgetLocalization(legacyRule as WidgetRule, 'en', ['en'])
+    expect(result.content.consent_label).toBe('Email me updates about this feedback')
+  })
 })

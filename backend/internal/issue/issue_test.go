@@ -135,6 +135,39 @@ func TestPublicWebhookRejectsInvalidSignatureBeforeDatabaseAccess(t *testing.T) 
 	}
 }
 
+func TestUnsubscribeConfirmationIsBilingual(t *testing.T) {
+	t.Parallel()
+	en := "en"
+	ptPT := "pt-PT"
+	fr := "fr"
+	cases := []struct {
+		name         string
+		locale       *string
+		wantLang     string
+		wantFragment string
+	}{
+		{name: "english locale", locale: &en, wantLang: "en", wantFragment: "Unsubscribed"},
+		{
+			name: "portuguese regional locale falls back to the pt language", locale: &ptPT,
+			wantLang: "pt", wantFragment: "Subscrição cancelada",
+		},
+		{name: "unsupported locale defaults to english", locale: &fr, wantLang: "en", wantFragment: "Unsubscribed"},
+		{name: "missing locale defaults to english", locale: nil, wantLang: "en", wantFragment: "Unsubscribed"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			html := unsubscribeConfirmationHTML(testCase.locale)
+			if !strings.Contains(html, `lang="`+testCase.wantLang+`"`) {
+				t.Errorf("html lang = %q, want %q in %s", testCase.wantLang, testCase.wantLang, html)
+			}
+			if !strings.Contains(html, testCase.wantFragment) {
+				t.Errorf("html = %q, want fragment %q", html, testCase.wantFragment)
+			}
+		})
+	}
+}
+
 func TestPublicRoutesRejectInvalidInputsAndIgnoreUntrackedEvents(t *testing.T) {
 	t.Parallel()
 	router := chi.NewRouter()

@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -52,9 +53,21 @@ type ReporterNotification struct {
 	Title          string
 	Status         Status
 	ReporterEmail  string
-	Notify         bool
+	ConsentActive  bool
+	ConsentLocale  *string
 	Event          string
 	ReporterPrompt string
+}
+
+// reporterConsentActiveExpression evaluates to true only when notify_reporter is set AND the
+// grant/withdrawal timestamps and consent purpose all agree consent is currently in force. A
+// legacy row consented before structured evidence existed (reporter_consent_purpose IS NULL) never
+// satisfies this expression, so it fails closed until the reporter re-confirms through a fresh
+// opt-in submission. Table alias must be "issue" or "feedback".
+func reporterConsentActiveExpression(alias string) string {
+	return alias + `.notify_reporter AND ` + alias + `.reporter_consent_granted_at IS NOT NULL
+		AND ` + alias + `.reporter_consent_withdrawn_at IS NULL
+		AND ` + alias + `.reporter_consent_purpose = '` + feedback.ReporterConsentPurposeFeedbackUpdates + `'`
 }
 
 type DeliveryAttempt struct {
@@ -95,7 +108,8 @@ func (s Store) loadIssueNotification(
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
 		       issue.id, issue.public_id,
 		       issue.title, COALESCE(update.new_status, issue.status), issue.reporter_email,
-		       issue.notify_reporter, event.event, COALESCE(clarification.prompt, '')
+		       (`+reporterConsentActiveExpression("issue")+`),
+		       issue.reporter_consent_locale, event.event, COALESCE(clarification.prompt, '')
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN issues AS issue
@@ -117,7 +131,8 @@ func (s Store) loadIssueNotification(
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
 		&notification.TenantSlug, &notification.ResourceType,
 		&notification.IssueID, &notification.PublicID, &notification.Title,
-		&notification.Status, &notification.ReporterEmail, &notification.Notify,
+		&notification.Status, &notification.ReporterEmail,
+		&notification.ConsentActive, &notification.ConsentLocale,
 		&notification.Event, &notification.ReporterPrompt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -138,7 +153,8 @@ func (s Store) loadFeedbackReceipt(
 	err := s.Database.QueryRow(ctx, `
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, event.resource_type,
 		       feedback.public_id, feedback.title, feedback.reporter_email,
-		       feedback.notify_reporter, event.event
+		       (`+reporterConsentActiveExpression("feedback")+`),
+		       feedback.reporter_consent_locale, event.event
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN feedbacks AS feedback
@@ -149,7 +165,8 @@ func (s Store) loadFeedbackReceipt(
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
 		&notification.TenantSlug, &notification.ResourceType,
 		&notification.PublicID, &notification.Title, &notification.ReporterEmail,
-		&notification.Notify, &notification.Event,
+		&notification.ConsentActive, &notification.ConsentLocale,
+		&notification.Event,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReporterNotification{}, ErrNotFound
@@ -237,6 +254,11 @@ type ReporterHandler struct {
 	PublicBaseURL string
 	BaseDomain    string
 	Now           func() time.Time
+	// BeforeDelivery, if set, runs after the notification is composed but before the
+	// immediately-before-delivery consent recheck and provider send. It exists so tests can
+	// deterministically simulate a reporter withdrawing consent during the window between the
+	// initial load and the provider call; production wiring leaves it nil.
+	BeforeDelivery func()
 }
 
 func (h ReporterHandler) Handler() asynq.HandlerFunc {
@@ -253,7 +275,7 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		if !notification.Notify || strings.TrimSpace(notification.ReporterEmail) == "" {
+		if !notification.ConsentActive || strings.TrimSpace(notification.ReporterEmail) == "" {
 			return nil
 		}
 		retryCount, _ := asynq.GetRetryCount(ctx)
@@ -293,6 +315,19 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 			markErr := h.Store.MarkDeliveryFailed(ctx, attempt.ID, err.Error())
 			return errors.Join(fmt.Errorf("compose reporter notification: %w", err), markErr)
 		}
+		if h.BeforeDelivery != nil {
+			h.BeforeDelivery()
+		}
+		// Re-verify consent immediately before the provider call: composing the message issued a
+		// portal token and made further round-trips, leaving a window in which the reporter could
+		// have withdrawn consent since the initial load above. This closes that revocation race.
+		active, err := h.Store.ReporterConsentActive(ctx, notification)
+		if err != nil {
+			return err
+		}
+		if !active {
+			return h.Store.MarkDeliveryFailed(ctx, attempt.ID, "reporter consent is no longer active")
+		}
 		providerID, err := h.Sender.Send(ctx, message)
 		if err != nil {
 			markErr := h.Store.MarkDeliveryFailed(ctx, attempt.ID, err.Error())
@@ -304,6 +339,28 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 		}
 		return h.Store.RecordReporterNotification(ctx, notification, now)
 	}
+}
+
+// ReporterConsentActive re-reads the current consent state for the notification's resource,
+// independent of whatever was loaded earlier in the same task attempt. Callers use it immediately
+// before provider delivery to close the window between the initial consent check and the send.
+func (s Store) ReporterConsentActive(ctx context.Context, notification ReporterNotification) (bool, error) {
+	table := "issues"
+	if notification.ResourceType == "feedback" {
+		table = "feedbacks"
+	}
+	var active bool
+	err := s.Database.QueryRow(ctx, `
+		SELECT `+reporterConsentActiveExpression(table)+`
+		FROM `+table+` WHERE tenant_id = $1 AND id = $2
+	`, notification.TenantID, notification.ResourceID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check reporter consent active: %w", err)
+	}
+	return active, nil
 }
 
 func (h ReporterHandler) now() time.Time {
@@ -371,6 +428,10 @@ func reporterMessage(
 	if err != nil {
 		return email.Message{}, err
 	}
+	footerLinks := []email.Link{{Label: "Unsubscribe", URL: unsubscribeURL}}
+	if privacyURL := reporterPrivacyURL(publicBaseURL, baseDomain); privacyURL != "" {
+		footerLinks = append(footerLinks, email.Link{Label: "Privacy", URL: privacyURL})
+	}
 	return email.Compose(email.Message{
 		From: from, To: notification.ReporterEmail,
 		Subject:        subject,
@@ -379,9 +440,22 @@ func reporterMessage(
 		Preheader: headline, Heading: subject, Workspace: notification.TenantName,
 		Body: body, Metadata: metadata, Action: action,
 		Footer:      "You received this because you asked for updates about this feedback.",
-		FooterLinks: []email.Link{{Label: "Unsubscribe", URL: unsubscribeURL}},
+		FooterLinks: footerLinks,
 		LogoURL:     logoURL,
 	})
+}
+
+// reporterPrivacyURL points to the workspace-independent published privacy policy, giving every
+// reporter email a link to the privacy information alongside its scoped unsubscribe action.
+func reporterPrivacyURL(publicBaseURL, baseDomain string) string {
+	if baseDomain == "" {
+		return ""
+	}
+	scheme := "https"
+	if strings.HasPrefix(publicBaseURL, "http://") {
+		scheme = "http"
+	}
+	return scheme + "://" + baseDomain + "/privacy"
 }
 
 func reporterPortalURL(publicBaseURL, baseDomain, tenantSlug, token string) string {

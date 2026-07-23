@@ -18,13 +18,13 @@ const browserRule: WidgetRule = {
     en: {
       launcher_label: 'Feedback', prompt: 'How clear was checkout?',
       comment_placeholder: 'Tell us more', contact_label: 'Email address',
-      consent_label: 'Email me about this feedback', submit_label: 'Send feedback',
+      consent_label: 'Email me updates about this feedback', submit_label: 'Send feedback',
       success_message: 'Your feedback was sent.',
     },
     pt: {
       launcher_label: 'Feedback', prompt: 'O checkout foi claro?',
       comment_placeholder: 'Conta-nos mais', contact_label: 'Endereço de email',
-      consent_label: 'Contactem-me sobre este feedback', submit_label: 'Enviar feedback',
+      consent_label: 'Enviem-me atualizações sobre este feedback', submit_label: 'Enviar feedback',
       success_message: 'O feedback foi enviado.',
     },
   },
@@ -67,7 +67,7 @@ function definitionConfiguration(presentation: WidgetPresentation, key = 'inline
         en: {
           launcher_label: 'Share feedback', prompt: 'How was checkout?',
           comment_placeholder: 'Add context', contact_label: 'Email address',
-          consent_label: 'Email me about this feedback', submit_label: 'Send response',
+          consent_label: 'Email me updates about this feedback', submit_label: 'Send response',
           success_message: 'Response received.',
           block_labels: { score: 'Score', reaction: 'Was this helpful?', reason: 'Reason', details: 'Details' },
           option_labels: {
@@ -78,7 +78,7 @@ function definitionConfiguration(presentation: WidgetPresentation, key = 'inline
         pt: {
           launcher_label: 'Dar feedback', prompt: 'Como foi o checkout?',
           comment_placeholder: 'Adicionar contexto', contact_label: 'Endereço de email',
-          consent_label: 'Contactem-me sobre este feedback', submit_label: 'Enviar resposta',
+          consent_label: 'Enviem-me atualizações sobre este feedback', submit_label: 'Enviar resposta',
           success_message: 'Resposta recebida.',
           block_labels: { score: 'Pontuação', reaction: 'Foi útil?', reason: 'Motivo', details: 'Detalhes' },
           option_labels: {
@@ -341,8 +341,11 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
     await page.getByRole('combobox', { name: 'Reason' }).selectOption('fast')
     await page.getByRole('textbox', { name: 'Details' }).fill('The checkout was clear.')
     await page.getByRole('textbox', { name: 'Add context' }).fill('No blockers.')
-    await page.getByRole('textbox', { name: 'Email address' }).fill('customer@example.com')
-    await page.getByRole('checkbox', { name: 'Email me about this feedback' }).check()
+    const email = page.getByRole('textbox', { name: 'Email address' })
+    await expect(email).toBeHidden()
+    await page.getByRole('checkbox', { name: 'Email me updates about this feedback' }).check()
+    await expect(email).toBeVisible()
+    await email.fill('customer@example.com')
     await page.getByRole('button', { name: 'Send response' }).click()
     await expect(page.getByText('Response received.')).toBeVisible()
 
@@ -355,6 +358,12 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
       comment: 'No blockers.',
       reporter_email: 'customer@example.com',
       notify_reporter: true,
+      consent: {
+        purpose: 'feedback_updates',
+        notice_version: expect.any(String),
+        locale: expect.any(String),
+        granted: true,
+      },
     })
   })
 }
@@ -414,7 +423,9 @@ test('reactive page language preserves an in-progress response and funnel state'
   await page.getByRole('combobox', { name: 'Reason' }).selectOption('fast')
   const details = page.locator('textarea[name="response_details"]')
   const email = page.locator('input[name="reporter_email"]')
+  const consent = page.locator('input[name="notify_reporter"]')
   await details.fill('Keep this draft across the language change.')
+  await consent.check()
   await email.fill('invalid-email')
   await page.getByRole('button', { name: 'Send response' }).click()
   await expect(page.getByText('Enter a valid email address.')).toBeVisible()
@@ -453,16 +464,22 @@ test('automatic placement reacts to the page language without duplicate funnel e
 })
 
 const contactSubmissionCases = [
-  { name: 'disabled', enabled: false, email: '', consent: false, expectedEmail: null, expectedConsent: false },
-  { name: 'enabled and empty', enabled: true, email: '', consent: false, expectedEmail: null, expectedConsent: false },
-  { name: 'email without consent', enabled: true, email: 'customer@example.com', consent: false, expectedEmail: 'customer@example.com', expectedConsent: false },
-  { name: 'email with consent', enabled: true, email: 'customer@example.com', consent: true, expectedEmail: 'customer@example.com', expectedConsent: true },
+  { name: 'disabled', enabled: true, disabled: true, check: false as const, email: '' },
+  { name: 'unchecked', enabled: true, disabled: false, check: false as const, email: '' },
+  {
+    name: 'checked then unchecked clears the typed email',
+    enabled: true, disabled: false, check: 'toggle' as const, email: 'customer@example.com',
+  },
+  {
+    name: 'checked with a valid email',
+    enabled: true, disabled: false, check: true as const, email: 'customer@example.com',
+  },
 ]
 
 for (const contactCase of contactSubmissionCases) {
   test(`contact collection submits the ${contactCase.name} state`, async ({ page }) => {
     const configuration = definitionConfiguration('inline')
-    configuration.definitions![0]!.collect_contact = contactCase.enabled
+    configuration.definitions![0]!.collect_contact = !contactCase.disabled
     const submissions: Array<Record<string, unknown>> = []
     await page.route('**/v1/widget/config*', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
@@ -475,15 +492,26 @@ for (const contactCase of contactSubmissionCases) {
 
     await page.goto('/sample.html')
     const email = page.getByRole('textbox', { name: 'Email address' })
-    const consent = page.getByRole('checkbox', { name: 'Email me about this feedback' })
-    if (!contactCase.enabled) {
+    const consent = page.getByRole('checkbox', { name: 'Email me updates about this feedback' })
+    if (contactCase.disabled) {
       await expect(email).toHaveCount(0)
       await expect(consent).toHaveCount(0)
     } else {
-      await expect(email).toHaveAttribute('type', 'email')
-      await expect(email).toHaveAttribute('autocomplete', 'email')
-      if (contactCase.email) await email.fill(contactCase.email)
-      if (contactCase.consent) await consent.check()
+      // The email input is present but must stay out of the accessible/visible surface until
+      // the reporter opts in, per the reveal-only-after-consent contract.
+      await expect(email).toBeHidden()
+      if (contactCase.check === true || contactCase.check === 'toggle') {
+        await consent.check()
+        await expect(email).toBeVisible()
+        if (contactCase.email) await email.fill(contactCase.email)
+      }
+      if (contactCase.check === 'toggle') {
+        await consent.uncheck()
+        await expect(email).toBeHidden()
+        // getByRole excludes hidden elements from the accessibility tree entirely, so read the
+        // cleared value through a raw locator instead.
+        await expect(page.locator('input[name="reporter_email"]')).toHaveValue('')
+      }
     }
     await page.getByRole('button', { name: '4 out of 5' }).click()
     await page.getByRole('button', { name: 'Helpful', exact: true }).click()
@@ -491,10 +519,15 @@ for (const contactCase of contactSubmissionCases) {
     await page.getByRole('button', { name: 'Send response' }).click()
     await expect(page.getByText('Response received.')).toBeVisible()
 
+    const expectGranted = contactCase.check === true
     expect(submissions).toHaveLength(1)
     expect(submissions[0]).toMatchObject({
-      reporter_email: contactCase.expectedEmail,
-      notify_reporter: contactCase.expectedConsent,
+      reporter_email: expectGranted ? contactCase.email : null,
+      notify_reporter: expectGranted,
+      consent: expectGranted ? {
+        purpose: 'feedback_updates', notice_version: expect.any(String),
+        locale: expect.any(String), granted: true,
+      } : null,
     })
   })
 }
@@ -515,8 +548,11 @@ test('contact validation is inline and preserves the prepared response', async (
   await page.getByRole('button', { name: 'Helpful', exact: true }).click()
   const details = page.getByRole('textbox', { name: 'Details' })
   const email = page.getByRole('textbox', { name: 'Email address' })
-  const consent = page.getByRole('checkbox', { name: 'Email me about this feedback' })
+  const consent = page.getByRole('checkbox', { name: 'Email me updates about this feedback' })
   await details.fill('Keep this response while correcting contact details.')
+  await expect(email).toBeHidden()
+  await consent.check()
+  await expect(email).toBeVisible()
   await email.fill('not-an-email')
   await page.getByRole('button', { name: 'Send response' }).click()
 
@@ -528,7 +564,6 @@ test('contact validation is inline and preserves the prepared response', async (
   expect(submissions).toHaveLength(0)
 
   await email.fill('')
-  await consent.check()
   await page.getByRole('button', { name: 'Send response' }).click()
   await expect(page.getByText('Enter an email address to receive updates.')).toBeVisible()
   await expect(details).toHaveValue('Keep this response while correcting contact details.')
@@ -1394,6 +1429,7 @@ test('preserves the complete draft and offers retry after a public rate decision
     responses: Record<string, string | number>
     reporter_email: string
     notify_reporter: boolean
+    consent: { purpose: string; notice_version: string; locale: string; granted: boolean } | null
     attachments: Array<{ client_attachment_id: string; kind: string }>
   }> = []
   await page.route('**/v1/widget/config*', (route) => route.fulfill({
@@ -1448,8 +1484,11 @@ test('preserves the complete draft and offers retry after a public rate decision
   await page.getByRole('button', { name: '5 out of 5' }).click()
   await page.getByRole('button', { name: 'Helpful', exact: true }).click()
   await page.getByRole('textbox', { name: 'Details' }).fill('Keep this complete draft.')
-  await page.getByRole('textbox', { name: 'Email address' }).fill('reporter@example.test')
-  await page.getByRole('checkbox', { name: 'Email me about this feedback' }).check()
+  const retryEmail = page.getByRole('textbox', { name: 'Email address' })
+  await expect(retryEmail).toBeHidden()
+  await page.getByRole('checkbox', { name: 'Email me updates about this feedback' }).check()
+  await expect(retryEmail).toBeVisible()
+  await retryEmail.fill('reporter@example.test')
   await page.getByRole('button', { name: 'Capture screenshot' }).click()
   await page.getByRole('button', { name: 'Send response' }).click()
 
@@ -1457,7 +1496,7 @@ test('preserves the complete draft and offers retry after a public rate decision
   await expect(page.getByRole('button', { name: 'Retry' })).toBeDisabled()
   await expect(page.getByRole('textbox', { name: 'Details' })).toHaveValue('Keep this complete draft.')
   await expect(page.getByRole('textbox', { name: 'Email address' })).toHaveValue('reporter@example.test')
-  await expect(page.getByRole('checkbox', { name: 'Email me about this feedback' })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Email me updates about this feedback' })).toBeChecked()
   await expect(page.getByRole('button', { name: 'Screenshot attached' })).toBeVisible()
   await expect(page.getByRole('button', { name: '5 out of 5' })).toHaveAttribute('aria-pressed', 'true')
   await page.screenshot({ path: testInfo.outputPath('retry-state-desktop.png'), animations: 'disabled' })
@@ -1474,6 +1513,8 @@ test('preserves the complete draft and offers retry after a public rate decision
   expect(payloads[1]?.responses).toEqual(payloads[0]?.responses)
   expect(payloads[1]?.reporter_email).toBe('reporter@example.test')
   expect(payloads[1]?.notify_reporter).toBe(true)
+  expect(payloads[1]?.consent).toEqual(payloads[0]?.consent)
+  expect(payloads[1]?.consent).toMatchObject({ purpose: 'feedback_updates', granted: true })
   expect(payloads[1]?.attachments).toEqual(payloads[0]?.attachments)
   expect(payloads[1]?.attachments).toHaveLength(1)
 })

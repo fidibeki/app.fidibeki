@@ -1286,6 +1286,214 @@ func (l staticLimiter) Allow(context.Context, string, ratelimit.Window) (ratelim
 	return l.decision, l.err
 }
 
+// TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradiction proves the
+// end-to-end explicit consent contract at the HTTP boundary: an opted-in submission persists the
+// exact structured evidence (purpose, notice version, locale, source, server-authoritative
+// timestamp), an anonymous submission persists no email and no consent, and every contradictory
+// payload shape is rejected before anything is written.
+func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradiction(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	directURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL connection string: %v", err)
+	}
+	migrator, err := db.NewMigrator(directURL, feedbackMigrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	root, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect as root: %v", err)
+	}
+	t.Cleanup(func() { _ = root.Close(ctx) })
+	if _, err := root.Exec(ctx, `ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password'`); err != nil {
+		t.Fatalf("enable app login: %v", err)
+	}
+
+	var tenantID, projectID, ruleID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Acme', 'acme', 'growth', 'active') RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	publicKey := "pk_live_CONSENTCONTRACTTEST001"
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Acme Web', $2, '{example.com}') RETURNING id
+	`, tenantID, publicKey).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds,
+			can_write_text, collect_contact
+		) VALUES ($1, 'All pages', 'all_pages', 'delay', 0, true, true)
+		RETURNING id
+	`, projectID).Scan(&ruleID); err != nil {
+		t.Fatalf("create widget rule: %v", err)
+	}
+
+	pools, err := db.OpenPools(ctx, feedbackRoleURL(t, directURL), directURL, 4, 2)
+	if err != nil {
+		t.Fatalf("open database pools: %v", err)
+	}
+	t.Cleanup(pools.Close)
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	authorizer := widgetapi.Authorizer{Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now }}
+	handler := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Now: func() time.Time { return now },
+	})
+	metadata := `"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720}`
+	testStart := time.Now().Add(-time.Second)
+
+	submit := func(clientFeedbackID, extra string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"client_feedback_id":%q,"widget_rule_id":%q,%s%s}`,
+			clientFeedbackID, ruleID, metadata, extra)
+		return performFeedbackRequest(
+			handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com",
+		)
+	}
+
+	optedIn := submit("00000000-0000-4000-8000-000000000001",
+		`,"text":"Great!","reporter_email":"Reporter@Example.com","notify_reporter":true,`+
+			`"consent":{"purpose":"feedback_updates","notice_version":"2026-07","locale":"en-US","granted":true}`,
+	)
+	if optedIn.Code != http.StatusCreated {
+		t.Fatalf("opted-in submission status = %d, body = %s", optedIn.Code, optedIn.Body.String())
+	}
+	var optedInResponse SubmissionResponse
+	decodeFeedbackResponse(t, optedIn, &optedInResponse)
+	if !optedInResponse.NotifyReporter {
+		t.Fatalf("opted-in response notify_reporter = %#v", optedInResponse)
+	}
+
+	var reporterEmail, purpose, noticeVersion, locale, source *string
+	var notifyReporter bool
+	var grantedAt, withdrawnAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT reporter_email, notify_reporter, reporter_consent_granted_at, reporter_consent_withdrawn_at,
+		       reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+		       reporter_consent_source
+		FROM feedbacks WHERE id = $1
+	`, optedInResponse.FeedbackID).Scan(
+		&reporterEmail, &notifyReporter, &grantedAt, &withdrawnAt,
+		&purpose, &noticeVersion, &locale, &source,
+	); err != nil {
+		t.Fatalf("read opted-in feedback row: %v", err)
+	}
+	if reporterEmail == nil || *reporterEmail != "reporter@example.com" || !notifyReporter ||
+		grantedAt == nil || withdrawnAt != nil ||
+		purpose == nil || *purpose != "feedback_updates" ||
+		noticeVersion == nil || *noticeVersion != "2026-07" ||
+		locale == nil || *locale != "en-US" ||
+		source == nil || *source != "widget_submission" {
+		t.Fatalf("opted-in consent evidence = email %v notify %t granted %v withdrawn %v "+
+			"purpose %v version %v locale %v source %v",
+			reporterEmail, notifyReporter, grantedAt, withdrawnAt, purpose, noticeVersion, locale, source)
+	}
+	// The client never sends a timestamp (ReporterConsentInput has no time field at all); the
+	// database trigger stamps reporter_consent_granted_at from its own clock at INSERT time, so
+	// this must land at real wall-clock submission time, never at the test's simulated business
+	// clock (`now`, fixed to 2026-07-23T12:00:00Z) which only drives unrelated validation logic.
+	if grantedAt.Before(testStart) {
+		t.Errorf("consent granted_at = %v, want a server-authoritative timestamp at or after %v", grantedAt, testStart)
+	}
+
+	anonymous := submit("00000000-0000-4000-8000-000000000002", `,"text":"No contact please."`)
+	if anonymous.Code != http.StatusCreated {
+		t.Fatalf("anonymous submission status = %d, body = %s", anonymous.Code, anonymous.Body.String())
+	}
+	var anonymousResponse SubmissionResponse
+	decodeFeedbackResponse(t, anonymous, &anonymousResponse)
+	var anonymousEmail, anonymousPurpose *string
+	var anonymousNotify bool
+	if err := root.QueryRow(ctx, `
+		SELECT reporter_email, notify_reporter, reporter_consent_purpose FROM feedbacks WHERE id = $1
+	`, anonymousResponse.FeedbackID).Scan(&anonymousEmail, &anonymousNotify, &anonymousPurpose); err != nil {
+		t.Fatalf("read anonymous feedback row: %v", err)
+	}
+	if anonymousEmail != nil || anonymousNotify || anonymousPurpose != nil {
+		t.Fatalf("anonymous submission persisted = email %v notify %t purpose %v",
+			anonymousEmail, anonymousNotify, anonymousPurpose)
+	}
+
+	contradictoryCases := []struct {
+		name  string
+		extra string
+		field string
+	}{
+		{
+			name:  "email without granted consent",
+			extra: `,"reporter_email":"leftover@example.com","notify_reporter":false`,
+			field: "reporter_email",
+		},
+		{
+			name:  "consent without notify_reporter",
+			extra: `,"consent":{"purpose":"feedback_updates","notice_version":"2026-07","locale":"en","granted":true}`,
+			field: "consent",
+		},
+		{
+			name:  "notify_reporter true without evidence",
+			extra: `,"reporter_email":"reporter@example.com","notify_reporter":true`,
+			field: "consent",
+		},
+		{
+			name: "unknown notice version",
+			extra: `,"reporter_email":"reporter@example.com","notify_reporter":true,` +
+				`"consent":{"purpose":"feedback_updates","notice_version":"1999-01","locale":"en","granted":true}`,
+			field: "consent.notice_version",
+		},
+	}
+	for index, testCase := range contradictoryCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			clientFeedbackID := fmt.Sprintf("00000000-0000-4000-8000-0000000000%02d", 10+index)
+			rejected := submit(clientFeedbackID, testCase.extra)
+			if rejected.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, body = %s, want 422", rejected.Code, rejected.Body.String())
+			}
+			var errorBody struct {
+				Error struct {
+					Details []FieldError `json:"details"`
+				} `json:"error"`
+			}
+			decodeFeedbackResponse(t, rejected, &errorBody)
+			if !hasField(errorBody.Error.Details, testCase.field) {
+				t.Fatalf("fields = %#v, missing %q", errorBody.Error.Details, testCase.field)
+			}
+			var count int
+			if err := root.QueryRow(ctx, `
+				SELECT count(*) FROM feedbacks WHERE tenant_id = $1 AND client_feedback_id = $2
+			`, tenantID, clientFeedbackID).Scan(&count); err != nil {
+				t.Fatalf("count rejected feedback rows: %v", err)
+			}
+			if count != 0 {
+				t.Fatalf("rejected payload %q persisted a row", testCase.name)
+			}
+		})
+	}
+}
+
 func feedbackHandler(options HTTPOptions) http.Handler {
 	router := chi.NewRouter()
 	RegisterRoutes(router, options)

@@ -29,6 +29,10 @@ var reporterExportFiles = []exportFile{
 			'comment', feedback.comment, 'reporter_email', feedback.reporter_email,
 			'reporter_consent_granted_at', feedback.reporter_consent_granted_at,
 			'reporter_consent_withdrawn_at', feedback.reporter_consent_withdrawn_at,
+			'reporter_consent_purpose', feedback.reporter_consent_purpose,
+			'reporter_consent_notice_version', feedback.reporter_consent_notice_version,
+			'reporter_consent_locale', feedback.reporter_consent_locale,
+			'reporter_consent_source', feedback.reporter_consent_source,
 			'page_url', feedback.page_url, 'referrer', feedback.referrer,
 			'user_agent', feedback.user_agent, 'os', feedback.os,
 			'browser', feedback.browser, 'device', feedback.device,
@@ -47,6 +51,10 @@ var reporterExportFiles = []exportFile{
 			'priority', issue.priority, 'reporter_email', issue.reporter_email,
 			'reporter_consent_granted_at', issue.reporter_consent_granted_at,
 			'reporter_consent_withdrawn_at', issue.reporter_consent_withdrawn_at,
+			'reporter_consent_purpose', issue.reporter_consent_purpose,
+			'reporter_consent_notice_version', issue.reporter_consent_notice_version,
+			'reporter_consent_locale', issue.reporter_consent_locale,
+			'reporter_consent_source', issue.reporter_consent_source,
 			'resolved_at', issue.resolved_at, 'created_at', issue.created_at,
 			'updated_at', issue.updated_at
 		)

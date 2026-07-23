@@ -309,7 +309,7 @@ func hasResponseBlock(blocks []WidgetResponseBlock, blockType WidgetResponseBloc
 func defaultLocalization(prompt string) WidgetLocalization {
 	return WidgetLocalization{
 		LauncherLabel: "Feedback", Prompt: prompt, CommentPlaceholder: "Tell us more",
-		ContactLabel: "Email address", ConsentLabel: "Email me about this feedback",
+		ContactLabel: "Email address", ConsentLabel: "Email me updates about this feedback",
 		SubmitLabel: "Send feedback", SuccessMessage: "Your feedback was sent.",
 	}
 }
