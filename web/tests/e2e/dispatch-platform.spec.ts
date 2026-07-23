@@ -1530,33 +1530,41 @@ test('session replay fits its surface across responsive viewports', async ({ pag
   await page.getByRole('button', { name: 'Replay', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Play or pause replay' })).toBeVisible()
 
+  const replayGeometry = () => page.locator('.feedback-replay-surface').evaluate((surface) => {
+    const target = surface.querySelector<HTMLElement>('.replay-player-target')
+    const player = surface.querySelector<HTMLElement>('.rr-player')
+    const frame = surface.querySelector<HTMLElement>('.rr-player__frame')
+    const controller = surface.querySelector<HTMLElement>('.rr-controller')
+    if (!target || !player || !frame || !controller) return null
+    const targetRect = target.getBoundingClientRect()
+    const playerRect = player.getBoundingClientRect()
+    const frameRect = frame.getBoundingClientRect()
+    const controllerRect = controller.getBoundingClientRect()
+    return {
+      documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      playerLeft: playerRect.left,
+      playerRight: playerRect.right,
+      targetLeft: targetRect.left,
+      targetRight: targetRect.right,
+      controllerLeft: controllerRect.left,
+      controllerRight: controllerRect.right,
+      frameRatio: frameRect.width / frameRect.height,
+    }
+  })
+
   for (const viewport of [
     { width: 1440, height: 1000 },
     { width: 1024, height: 768 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport)
-    const geometry = await page.locator('.feedback-replay-surface').evaluate((surface) => {
-      const target = surface.querySelector<HTMLElement>('.replay-player-target')
-      const player = surface.querySelector<HTMLElement>('.rr-player')
-      const frame = surface.querySelector<HTMLElement>('.rr-player__frame')
-      const controller = surface.querySelector<HTMLElement>('.rr-controller')
-      if (!target || !player || !frame || !controller) return null
-      const targetRect = target.getBoundingClientRect()
-      const playerRect = player.getBoundingClientRect()
-      const frameRect = frame.getBoundingClientRect()
-      const controllerRect = controller.getBoundingClientRect()
-      return {
-        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-        playerLeft: playerRect.left,
-        playerRight: playerRect.right,
-        targetLeft: targetRect.left,
-        targetRight: targetRect.right,
-        controllerLeft: controllerRect.left,
-        controllerRight: controllerRect.right,
-        frameRatio: frameRect.width / frameRect.height,
-      }
-    })
+    await expect.poll(async () => {
+      const geometry = await replayGeometry()
+      return geometry !== null
+        && geometry.playerRight <= geometry.targetRight + 1
+        && geometry.controllerRight <= geometry.targetRight + 1
+    }, { message: `${viewport.width}px replay resize` }).toBe(true)
+    const geometry = await replayGeometry()
 
     expect(geometry, `${viewport.width}px replay geometry`).not.toBeNull()
     expect(geometry!.documentOverflow, `${viewport.width}px document overflow`).toBeLessThanOrEqual(1)
