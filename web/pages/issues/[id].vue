@@ -63,7 +63,10 @@ const triageMembers = computed(() => {
   const options = [...(data.value?.members || [])]
   const assignee = data.value?.issue.assignee
   if (assignee && !options.some(option => option.id === assignee.id)) {
-    options.push({ id: assignee.id, tenant_id: '', email: assignee.email, name: assignee.name || undefined, permissions: [] })
+    options.push({
+      id: assignee.id, tenant_id: '', email: assignee.email, name: assignee.name || undefined,
+      permissions: [], status: 'active', role: 'member', verified: false,
+    })
   }
   return options
 })

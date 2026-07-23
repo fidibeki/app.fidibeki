@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
@@ -86,9 +87,13 @@ func (s Store) FindMemberByEmail(
 	tenantID string,
 	email string,
 ) (Member, error) {
-	member, err := scanMember(query.QueryRow(ctx, `
-		SELECT id, tenant_id, email, name, permissions
-		FROM tenant_members WHERE tenant_id = $1 AND email = $2
+	member, err := scanMemberWithRole(query.QueryRow(ctx, `
+		SELECT member.id, member.tenant_id, member.email, member.name, member.permissions,
+		       member.status, member.authorization_version,
+		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
+		FROM tenant_members AS member
+		JOIN tenants AS tenant ON tenant.id = member.tenant_id
+		WHERE member.tenant_id = $1 AND member.email = $2
 	`, tenantID, email))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Member{}, ErrMemberNotFound
@@ -278,17 +283,24 @@ func (s Store) ConsumeMagicLink(
 		member, err = scanMember(query.QueryRow(ctx, `
 			INSERT INTO tenant_members (tenant_id, email, permissions)
 			VALUES ($1, $2, $3)
-			RETURNING id, tenant_id, email, name, permissions
+			RETURNING id, tenant_id, email, name, permissions, status, authorization_version
 		`, tenantID, email, invitedPermissions))
 		if err != nil {
 			return Member{}, fmt.Errorf("accept tenant invitation: %w", err)
 		}
 		memberID = &member.ID
 	} else {
-		member, err = scanMember(query.QueryRow(ctx, `
-			SELECT id, tenant_id, email, name, permissions
-			FROM tenant_members WHERE tenant_id = $1 AND id = $2
+		member, err = scanMemberWithRole(query.QueryRow(ctx, `
+				SELECT member.id, member.tenant_id, member.email, member.name, member.permissions,
+				       member.status, member.authorization_version,
+				       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
+			FROM tenant_members AS member
+			JOIN tenants AS tenant ON tenant.id = member.tenant_id
+			WHERE member.tenant_id = $1 AND member.id = $2 AND member.status = 'active'
 		`, tenantID, *memberID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Member{}, ErrMagicLinkInvalid
+		}
 		if err != nil {
 			return Member{}, fmt.Errorf("load tenant member for magic link: %w", err)
 		}
@@ -307,13 +319,7 @@ func (s Store) ConsumeMagicLink(
 		       jsonb_build_object('member_id', $2::text)
 		FROM tenants AS tenant
 		WHERE tenant.id = $1 AND tenant.welcome_email_sent_at IS NULL
-		  AND $2::uuid = (
-		      SELECT candidate.id
-		      FROM tenant_members AS candidate
-		      WHERE candidate.tenant_id = tenant.id
-		      ORDER BY candidate.created_at, candidate.id
-		      LIMIT 1
-		  )
+		  AND tenant.owner_member_id = $2::uuid
 		ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
 	`, tenantID, member.ID); err != nil {
 		return Member{}, fmt.Errorf("schedule owner welcome email: %w", err)
@@ -324,6 +330,7 @@ func (s Store) ConsumeMagicLink(
 	); err != nil {
 		return Member{}, fmt.Errorf("update tenant member login: %w", err)
 	}
+	member.Verified = true
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash, user_agent, ip)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet)
@@ -380,11 +387,15 @@ func (s Store) RotateSession(
 		             AND replacement.revoked_at IS NULL
 		             AND replacement.issued_at > $7
 		         ),
-		       member.id, member.tenant_id, member.email, member.name, member.permissions
+		       member.id, member.tenant_id, member.email, member.name, member.permissions,
+		       member.status, member.authorization_version,
+		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
 		FROM tenant_member_sessions AS session
 		JOIN tenant_members AS member
 		  ON member.tenant_id = session.tenant_id AND member.id = session.member_id
+		JOIN tenants AS tenant ON tenant.id = member.tenant_id
 		WHERE session.tenant_id = $1 AND session.refresh_hash = $2
+		  AND member.status = 'active'
 		FOR UPDATE OF session
 	`, tenantID, currentHash, nextHash, checkedAt.Add(-retryGrace), userAgent, ip,
 		checkedAt.Add(-s.refreshTTL()), retryGrace > 0),
@@ -506,7 +517,7 @@ func lockTenantMember(ctx context.Context, query db.Querier, tenantID, memberID 
 func (s Store) CountMembers(ctx context.Context, query db.Querier, tenantID string) (int, error) {
 	var count int
 	if err := query.QueryRow(ctx,
-		`SELECT count(*) FROM tenant_members WHERE tenant_id = $1`, tenantID,
+		`SELECT count(*) FROM tenant_members WHERE tenant_id = $1 AND status <> 'removed'`, tenantID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count tenant members: %w", err)
 	}
@@ -515,8 +526,13 @@ func (s Store) CountMembers(ctx context.Context, query db.Querier, tenantID stri
 
 func (s Store) ListMembers(ctx context.Context, query db.Querier, tenantID string) ([]Member, error) {
 	rows, err := query.Query(ctx, `
-		SELECT id, tenant_id, email, name, permissions
-		FROM tenant_members WHERE tenant_id = $1 ORDER BY created_at, id
+		SELECT member.id, member.tenant_id, member.email, member.name, member.permissions,
+		       member.status, member.authorization_version,
+		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
+		FROM tenant_members AS member
+		JOIN tenants AS tenant ON tenant.id = member.tenant_id
+		WHERE member.tenant_id = $1
+		ORDER BY member.created_at, member.id
 	`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list tenant members: %w", err)
@@ -524,7 +540,7 @@ func (s Store) ListMembers(ctx context.Context, query db.Querier, tenantID strin
 	defer rows.Close()
 	members := make([]Member, 0)
 	for rows.Next() {
-		member, err := scanMember(rows)
+		member, err := scanMemberWithRole(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan tenant member: %w", err)
 		}
@@ -540,21 +556,427 @@ func (s Store) UpdatePermissions(
 	ctx context.Context,
 	query db.Querier,
 	tenantID string,
+	actorMemberID string,
 	memberID string,
 	permissions []string,
 ) (Member, error) {
-	member, err := scanMember(query.QueryRow(ctx, `
-		UPDATE tenant_members SET permissions = $3
-		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, email, name, permissions
-	`, tenantID, memberID, permissions))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Member{}, ErrMemberNotFound
+	ownerMemberID, current, err := lockWorkspaceMember(ctx, query, tenantID, memberID)
+	if err != nil {
+		return Member{}, err
 	}
+	if err := requireActiveMemberActor(ctx, query, tenantID, actorMemberID); err != nil {
+		if errors.Is(err, ErrMemberActorInvalid) {
+			if recordErr := recordTenantAccessEvent(ctx, query, tenantID, "member.permission_change_denied", &actorMemberID, &memberID, map[string]any{
+				"reason": "actor_is_not_active_member",
+			}); recordErr != nil {
+				return Member{}, recordErr
+			}
+		}
+		return Member{}, err
+	}
+	if ownerMemberID != nil && *ownerMemberID == memberID {
+		if err := recordTenantAccessEvent(ctx, query, tenantID, "member.permission_change_denied", &actorMemberID, &memberID, map[string]any{
+			"reason": "subject_is_owner",
+		}); err != nil {
+			return Member{}, err
+		}
+		return Member{}, ErrOwnerProtection
+	}
+	if current.Status == MemberStatusRemoved {
+		if err := recordTenantAccessEvent(ctx, query, tenantID, "member.permission_change_denied", &actorMemberID, &memberID, map[string]any{
+			"reason": "subject_is_removed",
+		}); err != nil {
+			return Member{}, err
+		}
+		return Member{}, ErrMemberAlreadyRemoved
+	}
+	if current.Status != MemberStatusActive {
+		return Member{}, ErrMemberStatusInvalid
+	}
+	if isRecoverableAdministrator(current.Permissions) && !isRecoverableAdministrator(permissions) {
+		last, err := isLastRecoverableAdministrator(ctx, query, tenantID, memberID)
+		if err != nil {
+			return Member{}, err
+		}
+		if last {
+			if err := recordTenantAccessEvent(ctx, query, tenantID, "member.permission_change_denied", &actorMemberID, &memberID, map[string]any{
+				"reason": "last_recoverable_administrator",
+			}); err != nil {
+				return Member{}, err
+			}
+			return Member{}, ErrLastAdministrator
+		}
+	}
+	member, err := scanMember(query.QueryRow(ctx, `
+		UPDATE tenant_members
+		SET permissions = $3, authorization_version = authorization_version + 1
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id, tenant_id, email, name, permissions, status, authorization_version
+	`, tenantID, memberID, permissions))
 	if err != nil {
 		return Member{}, fmt.Errorf("update tenant member permissions: %w", err)
 	}
+	revokedAt := s.now()
+	revokedSessions, err := revokeMemberAccess(ctx, query, tenantID, memberID, revokedAt)
+	if err != nil {
+		return Member{}, err
+	}
+	if err := recordTenantAccessEvent(ctx, query, tenantID, "member.permissions_changed", &actorMemberID, &memberID, map[string]any{
+		"previous_permissions":  current.Permissions,
+		"permissions":           member.Permissions,
+		"revoked_session_count": revokedSessions,
+		"sessions_revoked_at":   revokedAt,
+	}); err != nil {
+		return Member{}, err
+	}
 	return member, nil
+}
+
+func (s Store) UpdateMemberStatus(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+	memberID string,
+	status MemberStatus,
+) (Member, error) {
+	if status != MemberStatusActive && status != MemberStatusDeactivated {
+		return Member{}, ErrMemberStatusInvalid
+	}
+	return s.changeMemberLifecycle(ctx, query, tenantID, actorMemberID, memberID, status)
+}
+
+func (s Store) RemoveMember(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+	memberID string,
+) (Member, error) {
+	return s.changeMemberLifecycle(ctx, query, tenantID, actorMemberID, memberID, MemberStatusRemoved)
+}
+
+func (s Store) changeMemberLifecycle(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+	memberID string,
+	status MemberStatus,
+) (Member, error) {
+	ownerMemberID, current, err := lockWorkspaceMember(ctx, query, tenantID, memberID)
+	if err != nil {
+		return Member{}, err
+	}
+	if err := requireActiveMemberActor(ctx, query, tenantID, actorMemberID); err != nil {
+		if errors.Is(err, ErrMemberActorInvalid) {
+			if recordErr := recordTenantAccessEvent(ctx, query, tenantID, "member.lifecycle_change_denied", &actorMemberID, &memberID, map[string]any{
+				"reason": "actor_is_not_active_member",
+			}); recordErr != nil {
+				return Member{}, recordErr
+			}
+		}
+		return Member{}, err
+	}
+	deny := func(reason string, domainErr error) (Member, error) {
+		if err := recordTenantAccessEvent(ctx, query, tenantID, "member.lifecycle_change_denied", &actorMemberID, &memberID, map[string]any{
+			"reason": reason,
+			"status": status,
+		}); err != nil {
+			return Member{}, err
+		}
+		return Member{}, domainErr
+	}
+	if ownerMemberID != nil && *ownerMemberID == memberID {
+		return deny("subject_is_owner", ErrOwnerProtection)
+	}
+	if current.Status == MemberStatusRemoved {
+		return deny("subject_is_removed", ErrMemberAlreadyRemoved)
+	}
+	if current.Status == status {
+		return current, nil
+	}
+	if status == MemberStatusActive && current.Status != MemberStatusDeactivated {
+		return Member{}, ErrMemberStatusInvalid
+	}
+	if status != MemberStatusActive && isRecoverableAdministrator(current.Permissions) {
+		last, err := isLastRecoverableAdministrator(ctx, query, tenantID, memberID)
+		if err != nil {
+			return Member{}, err
+		}
+		if last {
+			return deny("last_recoverable_administrator", ErrLastAdministrator)
+		}
+	}
+	member, err := scanMember(query.QueryRow(ctx, `
+		UPDATE tenant_members
+		SET status = $3,
+		    permissions = CASE WHEN $3 = 'active'::member_status THEN permissions ELSE '{}'::text[] END,
+		    authorization_version = authorization_version + 1
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id, tenant_id, email, name, permissions, status, authorization_version
+	`, tenantID, memberID, status))
+	if err != nil {
+		return Member{}, fmt.Errorf("update tenant member lifecycle: %w", err)
+	}
+	revokedAt := s.now()
+	revokedSessions, err := revokeMemberAccess(ctx, query, tenantID, memberID, revokedAt)
+	if err != nil {
+		return Member{}, err
+	}
+	if status != MemberStatusActive {
+		if _, err := query.Exec(ctx, `
+			UPDATE tenant_magic_links
+			SET consumed_at = COALESCE(consumed_at, $3)
+			WHERE tenant_id = $1 AND (member_id = $2 OR email = $4)
+		`, tenantID, memberID, s.now(), current.Email); err != nil {
+			return Member{}, fmt.Errorf("consume inactive tenant member links: %w", err)
+		}
+	}
+	kind := map[MemberStatus]string{
+		MemberStatusActive:      "member.reactivated",
+		MemberStatusDeactivated: "member.deactivated",
+		MemberStatusRemoved:     "member.removed",
+	}[status]
+	if err := recordTenantAccessEvent(ctx, query, tenantID, kind, &actorMemberID, &memberID, map[string]any{
+		"previous_status":       current.Status,
+		"status":                member.Status,
+		"previous_permissions":  current.Permissions,
+		"permissions":           member.Permissions,
+		"revoked_session_count": revokedSessions,
+		"sessions_revoked_at":   revokedAt,
+	}); err != nil {
+		return Member{}, err
+	}
+	return member, nil
+}
+
+func lockWorkspaceMember(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	memberID string,
+) (*string, Member, error) {
+	var ownerMemberID *string
+	if err := query.QueryRow(ctx, `
+		SELECT owner_member_id FROM tenants WHERE id = $1 FOR UPDATE
+	`, tenantID).Scan(&ownerMemberID); err != nil {
+		return nil, Member{}, fmt.Errorf("lock workspace owner: %w", err)
+	}
+	member, err := scanMember(query.QueryRow(ctx, `
+		SELECT id, tenant_id, email, name, permissions, status, authorization_version
+		FROM tenant_members WHERE tenant_id = $1 AND id = $2 FOR UPDATE
+	`, tenantID, memberID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, Member{}, ErrMemberNotFound
+	}
+	if err != nil {
+		return nil, Member{}, fmt.Errorf("lock tenant member: %w", err)
+	}
+	return ownerMemberID, member, nil
+}
+
+func isRecoverableAdministrator(permissions []string) bool {
+	return auth.HasPermission(permissions, auth.PermissionMemberUpdate) &&
+		auth.HasPermission(permissions, auth.PermissionTenantUpdate)
+}
+
+func requireActiveMemberActor(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+) error {
+	var active bool
+	if err := query.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tenant_members
+			WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		)
+	`, tenantID, actorMemberID).Scan(&active); err != nil {
+		return fmt.Errorf("validate tenant member actor: %w", err)
+	}
+	if !active {
+		return ErrMemberActorInvalid
+	}
+	return nil
+}
+
+func isLastRecoverableAdministrator(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	memberID string,
+) (bool, error) {
+	var others int
+	if err := query.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id <> $2 AND status = 'active'
+		  AND permissions @> ARRAY['member:update', 'tenant:update']::text[]
+	`, tenantID, memberID).Scan(&others); err != nil {
+		return false, fmt.Errorf("count recoverable administrators: %w", err)
+	}
+	return others == 0, nil
+}
+
+func revokeMemberAccess(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	memberID string,
+	revokedAt time.Time,
+) (int64, error) {
+	result, err := query.Exec(ctx, `
+		UPDATE tenant_member_sessions
+		SET revoked_at = COALESCE(revoked_at, $3), rotated_at = NULL, replacement_hash = NULL
+		WHERE tenant_id = $1 AND member_id = $2
+		  AND (revoked_at IS NULL OR rotated_at IS NOT NULL OR replacement_hash IS NOT NULL)
+	`, tenantID, memberID, revokedAt)
+	if err != nil {
+		return 0, fmt.Errorf("revoke tenant member access: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
+func (s Store) TransferOwnership(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+	targetMemberID string,
+	confirmation string,
+) (Member, error) {
+	var slug string
+	var ownerMemberID *string
+	if err := query.QueryRow(ctx, `
+		SELECT slug, owner_member_id FROM tenants WHERE id = $1 FOR UPDATE
+	`, tenantID).Scan(&slug, &ownerMemberID); err != nil {
+		return Member{}, fmt.Errorf("lock workspace ownership: %w", err)
+	}
+	deny := func(reason string, target *string, err error) (Member, error) {
+		if insertErr := recordOwnershipDenied(ctx, query, tenantID, actorMemberID, target, reason); insertErr != nil {
+			return Member{}, insertErr
+		}
+		return Member{}, err
+	}
+	if confirmation != slug {
+		return deny("confirmation_mismatch", nil, ErrOwnershipConfirmation)
+	}
+	if ownerMemberID == nil || *ownerMemberID != actorMemberID {
+		return deny("actor_is_not_owner", nil, ErrOwnerProtection)
+	}
+	if targetMemberID == actorMemberID {
+		return deny("target_is_current_owner", &targetMemberID, ErrOwnershipTargetInvalid)
+	}
+	var actorLastLogin *time.Time
+	if err := query.QueryRow(ctx, `
+		SELECT last_login_at FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE
+	`, tenantID, actorMemberID).Scan(&actorLastLogin); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return deny("actor_is_not_active", nil, ErrOwnerProtection)
+		}
+		return Member{}, fmt.Errorf("lock workspace owner member: %w", err)
+	}
+	if actorLastLogin == nil || actorLastLogin.Before(s.now().Add(-10*time.Minute)) {
+		return deny("actor_authentication_is_stale", nil, ErrRecentAuthenticationRequired)
+	}
+	var targetLastLogin *time.Time
+	if err := query.QueryRow(ctx, `
+		SELECT last_login_at FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE
+	`, tenantID, targetMemberID).Scan(&targetLastLogin); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return deny("target_is_not_active", nil, ErrOwnershipTargetInvalid)
+		}
+		return Member{}, fmt.Errorf("lock ownership target: %w", err)
+	}
+	if targetLastLogin == nil {
+		return deny("target_is_not_verified", &targetMemberID, ErrOwnershipTargetInvalid)
+	}
+
+	target, err := scanMember(query.QueryRow(ctx, `
+		UPDATE tenant_members
+		SET permissions = $3, authorization_version = authorization_version + 1
+		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		RETURNING id, tenant_id, email, name, permissions, status, authorization_version
+	`, tenantID, targetMemberID, auth.TenantPermissionStrings()))
+	if err != nil {
+		return Member{}, fmt.Errorf("elevate workspace owner: %w", err)
+	}
+	revokedAt := s.now()
+	revokedSessions, err := revokeMemberAccess(ctx, query, tenantID, targetMemberID, revokedAt)
+	if err != nil {
+		return Member{}, err
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE tenants SET owner_member_id = $2 WHERE id = $1
+	`, tenantID, targetMemberID); err != nil {
+		return Member{}, fmt.Errorf("transfer workspace ownership: %w", err)
+	}
+	if err := recordTenantAccessEvent(ctx, query, tenantID, "ownership.transferred", &actorMemberID, &targetMemberID, map[string]any{
+		"previous_owner_member_id": actorMemberID,
+		"new_owner_member_id":      targetMemberID,
+		"revoked_session_count":    revokedSessions,
+		"sessions_revoked_at":      revokedAt,
+	}); err != nil {
+		return Member{}, err
+	}
+	target.Role = "owner"
+	target.Verified = true
+	return target, nil
+}
+
+func recordOwnershipDenied(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	actorMemberID string,
+	targetMemberID *string,
+	reason string,
+) error {
+	return recordTenantAccessEvent(
+		ctx, query, tenantID, "ownership.transfer_denied", &actorMemberID, targetMemberID,
+		map[string]any{"reason": reason},
+	)
+}
+
+func recordTenantAccessEvent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	kind string,
+	actorMemberID *string,
+	subjectMemberID *string,
+	data map[string]any,
+) error {
+	if actorMemberID != nil {
+		data["actor_credential_id"] = *actorMemberID
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode tenant access event: %w", err)
+	}
+	_, err = query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, subject_member_id, data, created_at
+		)
+		SELECT $1::uuid, $2::text,
+		       CASE WHEN $3::uuid IS NOT NULL AND EXISTS (
+		           SELECT 1 FROM tenant_members WHERE tenant_id = $1::uuid AND id = $3::uuid
+		       ) THEN $3::uuid END,
+		       CASE WHEN $4::uuid IS NOT NULL AND EXISTS (
+		           SELECT 1 FROM tenant_members WHERE tenant_id = $1::uuid AND id = $4::uuid
+		       ) THEN $4::uuid END,
+		       $5::jsonb, now()
+	`, tenantID, kind, actorMemberID, subjectMemberID, string(payload))
+	if err != nil {
+		return fmt.Errorf("record tenant access event: %w", err)
+	}
+	return nil
 }
 
 type rowScanner interface {
@@ -563,7 +985,25 @@ type rowScanner interface {
 
 func scanMember(row rowScanner) (Member, error) {
 	var member Member
-	err := row.Scan(&member.ID, &member.TenantID, &member.Email, &member.Name, &member.Permissions)
+	err := row.Scan(
+		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.Permissions,
+		&member.Status, &member.AuthorizationVersion,
+	)
+	member.Role = "member"
+	return member, err
+}
+
+func scanMemberWithRole(row rowScanner) (Member, error) {
+	var member Member
+	var owner bool
+	err := row.Scan(
+		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.Permissions,
+		&member.Status, &member.AuthorizationVersion, &owner, &member.Verified,
+	)
+	member.Role = "member"
+	if owner {
+		member.Role = "owner"
+	}
 	return member, err
 }
 
@@ -575,9 +1015,15 @@ func scanSessionMember(
 	retryAllowed *bool,
 ) (Member, error) {
 	var member Member
+	var owner bool
 	err := row.Scan(
 		sessionID, issuedAt, revokedAt, retryAllowed,
 		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.Permissions,
+		&member.Status, &member.AuthorizationVersion, &owner, &member.Verified,
 	)
+	member.Role = "member"
+	if owner {
+		member.Role = "owner"
+	}
 	return member, err
 }

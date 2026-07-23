@@ -19,6 +19,7 @@ import (
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 const (
@@ -32,6 +33,7 @@ type TenantStore interface {
 	ListTenants(context.Context) ([]TenantRecord, error)
 	UpdateTenant(context.Context, TenantRecord) (TenantRecord, error)
 	DeleteTenant(context.Context, string) error
+	RecoverOwnership(context.Context, RecoverOwnershipParams) error
 }
 
 type HTTPOptions struct {
@@ -73,6 +75,8 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 		Get("/admin/tenants/{tenantID}", handler.getTenant)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantUpdate)).
 		Patch("/admin/tenants/{tenantID}", handler.updateTenant)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantUpdate)).
+		Post("/admin/tenants/{tenantID}/ownership/recover", handler.recoverOwnership)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantDelete)).
 		Delete("/admin/tenants/{tenantID}", handler.deleteTenant)
 	router.NotFound(func(w http.ResponseWriter, _ *http.Request) {
@@ -186,6 +190,7 @@ type createTenantRequest struct {
 	Status       tenant.Status `json:"status"`
 	BillingEmail *string       `json:"billing_email"`
 	TrialEndsAt  *time.Time    `json:"trial_ends_at"`
+	OwnerEmail   string        `json:"owner_email"`
 }
 
 func (h *HTTPHandler) createTenant(w http.ResponseWriter, r *http.Request) {
@@ -198,12 +203,54 @@ func (h *HTTPHandler) createTenant(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
 		return
 	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	input.ActorPlatformAdminID = claims.Subject
 	record, err := h.options.Tenants.CreateTenant(r.Context(), input)
 	if err != nil {
 		writeTenantError(w, err)
 		return
 	}
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"tenant": record})
+}
+
+func (h *HTTPHandler) recoverOwnership(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		TargetMemberID        string `json:"target_member_id"`
+		Confirmation          string `json:"confirmation"`
+		VerificationReference string `json:"verification_reference"`
+		Reason                string `json:"reason"`
+	}
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	tenantID := chi.URLParam(r, "tenantID")
+	if _, err := uuid.Parse(tenantID); err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "tenant ID is invalid", nil)
+		return
+	}
+	if _, err := uuid.Parse(request.TargetMemberID); err != nil || strings.TrimSpace(request.Confirmation) == "" ||
+		len(strings.TrimSpace(request.VerificationReference)) < 3 || len(strings.TrimSpace(request.Reason)) < 10 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "ownership recovery evidence is invalid", nil)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	if err := h.options.Tenants.RecoverOwnership(r.Context(), RecoverOwnershipParams{
+		TenantID: tenantID, ActorPlatformAdminID: claims.Subject,
+		TargetMemberID: request.TargetMemberID, Confirmation: strings.TrimSpace(request.Confirmation),
+		VerificationReference: strings.TrimSpace(request.VerificationReference), Reason: strings.TrimSpace(request.Reason),
+	}); err != nil {
+		writeTenantError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]bool{"recovered": true})
 }
 
 func (h *HTTPHandler) listTenants(w http.ResponseWriter, r *http.Request) {
@@ -322,9 +369,13 @@ func (h *HTTPHandler) validateCreateTenant(request createTenantRequest) (CreateT
 	if err := h.validateTenantRecord(&record); err != nil {
 		return CreateTenantParams{}, err
 	}
+	ownerEmail, err := normalizedEmail(request.OwnerEmail)
+	if err != nil {
+		return CreateTenantParams{}, errors.New("owner_email is invalid")
+	}
 	return CreateTenantParams{
 		Name: record.Name, Slug: record.Slug, Plan: record.Plan, Status: record.Status,
-		BillingEmail: record.BillingEmail, TrialEndsAt: record.TrialEndsAt,
+		BillingEmail: record.BillingEmail, TrialEndsAt: record.TrialEndsAt, OwnerEmail: ownerEmail,
 	}, nil
 }
 
@@ -430,6 +481,14 @@ func writeTenantError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "tenant not found", nil)
 	case errors.Is(err, ErrSlugConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant slug already exists", nil)
+	case errors.Is(err, ErrOwnershipConfirmation):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipConfirmation, "workspace confirmation does not match", nil)
+	case errors.Is(err, ErrRecentAuthenticationRequired):
+		api.WriteError(w, http.StatusForbidden, api.CodeRecentAuthRequired, "recent authentication is required", nil)
+	case errors.Is(err, ErrOwnershipTargetInvalid):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipTarget, "new workspace owner is invalid", nil)
+	case errors.Is(err, ErrRecoveryVerificationInvalid):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "ownership recovery evidence is invalid", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

@@ -85,6 +85,25 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	`, betaID).Scan(&betaProjectID); err != nil {
 		t.Fatalf("create Beta project: %v", err)
 	}
+	var ownerID, viewerID, betaMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'owner@acme.test', $2) RETURNING id
+	`, acmeID, auth.TenantPermissionStrings()).Scan(&ownerID); err != nil {
+		t.Fatalf("create Acme owner: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'viewer@acme.test', ARRAY['project:read']) RETURNING id
+	`, acmeID).Scan(&viewerID); err != nil {
+		t.Fatalf("create Acme viewer: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'owner@beta.test', $2) RETURNING id
+	`, betaID, auth.TenantPermissionStrings()).Scan(&betaMemberID); err != nil {
+		t.Fatalf("create Beta owner: %v", err)
+	}
 
 	pools, err := db.OpenPools(
 		ctx, projectRoleURL(t, directURL, "fidibeki_app", "app-password"), directURL, 4, 2,
@@ -97,9 +116,9 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	ownerToken, _, _ := jwtManager.IssueTenant("owner-id", acmeID, auth.TenantPermissionStrings())
-	viewerToken, _, _ := jwtManager.IssueTenant("viewer-id", acmeID, []string{string(auth.PermissionProjectRead)})
-	betaToken, _, _ := jwtManager.IssueTenant("beta-id", betaID, auth.TenantPermissionStrings())
+	ownerToken, _, _ := jwtManager.IssueTenant(ownerID, acmeID, auth.TenantPermissionStrings())
+	viewerToken, _, _ := jwtManager.IssueTenant(viewerID, acmeID, []string{string(auth.PermissionProjectRead)})
+	betaToken, _, _ := jwtManager.IssueTenant(betaMemberID, betaID, auth.TenantPermissionStrings())
 
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{Store: Store{}, JWT: jwtManager})

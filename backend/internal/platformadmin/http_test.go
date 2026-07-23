@@ -20,7 +20,7 @@ func TestTenantCreationRequiresPermissionAndValidatesPlan(t *testing.T) {
 	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
 	store := &fakeTenantStore{}
 	handler := NewHTTPHandler(HTTPOptions{Tenants: store, JWT: jwtManager})
-	body := []byte(`{"name":"Acme","slug":"acme","plan":"growth"}`)
+	body := []byte(`{"name":"Acme","slug":"acme","plan":"growth","owner_email":"owner@acme.test"}`)
 
 	unauthenticated := httptest.NewRecorder()
 	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/admin/tenants", bytes.NewReader(body)))
@@ -51,6 +51,9 @@ func TestTenantCreationRequiresPermissionAndValidatesPlan(t *testing.T) {
 	}
 	if store.created.Plan != tenant.PlanGrowth || store.created.Status != tenant.StatusTrial || store.created.TrialEndsAt == nil {
 		t.Errorf("create input = %#v", store.created)
+	}
+	if store.created.OwnerEmail != "owner@acme.test" || store.created.ActorPlatformAdminID != "admin-id" {
+		t.Errorf("owner-backed create input = %#v", store.created)
 	}
 }
 
@@ -242,7 +245,7 @@ func TestTenantManagementMapsDomainErrors(t *testing.T) {
 		body   string
 		status int
 	}{
-		{method: http.MethodPost, path: "/admin/tenants", body: `{"name":"Acme","slug":"acme","status":"active"}`, status: http.StatusConflict},
+		{method: http.MethodPost, path: "/admin/tenants", body: `{"name":"Acme","slug":"acme","status":"active","owner_email":"owner@acme.test"}`, status: http.StatusConflict},
 		{method: http.MethodGet, path: "/admin/tenants/missing", status: http.StatusNotFound},
 		{method: http.MethodDelete, path: "/admin/tenants/missing", status: http.StatusNotFound},
 	}
@@ -254,6 +257,104 @@ func TestTenantManagementMapsDomainErrors(t *testing.T) {
 		if recorder.Code != tt.status {
 			t.Errorf("%s %s status = %d, want %d; body = %s", tt.method, tt.path, recorder.Code, tt.status, recorder.Body.String())
 		}
+	}
+}
+
+func TestPlatformAdminRecoveryRequiresEvidenceAndPassesActor(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantUpdate),
+	})
+	store := &fakeTenantStore{}
+	handler := NewHTTPHandler(HTTPOptions{Tenants: store, JWT: jwtManager})
+	tenantID := "d0f62b82-8347-45e6-8f35-b0cc4114a75c"
+	targetID := "44bbb4e5-7cf5-4550-8f42-d68688bc41c8"
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/admin/tenants/"+tenantID+"/ownership/recover",
+		strings.NewReader(`{"target_member_id":"`+targetID+`","confirmation":"acme","verification_reference":"support-2481","reason":"Verified billing email and incorporation record."}`),
+	)
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"recovered":true`) {
+		t.Fatalf("recovery status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if store.recovered.TenantID != tenantID || store.recovered.TargetMemberID != targetID ||
+		store.recovered.ActorPlatformAdminID != "admin-id" || store.recovered.VerificationReference != "support-2481" {
+		t.Fatalf("recovery input = %#v", store.recovered)
+	}
+}
+
+func TestPlatformOwnershipRecoveryErrorsHaveStableHTTPContracts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "invalid confirmation", err: ErrOwnershipConfirmation, status: http.StatusUnprocessableEntity, code: "invalid_ownership_confirmation"},
+		{name: "recent authentication", err: ErrRecentAuthenticationRequired, status: http.StatusForbidden, code: "recent_authentication_required"},
+		{name: "invalid target", err: ErrOwnershipTargetInvalid, status: http.StatusUnprocessableEntity, code: "invalid_ownership_target"},
+		{name: "invalid evidence", err: ErrRecoveryVerificationInvalid, status: http.StatusUnprocessableEntity, code: "validation_error"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			response := httptest.NewRecorder()
+			writeTenantError(response, test.err)
+			if response.Code != test.status || !strings.Contains(response.Body.String(), `"code":"`+test.code+`"`) {
+				t.Fatalf("status = %d body = %s, want %d/%s", response.Code, response.Body.String(), test.status, test.code)
+			}
+		})
+	}
+}
+
+func TestPlatformOwnershipRecoveryRejectsInvalidRequestsAndMapsStoreErrors(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantUpdate),
+	})
+	tenantID := "d0f62b82-8347-45e6-8f35-b0cc4114a75c"
+	targetID := "44bbb4e5-7cf5-4550-8f42-d68688bc41c8"
+	validBody := `{"target_member_id":"` + targetID + `","confirmation":"acme","verification_reference":"support-2481","reason":"Verified billing email and incorporation record."}`
+
+	store := &fakeTenantStore{}
+	handler := NewHTTPHandler(HTTPOptions{Tenants: store, JWT: jwtManager})
+	for _, test := range []struct {
+		name   string
+		path   string
+		body   string
+		status int
+	}{
+		{name: "malformed body", path: "/admin/tenants/" + tenantID + "/ownership/recover", body: `{`, status: http.StatusBadRequest},
+		{name: "invalid tenant", path: "/admin/tenants/not-a-uuid/ownership/recover", body: validBody, status: http.StatusUnprocessableEntity},
+		{name: "invalid evidence", path: "/admin/tenants/" + tenantID + "/ownership/recover", body: `{"target_member_id":"bad","confirmation":"acme","verification_reference":"x","reason":"short"}`, status: http.StatusUnprocessableEntity},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request.Header.Set("Authorization", "Bearer "+accessToken)
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status || store.recovered.TenantID != "" {
+				t.Fatalf("status = %d body = %s recovered = %#v", response.Code, response.Body.String(), store.recovered)
+			}
+		})
+	}
+
+	store.recoverErr = ErrRecentAuthenticationRequired
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/tenants/"+tenantID+"/ownership/recover", strings.NewReader(validBody))
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"recent_authentication_required"`) {
+		t.Fatalf("store recovery error status = %d body = %s", response.Code, response.Body.String())
 	}
 }
 
@@ -290,13 +391,15 @@ func TestInvalidAuthAndRequestBodiesFailClosed(t *testing.T) {
 }
 
 type fakeTenantStore struct {
-	created   CreateTenantParams
-	record    TenantRecord
-	updated   TenantRecord
-	deletedID string
-	createErr error
-	getErr    error
-	deleteErr error
+	created    CreateTenantParams
+	record     TenantRecord
+	updated    TenantRecord
+	deletedID  string
+	createErr  error
+	getErr     error
+	deleteErr  error
+	recovered  RecoverOwnershipParams
+	recoverErr error
 }
 
 func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {
@@ -326,4 +429,9 @@ func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord) (T
 func (s *fakeTenantStore) DeleteTenant(_ context.Context, id string) error {
 	s.deletedID = id
 	return s.deleteErr
+}
+
+func (s *fakeTenantStore) RecoverOwnership(_ context.Context, input RecoverOwnershipParams) error {
+	s.recovered = input
+	return s.recoverErr
 }

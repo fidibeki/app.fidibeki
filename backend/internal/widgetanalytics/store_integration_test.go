@@ -88,6 +88,19 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	`, projectID).Scan(&ruleID); err != nil {
 		t.Fatalf("create widget rule: %v", err)
 	}
+	var readerID, deniedID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'analytics-reader@acme.test', ARRAY['project:read']) RETURNING id
+	`, tenantID).Scan(&readerID); err != nil {
+		t.Fatalf("create analytics reader: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'analytics-denied@acme.test', ARRAY['feedback:read']) RETURNING id
+	`, tenantID).Scan(&deniedID); err != nil {
+		t.Fatalf("create denied analytics member: %v", err)
+	}
 
 	pools, err := db.OpenPools(ctx, analyticsRoleURL(t, directURL), directURL, 4, 2)
 	if err != nil {
@@ -148,11 +161,11 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	readToken, _, err := jwtManager.IssueTenant("analytics-reader", tenantID, []string{string(auth.PermissionProjectRead)})
+	readToken, _, err := jwtManager.IssueTenant(readerID, tenantID, []string{string(auth.PermissionProjectRead)})
 	if err != nil {
 		t.Fatalf("issue analytics token: %v", err)
 	}
-	deniedToken, _, err := jwtManager.IssueTenant("analytics-denied", tenantID, []string{string(auth.PermissionFeedbackRead)})
+	deniedToken, _, err := jwtManager.IssueTenant(deniedID, tenantID, []string{string(auth.PermissionFeedbackRead)})
 	if err != nil {
 		t.Fatalf("issue denied token: %v", err)
 	}

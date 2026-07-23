@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	jwtlib "github.com/golang-jwt/jwt/v5"
 )
 
 func TestRequireTenantMemberRejectsCrossTenantAndPlatformTokens(t *testing.T) {
@@ -21,14 +22,29 @@ func TestRequireTenantMemberRejectsCrossTenantAndPlatformTokens(t *testing.T) {
 	valid, _, _ := manager.IssueTenant("member-id", "tenant-id", []string{"project:read"})
 	otherTenant, _, _ := manager.IssueTenant("member-id", "other-tenant", []string{"project:read"})
 	platform, _, _ := manager.Issue("admin-id", auth.AudiencePlatform, []string{"project:read"})
+	now := time.Now()
+	legacyToken, err := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, auth.Claims{
+		Permissions: []string{"project:read"}, TenantID: "tenant-id",
+		RegisteredClaims: jwtlib.RegisteredClaims{
+			Issuer: "fidibeki", Subject: "member-id", Audience: jwtlib.ClaimStrings{auth.AudienceTenant},
+			IssuedAt: jwtlib.NewNumericDate(now), NotBefore: jwtlib.NewNumericDate(now),
+			ExpiresAt: jwtlib.NewNumericDate(now.Add(10 * time.Minute)),
+		},
+	}).SignedString([]byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatalf("sign legacy tenant token: %v", err)
+	}
 
 	tests := []struct {
-		name       string
-		token      string
-		permission auth.Permission
-		wantStatus int
+		name          string
+		token         string
+		permission    auth.Permission
+		memberVersion int
+		wantStatus    int
 	}{
 		{name: "valid", token: valid, permission: auth.PermissionProjectRead, wantStatus: http.StatusNoContent},
+		{name: "legacy version zero", token: legacyToken, permission: auth.PermissionProjectRead, wantStatus: http.StatusNoContent},
+		{name: "legacy token after authority change", token: legacyToken, permission: auth.PermissionProjectRead, memberVersion: 1, wantStatus: http.StatusUnauthorized},
 		{name: "missing permission", token: valid, permission: auth.PermissionProjectUpdate, wantStatus: http.StatusForbidden},
 		{name: "cross tenant", token: otherTenant, permission: auth.PermissionProjectRead, wantStatus: http.StatusForbidden},
 		{name: "platform audience", token: platform, permission: auth.PermissionProjectRead, wantStatus: http.StatusUnauthorized},
@@ -37,7 +53,7 @@ func TestRequireTenantMemberRejectsCrossTenantAndPlatformTokens(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tx := &fakeTransaction{}
+			tx := &fakeTransaction{memberAuthVersion: tt.memberVersion}
 			resolve := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 				BaseDomain: "localhost",
 				Resolver: tenant.ResolverFunc(func(context.Context, string) (tenant.Tenant, error) {

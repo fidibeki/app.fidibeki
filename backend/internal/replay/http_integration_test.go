@@ -273,12 +273,25 @@ func TestReplayHTTPFlow(t *testing.T) {
 		Scan(&batchRows); err != nil || batchRows != 0 {
 		t.Fatalf("merged batch rows = %d, error = %v", batchRows, err)
 	}
+	var replayMemberID, restrictedMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'replay@acme.test', ARRAY['session:read', 'session:delete']) RETURNING id
+	`, tenantID).Scan(&replayMemberID); err != nil {
+		t.Fatalf("create replay member: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'restricted@acme.test', '{}') RETURNING id
+	`, tenantID).Scan(&restrictedMemberID); err != nil {
+		t.Fatalf("create restricted replay member: %v", err)
+	}
 
 	jwtManager, err := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", time.Hour)
 	if err != nil {
 		t.Fatalf("create tenant JWT manager: %v", err)
 	}
-	accessToken, _, err := jwtManager.IssueTenant("member", tenantID, []string{
+	accessToken, _, err := jwtManager.IssueTenant(replayMemberID, tenantID, []string{
 		string(auth.PermissionSessionRead), string(auth.PermissionSessionDelete),
 	})
 	if err != nil {
@@ -332,7 +345,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if unauthenticatedStream.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated stream status = %d", unauthenticatedStream.Code)
 	}
-	readDeniedToken, _, err := jwtManager.IssueTenant("member", tenantID, nil)
+	readDeniedToken, _, err := jwtManager.IssueTenant(restrictedMemberID, tenantID, nil)
 	if err != nil {
 		t.Fatalf("issue restricted tenant token: %v", err)
 	}

@@ -127,11 +127,35 @@ func (*billingHTTPTransaction) Query(context.Context, string, ...any) (pgx.Rows,
 }
 
 func (*billingHTTPTransaction) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	if strings.Contains(query, "FROM tenant_members") {
+		return billingHTTPMemberRow{permissions: []string{string(auth.PermissionBillingManage)}, status: "active"}
+	}
 	if !strings.Contains(query, "set_config") || len(args) != 1 {
 		return billingHTTPRow{err: errors.New("unexpected QueryRow call")}
 	}
 	configuredTenant, _ := args[0].(string)
 	return billingHTTPRow{value: configuredTenant}
+}
+
+type billingHTTPMemberRow struct {
+	permissions []string
+	status      string
+}
+
+func (r billingHTTPMemberRow) Scan(destinations ...any) error {
+	if len(destinations) != 3 {
+		return errors.New("unexpected member auth scan destination count")
+	}
+	permissions, permissionsOK := destinations[0].(*[]string)
+	status, statusOK := destinations[1].(*string)
+	version, versionOK := destinations[2].(*int)
+	if !permissionsOK || !statusOK || !versionOK {
+		return errors.New("unexpected member auth scan destination type")
+	}
+	*permissions = append([]string(nil), r.permissions...)
+	*status = r.status
+	*version = 0
+	return nil
 }
 
 func (*billingHTTPTransaction) Commit(context.Context) error   { return nil }

@@ -27,6 +27,7 @@ import (
 
 const (
 	testTenantID            = "10000000-0000-4000-8000-000000000001"
+	testMemberID            = "10000000-0000-4000-8000-000000000010"
 	testProjectID           = "10000000-0000-4000-8000-000000000002"
 	testIssueID             = "10000000-0000-4000-8000-000000000003"
 	testFeedbackID          = "10000000-0000-4000-8000-000000000004"
@@ -693,6 +694,9 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		INSERT INTO tenants (id, name, slug, plan, status)
 		VALUES ($1, 'AI Tenant', 'ai-tenant', 'growth', 'active')`, args: []any{testTenantID}},
 		{query: `
+		INSERT INTO tenant_members (id, tenant_id, email, permissions)
+		VALUES ($1, $2, 'analyst@ai-tenant.test', ARRAY['feedback:update'])`, args: []any{testMemberID, testTenantID}},
+		{query: `
 		INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
 		VALUES ($1, $2, 'Web', 'pk_live_ABCDEFGHIJKLMNOPQRSTUV', '{example.com}')`, args: []any{testProjectID, testTenantID}},
 		{query: `
@@ -960,7 +964,7 @@ func exerciseAIHTTP(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("create tenant JWT manager: %v", err)
 	}
-	token, _, err := jwtManager.IssueTenant("member-id", testTenantID, []string{"feedback:update"})
+	token, _, err := jwtManager.IssueTenant(testMemberID, testTenantID, []string{"feedback:update"})
 	if err != nil {
 		t.Fatalf("issue tenant token: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,11 +75,16 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	`).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
-	if _, err := root.Exec(ctx, `
+	var ownerMemberID string
+	if err := root.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)
 		VALUES ($1, 'owner@acme.test', $2)
-	`, tenantID, auth.TenantPermissionStrings()); err != nil {
+		RETURNING id
+	`, tenantID, auth.TenantPermissionStrings()).Scan(&ownerMemberID); err != nil {
 		t.Fatalf("create owner: %v", err)
+	}
+	if _, err := root.Exec(ctx, `UPDATE tenants SET owner_member_id = $2 WHERE id = $1`, tenantID, ownerMemberID); err != nil {
+		t.Fatalf("assign owner: %v", err)
 	}
 
 	pools, err := db.OpenPools(
@@ -103,6 +109,8 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		Store: store, JWT: jwtManager, PublicBaseURL: "http://api.localhost:8088",
 		BaseDomain: "localhost", AuthFrom: "Fidibeki <auth@fidibeki.com>", Now: func() time.Time { return now },
 	}
+	var middlewareLogs bytes.Buffer
+	testLogger := slog.New(slog.NewJSONHandler(&middlewareLogs, nil))
 	probe, err := pools.App.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin auth probe: %v", err)
@@ -118,12 +126,11 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{
 		Service: service, Store: store, JWT: jwtManager, Email: queue,
-		RefreshTTL: 30 * 24 * time.Hour,
+		RefreshTTL: 30 * 24 * time.Hour, Logger: testLogger,
 	})
-	var middlewareLogs bytes.Buffer
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
-		Begin: db.BeginFromPool(pools.App), Logger: slog.New(slog.NewJSONHandler(&middlewareLogs, nil)),
+		Begin: db.BeginFromPool(pools.App), Logger: testLogger,
 	})(routes)
 
 	login := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
@@ -137,6 +144,9 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 
 	verified := performTenantRequest(handler, http.MethodPost, "/auth/verify", `{"token":"`+ownerMagicToken+`"}`, "", nil)
 	ownerSession := decodeTenantSession(t, verified)
+	if ownerSession.Member.Role != "owner" {
+		t.Fatalf("owner session role = %q, want owner", ownerSession.Member.Role)
+	}
 	ownerCookie := responseCookie(t, verified, tenantRefreshCookie)
 	var welcomeEvents int
 	var welcomeEventID string
@@ -265,7 +275,8 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	}
 
 	members := performTenantRequest(handler, http.MethodGet, "/v1/members", "", ownerSession.AccessToken, nil)
-	if members.Code != http.StatusOK || !strings.Contains(members.Body.String(), "viewer@acme.test") {
+	if members.Code != http.StatusOK || !strings.Contains(members.Body.String(), "viewer@acme.test") ||
+		!strings.Contains(members.Body.String(), `"role":"owner"`) {
 		t.Errorf("members status = %d, body = %s", members.Code, members.Body.String())
 	}
 	viewerForbidden := performTenantRequest(handler, http.MethodGet, "/v1/members", "", viewerSession.AccessToken, nil)
@@ -279,7 +290,15 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		ownerSession.AccessToken, nil,
 	)
 	if updatedViewer.Code != http.StatusOK || !strings.Contains(updatedViewer.Body.String(), "feedback:read") {
-		t.Errorf("update member status = %d, body = %s", updatedViewer.Code, updatedViewer.Body.String())
+		t.Errorf("update member status = %d, body = %s, logs = %s", updatedViewer.Code, updatedViewer.Body.String(), middlewareLogs.String())
+	}
+	protectedOwner := performTenantRequest(
+		handler, http.MethodPatch, "/v1/members/"+ownerSession.Member.ID,
+		`{"permissions":["project:read"]}`,
+		ownerSession.AccessToken, nil,
+	)
+	if protectedOwner.Code != http.StatusConflict || !strings.Contains(protectedOwner.Body.String(), `"code":"owner_protected"`) {
+		t.Fatalf("protected owner update status = %d, body = %s, logs = %s", protectedOwner.Code, protectedOwner.Body.String(), middlewareLogs.String())
 	}
 	duplicateInvite := performTenantRequest(
 		handler, http.MethodPost, "/auth/invite",
@@ -319,9 +338,174 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	if additionalActivation.Code != http.StatusOK {
 		t.Fatalf("verified additional-domain activation status = %d, body = %s", additionalActivation.Code, additionalActivation.Body.String())
 	}
+	additionalSession := decodeTenantSession(t, additionalActivation)
+	machineToken := "fk_live_" + strings.Repeat("A", 32)
+	var machineCredentialID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions)
+		VALUES ($1, 'Lifecycle machine key', $2, 'fk_live_AAAA...', ARRAY['member:update'])
+		RETURNING id
+	`, tenantID, auth.HashToken(machineToken)).Scan(&machineCredentialID); err != nil {
+		t.Fatalf("create machine tenant credential: %v", err)
+	}
+	machineDenied := performTenantRequest(
+		handler, http.MethodPatch, "/v1/members/"+additionalSession.Member.ID+"/status",
+		`{"status":"deactivated"}`, machineToken, nil,
+	)
+	if machineDenied.Code != http.StatusForbidden || !strings.Contains(machineDenied.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("machine lifecycle change status = %d, body = %s", machineDenied.Code, machineDenied.Body.String())
+	}
+	var auditedMachineCredential string
+	if err := root.QueryRow(ctx, `
+		SELECT data->>'actor_credential_id'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.lifecycle_change_denied'
+		  AND data->>'reason' = 'actor_is_not_active_member'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, tenantID).Scan(&auditedMachineCredential); err != nil || auditedMachineCredential != machineCredentialID {
+		t.Fatalf("machine audit credential = %q, error = %v", auditedMachineCredential, err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_magic_links (
+			tenant_id, member_id, email, invited_permissions, token_hash, expires_at
+		) VALUES ($1, $2, 'allowed@other.test', '{}'::text[], $3, $4)
+	`, tenantID, additionalSession.Member.ID, auth.HashToken("pending-before-deactivation"), now.Add(time.Hour)); err != nil {
+		t.Fatalf("create pending member magic link: %v", err)
+	}
+	invalidTransfer := performTenantRequest(
+		handler, http.MethodPost, "/v1/ownership/transfer",
+		`{"new_owner_member_id":"not-a-uuid","confirmation":"acme"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if invalidTransfer.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid ownership transfer status = %d, body = %s", invalidTransfer.Code, invalidTransfer.Body.String())
+	}
+	selfTransfer := performTenantRequest(
+		handler, http.MethodPost, "/v1/ownership/transfer",
+		`{"new_owner_member_id":"`+ownerSession.Member.ID+`","confirmation":"acme"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if selfTransfer.Code != http.StatusUnprocessableEntity || !strings.Contains(selfTransfer.Body.String(), `"code":"invalid_ownership_target"`) {
+		t.Fatalf("self ownership transfer status = %d, body = %s", selfTransfer.Code, selfTransfer.Body.String())
+	}
+	var unverifiedMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'pending@acme.test', ARRAY['project:read']) RETURNING id
+	`, tenantID).Scan(&unverifiedMemberID); err != nil {
+		t.Fatalf("create unverified ownership target: %v", err)
+	}
+	unverifiedTransfer := performTenantRequest(
+		handler, http.MethodPost, "/v1/ownership/transfer",
+		`{"new_owner_member_id":"`+unverifiedMemberID+`","confirmation":"acme"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if unverifiedTransfer.Code != http.StatusUnprocessableEntity || !strings.Contains(unverifiedTransfer.Body.String(), `"code":"invalid_ownership_target"`) {
+		t.Fatalf("unverified ownership transfer status = %d, body = %s", unverifiedTransfer.Code, unverifiedTransfer.Body.String())
+	}
 	viewerLogout := performTenantRequest(handler, http.MethodPost, "/auth/logout", "", "", viewerCookie)
 	if viewerLogout.Code != http.StatusNoContent {
 		t.Errorf("viewer logout status = %d, body = %s", viewerLogout.Code, viewerLogout.Body.String())
+	}
+	transfer := performTenantRequest(
+		handler, http.MethodPost, "/v1/ownership/transfer",
+		`{"new_owner_member_id":"`+viewerSession.Member.ID+`","confirmation":"acme"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if transfer.Code != http.StatusOK || !strings.Contains(transfer.Body.String(), `"role":"owner"`) ||
+		!strings.Contains(transfer.Body.String(), `"email":"viewer@acme.test"`) {
+		t.Fatalf("ownership transfer status = %d, body = %s, logs = %s", transfer.Code, transfer.Body.String(), middlewareLogs.String())
+	}
+	invalidatedViewer := performTenantRequest(handler, http.MethodGet, "/v1/members", "", viewerSession.AccessToken, nil)
+	if invalidatedViewer.Code != http.StatusUnauthorized {
+		t.Fatalf("pre-transfer viewer token status = %d, body = %s", invalidatedViewer.Code, invalidatedViewer.Body.String())
+	}
+	formerOwnerRetry := performTenantRequest(
+		handler, http.MethodPost, "/v1/ownership/transfer",
+		`{"new_owner_member_id":"`+ownerSession.Member.ID+`","confirmation":"acme"}`,
+		ownerSession.AccessToken, nil,
+	)
+	if formerOwnerRetry.Code != http.StatusConflict {
+		t.Fatalf("former owner transfer status = %d, body = %s", formerOwnerRetry.Code, formerOwnerRetry.Body.String())
+	}
+	protectedNewOwner := performTenantRequest(
+		handler, http.MethodPatch, "/v1/members/"+viewerSession.Member.ID+"/status",
+		`{"status":"deactivated"}`, ownerSession.AccessToken, nil,
+	)
+	if protectedNewOwner.Code != http.StatusConflict || !strings.Contains(protectedNewOwner.Body.String(), `"code":"owner_protected"`) {
+		t.Fatalf("protected new owner status = %d, body = %s", protectedNewOwner.Code, protectedNewOwner.Body.String())
+	}
+	deactivated := performTenantRequest(
+		handler, http.MethodPatch, "/v1/members/"+additionalSession.Member.ID+"/status",
+		`{"status":"deactivated"}`, ownerSession.AccessToken, nil,
+	)
+	if deactivated.Code != http.StatusOK || !strings.Contains(deactivated.Body.String(), `"status":"deactivated"`) {
+		t.Fatalf("deactivate member status = %d, body = %s", deactivated.Code, deactivated.Body.String())
+	}
+	var revokedSessionCount int
+	var sessionsRevokedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT (data->>'revoked_session_count')::integer,
+		       (data->>'sessions_revoked_at')::timestamptz
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'member.deactivated' AND subject_member_id = $2
+	`, tenantID, additionalSession.Member.ID).Scan(&revokedSessionCount, &sessionsRevokedAt); err != nil ||
+		revokedSessionCount != 1 || sessionsRevokedAt == nil {
+		t.Fatalf("deactivation session audit = %d/%v, error = %v", revokedSessionCount, sessionsRevokedAt, err)
+	}
+	var pendingLinks int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_magic_links
+		WHERE tenant_id = $1 AND member_id = $2 AND consumed_at IS NULL
+	`, tenantID, additionalSession.Member.ID).Scan(&pendingLinks); err != nil || pendingLinks != 0 {
+		t.Fatalf("pending links after deactivation = %d, error = %v", pendingLinks, err)
+	}
+	deactivatedAccess := performTenantRequest(handler, http.MethodGet, "/v1/members", "", additionalSession.AccessToken, nil)
+	if deactivatedAccess.Code != http.StatusUnauthorized {
+		t.Fatalf("deactivated member token status = %d, body = %s", deactivatedAccess.Code, deactivatedAccess.Body.String())
+	}
+	deactivatedLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"allowed@other.test"}`, "", nil)
+	if deactivatedLogin.Code != http.StatusAccepted || len(queue.messages) != 6 {
+		t.Fatalf("deactivated member login status = %d, messages = %d", deactivatedLogin.Code, len(queue.messages))
+	}
+	reactivated := performTenantRequest(
+		handler, http.MethodPatch, "/v1/members/"+additionalSession.Member.ID+"/status",
+		`{"status":"active"}`, ownerSession.AccessToken, nil,
+	)
+	if reactivated.Code != http.StatusOK || !strings.Contains(reactivated.Body.String(), `"status":"active"`) ||
+		!strings.Contains(reactivated.Body.String(), `"permissions":[]`) {
+		t.Fatalf("reactivate member status = %d, body = %s", reactivated.Code, reactivated.Body.String())
+	}
+	removed := performTenantRequest(
+		handler, http.MethodDelete, "/v1/members/"+additionalSession.Member.ID,
+		"", ownerSession.AccessToken, nil,
+	)
+	if removed.Code != http.StatusOK || !strings.Contains(removed.Body.String(), `"status":"removed"`) {
+		t.Fatalf("remove member status = %d, body = %s", removed.Code, removed.Body.String())
+	}
+	var accessAuditKinds []string
+	rows, err := pools.Admin.Query(ctx, `
+		SELECT kind FROM tenant_access_events WHERE tenant_id = $1 ORDER BY created_at, id
+	`, tenantID)
+	if err != nil {
+		t.Fatalf("list tenant access audit: %v", err)
+	}
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatalf("scan tenant access audit: %v", err)
+		}
+		accessAuditKinds = append(accessAuditKinds, kind)
+	}
+	rows.Close()
+	for _, expected := range []string{
+		"member.permission_change_denied", "ownership.transferred", "ownership.transfer_denied",
+		"member.lifecycle_change_denied", "member.deactivated", "member.reactivated", "member.removed",
+	} {
+		if !slices.Contains(accessAuditKinds, expected) {
+			t.Errorf("access audit kinds = %v, missing %q", accessAuditKinds, expected)
+		}
 	}
 	invalidLogin := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"invalid"}`, "", nil)
 	if invalidLogin.Code != http.StatusUnprocessableEntity {

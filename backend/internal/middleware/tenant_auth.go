@@ -104,6 +104,31 @@ func AuthenticateTenantCredential(
 	if claims.TenantID == "" || claims.TenantID != tenantID {
 		return auth.Claims{}, ErrTenantCredentialForbidden
 	}
+	if query == nil {
+		return auth.Claims{}, ErrTenantCredentialInvalid
+	}
+	expectedAuthorizationVersion := 0
+	if claims.AuthorizationVersion != nil {
+		expectedAuthorizationVersion = *claims.AuthorizationVersion
+	}
+	var permissions []string
+	var status string
+	var authorizationVersion int
+	err = query.QueryRow(ctx, `
+		SELECT permissions, status, authorization_version
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, claims.Subject).Scan(&permissions, &status, &authorizationVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.Claims{}, ErrTenantCredentialInvalid
+	}
+	if err != nil {
+		return auth.Claims{}, fmt.Errorf("authenticate tenant member: %w", err)
+	}
+	if status != "active" || authorizationVersion != expectedAuthorizationVersion {
+		return auth.Claims{}, ErrTenantCredentialInvalid
+	}
+	claims.Permissions = permissions
 	return claims, nil
 }
 

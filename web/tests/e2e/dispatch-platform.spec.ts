@@ -38,6 +38,9 @@ function createMockState() {
     email: 'alex@acme.test',
     name: 'Alex Morgan',
     permissions: [...allTenantPermissions],
+    status: 'active' as 'active' | 'deactivated' | 'removed',
+    role: 'owner' as 'owner' | 'member',
+    verified: true,
   }
   const members = [member, {
     id: 'member-2',
@@ -45,6 +48,9 @@ function createMockState() {
     email: 'jamie@acme.test',
     name: 'Jamie Torres',
     permissions: ['feedback:read', 'feedback:update', 'issue:read', 'issue:update'],
+    status: 'active' as 'active' | 'deactivated' | 'removed',
+    role: 'member' as 'owner' | 'member',
+    verified: true,
   }]
   const memberDomains = [{
     id: 'member-domain-1', tenant_id: tenant.id, domain: 'acme.test',
@@ -879,6 +885,33 @@ async function installMockAPI(page: Page, state: MockState) {
       return json(route, { accepted: true })
     }
     if (path === '/v1/members' && method === 'GET') return json(route, { members: state.members })
+    if (path === '/v1/ownership/transfer' && method === 'POST') {
+      const input = body()
+      if (input.confirmation !== state.tenant.slug) {
+        return json(route, { error: { code: 'validation_error', message: 'workspace confirmation does not match' } }, 422)
+      }
+      const target = state.members.find(member => member.id === input.new_owner_member_id)
+      if (!target) return json(route, { error: { code: 'validation_error', message: 'new workspace owner is invalid' } }, 422)
+      for (const member of state.members) member.role = member.id === target.id ? 'owner' : 'member'
+      target.permissions = [...allTenantPermissions]
+      return json(route, { owner: target })
+    }
+    const memberStatusMatch = path.match(/^\/v1\/members\/([^/]+)\/status$/)
+    if (memberStatusMatch && method === 'PATCH') {
+      const target = state.members.find(member => member.id === memberStatusMatch[1])
+      if (!target) return json(route, { error: { code: 'not_found', message: 'member not found' } }, 404)
+      target.status = String(body().status) as typeof target.status
+      if (target.status === 'deactivated') target.permissions = []
+      return json(route, { member: target })
+    }
+    const memberMatch = path.match(/^\/v1\/members\/([^/]+)$/)
+    if (memberMatch && method === 'DELETE') {
+      const target = state.members.find(member => member.id === memberMatch[1])
+      if (!target) return json(route, { error: { code: 'not_found', message: 'member not found' } }, 404)
+      target.status = 'removed'
+      target.permissions = []
+      return json(route, { member: target })
+    }
     if (path === '/v1/member-domains' && method === 'GET') return json(route, { member_domains: state.memberDomains })
     if (path === '/v1/member-domains' && method === 'POST') {
       const input = body()
@@ -2391,6 +2424,68 @@ test('member and API key permissions share a compact custom-aware editor', async
   await expect(keyEditor.locator('fieldset')).toHaveCount(9)
   await expect(keyEditor.getByRole('button', { name: 'Viewer' })).toHaveAttribute('data-active', 'true')
   await expectNoPageOverflow(page)
+})
+
+test('settings identifies and transfers workspace ownership', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.members.push({
+    id: 'member-unverified', tenant_id: state.tenant.id, email: 'pending@acme.test', name: 'Pending Member',
+    permissions: ['project:read'], status: 'active', role: 'member', verified: false,
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Members' }).click()
+
+  const currentOwner = page.locator('.settings-row').filter({ hasText: 'alex@acme.test' })
+  await expect(currentOwner.getByText('Owner', { exact: true })).toBeVisible()
+  await currentOwner.getByTitle('Transfer ownership').click()
+
+  const dialog = page.getByRole('dialog', { name: 'Transfer ownership' })
+  await expect(dialog.getByLabel('New owner')).toBeFocused()
+  await expect(dialog.getByRole('option', { name: /Pending Member/ })).toHaveCount(0)
+  await dialog.getByLabel('New owner').selectOption('member-2')
+  await dialog.getByLabel('Type acme to confirm').fill('acme')
+  await expectNoPageOverflow(page)
+  await capture(page, testInfo, `settings-transfer-ownership-${testInfo.project.name}`)
+  await dialog.getByRole('button', { name: 'Transfer ownership' }).click()
+
+  await expect(dialog).not.toBeVisible()
+  const newOwner = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
+  await expect(newOwner.getByText('Owner', { exact: true })).toBeVisible()
+  await expect(page.getByTitle('Transfer ownership')).toHaveCount(0)
+  expect(state.members.find(member => member.id === 'member-2')?.role).toBe('owner')
+})
+
+test('settings manages non-owner member lifecycle', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Members' }).click()
+
+  let memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
+  await memberRow.getByTitle('Deactivate member').click()
+  let dialog = page.getByRole('dialog', { name: 'Deactivate member' })
+  await expect(dialog).toContainText('every active session will end immediately')
+  await dialog.getByRole('button', { name: 'Deactivate member' }).click()
+
+  memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
+  await expect(memberRow.getByText('deactivated', { exact: true })).toBeVisible()
+  expect(state.members[1].permissions).toEqual([])
+  await memberRow.getByTitle('Reactivate member').click()
+  dialog = page.getByRole('dialog', { name: 'Reactivate member' })
+  await dialog.getByRole('button', { name: 'Reactivate member' }).click()
+
+  memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
+  await expect(memberRow.getByText('active', { exact: true })).toBeVisible()
+  await memberRow.getByTitle('Remove member').click()
+  dialog = page.getByRole('dialog', { name: 'Remove member' })
+  await expect(dialog).toContainText('Removal is permanent')
+  await capture(page, testInfo, `settings-remove-member-${testInfo.project.name}`)
+  await dialog.getByRole('button', { name: 'Remove member' }).click()
+
+  memberRow = page.locator('.settings-row').filter({ hasText: 'jamie@acme.test' })
+  await expect(memberRow.getByText('removed', { exact: true })).toBeVisible()
+  await expect(memberRow.locator('button')).toHaveCount(0)
 })
 
 test('member invitation keeps email errors beside the field and general errors separate', async ({ page }, testInfo) => {

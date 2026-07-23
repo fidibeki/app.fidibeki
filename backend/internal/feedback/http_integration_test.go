@@ -513,12 +513,24 @@ func assertTenantFeedbackReadFlow(
 	); err != nil {
 		t.Fatalf("link unavailable feedback replay: %v", err)
 	}
-	var assigneeID, checkoutTagID, accessibilityTagID string
+	var assigneeID, viewerID, feedbackWriterID, checkoutTagID, accessibilityTagID string
 	if err := root.QueryRow(ctx, `
-		INSERT INTO tenant_members (tenant_id, email, name)
-		VALUES ($1, 'triage@acme.test', 'Ada Triage') RETURNING id
-	`, tenantID).Scan(&assigneeID); err != nil {
+		INSERT INTO tenant_members (tenant_id, email, name, permissions)
+		VALUES ($1, 'triage@acme.test', 'Ada Triage', $2) RETURNING id
+	`, tenantID, auth.TenantPermissionStrings()).Scan(&assigneeID); err != nil {
 		t.Fatalf("create feedback assignee: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'viewer@acme.test', ARRAY['project:read']) RETURNING id
+	`, tenantID).Scan(&viewerID); err != nil {
+		t.Fatalf("create feedback viewer: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'writer@acme.test', ARRAY['feedback:read', 'feedback:update']) RETURNING id
+	`, tenantID).Scan(&feedbackWriterID); err != nil {
+		t.Fatalf("create feedback writer: %v", err)
 	}
 	if _, err := root.Exec(ctx,
 		`UPDATE feedbacks SET priority = 'urgent', assignee_id = $2 WHERE id = $1`,
@@ -552,11 +564,11 @@ func assertTenantFeedbackReadFlow(
 	if err != nil {
 		t.Fatalf("issue tenant feedback token: %v", err)
 	}
-	deniedToken, _, err := jwtManager.IssueTenant("viewer-id", tenantID, []string{string(auth.PermissionProjectRead)})
+	deniedToken, _, err := jwtManager.IssueTenant(viewerID, tenantID, []string{string(auth.PermissionProjectRead)})
 	if err != nil {
 		t.Fatalf("issue denied tenant feedback token: %v", err)
 	}
-	feedbackOnlyToken, _, err := jwtManager.IssueTenant("feedback-writer-id", tenantID, []string{
+	feedbackOnlyToken, _, err := jwtManager.IssueTenant(feedbackWriterID, tenantID, []string{
 		string(auth.PermissionFeedbackRead), string(auth.PermissionFeedbackUpdate),
 	})
 	if err != nil {

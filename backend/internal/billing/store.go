@@ -67,6 +67,11 @@ func (s Store) Signup(ctx context.Context, input SignupInput) (SignupResult, err
 		return SignupResult{}, fmt.Errorf("create signup owner: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
+		UPDATE tenants SET owner_member_id = $2 WHERE id = $1
+	`, result.Tenant.ID, result.MemberID); err != nil {
+		return SignupResult{}, fmt.Errorf("assign signup owner: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO tenant_magic_links (tenant_id, member_id, email, invited_permissions, token_hash, expires_at)
 		VALUES ($1, $2, $3, '{}', $4, $5)
 	`, result.Tenant.ID, result.MemberID, input.Email, tokenHash, s.now().Add(10*time.Minute)); err != nil {

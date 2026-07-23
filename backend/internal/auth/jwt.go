@@ -21,8 +21,9 @@ const (
 var ErrInvalidAccessToken = errors.New("invalid access token")
 
 type Claims struct {
-	Permissions []string `json:"permissions"`
-	TenantID    string   `json:"tenant_id,omitempty"`
+	Permissions          []string `json:"permissions"`
+	TenantID             string   `json:"tenant_id,omitempty"`
+	AuthorizationVersion *int     `json:"authorization_version,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -47,7 +48,7 @@ func NewJWTManager(secret, issuer string, ttl time.Duration) (*JWTManager, error
 }
 
 func (m *JWTManager) Issue(subject, audience string, permissions []string) (string, time.Time, error) {
-	return m.issue(subject, audience, "", permissions)
+	return m.issue(subject, audience, "", permissions, nil)
 }
 
 func (m *JWTManager) IssueTenant(
@@ -58,7 +59,20 @@ func (m *JWTManager) IssueTenant(
 	if tenantID == "" {
 		return "", time.Time{}, errors.New("JWT tenant ID is required")
 	}
-	return m.issue(subject, AudienceTenant, tenantID, permissions)
+	initialAuthorizationVersion := 0
+	return m.issue(subject, AudienceTenant, tenantID, permissions, &initialAuthorizationVersion)
+}
+
+func (m *JWTManager) IssueTenantMember(
+	subject string,
+	tenantID string,
+	permissions []string,
+	authorizationVersion int,
+) (string, time.Time, error) {
+	if tenantID == "" {
+		return "", time.Time{}, errors.New("JWT tenant ID is required")
+	}
+	return m.issue(subject, AudienceTenant, tenantID, permissions, &authorizationVersion)
 }
 
 func (m *JWTManager) IssueReporterUnsubscribe(
@@ -68,7 +82,7 @@ func (m *JWTManager) IssueReporterUnsubscribe(
 	if tenantID == "" {
 		return "", time.Time{}, errors.New("JWT tenant ID is required")
 	}
-	return m.issue(issueID, AudienceReporterUnsubscribe, tenantID, nil)
+	return m.issue(issueID, AudienceReporterUnsubscribe, tenantID, nil, nil)
 }
 
 func (m *JWTManager) IssueFeedbackReporterUnsubscribe(
@@ -78,7 +92,7 @@ func (m *JWTManager) IssueFeedbackReporterUnsubscribe(
 	if tenantID == "" {
 		return "", time.Time{}, errors.New("JWT tenant ID is required")
 	}
-	return m.issue(feedbackID, AudienceReporterUnsubscribe, tenantID, []string{reporterFeedbackPermission})
+	return m.issue(feedbackID, AudienceReporterUnsubscribe, tenantID, []string{reporterFeedbackPermission}, nil)
 }
 
 func IsFeedbackReporterUnsubscribe(claims Claims) bool {
@@ -106,6 +120,7 @@ func (m *JWTManager) issue(
 	audience string,
 	tenantID string,
 	permissions []string,
+	authorizationVersion *int,
 ) (string, time.Time, error) {
 	if subject == "" {
 		return "", time.Time{}, errors.New("JWT subject is required")
@@ -117,8 +132,9 @@ func (m *JWTManager) issue(
 	now := m.now()
 	expiresAt := now.Add(m.ttl)
 	claims := Claims{
-		Permissions: append([]string(nil), permissions...),
-		TenantID:    tenantID,
+		Permissions:          append([]string(nil), permissions...),
+		TenantID:             tenantID,
+		AuthorizationVersion: authorizationVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: m.issuer, Subject: subject, Audience: jwt.ClaimStrings{audience},
 			IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expiresAt),

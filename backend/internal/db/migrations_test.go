@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 59
+	const latestMigrationVersion = 60
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -91,6 +91,57 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 				role, canLogin, isSuperuser, bypassRLS,
 			)
 		}
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back workspace ownership migration: %v", err)
+	}
+	var legacyTenantID, legacyOwnerID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Legacy', 'legacy', 'starter', 'active') RETURNING id
+	`).Scan(&legacyTenantID); err != nil {
+		t.Fatalf("create legacy tenant before ownership migration: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, created_at)
+		VALUES ($1, 'founder@legacy.test', ARRAY['project:read'], now() - interval '2 minutes')
+		RETURNING id
+	`, legacyTenantID).Scan(&legacyOwnerID); err != nil {
+		t.Fatalf("create legacy founder before ownership migration: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, created_at)
+		VALUES ($1, 'later@legacy.test', ARRAY['project:read'], now() - interval '1 minute')
+	`, legacyTenantID); err != nil {
+		t.Fatalf("create later legacy member before ownership migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply workspace ownership migration: %v", err)
+	}
+	var migratedOwnerID, migratedOwnerStatus string
+	var migratedOwnerVersion, migratedOwnerPermissionCount int
+	if err := root.QueryRow(ctx, `
+		SELECT tenant.owner_member_id, member.status, member.authorization_version,
+		       cardinality(member.permissions)
+		FROM tenants AS tenant
+		JOIN tenant_members AS member
+		  ON member.tenant_id = tenant.id AND member.id = tenant.owner_member_id
+		WHERE tenant.id = $1
+	`, legacyTenantID).Scan(
+		&migratedOwnerID, &migratedOwnerStatus, &migratedOwnerVersion, &migratedOwnerPermissionCount,
+	); err != nil {
+		t.Fatalf("read migrated legacy owner: %v", err)
+	}
+	if migratedOwnerID != legacyOwnerID || migratedOwnerStatus != "active" ||
+		migratedOwnerVersion != 0 || migratedOwnerPermissionCount != 32 {
+		t.Fatalf(
+			"migrated owner = %q status=%q version=%d permissions=%d, want %q active/0/32",
+			migratedOwnerID, migratedOwnerStatus, migratedOwnerVersion,
+			migratedOwnerPermissionCount, legacyOwnerID,
+		)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, legacyTenantID); err != nil {
+		t.Fatalf("remove legacy ownership migration fixture: %v", err)
 	}
 
 	var tenantA, tenantB string

@@ -15,13 +15,17 @@ const (
 )
 
 var (
-	ErrAdminNotFound    = errors.New("platform admin not found")
-	ErrMagicLinkInvalid = errors.New("magic link is invalid or expired")
-	ErrRefreshInvalid   = errors.New("refresh token is invalid or expired")
-	ErrRefreshExpired   = errors.New("refresh token is expired")
-	ErrRefreshReuse     = errors.New("revoked refresh token was reused")
-	ErrTenantNotFound   = errors.New("tenant not found")
-	ErrSlugConflict     = errors.New("tenant slug already exists")
+	ErrAdminNotFound                = errors.New("platform admin not found")
+	ErrMagicLinkInvalid             = errors.New("magic link is invalid or expired")
+	ErrRefreshInvalid               = errors.New("refresh token is invalid or expired")
+	ErrRefreshExpired               = errors.New("refresh token is expired")
+	ErrRefreshReuse                 = errors.New("revoked refresh token was reused")
+	ErrTenantNotFound               = errors.New("tenant not found")
+	ErrSlugConflict                 = errors.New("tenant slug already exists")
+	ErrOwnershipConfirmation        = errors.New("workspace ownership confirmation is invalid")
+	ErrRecentAuthenticationRequired = errors.New("recent platform authentication is required")
+	ErrOwnershipTargetInvalid       = errors.New("workspace ownership recovery target is invalid")
+	ErrRecoveryVerificationInvalid  = errors.New("workspace recovery verification is invalid")
 )
 
 type Admin struct {
@@ -44,10 +48,21 @@ type TenantRecord struct {
 }
 
 type CreateTenantParams struct {
-	Name         string
-	Slug         string
-	Plan         tenant.Plan
-	Status       tenant.Status
-	BillingEmail *string
-	TrialEndsAt  *time.Time
+	Name                 string
+	Slug                 string
+	Plan                 tenant.Plan
+	Status               tenant.Status
+	BillingEmail         *string
+	TrialEndsAt          *time.Time
+	OwnerEmail           string
+	ActorPlatformAdminID string
+}
+
+type RecoverOwnershipParams struct {
+	TenantID              string
+	ActorPlatformAdminID  string
+	TargetMemberID        string
+	Confirmation          string
+	VerificationReference string
+	Reason                string
 }

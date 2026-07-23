@@ -271,15 +271,105 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 	record, err := store.CreateTenant(ctx, CreateTenantParams{
 		Name: "Acme", Slug: "acme", Plan: tenant.PlanGrowth,
 		Status: tenant.StatusTrial, TrialEndsAt: &trialEnd,
+		OwnerEmail: "owner@acme.test", ActorPlatformAdminID: admin.ID,
 	})
 	if err != nil {
 		t.Fatalf("CreateTenant() error = %v", err)
 	}
+	var ownerMemberID string
+	if err := connection.QueryRow(ctx, `
+		SELECT owner_member_id FROM tenants WHERE id = $1
+	`, record.ID).Scan(&ownerMemberID); err != nil {
+		t.Fatalf("read provisioned tenant owner: %v", err)
+	}
+	var ownerEmail string
+	if err := connection.QueryRow(ctx, `
+		SELECT email FROM tenant_members WHERE tenant_id = $1 AND id = $2
+	`, record.ID, ownerMemberID).Scan(&ownerEmail); err != nil || ownerEmail != "owner@acme.test" {
+		t.Fatalf("provisioned owner email = %q, error = %v", ownerEmail, err)
+	}
 	if _, err := store.CreateTenant(ctx, CreateTenantParams{
 		Name: "Duplicate", Slug: "acme", Plan: tenant.PlanStarter,
-		Status: tenant.StatusActive,
+		Status: tenant.StatusActive, OwnerEmail: "other@acme.test", ActorPlatformAdminID: admin.ID,
 	}); !errors.Is(err, ErrSlugConflict) {
 		t.Fatalf("duplicate CreateTenant() error = %v", err)
+	}
+	var recoveryTargetID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, last_login_at)
+		VALUES ($1, 'recovery@acme.test', '{}', $2)
+		RETURNING id
+	`, record.ID, now).Scan(&recoveryTargetID); err != nil {
+		t.Fatalf("create recovery target: %v", err)
+	}
+	recovery := RecoverOwnershipParams{
+		TenantID: record.ID, ActorPlatformAdminID: admin.ID, TargetMemberID: recoveryTargetID,
+		Confirmation: "acme", VerificationReference: "support-2481",
+		Reason: "Verified billing email and incorporation record.",
+	}
+	if _, err := connection.Exec(ctx, `UPDATE platform_admins SET last_login_at = $2 WHERE id = $1`, admin.ID, now.Add(-11*time.Minute)); err != nil {
+		t.Fatalf("age platform admin authentication: %v", err)
+	}
+	if err := store.RecoverOwnership(ctx, recovery); !errors.Is(err, ErrRecentAuthenticationRequired) {
+		t.Fatalf("stale RecoverOwnership() error = %v", err)
+	}
+	if _, err := connection.Exec(ctx, `UPDATE platform_admins SET last_login_at = $2 WHERE id = $1`, admin.ID, now); err != nil {
+		t.Fatalf("refresh platform admin recent auth: %v", err)
+	}
+	recovery.VerificationReference = ""
+	if err := store.RecoverOwnership(ctx, recovery); !errors.Is(err, ErrRecoveryVerificationInvalid) {
+		t.Fatalf("incomplete RecoverOwnership() error = %v", err)
+	}
+	recovery.VerificationReference = "support-2481"
+	if _, err := connection.Exec(ctx, `UPDATE tenant_members SET last_login_at = NULL WHERE id = $1`, recoveryTargetID); err != nil {
+		t.Fatalf("make recovery target unverified: %v", err)
+	}
+	if err := store.RecoverOwnership(ctx, recovery); !errors.Is(err, ErrOwnershipTargetInvalid) {
+		t.Fatalf("unverified RecoverOwnership() error = %v", err)
+	}
+	if _, err := connection.Exec(ctx, `UPDATE tenant_members SET last_login_at = $2 WHERE id = $1`, recoveryTargetID, now); err != nil {
+		t.Fatalf("verify recovery target: %v", err)
+	}
+	recovery.TargetMemberID = "00000000-0000-4000-8000-000000000099"
+	if err := store.RecoverOwnership(ctx, recovery); !errors.Is(err, ErrOwnershipTargetInvalid) {
+		t.Fatalf("missing-target RecoverOwnership() error = %v", err)
+	}
+	recovery.TargetMemberID = recoveryTargetID
+	recovery.Confirmation = "wrong"
+	if err := store.RecoverOwnership(ctx, recovery); !errors.Is(err, ErrOwnershipConfirmation) {
+		t.Fatalf("mismatched RecoverOwnership() error = %v", err)
+	}
+	recovery.Confirmation = "acme"
+	if err := store.RecoverOwnership(ctx, recovery); err != nil {
+		t.Fatalf("RecoverOwnership() error = %v", err)
+	}
+	var recoveredOwnerID string
+	var formerOwnerStatus string
+	if err := connection.QueryRow(ctx, `SELECT owner_member_id FROM tenants WHERE id = $1`, record.ID).Scan(&recoveredOwnerID); err != nil {
+		t.Fatalf("read recovered owner: %v", err)
+	}
+	if err := connection.QueryRow(ctx, `SELECT status FROM tenant_members WHERE tenant_id = $1 AND id = $2`, record.ID, ownerMemberID).Scan(&formerOwnerStatus); err != nil {
+		t.Fatalf("read former owner status: %v", err)
+	}
+	if recoveredOwnerID != recoveryTargetID || formerOwnerStatus != "deactivated" {
+		t.Fatalf("recovered owner = %q, former status = %q", recoveredOwnerID, formerOwnerStatus)
+	}
+	var recoveryAuditCount int
+	if err := connection.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind IN ('ownership.recovery_denied', 'ownership.recovered')
+	`, record.ID).Scan(&recoveryAuditCount); err != nil || recoveryAuditCount != 6 {
+		t.Fatalf("recovery audit count = %d, error = %v", recoveryAuditCount, err)
+	}
+	var recoverySessionAudit bool
+	if err := connection.QueryRow(ctx, `
+		SELECT data ? 'target_revoked_session_count'
+		   AND data ? 'former_owner_revoked_session_count'
+		   AND data ? 'sessions_revoked_at'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'ownership.recovered'
+	`, record.ID).Scan(&recoverySessionAudit); err != nil || !recoverySessionAudit {
+		t.Fatalf("recovery session audit = %t, error = %v", recoverySessionAudit, err)
 	}
 	fetched, err := store.GetTenant(ctx, record.ID)
 	if err != nil || fetched.Slug != "acme" {

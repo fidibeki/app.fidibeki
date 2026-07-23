@@ -70,6 +70,9 @@ func (s Service) RequestMagicLink(
 	if err != nil {
 		return nil, err
 	}
+	if member.Status != MemberStatusActive {
+		return nil, nil
+	}
 	return s.createLink(ctx, query, resolved, &member.ID, member.Email, nil)
 }
 
@@ -245,7 +248,9 @@ func (s Service) Verify(
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	accessToken, expiresAt, err := s.JWT.IssueTenant(member.ID, tenantID, member.Permissions)
+	accessToken, expiresAt, err := s.JWT.IssueTenantMember(
+		member.ID, tenantID, member.Permissions, member.AuthorizationVersion,
+	)
 	if err != nil {
 		return SessionTokens{}, err
 	}
@@ -273,7 +278,9 @@ func (s Service) Refresh(
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	accessToken, expiresAt, err := s.JWT.IssueTenant(member.ID, tenantID, member.Permissions)
+	accessToken, expiresAt, err := s.JWT.IssueTenantMember(
+		member.ID, tenantID, member.Permissions, member.AuthorizationVersion,
+	)
 	if err != nil {
 		return SessionTokens{}, err
 	}

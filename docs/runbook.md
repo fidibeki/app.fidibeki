@@ -97,3 +97,26 @@ customer evidence into chat or tickets.
    stored integration credentials before removing the previous key.
 4. Deploy production through the manually confirmed promotion workflow, verify, then revoke the old provider credential.
 5. Search logs and repository history for accidental exposure and rotate again if exposure is possible.
+
+## 11. Support-assisted workspace ownership recovery
+
+1. Use recovery only when the recorded owner genuinely cannot authenticate or transfer ownership.
+   Normal owner changes must use the tenant Settings workflow.
+2. Open a restricted support case and record its reference. Do not place identity documents, access
+   tokens, magic links, or complete customer evidence in the recovery reason.
+3. Verify control of the workspace billing email using a fresh challenge. Independently verify one
+   organization proof, such as the configured payment account or a current legal/company record.
+   A single email reply is not sufficient.
+4. Confirm that the proposed new owner is already an active workspace member and has completed a
+   successful Fidibeki login. Never create an invented member or recover to an external address.
+5. Re-authenticate the platform-admin account immediately before the operation. Submit the tenant ID,
+   target member ID, exact workspace slug, restricted support-case reference, and a concise human reason
+   to `POST /admin/tenants/{tenantID}/ownership/recover`.
+6. Confirm that the previous owner is deactivated, the target is the only owner with complete tenant
+   permissions, and both members' prior sessions are revoked. Inspect `tenant_access_events` for the
+   `ownership.recovered` event and platform-admin actor.
+7. Notify the workspace through the verified billing contact and ask the new owner to sign in again.
+   Record completion in the support case without copying the audit payload.
+8. Never recover ownership with direct SQL, temporarily disable RLS, or edit `owner_member_id` alone.
+   If the endpoint refuses the operation, preserve its denial audit and escalate the underlying data
+   inconsistency for an application fix.

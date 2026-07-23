@@ -2,11 +2,13 @@ package platformadmin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -323,7 +325,12 @@ func (s Store) BootstrapAdmin(ctx context.Context, email string, permissions []s
 }
 
 func (s Store) CreateTenant(ctx context.Context, input CreateTenantParams) (TenantRecord, error) {
-	record, err := scanTenant(s.Database.QueryRow(ctx, `
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return TenantRecord{}, fmt.Errorf("begin tenant provisioning: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	record, err := scanTenant(tx.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug, plan, status, billing_email, trial_ends_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, name, slug, plan, status, billing_email, trial_ends_at, created_at, updated_at
@@ -334,7 +341,182 @@ func (s Store) CreateTenant(ctx context.Context, input CreateTenantParams) (Tena
 	if err != nil {
 		return TenantRecord{}, fmt.Errorf("create tenant: %w", err)
 	}
+	var ownerMemberID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, record.ID, normalizeEmail(input.OwnerEmail), auth.TenantPermissionStrings()).Scan(&ownerMemberID); err != nil {
+		return TenantRecord{}, fmt.Errorf("create tenant owner: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tenants SET owner_member_id = $2 WHERE id = $1
+	`, record.ID, ownerMemberID); err != nil {
+		return TenantRecord{}, fmt.Errorf("assign tenant owner: %w", err)
+	}
+	if err := insertPlatformAccessEvent(ctx, tx, record.ID, "ownership.provisioned", input.ActorPlatformAdminID, &ownerMemberID, map[string]any{
+		"owner_member_id": ownerMemberID,
+		"owner_email":     normalizeEmail(input.OwnerEmail),
+	}); err != nil {
+		return TenantRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TenantRecord{}, fmt.Errorf("commit tenant provisioning: %w", err)
+	}
 	return record, nil
+}
+
+func (s Store) RecoverOwnership(ctx context.Context, input RecoverOwnershipParams) error {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin workspace ownership recovery: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var slug string
+	var previousOwnerMemberID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT slug, owner_member_id FROM tenants WHERE id = $1 FOR UPDATE
+	`, input.TenantID).Scan(&slug, &previousOwnerMemberID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrTenantNotFound
+	} else if err != nil {
+		return fmt.Errorf("lock workspace ownership recovery: %w", err)
+	}
+	deny := func(reason string, domainErr error) error {
+		if err := insertPlatformAccessEvent(
+			ctx, tx, input.TenantID, "ownership.recovery_denied", input.ActorPlatformAdminID, nil,
+			map[string]any{"reason": reason, "verification_reference": input.VerificationReference},
+		); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit denied workspace ownership recovery: %w", err)
+		}
+		return domainErr
+	}
+	var adminLastLogin *time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT last_login_at FROM platform_admins WHERE id = $1 FOR UPDATE
+	`, input.ActorPlatformAdminID).Scan(&adminLastLogin); err != nil {
+		return fmt.Errorf("lock recovery platform admin: %w", err)
+	}
+	if adminLastLogin == nil || adminLastLogin.Before(s.now().Add(-10*time.Minute)) {
+		return deny("platform_authentication_is_stale", ErrRecentAuthenticationRequired)
+	}
+	if input.Confirmation != slug {
+		return deny("confirmation_mismatch", ErrOwnershipConfirmation)
+	}
+	if len(strings.TrimSpace(input.VerificationReference)) < 3 || len(strings.TrimSpace(input.Reason)) < 10 {
+		return deny("verification_evidence_is_incomplete", ErrRecoveryVerificationInvalid)
+	}
+	var targetLastLogin *time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT last_login_at
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2 AND status = 'active'
+		FOR UPDATE
+	`, input.TenantID, input.TargetMemberID).Scan(&targetLastLogin); errors.Is(err, pgx.ErrNoRows) {
+		return deny("target_is_not_active", ErrOwnershipTargetInvalid)
+	} else if err != nil {
+		return fmt.Errorf("lock recovery target: %w", err)
+	}
+	if targetLastLogin == nil {
+		return deny("target_is_not_verified", ErrOwnershipTargetInvalid)
+	}
+	if previousOwnerMemberID != nil && *previousOwnerMemberID == input.TargetMemberID {
+		return deny("target_is_current_owner", ErrOwnershipTargetInvalid)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tenant_members
+		SET permissions = $3, authorization_version = authorization_version + 1
+		WHERE tenant_id = $1 AND id = $2
+	`, input.TenantID, input.TargetMemberID, auth.TenantPermissionStrings()); err != nil {
+		return fmt.Errorf("elevate recovered workspace owner: %w", err)
+	}
+	revokedAt := s.now()
+	targetRevocation, err := tx.Exec(ctx, `
+		UPDATE tenant_member_sessions
+		SET revoked_at = COALESCE(revoked_at, $3), rotated_at = NULL, replacement_hash = NULL
+		WHERE tenant_id = $1 AND member_id = $2
+		  AND (revoked_at IS NULL OR rotated_at IS NOT NULL OR replacement_hash IS NOT NULL)
+	`, input.TenantID, input.TargetMemberID, revokedAt)
+	if err != nil {
+		return fmt.Errorf("revoke recovered owner sessions: %w", err)
+	}
+	formerOwnerRevokedSessions := int64(0)
+	if previousOwnerMemberID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE tenant_members
+			SET status = 'deactivated', permissions = '{}',
+			    authorization_version = authorization_version + 1
+			WHERE tenant_id = $1 AND id = $2
+		`, input.TenantID, *previousOwnerMemberID); err != nil {
+			return fmt.Errorf("deactivate inaccessible workspace owner: %w", err)
+		}
+		formerOwnerRevocation, err := tx.Exec(ctx, `
+			UPDATE tenant_member_sessions
+			SET revoked_at = COALESCE(revoked_at, $3), rotated_at = NULL, replacement_hash = NULL
+			WHERE tenant_id = $1 AND member_id = $2
+			  AND (revoked_at IS NULL OR rotated_at IS NOT NULL OR replacement_hash IS NOT NULL)
+		`, input.TenantID, *previousOwnerMemberID, revokedAt)
+		if err != nil {
+			return fmt.Errorf("revoke inaccessible owner sessions: %w", err)
+		}
+		formerOwnerRevokedSessions = formerOwnerRevocation.RowsAffected()
+		if _, err := tx.Exec(ctx, `
+			UPDATE tenant_magic_links
+			SET consumed_at = COALESCE(consumed_at, $3)
+			WHERE tenant_id = $1 AND member_id = $2
+		`, input.TenantID, *previousOwnerMemberID, revokedAt); err != nil {
+			return fmt.Errorf("consume inaccessible owner links: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tenants SET owner_member_id = $2 WHERE id = $1
+	`, input.TenantID, input.TargetMemberID); err != nil {
+		return fmt.Errorf("recover workspace ownership: %w", err)
+	}
+	if err := insertPlatformAccessEvent(
+		ctx, tx, input.TenantID, "ownership.recovered", input.ActorPlatformAdminID, &input.TargetMemberID,
+		map[string]any{
+			"previous_owner_member_id":           previousOwnerMemberID,
+			"new_owner_member_id":                input.TargetMemberID,
+			"target_revoked_session_count":       targetRevocation.RowsAffected(),
+			"former_owner_revoked_session_count": formerOwnerRevokedSessions,
+			"sessions_revoked_at":                revokedAt,
+			"verification_reference":             strings.TrimSpace(input.VerificationReference),
+			"reason":                             strings.TrimSpace(input.Reason),
+		},
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit workspace ownership recovery: %w", err)
+	}
+	return nil
+}
+
+func insertPlatformAccessEvent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	kind string,
+	actorPlatformAdminID string,
+	subjectMemberID *string,
+	data map[string]any,
+) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode platform access event: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_platform_admin_id, subject_member_id, data
+		) VALUES ($1, $2, $3, $4, $5::jsonb)
+	`, tenantID, kind, actorPlatformAdminID, subjectMemberID, string(payload)); err != nil {
+		return fmt.Errorf("record platform access event: %w", err)
+	}
+	return nil
 }
 
 func (s Store) GetTenant(ctx context.Context, id string) (TenantRecord, error) {

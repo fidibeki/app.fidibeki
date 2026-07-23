@@ -54,6 +54,13 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	if len(permissions) != len(auth.AllTenantPermissions) {
 		t.Fatalf("owner permission count = %d, want %d", len(permissions), len(auth.AllTenantPermissions))
 	}
+	var ownerMemberID string
+	if err := pool.QueryRow(ctx, `SELECT owner_member_id FROM tenants WHERE id = $1`, signup.Tenant.ID).Scan(&ownerMemberID); err != nil {
+		t.Fatalf("load signup ownership: %v", err)
+	}
+	if ownerMemberID != signup.MemberID {
+		t.Fatalf("signup owner = %q, want %q", ownerMemberID, signup.MemberID)
+	}
 	var links int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM tenant_magic_links

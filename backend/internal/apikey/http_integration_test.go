@@ -84,6 +84,25 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	`, betaID, strings.Repeat("b", 64)).Scan(&betaKeyID); err != nil {
 		t.Fatalf("create Beta API key: %v", err)
 	}
+	var ownerID, readerID, betaMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'owner@acme.test', $2) RETURNING id
+	`, acmeID, auth.TenantPermissionStrings()).Scan(&ownerID); err != nil {
+		t.Fatalf("create Acme owner: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'reader@acme.test', ARRAY['api_key:read']) RETURNING id
+	`, acmeID).Scan(&readerID); err != nil {
+		t.Fatalf("create Acme reader: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'owner@beta.test', $2) RETURNING id
+	`, betaID, auth.TenantPermissionStrings()).Scan(&betaMemberID); err != nil {
+		t.Fatalf("create Beta owner: %v", err)
+	}
 
 	pools, err := db.OpenPools(ctx, apiKeyRoleURL(t, directURL, "fidibeki_app", "app-password"), directURL, 4, 2)
 	if err != nil {
@@ -94,9 +113,9 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	ownerToken, _, _ := jwtManager.IssueTenant("owner-id", acmeID, auth.TenantPermissionStrings())
-	readerToken, _, _ := jwtManager.IssueTenant("reader-id", acmeID, []string{string(auth.PermissionAPIKeyRead)})
-	betaToken, _, _ := jwtManager.IssueTenant("beta-id", betaID, auth.TenantPermissionStrings())
+	ownerToken, _, _ := jwtManager.IssueTenant(ownerID, acmeID, auth.TenantPermissionStrings())
+	readerToken, _, _ := jwtManager.IssueTenant(readerID, acmeID, []string{string(auth.PermissionAPIKeyRead)})
+	betaToken, _, _ := jwtManager.IssueTenant(betaMemberID, betaID, auth.TenantPermissionStrings())
 	raw := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{

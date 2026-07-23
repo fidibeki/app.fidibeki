@@ -373,11 +373,12 @@ func timePointer(value time.Time) *time.Time {
 }
 
 type fakeTransaction struct {
-	commitErr        error
-	queryRowErr      error
-	commitCalls      int
-	rollbackCalls    int
-	configuredTenant string
+	commitErr         error
+	queryRowErr       error
+	commitCalls       int
+	rollbackCalls     int
+	configuredTenant  string
+	memberAuthVersion int
 }
 
 func (f *fakeTransaction) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -389,6 +390,11 @@ func (f *fakeTransaction) Query(context.Context, string, ...any) (pgx.Rows, erro
 }
 
 func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	if strings.Contains(query, "FROM tenant_members") {
+		return fakeMemberAuthRow{
+			permissions: []string{"project:read"}, status: "active", version: f.memberAuthVersion,
+		}
+	}
 	if !strings.Contains(query, "set_config") || len(args) != 1 {
 		return fakeRow{err: errors.New("unexpected QueryRow call")}
 	}
@@ -397,6 +403,28 @@ func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any)
 	}
 	f.configuredTenant, _ = args[0].(string)
 	return fakeRow{value: f.configuredTenant}
+}
+
+type fakeMemberAuthRow struct {
+	permissions []string
+	status      string
+	version     int
+}
+
+func (r fakeMemberAuthRow) Scan(destinations ...any) error {
+	if len(destinations) != 3 {
+		return errors.New("unexpected member auth scan destination count")
+	}
+	permissions, permissionsOK := destinations[0].(*[]string)
+	status, statusOK := destinations[1].(*string)
+	version, versionOK := destinations[2].(*int)
+	if !permissionsOK || !statusOK || !versionOK {
+		return errors.New("unexpected member auth scan destination type")
+	}
+	*permissions = append([]string(nil), r.permissions...)
+	*status = r.status
+	*version = r.version
+	return nil
 }
 
 func (f *fakeTransaction) Commit(context.Context) error {

@@ -174,11 +174,25 @@ func TestJWTManagerIssuesTenantBoundToken(t *testing.T) {
 		t.Fatalf("IssueTenant() error = %v", err)
 	}
 	claims, err := manager.Verify(raw, AudienceTenant)
-	if err != nil || claims.TenantID != "tenant-id" || claims.Subject != "member-id" {
+	if err != nil || claims.TenantID != "tenant-id" || claims.Subject != "member-id" ||
+		claims.AuthorizationVersion == nil || *claims.AuthorizationVersion != 0 {
 		t.Fatalf("tenant claims = %#v, error = %v", claims, err)
 	}
 	if _, _, err := manager.IssueTenant("member-id", "", nil); err == nil {
 		t.Error("IssueTenant(empty tenant) error = nil")
+	}
+}
+
+func TestJWTManagerIssuesVersionedTenantMemberToken(t *testing.T) {
+	t.Parallel()
+	manager, _ := NewJWTManager(strings.Repeat("s", 32), "fidibeki", time.Minute)
+	raw, _, err := manager.IssueTenantMember("member-id", "tenant-id", []string{"project:read"}, 7)
+	if err != nil {
+		t.Fatalf("IssueTenantMember() error = %v", err)
+	}
+	claims, err := manager.Verify(raw, AudienceTenant)
+	if err != nil || claims.AuthorizationVersion == nil || *claims.AuthorizationVersion != 7 {
+		t.Fatalf("versioned tenant claims = %#v, error = %v", claims, err)
 	}
 }
 

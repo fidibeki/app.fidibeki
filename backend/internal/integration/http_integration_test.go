@@ -80,6 +80,24 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		}
 		tenantIDs[slug] = id
 	}
+	memberIDs := map[string]string{}
+	for _, slug := range []string{"acme", "growth", "beta"} {
+		var memberID string
+		if err := root.QueryRow(ctx, `
+			INSERT INTO tenant_members (tenant_id, email, permissions)
+			VALUES ($1, $2, $3) RETURNING id
+		`, tenantIDs[slug], "owner@"+slug+".test", auth.TenantPermissionStrings()).Scan(&memberID); err != nil {
+			t.Fatalf("create %s integration owner: %v", slug, err)
+		}
+		memberIDs[slug] = memberID
+	}
+	var creatorID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'creator@acme.test', ARRAY['integration:create']) RETURNING id
+	`, tenantIDs["acme"]).Scan(&creatorID); err != nil {
+		t.Fatalf("create integration-only member: %v", err)
+	}
 	pools, err := db.OpenPools(ctx, integrationRoleURL(t, directURL), directURL, 4, 2)
 	if err != nil {
 		t.Fatalf("open pools: %v", err)
@@ -93,10 +111,10 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	ownerToken, _, _ := jwtManager.IssueTenant("owner", tenantIDs["acme"], auth.TenantPermissionStrings())
-	growthToken, _, _ := jwtManager.IssueTenant("growth", tenantIDs["growth"], auth.TenantPermissionStrings())
-	betaToken, _, _ := jwtManager.IssueTenant("beta", tenantIDs["beta"], auth.TenantPermissionStrings())
-	createOnlyToken, _, _ := jwtManager.IssueTenant("creator", tenantIDs["acme"], []string{
+	ownerToken, _, _ := jwtManager.IssueTenant(memberIDs["acme"], tenantIDs["acme"], auth.TenantPermissionStrings())
+	growthToken, _, _ := jwtManager.IssueTenant(memberIDs["growth"], tenantIDs["growth"], auth.TenantPermissionStrings())
+	betaToken, _, _ := jwtManager.IssueTenant(memberIDs["beta"], tenantIDs["beta"], auth.TenantPermissionStrings())
+	createOnlyToken, _, _ := jwtManager.IssueTenant(creatorID, tenantIDs["acme"], []string{
 		string(auth.PermissionIntegrationCreate),
 	})
 

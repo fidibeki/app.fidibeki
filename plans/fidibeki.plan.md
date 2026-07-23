@@ -263,6 +263,27 @@ was removed from the staging test tenant.
         all Go packages, migration replay, static analysis, web unit/type checks, and the Nuxt build
         pass. `docs/transactional-email.md` records inventory, sender, consent, and retry policy.
   - [ ] Complete ownership, privacy, and abuse controls in #24, #25, and #26.
+    - [x] #24 slice 1: add the explicit ownership invariant, append-only tenant access audit,
+      current authorization-version enforcement, atomic recent-auth ownership transfer, and the
+      owner-visible responsive Settings workflow.
+      - Audit result: ownership is currently inferred from member order; permission changes do not
+        revoke sessions or current access tokens; no member lifecycle/removal routes or organization
+        access ledger exist. Reuse the tenant transaction, refresh-session revocation, permission
+        model, and existing Settings member editor rather than adding another auth service.
+      - Approved design:
+        `docs/superpowers/specs/2026-07-23-workspace-ownership-and-recovery-design.md`.
+    - [x] #24 slice 2: add protected deactivate/reactivate/remove operations, last-administrator
+      checks, immediate session invalidation, denied-operation audit, and responsive member actions.
+    - [x] #24 slice 3: make platform provisioning owner-backed, add recent-auth support recovery
+      with verification evidence and audit, document the recovery runbook, and validate concurrency,
+      isolation, and the complete staging journey.
+      - Completion: every workspace now has a persisted owner; transfer, member lifecycle, and support
+        recovery are transactional, recently authenticated, session-revoking, and append-only audited.
+        Legacy and current tenant JWTs are checked against live membership state and authorization
+        versions on every request. PostgreSQL migration replay/isolation, backend coverage, static
+        analysis, frontend checks, and desktop/mobile ownership journeys pass locally.
+    - [ ] #25: audit and implement data access/export/deletion/retention controls after #24.
+    - [ ] #26: audit and implement layered public-submission abuse protection after #25.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.

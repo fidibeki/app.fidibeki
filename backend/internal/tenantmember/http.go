@@ -20,6 +20,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 const tenantRefreshCookie = "fidibeki_tenant_refresh"
@@ -63,6 +64,16 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/member-domains", handler.requestMemberDomainVerification)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberUpdate))...).
 		Patch("/v1/members/{memberID}", handler.updateMember)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberUpdate))...).
+		Patch("/v1/members/{memberID}/status", handler.updateMemberStatus)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionMemberRemove))...).
+		Delete("/v1/members/{memberID}", handler.removeMember)
+	router.With(append(
+		protected,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequirePermission(auth.PermissionMemberUpdate),
+		appmiddleware.RequirePermission(auth.PermissionTenantUpdate),
+	)...).Post("/v1/ownership/transfer", handler.transferOwnership)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
 		Patch("/v1/reporter-access", handler.updateReporterAccess)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionTenantUpdate))...).
@@ -336,13 +347,106 @@ func (h *HTTPHandler) updateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	member, err := h.options.Store.UpdatePermissions(
-		r.Context(), query, resolved.ID, chi.URLParam(r, "memberID"), request.Permissions,
+		r.Context(), query, resolved.ID, claims.Subject, chi.URLParam(r, "memberID"), request.Permissions,
 	)
 	if err != nil {
+		if isMemberProtectionError(err) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		} else {
+			h.options.Logger.ErrorContext(
+				r.Context(), "tenant member permission update failed", "error", err, "tenant_id", resolved.ID,
+			)
+		}
 		writeError(w, err)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+func (h *HTTPHandler) updateMemberStatus(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Status MemberStatus `json:"status"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if request.Status != MemberStatusActive && request.Status != MemberStatusDeactivated {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "member status is invalid", nil)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
+	member, err := h.options.Store.UpdateMemberStatus(
+		r.Context(), query, resolved.ID, claims.Subject, chi.URLParam(r, "memberID"), request.Status,
+	)
+	if err != nil {
+		if isMemberProtectionError(err) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		}
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+func (h *HTTPHandler) removeMember(w http.ResponseWriter, r *http.Request) {
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
+	member, err := h.options.Store.RemoveMember(
+		r.Context(), query, resolved.ID, claims.Subject, chi.URLParam(r, "memberID"),
+	)
+	if err != nil {
+		if isMemberProtectionError(err) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		}
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"member": member})
+}
+
+func (h *HTTPHandler) transferOwnership(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		NewOwnerMemberID string `json:"new_owner_member_id"`
+		Confirmation     string `json:"confirmation"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if _, err := uuid.Parse(request.NewOwnerMemberID); err != nil || request.Confirmation == "" {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "ownership transfer is invalid", nil)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, claimsOK := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !claimsOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	owner, err := h.options.Store.TransferOwnership(
+		r.Context(), query, resolved.ID, claims.Subject, request.NewOwnerMemberID, request.Confirmation,
+	)
+	if err != nil {
+		if isOwnershipDecisionError(err) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		} else {
+			h.options.Logger.ErrorContext(
+				r.Context(), "workspace ownership transfer failed", "error", err, "tenant_id", resolved.ID,
+			)
+		}
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"owner": owner})
 }
 
 func requestState(w http.ResponseWriter, r *http.Request) (tenant.Tenant, db.Querier, bool) {
@@ -413,11 +517,41 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "domain verification failed", nil)
 	case errors.Is(err, ErrMemberNotFound):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "member not found", nil)
+	case errors.Is(err, ErrOwnerProtection):
+		api.WriteError(w, http.StatusConflict, api.CodeOwnerProtected, "workspace owner is protected", nil)
+	case errors.Is(err, ErrOwnershipConfirmation):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipConfirmation, "workspace confirmation does not match", nil)
+	case errors.Is(err, ErrRecentAuthenticationRequired):
+		api.WriteError(w, http.StatusForbidden, api.CodeRecentAuthRequired, "recent authentication is required", nil)
+	case errors.Is(err, ErrOwnershipTargetInvalid):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipTarget, "new workspace owner is invalid", nil)
+	case errors.Is(err, ErrLastAdministrator):
+		api.WriteError(w, http.StatusConflict, api.CodeLastAdministrator, "last recoverable administrator is protected", nil)
+	case errors.Is(err, ErrMemberAlreadyRemoved):
+		api.WriteError(w, http.StatusConflict, api.CodeMemberAlreadyRemoved, "member is already removed", nil)
+	case errors.Is(err, ErrMemberStatusInvalid):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "member status is invalid", nil)
+	case errors.Is(err, ErrMemberActorInvalid):
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active member authentication is required", nil)
 	case strings.Contains(err.Error(), "email is invalid"):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "email is invalid", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}
+}
+
+func isMemberProtectionError(err error) bool {
+	return errors.Is(err, ErrOwnerProtection) ||
+		errors.Is(err, ErrLastAdministrator) ||
+		errors.Is(err, ErrMemberAlreadyRemoved) ||
+		errors.Is(err, ErrMemberActorInvalid)
+}
+
+func isOwnershipDecisionError(err error) bool {
+	return errors.Is(err, ErrOwnerProtection) ||
+		errors.Is(err, ErrOwnershipConfirmation) ||
+		errors.Is(err, ErrRecentAuthenticationRequired) ||
+		errors.Is(err, ErrOwnershipTargetInvalid)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {

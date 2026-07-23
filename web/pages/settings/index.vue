@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Check,
   Copy,
   KeyRound,
@@ -9,7 +10,9 @@ import {
   Plus,
   ShieldCheck,
   Trash2,
+  UserCheck,
   UserPlus,
+  UserX,
   Users,
   X,
 } from '@lucide/vue'
@@ -75,13 +78,18 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
   }
 })
 
-const modal = ref<'member' | 'key' | 'integration' | null>(null)
+const modal = ref<'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | null>(null)
 const pending = ref(false)
 const formError = ref('')
 const memberEmailError = ref('')
 const memberEmailInput = ref<HTMLInputElement | null>(null)
 const memberMode = ref<'invite' | 'edit'>('invite')
 const selectedMember = ref<Member | null>(null)
+const memberAction = ref<'deactivate' | 'reactivate' | 'remove' | null>(null)
+const memberActionError = ref('')
+const transferTargetID = ref('')
+const transferConfirmation = ref('')
+const transferError = ref('')
 const memberEmail = ref('')
 type PermissionSelection = PermissionPreset | 'custom'
 const memberPreset = ref<PermissionSelection>('viewer')
@@ -111,6 +119,28 @@ const workspaceHost = computed(() => {
   return `${slug}.${String(runtimeConfig.public.baseDomain || 'fidibeki.com')}`
 })
 const hasVerifiedMemberDomains = computed(() => data.value?.memberDomains.some(domain => domain.status === 'verified') === true)
+const currentWorkspaceMember = computed(() => data.value?.members.find(member => member.id === currentMember.value?.id))
+const isCurrentOwner = computed(() => currentWorkspaceMember.value?.role === 'owner')
+const transferCandidates = computed(() => (data.value?.members || []).filter(member =>
+  member.id !== currentMember.value?.id && member.status === 'active' && member.verified && member.role !== 'owner'))
+const modalTitle = computed(() => {
+  if (modal.value === 'member') return memberMode.value === 'invite' ? 'Invite member' : 'Edit member'
+  if (modal.value === 'member-lifecycle') {
+    if (memberAction.value === 'deactivate') return 'Deactivate member'
+    if (memberAction.value === 'reactivate') return 'Reactivate member'
+    return 'Remove member'
+  }
+  if (modal.value === 'transfer') return 'Transfer ownership'
+  if (modal.value === 'key') return 'Create API key'
+  return 'Add integration'
+})
+const modalEyebrow = computed(() => {
+  if (modal.value === 'member') return 'Access policy'
+  if (modal.value === 'member-lifecycle') return 'Member lifecycle'
+  if (modal.value === 'transfer') return 'Workspace owner'
+  if (modal.value === 'key') return 'Machine credential'
+  return 'Delivery endpoint'
+})
 
 watch(data, (value) => {
   if (!value) return
@@ -169,6 +199,7 @@ function togglePermission(target: 'member' | 'key', permission: string) {
 }
 
 function openMember(member?: Member) {
+  if (member?.role === 'owner') return
   if (!canWrite(member ? 'member:update' : 'member:invite')) return
   formError.value = ''
   memberEmailError.value = ''
@@ -182,6 +213,65 @@ function openMember(member?: Member) {
     applyPreset('member', 'viewer')
   }
   modal.value = 'member'
+}
+
+function openOwnershipTransfer() {
+  if (!isCurrentOwner.value || !canWrite('member:update') || !canWrite('tenant:update')) return
+  transferTargetID.value = transferCandidates.value[0]?.id || ''
+  transferConfirmation.value = ''
+  transferError.value = ''
+  modal.value = 'transfer'
+}
+
+function openMemberLifecycle(member: Member, action: 'deactivate' | 'reactivate' | 'remove') {
+  if (member.role === 'owner' || !canWrite(action === 'remove' ? 'member:remove' : 'member:update')) return
+  selectedMember.value = member
+  memberAction.value = action
+  memberActionError.value = ''
+  modal.value = 'member-lifecycle'
+}
+
+async function changeMemberLifecycle() {
+  if (!selectedMember.value || !memberAction.value || pending.value) return
+  pending.value = true
+  memberActionError.value = ''
+  try {
+    if (memberAction.value === 'remove') {
+      await $apiFetch(`/v1/members/${selectedMember.value.id}`, { method: 'DELETE' })
+    } else {
+      await $apiFetch(`/v1/members/${selectedMember.value.id}/status`, {
+        method: 'PATCH',
+        body: { status: memberAction.value === 'deactivate' ? 'deactivated' : 'active' },
+      })
+    }
+    modal.value = null
+    await refresh()
+  } catch (memberFailure) {
+    memberActionError.value = apiErrorMessage(memberFailure, 'Member access could not be changed.')
+  } finally {
+    pending.value = false
+  }
+}
+
+async function transferOwnership() {
+  if (!isCurrentOwner.value || pending.value || !transferTargetID.value || !data.value) return
+  pending.value = true
+  transferError.value = ''
+  try {
+    await $apiFetch('/v1/ownership/transfer', {
+      method: 'POST',
+      body: {
+        new_owner_member_id: transferTargetID.value,
+        confirmation: transferConfirmation.value,
+      },
+    })
+    modal.value = null
+    await refresh()
+  } catch (transferFailure) {
+    transferError.value = apiErrorMessage(transferFailure, 'Workspace ownership could not be transferred.')
+  } finally {
+    pending.value = false
+  }
 }
 
 async function saveMember() {
@@ -464,11 +554,17 @@ useHead({ title: 'Settings - Fidibeki' })
           <div v-else-if="!data.members.length" class="settings-empty"><Users :size="23" /><h3>No members found</h3></div>
           <div v-else class="settings-table settings-members">
             <div class="settings-row settings-row--head"><span>Member</span><span>Permissions</span><span>Access</span><span /></div>
-            <div v-for="member in data.members" :key="member.id" class="settings-row">
+            <div v-for="member in data.members" :key="member.id" class="settings-row" :data-muted="member.status !== 'active'">
               <span class="settings-identity"><i>{{ (member.name || member.email).slice(0, 1).toUpperCase() }}</i><span><b>{{ member.name || member.email.split('@')[0] }}</b><small>{{ member.email }}</small></span></span>
               <span>{{ member.permissions.length }} granted</span>
-              <span>{{ member.id === currentMember?.id ? 'Current session' : 'Member' }}</span>
-              <button v-if="canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+              <span class="settings-member-access"><b v-if="member.role === 'owner'" class="settings-owner-label">Owner</b><span v-else class="capitalize">{{ member.status }}</span><small v-if="member.id === currentMember?.id">Current session</small></span>
+              <span class="settings-member-actions">
+                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" title="Edit permissions" @click="openMember(member)"><ShieldCheck :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status === 'active' && canWrite('member:update')" class="app-icon-button" title="Deactivate member" @click="openMemberLifecycle(member, 'deactivate')"><UserX :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status === 'deactivated' && canWrite('member:update')" class="app-icon-button" title="Reactivate member" @click="openMemberLifecycle(member, 'reactivate')"><UserCheck :size="16" /></button>
+                <button v-if="member.role !== 'owner' && member.status !== 'removed' && canWrite('member:remove')" class="app-icon-button settings-danger-icon" title="Remove member" @click="openMemberLifecycle(member, 'remove')"><Trash2 :size="16" /></button>
+                <button v-if="member.role === 'owner' && member.id === currentMember?.id && canWrite('member:update') && canWrite('tenant:update')" class="app-icon-button" title="Transfer ownership" @click="openOwnershipTransfer"><ArrowRightLeft :size="16" /></button>
+              </span>
             </div>
           </div>
         </section>
@@ -509,13 +605,31 @@ useHead({ title: 'Settings - Fidibeki' })
 
     <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">
       <section v-if="modal" class="settings-modal">
-        <header><div><p class="app-eyebrow">{{ modal === 'member' ? 'Access policy' : modal === 'key' ? 'Machine credential' : 'Delivery endpoint' }}</p><h2 id="settings-modal-title">{{ modal === 'member' ? (memberMode === 'invite' ? 'Invite member' : 'Edit member') : modal === 'key' ? 'Create API key' : 'Add integration' }}</h2></div><button class="app-icon-button" title="Close" @click="modal = null"><X :size="18" /></button></header>
+        <header><div><p class="app-eyebrow">{{ modalEyebrow }}</p><h2 id="settings-modal-title">{{ modalTitle }}</h2></div><button class="app-icon-button" title="Close" @click="modal = null"><X :size="18" /></button></header>
 
         <form v-if="modal === 'member'" @submit.prevent="saveMember">
           <label class="member-email-field">Email<input ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" /><span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span></label>
           <PermissionEditor label="Member permissions" :groups="availablePermissionGroups" :permissions="memberPermissions" :active-preset="memberPreset" @apply-preset="applyPreset('member', $event)" @toggle-permission="togglePermission('member', $event)" />
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !memberEmail || !memberPermissions.length">{{ pending ? 'Saving...' : memberMode === 'invite' ? 'Send invitation' : 'Save permissions' }}</button></footer>
+        </form>
+
+        <form v-else-if="modal === 'member-lifecycle'" class="settings-lifecycle-form" @submit.prevent="changeMemberLifecycle">
+          <div v-if="selectedMember" class="settings-action-subject"><span>{{ (selectedMember.name || selectedMember.email).slice(0, 1).toUpperCase() }}</span><div><b>{{ selectedMember.name || selectedMember.email }}</b><small>{{ selectedMember.email }}</small></div></div>
+          <p v-if="memberAction === 'deactivate'">This member will lose all permissions and every active session will end immediately.</p>
+          <p v-else-if="memberAction === 'reactivate'">This member will become active without permissions. Assign the required access separately.</p>
+          <p v-else>Removal is permanent. Existing history remains attributed, while permissions, sessions, and pending sign-in links are revoked.</p>
+          <p v-if="memberActionError" class="settings-form-error" role="alert">{{ memberActionError }}</p>
+          <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button" :class="memberAction === 'remove' ? 'settings-danger-button' : 'app-button--primary'" type="submit" :disabled="pending">{{ pending ? 'Saving...' : modalTitle }}</button></footer>
+        </form>
+
+        <form v-else-if="modal === 'transfer'" class="settings-transfer-form" @submit.prevent="transferOwnership">
+          <p>Choose an active, verified member. Their current sessions will end and they will receive full workspace administration access.</p>
+          <label>New owner<select v-model="transferTargetID" class="app-select" required autofocus><option v-for="member in transferCandidates" :key="member.id" :value="member.id">{{ member.name || member.email }} · {{ member.email }}</option></select></label>
+          <label><span>Type <b>{{ data?.configuration.tenant.slug }}</b> to confirm</span><input v-model.trim="transferConfirmation" class="app-input" required autocomplete="off" /></label>
+          <p v-if="!transferCandidates.length" class="settings-form-error" role="alert">Invite and activate another member before transferring ownership.</p>
+          <p v-else-if="transferError" class="settings-form-error" role="alert">{{ transferError }}</p>
+          <footer><button class="app-button" type="button" @click="modal = null">Cancel</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !transferTargetID || transferConfirmation !== data?.configuration.tenant.slug">{{ pending ? 'Transferring...' : 'Transfer ownership' }}</button></footer>
         </form>
 
         <form v-else-if="modal === 'key'" @submit.prevent="createKey">
@@ -591,7 +705,7 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-row { display: grid; min-height: 62px; align-items: center; gap: 14px; padding: 7px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .settings-row:last-child { border-bottom: 0; }
 .settings-row--head { min-height: 36px; padding-top: 0; padding-bottom: 0; background: #f8faf9; font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.settings-members .settings-row { grid-template-columns: minmax(190px, 1.5fr) minmax(110px, .7fr) minmax(110px, .7fr) 38px; }
+.settings-members .settings-row { grid-template-columns: minmax(190px, 1.5fr) minmax(110px, .7fr) minmax(110px, .7fr) minmax(38px, auto); }
 .settings-keys .settings-row { grid-template-columns: minmax(190px, 1.3fr) minmax(160px, 1fr) 100px 100px 38px; }
 .settings-integrations .settings-row { grid-template-columns: minmax(170px, .8fr) minmax(220px, 1.4fr) 100px 90px 38px; }
 .settings-row > span { min-width: 0; }
@@ -601,6 +715,10 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-identity { display: flex; align-items: center; gap: 10px; }
 .settings-identity > i { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; background: var(--teal-soft); color: var(--teal); border-radius: 5px; font-style: normal; font-weight: 800; }
 .settings-identity > span { min-width: 0; }
+.settings-member-access { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; }
+.settings-member-access small { margin: 0; }
+.settings-owner-label { display: inline-flex; min-height: 21px; align-items: center; padding: 0 7px; background: var(--teal-soft); color: var(--teal); border-radius: 4px; font-size: 9px; text-transform: uppercase; }
+.settings-member-actions { display: flex; justify-content: flex-end; gap: 4px; }
 .settings-danger-icon { color: var(--red); }
 .settings-empty { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 8px; color: var(--muted); }
 .settings-empty h3 { margin: 0; color: var(--ink-soft); font-size: 12px; }
@@ -609,6 +727,18 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-modal h2 { margin: 3px 0 0; font-size: 15px; }
 .settings-modal form { padding: 16px; }
 .settings-modal form > label, .settings-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
+.settings-transfer-form { display: grid; gap: 14px; }
+.settings-transfer-form > p:first-child { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.settings-transfer-form label b { color: var(--teal); }
+.settings-lifecycle-form { display: grid; gap: 14px; }
+.settings-lifecycle-form > p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.settings-action-subject { display: flex; align-items: center; gap: 10px; padding: 11px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
+.settings-action-subject > span { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; background: var(--teal-soft); color: var(--teal); border-radius: 5px; font-size: 11px; font-weight: 800; }
+.settings-action-subject > div { min-width: 0; }
+.settings-action-subject b, .settings-action-subject small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-action-subject b { color: var(--ink); font-size: 11px; }
+.settings-action-subject small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.settings-danger-button { background: var(--red); color: #fff; border-color: var(--red); }
 .settings-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .settings-form-grid .wide { grid-column: 1 / -1; }
 .settings-events legend { padding: 0; color: var(--ink); font-size: 10px; font-weight: 800; }
@@ -624,6 +754,6 @@ useHead({ title: 'Settings - Fidibeki' })
 .settings-secret h3 { margin: 0; font-size: 14px; }
 .settings-secret code { width: 100%; padding: 10px; overflow-wrap: anywhere; background: #f3f6f5; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; }
 .capitalize { text-transform: capitalize; }
-@media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row, .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) 38px; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } }
+@media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row { grid-template-columns: minmax(0, 1fr) auto minmax(38px, auto); } .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) 38px; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } .settings-members .settings-row > .settings-member-access, .settings-members .settings-row > .settings-member-actions { display: flex; } }
 @media (max-width: 650px) { .settings-tabs { gap: 15px; overflow-x: auto; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
 </style>

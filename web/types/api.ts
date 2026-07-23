@@ -23,6 +23,9 @@ export interface Member {
   email: string
   name?: string
   permissions: string[]
+  status: 'active' | 'deactivated' | 'removed'
+  role: 'owner' | 'member'
+  verified: boolean
 }
 
 export interface MemberDomain {

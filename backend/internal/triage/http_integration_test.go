@@ -60,7 +60,7 @@ func TestTagCatalogueHTTPFlow(t *testing.T) {
 		t.Fatalf("enable app role: %v", err)
 	}
 
-	var tenantID, otherTenantID, memberID string
+	var tenantID, otherTenantID, memberID, viewerID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug, plan, status)
 		VALUES ('Acme', 'acme', 'growth', 'active') RETURNING id
@@ -78,6 +78,12 @@ func TestTagCatalogueHTTPFlow(t *testing.T) {
 		VALUES ($1, 'owner@acme.test', $2) RETURNING id
 	`, tenantID, auth.TenantPermissionStrings()).Scan(&memberID); err != nil {
 		t.Fatalf("create member: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'viewer@acme.test', '{}') RETURNING id
+	`, tenantID).Scan(&viewerID); err != nil {
+		t.Fatalf("create viewer: %v", err)
 	}
 	var otherTagID string
 	if err := root.QueryRow(ctx, `
@@ -100,7 +106,7 @@ func TestTagCatalogueHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue owner token: %v", err)
 	}
-	viewerToken, _, err := jwtManager.IssueTenant(memberID, tenantID, nil)
+	viewerToken, _, err := jwtManager.IssueTenant(viewerID, tenantID, nil)
 	if err != nil {
 		t.Fatalf("issue viewer token: %v", err)
 	}
