@@ -219,6 +219,35 @@ function createMockState() {
       comment?: string
       created_at: string
     }>,
+    issueComments: [] as Array<{
+      id: string
+      issue_id: string
+      author: { id: string, name?: string, email: string }
+      body: string
+      mentions: Array<{ id: string, name?: string, email: string }>
+      created_at: string
+    }>,
+    issueActivities: [] as Array<{
+      id: string
+      issue_id: string
+      actor: { id: string, name?: string, email: string }
+      kind: string
+      visibility: 'internal' | 'reporter'
+      data: Record<string, unknown>
+      created_at: string
+    }>,
+    memberNotifications: [] as Array<{
+      id: string
+      recipient_member_id: string
+      kind: string
+      issue_id: string
+      public_id: string
+      issue_title: string
+      actor: { id: string, name?: string, email: string }
+      body: string
+      read_at?: string
+      created_at: string
+    }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
     billingDeletionRequestedAt: null as string | null,
@@ -664,11 +693,53 @@ async function installMockAPI(page: Page, state: MockState) {
       if (issue) issue.merged_into_id = undefined
       return json(route, { issue })
     }
+    const issueCommentMatch = path.match(/^\/v1\/issues\/([^/]+)\/comments$/)
+    if (issueCommentMatch && method === 'POST') {
+      const issue = state.issues.find(candidate => candidate.id === issueCommentMatch[1])
+      const input = body()
+      const mentionIDs = Array.isArray(input.mention_member_ids) ? input.mention_member_ids as string[] : []
+      const mentions = state.members.filter(member => mentionIDs.includes(member.id))
+      const comment = {
+        id: `comment-${state.issueComments.length + 1}`,
+        issue_id: issueCommentMatch[1],
+        author: { id: state.member.id, name: state.member.name, email: state.member.email },
+        body: String(input.body),
+        mentions: mentions.map(member => ({ id: member.id, name: member.name, email: member.email })),
+        created_at: now,
+      }
+      const activity = {
+        id: `activity-${state.issueActivities.length + 1}`,
+        issue_id: issueCommentMatch[1],
+        actor: comment.author,
+        kind: 'issue.comment_created',
+        visibility: 'internal' as const,
+        data: { comment_id: comment.id, body: comment.body, mention_member_ids: mentionIDs },
+        created_at: now,
+      }
+      state.issueComments.push(comment)
+      state.issueActivities.push(activity)
+      for (const member of mentions.filter(member => member.id !== state.member.id)) {
+        state.memberNotifications.push({
+          id: `notification-${state.memberNotifications.length + 1}`,
+          recipient_member_id: member.id,
+          kind: 'issue.mentioned',
+          issue_id: issueCommentMatch[1],
+          public_id: issue?.public_id || '',
+          issue_title: issue?.title || '',
+          actor: comment.author,
+          body: comment.body,
+          created_at: now,
+        })
+      }
+      return json(route, { comment, activity }, 201)
+    }
     const issueMatch = path.match(/^\/v1\/issues\/([^/]+)$/)
     if (issueMatch && method === 'GET') {
       return json(route, {
         issue: state.issues.find(issue => issue.id === issueMatch[1]),
         updates: state.issueUpdates.filter(update => update.issue_id === issueMatch[1]),
+        comments: state.issueComments.filter(comment => comment.issue_id === issueMatch[1]),
+        activities: state.issueActivities.filter(activity => activity.issue_id === issueMatch[1]),
       })
     }
     if (issueMatch && method === 'PATCH') {
@@ -693,6 +764,7 @@ async function installMockAPI(page: Page, state: MockState) {
         issue.tags.sort((left, right) => left.name.localeCompare(right.name))
       }
       if (issue && input.status && input.status !== issue.status) {
+        const previousStatus = issue.status
         state.issueUpdates.push({
           id: `update-${state.issueUpdates.length + 1}`,
           issue_id: issue.id,
@@ -703,8 +775,37 @@ async function installMockAPI(page: Page, state: MockState) {
           created_at: now,
         })
         issue.status = String(input.status)
+        state.issueActivities.push({
+          id: `activity-${state.issueActivities.length + 1}`,
+          issue_id: issue.id,
+          actor: { id: state.member.id, name: state.member.name, email: state.member.email },
+          kind: 'issue.status_changed',
+          visibility: 'internal',
+          data: {
+            changes: { status: { from: previousStatus, to: String(input.status) } },
+            transition_comment: typeof input.comment === 'string' ? input.comment : undefined,
+          },
+          created_at: now,
+        })
       }
       return json(route, { issue })
+    }
+
+    if (path === '/v1/notifications' && method === 'GET') {
+      const notifications = state.memberNotifications.filter(notification =>
+        notification.recipient_member_id === state.member.id)
+      return json(route, {
+        notifications,
+        unread_count: notifications.filter(notification => !notification.read_at).length,
+      })
+    }
+    const notificationReadMatch = path.match(/^\/v1\/notifications\/([^/]+)\/read$/)
+    if (notificationReadMatch && method === 'PATCH') {
+      const notification = state.memberNotifications.find(candidate =>
+        candidate.id === notificationReadMatch[1] && candidate.recipient_member_id === state.member.id)
+      if (!notification) return json(route, { error: { code: 'not_found', message: 'resource not found' } }, 404)
+      notification.read_at = now
+      return json(route, { read: true })
     }
 
     if (path === '/v1/plans' && method === 'GET') return json(route, { plans: planCatalog })
@@ -785,11 +886,11 @@ async function authenticate(page: Page, state: MockState) {
   await expect(page.getByRole('heading', { name: /Good afternoon/ })).toBeVisible()
 }
 
-async function openPrimary(page: Page, label: 'Feedback' | 'Issues' | 'Analytics' | 'Projects' | 'Settings') {
+async function openPrimary(page: Page, label: 'Feedback' | 'Issues' | 'Notifications' | 'Analytics' | 'Projects' | 'Settings') {
   const link = page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: label, exact: true })
   if ((page.viewportSize()?.width || 0) <= 700) await page.getByTitle('Open navigation').click()
   await link.click()
-  const path = { Feedback: '/feedback', Issues: '/issues', Analytics: '/analytics', Projects: '/projects', Settings: '/settings' }[label]
+  const path = { Feedback: '/feedback', Issues: '/issues', Notifications: '/notifications', Analytics: '/analytics', Projects: '/projects', Settings: '/settings' }[label]
   await expect(page).toHaveURL(new RegExp(`${path}(?:\\?|$)`))
   await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
 }
@@ -1720,6 +1821,45 @@ test('issue detail uses singular feedback copy for one linked record', async ({ 
 
   await expect(page.locator('.issue-detail-heading')).toContainText('1 feedback record · created')
   await expect(page.locator('.issue-feedback > header > span')).toHaveText('1 record')
+})
+
+test('issue comments mention members without requiring a status change', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The collaboration workflow is viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Issues')
+  await page.locator('.issues-table').getByRole('link', { name: /ISS-101/ }).click()
+
+  const comments = page.locator('.issue-comments')
+  await comments.getByLabel('Internal comment').fill('Please verify this with the checkout team.')
+  await comments.getByRole('checkbox', { name: 'Jamie Torres' }).check()
+  await comments.getByRole('button', { name: 'Add comment' }).click()
+
+  await expect(comments).toContainText('Please verify this with the checkout team.')
+  await expect(comments).toContainText('Jamie Torres')
+  await expect(page.locator('.issue-history')).toContainText('Alex Morgan added a comment')
+  expect(state.issueUpdates).toHaveLength(0)
+  expect(state.memberNotifications).toHaveLength(1)
+  expect(state.memberNotifications[0].recipient_member_id).toBe('member-2')
+})
+
+test('member notifications open the related issue and become read', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The notification workflow is viewport independent')
+  const state = createMockState()
+  state.memberNotifications.push({
+    id: 'notification-1', recipient_member_id: state.member.id, kind: 'issue.mentioned',
+    issue_id: state.issues[0].id, public_id: state.issues[0].public_id,
+    issue_title: state.issues[0].title,
+    actor: { id: state.members[1].id, name: state.members[1].name, email: state.members[1].email },
+    body: 'Can you confirm the expected promotion behavior?', created_at: now,
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Notifications')
+
+  await expect(page.getByText('1 unread')).toBeVisible()
+  await page.getByRole('button', { name: /Jamie Torres mentioned you/ }).click()
+  await expect(page).toHaveURL(/\/issues\/issue-1$/)
+  expect(state.memberNotifications[0].read_at).toBe(now)
 })
 
 test('issue status can change without nesting the control inside its detail link', async ({ page }, testInfo) => {

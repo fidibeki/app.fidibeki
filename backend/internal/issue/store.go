@@ -2,11 +2,13 @@ package issue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/google/uuid"
@@ -94,11 +96,242 @@ func (Store) ListUpdates(
 	return updates, nil
 }
 
+func (Store) ListComments(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	issueID string,
+) ([]Comment, error) {
+	rows, err := query.Query(ctx, issueCommentSelect+`
+		WHERE comment.tenant_id = $1 AND comment.issue_id = $2
+		ORDER BY comment.created_at, comment.id
+	`, tenantID, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("list issue comments: %w", err)
+	}
+	defer rows.Close()
+	comments := make([]Comment, 0)
+	for rows.Next() {
+		comment, scanErr := scanIssueComment(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		comments = append(comments, comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate issue comments: %w", err)
+	}
+	return comments, nil
+}
+
+func (Store) CreateComment(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	issueID string,
+	authorMemberID string,
+	body string,
+	mentionMemberIDs []string,
+	now time.Time,
+) (Comment, activity.Event, error) {
+	if _, err := (Store{}).Get(ctx, query, tenantID, issueID); err != nil {
+		return Comment{}, activity.Event{}, err
+	}
+	mentionMemberIDs = uniqueIssueMutationIDs(mentionMemberIDs)
+	if len(mentionMemberIDs) > 0 {
+		var count int
+		if err := query.QueryRow(ctx, `
+			SELECT count(*) FROM tenant_members
+			WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+			  AND permissions @> ARRAY['issue:read']::text[]
+		`, tenantID, mentionMemberIDs).Scan(&count); err != nil {
+			return Comment{}, activity.Event{}, fmt.Errorf("validate comment mentions: %w", err)
+		}
+		if count != len(mentionMemberIDs) {
+			return Comment{}, activity.Event{}, ErrNotFound
+		}
+	}
+	commentID := uuid.NewString()
+	if _, err := query.Exec(ctx, `
+		INSERT INTO issue_comments (id, tenant_id, issue_id, author_member_id, body, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, commentID, tenantID, issueID, authorMemberID, body, now.UTC()); err != nil {
+		return Comment{}, activity.Event{}, fmt.Errorf("create issue comment: %w", err)
+	}
+	if len(mentionMemberIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO issue_comment_mentions (tenant_id, comment_id, member_id, created_at)
+			SELECT $1, $2, member_id, $4
+			FROM unnest($3::uuid[]) AS member_id
+		`, tenantID, commentID, mentionMemberIDs, now.UTC()); err != nil {
+			return Comment{}, activity.Event{}, fmt.Errorf("create issue comment mentions: %w", err)
+		}
+	}
+	actorID := authorMemberID
+	activityID, err := activity.Record(ctx, query, activity.RecordInput{
+		TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+		Kind: "issue.comment_created", Data: map[string]any{
+			"comment_id": commentID, "body": body, "mention_member_ids": mentionMemberIDs,
+		}, CreatedAt: now,
+	})
+	if err != nil {
+		return Comment{}, activity.Event{}, err
+	}
+	if len(mentionMemberIDs) > 0 {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO member_notifications (
+				tenant_id, recipient_member_id, actor_member_id, issue_id,
+				activity_id, kind, created_at
+			)
+			SELECT $1, member_id, $2, $3, $4, 'issue.mentioned', $6
+			FROM unnest($5::uuid[]) AS member_id
+			WHERE member_id <> $2
+			ON CONFLICT (activity_id, recipient_member_id) DO NOTHING
+		`, tenantID, authorMemberID, issueID, activityID, mentionMemberIDs, now.UTC()); err != nil {
+			return Comment{}, activity.Event{}, fmt.Errorf("create mention notifications: %w", err)
+		}
+	}
+	comment, err := getIssueComment(ctx, query, tenantID, commentID)
+	if err != nil {
+		return Comment{}, activity.Event{}, err
+	}
+	event, err := activity.GetIssue(ctx, query, tenantID, issueID, activityID)
+	if err != nil {
+		return Comment{}, activity.Event{}, err
+	}
+	return comment, event, nil
+}
+
+func (Store) ListMemberNotifications(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	memberID string,
+) ([]MemberNotification, int, error) {
+	var unread int
+	if err := query.QueryRow(ctx, `
+		SELECT count(*) FROM member_notifications
+		WHERE tenant_id = $1 AND recipient_member_id = $2 AND read_at IS NULL
+	`, tenantID, memberID).Scan(&unread); err != nil {
+		return nil, 0, fmt.Errorf("count unread member notifications: %w", err)
+	}
+	rows, err := query.Query(ctx, `
+		SELECT notification.id, notification.kind, issue.id, issue.public_id, issue.title,
+		       actor.id, actor.name, actor.email::text,
+		       COALESCE(activity.data->>'body', ''), notification.read_at, notification.created_at
+		FROM member_notifications AS notification
+		JOIN issues AS issue
+		  ON issue.tenant_id = notification.tenant_id AND issue.id = notification.issue_id
+		JOIN issue_activities AS activity ON activity.id = notification.activity_id
+		LEFT JOIN tenant_members AS actor
+		  ON actor.tenant_id = notification.tenant_id AND actor.id = notification.actor_member_id
+		WHERE notification.tenant_id = $1 AND notification.recipient_member_id = $2
+		ORDER BY notification.created_at DESC, notification.id DESC
+		LIMIT 50
+	`, tenantID, memberID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list member notifications: %w", err)
+	}
+	defer rows.Close()
+	notifications := make([]MemberNotification, 0)
+	for rows.Next() {
+		var notification MemberNotification
+		var actorID, actorName, actorEmail *string
+		if err := rows.Scan(
+			&notification.ID, &notification.Kind, &notification.IssueID,
+			&notification.PublicID, &notification.IssueTitle,
+			&actorID, &actorName, &actorEmail, &notification.Body,
+			&notification.ReadAt, &notification.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan member notification: %w", err)
+		}
+		if actorID != nil && actorEmail != nil {
+			notification.Actor = &activity.Actor{ID: *actorID, Name: actorName, Email: *actorEmail}
+		}
+		notifications = append(notifications, notification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate member notifications: %w", err)
+	}
+	return notifications, unread, nil
+}
+
+func (Store) MarkMemberNotificationRead(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	memberID string,
+	notificationID string,
+	now time.Time,
+) (bool, error) {
+	tag, err := query.Exec(ctx, `
+		UPDATE member_notifications SET read_at = COALESCE(read_at, $4)
+		WHERE tenant_id = $1 AND recipient_member_id = $2 AND id = $3
+	`, tenantID, memberID, notificationID, now.UTC())
+	if err != nil {
+		return false, fmt.Errorf("mark member notification read: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+const issueCommentSelect = `
+	SELECT comment.id, comment.issue_id, comment.body, comment.created_at,
+	       author.id, author.name, author.email::text,
+	       COALESCE((
+	           SELECT jsonb_agg(
+	               jsonb_build_object('id', member.id, 'name', member.name, 'email', member.email::text)
+	               ORDER BY lower(COALESCE(member.name, member.email::text)), member.id
+	           )
+	           FROM issue_comment_mentions AS mention
+	           JOIN tenant_members AS member
+	             ON member.tenant_id = mention.tenant_id AND member.id = mention.member_id
+	           WHERE mention.tenant_id = comment.tenant_id AND mention.comment_id = comment.id
+	       ), '[]'::jsonb)
+	FROM issue_comments AS comment
+	LEFT JOIN tenant_members AS author
+	  ON author.tenant_id = comment.tenant_id AND author.id = comment.author_member_id
+`
+
+func getIssueComment(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	commentID string,
+) (Comment, error) {
+	comment, err := scanIssueComment(query.QueryRow(ctx, issueCommentSelect+`
+		WHERE comment.tenant_id = $1 AND comment.id = $2
+	`, tenantID, commentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Comment{}, ErrNotFound
+	}
+	return comment, err
+}
+
+func scanIssueComment(row rowScanner) (Comment, error) {
+	var comment Comment
+	var actorID, actorName, actorEmail *string
+	var mentionsPayload []byte
+	if err := row.Scan(
+		&comment.ID, &comment.IssueID, &comment.Body, &comment.CreatedAt,
+		&actorID, &actorName, &actorEmail, &mentionsPayload,
+	); err != nil {
+		return Comment{}, err
+	}
+	if actorID != nil && actorEmail != nil {
+		comment.Author = &activity.Actor{ID: *actorID, Name: actorName, Email: *actorEmail}
+	}
+	if err := json.Unmarshal(mentionsPayload, &comment.Mentions); err != nil {
+		return Comment{}, fmt.Errorf("decode issue comment mentions: %w", err)
+	}
+	return comment, nil
+}
+
 func (store Store) CreateFromFeedback(
 	ctx context.Context,
 	query db.Querier,
 	tenantID string,
 	tenantSlug string,
+	actorMemberID string,
 	input CreateFromFeedbackInput,
 	now time.Time,
 ) (Issue, error) {
@@ -214,6 +447,17 @@ func (store Store) CreateFromFeedback(
 	}
 	if int(result.RowsAffected()) != len(input.FeedbackIDs) {
 		return Issue{}, ErrFeedbackLinked
+	}
+	actorID := actorMemberID
+	if _, err := activity.Record(ctx, query, activity.RecordInput{
+		TenantID: tenantID, IssueID: createdID, ActorMemberID: &actorID,
+		Kind: "issue.created", Data: map[string]any{
+			"feedback_ids": input.FeedbackIDs,
+			"title":        input.Title,
+			"description":  input.Description,
+		}, CreatedAt: now,
+	}); err != nil {
+		return Issue{}, err
 	}
 	if _, err := query.Exec(ctx, `
 		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id)
@@ -336,6 +580,10 @@ func (store Store) UpdateIssue(
 	if err != nil {
 		return Issue{}, nil, fmt.Errorf("lock issue for update: %w", err)
 	}
+	before, err := store.Get(ctx, query, tenantID, issueID)
+	if err != nil {
+		return Issue{}, nil, err
+	}
 	if mutation.Status != nil && oldStatus == *mutation.Status {
 		return Issue{}, nil, ErrNoStatusChange
 	}
@@ -416,7 +664,17 @@ func (store Store) UpdateIssue(
 	if err != nil {
 		return Issue{}, nil, err
 	}
+	changes := issueChanges(before, found)
 	if mutation.Status == nil {
+		if len(changes) > 0 {
+			actorID := memberID
+			if _, err := activity.Record(ctx, query, activity.RecordInput{
+				TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+				Kind: "issue.updated", Data: map[string]any{"changes": changes}, CreatedAt: now,
+			}); err != nil {
+				return Issue{}, nil, err
+			}
+		}
 		return found, nil, nil
 	}
 	updateID := uuid.NewString()
@@ -437,12 +695,67 @@ func (store Store) UpdateIssue(
 	`, tenantID, event, issueID, updateID); err != nil {
 		return Issue{}, nil, fmt.Errorf("create issue update outbox event: %w", err)
 	}
+	data := map[string]any{"changes": changes, "legacy_update_id": updateID}
+	if mutation.Comment != nil {
+		data["transition_comment"] = *mutation.Comment
+	}
+	actorID := memberID
+	if _, err := activity.Record(ctx, query, activity.RecordInput{
+		TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+		Kind: "issue.status_changed", Data: data, CreatedAt: now,
+	}); err != nil {
+		return Issue{}, nil, err
+	}
 	update := &Update{
 		ID: updateID, IssueID: issueID, MemberID: &memberID,
 		OldStatus: &oldStatus, NewStatus: *mutation.Status,
 		Comment: mutation.Comment, CreatedAt: now.UTC(),
 	}
 	return found, update, nil
+}
+
+func issueChanges(before, after Issue) map[string]any {
+	changes := make(map[string]any)
+	addIssueChange(changes, "status", string(before.Status), string(after.Status))
+	addIssueChange(changes, "title", before.Title, after.Title)
+	addIssueChange(changes, "description", before.Description, after.Description)
+	addIssueChange(changes, "priority", issuePriorityValue(before.Priority), issuePriorityValue(after.Priority))
+	addIssueChange(changes, "assignee_id", issueAssigneeID(before.Assignee), issueAssigneeID(after.Assignee))
+	beforeTags := issueTagIDs(before.Tags)
+	afterTags := issueTagIDs(after.Tags)
+	if strings.Join(beforeTags, ",") != strings.Join(afterTags, ",") {
+		changes["tag_ids"] = map[string]any{"from": beforeTags, "to": afterTags}
+	}
+	return changes
+}
+
+func addIssueChange(changes map[string]any, field string, before, after any) {
+	if fmt.Sprint(before) == fmt.Sprint(after) {
+		return
+	}
+	changes[field] = map[string]any{"from": before, "to": after}
+}
+
+func issuePriorityValue(priority *triage.Priority) any {
+	if priority == nil {
+		return nil
+	}
+	return string(*priority)
+}
+
+func issueAssigneeID(assignee *triage.Assignee) any {
+	if assignee == nil {
+		return nil
+	}
+	return assignee.ID
+}
+
+func issueTagIDs(tags []triage.Tag) []string {
+	ids := make([]string, len(tags))
+	for index, tag := range tags {
+		ids[index] = tag.ID
+	}
+	return ids
 }
 
 func uniqueIssueMutationIDs(groups ...[]string) []string {
@@ -466,6 +779,7 @@ func (store Store) Merge(
 	tenantID string,
 	sourceID string,
 	targetID string,
+	memberID string,
 	now time.Time,
 ) (Issue, error) {
 	if sourceID == targetID {
@@ -519,6 +833,19 @@ func (store Store) Merge(
 	`, tenantID, sourceID, targetID, now.UTC()); err != nil {
 		return Issue{}, fmt.Errorf("merge issue: %w", err)
 	}
+	actorID := memberID
+	if _, err := activity.Record(ctx, query, activity.RecordInput{
+		TenantID: tenantID, IssueID: sourceID, ActorMemberID: &actorID,
+		Kind: "issue.merged", Data: map[string]any{"target_issue_id": targetID}, CreatedAt: now,
+	}); err != nil {
+		return Issue{}, err
+	}
+	if _, err := activity.Record(ctx, query, activity.RecordInput{
+		TenantID: tenantID, IssueID: targetID, ActorMemberID: &actorID,
+		Kind: "issue.merge_received", Data: map[string]any{"source_issue_id": sourceID}, CreatedAt: now,
+	}); err != nil {
+		return Issue{}, err
+	}
 	return store.Get(ctx, query, tenantID, sourceID)
 }
 
@@ -527,7 +854,21 @@ func (store Store) Unmerge(
 	query db.Querier,
 	tenantID string,
 	issueID string,
+	memberID string,
+	now time.Time,
 ) (Issue, error) {
+	var targetID *string
+	err := query.QueryRow(ctx, `
+		SELECT merged_into_id FROM issues
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, issueID).Scan(&targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Issue{}, ErrNotFound
+	}
+	if err != nil {
+		return Issue{}, fmt.Errorf("lock issue for unmerge: %w", err)
+	}
 	tag, err := query.Exec(ctx, `
 		UPDATE issues SET merged_into_id = NULL, merged_at = NULL
 		WHERE tenant_id = $1 AND id = $2
@@ -537,6 +878,21 @@ func (store Store) Unmerge(
 	}
 	if tag.RowsAffected() == 0 {
 		return Issue{}, ErrNotFound
+	}
+	if targetID != nil {
+		actorID := memberID
+		if _, err := activity.Record(ctx, query, activity.RecordInput{
+			TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+			Kind: "issue.unmerged", Data: map[string]any{"target_issue_id": *targetID}, CreatedAt: now,
+		}); err != nil {
+			return Issue{}, err
+		}
+		if _, err := activity.Record(ctx, query, activity.RecordInput{
+			TenantID: tenantID, IssueID: *targetID, ActorMemberID: &actorID,
+			Kind: "issue.merge_removed", Data: map[string]any{"source_issue_id": issueID}, CreatedAt: now,
+		}); err != nil {
+			return Issue{}, err
+		}
 	}
 	return store.Get(ctx, query, tenantID, issueID)
 }

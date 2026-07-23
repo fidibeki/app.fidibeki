@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -38,6 +39,12 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/issues", handler.list)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
 		Get("/v1/issues/{issueID}", handler.get)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIssueUpdate))...).
+		Post("/v1/issues/{issueID}/comments", handler.createComment)
+	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
+		Get("/v1/notifications", handler.listNotifications)
+	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIssueRead))...).
+		Patch("/v1/notifications/{notificationID}/read", handler.markNotificationRead)
 	createPermissions := append(protected,
 		appmiddleware.RequireWritable,
 		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
@@ -93,12 +100,17 @@ func (h *HTTPHandler) createIssueFromFeedback(
 	if !ok {
 		return
 	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
 	now := time.Now().UTC()
 	if h.options.Now != nil {
 		now = h.options.Now().UTC()
 	}
 	created, err := h.options.Store.CreateFromFeedback(
-		r.Context(), query, resolved.ID, resolved.Slug, input, now,
+		r.Context(), query, resolved.ID, resolved.Slug, claims.Subject, input, now,
 	)
 	if err != nil {
 		writeStoreError(w, err)
@@ -218,7 +230,115 @@ func (h *HTTPHandler) get(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	api.WriteJSON(w, http.StatusOK, map[string]any{"issue": found, "updates": updates})
+	comments, err := h.options.Store.ListComments(r.Context(), query, resolved.ID, issueID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	activities, err := activity.ListIssue(r.Context(), query, resolved.ID, issueID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"issue": found, "updates": updates, "comments": comments, "activities": activities,
+	})
+}
+
+func (h *HTTPHandler) createComment(w http.ResponseWriter, r *http.Request) {
+	issueID, ok := issuePathID(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Body             string   `json:"body"`
+		MentionMemberIDs []string `json:"mention_member_ids"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	fields := make(map[string]string)
+	body := strings.TrimSpace(request.Body)
+	if length := len([]rune(body)); length < 1 || length > 5000 {
+		fields["body"] = "must be between 1 and 5000 characters"
+	}
+	if len(request.MentionMemberIDs) > 20 {
+		fields["mention_member_ids"] = "must contain at most 20 UUIDs"
+	}
+	mentionMemberIDs := validateIssueUUIDs("mention_member_ids", request.MentionMemberIDs, fields)
+	if len(fields) > 0 {
+		writeValidation(w, fields)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	comment, event, err := h.options.Store.CreateComment(
+		r.Context(), query, resolved.ID, issueID, claims.Subject,
+		body, mentionMemberIDs, h.now(),
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"comment": comment, "activity": event})
+}
+
+func (h *HTTPHandler) listNotifications(w http.ResponseWriter, r *http.Request) {
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	notifications, unread, err := h.options.Store.ListMemberNotifications(
+		r.Context(), query, resolved.ID, claims.Subject,
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"notifications": notifications, "unread_count": unread,
+	})
+}
+
+func (h *HTTPHandler) markNotificationRead(w http.ResponseWriter, r *http.Request) {
+	notificationID := chi.URLParam(r, "notificationID")
+	if _, err := uuid.Parse(notificationID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
+		return
+	}
+	resolved, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	found, err := h.options.Store.MarkMemberNotificationRead(
+		r.Context(), query, resolved.ID, claims.Subject, notificationID, h.now(),
+	)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !found {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]bool{"read": true})
 }
 
 func (h *HTTPHandler) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -362,12 +482,17 @@ func (h *HTTPHandler) merge(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
 	now := time.Now().UTC()
 	if h.options.Now != nil {
 		now = h.options.Now().UTC()
 	}
 	found, err := h.options.Store.Merge(
-		r.Context(), query, resolved.ID, issueID, request.TargetIssueID, now,
+		r.Context(), query, resolved.ID, issueID, request.TargetIssueID, claims.Subject, now,
 	)
 	if err != nil {
 		writeStoreError(w, err)
@@ -385,7 +510,14 @@ func (h *HTTPHandler) unmerge(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	found, err := h.options.Store.Unmerge(r.Context(), query, resolved.ID, issueID)
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	found, err := h.options.Store.Unmerge(
+		r.Context(), query, resolved.ID, issueID, claims.Subject, h.now(),
+	)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -401,6 +533,13 @@ func requestState(w http.ResponseWriter, r *http.Request) (tenant.Tenant, db.Que
 		return tenant.Tenant{}, nil, false
 	}
 	return resolved, query, true
+}
+
+func (h *HTTPHandler) now() time.Time {
+	if h.options.Now != nil {
+		return h.options.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func issuePathID(w http.ResponseWriter, r *http.Request) (string, bool) {

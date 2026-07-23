@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 )
 
@@ -87,4 +88,25 @@ type Update struct {
 	NewStatus Status    `json:"new_status"`
 	Comment   *string   `json:"comment,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type Comment struct {
+	ID        string           `json:"id"`
+	IssueID   string           `json:"issue_id"`
+	Author    *activity.Actor  `json:"author,omitempty"`
+	Body      string           `json:"body"`
+	Mentions  []activity.Actor `json:"mentions"`
+	CreatedAt time.Time        `json:"created_at"`
+}
+
+type MemberNotification struct {
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	IssueID    string          `json:"issue_id"`
+	PublicID   string          `json:"public_id"`
+	IssueTitle string          `json:"issue_title"`
+	Actor      *activity.Actor `json:"actor,omitempty"`
+	Body       string          `json:"body"`
+	ReadAt     *time.Time      `json:"read_at,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
 }

@@ -391,6 +391,43 @@ export interface IssueUpdate {
   created_at: string
 }
 
+export interface ActivityActor {
+  id: string
+  name?: string | null
+  email: string
+}
+
+export interface IssueActivity {
+  id: string
+  issue_id: string
+  actor?: ActivityActor | null
+  kind: string
+  visibility: 'internal' | 'reporter'
+  data: Record<string, unknown>
+  created_at: string
+}
+
+export interface IssueComment {
+  id: string
+  issue_id: string
+  author?: ActivityActor | null
+  body: string
+  mentions: ActivityActor[]
+  created_at: string
+}
+
+export interface MemberNotification {
+  id: string
+  kind: string
+  issue_id: string
+  public_id: string
+  issue_title: string
+  actor?: ActivityActor | null
+  body: string
+  read_at?: string | null
+  created_at: string
+}
+
 export interface PlanLimits {
   projects: number
   feedback_per_month: number

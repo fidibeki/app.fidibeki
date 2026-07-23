@@ -25,8 +25,8 @@ type TenantReadStore interface {
 	GetTenantFeedback(context.Context, db.Querier, string, string) (Detail, error)
 	UpdateTenantFeedback(context.Context, db.Querier, string, string, TenantMutation) (Detail, error)
 	BulkUpdateTenantFeedback(context.Context, db.Querier, string, []string, TenantMutation) ([]Item, error)
-	LinkTenantFeedback(context.Context, db.Querier, string, []string, string) ([]Item, error)
-	UnlinkTenantFeedback(context.Context, db.Querier, string, []string) ([]Item, error)
+	LinkTenantFeedback(context.Context, db.Querier, string, []string, string, string, time.Time) ([]Item, error)
+	UnlinkTenantFeedback(context.Context, db.Querier, string, []string, string, time.Time) ([]Item, error)
 	TenantDashboard(context.Context, db.Querier, string, string, int, time.Time) (Dashboard, error)
 }
 
@@ -223,8 +223,13 @@ func (h *TenantHTTPHandler) link(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
 	updated, err := h.options.Store.LinkTenantFeedback(
-		r.Context(), query, resolved.ID, request.FeedbackIDs, request.IssueID,
+		r.Context(), query, resolved.ID, request.FeedbackIDs, request.IssueID, claims.Subject, h.now(),
 	)
 	if err != nil {
 		writeTenantStoreError(w, err)
@@ -248,8 +253,13 @@ func (h *TenantHTTPHandler) unlink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
 	updated, err := h.options.Store.UnlinkTenantFeedback(
-		r.Context(), query, resolved.ID, request.FeedbackIDs,
+		r.Context(), query, resolved.ID, request.FeedbackIDs, claims.Subject, h.now(),
 	)
 	if err != nil {
 		writeTenantStoreError(w, err)
@@ -263,6 +273,13 @@ func writeTenantFeedbackMutationResult(w http.ResponseWriter, updated []Item) {
 		"updated_count": len(updated),
 		"feedbacks":     updated,
 	})
+}
+
+func (h *TenantHTTPHandler) now() time.Time {
+	if h.options.Now != nil {
+		return h.options.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 type tenantFeedbackMutationRequest struct {

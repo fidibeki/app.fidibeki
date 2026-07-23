@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/jackc/pgx/v5"
@@ -367,6 +368,8 @@ func (Store) LinkTenantFeedback(
 	tenantID string,
 	feedbackIDs []string,
 	issueID string,
+	actorMemberID string,
+	now time.Time,
 ) ([]Item, error) {
 	states, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs)
 	if err != nil {
@@ -397,12 +400,28 @@ func (Store) LinkTenantFeedback(
 			return nil, ErrLinkConflict
 		}
 	}
-	if _, err := query.Exec(ctx, `
+	result, err := query.Exec(ctx, `
 		UPDATE feedbacks
 		SET issue_id = $3
 		WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND issue_id IS NULL
-	`, tenantID, feedbackIDs, issueID); err != nil {
+	`, tenantID, feedbackIDs, issueID)
+	if err != nil {
 		return nil, fmt.Errorf("link feedback to issue: %w", err)
+	}
+	if result.RowsAffected() > 0 {
+		linkedIDs := make([]string, 0, len(states))
+		for _, state := range states {
+			if state.IssueID == nil {
+				linkedIDs = append(linkedIDs, state.ID)
+			}
+		}
+		actorID := actorMemberID
+		if _, err := activity.Record(ctx, query, activity.RecordInput{
+			TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+			Kind: "feedback.linked", Data: map[string]any{"feedback_ids": linkedIDs}, CreatedAt: now,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return listTenantFeedbackByIDs(ctx, query, tenantID, feedbackIDs)
 }
@@ -412,8 +431,11 @@ func (Store) UnlinkTenantFeedback(
 	query db.Querier,
 	tenantID string,
 	feedbackIDs []string,
+	actorMemberID string,
+	now time.Time,
 ) ([]Item, error) {
-	if _, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs); err != nil {
+	states, err := lockTenantFeedbackStates(ctx, query, tenantID, feedbackIDs)
+	if err != nil {
 		return nil, err
 	}
 	if _, err := query.Exec(ctx, `
@@ -421,6 +443,21 @@ func (Store) UnlinkTenantFeedback(
 		WHERE tenant_id = $1 AND id = ANY($2::uuid[])
 	`, tenantID, feedbackIDs); err != nil {
 		return nil, fmt.Errorf("unlink feedback from issue: %w", err)
+	}
+	byIssue := make(map[string][]string)
+	for _, state := range states {
+		if state.IssueID != nil {
+			byIssue[*state.IssueID] = append(byIssue[*state.IssueID], state.ID)
+		}
+	}
+	actorID := actorMemberID
+	for issueID, unlinkedIDs := range byIssue {
+		if _, err := activity.Record(ctx, query, activity.RecordInput{
+			TenantID: tenantID, IssueID: issueID, ActorMemberID: &actorID,
+			Kind: "feedback.unlinked", Data: map[string]any{"feedback_ids": unlinkedIDs}, CreatedAt: now,
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return listTenantFeedbackByIDs(ctx, query, tenantID, feedbackIDs)
 }

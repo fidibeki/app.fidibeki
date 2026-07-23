@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
@@ -149,6 +150,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue access token: %v", err)
 	}
+	triageAccessToken, _, err := accessTokens.IssueTenant(
+		triageMemberID, tenantID, auth.TenantPermissionStrings(),
+	)
+	if err != nil {
+		t.Fatalf("issue triage access token: %v", err)
+	}
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{Store: Store{}, JWT: accessTokens, Now: func() time.Time { return now }})
@@ -156,6 +163,67 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		BaseDomain: "fidibeki.localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App),
 	})(routes)
+	createdCommentResponse := issueRequest(
+		handler, accessToken, http.MethodPost, "/v1/issues/"+issueID+"/comments",
+		fmt.Sprintf(`{"body":"Please verify this with the checkout team.","mention_member_ids":[%q,%q]}`,
+			triageMemberID, memberID),
+	)
+	if createdCommentResponse.Code != http.StatusCreated {
+		t.Fatalf("create standalone comment = %d, body = %s",
+			createdCommentResponse.Code, createdCommentResponse.Body.String())
+	}
+	var createdComment struct {
+		Comment  Comment        `json:"comment"`
+		Activity activity.Event `json:"activity"`
+	}
+	if err := json.Unmarshal(createdCommentResponse.Body.Bytes(), &createdComment); err != nil {
+		t.Fatalf("decode standalone comment: %v", err)
+	}
+	if createdComment.Comment.Body != "Please verify this with the checkout team." ||
+		len(createdComment.Comment.Mentions) != 2 ||
+		createdComment.Activity.Kind != "issue.comment_created" ||
+		createdComment.Activity.Actor == nil || createdComment.Activity.Actor.ID != memberID {
+		t.Fatalf("standalone comment response = %#v", createdComment)
+	}
+	notificationResponse := issueRequest(
+		handler, triageAccessToken, http.MethodGet, "/v1/notifications", "",
+	)
+	if notificationResponse.Code != http.StatusOK {
+		t.Fatalf("list mention notifications = %d, body = %s",
+			notificationResponse.Code, notificationResponse.Body.String())
+	}
+	var notificationPage struct {
+		Notifications []MemberNotification `json:"notifications"`
+		UnreadCount   int                  `json:"unread_count"`
+	}
+	if err := json.Unmarshal(notificationResponse.Body.Bytes(), &notificationPage); err != nil {
+		t.Fatalf("decode mention notifications: %v", err)
+	}
+	if notificationPage.UnreadCount != 1 || len(notificationPage.Notifications) != 1 ||
+		notificationPage.Notifications[0].IssueID != issueID ||
+		notificationPage.Notifications[0].Actor == nil ||
+		notificationPage.Notifications[0].Actor.ID != memberID {
+		t.Fatalf("mention notifications = %#v", notificationPage)
+	}
+	notificationID := notificationPage.Notifications[0].ID
+	foreignRead := issueRequest(
+		handler, accessToken, http.MethodPatch, "/v1/notifications/"+notificationID+"/read", "",
+	)
+	if foreignRead.Code != http.StatusNotFound {
+		t.Fatalf("foreign notification read = %d, body = %s", foreignRead.Code, foreignRead.Body.String())
+	}
+	markedRead := issueRequest(
+		handler, triageAccessToken, http.MethodPatch, "/v1/notifications/"+notificationID+"/read", "",
+	)
+	if markedRead.Code != http.StatusOK {
+		t.Fatalf("mark notification read = %d, body = %s", markedRead.Code, markedRead.Body.String())
+	}
+	readNotificationResponse := issueRequest(
+		handler, triageAccessToken, http.MethodGet, "/v1/notifications", "",
+	)
+	if !strings.Contains(readNotificationResponse.Body.String(), `"unread_count":0`) {
+		t.Fatalf("read mention notification response = %s", readNotificationResponse.Body.String())
+	}
 	if _, err := root.Exec(ctx, `
 		INSERT INTO issue_counters (tenant_id, year, next_seq) VALUES ($1, 2026, 3)
 	`, tenantID); err != nil {
@@ -459,7 +527,9 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("issue detail status = %d, body = %s", detail.Code, detail.Body.String())
 	}
 	var detailEnvelope struct {
-		Issue Issue `json:"issue"`
+		Issue      Issue            `json:"issue"`
+		Comments   []Comment        `json:"comments"`
+		Activities []activity.Event `json:"activities"`
 	}
 	if err := json.Unmarshal(detail.Body.Bytes(), &detailEnvelope); err != nil {
 		t.Fatalf("decode issue detail: %v", err)
@@ -469,6 +539,16 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		len(detailEnvelope.Issue.Tags) != 2 || detailEnvelope.Issue.Tags[0].Name != "Checkout" ||
 		detailEnvelope.Issue.Tags[1].Name != "Regression" {
 		t.Fatalf("updated issue detail metadata = %#v", detailEnvelope.Issue)
+	}
+	activityKinds := make(map[string]bool, len(detailEnvelope.Activities))
+	for _, event := range detailEnvelope.Activities {
+		activityKinds[event.Kind] = true
+	}
+	if len(detailEnvelope.Comments) != 1 || len(detailEnvelope.Activities) != 3 ||
+		!activityKinds["issue.comment_created"] || !activityKinds["issue.updated"] ||
+		!activityKinds["issue.status_changed"] {
+		t.Fatalf("issue collaboration detail = comments %#v activities %#v",
+			detailEnvelope.Comments, detailEnvelope.Activities)
 	}
 	invalidStatus := issueRequest(handler, accessToken, http.MethodPatch, "/v1/issues/"+issueID,
 		`{"status":"invalid"}`)
@@ -522,6 +602,21 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		"/v1/issues/00000000-0000-0000-0000-000000000000/merge", "")
 	if missingUnmerge.Code != http.StatusNotFound {
 		t.Errorf("missing unmerge = %d, body = %s", missingUnmerge.Code, missingUnmerge.Body.String())
+	}
+	var mergeActivityCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_activities
+		WHERE tenant_id = $1 AND issue_id = $2
+		  AND kind IN ('issue.merged', 'issue.unmerged')
+	`, tenantID, issueID).Scan(&mergeActivityCount); err != nil || mergeActivityCount != 2 {
+		t.Fatalf("merge activity count = %d, error = %v, want 2", mergeActivityCount, err)
+	}
+	var creationActivityCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_activities
+		WHERE tenant_id = $1 AND issue_id = $2 AND kind = 'issue.created'
+	`, tenantID, createdIssueID).Scan(&creationActivityCount); err != nil || creationActivityCount != 1 {
+		t.Fatalf("issue creation activity count = %d, error = %v, want 1", creationActivityCount, err)
 	}
 
 	store := Store{Database: pools.Admin}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { AlertTriangle, ArrowLeft, GitMerge, Pencil, RotateCcw } from '@lucide/vue'
-import type { FeedbackPage, Issue, IssueStatus, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
+import { AlertTriangle, ArrowLeft, AtSign, GitMerge, MessageSquare, Pencil, RotateCcw, Send } from '@lucide/vue'
+import type { FeedbackPage, Issue, IssueActivity, IssueComment, IssueStatus, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
 import { apiErrorMessage } from '~/utils/api-fetch'
 import { formatDateTime } from '~/utils/format'
 
@@ -16,18 +16,35 @@ const mutationError = ref('')
 const detailsEditing = ref(false)
 const titleDraft = ref('')
 const descriptionDraft = ref('')
+const commentBody = ref('')
+const mentionedMemberIDs = ref<string[]>([])
 
 const { data, status, error, refresh } = await useAsyncData(
   () => `issue-detail:${issueID.value}`,
   async () => {
-    const issueResponse = await $apiFetch<{ issue: Issue; updates: IssueUpdate[] }>(`/v1/issues/${issueID.value}`)
+    const issueResponse = await $apiFetch<{
+      issue: Issue
+      updates: IssueUpdate[]
+      comments?: IssueComment[]
+      activities?: IssueActivity[]
+    }>(`/v1/issues/${issueID.value}`)
     const [allIssues, feedbacks, tags, members] = await Promise.all([
       can('issue:read') ? $apiFetch<{ issues: Issue[] }>('/v1/issues') : Promise.resolve({ issues: [] }),
       can('feedback:read') ? $apiFetch<FeedbackPage>(`/v1/feedbacks?q=${encodeURIComponent(issueResponse.issue.public_id)}&limit=20`) : Promise.resolve({ feedbacks: [], pagination: { has_more: false, limit: 20 } }),
       canWrite('issue:update') ? $apiFetch<{ tags: TriageTag[] }>('/v1/tags') : Promise.resolve({ tags: [] }),
       canWrite('issue:update') && can('member:read') ? $apiFetch<{ members: Member[] }>('/v1/members') : Promise.resolve({ members: [] }),
     ])
-    return { ...issueResponse, allIssues: allIssues.issues, feedbacks: feedbacks.feedbacks, tags: tags.tags, members: members.members }
+    return {
+      ...issueResponse,
+      comments: issueResponse.comments || [],
+      activities: issueResponse.activities?.length
+        ? issueResponse.activities
+        : issueResponse.updates.map(activityFromLegacyUpdate),
+      allIssues: allIssues.issues,
+      feedbacks: feedbacks.feedbacks,
+      tags: tags.tags,
+      members: members.members,
+    }
   },
   { watch: [issueID] },
 )
@@ -106,6 +123,27 @@ async function updateIssue() {
   } finally { pending.value = false }
 }
 
+async function createComment() {
+  const body = commentBody.value.trim()
+  if (!canWrite('issue:update') || !data.value || pending.value || !body) return
+  pending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ comment: IssueComment, activity: IssueActivity }>(
+      `/v1/issues/${issueID.value}/comments`,
+      { method: 'POST', body: { body, mention_member_ids: mentionedMemberIDs.value } },
+    )
+    data.value.comments.push(response.comment)
+    data.value.activities.push(response.activity)
+    commentBody.value = ''
+    mentionedMemberIDs.value = []
+  } catch (commentError) {
+    mutationError.value = apiErrorMessage(commentError, 'Comment could not be added.')
+  } finally {
+    pending.value = false
+  }
+}
+
 async function mergeIssue() {
   if (!canWrite('issue:merge') || !mergeTarget.value || pending.value) return
   pending.value = true
@@ -133,6 +171,57 @@ async function undoMerge() {
 
 function formatDate(value: string) {
   return formatDateTime(value)
+}
+
+function actorLabel(activity: IssueActivity) {
+  return activity.actor?.name || activity.actor?.email || 'Fidibeki'
+}
+
+function activityFromLegacyUpdate(update: IssueUpdate): IssueActivity {
+  return {
+    id: `legacy-${update.id}`,
+    issue_id: update.issue_id,
+    kind: 'issue.status_changed',
+    visibility: 'internal',
+    data: {
+      changes: { status: { from: update.old_status, to: update.new_status } },
+      transition_comment: update.comment,
+    },
+    created_at: update.created_at,
+  }
+}
+
+function activitySummary(activity: IssueActivity) {
+  const actor = actorLabel(activity)
+  if (activity.kind === 'issue.created') return `${actor} created the issue`
+  if (activity.kind === 'issue.comment_created') return `${actor} added a comment`
+  if (activity.kind === 'issue.status_changed') return `${actor} changed the status`
+  if (activity.kind === 'issue.updated') return `${actor} updated issue details`
+  if (activity.kind === 'feedback.linked') return `${actor} linked feedback`
+  if (activity.kind === 'feedback.unlinked') return `${actor} unlinked feedback`
+  if (activity.kind === 'issue.merged') return `${actor} merged this issue`
+  if (activity.kind === 'issue.merge_received') return `${actor} merged another issue here`
+  if (activity.kind === 'issue.unmerged' || activity.kind === 'issue.merge_removed') return `${actor} removed a merge`
+  return activity.kind.replaceAll('_', ' ').replaceAll('.', ' · ')
+}
+
+function activityDetail(activity: IssueActivity) {
+  const changes = activity.data.changes
+  if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
+    return Object.entries(changes as Record<string, { from?: unknown, to?: unknown }>).map(([field, value]) => {
+      const label = field.replace('_id', '').replaceAll('_', ' ')
+      const before = value?.from == null || value.from === '' ? 'none' : String(value.from).replaceAll('_', ' ')
+      const after = value?.to == null || value.to === '' ? 'none' : String(value.to).replaceAll('_', ' ')
+      return `${label}: ${before} → ${after}`
+    }).join(' · ')
+  }
+  const feedbackIDs = activity.data.feedback_ids
+  if (Array.isArray(feedbackIDs)) return `${feedbackIDs.length} feedback ${feedbackIDs.length === 1 ? 'record' : 'records'}`
+  return ''
+}
+
+function transitionComment(activity: IssueActivity) {
+  return typeof activity.data.transition_comment === 'string' ? activity.data.transition_comment : ''
 }
 
 useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` }))
@@ -163,8 +252,23 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
       <div class="issue-detail-grid">
         <main>
           <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select" :disabled="!canWrite('issue:update')"><option value="open">Open</option><option value="in_progress">In progress</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status" @click="updateIssue">Update issue</button></div></section>
+          <section class="app-surface issue-comments">
+            <header><div><h2>Internal comments</h2><p>Collaborate with workspace members without changing status.</p></div><span>{{ data.comments.length }}</span></header>
+            <div v-if="data.comments.length" class="issue-comment-list">
+              <article v-for="entry in [...data.comments].reverse()" :key="entry.id">
+                <span>{{ (entry.author?.name || entry.author?.email || 'F').slice(0, 1).toUpperCase() }}</span>
+                <div><header><b>{{ entry.author?.name || entry.author?.email || 'Former member' }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p>{{ entry.body }}</p><small v-if="entry.mentions.length"><AtSign :size="12" /> {{ entry.mentions.map(member => member.name || member.email).join(', ') }}</small></div>
+              </article>
+            </div>
+            <div v-else class="issue-empty"><MessageSquare :size="20" /> No internal comments yet.</div>
+            <form v-if="canWrite('issue:update')" class="issue-comment-form" @submit.prevent="createComment">
+              <textarea v-model="commentBody" aria-label="Internal comment" placeholder="Add internal context" maxlength="5000" required />
+              <fieldset v-if="triageMembers.length"><legend><AtSign :size="12" /> Notify members</legend><label v-for="member in triageMembers" :key="member.id"><input v-model="mentionedMemberIDs" type="checkbox" :value="member.id" /><span>{{ member.name || member.email }}</span></label></fieldset>
+              <button class="app-button app-button--primary" type="submit" :disabled="pending || !commentBody.trim()"><Send :size="14" /> Add comment</button>
+            </form>
+          </section>
           <section class="app-surface issue-feedback"><header><h2>Linked feedback</h2><span>{{ data.feedbacks.length }} {{ data.feedbacks.length === 1 ? 'record' : 'records' }}</span></header><div v-if="!data.feedbacks.length" class="issue-empty">No readable feedback is linked.</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>-</span><p><b>{{ feedback.title || 'Feedback without written detail' }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></NuxtLink></section>
-          <section class="app-surface issue-history"><header><h2>History</h2></header><ol><li v-for="update in [...data.updates].reverse()" :key="update.id"><span /><div><p><b>{{ update.old_status || 'Created' }}</b> → <b>{{ update.new_status }}</b></p><blockquote v-if="update.comment">{{ update.comment }}</blockquote><time>{{ formatDate(update.created_at) }}</time></div></li><li class="issue-created"><span /><div><p>Issue created from feedback</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
+          <section class="app-surface issue-history"><header><h2>Activity</h2><span>{{ data.activities.length }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span /><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>Issue created</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
         </main>
         <aside>
           <OperationalTriageControls
@@ -209,6 +313,22 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-detail-grid header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
 .issue-update-panel > div { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 14px; }
 .issue-update-panel textarea { min-height: 72px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; }
+.issue-comments > header > span,
+.issue-history > header > span { color: var(--muted); font-size: 9px; }
+.issue-comment-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.issue-comment-list article > span { display: grid; width: 28px; height: 28px; place-items: center; background: var(--surface-soft); color: var(--teal); border: 1px solid var(--line); border-radius: 50%; font-size: 10px; font-weight: 800; }
+.issue-comment-list article header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.issue-comment-list article b { font-size: 10px; }
+.issue-comment-list article time { color: var(--muted); font-size: 9px; }
+.issue-comment-list article p { margin: 6px 0; color: var(--ink-soft); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+.issue-comment-list article small { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 9px; }
+.issue-comment-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 9px; padding: 14px; background: var(--surface-soft); border-top: 1px solid var(--line); }
+.issue-comment-form > textarea { min-height: 78px; grid-column: 1 / -1; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; }
+.issue-comment-form fieldset { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; border: 0; }
+.issue-comment-form legend { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; color: var(--muted); font-size: 9px; font-weight: 750; }
+.issue-comment-form label { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 7px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 9px; }
+.issue-comment-form label:has(input:checked) { color: var(--teal); border-color: var(--teal); }
+.issue-comment-form button { align-self: end; }
 .issue-feedback > header > span { color: var(--muted); font-size: 9px; }
 .issue-feedback > a { display: grid; min-height: 62px; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 8px 14px; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
 .issue-feedback > a:last-child { border-bottom: 0; }
@@ -225,6 +345,7 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-history li:last-child > span::after { display: none; }
 .issue-history p,
 .issue-history blockquote { margin: 0 0 5px; font-size: 10px; }
+.issue-history small { display: block; margin: 0 0 5px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .issue-history blockquote { padding: 7px 9px; background: var(--surface-soft); border-left: 2px solid var(--line-strong); }
 .issue-history time { color: var(--muted); font-size: 9px; }
 .issue-facts,
@@ -238,5 +359,5 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
 .issue-merge select { width: 100%; margin-bottom: 8px; font-size: 9px; }
 .issue-merge button { width: 100%; }
 @media (max-width: 900px) { .issue-detail-grid { grid-template-columns: 1fr; } .issue-detail-grid aside { grid-row: 1; display: grid; grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .issue-detail-grid aside { display: flex; } .issue-update-panel > div { grid-template-columns: 1fr; } .issue-detail-heading { flex-direction: column; } }
+@media (max-width: 700px) { .issue-detail-grid aside { display: flex; } .issue-update-panel > div, .issue-comment-form { grid-template-columns: 1fr; } .issue-comment-form > textarea { grid-column: auto; } .issue-detail-heading { flex-direction: column; } }
 </style>

@@ -2,6 +2,7 @@
 import {
   Archive,
   BarChart3,
+  Bell,
   ChevronDown,
   CircleAlert,
   CircleUserRound,
@@ -52,6 +53,7 @@ const primaryNavigation = [
   { label: 'Overview', to: '/', icon: House, permissions: ['feedback:read', 'issue:read'] },
   { label: 'Feedback', to: '/feedback', icon: Inbox, permissions: ['feedback:read'] },
   { label: 'Issues', to: '/issues', icon: LayoutList, permissions: ['issue:read'] },
+  { label: 'Notifications', to: '/notifications', icon: Bell, permissions: ['issue:read'] },
   { label: 'Analytics', to: '/analytics', icon: BarChart3, permissions: ['project:read'] },
   { label: 'Projects', to: '/projects', icon: FolderKanban, permissions: ['project:read'] },
   { label: 'Settings', to: '/settings', icon: Settings, permissions: ['tenant:read'] },

@@ -548,7 +548,7 @@ func assertTenantFeedbackReadFlow(
 	if err != nil {
 		t.Fatalf("create tenant feedback JWT manager: %v", err)
 	}
-	ownerToken, _, err := jwtManager.IssueTenant("owner-id", tenantID, auth.TenantPermissionStrings())
+	ownerToken, _, err := jwtManager.IssueTenant(assigneeID, tenantID, auth.TenantPermissionStrings())
 	if err != nil {
 		t.Fatalf("issue tenant feedback token: %v", err)
 	}
@@ -845,6 +845,13 @@ func assertTenantFeedbackReadFlow(
 	if idempotentLink.Code != http.StatusOK {
 		t.Fatalf("idempotent feedback link = %d body=%s", idempotentLink.Code, idempotentLink.Body.String())
 	}
+	var linkActivityCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_activities
+		WHERE tenant_id = $1 AND issue_id = $2 AND kind = 'feedback.linked'
+	`, tenantID, linkTargetID).Scan(&linkActivityCount); err != nil || linkActivityCount != 1 {
+		t.Fatalf("feedback link activity count = %d, error = %v, want 1", linkActivityCount, err)
+	}
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET issue_id = $2 WHERE id = $1`, secondFeedbackID, conflictIssueID); err != nil {
 		t.Fatalf("prepare conflicting feedback link: %v", err)
 	}
@@ -877,6 +884,13 @@ func assertTenantFeedbackReadFlow(
 	)
 	if idempotentUnlink.Code != http.StatusOK {
 		t.Fatalf("idempotent feedback unlink = %d body=%s", idempotentUnlink.Code, idempotentUnlink.Body.String())
+	}
+	var unlinkActivityCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_activities
+		WHERE tenant_id = $1 AND kind = 'feedback.unlinked'
+	`, tenantID).Scan(&unlinkActivityCount); err != nil || unlinkActivityCount != 2 {
+		t.Fatalf("feedback unlink activity count = %d, error = %v, want 2", unlinkActivityCount, err)
 	}
 	var otherProjectID, otherProjectFeedbackID string
 	if err := root.QueryRow(ctx, `
