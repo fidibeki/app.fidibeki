@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -18,60 +21,62 @@ import (
 type LookupEnv func(string) (string, bool)
 
 type Config struct {
-	Environment              string
-	HTTPAddress              string
-	BaseDomain               string
-	PublicBaseURL            string
-	DatabaseURLApp           string
-	DatabaseURLAdmin         string
-	DatabaseURLDirect        string
-	RedisURL                 string
-	S3Endpoint               string
-	S3PublicEndpoint         string
-	S3Region                 string
-	S3Bucket                 string
-	S3AccessKey              string
-	S3SecretKey              string
-	S3VirtualHostStyle       bool
-	JWTSecret                string
-	InternalProxySecret      string
-	TrustedProxyCIDRs        []netip.Prefix
-	IntegrationEncryptionKey string
-	StripeSecretKey          string
-	StripeWebhookSecret      string
-	StripePriceStarter       string
-	StripePriceGrowth        string
-	StripePriceScale         string
-	TurnstileSecretKey       string
-	TurnstileSiteKey         string
-	AccessTokenTTL           time.Duration
-	MagicLinkTTL             time.Duration
-	RefreshTokenTTL          time.Duration
-	RefreshRetryGrace        time.Duration
-	ReporterTokenTTL         time.Duration
-	EmailDriver              string
-	EmailCaptureDir          string
-	ResendAPIKey             string
-	ResendAuthFrom           string
-	ResendWelcomeFrom        string
-	ResendWelcomeReplyTo     string
-	ResendWebhookSecret      string
-	EmailConcurrency         int
-	AIConcurrency            int
-	GeminiAPIKey             string
-	GeminiModel              string
-	GeminiRPM                int
-	AIDailyLimit             int
-	AIReconcileEvery         time.Duration
-	AppDBMaxConns            int32
-	AdminDBMaxConns          int32
-	S3AutoCreate             bool
-	SentryDSN                string
-	AppVersion               string
-	LogLevel                 string
-	MigrationsPath           string
-	ReadinessTimeout         time.Duration
-	ShutdownTimeout          time.Duration
+	Environment               string
+	HTTPAddress               string
+	BaseDomain                string
+	PublicBaseURL             string
+	DatabaseURLApp            string
+	DatabaseURLAdmin          string
+	DatabaseURLDirect         string
+	RedisURL                  string
+	S3Endpoint                string
+	S3PublicEndpoint          string
+	S3Region                  string
+	S3Bucket                  string
+	S3AccessKey               string
+	S3SecretKey               string
+	S3VirtualHostStyle        bool
+	JWTSecret                 string
+	AbuseBucketSecret         string
+	AbuseBucketPreviousSecret string
+	InternalProxySecret       string
+	TrustedProxyCIDRs         []netip.Prefix
+	IntegrationEncryptionKey  string
+	StripeSecretKey           string
+	StripeWebhookSecret       string
+	StripePriceStarter        string
+	StripePriceGrowth         string
+	StripePriceScale          string
+	TurnstileSecretKey        string
+	TurnstileSiteKey          string
+	AccessTokenTTL            time.Duration
+	MagicLinkTTL              time.Duration
+	RefreshTokenTTL           time.Duration
+	RefreshRetryGrace         time.Duration
+	ReporterTokenTTL          time.Duration
+	EmailDriver               string
+	EmailCaptureDir           string
+	ResendAPIKey              string
+	ResendAuthFrom            string
+	ResendWelcomeFrom         string
+	ResendWelcomeReplyTo      string
+	ResendWebhookSecret       string
+	EmailConcurrency          int
+	AIConcurrency             int
+	GeminiAPIKey              string
+	GeminiModel               string
+	GeminiRPM                 int
+	AIDailyLimit              int
+	AIReconcileEvery          time.Duration
+	AppDBMaxConns             int32
+	AdminDBMaxConns           int32
+	S3AutoCreate              bool
+	SentryDSN                 string
+	AppVersion                string
+	LogLevel                  string
+	MigrationsPath            string
+	ReadinessTimeout          time.Duration
+	ShutdownTimeout           time.Duration
 }
 
 func Load() (Config, error) {
@@ -109,65 +114,69 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	aiReconcileEvery, aiReconcileEveryErr := time.ParseDuration(get("AI_RECONCILE_INTERVAL", "5m"))
 	trustedProxyCIDRs, trustedProxyCIDRsErr := parseCIDRs(get("TRUSTED_PROXY_CIDRS", ""))
 	s3Endpoint := get("S3_ENDPOINT", "")
+	jwtSecret := get("JWT_SECRET", "")
+	abuseBucketSecret := get("ABUSE_BUCKET_SECRET", deriveAbuseBucketSecret(jwtSecret))
 	httpAddress := ":8080"
 	if port := get("PORT", ""); port != "" {
 		httpAddress = ":" + port
 	}
 	config := Config{
-		Environment:              get("APP_ENV", ""),
-		HTTPAddress:              get("HTTP_ADDRESS", httpAddress),
-		BaseDomain:               get("BASE_DOMAIN", ""),
-		PublicBaseURL:            get("PUBLIC_BASE_URL", ""),
-		DatabaseURLApp:           get("DATABASE_URL_APP", ""),
-		DatabaseURLAdmin:         get("DATABASE_URL_ADMIN", ""),
-		DatabaseURLDirect:        get("DATABASE_URL_DIRECT", ""),
-		RedisURL:                 get("REDIS_URL", ""),
-		S3Endpoint:               s3Endpoint,
-		S3PublicEndpoint:         get("S3_PUBLIC_ENDPOINT", s3Endpoint),
-		S3Region:                 get("S3_REGION", "us-east-1"),
-		S3Bucket:                 get("S3_BUCKET", ""),
-		S3AccessKey:              get("S3_ACCESS_KEY", ""),
-		S3SecretKey:              get("S3_SECRET_KEY", ""),
-		S3VirtualHostStyle:       s3VirtualHostStyle,
-		JWTSecret:                get("JWT_SECRET", ""),
-		InternalProxySecret:      get("INTERNAL_PROXY_SECRET", ""),
-		TrustedProxyCIDRs:        trustedProxyCIDRs,
-		IntegrationEncryptionKey: get("INTEGRATION_ENCRYPTION_KEY", ""),
-		StripeSecretKey:          get("STRIPE_SECRET_KEY", ""),
-		StripeWebhookSecret:      get("STRIPE_WEBHOOK_SECRET", ""),
-		StripePriceStarter:       get("STRIPE_PRICE_STARTER", ""),
-		StripePriceGrowth:        get("STRIPE_PRICE_GROWTH", ""),
-		StripePriceScale:         get("STRIPE_PRICE_SCALE", ""),
-		TurnstileSecretKey:       get("TURNSTILE_SECRET_KEY", ""),
-		TurnstileSiteKey:         get("TURNSTILE_SITE_KEY", ""),
-		AccessTokenTTL:           accessTokenTTL,
-		MagicLinkTTL:             magicLinkTTL,
-		RefreshTokenTTL:          refreshTokenTTL,
-		RefreshRetryGrace:        refreshRetryGrace,
-		ReporterTokenTTL:         reporterTokenTTL,
-		EmailDriver:              get("EMAIL_DRIVER", "capture"),
-		EmailCaptureDir:          get("EMAIL_CAPTURE_DIR", "/tmp/fidibeki-emails"),
-		ResendAPIKey:             get("RESEND_API_KEY", ""),
-		ResendAuthFrom:           get("RESEND_AUTH_FROM", "Fidibeki <auth@fidibeki.com>"),
-		ResendWelcomeFrom:        get("RESEND_WELCOME_FROM", "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>"),
-		ResendWelcomeReplyTo:     get("RESEND_WELCOME_REPLY_TO", "acidiney.dias@fidibeki.com"),
-		ResendWebhookSecret:      get("RESEND_WEBHOOK_SECRET", ""),
-		EmailConcurrency:         emailConcurrency,
-		AIConcurrency:            aiConcurrency,
-		GeminiAPIKey:             get("GEMINI_API_KEY", ""),
-		GeminiModel:              get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-		GeminiRPM:                geminiRPM,
-		AIDailyLimit:             aiDailyLimit,
-		AIReconcileEvery:         aiReconcileEvery,
-		AppDBMaxConns:            int32(appDBMaxConns),
-		AdminDBMaxConns:          int32(adminDBMaxConns),
-		S3AutoCreate:             s3AutoCreate,
-		SentryDSN:                get("SENTRY_DSN", ""),
-		AppVersion:               get("APP_VERSION", "dev"),
-		LogLevel:                 get("LOG_LEVEL", "info"),
-		MigrationsPath:           get("MIGRATIONS_PATH", "../infra/migrations"),
-		ReadinessTimeout:         readinessTimeout,
-		ShutdownTimeout:          shutdownTimeout,
+		Environment:               get("APP_ENV", ""),
+		HTTPAddress:               get("HTTP_ADDRESS", httpAddress),
+		BaseDomain:                get("BASE_DOMAIN", ""),
+		PublicBaseURL:             get("PUBLIC_BASE_URL", ""),
+		DatabaseURLApp:            get("DATABASE_URL_APP", ""),
+		DatabaseURLAdmin:          get("DATABASE_URL_ADMIN", ""),
+		DatabaseURLDirect:         get("DATABASE_URL_DIRECT", ""),
+		RedisURL:                  get("REDIS_URL", ""),
+		S3Endpoint:                s3Endpoint,
+		S3PublicEndpoint:          get("S3_PUBLIC_ENDPOINT", s3Endpoint),
+		S3Region:                  get("S3_REGION", "us-east-1"),
+		S3Bucket:                  get("S3_BUCKET", ""),
+		S3AccessKey:               get("S3_ACCESS_KEY", ""),
+		S3SecretKey:               get("S3_SECRET_KEY", ""),
+		S3VirtualHostStyle:        s3VirtualHostStyle,
+		JWTSecret:                 jwtSecret,
+		AbuseBucketSecret:         abuseBucketSecret,
+		AbuseBucketPreviousSecret: get("ABUSE_BUCKET_PREVIOUS_SECRET", ""),
+		InternalProxySecret:       get("INTERNAL_PROXY_SECRET", ""),
+		TrustedProxyCIDRs:         trustedProxyCIDRs,
+		IntegrationEncryptionKey:  get("INTEGRATION_ENCRYPTION_KEY", ""),
+		StripeSecretKey:           get("STRIPE_SECRET_KEY", ""),
+		StripeWebhookSecret:       get("STRIPE_WEBHOOK_SECRET", ""),
+		StripePriceStarter:        get("STRIPE_PRICE_STARTER", ""),
+		StripePriceGrowth:         get("STRIPE_PRICE_GROWTH", ""),
+		StripePriceScale:          get("STRIPE_PRICE_SCALE", ""),
+		TurnstileSecretKey:        get("TURNSTILE_SECRET_KEY", ""),
+		TurnstileSiteKey:          get("TURNSTILE_SITE_KEY", ""),
+		AccessTokenTTL:            accessTokenTTL,
+		MagicLinkTTL:              magicLinkTTL,
+		RefreshTokenTTL:           refreshTokenTTL,
+		RefreshRetryGrace:         refreshRetryGrace,
+		ReporterTokenTTL:          reporterTokenTTL,
+		EmailDriver:               get("EMAIL_DRIVER", "capture"),
+		EmailCaptureDir:           get("EMAIL_CAPTURE_DIR", "/tmp/fidibeki-emails"),
+		ResendAPIKey:              get("RESEND_API_KEY", ""),
+		ResendAuthFrom:            get("RESEND_AUTH_FROM", "Fidibeki <auth@fidibeki.com>"),
+		ResendWelcomeFrom:         get("RESEND_WELCOME_FROM", "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>"),
+		ResendWelcomeReplyTo:      get("RESEND_WELCOME_REPLY_TO", "acidiney.dias@fidibeki.com"),
+		ResendWebhookSecret:       get("RESEND_WEBHOOK_SECRET", ""),
+		EmailConcurrency:          emailConcurrency,
+		AIConcurrency:             aiConcurrency,
+		GeminiAPIKey:              get("GEMINI_API_KEY", ""),
+		GeminiModel:               get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+		GeminiRPM:                 geminiRPM,
+		AIDailyLimit:              aiDailyLimit,
+		AIReconcileEvery:          aiReconcileEvery,
+		AppDBMaxConns:             int32(appDBMaxConns),
+		AdminDBMaxConns:           int32(adminDBMaxConns),
+		S3AutoCreate:              s3AutoCreate,
+		SentryDSN:                 get("SENTRY_DSN", ""),
+		AppVersion:                get("APP_VERSION", "dev"),
+		LogLevel:                  get("LOG_LEVEL", "info"),
+		MigrationsPath:            get("MIGRATIONS_PATH", "../infra/migrations"),
+		ReadinessTimeout:          readinessTimeout,
+		ShutdownTimeout:           shutdownTimeout,
 	}
 
 	var validationErrors []error
@@ -285,6 +294,18 @@ func (c Config) validate() []error {
 	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
 		validationErrors = append(validationErrors, fmt.Errorf("JWT_SECRET must be at least 32 characters"))
 	}
+	if c.AbuseBucketSecret != "" && len(c.AbuseBucketSecret) < 32 {
+		validationErrors = append(validationErrors, fmt.Errorf("ABUSE_BUCKET_SECRET must be at least 32 characters"))
+	}
+	if c.AbuseBucketPreviousSecret != "" && len(c.AbuseBucketPreviousSecret) < 32 {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("ABUSE_BUCKET_PREVIOUS_SECRET must be at least 32 characters"))
+	}
+	if c.AbuseBucketPreviousSecret != "" &&
+		hmac.Equal([]byte(c.AbuseBucketSecret), []byte(c.AbuseBucketPreviousSecret)) {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("ABUSE_BUCKET_PREVIOUS_SECRET must differ from ABUSE_BUCKET_SECRET"))
+	}
 	if c.InternalProxySecret != "" && len(c.InternalProxySecret) < 32 {
 		validationErrors = append(validationErrors, fmt.Errorf("INTERNAL_PROXY_SECRET must be at least 32 characters"))
 	}
@@ -393,59 +414,70 @@ func (c Config) validate() []error {
 
 func (c Config) Redacted() map[string]any {
 	return map[string]any{
-		"environment":                c.Environment,
-		"http_address":               c.HTTPAddress,
-		"base_domain":                c.BaseDomain,
-		"public_base_url":            c.PublicBaseURL,
-		"database_url_app":           "[REDACTED]",
-		"database_url_admin":         "[REDACTED]",
-		"database_url_direct":        "[REDACTED]",
-		"redis_url":                  "[REDACTED]",
-		"s3_endpoint":                c.S3Endpoint,
-		"s3_public_endpoint":         c.S3PublicEndpoint,
-		"s3_region":                  c.S3Region,
-		"s3_bucket":                  c.S3Bucket,
-		"s3_access_key":              "[REDACTED]",
-		"s3_secret_key":              "[REDACTED]",
-		"s3_virtual_host_style":      c.S3VirtualHostStyle,
-		"jwt_secret":                 "[REDACTED]",
-		"internal_proxy_secret":      "[REDACTED]",
-		"trusted_proxy_cidrs":        c.TrustedProxyCIDRs,
-		"integration_encryption_key": "[REDACTED]",
-		"stripe_secret_key":          "[REDACTED]",
-		"stripe_webhook_secret":      "[REDACTED]",
-		"stripe_price_starter":       c.StripePriceStarter,
-		"stripe_price_growth":        c.StripePriceGrowth,
-		"stripe_price_scale":         c.StripePriceScale,
-		"turnstile_secret_key":       "[REDACTED]",
-		"turnstile_site_key":         c.TurnstileSiteKey,
-		"access_token_ttl":           c.AccessTokenTTL.String(),
-		"magic_link_ttl":             c.MagicLinkTTL.String(),
-		"refresh_token_ttl":          c.RefreshTokenTTL.String(),
-		"refresh_retry_grace":        c.RefreshRetryGrace.String(),
-		"reporter_token_ttl":         c.ReporterTokenTTL.String(),
-		"email_driver":               c.EmailDriver,
-		"email_capture_dir":          c.EmailCaptureDir,
-		"resend_api_key":             "[REDACTED]",
-		"resend_auth_from":           c.ResendAuthFrom,
-		"resend_welcome_from":        c.ResendWelcomeFrom,
-		"resend_welcome_reply_to":    c.ResendWelcomeReplyTo,
-		"resend_webhook_secret":      "[REDACTED]",
-		"email_concurrency":          c.EmailConcurrency,
-		"ai_concurrency":             c.AIConcurrency,
-		"gemini_api_key":             "[REDACTED]",
-		"gemini_model":               c.GeminiModel,
-		"gemini_rpm":                 c.GeminiRPM,
-		"ai_daily_limit":             c.AIDailyLimit,
-		"ai_reconcile_every":         c.AIReconcileEvery.String(),
-		"sentry_dsn":                 "[REDACTED]",
-		"app_version":                c.AppVersion,
-		"log_level":                  c.LogLevel,
-		"app_db_max_conns":           c.AppDBMaxConns,
-		"admin_db_max_conns":         c.AdminDBMaxConns,
-		"readiness_timeout":          c.ReadinessTimeout.String(),
-		"shutdown_timeout":           c.ShutdownTimeout.String(),
+		"environment":                  c.Environment,
+		"http_address":                 c.HTTPAddress,
+		"base_domain":                  c.BaseDomain,
+		"public_base_url":              c.PublicBaseURL,
+		"database_url_app":             "[REDACTED]",
+		"database_url_admin":           "[REDACTED]",
+		"database_url_direct":          "[REDACTED]",
+		"redis_url":                    "[REDACTED]",
+		"s3_endpoint":                  c.S3Endpoint,
+		"s3_public_endpoint":           c.S3PublicEndpoint,
+		"s3_region":                    c.S3Region,
+		"s3_bucket":                    c.S3Bucket,
+		"s3_access_key":                "[REDACTED]",
+		"s3_secret_key":                "[REDACTED]",
+		"s3_virtual_host_style":        c.S3VirtualHostStyle,
+		"jwt_secret":                   "[REDACTED]",
+		"abuse_bucket_secret":          "[REDACTED]",
+		"abuse_bucket_previous_secret": "[REDACTED]",
+		"internal_proxy_secret":        "[REDACTED]",
+		"trusted_proxy_cidrs":          c.TrustedProxyCIDRs,
+		"integration_encryption_key":   "[REDACTED]",
+		"stripe_secret_key":            "[REDACTED]",
+		"stripe_webhook_secret":        "[REDACTED]",
+		"stripe_price_starter":         c.StripePriceStarter,
+		"stripe_price_growth":          c.StripePriceGrowth,
+		"stripe_price_scale":           c.StripePriceScale,
+		"turnstile_secret_key":         "[REDACTED]",
+		"turnstile_site_key":           c.TurnstileSiteKey,
+		"access_token_ttl":             c.AccessTokenTTL.String(),
+		"magic_link_ttl":               c.MagicLinkTTL.String(),
+		"refresh_token_ttl":            c.RefreshTokenTTL.String(),
+		"refresh_retry_grace":          c.RefreshRetryGrace.String(),
+		"reporter_token_ttl":           c.ReporterTokenTTL.String(),
+		"email_driver":                 c.EmailDriver,
+		"email_capture_dir":            c.EmailCaptureDir,
+		"resend_api_key":               "[REDACTED]",
+		"resend_auth_from":             c.ResendAuthFrom,
+		"resend_welcome_from":          c.ResendWelcomeFrom,
+		"resend_welcome_reply_to":      c.ResendWelcomeReplyTo,
+		"resend_webhook_secret":        "[REDACTED]",
+		"email_concurrency":            c.EmailConcurrency,
+		"ai_concurrency":               c.AIConcurrency,
+		"gemini_api_key":               "[REDACTED]",
+		"gemini_model":                 c.GeminiModel,
+		"gemini_rpm":                   c.GeminiRPM,
+		"ai_daily_limit":               c.AIDailyLimit,
+		"ai_reconcile_every":           c.AIReconcileEvery.String(),
+		"sentry_dsn":                   "[REDACTED]",
+		"app_version":                  c.AppVersion,
+		"log_level":                    c.LogLevel,
+		"app_db_max_conns":             c.AppDBMaxConns,
+		"admin_db_max_conns":           c.AdminDBMaxConns,
+		"readiness_timeout":            c.ReadinessTimeout.String(),
+		"shutdown_timeout":             c.ShutdownTimeout.String(),
 	}
+}
+
+func deriveAbuseBucketSecret(jwtSecret string) string {
+	if jwtSecret == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(jwtSecret))
+	_, _ = mac.Write([]byte("fidibeki:abuse-buckets:v1"))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func parseCIDRs(raw string) ([]netip.Prefix, error) {

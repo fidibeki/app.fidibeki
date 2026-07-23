@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	aiprocessing "github.com/acidiney/app.fidibeki/backend/internal/ai"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/apikey"
@@ -177,6 +178,16 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 			logger.Warn("Redis close failed", "error", err)
 		}
 	}()
+	abuseKeyring, err := abuse.NewKeyring(
+		settings.AbuseBucketSecret,
+		settings.AbuseBucketPreviousSecret,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize abuse bucket keyring: %w", err)
+	}
+	publicLimiter := ratelimit.NewRedisLimiter(redisClient.Client())
+	abuseEvaluator := abuse.Evaluator{Limiter: publicLimiter, Keyring: abuseKeyring}
+	abuseDiagnostics := abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}}
 
 	objectStorage, err := storage.Open(storage.Config{
 		Endpoint: settings.S3Endpoint, PublicEndpoint: settings.S3PublicEndpoint,
@@ -340,6 +351,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	widgetanalytics.RegisterTenantRoutes(tenantRoutes, widgetanalytics.TenantHTTPOptions{
 		Store: widgetanalytics.Store{}, JWT: jwtManager, Logger: logger,
 	})
+	abuse.RegisterTenantRoutes(tenantRoutes, abuse.TenantHTTPOptions{
+		Store: abuse.Store{}, JWT: jwtManager, Logger: logger,
+	})
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
@@ -383,7 +397,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	widgetapi.RegisterRoutes(widgetRoutes, widgetOptions)
 	feedback.RegisterRoutes(widgetRoutes, feedback.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: feedback.Store{},
-		Limiter: ratelimit.NewRedisLimiter(redisClient.Client()), Storage: objectStorage, Logger: logger,
+		Limiter: publicLimiter, Abuse: abuseEvaluator, Diagnostics: abuseDiagnostics,
+		Storage: objectStorage, Logger: logger,
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 		Scheduler:         aiScheduler, Analytics: widgetanalytics.Store{},
 	})
@@ -563,6 +578,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	analyticsMaintainer := widgetanalytics.Maintainer{
 		Store: widgetanalytics.MaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
+	abuseMaintainer := abuse.Maintainer{
+		Store: abuse.MaintenanceStore{Recorder: abuse.Recorder{
+			Database: pools.Admin, Store: abuse.Store{},
+		}},
+		Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -631,7 +652,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 9)
+	backgroundDone := make(chan error, 10)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
@@ -639,6 +660,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- privacyScheduler.Run(workerCtx, 30*time.Second) }()
 	go func() { backgroundDone <- privacyRetention.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- abuseMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -647,7 +669,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		workerErr,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone,
+		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 	)
 }
 

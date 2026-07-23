@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
@@ -46,11 +48,21 @@ type SubmissionAnalyticsStore interface {
 	InsertSubmittedEvent(context.Context, db.Querier, widgetanalytics.EventValues) (bool, error)
 }
 
+type AbuseEvaluator interface {
+	Evaluate(context.Context, abuse.Policy, abuse.Request) (abuse.Decision, error)
+}
+
+type AbuseDiagnosticRecorder interface {
+	Record(context.Context, abuse.DiagnosticEvent) error
+}
+
 type HTTPOptions struct {
 	Authorizer        widgetapi.ProjectAuthorizer
 	Begin             db.BeginFunc
 	Store             Store
 	Limiter           ratelimit.Limiter
+	Abuse             AbuseEvaluator
+	Diagnostics       AbuseDiagnosticRecorder
 	TrustedProxyCIDRs []netip.Prefix
 	Storage           ObjectStorage
 	Scheduler         AttachmentScheduler
@@ -96,21 +108,55 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	widgetapi.SetCORSHeaders(w, origin)
-	if !h.allow(w, r, configuration.ProjectID) {
-		return
-	}
 	var request SubmissionRequest
 	if !decodeJSON(w, r, &request) {
 		return
 	}
 	if strings.TrimSpace(request.Honeypot) != "" {
+		h.recordDiagnostic(r.Context(), configuration, abuse.CategorySpam, abuse.ReasonSpamRejected)
 		api.WriteJSON(w, http.StatusOK, map[string]bool{"accepted": true})
+		return
+	}
+	visitorID := ""
+	if request.Analytics != nil {
+		visitorID = request.Analytics.VisitorID
+	}
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, visitorID, abuse.SubmissionPolicy, 1, false,
+	); !allowed {
 		return
 	}
 	values, fields := ValidateSubmissionAt(request, configuration, h.now().UTC())
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "feedback is invalid", fields)
 		return
+	}
+	warnings := make([]SubmissionWarning, 0, 1)
+	if len(values.Attachments) > 0 {
+		grant, allowed := h.enforceAbusePolicy(
+			w, r, configuration, origin, visitorID, abuse.AttachmentGrantPolicy,
+			len(values.Attachments), true,
+		)
+		if !allowed {
+			if !grant.Unavailable {
+				return
+			}
+			warnings = append(warnings, uploadUnavailableWarning())
+			values.Attachments = nil
+		} else {
+			mebibytes := int((attachmentTotalBytes(values.Attachments) + (1 << 20) - 1) >> 20)
+			bytesDecision, bytesAllowed := h.enforceAbusePolicy(
+				w, r, configuration, origin, visitorID, abuse.AttachmentBytePolicy, mebibytes,
+				true,
+			)
+			if !bytesAllowed {
+				if !bytesDecision.Unavailable {
+					return
+				}
+				warnings = append(warnings, uploadUnavailableWarning())
+				values.Attachments = nil
+			}
+		}
 	}
 
 	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
@@ -167,6 +213,10 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if definition.Limits.FeedbackPerMonth >= 0 && usage >= definition.Limits.FeedbackPerMonth {
+			h.recordDiagnostic(
+				r.Context(), configuration, abuse.CategoryPlanQuota,
+				abuse.ReasonPlanQuotaExhausted,
+			)
 			api.WriteError(w, http.StatusPaymentRequired, api.CodePlanLimitExceeded,
 				"monthly feedback limit reached", map[string]any{
 					"limit": definition.Limits.FeedbackPerMonth, "usage": usage, "upgrade_url": "/v1/billing",
@@ -211,7 +261,7 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
-	response, err := h.submissionResponse(r.Context(), submission, rawTokens)
+	response, err := h.submissionResponse(r.Context(), submission, rawTokens, warnings)
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return
@@ -229,7 +279,9 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	widgetapi.SetCORSHeaders(w, origin)
-	if !h.allow(w, r, configuration.ProjectID) {
+	if _, allowed := h.enforceAbusePolicy(
+		w, r, configuration, origin, "", abuse.AttachmentCompletionPolicy, 1, false,
+	); !allowed {
 		return
 	}
 	attachmentID := chi.URLParam(r, "attachmentID")
@@ -341,7 +393,7 @@ func (h *HTTPHandler) authorize(
 	return configuration, origin, true
 }
 
-func (h *HTTPHandler) allow(w http.ResponseWriter, r *http.Request, projectID string) bool {
+func (h *HTTPHandler) allowLegacy(w http.ResponseWriter, r *http.Request, projectID string) bool {
 	windows := []struct {
 		key    string
 		window ratelimit.Window
@@ -453,6 +505,7 @@ func (h *HTTPHandler) submissionResponse(
 	ctx context.Context,
 	submission Submission,
 	rawTokens map[string]string,
+	warnings []SubmissionWarning,
 ) (SubmissionResponse, error) {
 	expiresAt := h.now().UTC().Add(uploadTTL)
 	uploads := make([]AttachmentUpload, 0, len(rawTokens))
@@ -475,8 +528,122 @@ func (h *HTTPHandler) submissionResponse(
 	return SubmissionResponse{
 		FeedbackID: submission.ID, FeedbackPublicID: submission.PublicID,
 		IssuePublicID: submission.IssuePublicID, NotifyReporter: submission.NotifyReporter,
-		Attachments: uploads,
+		Attachments: uploads, Warnings: warnings,
 	}, nil
+}
+
+func (h *HTTPHandler) enforceAbusePolicy(
+	w http.ResponseWriter,
+	r *http.Request,
+	configuration project.PublicConfiguration,
+	origin string,
+	visitorID string,
+	policy abuse.Policy,
+	cost int,
+	degradeOnUnavailable bool,
+) (abuse.Decision, bool) {
+	if h.options.Abuse == nil {
+		if policy.Name == abuse.SubmissionPolicy.Name ||
+			policy.Name == abuse.AttachmentCompletionPolicy.Name {
+			allowed := h.allowLegacy(w, r, configuration.ProjectID)
+			return abuse.Decision{Allowed: allowed, Reason: policy.Reason}, allowed
+		}
+		return abuse.Decision{Allowed: true, Reason: policy.Reason}, true
+	}
+	decision, err := h.options.Abuse.Evaluate(r.Context(), policy, abuse.Request{
+		Identity: abuse.Identity{
+			TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
+			Origin:    originHost(origin),
+			Network:   httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
+			VisitorID: visitorID,
+		},
+		Cost: cost,
+	})
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "abuse policy unavailable",
+			"error", err, "policy", policy.Name, "fail_open", decision.Allowed)
+		if decision.Allowed {
+			return decision, true
+		}
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryRateLimit, policy.Name+"_unavailable",
+		)
+		if degradeOnUnavailable {
+			return decision, false
+		}
+		h.writeAbuseError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable,
+			decision.Reason, 5)
+		return decision, false
+	}
+	if decision.Allowed {
+		if decision.Limit > 0 {
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(decision.Limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+		}
+		return decision, true
+	}
+	h.recordDiagnostic(r.Context(), configuration, abuse.CategoryRateLimit, decision.Reason)
+	h.writeAbuseError(
+		w, http.StatusTooManyRequests, api.CodeRateLimitExceeded,
+		decision.Reason, abuse.RetryAfterSeconds(decision.RetryAfter),
+	)
+	return decision, false
+}
+
+func (h *HTTPHandler) writeAbuseError(
+	w http.ResponseWriter,
+	status int,
+	code api.ErrorCode,
+	reason string,
+	retrySeconds int,
+) {
+	if retrySeconds < 1 {
+		retrySeconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+	api.WriteErrorWithOptions(w, status, code, "too many attempts; try again shortly", nil,
+		api.ErrorOptions{Reason: reason, RetryAfterSeconds: retrySeconds})
+}
+
+func (h *HTTPHandler) recordDiagnostic(
+	ctx context.Context,
+	configuration project.PublicConfiguration,
+	category abuse.Category,
+	reason string,
+) {
+	if h.options.Diagnostics == nil {
+		return
+	}
+	if err := h.options.Diagnostics.Record(ctx, abuse.DiagnosticEvent{
+		TenantID: configuration.TenantID, ProjectID: configuration.ProjectID,
+		Category: category, Reason: reason, OccurredAt: h.now().UTC(),
+	}); err != nil {
+		h.logger.WarnContext(ctx, "record abuse diagnostic", "error", err,
+			"category", category, "reason", reason)
+	}
+}
+
+func originHost(origin string) string {
+	parsed, err := url.Parse(origin)
+	if err == nil && parsed.Hostname() != "" {
+		return strings.ToLower(parsed.Hostname())
+	}
+	return strings.ToLower(strings.TrimSpace(origin))
+}
+
+func attachmentTotalBytes(values []AttachmentValues) int64 {
+	var total int64
+	for _, value := range values {
+		total += value.SizeBytes
+	}
+	return total
+}
+
+func uploadUnavailableWarning() SubmissionWarning {
+	return SubmissionWarning{
+		Code: "service_unavailable", Message: "Feedback saved without attachments. Try again later.",
+		Reason: abuse.ReasonUploadRateLimited, RetryAfterSeconds: 5,
+	}
 }
 
 func (h *HTTPHandler) now() time.Time {

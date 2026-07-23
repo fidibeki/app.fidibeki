@@ -30,10 +30,12 @@ const (
 )
 
 type Error struct {
-	Code          ErrorCode `json:"code"`
-	Message       string    `json:"message"`
-	Details       any       `json:"details,omitempty"`
-	SentryEventID string    `json:"sentry_event_id,omitempty"`
+	Code              ErrorCode `json:"code"`
+	Message           string    `json:"message"`
+	Details           any       `json:"details,omitempty"`
+	Reason            string    `json:"reason,omitempty"`
+	RetryAfterSeconds int       `json:"retry_after_seconds,omitempty"`
+	SentryEventID     string    `json:"sentry_event_id,omitempty"`
 }
 
 type ErrorEnvelope struct {
@@ -50,6 +52,30 @@ func WriteError(w http.ResponseWriter, status int, code ErrorCode, message strin
 	WriteErrorWithEventID(w, status, code, message, details, "")
 }
 
+type ErrorOptions struct {
+	Reason            string
+	RetryAfterSeconds int
+	SentryEventID     string
+}
+
+func WriteErrorWithOptions(
+	w http.ResponseWriter,
+	status int,
+	code ErrorCode,
+	message string,
+	details any,
+	options ErrorOptions,
+) {
+	WriteJSON(w, status, ErrorEnvelope{Error: Error{
+		Code:              code,
+		Message:           message,
+		Details:           details,
+		Reason:            options.Reason,
+		RetryAfterSeconds: options.RetryAfterSeconds,
+		SentryEventID:     options.SentryEventID,
+	}})
+}
+
 func WriteErrorWithEventID(
 	w http.ResponseWriter,
 	status int,
@@ -58,10 +84,5 @@ func WriteErrorWithEventID(
 	details any,
 	eventID string,
 ) {
-	WriteJSON(w, status, ErrorEnvelope{Error: Error{
-		Code:          code,
-		Message:       message,
-		Details:       details,
-		SentryEventID: eventID,
-	}})
+	WriteErrorWithOptions(w, status, code, message, details, ErrorOptions{SentryEventID: eventID})
 }

@@ -315,11 +315,19 @@ type AttachmentUpload struct {
 }
 
 type SubmissionResponse struct {
-	FeedbackID       string             `json:"feedback_id"`
-	FeedbackPublicID string             `json:"feedback_public_id"`
-	IssuePublicID    string             `json:"issue_public_id,omitempty"`
-	NotifyReporter   bool               `json:"notify_reporter"`
-	Attachments      []AttachmentUpload `json:"attachments"`
+	FeedbackID       string              `json:"feedback_id"`
+	FeedbackPublicID string              `json:"feedback_public_id"`
+	IssuePublicID    string              `json:"issue_public_id,omitempty"`
+	NotifyReporter   bool                `json:"notify_reporter"`
+	Attachments      []AttachmentUpload  `json:"attachments"`
+	Warnings         []SubmissionWarning `json:"warnings,omitempty"`
+}
+
+type SubmissionWarning struct {
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	Reason            string `json:"reason"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
 type FieldError struct {

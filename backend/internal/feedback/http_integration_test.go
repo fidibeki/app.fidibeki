@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
@@ -415,6 +416,91 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	if rateResponse.Code != http.StatusTooManyRequests || rateResponse.Header().Get("Retry-After") != "7" ||
 		rateResponse.Header().Get("X-RateLimit-Limit") == "" {
 		t.Errorf("rate response status = %d, headers = %#v", rateResponse.Code, rateResponse.Header())
+	}
+	diagnostics := &abuseDiagnosticRecorderStub{}
+	deniedByCoordinatedRate := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Diagnostics: diagnostics,
+		Abuse: abuseEvaluatorFunc(func(
+			_ context.Context,
+			policy abuse.Policy,
+			_ abuse.Request,
+		) (abuse.Decision, error) {
+			return abuse.Decision{
+				Allowed: false, Reason: policy.Reason, RetryAfter: 6500 * time.Millisecond,
+				Limit: 10, Remaining: 0,
+			}, nil
+		}),
+	})
+	coordinatedRate := performFeedbackRequest(
+		deniedByCoordinatedRate, http.MethodPost, "/v1/feedback?key="+publicKey,
+		body, publicKey, "https://example.com",
+	)
+	if coordinatedRate.Code != http.StatusTooManyRequests ||
+		coordinatedRate.Header().Get("Retry-After") != "7" ||
+		!strings.Contains(coordinatedRate.Body.String(), `"reason":"submission_rate_limited"`) ||
+		!strings.Contains(coordinatedRate.Body.String(), `"retry_after_seconds":7`) {
+		t.Errorf("coordinated rate response status=%d headers=%#v body=%s",
+			coordinatedRate.Code, coordinatedRate.Header(), coordinatedRate.Body.String())
+	}
+	if len(diagnostics.events) != 1 ||
+		diagnostics.events[0].Reason != abuse.ReasonSubmissionRateLimited {
+		t.Errorf("rate diagnostics = %#v", diagnostics.events)
+	}
+
+	degradedBody := fmt.Sprintf(`{
+		"client_feedback_id":"00000000-0000-4000-8000-000000000211",
+		"widget_rule_id":%q,"rating":4,"text":"Keep this feedback",
+		"attachments":[{
+			"client_attachment_id":"00000000-0000-4000-8000-000000000212",
+			"kind":"audio","content_type":"audio/webm","size_bytes":2048
+		}],
+		"metadata":{"url":"https://example.com/checkout","viewport_width":390,"viewport_height":844}
+	}`, ruleID)
+	limiterFailure := errors.New("redis unavailable")
+	degraded := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Now: func() time.Time { return now },
+		Abuse: abuseEvaluatorFunc(func(
+			_ context.Context,
+			policy abuse.Policy,
+			_ abuse.Request,
+		) (abuse.Decision, error) {
+			switch policy.Name {
+			case abuse.SubmissionPolicy.Name:
+				return abuse.Decision{
+					Allowed: true, Unavailable: true, Reason: policy.Reason,
+				}, limiterFailure
+			case abuse.AttachmentGrantPolicy.Name:
+				return abuse.Decision{
+					Allowed: false, Unavailable: true, Reason: policy.Reason,
+				}, limiterFailure
+			default:
+				return abuse.Decision{Allowed: true, Reason: policy.Reason}, nil
+			}
+		}),
+		Diagnostics: diagnostics,
+	})
+	degradedResponse := performFeedbackRequest(
+		degraded, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedBody, publicKey, "https://example.com",
+	)
+	if degradedResponse.Code != http.StatusCreated {
+		t.Fatalf("degraded submission status=%d body=%s",
+			degradedResponse.Code, degradedResponse.Body.String())
+	}
+	var degradedSubmission SubmissionResponse
+	decodeFeedbackResponse(t, degradedResponse, &degradedSubmission)
+	if len(degradedSubmission.Attachments) != 0 || len(degradedSubmission.Warnings) != 1 ||
+		degradedSubmission.Warnings[0].Reason != abuse.ReasonUploadRateLimited {
+		t.Errorf("degraded submission = %#v", degradedSubmission)
+	}
+	var savedText string
+	if err := root.QueryRow(ctx,
+		`SELECT description FROM feedbacks WHERE id = $1`,
+		degradedSubmission.FeedbackID,
+	).Scan(&savedText); err != nil || savedText != "Keep this feedback" {
+		t.Errorf("degraded saved text=%q error=%v", savedText, err)
 	}
 
 	if _, err := root.Exec(ctx, `UPDATE tenants SET plan = 'starter' WHERE id = $1`, tenantID); err != nil {
@@ -1017,6 +1103,32 @@ func (s *feedbackStorageStub) Stat(context.Context, string) (storage.ObjectInfo,
 type staticLimiter struct {
 	decision ratelimit.Decision
 	err      error
+}
+
+type abuseEvaluatorFunc func(
+	context.Context,
+	abuse.Policy,
+	abuse.Request,
+) (abuse.Decision, error)
+
+func (evaluate abuseEvaluatorFunc) Evaluate(
+	ctx context.Context,
+	policy abuse.Policy,
+	request abuse.Request,
+) (abuse.Decision, error) {
+	return evaluate(ctx, policy, request)
+}
+
+type abuseDiagnosticRecorderStub struct {
+	events []abuse.DiagnosticEvent
+}
+
+func (recorder *abuseDiagnosticRecorderStub) Record(
+	_ context.Context,
+	event abuse.DiagnosticEvent,
+) error {
+	recorder.events = append(recorder.events, event)
+	return nil
 }
 
 type outboxEnqueuerStub struct {

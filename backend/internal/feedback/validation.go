@@ -18,6 +18,7 @@ const (
 	maxTextLength       = 10000
 	maxElementHTMLBytes = 200000
 	maxElementCSSBytes  = 100000
+	maxAttachmentBytes  = 125 << 20
 )
 
 var attachmentRules = map[AttachmentKind]struct {
@@ -325,6 +326,7 @@ func validateAttachments(attachments []AttachmentValues) []FieldError {
 	}
 	seenIDs := map[string]struct{}{}
 	seenKinds := map[AttachmentKind]struct{}{}
+	var totalBytes int64
 	for index, attachment := range attachments {
 		prefix := fmt.Sprintf("attachments.%d", index)
 		if _, err := uuid.Parse(attachment.ClientAttachmentID); err != nil {
@@ -347,10 +349,18 @@ func validateAttachments(attachments []AttachmentValues) []FieldError {
 		}
 		if attachment.SizeBytes < 1 || attachment.SizeBytes > rule.maxBytes {
 			fields = append(fields, field(prefix+".size_bytes", fmt.Sprintf("must be between 1 and %d", rule.maxBytes)))
+		} else {
+			totalBytes += attachment.SizeBytes
 		}
 		if attachment.DurationSeconds != nil && (*attachment.DurationSeconds < 0 || *attachment.DurationSeconds > 7200) {
 			fields = append(fields, field(prefix+".duration_seconds", "must be between 0 and 7200"))
 		}
+	}
+	if totalBytes > maxAttachmentBytes {
+		fields = append(fields, field(
+			"attachments",
+			fmt.Sprintf("total size must not exceed %d bytes", maxAttachmentBytes),
+		))
 	}
 	return fields
 }

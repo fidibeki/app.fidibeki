@@ -24,6 +24,10 @@ type Limiter interface {
 	Allow(context.Context, string, Window) (Decision, error)
 }
 
+type CostLimiter interface {
+	AllowN(context.Context, string, Window, int) (Decision, error)
+}
+
 type RedisLimiter struct {
 	limiter *redisrate.Limiter
 }
@@ -33,9 +37,18 @@ func NewRedisLimiter(client redis.UniversalClient) RedisLimiter {
 }
 
 func (l RedisLimiter) Allow(ctx context.Context, key string, window Window) (Decision, error) {
-	result, err := l.limiter.Allow(ctx, key, redisrate.Limit{
+	return l.AllowN(ctx, key, window, 1)
+}
+
+func (l RedisLimiter) AllowN(
+	ctx context.Context,
+	key string,
+	window Window,
+	cost int,
+) (Decision, error) {
+	result, err := l.limiter.AllowN(ctx, key, redisrate.Limit{
 		Rate: window.Limit, Burst: window.Limit, Period: window.Period,
-	})
+	}, cost)
 	if err != nil {
 		return Decision{}, err
 	}

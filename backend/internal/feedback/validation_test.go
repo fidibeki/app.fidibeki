@@ -234,6 +234,28 @@ func TestAttachmentHelpersCoverSupportedFormats(t *testing.T) {
 	}
 }
 
+func TestAttachmentValidationBoundsCountIdentityKindsAndAggregateSize(t *testing.T) {
+	t.Parallel()
+
+	attachments := []AttachmentValues{
+		{ClientAttachmentID: "00000000-0000-4000-8000-000000000001", Kind: AttachmentVideo, ContentType: "video/mp4", SizeBytes: 100 << 20},
+		{ClientAttachmentID: "00000000-0000-4000-8000-000000000002", Kind: AttachmentAudio, ContentType: "audio/webm", SizeBytes: 25 << 20},
+		{ClientAttachmentID: "00000000-0000-4000-8000-000000000003", Kind: AttachmentScreenshot, ContentType: "image/png", SizeBytes: 1},
+		{ClientAttachmentID: "00000000-0000-4000-8000-000000000003", Kind: AttachmentScreenshot, ContentType: "image/png", SizeBytes: 1},
+		{ClientAttachmentID: "00000000-0000-4000-8000-000000000005", Kind: AttachmentReplay, ContentType: "application/json", SizeBytes: 1},
+	}
+	fields := validateAttachments(attachments)
+	for _, expected := range []string{
+		"attachments",
+		"attachments.3.client_attachment_id",
+		"attachments.3.kind",
+	} {
+		if !hasField(fields, expected) {
+			t.Errorf("fields = %#v, missing %q", fields, expected)
+		}
+	}
+}
+
 func TestValidateSubmissionReportsFieldLevelAndCapabilityErrors(t *testing.T) {
 	t.Parallel()
 	invalidEmail := "not-an-email"

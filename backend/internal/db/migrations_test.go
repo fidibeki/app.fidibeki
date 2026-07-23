@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 63
+	const latestMigrationVersion = 64
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-4); err != nil {
+	if err := migrator.Steps(-5); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -151,6 +151,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply unverified privacy expiry migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply abuse diagnostics migration: %v", err)
 	}
 
 	var tenantA, tenantB string
@@ -631,6 +634,16 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, tenantA, attachmentA, tenantB, attachmentB); err != nil {
 		t.Fatalf("seed Gemini file ledger: %v", err)
 	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO abuse_diagnostics_hourly (
+			tenant_id, project_id, bucket_start, category, reason, event_count,
+			first_occurred_at, last_occurred_at
+		) VALUES
+			($1, $2, date_trunc('hour', now()), 'rate_limit', 'submission_rate_limited', 2, now(), now()),
+			($3, $4, date_trunc('hour', now()), 'spam', 'spam_rejected', 1, now(), now())
+	`, tenantA, projectA, tenantB, projectB); err != nil {
+		t.Fatalf("seed abuse diagnostics: %v", err)
+	}
 
 	pools, err := db.OpenPools(
 		ctx,
@@ -715,6 +728,12 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("app role without tenant context read %d reporter privacy requests, want 0", count)
 	}
+	if err := appPool.QueryRow(ctx, `SELECT count(*) FROM abuse_diagnostics_hourly`).Scan(&count); err != nil {
+		t.Fatalf("query abuse diagnostics without tenant context: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("app role without tenant context read %d abuse diagnostics, want 0", count)
+	}
 
 	tx, err := appPool.Begin(ctx)
 	if err != nil {
@@ -745,6 +764,10 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("tenant A Gemini file count = %d, want 1", count)
+	}
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM abuse_diagnostics_hourly`).Scan(&count); err != nil ||
+		count != 1 {
+		t.Fatalf("tenant A abuse diagnostic count = %d, error = %v, want 1", count, err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM issue_updates`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("tenant A issue update count = %d, error = %v, want 1", count, err)
@@ -1022,6 +1045,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM reporter_privacy_requests`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin reporter privacy request count = %d, error = %v, want 2", count, err)
+	}
+	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM abuse_diagnostics_hourly`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("admin abuse diagnostic count = %d, error = %v, want 2", count, err)
 	}
 	if err := adminPool.QueryRow(ctx, `SELECT count(*) FROM issue_updates`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("admin issue update count = %d, error = %v, want 2", count, err)

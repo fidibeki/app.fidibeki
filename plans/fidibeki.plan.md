@@ -329,6 +329,15 @@ was removed from the staging test tenant.
         `docs/superpowers/specs/2026-07-23-public-submission-abuse-protection-design.md`.
       - [ ] Slice 1: shared HMAC buckets and named policies, stable error details, aggregate
         diagnostics/API, declaration bounds, and distributed/concurrency coverage.
+        Local implementation now derives rotating HMAC identities before Redis, composes named
+        project/origin/network/visitor policies, preserves the existing error envelope while adding
+        stable reason/retry fields, and supports weighted byte budgets. A forced-RLS hourly ledger
+        records only tenant/project/category/reason counts, exposes a bounded `tenant:read`
+        diagnostics API, and is cleaned after 90 days. Feedback validates four unique attachment
+        slots and a 125 MiB aggregate before storage, records honeypot/quota/rate pressure, retains
+        text when an unavailable limiter denies optional upload grants, and keeps legacy handler
+        compatibility. Focused backend, PostgreSQL/Redis concurrency, migration replay, and static
+        analysis pass locally; CI and staging remain the slice gate.
       - [ ] Slice 2: explicit upload expiry, quarantine and deterministic signature verification,
         safe-only preview/AI/export, cleanup/reconciliation, and failure coverage.
       - [ ] Slice 3: coordinated replay protection, verified batch lifecycle and aggregate bounds,

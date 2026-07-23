@@ -49,4 +49,17 @@ func TestRedisLimiterEnforcesGCRAWindow(t *testing.T) {
 	if err != nil || third.Allowed || third.RetryAfter <= 0 {
 		t.Fatalf("third decision = %#v, error = %v", third, err)
 	}
+
+	weighted, err := limiter.AllowN(ctx, "project:weighted", Window{
+		Limit: 5, Period: time.Minute,
+	}, 4)
+	if err != nil || !weighted.Allowed || weighted.Remaining != 1 {
+		t.Fatalf("weighted decision = %#v, error = %v", weighted, err)
+	}
+	exceeded, err := limiter.AllowN(ctx, "project:weighted", Window{
+		Limit: 5, Period: time.Minute,
+	}, 2)
+	if err != nil || exceeded.Allowed || exceeded.RetryAfter <= 0 {
+		t.Fatalf("weighted exceeded decision = %#v, error = %v", exceeded, err)
+	}
 }
