@@ -47,6 +47,10 @@ export default defineNuxtConfig({
       demoSchedulerUrl:
         process.env.NUXT_PUBLIC_DEMO_SCHEDULER_URL ||
         'https://cal.eu/acidiney.dias-fidibeki/30min',
+      umamiScriptUrl:
+        process.env.NUXT_PUBLIC_UMAMI_SCRIPT_URL || 'https://cloud.umami.is/script.js',
+      umamiWebsiteId:
+        process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '1d518b00-2258-4884-bf69-63f789d6f11d',
     },
   },
   typescript: {
