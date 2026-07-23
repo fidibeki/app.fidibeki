@@ -199,7 +199,14 @@ was removed from the staging test tenant.
     inactive definitions so explicit mounts return `inactive` rather than `not_found`. Connection
     telemetry rejects inactive definitions. The editor exposes all four states, starts new rules as
     drafts, and hides archived definitions by default without deleting their history.
-- [ ] Complete backoffice preview, URL testing, decision explanation, and installation diagnostics.
+- [x] Complete backoffice preview, URL testing, decision explanation, and installation diagnostics.
+  - The backoffice and runtime now consume one pure objective evaluator. A compact signal simulator
+    reports score, threshold, contributing non-personal signals, trigger behavior, recurrence, and
+    presentation guardrails without collecting new telemetry. The existing safe URL tester feeds a
+    shared installation band alongside loader observation, configured domains, and active-definition
+    state. Launcher closed/open and inline/reaction layouts now preview their actual presentation.
+    Diagnostic refreshes preserve unsaved rule edits. Unit, type, coverage, build, and full responsive
+    browser suites cover the shared contract and the desktop/mobile configuration journeys.
 
 #### Post-roadmap issue sweep
 

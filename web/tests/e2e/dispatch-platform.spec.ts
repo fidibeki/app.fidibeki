@@ -64,6 +64,7 @@ function createMockState() {
     default_locale: 'en',
     reporter_access_enabled: null as boolean | null,
     widget_appearance_overrides: {} as Record<string, string>,
+    widget_last_seen_at: null as string | null,
     created_at: now,
     updated_at: now,
   }]
@@ -73,6 +74,11 @@ function createMockState() {
     name: 'Checkout pulse',
     priority: 10,
     enabled: true,
+    definition_key: 'checkout-pulse',
+    definition_version: 1,
+    definition_status: 'active' as 'draft' | 'active' | 'paused' | 'archived',
+    presentation: 'prompt' as 'launcher' | 'inline' | 'reaction' | 'prompt',
+    objective: 'continuous_feedback' as 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction',
     matcher_type: 'url_prefix',
     matcher_value: 'https://shop.acme.test/checkout',
     include_conditions: [{
@@ -493,6 +499,7 @@ async function installMockAPI(page: Page, state: MockState) {
         default_locale: 'en',
         reporter_access_enabled: null as boolean | null,
         widget_appearance_overrides: {} as Record<string, string>,
+        widget_last_seen_at: null as string | null,
         created_at: now,
         updated_at: now,
       }
@@ -1397,9 +1404,11 @@ test('widget targeting edits include and exclude conditions with a local URL tes
   await testURL.fill('https://shop.acme.test/checkout/private/card?asset=BAI#details')
   await page.getByRole('button', { name: 'Test', exact: true }).click()
   await expect(page.getByRole('status')).toHaveText('Excluded by condition 1.')
+  await expect(page.locator('.project-install-diagnostics')).toContainText('Excluded by condition 1.')
   await testURL.fill('https://shop.acme.test/pricing/?asset=BIC#plans')
   await page.getByRole('button', { name: 'Test', exact: true }).click()
   await expect(page.getByRole('status')).toHaveText('This rule is eligible on the tested page.')
+  await expect(page.locator('.project-install-diagnostics')).toContainText('This rule is eligible on the tested page.')
 
   await page.getByRole('button', { name: 'Save rule' }).click()
   await expect(page.getByText('Widget rule saved.')).toBeVisible()
@@ -1416,6 +1425,63 @@ test('widget targeting edits include and exclude conditions with a local URL tes
   })
   await page.getByRole('heading', { name: 'Page matching' }).scrollIntoViewIfNeeded()
   await capture(page, testInfo, 'widget-targeting')
+})
+
+test('widget diagnostics explain installation and objective eligibility', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const installation = page.locator('.project-install-diagnostics')
+  await expect(installation).toContainText('Not detected')
+  await page.getByLabel('Name', { exact: true }).fill('Unsaved checkout pulse')
+  state.projects[0].widget_last_seen_at = now
+  await page.getByRole('button', { name: 'Refresh diagnostics' }).click()
+  await expect(installation).toContainText('Observed')
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Unsaved checkout pulse')
+  await expect(installation).toContainText('2 configured')
+  await expect(installation).toContainText('1 active')
+  await capture(page, testInfo, `widget-install-diagnostics-${testInfo.project.name}`)
+
+  await page.getByLabel('Presentation').selectOption('reaction')
+  await page.getByLabel('Objective').selectOption('after_engagement')
+  const diagnostics = page.locator('.decision-diagnostics')
+  await diagnostics.scrollIntoViewIfNeeded()
+  await expect(diagnostics).toContainText('Waiting')
+  await expect(diagnostics).toContainText('Reaction waits for meaningful engagement')
+  await diagnostics.getByLabel('Interactions').fill('1')
+  await diagnostics.getByRole('checkbox', { name: 'Engaged' }).check()
+  await expect(diagnostics).toContainText('Eligible')
+  await expect(diagnostics).toContainText('Explicit engagement signal')
+
+  const geometry = await diagnostics.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { left: rect.left, right: rect.right, viewport: document.documentElement.clientWidth }
+  })
+  expect(geometry.left).toBeGreaterThanOrEqual(0)
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewport + 1)
+  await capture(page, testInfo, `widget-decision-${testInfo.project.name}`)
+})
+
+test('widget preview mirrors launcher and inline presentation states', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The live preview is hidden on smaller viewports')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Presentation').selectOption('launcher')
+  await expect(page.locator('.widget-preview-trigger')).toBeVisible()
+  await expect(page.locator('.widget-preview-modal')).toBeHidden()
+  await page.getByRole('group', { name: 'Launcher preview state' }).getByRole('button', { name: 'Open' }).click()
+  await expect(page.locator('.widget-preview-trigger')).toHaveCount(0)
+  await expect(page.locator('.widget-preview-modal')).toBeVisible()
+
+  await page.getByLabel('Presentation').selectOption('inline')
+  await expect(page.locator('.widget-preview-modal')).toBeVisible()
+  await expect(page.locator('.widget-preview-modal')).toHaveCSS('position', 'relative')
+  await capture(page, testInfo, 'widget-presentation-preview')
 })
 
 test('new widget rules require an explicit targeting choice', async ({ page }, testInfo) => {

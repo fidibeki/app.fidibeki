@@ -24,6 +24,11 @@ export interface TargetingTestResult {
   message: string
 }
 
+export interface TargetingTestDiagnostic {
+  url: string
+  result: TargetingTestResult
+}
+
 export function canonicalPage(rawURL: string): CanonicalPage | null {
   try {
     const url = new URL(rawURL)

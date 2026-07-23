@@ -6,11 +6,13 @@ import {
   validateTargeting,
   type TargetingFormState,
   type TargetingMode,
+  type TargetingTestDiagnostic,
   type TargetingTestResult,
 } from '~/utils/widget-targeting'
 
 const state = defineModel<TargetingFormState>({ required: true })
 const props = withDefaults(defineProps<{ showErrors?: boolean }>(), { showErrors: false })
+const emit = defineEmits<{ tested: [diagnostic: TargetingTestDiagnostic | null] }>()
 const testURL = ref('')
 const testResult = ref<TargetingTestResult | null>(null)
 const errors = computed(() => validateTargeting(state.value))
@@ -20,8 +22,8 @@ const matcherOptions: Array<{ value: MatcherType; label: string }> = [
   { value: 'url_regex', label: 'Regular expression' },
 ]
 
-watch(state, () => { testResult.value = null }, { deep: true })
-watch(testURL, () => { testResult.value = null })
+watch(state, resetTest, { deep: true })
+watch(testURL, resetTest)
 
 function selectMode(mode: Exclude<TargetingMode, null>) {
   if (mode === 'all_pages') {
@@ -60,6 +62,12 @@ function conditionError(collection: 'include_conditions' | 'exclude_conditions',
 
 function runTest() {
   testResult.value = testTargetingURL(testURL.value, state.value)
+  emit('tested', { url: testURL.value.trim(), result: testResult.value })
+}
+
+function resetTest() {
+  testResult.value = null
+  emit('tested', null)
 }
 
 function emptyCondition(): WidgetTargetConditionInput {
