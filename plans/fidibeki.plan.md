@@ -439,12 +439,14 @@ was removed from the staging test tenant.
       English and Portuguese catalogs now cover these surfaces while customer-authored content,
       exact API mutations, and regional formatting remain intact. Focused desktop/mobile workflows,
       unit tests, typecheck, and the Nuxt build pass.
-    - [ ] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
+    - [x] Slice 5: extraction audit, catalog parity, pseudo-locale responsive checks, complete local
       gates, CI, and real staging validation.
       The local gate is complete: source coverage, EN/PT parity, interpolation preservation,
       generated `en-XA`, unit (104), typecheck, build, and 18 integrated responsive browser journeys
-      pass. CI and real staging validation remain pending because deployment work is not currently
-      authorized unless it directly blocks staging use.
+      pass. Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` served the exact runtime:
+      a real Tauview member inherited organization `pt`/`Europe/Lisbon`, switched to member
+      `en`/`UTC` and `pt-PT`/`Europe/Lisbon`, then returned to null/null inheritance; public SSR
+      resolved Portuguese through `Accept-Language`. Temporary authentication data was removed.
   - [x] Complete focused follow-up issues #38, #44, #45, #47, and #48.
     - Reactive widget-rule localization data is unwrapped before cloning and covered with a real
       Vue Proxy regression; desktop/mobile editor coverage verifies persisted configuration.
@@ -506,6 +508,14 @@ was removed from the staging test tenant.
       including public submit to backoffice visibility and hostile HTML.
     - Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` passed a real reporter API and
       SSR journey in English and Portuguese; its temporary reporter token was removed.
+  - [ ] Complete the new non-postponed privacy issues before continuous improvement.
+    - [ ] #53: make replay anonymous by default across identifiers, locations, rrweb content,
+      canvas, storage, streaming, playback, and deletion.
+    - [ ] #55: require explicit, structured, auditable, revocable reporter-update consent before
+      email transmission, persistence, enqueue, or provider delivery.
+    - [ ] #54: reuse the resulting privacy primitives for automatic feedback context, referrers,
+      element attachments, backend validation, downstream projections, and existing-data
+      remediation.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.

@@ -532,11 +532,19 @@ pass.
 ## Task 31: Localization Staging Gate
 
 **Depends on:** Task 30
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** #32 is fully usable in staging.
 
 **Acceptance:** Full local, CI, and real staging locale/timezone journeys pass on the same commit.
+
+**Evidence:** The complete local and CI-equivalent catalog, unit, typecheck, build, responsive
+browser, SSR/hydration, and pseudo-locale gates pass. Staging web deployment
+`c21ea9ce-a1b5-49dc-a779-7ca6213b4479` served the exact code. A real Tauview member session
+inherited organization `pt`/`Europe/Lisbon`, accepted personal `en`/`UTC` and
+`pt-PT`/`Europe/Lisbon` overrides, then returned to null/null inheritance. Unauthenticated SSR
+resolved Portuguese through `Accept-Language`. The temporary magic link/session were revoked and
+deleted, and the member preferences were verified restored. No push or production action was used.
 
 **Autonomy:** AFK
 
@@ -737,13 +745,56 @@ and SSR page journey in English and Portuguese; its temporary access token was r
 
 ## Task 41: Reconcile Remaining Open Issues
 
-**Depends on:** Tasks 31 through 40
-**Status:** Pending
+**Depends on:** Tasks 31 through 44
+**Status:** In Progress
 
 **Outcome:** Close materially completed issues with test evidence and leave only explicitly
 postponed or genuinely staging-gated work open.
 
 **Acceptance:** GitHub state matches the code and test evidence; no production, deployment, or
 infrastructure work is performed without renewed authorization.
+
+**Autonomy:** AFK
+
+## Task 42: Enforce Anonymous Session Replay
+
+**Depends on:** Task 39
+**Status:** In Progress
+
+**Outcome:** Complete issue #53 so replay artifacts cannot expose an authenticated user through
+identity-bearing text, attributes, URLs, canvas pixels, or stable cross-session identifiers.
+
+**Acceptance:** Replay-scoped identity, canonical locations, fail-closed rrweb sanitization,
+canvas anonymity, deletion coverage, privacy documentation, and sentinel backend/widget/browser
+tests satisfy the issue contract without relying only on customer-authored selectors.
+
+**Autonomy:** AFK
+
+## Task 43: Require Auditable Reporter Consent
+
+**Depends on:** Task 40
+**Status:** In Progress
+
+**Outcome:** Complete issue #55 with explicit, specific, revocable consent before any reporter
+email address is transmitted, persisted, enqueued, or delivered.
+
+**Acceptance:** Widget disclosure, structured consent evidence, safe legacy migration, contradictory
+payload rejection, enqueue/send-time checks, withdrawal race protection, bilingual email flows,
+retention, and end-to-end tests satisfy the issue contract.
+
+**Autonomy:** AFK
+
+## Task 44: Minimize Automatic Feedback Context
+
+**Depends on:** Tasks 42 and 43
+**Status:** Pending
+
+**Outcome:** Complete issue #54 by applying shared canonical-location and sanitization primitives to
+widget metadata, referrers, element attachments, backend defense in depth, downstream projections,
+existing data remediation, and retention.
+
+**Acceptance:** PII/secrets in URL credentials, query/hash/path context, referrers, DOM text and
+attributes, CSS URLs, logs, AI, integrations, exports, storage, APIs, and backoffice rendering fail
+closed under sentinel unit/integration/browser coverage.
 
 **Autonomy:** AFK
