@@ -27,7 +27,7 @@ func TestValidateSubmissionAcceptsEnabledGrowthFeatures(t *testing.T) {
 		WidgetRuleID:     "1341b36b-d02c-4398-ab29-ca935e73539a",
 		Rating:           intPointer(5), Text: &text,
 		Element: &ElementAttachmentInput{
-			Selector: "#checkout", HTML: "<section>Checkout</section>",
+			Selector: "section", HTML: "<section></section>",
 			Styles: map[string]string{"display": "grid"},
 		},
 		Attachments: []AttachmentInput{{

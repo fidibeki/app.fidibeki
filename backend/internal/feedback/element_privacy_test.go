@@ -8,30 +8,14 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
-func TestSanitizeElementAttachmentRemovesSourceContentAndAttributes(t *testing.T) {
+func TestSanitizeElementAttachmentAcceptsOnlyCanonicalStructure(t *testing.T) {
 	t.Parallel()
 	input := ElementAttachmentInput{
-		Selector: `#account-48291.customer-jane[data-email="jane.private@example.test"]`,
-		HTML: `<section id="account-48291" class="customer-jane"
-			data-email="jane.private@example.test" aria-label="Jane Private"
-			title="reset-token-SECRET" onclick="fetch('/private')">
-			Jane Private jane.private@example.test
-			<!-- bearer SECRET_COMMENT -->
-			<script>window.secret = "SECRET_SCRIPT"</script>
-			<div><span>Account 48291</span>
-				<input name="email" value="jane.private@example.test">
-				<img src="https://private.example/avatar/jane.png" alt="Jane Private">
-				<a href="https://private.example/reset?token=SECRET_LINK">Reset</a>
-			</div>
-			<ul><li data-token="SECRET_DATA">Private item</li></ul>
-		</section>`,
+		Selector: `main > section:nth-of-type(2)`,
+		HTML:     `<section><div><span></span></div><ul><li></li></ul></section>`,
 		Styles: map[string]string{
-			"display":          "block",
-			"position":         "relative",
-			"color":            "rgb(18, 52, 86)",
-			"background-color": "url(https://private.example/avatar.png)",
-			"font-family":      `"Jane Private"`,
-			"width":            "640px",
+			"display": "block", "position": "relative",
+			"color": "rgb(18, 52, 86)", "width": "640px",
 		},
 	}
 
@@ -45,14 +29,31 @@ func TestSanitizeElementAttachmentRemovesSourceContentAndAttributes(t *testing.T
 	if styles != `{"color":"rgb(18, 52, 86)","display":"block","position":"relative","width":"640px"}` {
 		t.Errorf("sanitized styles = %q", styles)
 	}
-	serialized := html + styles
-	for _, sentinel := range []string{
-		"Jane", "jane.private", "48291", "SECRET", "private.example",
-		"onclick", "data-", "aria-", "title=", "href=", "src=", "class=", "id=",
-	} {
-		if strings.Contains(serialized, sentinel) {
-			t.Errorf("sanitized element contains sentinel %q: %s", sentinel, serialized)
-		}
+}
+
+func TestSanitizeElementAttachmentRejectsNonCanonicalSourceValues(t *testing.T) {
+	t.Parallel()
+	input := ElementAttachmentInput{
+		Selector: `#account-48291.customer-jane[data-email="jane.private@example.test"]`,
+		HTML: `<section id="account-48291" class="customer-jane"
+			data-email="jane.private@example.test" aria-label="Jane Private"
+			title="reset-token-SECRET" onclick="fetch('/private')">
+			Jane Private jane.private@example.test
+			<div><span>Account 48291</span></div>
+		</section>`,
+		Styles: map[string]string{"display": "block"},
+	}
+	if _, _, ok := sanitizeElementAttachment(input); ok {
+		t.Fatal("non-canonical selector and source DOM were accepted")
+	}
+	input.Selector = "main > section"
+	if _, _, ok := sanitizeElementAttachment(input); ok {
+		t.Fatal("source DOM carrying private values was accepted")
+	}
+	input.HTML = `<section><div><span></span></div></section>`
+	input.Styles["background-image"] = "url(https://private.example/avatar.png)"
+	if _, _, ok := sanitizeElementAttachment(input); ok {
+		t.Fatal("unexpected or unsafe style was silently retained")
 	}
 }
 
@@ -91,8 +92,8 @@ func TestSanitizeElementAttachmentFailsClosedAtStructuralBounds(t *testing.T) {
 
 	if _, _, ok := sanitizeElementAttachment(ElementAttachmentInput{
 		Selector: "div", HTML: `<div><span>`,
-	}); !ok {
-		t.Fatal("safely parseable legacy fragment should be reduced")
+	}); ok {
+		t.Fatal("non-canonical legacy fragment was accepted")
 	}
 }
 

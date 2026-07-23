@@ -66,10 +66,13 @@ var (
 			`(?:\s+-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|%|em|rem|vh|vw)?){0,3}$`,
 	)
 	elementStyleNumberPattern = regexp.MustCompile(`-?(?:\d+(?:\.\d+)?|\.\d+)`)
+	elementSelectorSegment    = regexp.MustCompile(
+		`^([a-z][a-z0-9]*)(?::nth-of-type\(([1-9][0-9]{0,2})\))?$`,
+	)
 )
 
 func sanitizeElementAttachment(input ElementAttachmentInput) (string, string, bool) {
-	if strings.TrimSpace(input.Selector) == "" || len(input.Selector) > 2000 ||
+	if !validCanonicalElementSelector(input.Selector) ||
 		len(input.HTML) == 0 || len(input.HTML) > maxElementHTMLBytes {
 		return "", "", false
 	}
@@ -104,21 +107,52 @@ func sanitizeElementAttachment(input ElementAttachmentInput) (string, string, bo
 	if err := html.Render(&rendered, sanitized); err != nil {
 		return "", "", false
 	}
+	if strings.TrimSpace(input.HTML) != rendered.String() {
+		return "", "", false
+	}
 	styles := make(map[string]string)
 	for property, inputValue := range input.Styles {
 		property = strings.ToLower(strings.TrimSpace(property))
 		if _, allowed := allowedElementStyleProperties[property]; !allowed {
-			continue
+			return "", "", false
 		}
-		if value, ok := sanitizeElementStyleValue(inputValue); ok && value != "" {
-			styles[property] = value
+		value, ok := sanitizeElementStyleValue(inputValue)
+		if !ok || value == "" || value != strings.ToLower(strings.TrimSpace(inputValue)) {
+			return "", "", false
 		}
+		styles[property] = value
 	}
 	encodedStyles, err := json.Marshal(styles)
 	if err != nil {
 		return "", "", false
 	}
 	return rendered.String(), string(encodedStyles), true
+}
+
+func validCanonicalElementSelector(input string) bool {
+	if input == "" || len(input) > 200 {
+		return false
+	}
+	segments := strings.Split(input, " > ")
+	if len(segments) == 0 || len(segments) > 6 {
+		return false
+	}
+	for _, segment := range segments {
+		matches := elementSelectorSegment.FindStringSubmatch(segment)
+		if matches == nil {
+			return false
+		}
+		if _, allowed := allowedElementTags[matches[1]]; !allowed {
+			return false
+		}
+		if matches[2] != "" {
+			position, err := strconv.Atoi(matches[2])
+			if err != nil || position > maximumElementNodes {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 type elementSanitizerState struct {
