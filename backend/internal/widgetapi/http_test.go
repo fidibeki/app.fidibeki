@@ -44,7 +44,7 @@ func TestOriginAllowedUsesExactAndLeadingWildcardMatches(t *testing.T) {
 	}
 }
 
-func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
+func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 	t.Parallel()
 	delay := 3
 	recurrenceDays := 30
@@ -54,6 +54,7 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
 		Rules: []project.WidgetRule{{
 			ID: "rule-id", Name: "All pages", Priority: 5, MatcherType: project.MatcherAllPages,
+			Enabled: true,
 			IncludeConditions: []project.WidgetRuleTargetCondition{{
 				ID: "condition-include", MatcherType: project.MatcherAllPages, Position: 0,
 			}},
@@ -75,6 +76,9 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 				"pt-ao": {LauncherLabel: "Opinião", Prompt: "Como correu?"},
 			},
 			AllowComment: true, CollectContact: true,
+		}, {
+			ID: "paused-rule-id", Name: "Paused", MatcherType: project.MatcherAllPages,
+			DefinitionKey: "paused-feedback", DefinitionStatus: project.DefinitionPaused,
 		}},
 	}}
 	handler := NewHTTPHandler(HTTPOptions{Store: store, Now: func() time.Time { return now }})
@@ -99,7 +103,7 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		`"definition_key":"checkout-feedback"`, `"definition_version":3`,
 		`"presentation":"launcher"`, `"objective":"continuous_feedback"`,
 		`"response_blocks":[{"key":"rating"`, `"collect_contact":true`,
-		`"definitions":[{"id":"rule-id"`,
+		`"definitions":[{"id":"rule-id"`, `"id":"paused-rule-id"`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
@@ -107,6 +111,9 @@ func TestConfigurationReturnsEnabledRulesAndPlanFeatures(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)
 		}
+	}
+	if strings.Contains(strings.Split(recorder.Body.String(), `"definitions"`)[0], `"id":"paused-rule-id"`) {
+		t.Errorf("inactive definition leaked into compatibility rules: %s", recorder.Body.String())
 	}
 	if store.publicKey != "pk_live_key" {
 		t.Errorf("loaded key = %q", store.publicKey)
@@ -172,6 +179,7 @@ func TestConnectionRecordsActivityOnlyForEnabledConfigurationRule(t *testing.T) 
 		{name: "missing rule ID"},
 		{name: "unknown rule ID", ruleID: "other-rule"},
 		{name: "enabled configuration rule", ruleID: "rule-id", wantMark: true},
+		{name: "paused configuration rule", ruleID: "paused-rule"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,7 +187,10 @@ func TestConnectionRecordsActivityOnlyForEnabledConfigurationRule(t *testing.T) 
 			store := &configurationStoreStub{configuration: project.PublicConfiguration{
 				ProjectID: "project-id", AllowedDomains: []string{"example.com"},
 				Plan: tenant.PlanStarter, Status: tenant.StatusActive,
-				Rules: []project.WidgetRule{{ID: "rule-id", MatcherType: project.MatcherAllPages}},
+				Rules: []project.WidgetRule{
+					{ID: "rule-id", Enabled: true, DefinitionStatus: project.DefinitionActive, MatcherType: project.MatcherAllPages},
+					{ID: "paused-rule", DefinitionStatus: project.DefinitionPaused, MatcherType: project.MatcherAllPages},
+				},
 			}}
 			path := "/v1/widget/connected?key=pk_live_key"
 			if tt.ruleID != "" {
@@ -407,7 +418,10 @@ func activeStore() *configurationStoreStub {
 	return &configurationStoreStub{configuration: project.PublicConfiguration{
 		ProjectID: "project-id", AllowedDomains: []string{"example.com"},
 		Plan: tenant.PlanStarter, Status: tenant.StatusActive,
-		Rules: []project.WidgetRule{{ID: "rule-id", MatcherType: project.MatcherAllPages}},
+		Rules: []project.WidgetRule{{
+			ID: "rule-id", Enabled: true, DefinitionStatus: project.DefinitionActive,
+			MatcherType: project.MatcherAllPages,
+		}},
 	}}
 }
 

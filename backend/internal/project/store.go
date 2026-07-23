@@ -365,7 +365,7 @@ func (Store) LoadPublicConfiguration(
 	rows, err := query.Query(ctx, `
 		SELECT `+prefixedWidgetRuleColumns("rule")+`
 		FROM widget_rules AS rule
-		WHERE rule.project_id = $1 AND rule.enabled = true AND rule.definition_status = 'active'
+		WHERE rule.project_id = $1
 		ORDER BY rule.priority DESC, rule.created_at, rule.id
 	`, configuration.ProjectID)
 	if err != nil {

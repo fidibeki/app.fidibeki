@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   Check,
   Clipboard,
@@ -46,6 +47,7 @@ const copied = ref(false)
 const editingLocale = ref('en')
 const newLocale = ref('')
 const showTargetingErrors = ref(false)
+const showArchivedRules = ref(false)
 const targetingState = ref<TargetingFormState>({ mode: null, includes: [], excludes: [] })
 
 const ruleForm = reactive<WidgetRuleInput>(defaultWidgetRule())
@@ -73,13 +75,16 @@ watch(data, (value) => {
     ? 'inherit'
     : value.project.reporter_access_enabled ? 'enabled' : 'disabled'
   if (!editingNew.value) {
-    const selected = value.rules.find((rule) => rule.id === selectedRuleID.value) || value.rules[0]
+    const selected = value.rules.find((rule) => rule.id === selectedRuleID.value)
+      || value.rules.find((rule) => rule.definition_status !== 'archived')
     if (selected) selectRule(selected)
     else startNewRule()
   }
 }, { immediate: true })
 
 const selectedRule = computed(() => data.value?.rules.find((rule) => rule.id === selectedRuleID.value))
+const visibleRules = computed(() => (data.value?.rules || []).filter(rule =>
+  showArchivedRules.value || rule.definition_status !== 'archived'))
 const supportsAudio = computed(() => tenant.value?.plan !== 'starter')
 const supportsDOM = computed(() => tenant.value?.plan !== 'starter')
 const supportsReplay = computed(() => tenant.value?.plan !== 'starter')
@@ -100,7 +105,8 @@ function selectRule(rule: WidgetRule) {
   const localized = localizations[locale] || fallbackLocalization(rule.greeting || 'How was your experience?')
   localizations[locale] = localized
   Object.assign(ruleForm, {
-    name: rule.name, priority: rule.priority, enabled: rule.enabled,
+    name: rule.name, priority: rule.priority,
+    enabled: (rule.definition_status || (rule.enabled ? 'active' : 'paused')) === 'active',
     matcher_type: rule.matcher_type, matcher_value: rule.matcher_value ?? null,
     trigger_type: rule.trigger_type, trigger_delay_seconds: rule.trigger_delay_seconds ?? null,
     trigger_scroll_percent: rule.trigger_scroll_percent ?? null, can_rate: rule.can_rate,
@@ -144,6 +150,7 @@ function normalizedRule(): WidgetRuleInput {
   const responseBlocks = synchronizedResponseBlocks(ruleForm)
   return {
     ...ruleForm,
+    enabled: ruleForm.definition_status === 'active',
     ...buildTargetingPayload(targetingState.value),
     trigger_delay_seconds: ruleForm.trigger_type === 'delay' ? Number(ruleForm.trigger_delay_seconds || 0) : null,
     trigger_scroll_percent: ruleForm.trigger_type === 'scroll' ? Number(ruleForm.trigger_scroll_percent || 1) : null,
@@ -153,9 +160,7 @@ function normalizedRule(): WidgetRuleInput {
     replay_mask_text_selector: ruleForm.replay_mask_text_selector?.trim() || null,
     recurrence_days: ruleForm.recurrence_mode === 'cooldown' ? Number(ruleForm.recurrence_days || 30) : null,
     definition_key: ruleForm.definition_key.trim().toLowerCase(),
-    definition_status: ruleForm.enabled
-      ? 'active'
-      : ['draft', 'archived'].includes(ruleForm.definition_status) ? ruleForm.definition_status : 'paused',
+    definition_status: ruleForm.definition_status,
     response_blocks: responseBlocks,
     localizations: { ...ruleForm.localizations, [locale]: localized },
   }
@@ -395,9 +400,9 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
       <p v-if="formError" class="project-config-error" role="alert"><AlertTriangle :size="15" /> {{ formError }}</p>
       <div class="project-config-grid">
         <aside class="project-rule-list">
-          <header><span>Widget rules</span><button v-if="canWrite('widget_rule:create')" title="New widget rule" @click="startNewRule"><Plus :size="16" /></button></header>
-          <button v-for="rule in data.rules" :key="rule.id" :data-active="rule.id === selectedRuleID" @click="selectRule(rule)"><span :data-enabled="rule.enabled" /><p><b>{{ rule.name }}</b><small>{{ rule.matcher_type.replaceAll('_', ' ') }} · priority {{ rule.priority }}</small></p></button>
-          <p v-if="!data.rules.length" class="project-rule-empty">No rules configured.</p>
+          <header><span>Widget rules</span><div><button v-if="data.rules.some(rule => rule.definition_status === 'archived')" :title="showArchivedRules ? 'Hide archived rules' : 'Show archived rules'" :aria-pressed="showArchivedRules" @click="showArchivedRules = !showArchivedRules"><Archive :size="15" /></button><button v-if="canWrite('widget_rule:create')" title="New widget rule" @click="startNewRule"><Plus :size="16" /></button></div></header>
+          <button v-for="rule in visibleRules" :key="rule.id" :data-active="rule.id === selectedRuleID" @click="selectRule(rule)"><span :data-status="rule.definition_status || (rule.enabled ? 'active' : 'paused')" /><p><b>{{ rule.name }}</b><small>{{ rule.definition_status || (rule.enabled ? 'active' : 'paused') }} · {{ rule.matcher_type.replaceAll('_', ' ') }} · priority {{ rule.priority }}</small></p></button>
+          <p v-if="!visibleRules.length" class="project-rule-empty">No rules configured.</p>
           <nav><a href="#project-settings"><Settings2 :size="14" /> Project settings</a></nav>
         </aside>
 
@@ -405,7 +410,7 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
           <header><div><p class="app-eyebrow">{{ editingNew ? 'New rule' : 'Editing rule' }}</p><h2>{{ ruleForm.name || 'Untitled rule' }}</h2></div><div><button v-if="selectedRule && canWrite('widget_rule:delete')" class="app-button project-delete-button" :disabled="pending" title="Delete rule" aria-label="Delete rule" @click="deleteRule"><Trash2 :size="14" /></button><button class="app-button app-button--primary" type="submit" form="widget-rule-form" :disabled="pending || !(editingNew ? canWrite('widget_rule:create') : canWrite('widget_rule:update'))"><Save :size="14" /> {{ pending ? 'Saving…' : 'Save rule' }}</button></div></header>
           <form id="widget-rule-form" @submit.prevent="saveRule">
             <fieldset :disabled="!workspaceWritable">
-            <section><h3>Rule identity</h3><div class="project-form-grid"><label>Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Definition key<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>Presentation<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">Launcher</option><option value="inline">Inline</option><option value="reaction">Reaction</option><option value="prompt">Prompt</option></select></label><label>Objective<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">Continuous feedback</option><option value="after_engagement">After engagement</option><option value="validate_content">Validate content</option><option value="detect_friction">Detect friction</option></select></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label><label class="project-toggle"><input v-model="ruleForm.enabled" type="checkbox" /><span>Active</span></label></div></section>
+            <section><h3>Rule identity</h3><div class="project-form-grid"><label>Name<input v-model.trim="ruleForm.name" class="app-input" required maxlength="120" /></label><label>Definition key<input v-model.trim="ruleForm.definition_key" class="app-input" required maxlength="64" pattern="[a-z][a-z0-9-]{1,62}[a-z0-9]" /></label><label>Lifecycle status<select v-model="ruleForm.definition_status" class="app-select"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="archived">Archived</option></select></label><label>Presentation<select v-model="ruleForm.presentation" class="app-select"><option value="launcher">Launcher</option><option value="inline">Inline</option><option value="reaction">Reaction</option><option value="prompt">Prompt</option></select></label><label>Objective<select v-model="ruleForm.objective" class="app-select"><option value="continuous_feedback">Continuous feedback</option><option value="after_engagement">After engagement</option><option value="validate_content">Validate content</option><option value="detect_friction">Detect friction</option></select></label><label>Priority<input v-model.number="ruleForm.priority" class="app-input" type="number" /></label></div></section>
             <section><h3>Page matching</h3><WidgetTargetingEditor v-model="targetingState" :show-errors="showTargetingErrors" /></section>
             <section><h3>Trigger</h3><div class="project-form-grid"><label>Trigger type<select v-model="ruleForm.trigger_type" class="app-select"><option value="delay">Delay</option><option value="scroll">Scroll depth</option><option value="exit_intent">Exit intent</option></select></label><label v-if="ruleForm.trigger_type === 'delay'">Delay seconds<input v-model.number="ruleForm.trigger_delay_seconds" class="app-input" type="number" min="0" max="86400" /></label><label v-if="ruleForm.trigger_type === 'scroll'">Scroll percent<input v-model.number="ruleForm.trigger_scroll_percent" class="app-input" type="number" min="1" max="100" /></label></div></section>
             <section><h3>Recurrence</h3><div class="project-form-grid"><label>Show again<select v-model="ruleForm.recurrence_mode" class="app-select"><option value="cooldown">After a period</option><option value="session">Next browser session</option><option value="never">Never show again</option></select></label><label v-if="ruleForm.recurrence_mode === 'cooldown'">Cooldown days<input v-model.number="ruleForm.recurrence_days" class="app-input" type="number" min="1" max="3650" required /></label></div></section>
@@ -450,12 +455,16 @@ useHead(() => ({ title: `${data.value?.project.name || 'Project'} · Fidibeki` }
 .project-config-grid { display: grid; min-height: 720px; grid-template-columns: 210px minmax(480px, 1fr) minmax(300px, 34%); border-bottom: 1px solid var(--line); }
 .project-rule-list { background: #fafbfa; border-right: 1px solid var(--line); }
 .project-rule-list > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 0 10px 0 14px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.project-rule-list > header > div { display: flex; gap: 2px; }
 .project-rule-list > header button { display: grid; width: 30px; height: 30px; place-items: center; background: transparent; border: 0; border-radius: 4px; }
+.project-rule-list > header button[aria-pressed='true'] { background: #eaf3f0; color: var(--teal); }
 .project-rule-list > button { display: grid; width: 100%; min-height: 56px; grid-template-columns: 8px minmax(0, 1fr); align-items: center; gap: 9px; padding: 7px 12px; background: transparent; color: var(--ink-soft); border: 0; border-bottom: 1px solid var(--line); text-align: left; }
 .project-rule-list > button:hover,
 .project-rule-list > button[data-active='true'] { background: #eaf3f0; }
 .project-rule-list > button > span { width: 7px; height: 7px; background: var(--line-strong); border-radius: 50%; }
-.project-rule-list > button > span[data-enabled='true'] { background: var(--green); }
+.project-rule-list > button > span[data-status='active'] { background: var(--green); }
+.project-rule-list > button > span[data-status='draft'] { background: var(--amber); }
+.project-rule-list > button > span[data-status='archived'] { background: var(--muted); }
 .project-rule-list button p { display: flex; min-width: 0; flex-direction: column; gap: 3px; margin: 0; }
 .project-rule-list button b,
 .project-rule-list button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -392,6 +392,18 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		t.Errorf("inherit reporter access status = %d, body = %s",
 			inheritedReporterAccess.Code, inheritedReporterAccess.Body.String())
 	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET enabled = false, definition_status = 'paused' WHERE id = $1
+	`, createdRule.WidgetRule.ID); err != nil {
+		t.Fatalf("pause widget definition: %v", err)
+	}
+	publicConfiguration, err = (Store{}).LoadPublicConfiguration(ctx, pools.Admin, created.Project.PublicKey)
+	if err != nil {
+		t.Fatalf("load public configuration with paused definition: %v", err)
+	}
+	if len(publicConfiguration.Rules) != 1 || publicConfiguration.Rules[0].DefinitionStatus != DefinitionPaused {
+		t.Errorf("paused public definition = %#v", publicConfiguration.Rules)
+	}
 	deleteRule := performProjectRequest(
 		handler, "acme", http.MethodDelete,
 		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID, "", ownerToken,

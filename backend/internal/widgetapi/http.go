@@ -145,16 +145,21 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 		return
 	}
-	rules := make([]PublicWidgetRule, len(configuration.Rules))
-	for index, rule := range configuration.Rules {
-		rules[index] = publicWidgetRule(rule)
+	definitions := make([]PublicWidgetRule, 0, len(configuration.Rules))
+	rules := make([]PublicWidgetRule, 0, len(configuration.Rules))
+	for _, rule := range configuration.Rules {
+		publicRule := publicWidgetRule(rule)
+		definitions = append(definitions, publicRule)
+		if definitionIsActive(rule) {
+			rules = append(rules, publicRule)
+		}
 	}
 	SetCORSHeaders(w, origin)
 	w.Header().Set("Cache-Control", "no-store")
 	api.WriteJSON(w, http.StatusOK, ConfigurationResponse{
 		SchemaVersion: 2, ProjectID: configuration.ProjectID,
 		DefaultLocale: configuration.DefaultLocale, Features: definition.Features,
-		Rules: rules, Definitions: rules, RefreshAfterSeconds: 300,
+		Rules: rules, Definitions: definitions, RefreshAfterSeconds: 300,
 		ErrorReportingDSN: h.options.SentryDSN,
 	})
 }
@@ -195,11 +200,15 @@ func configurationHasRule(configuration project.PublicConfiguration, ruleID stri
 		return false
 	}
 	for _, rule := range configuration.Rules {
-		if rule.ID == ruleID {
+		if rule.ID == ruleID && definitionIsActive(rule) {
 			return true
 		}
 	}
 	return false
+}
+
+func definitionIsActive(rule project.WidgetRule) bool {
+	return (rule.DefinitionStatus == "" || rule.DefinitionStatus == project.DefinitionActive) && rule.Enabled
 }
 
 func (h *HTTPHandler) authorize(

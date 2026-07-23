@@ -1256,6 +1256,30 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
 })
 
+test('widget lifecycle exposes every status and hides archived rules by default', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Lifecycle editing is viewport independent')
+  const state = createMockState()
+  Object.assign(state.widgetRules[0], { definition_status: 'active', definition_key: 'checkout-pulse' })
+  state.widgetRules.push({
+    ...state.widgetRules[0], id: 'rule-archived', name: 'Legacy survey', enabled: false,
+    definition_status: 'archived', definition_key: 'legacy-survey',
+  } as typeof state.widgetRules[number])
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await expect(page.getByRole('button', { name: /Legacy survey/ })).toHaveCount(0)
+  await page.getByTitle('Show archived rules').click()
+  await page.getByRole('button', { name: /Legacy survey/ }).click()
+  await expect(page.getByLabel('Lifecycle status')).toHaveValue('archived')
+  await capture(page, testInfo, 'widget-lifecycle')
+
+  await page.getByLabel('Lifecycle status').selectOption('paused')
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[1]).toMatchObject({ definition_status: 'paused', enabled: false })
+})
+
 test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)
@@ -1331,6 +1355,7 @@ test('new widget rules require an explicit targeting choice', async ({ page }, t
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
 
   await page.getByTitle('New widget rule').click()
+  await expect(page.getByLabel('Lifecycle status')).toHaveValue('draft')
   await expect(page.getByRole('radio', { name: 'All pages' })).toHaveAttribute('aria-checked', 'false')
   await expect(page.getByRole('radio', { name: 'Specific pages' })).toHaveAttribute('aria-checked', 'false')
   await page.getByRole('button', { name: 'Save rule' }).click()

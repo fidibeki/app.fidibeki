@@ -4,7 +4,7 @@ import { defaultWidgetRule, widgetEmbedCode } from '../../utils/widget-setup'
 describe('widget setup helpers', () => {
   it('creates a valid conservative first rule', () => {
     expect(defaultWidgetRule()).toMatchObject({
-      enabled: true,
+      enabled: false,
       matcher_type: 'all_pages',
       trigger_type: 'delay',
       trigger_delay_seconds: 0,
@@ -15,7 +15,7 @@ describe('widget setup helpers', () => {
       replay_mode: 'none',
       recurrence_mode: 'cooldown',
       recurrence_days: 30,
-      definition_status: 'active',
+      definition_status: 'draft',
       presentation: 'launcher',
       objective: 'continuous_feedback',
       response_blocks: [

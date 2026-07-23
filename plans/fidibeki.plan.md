@@ -164,15 +164,31 @@ was removed from the staging test tenant.
 
 #### Phase 3: Widget Platform
 
-- [ ] Re-audit the shared runtime and configuration hierarchy before adding breadth.
+- [x] Re-audit the shared runtime and configuration hierarchy before adding breadth.
+  - Preserve: exact/prefix/regex include/exclude targeting and its URL tester, safe RE2 validation,
+    durable per-page recurrence state, query/hash-independent canonical paths, trailing-slash
+    normalization, all four presentation modes, localization/default locale, preview, and the
+    existing definition status/objective contracts.
+  - Partial: lifecycle exists in storage/runtime but public configuration currently removes inactive
+    definitions before an explicit mount can distinguish `inactive` from `not_found`; the
+    backoffice reduces lifecycle to one Active checkbox and mixes archived definitions into the
+    primary list. Appearance has position/theme/accent and localized copy, but no controlled
+    surface/text/logo hierarchy. Objectives are labels only, and diagnostics stop at last-connected.
+  - Implementation path: close the lifecycle contract first; then add controlled inherited
+    appearance; then deterministic objective policies; finally expose faithful preview, decision
+    reasons, and installation diagnostics without replacing the targeting/runtime foundations.
 - [ ] Add controlled colors, logo, localized copy, language defaults, position, and presentation
   configuration without arbitrary CSS, DOM injection, or a general form builder.
 - [ ] Add deterministic objective policies for continuous feedback, after engagement, content
   validation, and friction detection using only non-personal public/browser signals. Apply stricter
   confidence and cooldown rules to more interruptive presentations.
-- [ ] Add `draft`, `active`, `paused`, and `archived` lifecycle behavior while preserving historical
+- [x] Add `draft`, `active`, `paused`, and `archived` lifecycle behavior while preserving historical
   Feedback, analytics, and configuration; paused/archived widgets must neither render nor record
   impressions.
+  - Public `rules` remains the active-only compatibility projection while `definitions` now includes
+    inactive definitions so explicit mounts return `inactive` rather than `not_found`. Connection
+    telemetry rejects inactive definitions. The editor exposes all four states, starts new rules as
+    drafts, and hides archived definitions by default without deleting their history.
 - [ ] Complete backoffice preview, URL testing, decision explanation, and installation diagnostics.
 
 #### Post-roadmap issue sweep
