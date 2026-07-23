@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "contracts/**"
       - "web/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -11,6 +12,7 @@ on:
       - ".github/workflows/web-ci.yml"
   pull_request:
     paths:
+      - "contracts/**"
       - "web/**"
       - "package.json"
       - "pnpm-lock.yaml"

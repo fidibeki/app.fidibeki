@@ -7,6 +7,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY widget/package.json widget/package.json
 RUN pnpm install --frozen-lockfile --filter @fidibeki/widget...
 
+COPY contracts contracts
 COPY widget widget
 RUN pnpm --filter @fidibeki/widget build
 
