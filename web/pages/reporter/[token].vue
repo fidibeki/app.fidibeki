@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2, Clock3, MessageSquareText, Send } from '@lucide/vue'
 import type { ReporterProgress } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
+import { issueStatusKey } from '~/utils/issue-activity'
 
 definePageMeta({ layout: false })
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime } = useRegionalFormat()
 const token = computed(() => String(route.params.token || ''))
 const response = ref('')
 const sending = ref(false)
@@ -17,7 +19,7 @@ const responseAccepted = ref(false)
 const { data, status, error, refresh } = await useAsyncData(
   () => `reporter-progress:${token.value}`,
   () => $apiFetch<{ progress: ReporterProgress }>(`/v1/reporter/progress/${encodeURIComponent(token.value)}`),
-  { watch: [token] },
+  { watch: [token], server: !import.meta.dev },
 )
 
 const progress = computed(() => data.value?.progress)
@@ -25,7 +27,8 @@ const canRespond = computed(() => progress.value?.status === 'needs_info' &&
   Boolean(progress.value.clarification) && !progress.value.clarification?.responded && !responseAccepted.value)
 
 function statusLabel(value: string) {
-  return value.replaceAll('_', ' ')
+  const key = issueStatusKey(value)
+  return key ? t(key) : value
 }
 
 async function submitResponse() {
@@ -41,51 +44,53 @@ async function submitResponse() {
     response.value = ''
     await refresh()
   } catch (submitError) {
-    responseError.value = apiErrorMessage(submitError, 'Your response could not be sent.')
+    responseError.value = apiErrorMessage(submitError, 'reporter.responseFailed')
   } finally {
     sending.value = false
   }
 }
 
 useHead(() => ({
-  title: progress.value ? `${progress.value.public_id} progress - Fidibeki` : 'Issue progress - Fidibeki',
+  title: progress.value
+    ? t('reporter.pageTitle', { publicId: progress.value.public_id })
+    : t('reporter.pageTitleFallback'),
   meta: [{ name: 'robots', content: 'noindex,nofollow' }],
 }))
 </script>
 
 <template>
   <div class="reporter-page">
-    <header class="reporter-brand"><span>F</span><b>Fidibeki</b></header>
+    <header class="reporter-brand"><span>F</span><b>{{ t('reporter.brand') }}</b></header>
     <main>
-      <section v-if="status === 'pending'" class="reporter-state" aria-live="polite"><span class="reporter-spinner" /><h1>Loading progress</h1></section>
-      <section v-else-if="error || !progress" class="reporter-state"><AlertTriangle :size="28" /><h1>Progress unavailable</h1><p>This link is invalid, expired, or no longer available.</p></section>
+      <section v-if="status === 'pending'" class="reporter-state" aria-live="polite"><span class="reporter-spinner" /><h1>{{ t('reporter.loading') }}</h1></section>
+      <section v-else-if="error || !progress" class="reporter-state" role="alert"><AlertTriangle :size="28" /><h1>{{ t('reporter.unavailable') }}</h1><p>{{ t('reporter.unavailableDescription') }}</p></section>
       <template v-else>
         <header class="reporter-heading">
-          <div><p>{{ progress.public_id }}</p><h1>{{ progress.title }}</h1><span>Reported {{ formatDateTime(progress.created_at) }}</span></div>
+          <div><p>{{ progress.public_id }}</p><h1>{{ progress.title }}</h1><span>{{ t('reporter.reportedOn', { date: dateTime(progress.created_at) }) }}</span></div>
           <span class="status-pill" :class="`status-${progress.status}`">{{ statusLabel(progress.status) }}</span>
         </header>
 
         <section v-if="progress.clarification" class="reporter-clarification">
-          <header><MessageSquareText :size="18" /><div><h2>Question from the team</h2><p>{{ progress.clarification.prompt }}</p></div></header>
+          <header><MessageSquareText :size="18" /><div><h2>{{ t('reporter.clarificationTitle') }}</h2><p>{{ progress.clarification.prompt }}</p></div></header>
           <form v-if="canRespond" @submit.prevent="submitResponse">
-            <label for="reporter-response">Your response</label>
+            <label for="reporter-response">{{ t('reporter.responseLabel') }}</label>
             <textarea id="reporter-response" v-model="response" maxlength="5000" required autofocus />
             <p v-if="responseError" role="alert">{{ responseError }}</p>
-            <button type="submit" :disabled="sending || !response.trim()"><Send :size="15" />{{ sending ? 'Sending...' : 'Send response' }}</button>
+            <button type="submit" :disabled="sending || !response.trim()"><Send :size="15" />{{ sending ? t('reporter.sending') : t('reporter.send') }}</button>
           </form>
-          <div v-else class="reporter-answered"><CheckCircle2 :size="17" /><span>{{ responseAccepted ? 'Response sent.' : 'Response received.' }}</span></div>
+          <div v-else class="reporter-answered"><CheckCircle2 :size="17" /><span>{{ responseAccepted ? t('reporter.responseSentNotice') : t('reporter.responseReceivedNotice') }}</span></div>
         </section>
 
         <section class="reporter-timeline">
-          <header><Clock3 :size="17" /><h2>Progress</h2></header>
+          <header><Clock3 :size="17" /><h2>{{ t('reporter.timelineTitle') }}</h2></header>
           <ol>
-            <li><span /><div><b>Feedback received</b><time>{{ formatDateTime(progress.created_at) }}</time></div></li>
-            <li v-for="(event, index) in progress.events" :key="`${event.created_at}-${index}`"><span /><div><b>Status changed to {{ statusLabel(event.to_status) }}</b><time>{{ formatDateTime(event.created_at) }}</time></div></li>
+            <li><span /><div><b>{{ t('reporter.feedbackReceived') }}</b><time :datetime="progress.created_at">{{ dateTime(progress.created_at) }}</time></div></li>
+            <li v-for="(event, index) in progress.events" :key="`${event.created_at}-${index}`"><span /><div><b>{{ t('reporter.statusChanged', { status: statusLabel(event.to_status) }) }}</b><time :datetime="event.created_at">{{ dateTime(event.created_at) }}</time></div></li>
           </ol>
         </section>
       </template>
     </main>
-    <footer>Progress shared securely by Fidibeki</footer>
+    <footer>{{ t('reporter.footer') }}</footer>
   </div>
 </template>
 

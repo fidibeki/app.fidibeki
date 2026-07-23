@@ -2780,7 +2780,7 @@ test('issue requests reporter clarification and controls progress access', async
 
   expect(state.issues[0].status).toBe('needs_info')
   expect(state.lastReporterMessage).toBe('Which promotion code did you use?')
-  await expect(page.locator('.issue-detail-heading .status-pill')).toHaveText('needs info')
+  await expect(page.locator('.issue-detail-heading .status-pill')).toHaveText('Needs info')
 
   await page.getByRole('button', { name: 'Revoke progress access' }).click()
   expect(state.issues[0].reporter_access_revoked_at).toBe(now)

@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { AlertTriangle, ChevronRight, CircleDot, LayoutList, Search } from '@lucide/vue'
 import type { Issue, IssueStatus, Project } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
+import { issueStatusKey, triagePriorityKey } from '~/utils/issue-activity'
 
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite } = useAuth()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { integer, list, plural } = useRegionalFormat()
+const issueStatuses: IssueStatus[] = ['open', 'in_progress', 'needs_info', 'resolved', 'closed']
 const search = ref('')
 const statusFilter = ref('')
 const projectFilter = ref('')
@@ -39,52 +43,64 @@ async function changeStatus(issue: Issue, nextStatus: IssueStatus) {
     await $apiFetch(`/v1/issues/${issue.id}`, { method: 'PATCH', body: { status: nextStatus } })
     await refresh()
   } catch (updateError) {
-    mutationError.value = apiErrorMessage(updateError, 'Issue status could not be updated.')
+    mutationError.value = apiErrorMessage(updateError, 'issues.statusUpdateFailed')
   } finally {
     updatingID.value = ''
   }
 }
 
 function formatAge(value: string) {
-  const days = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 86_400_000)
-  return days < 1 ? 'Today' : days === 1 ? '1 day' : `${days} days`
+  const timestamp = new Date(value).getTime()
+  if (Number.isNaN(timestamp)) return '—'
+  const days = Math.floor(Math.max(0, Date.now() - timestamp) / 86_400_000)
+  return days < 1 ? t('issues.ageToday') : plural('issues.ageDays', days)
+}
+
+function statusOptions(issue: Issue) {
+  return issueStatuses.filter(value => value !== 'needs_info' || issue.status === 'needs_info')
+}
+
+function statusLabel(status: IssueStatus) {
+  const key = issueStatusKey(status)
+  return key ? t(key) : status
 }
 
 function priorityLabel(issue: Issue) {
-  return issue.priority ? issue.priority[0].toUpperCase() + issue.priority.slice(1) : ''
+  const key = triagePriorityKey(issue.priority)
+  return key ? t(key) : issue.priority || ''
 }
 
-useHead({ title: 'Issues · Fidibeki' })
+useHead(() => ({ title: t('issues.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page issues-page">
-    <header class="app-page-head"><div><p class="app-eyebrow">Product work</p><h1>Issues</h1><span>Resolve feedback-linked work and keep reporters informed.</span></div></header>
+    <header class="app-page-head"><div><p class="app-eyebrow">{{ t('issues.eyebrow') }}</p><h1>{{ t('issues.title') }}</h1><span>{{ t('issues.subtitle') }}</span></div></header>
     <section class="issues-toolbar app-surface">
-      <label><Search :size="15" /><input v-model="search" placeholder="Search issues" aria-label="Search issues" /></label>
-      <select v-model="statusFilter" class="app-select" aria-label="Issue status filter"><option value="">All status</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
-      <select v-model="projectFilter" class="app-select" aria-label="Issue project filter"><option value="">All projects</option><option v-for="project in data?.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select>
-      <span>{{ filteredIssues.length }} issues</span>
+      <label><Search :size="15" /><input v-model="search" :placeholder="t('issues.search')" :aria-label="t('issues.search')" /></label>
+      <select v-model="statusFilter" class="app-select" :aria-label="t('issues.statusFilter')"><option value="">{{ t('issues.allStatuses') }}</option><option v-for="value in issueStatuses" :key="value" :value="value">{{ statusLabel(value) }}</option></select>
+      <select v-model="projectFilter" class="app-select" :aria-label="t('issues.projectFilter')"><option value="">{{ t('issues.allProjects') }}</option><option v-for="project in data?.projects" :key="project.id" :value="project.id">{{ project.name }}</option></select>
+      <span>{{ plural('issues.count', filteredIssues.length) }}</span>
     </section>
     <p v-if="mutationError" class="issues-error" role="alert"><AlertTriangle :size="15" />{{ mutationError }}</p>
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading issues</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Issues unavailable</h2><p>{{ apiErrorMessage(error) }}</p><button class="app-button" @click="refresh()">Try again</button></div></section>
-    <section v-else-if="filteredIssues.length === 0" class="app-surface app-state"><div><LayoutList :size="25" /><h2>No issues found</h2><p>Issues appear when feedback is promoted into actionable work.</p></div></section>
+    <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>{{ t('issues.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('issues.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'issues.loadFailed') }}</p><button class="app-button" type="button" @click="refresh()">{{ t('issues.tryAgain') }}</button></div></section>
+    <section v-else-if="filteredIssues.length === 0" class="app-surface app-state"><div><LayoutList :size="25" /><h2>{{ t('issues.emptyTitle') }}</h2><p>{{ t('issues.emptyDescription') }}</p></div></section>
     <section v-else class="issues-table app-surface">
-      <header><span>Issue</span><span>Project</span><span>Triage</span><span>Feedback</span><span>Status</span><span>Age</span><span /></header>
+      <header><span>{{ t('issues.columns.issue') }}</span><span>{{ t('issues.columns.project') }}</span><span>{{ t('issues.columns.triage') }}</span><span>{{ t('issues.columns.feedback') }}</span><span>{{ t('issues.columns.status') }}</span><span>{{ t('issues.columns.age') }}</span><span /></header>
       <div v-for="issue in filteredIssues" :key="issue.id" class="issues-row">
-        <NuxtLink class="issues-row-link" :to="`/issues/${issue.id}`" :aria-label="`Open ${issue.public_id}: ${issue.title}`" />
+        <NuxtLink class="issues-row-link" :to="`/issues/${issue.id}`" :aria-label="t('issues.open', { publicId: issue.public_id, title: issue.title })" />
         <span class="issues-title"><CircleDot :size="15" /><span><b>{{ issue.public_id }}</b><small>{{ issue.title }}</small></span></span>
-        <span class="issues-project">{{ projectNames.get(issue.project_id) || 'Project' }}</span>
+        <span class="issues-project">{{ projectNames.get(issue.project_id) || t('issues.projectFallback') }}</span>
         <span class="issues-triage">
-          <span v-if="issue.priority" class="issue-priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue) }}</span>
+          <span v-if="issue.priority" class="issue-priority-mark" :data-priority="issue.priority" :title="t('triage.priorityOption', { priority: priorityLabel(issue) })">{{ priorityLabel(issue) }}</span>
           <span v-if="issue.assignee" class="issue-assignee-mark" :title="issue.assignee.name || issue.assignee.email"><MemberAvatar :member-id="issue.assignee.id" :name="issue.assignee.name" :email="issue.assignee.email" :avatar-version="issue.assignee.avatar_version" /></span>
-          <span v-if="issue.tags?.length" class="issue-tag-marks" :title="issue.tags.map(tag => tag.name).join(', ')"><i v-for="tag in issue.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
-          <span v-if="!issue.priority && !issue.assignee && !issue.tags?.length" class="issue-untriaged">Untriaged</span>
+          <span v-if="issue.tags?.length" class="issue-tag-marks" :title="t('issues.tagList', { tags: list(issue.tags.map(tag => tag.name)) })"><i v-for="tag in issue.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
+          <span v-if="!issue.priority && !issue.assignee && !issue.tags?.length" class="issue-untriaged">{{ t('issues.untriaged') }}</span>
         </span>
-        <span class="issues-feedback">{{ issue.feedback_count }}</span>
-        <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="`Status for ${issue.public_id}`" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option value="open">Open</option><option value="in_progress">In progress</option><option v-if="issue.status === 'needs_info'" value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
-        <time>{{ formatAge(issue.created_at) }}</time>
+        <span class="issues-feedback" :title="plural('issues.feedbackCount', issue.feedback_count)">{{ integer(issue.feedback_count) }}</span>
+        <select :value="issue.status" :disabled="updatingID === issue.id || !canWrite('issue:update')" :aria-label="t('issues.statusFor', { publicId: issue.public_id })" @change="changeStatus(issue, ($event.target as HTMLSelectElement).value as IssueStatus)"><option v-for="value in statusOptions(issue)" :key="value" :value="value">{{ statusLabel(value) }}</option></select>
+        <time :datetime="issue.created_at">{{ formatAge(issue.created_at) }}</time>
         <ChevronRight :size="16" />
       </div>
     </section>

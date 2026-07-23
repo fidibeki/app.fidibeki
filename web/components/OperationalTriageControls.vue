@@ -22,11 +22,16 @@ const emit = defineEmits<{
 const priorityValues: TriagePriority[] = ['low', 'medium', 'high', 'urgent']
 const priorities = computed(() => priorityValues.map(value => ({
   value,
-  label: t(`feedback.priority.${value}`),
+  label: t(`triage.priorities.${value}`),
 })))
 
 const selectedTagIDs = computed(() => new Set(props.tags.map(tag => tag.id)))
-const assigneeName = computed(() => props.assignee?.name || props.assignee?.email || t('feedback.triage.unassigned'))
+const assigneeName = computed(() =>
+  props.assignee?.name || props.assignee?.email || t('triage.unassigned'),
+)
+const priorityLabel = computed(() =>
+  props.priority ? t(`triage.priorities.${props.priority}`) : t('triage.unset'),
+)
 
 function onAssigneeChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
@@ -42,22 +47,22 @@ function onTagChange(tagID: string, event: Event) {
   <section class="operational-triage" aria-labelledby="operational-triage-title">
     <header>
       <div>
-        <span class="app-eyebrow">{{ t('feedback.triage.eyebrow') }}</span>
-        <h3 id="operational-triage-title">{{ t('feedback.triage.title') }}</h3>
+        <span class="app-eyebrow">{{ t('triage.eyebrow') }}</span>
+        <h3 id="operational-triage-title">{{ t('triage.title') }}</h3>
       </div>
-      <span v-if="pending" class="app-spinner" :aria-label="t('feedback.triage.saving')" />
+      <span v-if="pending" class="app-spinner" :aria-label="t('triage.saving')" />
     </header>
 
     <template v-if="editable">
       <div class="triage-field">
-        <span>{{ t('feedback.triage.priority') }}</span>
-        <div class="triage-priority-control" role="group" :aria-label="t('feedback.triage.priority')">
+        <span>{{ t('triage.priority') }}</span>
+        <div class="triage-priority-control" role="group" :aria-label="t('triage.priority')">
           <button
             v-for="item in priorities"
             :key="item.value"
             type="button"
             :data-priority="item.value"
-            :aria-label="t('feedback.priority.accessible', { priority: item.label })"
+            :aria-label="t('triage.priorityOption', { priority: item.label })"
             :aria-pressed="priority === item.value"
             :disabled="pending"
             @click="emit('setPriority', item.value)"
@@ -65,8 +70,8 @@ function onTagChange(tagID: string, event: Event) {
           <button
             class="triage-clear"
             type="button"
-            :title="t('feedback.priority.clear')"
-            :aria-label="t('feedback.priority.clear')"
+            :title="t('triage.clearPriority')"
+            :aria-label="t('triage.clearPriority')"
             :disabled="pending || !priority"
             @click="emit('setPriority', null)"
           ><X :size="13" /></button>
@@ -74,13 +79,13 @@ function onTagChange(tagID: string, event: Event) {
       </div>
 
       <label class="triage-field">
-        <span><UserRound :size="13" /> {{ t('feedback.triage.assignee') }}</span>
+        <span><UserRound :size="13" /> {{ t('triage.assignee') }}</span>
         <span v-if="assignee" class="triage-assignee-current">
           <i><MemberAvatar :member-id="assignee.id" :name="assignee.name" :email="assignee.email" :avatar-version="assignee.avatar_version" /></i>
           <b>{{ assigneeName }}</b>
         </span>
-        <select :value="assignee?.id || ''" :aria-label="t('feedback.triage.assignee')" :disabled="pending" @change="onAssigneeChange">
-          <option value="">{{ t('feedback.triage.unassigned') }}</option>
+        <select :value="assignee?.id || ''" :aria-label="t('triage.assignee')" :disabled="pending" @change="onAssigneeChange">
+          <option value="">{{ t('triage.unassigned') }}</option>
           <option v-for="member in members" :key="member.id" :value="member.id">
             {{ member.name || member.email }}
           </option>
@@ -88,27 +93,27 @@ function onTagChange(tagID: string, event: Event) {
       </label>
 
       <fieldset class="triage-field triage-tag-picker">
-        <legend><Tag :size="13" /> {{ t('feedback.triage.tags') }}</legend>
+        <legend><Tag :size="13" /> {{ t('triage.tags') }}</legend>
         <div>
           <label v-for="tag in tagOptions" :key="tag.id" :style="{ borderColor: tag.color }">
             <input
               type="checkbox"
               :checked="selectedTagIDs.has(tag.id)"
-              :aria-label="t('feedback.triage.tagAccessible', { tag: tag.name })"
+              :aria-label="t('triage.tagOption', { tag: tag.name })"
               :disabled="pending"
               @change="onTagChange(tag.id, $event)"
             >
             <span :style="{ backgroundColor: tag.color }" />{{ tag.name }}
           </label>
-          <span v-if="tagOptions.length === 0" class="triage-empty">{{ t('feedback.triage.noTags') }}</span>
+          <span v-if="tagOptions.length === 0" class="triage-empty">{{ t('triage.noTags') }}</span>
         </div>
       </fieldset>
     </template>
 
     <dl v-else class="triage-readonly">
-      <div><dt>{{ t('feedback.triage.priority') }}</dt><dd>{{ priority ? priorities.find(item => item.value === priority)?.label : t('feedback.priority.unset') }}</dd></div>
-      <div><dt>{{ t('feedback.triage.assignee') }}</dt><dd><span v-if="assignee" class="triage-readonly-avatar"><i><MemberAvatar :member-id="assignee.id" :name="assignee.name" :email="assignee.email" :avatar-version="assignee.avatar_version" /></i><b>{{ assigneeName }}</b></span><template v-else>{{ assigneeName }}</template></dd></div>
-      <div><dt>{{ t('feedback.triage.tags') }}</dt><dd><span v-for="tag in tags" :key="tag.id" :style="{ borderColor: tag.color }">{{ tag.name }}</span><template v-if="tags.length === 0">{{ t('feedback.common.none') }}</template></dd></div>
+      <div><dt>{{ t('triage.priority') }}</dt><dd>{{ priorityLabel }}</dd></div>
+      <div><dt>{{ t('triage.assignee') }}</dt><dd><span v-if="assignee" class="triage-readonly-avatar"><i><MemberAvatar :member-id="assignee.id" :name="assignee.name" :email="assignee.email" :avatar-version="assignee.avatar_version" /></i><b>{{ assigneeName }}</b></span><template v-else>{{ assigneeName }}</template></dd></div>
+      <div><dt>{{ t('triage.tags') }}</dt><dd><span v-for="tag in tags" :key="tag.id" :style="{ borderColor: tag.color }">{{ tag.name }}</span><template v-if="tags.length === 0">{{ t('triage.noTagsSelected') }}</template></dd></div>
     </dl>
   </section>
 </template>

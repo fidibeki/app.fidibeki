@@ -1,12 +1,24 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowLeft, AtSign, Eye, EyeOff, GitMerge, MessageSquare, Pencil, RotateCcw, Send } from '@lucide/vue'
 import type { FeedbackPage, Issue, IssueActivity, IssueComment, IssueStatus, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
+import {
+  issueActivityChanges,
+  issueActivityFeedbackCount,
+  issueActivityReporterAccess,
+  issueActivitySummaryKey,
+  issueStatusKey,
+  issueTransitionComment,
+  processingStatusKey,
+  type ActivityValueCopy,
+} from '~/utils/issue-activity'
 
 const route = useRoute()
 const { $apiFetch } = useNuxtApp()
 const { can, canWrite } = useAuth()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime, integer, list, plural } = useRegionalFormat()
+const issueStatuses: IssueStatus[] = ['open', 'in_progress', 'needs_info', 'resolved', 'closed']
 const issueID = computed(() => String(route.params.id || ''))
 const nextStatus = ref<IssueStatus>('open')
 const comment = ref('')
@@ -79,7 +91,7 @@ function editDetails() {
   detailsEditing.value = true
 }
 
-async function updateIssueMetadata(body: Record<string, unknown>, fallback: string) {
+async function updateIssueMetadata(body: Record<string, unknown>, fallbackKey: string) {
   if (!canWrite('issue:update') || !data.value || pending.value) return false
   pending.value = true
   mutationError.value = ''
@@ -88,7 +100,7 @@ async function updateIssueMetadata(body: Record<string, unknown>, fallback: stri
     data.value.issue = response.issue
     return true
   } catch (updateError) {
-    mutationError.value = apiErrorMessage(updateError, fallback)
+    mutationError.value = apiErrorMessage(updateError, fallbackKey)
     return false
   } finally {
     pending.value = false
@@ -98,21 +110,21 @@ async function updateIssueMetadata(body: Record<string, unknown>, fallback: stri
 async function saveDetails() {
   const title = titleDraft.value.trim()
   if (!title) return
-  if (await updateIssueMetadata({ title, description: descriptionDraft.value.trim() }, 'Issue details could not be updated.')) {
+  if (await updateIssueMetadata({ title, description: descriptionDraft.value.trim() }, 'issues.detail.detailsFailed')) {
     detailsEditing.value = false
   }
 }
 
 function setIssuePriority(priority: TriagePriority | null) {
-  return updateIssueMetadata({ priority: priority || 'none' }, 'Issue priority could not be updated.')
+  return updateIssueMetadata({ priority: priority || 'none' }, 'issues.detail.priorityFailed')
 }
 
 function setIssueAssignee(memberID: string | null) {
-  return updateIssueMetadata(memberID ? { assignee_id: memberID } : { unassign: true }, 'Issue assignee could not be updated.')
+  return updateIssueMetadata(memberID ? { assignee_id: memberID } : { unassign: true }, 'issues.detail.assigneeFailed')
 }
 
 function toggleIssueTag(tagID: string, checked: boolean) {
-  return updateIssueMetadata(checked ? { add_tag_ids: [tagID] } : { remove_tag_ids: [tagID] }, 'Issue tags could not be updated.')
+  return updateIssueMetadata(checked ? { add_tag_ids: [tagID] } : { remove_tag_ids: [tagID] }, 'issues.detail.tagsFailed')
 }
 
 async function updateIssue() {
@@ -133,7 +145,7 @@ async function updateIssue() {
     reporterMessage.value = ''
     await refresh()
   } catch (updateError) {
-    mutationError.value = apiErrorMessage(updateError, 'Issue could not be updated.')
+    mutationError.value = apiErrorMessage(updateError, 'issues.detail.update.failed')
   } finally { pending.value = false }
 }
 
@@ -147,7 +159,7 @@ async function setReporterAccess(enabled: boolean) {
     })
     data.value.issue = response.issue
   } catch (accessError) {
-    mutationError.value = apiErrorMessage(accessError, 'Reporter access could not be updated.')
+    mutationError.value = apiErrorMessage(accessError, 'issues.detail.facts.accessFailed')
   } finally {
     pending.value = false
   }
@@ -168,7 +180,7 @@ async function createComment() {
     commentBody.value = ''
     mentionedMemberIDs.value = []
   } catch (commentError) {
-    mutationError.value = apiErrorMessage(commentError, 'Comment could not be added.')
+    mutationError.value = apiErrorMessage(commentError, 'issues.detail.comments.failed')
   } finally {
     pending.value = false
   }
@@ -183,7 +195,7 @@ async function mergeIssue() {
     mergeTarget.value = ''
     await refresh()
   } catch (mergeError) {
-    mutationError.value = apiErrorMessage(mergeError, 'Issues could not be merged.')
+    mutationError.value = apiErrorMessage(mergeError, 'issues.detail.merge.failed')
   } finally { pending.value = false }
 }
 
@@ -195,16 +207,26 @@ async function undoMerge() {
     await $apiFetch(`/v1/issues/${issueID.value}/merge`, { method: 'DELETE' })
     await refresh()
   } catch (mergeError) {
-    mutationError.value = apiErrorMessage(mergeError, 'The merge could not be undone.')
+    mutationError.value = apiErrorMessage(mergeError, 'issues.detail.merge.undoFailed')
   } finally { pending.value = false }
 }
 
 function formatDate(value: string) {
-  return formatDateTime(value)
+  return dateTime(value)
 }
 
 function actorLabel(activity: IssueActivity) {
-  return activity.actor?.name || activity.actor?.email || 'Fidibeki'
+  return activity.actor?.name || activity.actor?.email || t('issues.detail.activity.systemActor')
+}
+
+function statusLabel(status: IssueStatus) {
+  const key = issueStatusKey(status)
+  return key ? t(key) : status
+}
+
+function aiStatusLabel(status: string) {
+  const key = processingStatusKey(status)
+  return key ? t(key) : status
 }
 
 function activityFromLegacyUpdate(update: IssueUpdate): IssueActivity {
@@ -222,86 +244,87 @@ function activityFromLegacyUpdate(update: IssueUpdate): IssueActivity {
 }
 
 function activitySummary(activity: IssueActivity) {
-  const actor = actorLabel(activity)
-  if (activity.kind === 'issue.created') return `${actor} created the issue`
-  if (activity.kind === 'issue.comment_created') return `${actor} added a comment`
-  if (activity.kind === 'issue.status_changed') return `${actor} changed the status`
-  if (activity.kind === 'issue.updated') return `${actor} updated issue details`
-  if (activity.kind === 'feedback.linked') return `${actor} linked feedback`
-  if (activity.kind === 'feedback.unlinked') return `${actor} unlinked feedback`
-  if (activity.kind === 'issue.merged') return `${actor} merged this issue`
-  if (activity.kind === 'issue.merge_received') return `${actor} merged another issue here`
-  if (activity.kind === 'issue.unmerged' || activity.kind === 'issue.merge_removed') return `${actor} removed a merge`
-  if (activity.kind === 'reporter.access_changed') return `${actor} changed reporter access`
-  if (activity.kind === 'reporter.responded') return 'Reporter answered the clarification request'
-  if (activity.kind === 'reporter.notified') return 'Reporter notification delivered'
-  return activity.kind.replaceAll('_', ' ').replaceAll('.', ' · ')
+  return t(issueActivitySummaryKey(activity.kind), { actor: actorLabel(activity) })
+}
+
+function changeValue(value: ActivityValueCopy) {
+  if (value.key) return t(value.key)
+  return value.items ? list(value.items) : value.text
 }
 
 function activityDetail(activity: IssueActivity) {
-  const changes = activity.data.changes
-  if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
-    return Object.entries(changes as Record<string, { from?: unknown, to?: unknown }>).map(([field, value]) => {
-      const label = field.replace('_id', '').replaceAll('_', ' ')
-      const before = value?.from == null || value.from === '' ? 'none' : String(value.from).replaceAll('_', ' ')
-      const after = value?.to == null || value.to === '' ? 'none' : String(value.to).replaceAll('_', ' ')
-      return `${label}: ${before} → ${after}`
-    }).join(' · ')
+  const changes = issueActivityChanges(activity)
+  if (changes.length) {
+    return changes.map(change => t('issues.detail.activity.change', {
+      field: change.field.key ? t(change.field.key) : change.field.text,
+      before: changeValue(change.before),
+      after: changeValue(change.after),
+    })).join(' · ')
   }
-  const feedbackIDs = activity.data.feedback_ids
-  if (Array.isArray(feedbackIDs)) return `${feedbackIDs.length} feedback ${feedbackIDs.length === 1 ? 'record' : 'records'}`
+  const feedbackCount = issueActivityFeedbackCount(activity)
+  if (feedbackCount !== null) return plural('issues.detail.activity.feedbackRecords', feedbackCount)
+  const reporterAccess = issueActivityReporterAccess(activity)
+  if (reporterAccess !== null) {
+    return t(reporterAccess
+      ? 'issues.detail.activity.reporterAccessEnabled'
+      : 'issues.detail.activity.reporterAccessDisabled')
+  }
   return ''
 }
 
 function transitionComment(activity: IssueActivity) {
-  return typeof activity.data.transition_comment === 'string' ? activity.data.transition_comment : ''
+  return issueTransitionComment(activity)
 }
 
-useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` }))
+useHead(() => ({
+  title: t('issues.detail.pageTitle', {
+    publicId: data.value?.issue.public_id || t('issues.detail.fallbackTitle'),
+  }),
+}))
 </script>
 
 <template>
   <div class="app-page issue-detail-page">
-    <header class="issue-detail-back"><NuxtLink class="app-button" to="/issues"><ArrowLeft :size="15" /> Back to issues</NuxtLink></header>
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading issue</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Issue unavailable</h2><p>{{ apiErrorMessage(error) }}</p></div></section>
+    <header class="issue-detail-back"><NuxtLink class="app-button" to="/issues"><ArrowLeft :size="15" /> {{ t('issues.detail.back') }}</NuxtLink></header>
+    <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>{{ t('issues.detail.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('issues.detail.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'issues.detail.loadFailed') }}</p></div></section>
     <template v-else-if="data">
       <header class="issue-detail-heading">
         <div><p class="app-eyebrow">{{ data.issue.public_id }}</p>
           <form v-if="detailsEditing" class="issue-detail-editor" @submit.prevent="saveDetails">
-            <label><span>Title</span><input v-model="titleDraft" class="app-input" aria-label="Issue title" required maxlength="80" autofocus /></label>
-            <label><span>Description</span><textarea v-model="descriptionDraft" aria-label="Issue description" maxlength="10000" /></label>
-            <div><button type="button" class="app-button" :disabled="pending" @click="detailsEditing = false">Cancel</button><button type="submit" class="app-button app-button--primary" :disabled="pending || !titleDraft.trim()">Save details</button></div>
+            <label><span>{{ t('issues.detail.titleLabel') }}</span><input v-model="titleDraft" class="app-input" :aria-label="t('issues.detail.titleField')" required maxlength="80" autofocus /></label>
+            <label><span>{{ t('issues.detail.descriptionLabel') }}</span><textarea v-model="descriptionDraft" :aria-label="t('issues.detail.descriptionField')" maxlength="10000" /></label>
+            <div><button type="button" class="app-button" :disabled="pending" @click="detailsEditing = false">{{ t('issues.detail.cancel') }}</button><button type="submit" class="app-button app-button--primary" :disabled="pending || !titleDraft.trim()">{{ t('issues.detail.saveDetails') }}</button></div>
           </form>
           <template v-else>
-            <h1>{{ data.issue.title }}<button v-if="canWrite('issue:update')" type="button" class="issue-detail-edit" title="Edit issue details" aria-label="Edit issue details" @click="editDetails"><Pencil :size="14" /></button></h1>
+            <h1>{{ data.issue.title }}<button v-if="canWrite('issue:update')" type="button" class="issue-detail-edit" :title="t('issues.detail.editDetails')" :aria-label="t('issues.detail.editDetails')" @click="editDetails"><Pencil :size="14" /></button></h1>
             <p v-if="data.issue.description" class="issue-detail-description">{{ data.issue.description }}</p>
           </template>
-          <span>{{ data.issue.feedback_count }} feedback {{ data.issue.feedback_count === 1 ? 'record' : 'records' }} · created {{ formatDate(data.issue.created_at) }}</span>
+          <span>{{ plural('issues.detail.summary', data.issue.feedback_count, { date: formatDate(data.issue.created_at) }) }}</span>
         </div>
-        <span class="status-pill" :class="`status-${data.issue.status}`">{{ data.issue.status.replace('_', ' ') }}</span>
+        <span class="status-pill" :class="`status-${data.issue.status}`">{{ statusLabel(data.issue.status) }}</span>
       </header>
       <p v-if="mutationError" class="issues-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
       <div class="issue-detail-grid">
         <main>
-          <section class="app-surface issue-update-panel"><header><h2>Update status</h2><p>Status changes are recorded in the issue history.</p></header><div><select v-model="nextStatus" class="app-select" :disabled="!canWrite('issue:update')"><option value="open">Open</option><option value="in_progress">In progress</option><option value="needs_info">Needs info</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><textarea v-model="comment" placeholder="Internal context for this change (optional)" maxlength="2000" :disabled="!canWrite('issue:update')" /><textarea v-if="nextStatus === 'needs_info'" v-model="reporterMessage" class="issue-reporter-message" aria-label="Message for reporter" placeholder="Question for the reporter" maxlength="2000" required :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status || (nextStatus === 'needs_info' && !reporterMessage.trim())" @click="updateIssue">Update issue</button></div></section>
+          <section class="app-surface issue-update-panel"><header><h2>{{ t('issues.detail.update.title') }}</h2><p>{{ t('issues.detail.update.description') }}</p></header><div><select v-model="nextStatus" class="app-select" :aria-label="t('issues.detail.update.statusLabel')" :disabled="!canWrite('issue:update')"><option v-for="value in issueStatuses" :key="value" :value="value">{{ statusLabel(value) }}</option></select><textarea v-model="comment" :aria-label="t('issues.detail.update.commentLabel')" :placeholder="t('issues.detail.update.comment')" maxlength="2000" :disabled="!canWrite('issue:update')" /><textarea v-if="nextStatus === 'needs_info'" v-model="reporterMessage" class="issue-reporter-message" :aria-label="t('issues.detail.update.reporterMessage')" :placeholder="t('issues.detail.update.reporterPlaceholder')" maxlength="2000" required :disabled="!canWrite('issue:update')" /><button class="app-button app-button--primary" :disabled="pending || !canWrite('issue:update') || nextStatus === data.issue.status || (nextStatus === 'needs_info' && !reporterMessage.trim())" @click="updateIssue">{{ t('issues.detail.update.submit') }}</button></div></section>
           <section class="app-surface issue-comments">
-            <header><div><h2>Internal comments</h2><p>Collaborate with workspace members without changing status.</p></div><span>{{ data.comments.length }}</span></header>
+            <header><div><h2>{{ t('issues.detail.comments.title') }}</h2><p>{{ t('issues.detail.comments.description') }}</p></div><span>{{ plural('issues.detail.comments.count', data.comments.length) }}</span></header>
             <div v-if="data.comments.length" class="issue-comment-list">
               <article v-for="entry in [...data.comments].reverse()" :key="entry.id">
                 <span><MemberAvatar v-if="entry.author" :member-id="entry.author.id" :name="entry.author.name" :email="entry.author.email" :avatar-version="entry.author.avatar_version" /><template v-else>F</template></span>
-                <div><header><b>{{ entry.author?.name || entry.author?.email || 'Former member' }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p>{{ entry.body }}</p><small v-if="entry.mentions.length"><AtSign :size="12" /> {{ entry.mentions.map(member => member.name || member.email).join(', ') }}</small></div>
+                <div><header><b>{{ entry.author?.name || entry.author?.email || t('issues.detail.comments.formerMember') }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p>{{ entry.body }}</p><small v-if="entry.mentions.length"><AtSign :size="12" /> {{ t('issues.detail.comments.mentions', { members: list(entry.mentions.map(member => member.name || member.email)) }) }}</small></div>
               </article>
             </div>
-            <div v-else class="issue-empty"><MessageSquare :size="20" /> No internal comments yet.</div>
+            <div v-else class="issue-empty"><MessageSquare :size="20" /> {{ t('issues.detail.comments.empty') }}</div>
             <form v-if="canWrite('issue:update')" class="issue-comment-form" @submit.prevent="createComment">
-              <textarea v-model="commentBody" aria-label="Internal comment" placeholder="Add internal context" maxlength="5000" required />
-              <fieldset v-if="triageMembers.length"><legend><AtSign :size="12" /> Notify members</legend><label v-for="member in triageMembers" :key="member.id"><input v-model="mentionedMemberIDs" type="checkbox" :value="member.id" /><span>{{ member.name || member.email }}</span></label></fieldset>
-              <button class="app-button app-button--primary" type="submit" :disabled="pending || !commentBody.trim()"><Send :size="14" /> Add comment</button>
+              <textarea v-model="commentBody" :aria-label="t('issues.detail.comments.input')" :placeholder="t('issues.detail.comments.placeholder')" maxlength="5000" required />
+              <fieldset v-if="triageMembers.length"><legend><AtSign :size="12" /> {{ t('issues.detail.comments.notify') }}</legend><label v-for="member in triageMembers" :key="member.id"><input v-model="mentionedMemberIDs" type="checkbox" :value="member.id" /><span>{{ member.name || member.email }}</span></label></fieldset>
+              <button class="app-button app-button--primary" type="submit" :disabled="pending || !commentBody.trim()"><Send :size="14" /> {{ t('issues.detail.comments.submit') }}</button>
             </form>
           </section>
-          <section class="app-surface issue-feedback"><header><h2>Linked feedback</h2><span>{{ data.feedbacks.length }} {{ data.feedbacks.length === 1 ? 'record' : 'records' }}</span></header><div v-if="!data.feedbacks.length" class="issue-empty">No readable feedback is linked.</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>-</span><p><b>{{ feedback.title || 'Feedback without written detail' }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ feedback.ai_status }}</span></NuxtLink></section>
-          <section class="app-surface issue-history"><header><h2>Activity</h2><span>{{ data.activities.length }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span class="issue-activity-avatar" :data-actor="Boolean(activity.actor)"><MemberAvatar v-if="activity.actor" :member-id="activity.actor.id" :name="activity.actor.name" :email="activity.actor.email" :avatar-version="activity.actor.avatar_version" /></span><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>Issue created</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
+          <section class="app-surface issue-feedback"><header><h2>{{ t('issues.detail.linkedFeedback.title') }}</h2><span>{{ plural('issues.detail.linkedFeedback.count', data.feedbacks.length) }}</span></header><div v-if="!data.feedbacks.length" class="issue-empty">{{ t('issues.detail.linkedFeedback.empty') }}</div><NuxtLink v-for="feedback in data.feedbacks" :key="feedback.id" :to="`/feedback/${feedback.id}`"><RatingMark v-if="feedback.rating" :rating="feedback.rating" compact /><span v-else>-</span><p><b>{{ feedback.title || t('issues.detail.linkedFeedback.withoutDetail') }}</b><small>{{ feedback.public_id }} · {{ feedback.page_url }}</small></p><span class="status-pill" :class="`status-${feedback.ai_status}`">{{ aiStatusLabel(feedback.ai_status) }}</span></NuxtLink></section>
+          <section class="app-surface issue-history"><header><h2>{{ t('issues.detail.activity.title') }}</h2><span>{{ plural('issues.detail.activity.count', data.activities.length) }}</span></header><ol><li v-for="activity in [...data.activities].reverse()" :key="activity.id"><span class="issue-activity-avatar" :data-actor="Boolean(activity.actor)"><MemberAvatar v-if="activity.actor" :member-id="activity.actor.id" :name="activity.actor.name" :email="activity.actor.email" :avatar-version="activity.actor.avatar_version" /></span><div><p><b>{{ activitySummary(activity) }}</b></p><small v-if="activityDetail(activity)">{{ activityDetail(activity) }}</small><blockquote v-if="transitionComment(activity)">{{ transitionComment(activity) }}</blockquote><time>{{ formatDate(activity.created_at) }}</time></div></li><li v-if="!data.activities.length" class="issue-created"><span /><div><p>{{ t('issues.detail.activity.created') }}</p><time>{{ formatDate(data.issue.created_at) }}</time></div></li></ol></section>
         </main>
         <aside>
           <OperationalTriageControls
@@ -317,8 +340,8 @@ useHead(() => ({ title: `${data.value?.issue.public_id || 'Issue'} · Fidibeki` 
             @set-assignee="setIssueAssignee"
             @toggle-tag="toggleIssueTag"
           />
-          <section class="app-surface issue-facts"><h2>Issue facts</h2><dl><div><dt>Public ID</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>Reporter</dt><dd>{{ data.issue.reporter_email || 'Anonymous' }}</dd></div><div><dt>Reporter updates</dt><dd>{{ data.issue.notify_reporter ? 'Enabled' : 'Disabled' }}</dd></div><div><dt>Progress access</dt><dd>{{ data.issue.reporter_access_revoked_at ? 'Revoked' : 'Enabled' }}</dd></div><div><dt>Resolved</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : 'Not resolved' }}</dd></div></dl><button v-if="data.issue.reporter_email && data.issue.notify_reporter && canWrite('issue:update')" class="app-button issue-reporter-access" :disabled="pending" @click="setReporterAccess(Boolean(data.issue.reporter_access_revoked_at))"><Eye v-if="data.issue.reporter_access_revoked_at" :size="14" /><EyeOff v-else :size="14" />{{ data.issue.reporter_access_revoked_at ? 'Enable progress access' : 'Revoke progress access' }}</button></section>
-          <section class="app-surface issue-merge"><h2>Merge issue</h2><template v-if="data.issue.merged_into_id"><p>This issue is merged into another issue.</p><button class="app-button" :disabled="pending || !canWrite('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> Undo merge</button></template><template v-else><p>Move this issue under another issue in the same project.</p><select v-model="mergeTarget" class="app-select" :disabled="!canWrite('issue:merge')"><option value="">Choose target issue</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ candidate.public_id }} · {{ candidate.title }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !canWrite('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> Merge</button></template></section>
+          <section class="app-surface issue-facts"><h2>{{ t('issues.detail.facts.title') }}</h2><dl><div><dt>{{ t('issues.detail.facts.publicId') }}</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>{{ t('issues.detail.facts.reporter') }}</dt><dd>{{ data.issue.reporter_email || t('issues.detail.facts.anonymous') }}</dd></div><div><dt>{{ t('issues.detail.facts.reporterUpdates') }}</dt><dd>{{ data.issue.notify_reporter ? t('issues.detail.facts.enabled') : t('issues.detail.facts.disabled') }}</dd></div><div><dt>{{ t('issues.detail.facts.progressAccess') }}</dt><dd>{{ data.issue.reporter_access_revoked_at ? t('issues.detail.facts.revoked') : t('issues.detail.facts.enabled') }}</dd></div><div><dt>{{ t('issues.detail.facts.resolvedAt') }}</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : t('issues.detail.facts.notResolved') }}</dd></div></dl><button v-if="data.issue.reporter_email && data.issue.notify_reporter && canWrite('issue:update')" class="app-button issue-reporter-access" :disabled="pending" @click="setReporterAccess(Boolean(data.issue.reporter_access_revoked_at))"><Eye v-if="data.issue.reporter_access_revoked_at" :size="14" /><EyeOff v-else :size="14" />{{ data.issue.reporter_access_revoked_at ? t('issues.detail.facts.enableAccess') : t('issues.detail.facts.revokeAccess') }}</button></section>
+          <section class="app-surface issue-merge"><h2>{{ t('issues.detail.merge.title') }}</h2><template v-if="data.issue.merged_into_id"><p>{{ t('issues.detail.merge.mergedNotice') }}</p><button class="app-button" :disabled="pending || !canWrite('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> {{ t('issues.detail.merge.undo') }}</button></template><template v-else><p>{{ t('issues.detail.merge.description') }}</p><select v-model="mergeTarget" class="app-select" :aria-label="t('issues.detail.merge.targetLabel')" :disabled="!canWrite('issue:merge')"><option value="">{{ t('issues.detail.merge.choose') }}</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ t('issues.detail.merge.option', { publicId: candidate.public_id, title: candidate.title }) }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !canWrite('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> {{ t('issues.detail.merge.submit') }}</button></template></section>
         </aside>
       </div>
     </template>

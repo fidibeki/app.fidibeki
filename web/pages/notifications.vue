@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { AlertTriangle, Bell, Check, ChevronRight } from '@lucide/vue'
 import type { MemberNotification } from '~/types/api'
-import { apiErrorMessage } from '~/utils/api-fetch'
-import { formatDateTime } from '~/utils/format'
 
 const { $apiFetch } = useNuxtApp()
+const { t } = useI18n()
+const { message: apiErrorMessage } = useLocalizedAPIError()
+const { dateTime } = useRegionalFormat()
 const pendingID = ref('')
 const mutationError = ref('')
 const { data, status, error } = await useAsyncData('member-notifications', () =>
@@ -23,28 +24,41 @@ async function openNotification(notification: MemberNotification) {
     }
     await navigateTo(`/issues/${notification.issue_id}`)
   } catch (notificationError) {
-    mutationError.value = apiErrorMessage(notificationError, 'Notification could not be opened.')
+    mutationError.value = apiErrorMessage(notificationError, 'notifications.openFailed')
   } finally {
     pendingID.value = ''
   }
 }
 
-useHead({ title: 'Notifications · Fidibeki' })
+function actorName(notification: MemberNotification) {
+  return notification.actor?.name
+    || notification.actor?.email
+    || t('notifications.workspaceMember')
+}
+
+function notificationSummary(notification: MemberNotification) {
+  const key = notification.kind === 'issue.mentioned'
+    ? 'notifications.kinds.mentioned'
+    : 'notifications.kinds.unknown'
+  return t(key, { actor: actorName(notification) })
+}
+
+useHead(() => ({ title: t('notifications.pageTitle') }))
 </script>
 
 <template>
   <div class="app-page notifications-page">
-    <header class="app-page-head"><div><p class="app-eyebrow">Workspace activity</p><h1>Notifications</h1><span>{{ data?.unread_count || 0 }} unread</span></div></header>
+    <header class="app-page-head"><div><p class="app-eyebrow">{{ t('notifications.eyebrow') }}</p><h1>{{ t('notifications.title') }}</h1><span>{{ t('notifications.unread', { count: data?.unread_count || 0 }) }}</span></div></header>
     <p v-if="mutationError" class="notifications-error" role="alert"><AlertTriangle :size="15" /> {{ mutationError }}</p>
-    <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>Loading notifications</h2></div></section>
-    <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>Notifications unavailable</h2><p>{{ apiErrorMessage(error) }}</p></div></section>
-    <section v-else-if="!data?.notifications.length" class="app-surface app-state"><div><Bell :size="24" /><h2>No notifications</h2><p>Mentions from internal issue comments appear here.</p></div></section>
-    <section v-else class="app-surface notifications-list">
-      <header><span>Activity</span><span>Issue</span><span>Received</span><span /></header>
+    <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite"><div><span class="app-spinner" /><h2>{{ t('notifications.loading') }}</h2></div></section>
+    <section v-else-if="error" class="app-surface app-state" role="alert"><div><AlertTriangle :size="24" /><h2>{{ t('notifications.unavailable') }}</h2><p>{{ apiErrorMessage(error, 'notifications.loadFailed') }}</p></div></section>
+    <section v-else-if="!data?.notifications.length" class="app-surface app-state"><div><Bell :size="24" /><h2>{{ t('notifications.emptyTitle') }}</h2><p>{{ t('notifications.emptyDescription') }}</p></div></section>
+    <section v-else class="app-surface notifications-list" :aria-label="t('notifications.listLabel')">
+      <header><span>{{ t('notifications.columns.activity') }}</span><span>{{ t('notifications.columns.issue') }}</span><span>{{ t('notifications.columns.received') }}</span><span /></header>
       <button v-for="notification in data.notifications" :key="notification.id" type="button" :data-unread="!notification.read_at" :disabled="Boolean(pendingID)" @click="openNotification(notification)">
-        <span class="notifications-state"><i><MemberAvatar v-if="notification.actor" :member-id="notification.actor.id" :name="notification.actor.name" :email="notification.actor.email" :avatar-version="notification.actor.avatar_version" /><template v-else><Check v-if="notification.read_at" :size="12" /><Bell v-else :size="12" /></template></i><span><b>{{ notification.actor?.name || notification.actor?.email || 'Workspace member' }} mentioned you</b><small>{{ notification.body }}</small></span></span>
+        <span class="notifications-state"><i :title="notification.read_at ? t('notifications.readState') : t('notifications.unreadState')"><MemberAvatar v-if="notification.actor" :member-id="notification.actor.id" :name="notification.actor.name" :email="notification.actor.email" :avatar-version="notification.actor.avatar_version" /><template v-else><Check v-if="notification.read_at" :size="12" /><Bell v-else :size="12" /></template></i><span><b>{{ notificationSummary(notification) }}</b><small>{{ notification.body }}</small></span></span>
         <span><b>{{ notification.public_id }}</b><small>{{ notification.issue_title }}</small></span>
-        <time>{{ formatDateTime(notification.created_at) }}</time>
+        <time :datetime="notification.created_at">{{ dateTime(notification.created_at) }}</time>
         <ChevronRight :size="15" />
       </button>
     </section>
