@@ -566,7 +566,7 @@ and focused browser gates pass; real staging refresh remains part of the deferre
 ## Task 33: Repair Privacy Request Journeys
 
 **Depends on:** Task 30
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** Resolve workspace export generation, reporter anonymization creation, and reporter
 verification link failures in issues #46, #49, and #50.
@@ -574,6 +574,17 @@ verification link failures in issues #46, #49, and #50.
 **Acceptance:** Backend integration coverage proves durable idempotent job creation and one-time,
 tenant-scoped verification URL handling; browser coverage proves success and actionable retry
 states. Staging validation is deferred unless the fix directly requires it.
+
+**Evidence:** Issues #46 and #49 were caused by byte-encoded JSON audit payloads in runtime mode
+and were already repaired by `4fd55a5`; historical Railway logs identified the exact PostgreSQL
+`22P02` failures and later real requests proved both creation paths. Issue #50 was a separate host
+routing defect: generated email links targeted the tenant host while the public handlers were
+mounted only on the platform router. The shared routes now mount on both hosts, with integration
+coverage for the generated email URL, re-verification, status, expiry, invalid tokens, export,
+anonymization, idempotency, and tenant isolation. Staging API deployment
+`06c035b6-9d10-47a5-8027-2420b648e843` applied migration 73 and passed first verification,
+idempotent re-verification, status, public-page, and neutral-invalid-token checks on the Tauview
+tenant host. The synthetic request, job, export object, and token were removed after validation.
 
 **Autonomy:** AFK
 
@@ -704,13 +715,23 @@ browser journeys pass.
 ## Task 40: Complete Reporter Progress Experience
 
 **Depends on:** Task 30
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Complete issues #42 and #43 with a Dispatch-aligned public progress page and visible,
 safe clarification responses in the issue timeline.
 
 **Acceptance:** Public states are localized and private by construction; responses persist and
 render with attribution/order/newlines; desktop/mobile browser journeys pass.
+
+**Evidence:** The public reporter page now uses the approved Fidibeki wordmark and shared Dispatch
+tokens with localized loading, invalid/expired, transient error/retry, empty, clarification,
+answered, and timeline states. Reporter responses already persisted in `reporter.responded`
+activity data; the issue timeline now renders the complete text with actorless attribution,
+chronological order, preserved newlines, long-text containment, and escaped interpolation. Focused
+backend coverage, web unit/i18n tests, typecheck, production build, and 14 related Playwright
+journeys pass on desktop/mobile, including submit-to-backoffice visibility and executable HTML
+escaping. Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` passed a real reporter API
+and SSR page journey in English and Portuguese; its temporary access token was removed.
 
 **Autonomy:** AFK
 

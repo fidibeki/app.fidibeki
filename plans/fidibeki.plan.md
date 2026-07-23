@@ -488,6 +488,24 @@ was removed from the staging test tenant.
     - Full backend tests, web unit (113), widget unit (129), typechecks/builds, focused widget
       Chromium, and three focused backoffice browser journeys pass locally. No migration or
       deployment was required.
+  - [x] Repair privacy request journeys from issues #46, #49, and #50.
+    - Runtime-mode audit payloads are encoded for PostgreSQL JSON parameters, and public reporter
+      privacy handlers are mounted on both platform and tenant hosts without weakening the neutral
+      token response contract.
+    - Generated-email URL, expiry, idempotency, tenant isolation, export, and anonymization
+      integration coverage passes. Staging API deployment
+      `06c035b6-9d10-47a5-8027-2420b648e843` applied migration 73 and passed first verification,
+      re-verification, status, public page, and invalid-token checks; all synthetic data and the
+      generated export object were removed afterward.
+  - [x] Complete reporter progress issues #42 and #43.
+    - The public page now follows the restrained Dispatch system with approved branding, localized
+      loading/invalid/error/empty/clarification/answered states, and a responsive progress timeline.
+    - Complete clarification responses render in the issue activity timeline with reporter
+      attribution, chronological order, preserved newlines, long-text containment, and escaped
+      interpolation. Backend contract coverage and 14 focused desktop/mobile browser journeys pass,
+      including public submit to backoffice visibility and hostile HTML.
+    - Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` passed a real reporter API and
+      SSR journey in English and Portuguese; its temporary reporter token was removed.
   - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
     close work already delivered, and implement every remaining issue without the `postpone` label
     before starting open-ended continuous improvement.
