@@ -629,13 +629,15 @@ pass, including the project flow on desktop and mobile.
 ## Task 37: Complete Appearance And Validation Contracts
 
 **Depends on:** Task 36
-**Status:** Pending
+**Status:** In Progress
 
 **Outcome:** Complete issues #36, #37, and #39 through one consistent structured field-error and
 accent-foreground contract across API, backoffice preview, and widget.
 
 **Acceptance:** Errors stay in their owning forms and fields, nested rule paths remain actionable,
 accessible foreground derivation is deterministic, and backend/web/widget/browser tests pass.
+
+**Design:** `docs/superpowers/specs/2026-07-23-widget-appearance-validation-contract-design.md`
 
 **Autonomy:** AFK
 
