@@ -13,10 +13,14 @@ import (
 func TestConfigReturnsTenantPlanLimitsAndFeatures(t *testing.T) {
 	t.Parallel()
 
+	shortName := "ACME"
+	locale := "pt-AO"
+	timezone := "Africa/Luanda"
 	handler := NewHTTPHandler(func(context.Context) (tenant.Tenant, bool) {
 		return tenant.Tenant{
 			ID: "tenant-id", Name: "Acme", Slug: "acme",
-			Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
+			Plan: tenant.PlanGrowth, Status: tenant.StatusActive, ShortName: &shortName,
+			DefaultLocale: &locale, DefaultTimezone: &timezone,
 		}, true
 	})
 	recorder := httptest.NewRecorder()
@@ -34,12 +38,21 @@ func TestConfigReturnsTenantPlanLimitsAndFeatures(t *testing.T) {
 				Slack bool `json:"slack"`
 			} `json:"features"`
 		} `json:"plan"`
+		OrganizationProfile tenant.OrganizationProfile `json:"organization_profile"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if response.Plan.Limits.Projects != 4 || !response.Plan.Features.AI || response.Plan.Features.Slack {
 		t.Errorf("plan response = %#v", response.Plan)
+	}
+	if response.OrganizationProfile.ShortName == nil ||
+		*response.OrganizationProfile.ShortName != "ACME" ||
+		response.OrganizationProfile.DefaultLocale == nil ||
+		*response.OrganizationProfile.DefaultLocale != "pt-AO" ||
+		response.OrganizationProfile.DefaultTimezone == nil ||
+		*response.OrganizationProfile.DefaultTimezone != "Africa/Luanda" {
+		t.Errorf("organization profile = %#v", response.OrganizationProfile)
 	}
 }
 
