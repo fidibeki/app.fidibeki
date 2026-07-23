@@ -580,13 +580,19 @@ states. Staging validation is deferred unless the fix directly requires it.
 ## Task 34: Repair Replay Fullscreen
 
 **Depends on:** Task 30
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** Complete issue #33 with responsive fullscreen sizing and browser/fullscreen state
 synchronization.
 
 **Acceptance:** Aspect ratio, controls, Escape/control exit, repeated cycles, listener cleanup, and
 supported-browser E2E pass.
+
+**Evidence:** ReplayPlayer now owns fullscreen through `document.fullscreenElement` and one
+`fullscreenchange` listener, fits the recorded aspect ratio inside the available viewport, keeps
+controls visible, restores inline geometry across repeated cycles, and exposes the toggle state to
+assistive technology. Web unit (121), typecheck, production build, and all three focused desktop
+replay browser journeys pass.
 
 **Autonomy:** AFK
 
