@@ -1,0 +1,5 @@
+REVOKE UPDATE (next_attempt_at) ON identity_asset_deletions FROM fidibeki_app;
+REVOKE SELECT ON identity_asset_deletions FROM fidibeki_app;
+
+DROP POLICY identity_asset_deletions_tenant_update ON identity_asset_deletions;
+DROP POLICY identity_asset_deletions_tenant_select ON identity_asset_deletions;

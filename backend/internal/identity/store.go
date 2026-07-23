@@ -89,8 +89,8 @@ func (store Store) ReplaceLogo(
 		return fmt.Errorf("replace workspace logo: %w", err)
 	}
 	if previous != nil {
-		if err := store.StageCleanup(
-			ctx, tenantID, ImageKindLogo, nil, *previous, 0,
+		if err := enqueueCleanup(
+			ctx, query, tenantID, ImageKindLogo, nil, *previous, store.now(),
 		); err != nil {
 			return err
 		}
@@ -120,8 +120,8 @@ func (store Store) RemoveLogo(
 	`, tenantID); err != nil {
 		return false, fmt.Errorf("remove workspace logo: %w", err)
 	}
-	if err := store.StageCleanup(
-		ctx, tenantID, ImageKindLogo, nil, *previous, 0,
+	if err := enqueueCleanup(
+		ctx, query, tenantID, ImageKindLogo, nil, *previous, store.now(),
 	); err != nil {
 		return false, err
 	}
@@ -157,8 +157,8 @@ func (store Store) ReplaceAvatar(
 		return fmt.Errorf("replace member avatar: %w", err)
 	}
 	if previous != nil {
-		if err := store.StageCleanup(
-			ctx, tenantID, ImageKindAvatar, &memberID, *previous, 0,
+		if err := enqueueCleanup(
+			ctx, query, tenantID, ImageKindAvatar, &memberID, *previous, store.now(),
 		); err != nil {
 			return err
 		}
@@ -194,8 +194,8 @@ func (store Store) RemoveAvatar(
 	`, tenantID, memberID); err != nil {
 		return false, fmt.Errorf("remove member avatar: %w", err)
 	}
-	if err := store.StageCleanup(
-		ctx, tenantID, ImageKindAvatar, &memberID, *previous, 0,
+	if err := enqueueCleanup(
+		ctx, query, tenantID, ImageKindAvatar, &memberID, *previous, store.now(),
 	); err != nil {
 		return false, err
 	}

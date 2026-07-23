@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 70
+	const latestMigrationVersion = 71
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,7 +92,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
-	if err := migrator.Steps(-11); err != nil {
+	if err := migrator.Steps(-12); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
 	var legacyTenantID, legacyOwnerID string
@@ -539,6 +539,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply organization identity profile migration: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply transactional identity cleanup migration: %v", err)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, profileMigrationTenantID); err != nil {
 		t.Fatalf("remove organization profile migration fixture: %v", err)
@@ -1241,6 +1244,18 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		VALUES ($1, 'workspace_logo', gen_random_uuid())
 	`, tenantA); err != nil {
 		t.Fatalf("insert tenant A identity cleanup: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE identity_asset_deletions
+		SET next_attempt_at = now()
+		WHERE tenant_id = $1
+	`, tenantA); err != nil {
+		t.Fatalf("update tenant A identity cleanup: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM identity_asset_deletions WHERE tenant_id = $1
+	`, tenantA).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("tenant A identity cleanup count = %d, error = %v, want 1", count, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit tenant A read transaction: %v", err)

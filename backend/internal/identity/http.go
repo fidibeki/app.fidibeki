@@ -203,12 +203,16 @@ func (handler *HTTPHandler) getAvatar(w http.ResponseWriter, r *http.Request) {
 	current, err := handler.options.Store.CurrentAvatarVersion(
 		r.Context(), query, resolved.ID, memberID,
 	)
-	if errors.Is(err, ErrAssetNotFound) || current != version {
+	if errors.Is(err, ErrAssetNotFound) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "avatar not found", nil)
 		return
 	}
 	if err != nil {
 		handler.internalError(w, r, "get member avatar", err)
+		return
+	}
+	if current != version {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "avatar not found", nil)
 		return
 	}
 	key, err := ObjectKey(resolved.ID, ImageKindAvatar, &memberID, version, size)

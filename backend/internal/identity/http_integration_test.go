@@ -276,6 +276,49 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 		}
 	}
 
+	deletedLogo := performIdentityRequest(
+		handler, http.MethodDelete, "/v1/organization-profile/logo", nil, "", ownerToken,
+	)
+	if deletedLogo.Code != http.StatusOK ||
+		!strings.Contains(deletedLogo.Body.String(), `"removed":true`) {
+		t.Fatalf("delete logo status = %d, body = %s", deletedLogo.Code,
+			deletedLogo.Body.String())
+	}
+	var storedLogoVersion *string
+	if err := root.QueryRow(ctx, `
+		SELECT logo_version::text FROM tenants WHERE id = $1
+	`, tenantID).Scan(&storedLogoVersion); err != nil || storedLogoVersion != nil {
+		t.Fatalf("logo version after removal = %v, error = %v", storedLogoVersion, err)
+	}
+	var logoRemovalAudit int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'organization.logo_removed'
+		  AND actor_member_id = $2
+	`, tenantID, ownerID).Scan(&logoRemovalAudit); err != nil || logoRemovalAudit != 1 {
+		t.Fatalf("logo removal audit count = %d, error = %v", logoRemovalAudit, err)
+	}
+	if err := (CleanupMaintainer{Store: store, Storage: objects}).Maintain(ctx); err != nil {
+		t.Fatalf("clean removed logo: %v", err)
+	}
+	deletedLogoRead := httptest.NewRecorder()
+	publicRoutes.ServeHTTP(deletedLogoRead, httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/v1/public/workspace-logo/%s/%s/64.png", tenantID, secondLogoVersion),
+		nil,
+	))
+	if deletedLogoRead.Code != http.StatusNotFound {
+		t.Fatalf("deleted logo read status = %d", deletedLogoRead.Code)
+	}
+	deletedLogoAgain := performIdentityRequest(
+		handler, http.MethodDelete, "/v1/organization-profile/logo", nil, "", ownerToken,
+	)
+	if deletedLogoAgain.Code != http.StatusOK ||
+		!strings.Contains(deletedLogoAgain.Body.String(), `"removed":false`) {
+		t.Fatalf("second logo deletion status = %d, body = %s", deletedLogoAgain.Code,
+			deletedLogoAgain.Body.String())
+	}
+
 	deletedAvatar := performIdentityRequest(
 		handler, http.MethodDelete, "/v1/profile/avatar", nil, "", memberToken,
 	)
@@ -294,6 +337,14 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 	)
 	if deletedAvatarRead.Code != http.StatusNotFound {
 		t.Fatalf("deleted avatar read status = %d", deletedAvatarRead.Code)
+	}
+	deletedAvatarAgain := performIdentityRequest(
+		handler, http.MethodDelete, "/v1/profile/avatar", nil, "", memberToken,
+	)
+	if deletedAvatarAgain.Code != http.StatusOK ||
+		!strings.Contains(deletedAvatarAgain.Body.String(), `"removed":false`) {
+		t.Fatalf("second avatar deletion status = %d, body = %s",
+			deletedAvatarAgain.Code, deletedAvatarAgain.Body.String())
 	}
 
 	limiter.allowed = false

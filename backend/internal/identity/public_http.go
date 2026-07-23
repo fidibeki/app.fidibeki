@@ -26,12 +26,16 @@ func (handler *HTTPHandler) getPublicLogo(w http.ResponseWriter, r *http.Request
 		return
 	}
 	current, err := handler.options.Store.CurrentLogoVersion(r.Context(), tenantID)
-	if errors.Is(err, ErrAssetNotFound) || current != version {
+	if errors.Is(err, ErrAssetNotFound) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "logo not found", nil)
 		return
 	}
 	if err != nil {
 		handler.internalError(w, r, "get public workspace logo", err)
+		return
+	}
+	if current != version {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "logo not found", nil)
 		return
 	}
 	key, err := ObjectKey(tenantID, ImageKindLogo, nil, version, size)
