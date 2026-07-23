@@ -23,7 +23,7 @@ async function runtimeSnapshot(page: Page) {
             $nuxt: {
               $i18n: {
                 locale: { value: string } | string
-                t: (key: string) => string
+                t: (key: string, ...arguments_: unknown[]) => string
               }
               payload: {
                 state: Record<string, unknown>
@@ -44,6 +44,8 @@ async function runtimeSnapshot(page: Page) {
       locale,
       catalogLanguage: nuxt.$i18n.t('runtime.catalogLanguage'),
       fallbackProbe: nuxt.$i18n.t('runtime.fallbackProbe'),
+      oneItem: nuxt.$i18n.t('runtime.itemCount', 1),
+      manyItems: nuxt.$i18n.t('runtime.itemCount', 3),
       regional: regionalKey ? nuxt.payload.state[regionalKey] : undefined,
     }
   })
@@ -74,6 +76,8 @@ test('public SSR and hydration keep browser locale state aligned', async ({ page
     locale: 'pt-AO',
     catalogLanguage: 'Português',
     fallbackProbe: 'English fallback',
+    oneItem: 'um item',
+    manyItems: '3 itens',
     regional: {
       locale: 'pt-AO',
       localeSource: 'browser',

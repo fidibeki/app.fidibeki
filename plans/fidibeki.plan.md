@@ -418,8 +418,14 @@ was removed from the staging test tenant.
       supported locales, IANA timezone validation, one audit per real change, and preference
       propagation through member/session reads. Migration and tenant-member integration coverage,
       the full package test, and `go vet` pass locally.
-    - [ ] Slice 2: no-prefix Nuxt i18n runtime, SSR-safe precedence, Portuguese regional fallback,
+    - [x] Slice 2: no-prefix Nuxt i18n runtime, SSR-safe precedence, Portuguese regional fallback,
       reactive document language/direction, and centralized regional/error formatting.
+      Nuxt now resolves lazy no-prefix English, Portuguese, regional Portuguese, and pseudo-locale
+      catalogs before SSR rendering, applies member/organization/browser/default precedence
+      independently for locale and timezone, and reacts without hydration drift. Shared cached
+      regional formatters cover temporal, numeric, relative, list, and plural output; localized API
+      errors expose only allowlisted stable codes/reasons with safe generic fallbacks. Unit,
+      typecheck, production-build, full-browser, and focused responsive SSR/runtime gates pass.
     - [ ] Slice 3: profile/shared shell, authentication, and onboarding catalogs with immediate
       preference switching.
     - [ ] Slice 4: dashboard/analytics, feedback, issues, projects/widget configuration,

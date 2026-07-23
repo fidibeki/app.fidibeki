@@ -357,13 +357,22 @@ production-build SSR/hydration tests pass across desktop and mobile.
 ## Task 22: Regional Format And Error Helpers
 
 **Depends on:** Task 21
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Shared locale/timezone-aware formatters and safe localized API errors replace fixed
 English/UTC helpers.
 
 **Acceptance:** Unit tests prove DST/midnight, numeric formats, plurals, known errors, and unknown
 fallback.
+
+**Completion:** A shared cached `Intl` formatter factory and reactive composable now format dates,
+times, numbers, currencies, percentages, relative time, lists, and plural categories with the
+resolved member context. A centralized localized API-error layer maps only allowlisted stable
+codes, reasons, and structured field reasons, preventing arbitrary backend or provider text from
+reaching users while preserving a generic fallback. English and Portuguese catalogs cover the
+stable contract, including plural messages. Focused DST/midnight, Angolan numeric, plural,
+known/unknown error, and legacy compatibility tests pass; the full 93-test web unit suite,
+typecheck, production build, and four responsive regional-runtime browser tests also pass.
 
 **Autonomy:** AFK
 

@@ -1,14 +1,13 @@
-const productLocale = 'en-US'
-const productTimeZone = 'UTC'
+import { createRegionalFormatters } from '~/utils/regional-format'
+
+const productFormat = createRegionalFormatters({ locale: 'en', timezone: 'UTC' })
 
 export function formatEuro(cents: number | null | undefined): string {
   if (cents == null) return 'Managed contract'
-  return new Intl.NumberFormat(productLocale, {
-    style: 'currency',
-    currency: 'EUR',
+  return productFormat.currency(cents / 100, 'EUR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(cents / 100)
+  })
 }
 
 export function formatMonthlyEuro(cents: number | null | undefined): string {
@@ -17,20 +16,13 @@ export function formatMonthlyEuro(cents: number | null | undefined): string {
 }
 
 export function formatWholeNumber(value: number): string {
-  return new Intl.NumberFormat(productLocale, { maximumFractionDigits: 0 }).format(value)
+  return productFormat.integer(value)
 }
 
 export function formatDate(value: string | number | Date): string {
-  return new Intl.DateTimeFormat(productLocale, {
-    dateStyle: 'medium',
-    timeZone: productTimeZone,
-  }).format(new Date(value))
+  return productFormat.date(value)
 }
 
 export function formatDateTime(value: string | number | Date): string {
-  return new Intl.DateTimeFormat(productLocale, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: productTimeZone,
-  }).format(new Date(value))
+  return productFormat.dateTime(value)
 }

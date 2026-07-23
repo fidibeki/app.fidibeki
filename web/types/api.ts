@@ -97,6 +97,8 @@ export interface APIErrorBody {
     code: string
     message: string
     details?: unknown
+    reason?: string
+    retry_after_seconds?: number
     sentry_event_id?: string
   }
 }
