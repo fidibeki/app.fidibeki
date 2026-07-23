@@ -272,6 +272,44 @@ function createMockState() {
     }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
+    privacyExports: [{
+      id: 'privacy-export-1',
+      kind: 'workspace_export' as const,
+      status: 'completed' as 'pending' | 'processing' | 'completed' | 'failed' | 'expired',
+      attempts: 1,
+      completed_at: '2026-07-21T12:04:00.000Z' as string | undefined,
+      expires_at: '2026-07-28T12:04:00.000Z' as string | undefined,
+      object_size_bytes: 1835008 as number | undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:04:00.000Z',
+    }],
+    privacyRequests: [{
+      id: 'privacy-request-1',
+      action: 'anonymize' as 'export' | 'anonymize',
+      status: 'failed' as 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired',
+      reporter_email: 'former.customer@example.test' as string | undefined,
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verified_at: '2026-07-21T12:02:00.000Z' as string | undefined,
+      access_expires_at: '2026-08-20T12:02:00.000Z' as string | undefined,
+      job_id: 'privacy-job-reporter-1' as string | undefined,
+      job_status: 'failed' as 'pending' | 'processing' | 'completed' | 'failed' | 'expired' | undefined,
+      manual_review_count: 2 as number | undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:05:00.000Z',
+    }],
+    publicPrivacyRequest: {
+      action: 'export' as 'export' | 'anonymize',
+      status: 'completed' as 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired',
+      completed_at: '2026-07-21T12:04:00.000Z',
+      record_count: 14,
+      manual_review_count: 0,
+      job_status: 'completed' as 'pending' | 'processing' | 'completed' | 'failed' | 'expired',
+      download_available: true,
+      access_expires_at: '2026-08-20T12:02:00.000Z',
+    },
+    privacyDownloadCount: 0,
+    privacyVerifyCount: 0,
+    privacyPublicUnavailable: false,
     memberInviteFailure: null as null | { status: number; code: string; message: string },
     billingDeletionRequestedAt: null as string | null,
     failedReplayFeedbackIDs: new Set<string>(),
@@ -453,6 +491,12 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 async function installMockAPI(page: Page, state: MockState) {
+  await page.route('https://downloads.example.test/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/zip',
+    headers: { 'content-disposition': 'attachment; filename="fidibeki-export.zip"' },
+    body: 'PK',
+  }))
   await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
     const request = route.request()
     if (request.resourceType() === 'document') return route.continue()
@@ -864,6 +908,90 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/widget-appearance' && method === 'PATCH') {
       state.tenant.widget_appearance_defaults = body() as Record<string, string>
       return json(route, { widget_appearance_defaults: state.tenant.widget_appearance_defaults })
+    }
+    if (path === '/v1/privacy/retention' && method === 'GET') {
+      return json(route, { retention: {
+        plan: state.tenant.plan,
+        policies: [
+          { category: 'workflow_metadata', label: 'Feedback and issue workflow metadata', duration: 'Workspace lifetime', source: 'Workspace lifecycle' },
+          { category: 'attachments', label: 'Attachments', duration: '90 days', duration_days: 90, source: 'Plan storage limit' },
+          { category: 'session_replays', label: 'Session replay objects', duration: '90 days', duration_days: 90, source: 'Plan storage limit' },
+          { category: 'widget_events', label: 'Raw widget funnel events', duration: '90 days', duration_days: 90, source: 'Platform default' },
+          { category: 'widget_daily', label: 'Daily widget funnel aggregates', duration: '730 days', duration_days: 730, source: 'Platform default' },
+          { category: 'export_archives', label: 'Export archives', duration: '7 days', duration_days: 7, source: 'Platform default' },
+          { category: 'unverified_requests', label: 'Unverified reporter requests', duration: '48 hours', duration_days: 2, source: 'Platform default' },
+          { category: 'verified_requests', label: 'Verified reporter request access', duration: '30 days', duration_days: 30, source: 'Platform default' },
+        ],
+      } })
+    }
+    if (path === '/v1/privacy/exports' && method === 'GET') return json(route, { exports: state.privacyExports })
+    if (path === '/v1/privacy/exports' && method === 'POST') {
+      const active = state.privacyExports.find(item => item.status === 'pending' || item.status === 'processing')
+      if (active) return json(route, { export: active, created: false })
+      const item = {
+        id: `privacy-export-${state.privacyExports.length + 1}`,
+        kind: 'workspace_export' as const,
+        status: 'pending' as const,
+        attempts: 0,
+        completed_at: undefined,
+        expires_at: undefined,
+        object_size_bytes: undefined,
+        created_at: now,
+        updated_at: now,
+      }
+      state.privacyExports.unshift(item)
+      return json(route, { export: item, created: true }, 202)
+    }
+    const privacyExportDownloadMatch = path.match(/^\/v1\/privacy\/exports\/([^/]+)\/download$/)
+    if (privacyExportDownloadMatch && method === 'POST') {
+      state.privacyDownloadCount += 1
+      return json(route, { url: 'https://downloads.example.test/workspace-export.zip?signature=test', expires_at: '2026-07-21T12:10:00.000Z' })
+    }
+    const privacyExportRetryMatch = path.match(/^\/v1\/privacy\/exports\/([^/]+)\/retry$/)
+    if (privacyExportRetryMatch && method === 'POST') {
+      const exportItem = state.privacyExports.find(item => item.id === privacyExportRetryMatch[1])
+      if (exportItem) exportItem.status = 'pending'
+      const request = state.privacyRequests.find(item => item.job_id === privacyExportRetryMatch[1])
+      if (request) {
+        request.status = 'processing'
+        request.job_status = 'pending'
+      }
+      return json(route, { export: exportItem || { id: privacyExportRetryMatch[1], kind: 'reporter_anonymize', status: 'pending', attempts: 1, created_at: now, updated_at: now } }, 202)
+    }
+    if (path === '/v1/privacy/requests' && method === 'GET') return json(route, { requests: state.privacyRequests })
+    if (path === '/v1/privacy/requests' && method === 'POST') {
+      const input = body()
+      const item = {
+        id: `privacy-request-${state.privacyRequests.length + 1}`,
+        action: String(input.action) as 'export' | 'anonymize',
+        status: 'pending_verification' as const,
+        reporter_email: String(input.email),
+        verification_expires_at: '2026-07-23T12:00:00.000Z',
+        verified_at: undefined,
+        access_expires_at: undefined,
+        job_id: undefined,
+        job_status: undefined,
+        manual_review_count: undefined,
+        created_at: now,
+        updated_at: now,
+      }
+      state.privacyRequests.unshift(item)
+      return json(route, { request: item, verification_email_queued: true }, 202)
+    }
+    const privacyPublicMatch = path.match(/^\/v1\/privacy\/requests\/([^/]+)(?:\/(verify|download))?$/)
+    if (privacyPublicMatch && method === 'POST' && privacyPublicMatch[2] === 'verify') {
+      state.privacyVerifyCount += 1
+      if (state.privacyPublicUnavailable) {
+        return json(route, { error: { code: 'not_found', message: 'data request is invalid or unavailable' } }, 404)
+      }
+      return json(route, { request: state.publicPrivacyRequest })
+    }
+    if (privacyPublicMatch && method === 'GET' && !privacyPublicMatch[2]) {
+      return json(route, { request: state.publicPrivacyRequest })
+    }
+    if (privacyPublicMatch && method === 'POST' && privacyPublicMatch[2] === 'download') {
+      state.privacyDownloadCount += 1
+      return json(route, { url: 'https://downloads.example.test/reporter-export.zip?signature=test', expires_at: '2026-07-21T12:10:00.000Z' })
     }
     const reporterProgressMatch = path.match(/^\/v1\/reporter\/progress\/([^/]+)$/)
     if (reporterProgressMatch && method === 'GET') return json(route, { progress: {
@@ -2394,6 +2522,88 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+})
+
+test('data privacy controls cover retention, exports, reporter verification, and retries', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=privacy$/)
+
+  await expect(page.getByRole('heading', { name: 'Retention schedule' })).toBeVisible()
+  await expect(page.locator('.privacy-retention-table')).toContainText('Attachments')
+  await expect(page.locator('.privacy-retention-table')).toContainText('90 days')
+  await expect(page.locator('.privacy-export-table')).toContainText('1.8 MB')
+  await expect(page.locator('.privacy-request-table')).toContainText('former.customer@example.test')
+  await expect(page.locator('.privacy-request-table')).toContainText('Manual review: 2')
+  await capture(page, testInfo, `settings-data-privacy-${testInfo.project.name}`)
+
+  await page.getByTitle('Download workspace export').click()
+  expect(state.privacyDownloadCount).toBe(1)
+
+  await page.getByTitle('Retry reporter request').click()
+  await expect(page.locator('.privacy-request-table')).toContainText('processing')
+  expect(state.privacyRequests[0].job_status).toBe('pending')
+
+  await page.getByRole('button', { name: 'Generate export' }).click()
+  await expect(page.getByRole('status')).toContainText('Workspace export queued')
+  expect(state.privacyExports[0].status).toBe('pending')
+
+  const requestForm = page.locator('.privacy-request-form')
+  await requestForm.getByLabel('Reporter email').fill('requester@example.test')
+  await requestForm.getByLabel('Request type').selectOption('export')
+  await requestForm.getByRole('button', { name: 'Send verification' }).click()
+  await expect(page.getByRole('status')).toContainText('Verification email queued')
+  expect(state.privacyRequests[0].action).toBe('export')
+
+  await requestForm.getByLabel('Reporter email').fill('remove.me@example.test')
+  await requestForm.getByLabel('Request type').selectOption('anonymize')
+  await requestForm.getByRole('button', { name: 'Review anonymization' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Confirm reporter anonymization' })
+  await expect(dialog).toBeVisible()
+  const confirmButton = dialog.getByRole('button', { name: 'Send anonymization request' })
+  await expect(confirmButton).toBeDisabled()
+  await dialog.getByLabel(/Type remove\.me@example\.test to confirm/).fill('remove.me@example.test')
+  await confirmButton.click()
+  await expect(dialog).not.toBeVisible()
+  expect(state.privacyRequests[0].action).toBe('anonymize')
+})
+
+test('verified reporter can follow and download a completed data export', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await installMockAPI(page, state)
+  await page.goto(`${tenantOrigin}/privacy/privacy-token`)
+
+  await expect(page.getByRole('heading', { name: 'Data export request' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your data archive is ready' })).toBeVisible()
+  await expect(page.getByText('14 matching records')).toBeVisible()
+  expect(state.privacyVerifyCount).toBe(1)
+  await capture(page, testInfo, `reporter-data-export-${testInfo.project.name}`)
+
+  await page.getByRole('button', { name: 'Download data archive' }).click()
+  expect(state.privacyDownloadCount).toBe(1)
+})
+
+test('reporter data request keeps failures and invalid links neutral', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'State semantics are viewport independent')
+  const failed = createMockState()
+  failed.publicPrivacyRequest.status = 'failed'
+  failed.publicPrivacyRequest.job_status = 'failed'
+  failed.publicPrivacyRequest.download_available = false
+  await installMockAPI(page, failed)
+  await page.goto(`${tenantOrigin}/privacy/failed-token`)
+
+  await expect(page.getByRole('heading', { name: 'The request needs attention' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Download data archive' })).toHaveCount(0)
+
+  const unavailable = createMockState()
+  unavailable.privacyPublicUnavailable = true
+  await page.unrouteAll({ behavior: 'wait' })
+  await installMockAPI(page, unavailable)
+  await page.goto(`${tenantOrigin}/privacy/invalid-token`)
+  await expect(page.getByRole('heading', { name: 'Data request unavailable' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('data request is invalid or unavailable')
 })
 
 test('member and API key permissions share a compact custom-aware editor', async ({ page }, testInfo) => {

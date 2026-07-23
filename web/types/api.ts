@@ -353,12 +353,13 @@ export interface FeedbackAttachment {
   completed_at?: string
   processed_at?: string
   created_at: string
-	content_url?: string
+  retention_deleted_at?: string
+  content_url?: string
 }
 
 export interface FeedbackSession {
   id: string
-  status: 'recording' | 'processing' | 'ready' | 'failed'
+  status: 'recording' | 'processing' | 'ready' | 'failed' | 'expired'
   page_url?: string
   started_at: string
   ended_at?: string
@@ -367,7 +368,8 @@ export interface FeedbackSession {
   rrweb_version: string
   replay_ready: boolean
   merge_error?: string
-	replay_url?: string
+  retention_deleted_at?: string
+  replay_url?: string
 }
 
 export interface FeedbackDetail extends FeedbackItem {
@@ -514,6 +516,70 @@ export interface SignupResponse {
 export interface TenantConfiguration {
   tenant: TenantSummary
   plan: PlanDefinition
+}
+
+export type PrivacyJobKind = 'workspace_export' | 'reporter_export' | 'reporter_anonymize'
+export type PrivacyJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'expired'
+export type ReporterPrivacyAction = 'export' | 'anonymize'
+export type ReporterPrivacyStatus = 'pending_verification' | 'processing' | 'completed' | 'failed' | 'expired'
+
+export interface PrivacyExport {
+  id: string
+  kind: PrivacyJobKind
+  status: PrivacyJobStatus
+  actor_member_id?: string
+  attempts: number
+  started_at?: string
+  completed_at?: string
+  expires_at?: string
+  object_size_bytes?: number
+  error_message?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ReporterPrivacyRequest {
+  id: string
+  action: ReporterPrivacyAction
+  status: ReporterPrivacyStatus
+  reporter_email?: string
+  actor_member_id?: string
+  verification_expires_at: string
+  verified_at?: string
+  access_expires_at?: string
+  completed_at?: string
+  record_count?: number
+  manual_review_count?: number
+  error_message?: string
+  job_id?: string
+  job_status?: PrivacyJobStatus
+  job_expires_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ReporterPrivacyView {
+  action: ReporterPrivacyAction
+  status: ReporterPrivacyStatus
+  completed_at?: string
+  record_count?: number
+  manual_review_count?: number
+  job_status?: PrivacyJobStatus
+  download_available: boolean
+  access_expires_at: string
+}
+
+export interface RetentionPolicy {
+  category: string
+  label: string
+  duration: string
+  duration_days?: number
+  source: string
+}
+
+export interface EffectiveRetention {
+  plan: TenantPlan
+  policies: RetentionPolicy[]
 }
 
 export interface APIKey {

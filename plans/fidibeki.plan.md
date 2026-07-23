@@ -312,6 +312,12 @@ was removed from the staging test tenant.
         replay and retention boundary tests pass, and the backend coverage gate is restored above 80%.
       - [ ] Slice 4: responsive Data & privacy Settings controls, reporter status page, desktop/mobile
         E2E, CI, and staging validation.
+        Local implementation now exposes the plan-effective retention matrix, workspace export
+        generation/history/download/retry, verified reporter export/anonymization requests with
+        destructive confirmation, manual-review disclosure, and a neutral token-scoped public status
+        and download page. Signed download schemes are constrained to HTTP(S), token pages ship
+        no-store/no-referrer/noindex response headers, and desktop/mobile journeys pass. Web CI and the
+        real staging smoke remain the completion gate.
     - [ ] #26: audit and implement layered public-submission abuse protection after #25.
   - [ ] Complete workspace identity and organization profile issues #30 and #31.
   - [ ] Complete member-aware internationalization issue #32.

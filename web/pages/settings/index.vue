@@ -45,6 +45,7 @@ const tabs = [
   { id: 'members', label: 'Members' },
   { id: 'keys', label: 'API keys' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'privacy', label: 'Data & privacy' },
 ] as const
 type SettingsTab = typeof tabs[number]['id']
 
@@ -586,7 +587,7 @@ useHead({ title: 'Settings - Fidibeki' })
         </div>
       </section>
 
-      <section v-else class="app-surface settings-section">
+      <section v-else-if="activeTab === 'integrations'" class="app-surface settings-section">
         <header><div><p class="app-eyebrow">Delivery</p><h2>Integrations</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> Add integration</button></header>
         <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>Integration access required</h3></div>
         <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>No integrations</h3></div>
@@ -601,6 +602,8 @@ useHead({ title: 'Settings - Fidibeki' })
           </div>
         </div>
       </section>
+
+      <DataPrivacy v-else />
     </template>
 
     <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">
