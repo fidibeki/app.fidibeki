@@ -5,6 +5,11 @@
   "scripts": {
     "build:widget": "pnpm --filter @fidibeki/widget build",
     "build:web": "pnpm --filter @fidibeki/web build",
+    "build:marketing": "pnpm --filter @fidibeki/marketing build",
+    "dev:marketing": "pnpm --filter @fidibeki/marketing dev",
+    "test:marketing": "pnpm --filter @fidibeki/marketing test",
+    "test:marketing:e2e": "pnpm --filter @fidibeki/marketing test:e2e",
+    "typecheck:marketing": "pnpm --filter @fidibeki/marketing typecheck",
     "dev:web": "pnpm --filter @fidibeki/web dev",
     "test:widget": "pnpm --filter @fidibeki/widget test",
     "test:widget:e2e": "pnpm --filter @fidibeki/widget test:e2e",
