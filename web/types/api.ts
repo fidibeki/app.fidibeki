@@ -122,6 +122,7 @@ export type TriggerType = 'delay' | 'scroll' | 'exit_intent'
 export type WidgetPosition = 'bottom-left' | 'bottom-right'
 export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
+export type ReplayConsentMode = 'none' | 'fidibeki_managed' | 'customer_cmp'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
 export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
@@ -170,6 +171,39 @@ export interface WidgetLocalization {
   option_labels?: Record<string, Record<string, string>>
 }
 
+export interface ReplayConsentNotice {
+  title: string
+  description: string
+  accept_label: string
+  reject_label: string
+  withdraw_label: string
+}
+
+export interface ReplayConsentConfig {
+  mode: ReplayConsentMode
+  notice_version: string
+  controller_name: string
+  privacy_policy_url: string
+  supported_locales: string[]
+  retention_days: number
+  expiry_days: number
+  notices: Record<string, ReplayConsentNotice>
+}
+
+export interface ReplayConsentDiagnostic {
+  widget_rule_id: string
+  replay_mode: ReplayMode
+  consent_mode: ReplayConsentMode
+  notice_version: string
+  state: 'not_observed' | 'active' | 'denied' | 'withdrawn' | 'expired'
+  locale?: string
+  source?: ReplayConsentMode
+  accepted_at?: string
+  withdrawn_at?: string
+  expires_at?: string
+  latest_session_started_at?: string
+}
+
 export interface WidgetTargetCondition {
   id: string
   matcher_type: MatcherType
@@ -213,6 +247,7 @@ export interface WidgetRule {
   replay_mask_text_selector?: string | null
   replay_record_canvas: boolean
   replay_canvas_fps: number
+  replay_consent: ReplayConsentConfig
   recurrence_mode: RecurrenceMode
   recurrence_days?: number | null
   definition_key: string

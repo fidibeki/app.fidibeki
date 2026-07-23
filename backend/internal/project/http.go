@@ -235,12 +235,18 @@ func (h *HTTPHandler) createWidgetRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorMemberID, ok := requestActorMemberID(w, r)
+	if !ok {
+		return
+	}
 	values, fields := ValidateWidgetRule(input, resolved)
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
 	}
-	created, err := h.options.Store.CreateWidgetRule(r.Context(), query, resolved.ID, projectID, values)
+	created, err := h.options.Store.CreateWidgetRule(
+		r.Context(), query, resolved.ID, projectID, values, actorMemberID,
+	)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -299,13 +305,17 @@ func (h *HTTPHandler) updateWidgetRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorMemberID, ok := requestActorMemberID(w, r)
+	if !ok {
+		return
+	}
 	values, fields := ValidateWidgetRule(input, resolved)
 	if len(fields) > 0 {
 		writeValidation(w, fields)
 		return
 	}
 	updated, err := h.options.Store.UpdateWidgetRule(
-		r.Context(), query, resolved.ID, projectID, ruleID, values,
+		r.Context(), query, resolved.ID, projectID, ruleID, values, actorMemberID,
 	)
 	if err != nil {
 		writeStoreError(w, err)
@@ -338,6 +348,15 @@ func requestState(w http.ResponseWriter, r *http.Request) (tenant.Tenant, db.Que
 		return tenant.Tenant{}, nil, false
 	}
 	return resolved, query, true
+}
+
+func requestActorMemberID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	claims, ok := appmiddleware.TenantClaimsFromContext(r.Context())
+	if !ok || claims.Subject == "" {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return "", false
+	}
+	return claims.Subject, true
 }
 
 func widgetPathUUIDs(w http.ResponseWriter, r *http.Request) (string, string, bool) {

@@ -282,12 +282,77 @@ func TestValidateWidgetRuleAllowsGrowthFeaturesAndValidRegex(t *testing.T) {
 		TriggerType: TriggerDelay, TriggerDelaySeconds: &delay,
 		CanRecordAudio: true, CanAttachScreenshot: true,
 		ReplayMode: ReplaySampling, ReplaySamplingRate: 25,
+		ReplayConsent: ReplayConsentConfig{
+			Mode: ReplayConsentCustomerManaged, NoticeVersion: "2026-07",
+			SupportedLocales: []string{"pt-PT"}, ExpiryDays: 30,
+		},
 	}, tenant.Tenant{Plan: tenant.PlanGrowth})
 	if len(fields) != 0 {
 		t.Fatalf("fields = %#v", fields)
 	}
-	if !values.CanRecordAudio || !values.CanAttachScreenshot || values.ReplaySamplingRate != 25 {
+	if !values.CanRecordAudio || !values.CanAttachScreenshot || values.ReplaySamplingRate != 25 ||
+		values.ReplayConsent.Mode != ReplayConsentCustomerManaged ||
+		len(values.ReplayConsent.SupportedLocales) != 1 ||
+		values.ReplayConsent.SupportedLocales[0] != "pt-pt" {
 		t.Errorf("values = %#v", values)
+	}
+}
+
+func TestValidateWidgetRuleRequiresExplicitReplayConsentMode(t *testing.T) {
+	t.Parallel()
+	values, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Replay", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		ReplayMode: ReplayFull,
+	}, tenant.Tenant{Plan: tenant.PlanGrowth})
+	if values.ReplayConsent.Mode != ReplayConsentNone {
+		t.Fatalf("replay consent mode = %q, want safe none default", values.ReplayConsent.Mode)
+	}
+	if fields["replay_consent.mode"] == "" {
+		t.Fatalf("fields = %#v, want replay consent mode error", fields)
+	}
+}
+
+func TestValidateWidgetRuleRejectsIncompleteCustomerManagedReplayConsent(t *testing.T) {
+	t.Parallel()
+	_, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Replay", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		ReplayMode: ReplayFull,
+		ReplayConsent: ReplayConsentConfig{
+			Mode: ReplayConsentCustomerManaged,
+		},
+	}, tenant.Tenant{Plan: tenant.PlanGrowth})
+	for _, field := range []string{
+		"replay_consent.notice_version",
+		"replay_consent.supported_locales",
+		"replay_consent.expiry_days",
+	} {
+		if fields[field] == "" {
+			t.Errorf("fields[%q] missing from %#v", field, fields)
+		}
+	}
+}
+
+func TestValidateWidgetRuleRejectsIncompleteFidibekiManagedReplayConsent(t *testing.T) {
+	t.Parallel()
+	_, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Replay", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		ReplayMode: ReplayFull,
+		ReplayConsent: ReplayConsentConfig{
+			Mode:             ReplayConsentFidibekiManaged,
+			NoticeVersion:    "2026-07",
+			SupportedLocales: []string{"pt-PT"},
+			ExpiryDays:       30,
+		},
+	}, tenant.Tenant{Plan: tenant.PlanGrowth})
+	for _, field := range []string{
+		"replay_consent.controller_name",
+		"replay_consent.privacy_policy_url",
+		"replay_consent.retention_days",
+		"replay_consent.notices.pt-pt",
+	} {
+		if fields[field] == "" {
+			t.Errorf("fields[%q] missing from %#v", field, fields)
+		}
 	}
 }
 

@@ -123,6 +123,25 @@ describe('configuration fetch and cache', () => {
     })).rejects.toThrow('status 403')
   })
 
+  it('fails legacy replay configuration closed when consent orchestration is absent', async () => {
+    const legacyRule = rule({ replay_mode: 'full' })
+    const { replay_consent: _removed, ...withoutConsent } = legacyRule
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      ...configuration,
+      rules: [withoutConsent],
+      definitions: [withoutConsent],
+    }), { status: 200 }))
+
+    const result = await fetchConfiguration({
+      endpoint: new URL('https://widget.test/v1/widget/config'),
+      publicKey: 'pk_live_test',
+      fetchImpl,
+    })
+
+    expect(result.rules[0]?.replay_consent).toEqual(expect.objectContaining({ mode: 'none' }))
+    expect(result.definitions?.[0]?.replay_consent).toEqual(expect.objectContaining({ mode: 'none' }))
+  })
+
   it('reports only the selected rule without page data', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 204 }))
     await expect(reportConnection({

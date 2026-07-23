@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 79
+	const latestMigrationVersion = 80
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2320,6 +2320,68 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, tenantA, legacyReviewRequestID, legacyReviewJobID).Scan(&legacyReviewItems); err != nil ||
 		legacyReviewItems != 1 {
 		t.Fatalf("legacy privacy review items = %d, error = %v", legacyReviewItems, err)
+	}
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
+		t.Fatalf("apply replay consent orchestration migration: %v", err)
+	}
+	var legacyReplayConsentMode string
+	if err := root.QueryRow(ctx, `
+		SELECT replay_consent->>'mode' FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(&legacyReplayConsentMode); err != nil || legacyReplayConsentMode != "none" {
+		t.Fatalf(
+			"legacy replay consent mode = %q, error = %v, want none",
+			legacyReplayConsentMode, err,
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET replay_consent = '{"mode":"implicit"}'::jsonb WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("replay consent configuration accepted an implicit mode")
+	}
+	var replayConsentRLS, replayConsentForceRLS bool
+	if err := root.QueryRow(ctx, `
+		SELECT relrowsecurity, relforcerowsecurity
+		FROM pg_class
+		WHERE oid = 'replay_consents'::regclass
+	`).Scan(&replayConsentRLS, &replayConsentForceRLS); err != nil ||
+		!replayConsentRLS || !replayConsentForceRLS {
+		t.Fatalf(
+			"replay consent RLS = enabled %t forced %t, error = %v",
+			replayConsentRLS, replayConsentForceRLS, err,
+		)
+	}
+	var replayConsentID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO replay_consents (
+			tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, token_hash, state, accepted_at, expires_at
+		) VALUES (
+			$1, $2, $3, 'session_replay', '2026-07', 'en', 'customer_cmp',
+			encode(digest('replay-consent-migration', 'sha256'), 'hex'),
+			'active', now(), now() + interval '30 days'
+		)
+		RETURNING id
+	`, tenantA, projectA, widgetRuleA).Scan(&replayConsentID); err != nil {
+		t.Fatalf("insert replay consent migration fixture: %v", err)
+	}
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tenant B replay consent visibility transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB); err != nil {
+		t.Fatalf("set tenant B replay consent scope: %v", err)
+	}
+	var replayConsentVisible int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM replay_consents WHERE id = $1
+	`, replayConsentID).Scan(&replayConsentVisible); err != nil || replayConsentVisible != 0 {
+		t.Fatalf(
+			"tenant B replay consent visibility = %d, error = %v",
+			replayConsentVisible, err,
+		)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("roll back tenant B replay consent visibility transaction: %v", err)
 	}
 
 	pools.Close()

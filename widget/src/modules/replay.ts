@@ -14,12 +14,14 @@ const retryDelays = [0, 250, 1000]
 export interface ReplayCapture {
   readonly sessionID: string
   stop(): Promise<void>
+  revoke(): void
 }
 
 export interface ReplayCaptureOptions {
   rule: WidgetRule
   publicKey: string
   apiBase: URL
+  consentToken: string
   visitorID?: string
   onError?: (error: unknown) => void
   random?: () => number
@@ -163,7 +165,15 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     return stopPromise
   }
 
-  return { sessionID: session.id, stop }
+  function revoke(): void {
+    if (stopped) return
+    stopped = true
+    cleanup()
+    serializedEvents = []
+    serializedBytes = 2
+  }
+
+  return { sessionID: session.id, stop, revoke }
 }
 
 async function createSession(
@@ -178,6 +188,7 @@ async function createSession(
       widget_rule_id: options.rule.id,
       page_url: pageURL,
       visitor_id: options.visitorID,
+      consent_token: options.consentToken,
     }),
   })
   if (!response.ok) throw new Error(`replay session creation failed with status ${response.status}`)

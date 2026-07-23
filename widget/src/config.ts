@@ -31,7 +31,22 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
   if (!response.ok) {
     throw new Error(`Fidibeki configuration failed with status ${response.status}`)
   }
-  return response.json() as Promise<WidgetConfiguration>
+  const configuration = await response.json() as WidgetConfiguration
+  for (const rule of [...(configuration.rules ?? []), ...(configuration.definitions ?? [])]) {
+    if (!rule.replay_consent) {
+      rule.replay_consent = {
+        mode: 'none',
+        notice_version: '',
+        controller_name: '',
+        privacy_policy_url: '',
+        supported_locales: [],
+        retention_days: 0,
+        expiry_days: 0,
+        notices: {},
+      }
+    }
+  }
+  return configuration
 }
 
 export interface ConnectionRequest {

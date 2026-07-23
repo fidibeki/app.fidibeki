@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +84,10 @@ func RegisterPublicRoutes(router chi.Router, options HTTPOptions) {
 	handler := &HTTPHandler{options: options, logger: logger}
 	router.Post("/v1/replay/sessions", handler.createSession)
 	router.Options("/v1/replay/sessions", handler.preflight)
+	router.Post("/v1/replay/consents", handler.recordConsent)
+	router.Options("/v1/replay/consents", handler.preflight)
+	router.Post("/v1/replay/consents/revoke", handler.revokeConsent)
+	router.Options("/v1/replay/consents/revoke", handler.preflight)
 	router.Post("/v1/replay/sessions/{sessionID}/batches", handler.declareBatch)
 	router.Options("/v1/replay/sessions/{sessionID}/batches", handler.preflight)
 	router.Post("/v1/replay/sessions/{sessionID}/batches/{batchIndex}/complete", handler.completeBatch)
@@ -113,13 +118,14 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		WidgetRuleID string `json:"widget_rule_id"`
 		PageURL      string `json:"page_url"`
 		VisitorID    string `json:"visitor_id"`
+		ConsentToken string `json:"consent_token"`
 	}
 	if !decodeReplayJSON(w, r, &request) {
 		return
 	}
 	rule, canonicalPageURL, valid := h.validateReplayStart(
 		w, configuration, origin, request.SessionID, request.WidgetRuleID, request.PageURL,
-		request.VisitorID,
+		request.VisitorID, request.ConsentToken,
 	)
 	if !valid {
 		return
@@ -140,11 +146,36 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 		}
 	}()
+	consent, err := h.options.Store.AuthorizeConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID, rule.ID,
+		rule.ReplayConsent.NoticeVersion, string(rule.ReplayConsent.Mode),
+		auth.HashToken(strings.TrimSpace(request.ConsentToken)), h.now(),
+	)
+	if errors.Is(err, ErrConsentRequired) {
+		if errors.Is(err, ErrConsentExpired) {
+			if err := tx.Commit(r.Context()); err != nil {
+				h.writeStoreError(w, r, fmt.Errorf("commit replay consent expiry: %w", err))
+				return
+			}
+			committed = true
+		}
+		api.WriteError(
+			w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"replay session is invalid",
+			[]map[string]string{replayField("consent_token", "must identify an active consent grant")},
+		)
+		return
+	}
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
 	session, err := h.options.Store.CreateSession(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID,
 		strings.TrimSpace(request.SessionID), canonicalPageURL, h.now(),
 		min(rule.ReplayMaxDurationSeconds, project.MaximumReplayDurationSeconds),
 		min(rule.ReplayMaxEvents, project.MaximumReplayEvents),
+		consent.ID,
 	)
 	if errors.Is(err, ErrPrivacyContract) {
 		api.WriteError(
@@ -168,6 +199,171 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		"max_duration_seconds": session.MaxDurationSeconds,
 		"max_events":           session.MaxEvents,
 	})
+}
+
+func (h *HTTPHandler) recordConsent(w http.ResponseWriter, r *http.Request) {
+	configuration, _, ok := h.authorizeRequest(w, r)
+	if !ok || !h.requireReplayPlan(w, configuration) {
+		return
+	}
+	var request struct {
+		WidgetRuleID  string `json:"widget_rule_id"`
+		Purpose       string `json:"purpose"`
+		NoticeVersion string `json:"notice_version"`
+		Locale        string `json:"locale"`
+		Source        string `json:"source"`
+		ConsentID     string `json:"consent_id"`
+		State         string `json:"state"`
+		GrantToken    string `json:"grant_token"`
+	}
+	if !decodeReplayJSON(w, r, &request) {
+		return
+	}
+	rule := replayRule(configuration.Rules, strings.TrimSpace(request.WidgetRuleID))
+	fields := make([]map[string]string, 0, 8)
+	if rule == nil || !rule.Enabled || rule.ReplayMode == project.ReplayNone ||
+		rule.ReplayConsent.Mode == project.ReplayConsentNone {
+		fields = append(fields, replayField("widget_rule_id", "must identify a replay-enabled consent rule"))
+	}
+	purpose := strings.TrimSpace(request.Purpose)
+	if purpose != "session_replay" {
+		fields = append(fields, replayField("purpose", "must be session_replay"))
+	}
+	noticeVersion := strings.TrimSpace(request.NoticeVersion)
+	locale := strings.ToLower(strings.TrimSpace(request.Locale))
+	source := strings.TrimSpace(request.Source)
+	customerReference := strings.TrimSpace(request.ConsentID)
+	state := strings.TrimSpace(request.State)
+	grantToken := strings.TrimSpace(request.GrantToken)
+	if rule != nil {
+		if noticeVersion != rule.ReplayConsent.NoticeVersion {
+			fields = append(fields, replayField("notice_version", "must match the current replay notice"))
+		}
+		if source != string(rule.ReplayConsent.Mode) {
+			fields = append(fields, replayField("source", "must match the configured replay consent mode"))
+		}
+		if !supportedReplayLocale(rule.ReplayConsent.SupportedLocales, locale) {
+			fields = append(fields, replayField("locale", "must be supported by the current replay notice"))
+		}
+	}
+	if source == string(project.ReplayConsentCustomerManaged) {
+		if len(customerReference) < 1 || len(customerReference) > 200 {
+			fields = append(fields, replayField("consent_id", "must contain between 1 and 200 characters"))
+		}
+	} else if customerReference != "" {
+		fields = append(fields, replayField("consent_id", "must be empty for Fidibeki-managed consent"))
+	}
+	var consentState ConsentState
+	switch state {
+	case "granted":
+		consentState = ConsentActive
+		if !validConsentToken(grantToken) {
+			fields = append(fields, replayField("grant_token", "must be a 32-byte opaque token"))
+		}
+	case "denied":
+		consentState = ConsentDenied
+		if grantToken != "" {
+			fields = append(fields, replayField("grant_token", "must be empty when consent is denied"))
+		}
+	default:
+		fields = append(fields, replayField("state", "must be granted or denied"))
+	}
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "replay consent is invalid", fields)
+		return
+	}
+	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
+	if !ok {
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(r.Context())
+		}
+	}()
+	now := h.now()
+	var tokenHash *string
+	expiry := now.AddDate(0, 0, rule.ReplayConsent.ExpiryDays)
+	expiresAt := &expiry
+	if consentState == ConsentActive {
+		hash := auth.HashToken(grantToken)
+		tokenHash = &hash
+	}
+	var reference *string
+	if customerReference != "" {
+		reference = &customerReference
+	}
+	consent, err := h.options.Store.RecordConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID, rule.ID,
+		noticeVersion, locale, source, reference, tokenHash, consentState, now, expiresAt,
+	)
+	if errors.Is(err, ErrConsentRequired) {
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "replay consent token is already scoped elsewhere", nil)
+		return
+	}
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		h.writeStoreError(w, r, fmt.Errorf("commit replay consent: %w", err))
+		return
+	}
+	committed = true
+	response := map[string]any{"state": consent.State}
+	response["expires_at"] = consent.ExpiresAt
+	if consent.State == ConsentActive {
+		response["token"] = grantToken
+	}
+	api.WriteJSON(w, http.StatusCreated, response)
+}
+
+func (h *HTTPHandler) revokeConsent(w http.ResponseWriter, r *http.Request) {
+	configuration, _, ok := h.authorizeRequest(w, r)
+	if !ok || !h.requireReplayPlan(w, configuration) {
+		return
+	}
+	var request struct {
+		Token string `json:"token"`
+	}
+	if !decodeReplayJSON(w, r, &request) {
+		return
+	}
+	token := strings.TrimSpace(request.Token)
+	if !validConsentToken(token) {
+		api.WriteError(
+			w, http.StatusUnprocessableEntity, api.CodeValidation, "replay consent revocation is invalid",
+			[]map[string]string{replayField("token", "must be a 32-byte opaque token")},
+		)
+		return
+	}
+	tx, ok := h.beginTenantTransaction(w, r, configuration.TenantID)
+	if !ok {
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(r.Context())
+		}
+	}()
+	if _, err := h.options.Store.RevokeConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID,
+		auth.HashToken(token), h.now(),
+	); errors.Is(err, ErrConsentRequired) {
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "replay consent revocation denied", nil)
+		return
+	} else if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		h.writeStoreError(w, r, fmt.Errorf("commit replay consent revocation: %w", err))
+		return
+	}
+	committed = true
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +419,19 @@ func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 		}
 	}()
+	if _, err := h.options.Store.AuthorizeSessionConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID, h.now(),
+	); err != nil {
+		if errors.Is(err, ErrConsentExpired) {
+			if commitErr := tx.Commit(r.Context()); commitErr != nil {
+				h.writeStoreError(w, r, fmt.Errorf("commit replay consent expiry: %w", commitErr))
+				return
+			}
+			committed = true
+		}
+		h.writeDomainError(w, r, err)
+		return
+	}
 	batch, token, err := h.options.Store.DeclareBatch(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID,
 		request.BatchIndex, request.EventsCount, request.SizeBytes, h.now(),
@@ -285,6 +494,19 @@ func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 		}
 	}()
+	if _, err := h.options.Store.AuthorizeSessionConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID, h.now(),
+	); err != nil {
+		if errors.Is(err, ErrConsentExpired) {
+			if commitErr := tx.Commit(r.Context()); commitErr != nil {
+				h.writeStoreError(w, r, fmt.Errorf("commit replay consent expiry: %w", commitErr))
+				return
+			}
+			committed = true
+		}
+		h.writeDomainError(w, r, err)
+		return
+	}
 	batch, err := h.options.Store.LockBatch(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID, batchIndex,
 	)
@@ -380,6 +602,19 @@ func (h *HTTPHandler) finalizeSession(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 		}
 	}()
+	if _, err := h.options.Store.AuthorizeSessionConsent(
+		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID, h.now(),
+	); err != nil {
+		if errors.Is(err, ErrConsentExpired) {
+			if commitErr := tx.Commit(r.Context()); commitErr != nil {
+				h.writeStoreError(w, r, fmt.Errorf("commit replay consent expiry: %w", commitErr))
+				return
+			}
+			committed = true
+		}
+		h.writeDomainError(w, r, err)
+		return
+	}
 	session, changed, err := h.options.Store.Finalize(
 		r.Context(), tx, configuration.TenantID, configuration.ProjectID, sessionID, h.now(),
 	)
@@ -447,6 +682,7 @@ func (h *HTTPHandler) validateReplayStart(
 	widgetRuleID string,
 	pageURL string,
 	visitorID string,
+	consentToken string,
 ) (project.WidgetRule, string, bool) {
 	if !h.requireReplayPlan(w, configuration) {
 		return project.WidgetRule{}, "", false
@@ -465,15 +701,13 @@ func (h *HTTPHandler) validateReplayStart(
 			fields = append(fields, replayField("visitor_id", "must be a UUID"))
 		}
 	}
-	var selected *project.WidgetRule
-	for index := range configuration.Rules {
-		if configuration.Rules[index].ID == strings.TrimSpace(widgetRuleID) {
-			selected = &configuration.Rules[index]
-			break
-		}
+	if !validConsentToken(strings.TrimSpace(consentToken)) {
+		fields = append(fields, replayField("consent_token", "must be a 32-byte opaque token"))
 	}
+	selected := replayRule(configuration.Rules, strings.TrimSpace(widgetRuleID))
 	if selected == nil || !selected.Enabled || selected.ReplayMode == project.ReplayNone ||
-		(selected.ReplayMode == project.ReplaySampling && selected.ReplaySamplingRate == 0) {
+		(selected.ReplayMode == project.ReplaySampling && selected.ReplaySamplingRate == 0) ||
+		selected.ReplayConsent.Mode == project.ReplayConsentNone {
 		fields = append(fields, replayField("widget_rule_id", "must identify a replay-enabled widget rule"))
 	}
 	safePageURL := ""
@@ -496,6 +730,29 @@ func (h *HTTPHandler) validateReplayStart(
 		return project.WidgetRule{}, "", false
 	}
 	return *selected, safePageURL, true
+}
+
+func replayRule(rules []project.WidgetRule, ruleID string) *project.WidgetRule {
+	for index := range rules {
+		if rules[index].ID == ruleID {
+			return &rules[index]
+		}
+	}
+	return nil
+}
+
+func supportedReplayLocale(locales []string, locale string) bool {
+	for _, supported := range locales {
+		if strings.EqualFold(strings.TrimSpace(supported), locale) {
+			return true
+		}
+	}
+	return false
+}
+
+func validConsentToken(value string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(decoded) == 32
 }
 
 func (h *HTTPHandler) requireReplayPlan(w http.ResponseWriter, configuration project.PublicConfiguration) bool {
@@ -644,6 +901,8 @@ func (h *HTTPHandler) writeDomainError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, err.Error(), nil)
 	case errors.Is(err, ErrIncompleteBatches):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "replay session has incomplete or no batches", nil)
+	case errors.Is(err, ErrConsentRequired):
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active replay consent is required", nil)
 	case errors.Is(err, ErrEventLimit):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
 			"replay session event limit exceeded", []map[string]string{replayField("events_count", "exceeds the session limit")})

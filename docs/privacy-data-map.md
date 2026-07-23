@@ -1,6 +1,6 @@
 # Fidibeki Technical Privacy Data Map
 
-**Last technical review:** 2026-07-23
+**Last technical review:** 2026-07-24
 
 This document is an engineering inventory for founder and legal review. It is not a published
 privacy policy, data processing agreement, residency commitment, legal opinion, or guarantee.
@@ -18,6 +18,7 @@ customer-facing claims.
 | Reporter contact and consent | Normalized email; notification preference; structured consent evidence (purpose, notice version, locale, source); server-authoritative grant/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Email and preference until anonymization, workspace deletion, or unsubscribe; non-identifying evidence metadata (purpose/notice version/locale/source/timestamps) is retained after withdrawal or anonymization as the minimum audit record proving consent was collected and honored |
 | Attachments and derived analysis | Screenshot/audio/video objects, transcript, sentiment, moderation flags, declared metadata | Give operational context to feedback | Private S3-compatible object storage and PostgreSQL manifest | Objects and derived transcript: plan storage limit (30/90/365 days); manifest retained with workflow |
 | Session replay | rrweb batches/merged object; session-scoped random identifier; rule-safe page context (configured exact target, longest matching prefix base, or origin only; credentials/query/fragment and unproven dynamic suffixes removed); timing and event counts; no canvas pixels | Reproduce the reported page experience without exposing the authenticated user's identity | Private S3-compatible object storage and PostgreSQL manifest | Anonymous by enforced contract: visible text and form values are masked; serialized attributes are empty except the explicit `data-fidibeki-safe-text` marker; Meta/navigation events are pinned to the server-validated session projection; canvas, stylesheets, fonts, logs, and unknown custom sources are dropped. The backend structurally validates every event before promotion and again before merge. Pre-contract objects are not playable and are selected for object-first retention cleanup. `data-fidibeki-block` excludes a subtree; `data-fidibeki-safe-text` explicitly opts known-safe static text back in. Objects otherwise follow the plan limit (30/90/365 days); manifests remain with workflow. See `docs/superpowers/specs/2026-07-23-replay-identity-threat-model.md`. |
+| Session replay consent evidence | Tenant/project/rule scope; purpose `session_replay`; consent mode/source; customer consent reference where supplied; notice version; locale; server-authoritative accepted, withdrawn, and expiry timestamps; active/withdrawn/expired state | Enforce the replay capture gate and retain the minimum provenance needed for audit | PostgreSQL | Evidence follows the approved consent-evidence retention policy. It is separate from replay events and reporter-contact consent. The ledger does not contain IP address, user-agent, authenticated account ID, email, reporter ID, visitor ID, fingerprint, or page URL. Legal review must approve the external retention statement before broad staging enablement. |
 | Anonymous widget analytics | Visitor/page-view/event IDs, page path, funnel event and daily counts | Measure matched, impression, interaction, submit, and dismiss funnels | PostgreSQL | Raw events 90 days; daily aggregates 730 days |
 | Integration delivery | Slack/Teams/webhook configuration, encrypted credentials, attempts and errors | Send operational notifications and retry delivery | PostgreSQL, Asynq/Redis | Workspace/integration lifecycle; credentials are never exported |
 | Email delivery | Recipient, message metadata, delivery/bounce/complaint events | Send authentication, lifecycle, and reporter messages | PostgreSQL, Asynq/Redis, configured email provider | Operational and audit lifecycle |
@@ -79,6 +80,15 @@ be verified independently.
 - Canvas recording is forced off in the widget, API normalization, and database constraint. A
   modified or old client cannot make canvas events playable because batch verification rejects the
   canvas source before storage promotion.
+- Replay is off by default and existing rules migrate to consent mode `none`. Loading or matching a
+  rule cannot import/start rrweb, create a session, buffer events, or upload batches until the
+  backend accepts a current structured grant for that rule and notice version. Revocation first
+  stops capture and discards the browser buffer, then records withdrawal; the backend independently
+  refuses new session and batch operations after withdrawal, expiry, rule disablement, or a
+  configuration revision.
+- Replay consent evidence is purpose-limited and is not copied into rrweb events, analytics
+  dimensions, integrations, logs, or player responses. Customer-managed consent references are
+  provenance assertions, not cross-session identity keys. See `docs/session-replay-consent.md`.
 - Replay objects captured before the current anonymous-event contract have privacy version zero.
   Tenant metadata reports them as expired, stream and merge paths refuse them, and the retention
   cleaner deletes their referenced objects before nulling the manifest keys.
@@ -104,6 +114,12 @@ avoiding capture of unnecessary sensitive fields, access governance, and respond
 items that automated anonymization cannot safely rewrite. Free text, structured answers, comments,
 page URLs, and clarification responses can contain identifiers and may require human review.
 
+For session replay, the customer remains the controller and chooses either a customer-managed CMP
+integration or a Fidibeki-managed prompt presented on the customer's behalf. The customer owns the
+accuracy of controller identity, purpose, notice copy/version, locales, privacy-policy URL, CMP
+assertions, and use of the safe-text marker. Fidibeki's managed prompt does not change the factual
+controller/processor roles.
+
 ## Review Gaps
 
 - Legal must define published retention and deletion commitments from these technical defaults.
@@ -114,3 +130,6 @@ page URLs, and clarification responses can contain identifiers and may require h
 - No self-service reconfirmation flow exists yet for reporters whose consent predates structured
   evidence; today they simply stop receiving reporter email until they submit new feedback with a
   fresh opt-in. A dedicated reconfirmation prompt is a candidate follow-up, not yet built.
+- Privacy/legal review must approve the replay consent copy, withdrawal/expiry behavior, evidence
+  retention, DPA wording, and current subprocessor inventory before replay is enabled broadly in
+  staging. Production enablement and deployment remain explicitly out of scope.

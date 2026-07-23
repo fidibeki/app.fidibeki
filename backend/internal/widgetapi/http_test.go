@@ -69,6 +69,10 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 			ReplayMode: project.ReplaySampling, ReplaySamplingRate: 25,
 			ReplayMaxDurationSeconds: 1800, ReplayMaxEvents: 50000, ReplayMaskAllInputs: true,
 			ReplayRecordCanvas: true, ReplayCanvasFPS: 3,
+			ReplayConsent: project.ReplayConsentConfig{
+				Mode: project.ReplayConsentCustomerManaged, NoticeVersion: "2026-07",
+				SupportedLocales: []string{"pt-ao"}, ExpiryDays: 30,
+			},
 			RecurrenceMode: project.RecurrenceCooldown, RecurrenceDays: &recurrenceDays,
 			DefinitionKey: "checkout-feedback", DefinitionVersion: 3,
 			DefinitionStatus: project.DefinitionActive, Presentation: project.PresentationLauncher,
@@ -113,6 +117,7 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"definitions":[{"id":"rule-id"`, `"id":"paused-rule-id"`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"replay_record_canvas":false`, `"replay_canvas_fps":2`,
+		`"replay_consent":{"mode":"customer_cmp","notice_version":"2026-07"`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
 		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56","accent_foreground":"#ffffff"}`,

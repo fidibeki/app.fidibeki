@@ -32,6 +32,7 @@ type TenantHTTPOptions struct {
 	JWT     TenantTokenVerifier
 	Storage ReplayStorage
 	Logger  *slog.Logger
+	Now     func() time.Time
 }
 
 type TenantHTTPHandler struct {
@@ -50,10 +51,52 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		appmiddleware.RequirePermission(auth.PermissionSessionRead),
 	).Get("/v1/sessions/{sessionID}", handler.getSession)
 	router.With(
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionWidgetRuleRead),
+	).Get(
+		"/v1/projects/{projectID}/widget-rules/{ruleID}/replay-consent-diagnostic",
+		handler.getConsentDiagnostic,
+	)
+	router.With(
 		appmiddleware.RequireWritable,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionDelete),
 	).Delete("/v1/sessions/{sessionID}", handler.deleteSession)
+}
+
+func (h *TenantHTTPHandler) getConsentDiagnostic(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	ruleID := chi.URLParam(r, "ruleID")
+	if _, err := uuid.Parse(projectID); err != nil {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	if _, err := uuid.Parse(ruleID); err != nil {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	now := time.Now().UTC()
+	if h.options.Now != nil {
+		now = h.options.Now().UTC()
+	}
+	diagnostic, err := h.options.Store.GetConsentDiagnostic(
+		r.Context(), query, resolved.ID, projectID, ruleID, now,
+	)
+	if errors.Is(err, ErrNotFound) {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"diagnostic": diagnostic})
 }
 
 func (h *TenantHTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {

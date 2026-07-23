@@ -14,6 +14,11 @@ import { createAnalyticsOutbox } from './analytics-outbox'
 import { getSessionID, isSuppressed, presentationRecurrencePolicy, recordWidgetState } from './suppression'
 import { armObjectivePolicy, recordObjectiveVisit } from './policy'
 import { privacySafeLocation } from './privacy-location'
+import {
+  createReplayConsentController,
+  type ReplayConsentAssertion,
+  type ReplayConsentController,
+} from './replay-consent'
 import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
 import type { WidgetConfiguration, WidgetRule } from './types'
@@ -48,6 +53,7 @@ interface ExplicitMountResult {
 interface ReplayCapture {
 	readonly sessionID: string
 	stop(): Promise<void>
+	revoke?(): void
 }
 
 interface ReplayModule {
@@ -56,8 +62,20 @@ interface ReplayModule {
 			publicKey: string
 			apiBase: URL
 			visitorID: string
+			consentToken: string
 			onError(error: unknown): void
 	}): Promise<ReplayCapture | null>
+}
+
+interface ReplayConsentPromptModule {
+  mountReplayConsentPrompt(options: {
+    consent: WidgetRule['replay_consent']
+    locale: string
+    state: 'new' | 'active'
+    onAccept(): Promise<void>
+    onReject(): Promise<void>
+    onWithdraw(): Promise<void>
+  }): WidgetUnmount
 }
 
 interface ErrorModule {
@@ -80,6 +98,12 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let cleanupTrigger: TriggerCleanup | null = null
   let unmountWidget: WidgetUnmount | null = null
 	let replayCapture: ReplayCapture | null = null
+  let replayConsent: ReplayConsentController | null = null
+  let replayConsentProjectID = ''
+  let currentReplayRule: WidgetRule | null = null
+  let replayConsentPromptUnmount: WidgetUnmount | null = null
+  let replayConsentPromptFingerprint = ''
+  let replayConsentPromptTransition = 0
   let replayFingerprint = ''
   let replayTransition = 0
   let evaluation = 0
@@ -92,6 +116,29 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
   const widgetSessionID = getSessionID(sessionStorage)
   const analytics = createAnalyticsTracker({ storage: durableStorage })
+
+  const ensureReplayConsent = (configuration: WidgetConfiguration) => {
+    if (replayConsent && replayConsentProjectID === configuration.project_id) return replayConsent
+    replayConsentProjectID = configuration.project_id
+    replayConsent = createReplayConsentController({
+      endpoint: new URL('replay/consents', assetBase),
+      publicKey: key,
+      projectID: configuration.project_id,
+      storage: durableStorage,
+      onChanged: (state) => {
+        if (state === 'revoked') {
+          replayTransition++
+          replayFingerprint = ''
+          const capture = replayCapture
+          replayCapture = null
+          if (capture?.revoke) capture.revoke()
+          else if (capture) void capture.stop()
+        }
+        if (cache) void synchronizeReplay(cache.value, currentReplayRule)
+      },
+    })
+    return replayConsent
+  }
 
   const report = async (error: unknown, phase: string) => {
     const dsn = cache?.value.error_reporting_dsn
@@ -301,7 +348,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   installExplicitMounting(mountExplicit, unmountExplicitTarget)
 
 	const synchronizeReplay = async (configuration: WidgetConfiguration, rule: WidgetRule | null) => {
-		const enabled = rule !== null && rule.replay_mode !== 'none' && configuration.features.session_replay
+    currentReplayRule = rule
+    const consent = ensureReplayConsent(configuration)
+    consent.setRule(rule)
+    await synchronizeReplayConsentPrompt(configuration, rule, consent)
+    const grant = consent.activeGrant()
+		const enabled = rule !== null && rule.replay_mode !== 'none' &&
+      configuration.features.session_replay && grant !== null
 		const fingerprint = enabled ? JSON.stringify({
 			id: rule.id,
 			mode: rule.replay_mode,
@@ -312,6 +365,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			maskText: rule.replay_mask_text_selector,
 			recordCanvas: rule.replay_record_canvas,
 			canvasFPS: rule.replay_canvas_fps,
+      consent: grant.token,
 		}) : ''
 		if (fingerprint === replayFingerprint) return
 		const transition = ++replayTransition
@@ -327,6 +381,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 					publicKey: key,
 					apiBase: assetBase,
 					visitorID: analytics.visitorID,
+          consentToken: grant.token,
 					onError: (error) => void report(error, 'replay'),
 			})
 			if (transition !== replayTransition) {
@@ -338,6 +393,60 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			void report(error, 'replay')
 		}
 	}
+
+  const synchronizeReplayConsentPrompt = async (
+    configuration: WidgetConfiguration,
+    rule: WidgetRule | null,
+    controller: ReplayConsentController,
+  ) => {
+    const status = controller.status()
+    const visibleState = status === 'new' ? 'new' : status === 'active' ? 'active' : null
+    const locale = rule ? replayConsentLocale(configuration, rule) : null
+    const fingerprint = rule?.replay_consent.mode === 'fidibeki_managed' && visibleState && locale
+      ? `${rule.id}:${rule.replay_consent.notice_version}:${locale}:${visibleState}`
+      : ''
+    if (fingerprint === replayConsentPromptFingerprint) return
+    const transition = ++replayConsentPromptTransition
+    replayConsentPromptFingerprint = fingerprint
+    replayConsentPromptUnmount?.()
+    replayConsentPromptUnmount = null
+    if (!fingerprint || !rule || !locale || !visibleState) return
+    try {
+      const module = (await import(
+        new URL('replay-consent-prompt.js', assetBase).href
+      )) as ReplayConsentPromptModule
+      if (transition !== replayConsentPromptTransition) return
+      replayConsentPromptUnmount = module.mountReplayConsentPrompt({
+        consent: rule.replay_consent,
+        locale,
+        state: visibleState,
+        onAccept: () => controller.grant({
+          purpose: 'session_replay',
+          noticeVersion: rule.replay_consent.notice_version,
+          locale,
+          source: 'fidibeki_managed',
+        }).then(() => {}),
+        onReject: () => controller.deny(locale),
+        onWithdraw: () => controller.revoke(),
+      })
+    } catch (error) {
+      void report(error, 'replay_consent_prompt')
+    }
+  }
+
+  installReplayConsentAPI(
+    async (assertion) => {
+      const configuration = await loadConfiguration(false)
+      const controller = ensureReplayConsent(configuration)
+      if (!currentReplayRule) throw new Error('no replay-enabled rule is active on this page')
+      controller.setRule(currentReplayRule)
+      return controller.grant(assertion)
+    },
+    async () => {
+      if (!replayConsent) return
+      await replayConsent.revoke()
+    },
+  )
 
   installNavigationEvents()
   window.addEventListener('fidibeki:navigation', () => {
@@ -366,6 +475,15 @@ function explicitResult(mounted: false, reason: NonNullable<ExplicitMountResult[
 
 function definitionIsActive(rule: WidgetRule): boolean {
   return rule.definition_status === undefined || rule.definition_status === 'active'
+}
+
+function installReplayConsentAPI(
+  grantConsent: (assertion: ReplayConsentAssertion) => Promise<unknown>,
+  revokeConsent: () => Promise<void>,
+): void {
+  const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
+  namespace.replay = { grantConsent, revokeConsent }
+  ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
 }
 
 function installExplicitMounting(
@@ -397,6 +515,24 @@ function installExplicitMounting(
 
 function randomID(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function replayConsentLocale(configuration: WidgetConfiguration, rule: WidgetRule): string | null {
+  const supported = rule.replay_consent.supported_locales
+    .map(locale => locale.trim().toLowerCase())
+    .filter(locale => rule.replay_consent.notices[locale] !== undefined)
+  const candidates = [
+    document.documentElement.lang,
+    ...navigator.languages,
+    configuration.default_locale ?? '',
+  ].map(locale => locale.trim().replace(/_/g, '-').toLowerCase()).filter(Boolean)
+  for (const candidate of candidates) {
+    if (supported.includes(candidate)) return candidate
+    const primary = candidate.split('-', 1)[0]
+    const compatible = supported.find(locale => locale === primary || locale.split('-', 1)[0] === primary)
+    if (compatible) return compatible
+  }
+  return supported[0] ?? null
 }
 
 function ruleIsSuppressed(

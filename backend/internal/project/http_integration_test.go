@@ -353,6 +353,8 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"trigger_type":"delay",`+
 			`"trigger_delay_seconds":3,"can_record_audio":true,"can_attach_screenshot":true,`+
 			`"replay_mode":"sampling","replay_sampling_rate":20,"recurrence_mode":"session",`+
+			`"replay_consent":{"mode":"customer_cmp","notice_version":"2026-07",`+
+			`"supported_locales":["en"],"expiry_days":30},`+
 			`"replay_record_canvas":true,"replay_canvas_fps":3,`+
 			`"definition_key":"checkout-reaction","definition_status":"active",`+
 			`"presentation":"reaction","objective":"after_engagement",`+
@@ -378,6 +380,29 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(updatedRule.Body.String(), `"replay_canvas_fps":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"appearance_overrides":{"logo_url":""}`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
+	}
+	var replayAuditActor, replayAuditKind, replayAuditData string
+	if err := root.QueryRow(ctx, `
+		SELECT actor_member_id::text, kind, data::text
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'widget_rule.replay_consent_updated'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, acmeID).Scan(&replayAuditActor, &replayAuditKind, &replayAuditData); err != nil {
+		t.Fatalf("read replay consent configuration audit: %v", err)
+	}
+	if replayAuditActor != ownerID ||
+		replayAuditKind != "widget_rule.replay_consent_updated" ||
+		!strings.Contains(replayAuditData, `"previous_replay_mode": "none"`) ||
+		!strings.Contains(replayAuditData, `"replay_mode": "sampling"`) ||
+		!strings.Contains(replayAuditData, `"definition_version": 2`) ||
+		!strings.Contains(replayAuditData, `"notice_version": "2026-07"`) {
+		t.Fatalf(
+			"replay consent configuration audit = actor %q kind %q data %s",
+			replayAuditActor,
+			replayAuditKind,
+			replayAuditData,
+		)
 	}
 	if _, err := root.Exec(ctx, `
 		UPDATE tenants SET widget_appearance_defaults =

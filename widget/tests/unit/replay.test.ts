@@ -28,7 +28,7 @@ describe('rrweb replay capture', () => {
     vi.stubGlobal('fetch', fetchMock)
     const capture = await startReplayCapture({
       rule: replayRule({ replay_mode: 'sampling', replay_sampling_rate: 25 }),
-      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'),
+      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
       random: () => 0.25,
     })
     expect(capture).toBeNull()
@@ -63,7 +63,7 @@ describe('rrweb replay capture', () => {
     const capture = await startReplayCapture({
       // A customer-configured mask selector must not narrow the anonymity-safe default.
       rule: replayRule({ replay_mask_text_selector: '.private' }),
-      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'),
+      publicKey: 'pk_live_test', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
       visitorID: 'e8b3bb8c-e7ce-4c06-b804-c40f1db21355', onError,
     })
     expect(capture?.sessionID).toBe('server-session')
@@ -91,12 +91,43 @@ describe('rrweb replay capture', () => {
     expect(JSON.parse(String(sessionRequest?.init.body))).toMatchObject({
       widget_rule_id: expect.any(String),
       visitor_id: 'e8b3bb8c-e7ce-4c06-b804-c40f1db21355',
+      consent_token: 'consent-token',
     })
     const declarations = requests.filter(({ url }) => url.endsWith('/batches?key=pk_live_test'))
     expect(declarations).toHaveLength(2)
     expect(declarations.map(({ init }) => JSON.parse(String(init.body)).events_count)).toEqual([50, 1])
     expect(requests.filter(({ url }) => url.startsWith('https://storage.example/'))).toHaveLength(2)
 		expect(requests[requests.length - 1]?.url).toContain('/finalize?key=pk_live_test')
+  })
+
+  it('discards unsent replay events when consent is revoked', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      requests.push(url)
+      if (url.endsWith('/v1/replay/sessions?key=key')) {
+        return jsonResponse({
+          id: 'server-session',
+          rrweb_version: '2.1.1',
+          max_duration_seconds: 1800,
+          max_events: 50000,
+        }, 201)
+      }
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(),
+      publicKey: 'key',
+      apiBase: new URL('https://widget.example/v1/'),
+      consentToken: 'consent-token',
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    emit({ type: 3, timestamp: 1, data: { source: 3, id: 1, x: 1, y: 1 } })
+
+    capture?.revoke()
+    await Promise.resolve()
+
+    expect(requests).toEqual(['https://widget.example/v1/replay/sessions?key=key'])
   })
 
   it('forces input masking even when the widget rule requests it disabled', async () => {
@@ -109,7 +140,7 @@ describe('rrweb replay capture', () => {
     }))
     const capture = await startReplayCapture({
       rule: replayRule({ replay_mask_all_inputs: false }),
-      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     expect(recordMock.mock.calls[0]?.[0]).toMatchObject({ maskAllInputs: true })
     await capture?.stop()
@@ -138,7 +169,7 @@ describe('rrweb replay capture', () => {
         matcher_value: expectedSafeURL,
       }),
       publicKey: 'key',
-      apiBase: new URL('https://widget.example/v1/'),
+      apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     const sessionRequest = requests.find(({ url }) => url.endsWith('/replay/sessions?key=key'))
     const sessionBody = JSON.parse(String(sessionRequest?.init.body)) as { page_url: string }
@@ -163,7 +194,7 @@ describe('rrweb replay capture', () => {
       throw new Error(`unexpected request ${url}`)
     }))
     const capture = await startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     // afterEach() calls vi.unstubAllGlobals(), so this override does not leak into later tests.
     vi.stubGlobal('location', { href: 'not a valid url' })
@@ -198,7 +229,7 @@ describe('rrweb replay capture', () => {
       throw new Error(`unexpected request ${url}`)
     }))
     const capture = await startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
     emit({
@@ -241,7 +272,7 @@ describe('rrweb replay capture', () => {
     const onError = vi.fn()
     const capture = await startReplayCapture({
       rule: replayRule({ replay_record_canvas: true, replay_canvas_fps: 3 }),
-      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
       onError,
     })
 
@@ -281,7 +312,7 @@ describe('rrweb replay capture', () => {
       throw new Error(`unexpected request ${url}`)
     }))
     const capture = await startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
     emit({ type: 0, timestamp: 1, data: {} })
@@ -320,7 +351,7 @@ describe('rrweb replay capture', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const capture = await startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
     emit({ type: 0, timestamp: 1, data: {} })
@@ -335,7 +366,7 @@ describe('rrweb replay capture', () => {
       id: 'session', rrweb_version: '1.0.0', max_duration_seconds: 1, max_events: 1,
     }, 201)))
     await expect(startReplayCapture({
-      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })).rejects.toThrow('incompatible')
     expect(recordMock).not.toHaveBeenCalled()
   })

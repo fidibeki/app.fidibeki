@@ -89,8 +89,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 		INSERT INTO widget_rules (
 			project_id, name, matcher_type, trigger_type, trigger_delay_seconds,
 			replay_mode, replay_sampling_rate, replay_max_duration_seconds,
-			replay_max_events, replay_mask_all_inputs
-		) VALUES ($1, 'Replay', 'all_pages', 'delay', 0, 'full', 0, 1800, 50000, true)
+			replay_max_events, replay_mask_all_inputs, replay_consent
+		) VALUES (
+			$1, 'Replay', 'all_pages', 'delay', 0, 'full', 0, 1800, 50000, true,
+			'{"mode":"customer_cmp","notice_version":"2026-07","supported_locales":["en"],"expiry_days":30}'::jsonb
+		)
 		RETURNING id
 	`, projectID).Scan(&ruleID); err != nil {
 		t.Fatalf("create widget rule: %v", err)
@@ -129,9 +132,132 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	clientSessionID := "d766f8eb-d58d-42ca-b9fd-349cc9e8e3b4"
 	visitorID := "e8b3bb8c-e7ce-4c06-b804-c40f1db21355"
-	createBody := fmt.Sprintf(
+	missingConsentBody := fmt.Sprintf(
 		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/checkout","visitor_id":%q}`,
 		clientSessionID, ruleID, visitorID,
+	)
+	missingConsent := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		missingConsentBody, publicKey, "https://example.com")
+	if missingConsent.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(missingConsent.Body.String(), `"field":"consent_token"`) {
+		t.Fatalf("missing replay consent = %d/%s", missingConsent.Code, missingConsent.Body.String())
+	}
+	var sessionsWithoutConsent int
+	if err := root.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&sessionsWithoutConsent); err != nil ||
+		sessionsWithoutConsent != 0 {
+		t.Fatalf("sessions without consent = %d, error = %v", sessionsWithoutConsent, err)
+	}
+	consentToken, _, err := auth.NewOpaqueToken()
+	if err != nil {
+		t.Fatalf("generate replay consent token: %v", err)
+	}
+	malformedConsent := replayRequest(
+		router,
+		http.MethodPost,
+		"/v1/replay/consents?key="+publicKey,
+		`{`,
+		publicKey,
+		"https://example.com",
+	)
+	if malformedConsent.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"malformed replay consent = %d/%s",
+			malformedConsent.Code,
+			malformedConsent.Body.String(),
+		)
+	}
+	invalidConsent := replayRequest(
+		router,
+		http.MethodPost,
+		"/v1/replay/consents?key="+publicKey,
+		fmt.Sprintf(
+			`{"widget_rule_id":%q,"purpose":"analytics","notice_version":"outdated",`+
+				`"locale":"fr","source":"fidibeki_managed","state":"granted","grant_token":%q}`,
+			ruleID,
+			consentToken,
+		),
+		publicKey,
+		"https://example.com",
+	)
+	if invalidConsent.Code != http.StatusUnprocessableEntity {
+		t.Fatalf(
+			"invalid replay consent = %d/%s",
+			invalidConsent.Code,
+			invalidConsent.Body.String(),
+		)
+	}
+	for _, field := range []string{"purpose", "notice_version", "locale", "source"} {
+		if !strings.Contains(invalidConsent.Body.String(), `"field":"`+field+`"`) {
+			t.Fatalf("invalid replay consent omitted %s: %s", field, invalidConsent.Body.String())
+		}
+	}
+	consentRequestBody := fmt.Sprintf(
+		`{"widget_rule_id":%q,"purpose":"session_replay","notice_version":"2026-07",`+
+			`"locale":"en","source":"customer_cmp","consent_id":"cmp-reference-1",`+
+			`"state":"granted","grant_token":%q}`,
+		ruleID, consentToken,
+	)
+	consent := replayRequest(router, http.MethodPost, "/v1/replay/consents?key="+publicKey,
+		consentRequestBody, publicKey, "https://example.com")
+	if consent.Code != http.StatusCreated {
+		t.Fatalf("grant replay consent = %d/%s", consent.Code, consent.Body.String())
+	}
+	var consentResponse struct {
+		Token     string    `json:"token"`
+		State     string    `json:"state"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	decodeReplayResponse(t, consent, &consentResponse)
+	if consentResponse.Token != consentToken || consentResponse.State != "active" ||
+		!consentResponse.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
+		t.Fatalf("consent response = %#v", consentResponse)
+	}
+	repeatedConsent := replayRequest(
+		router,
+		http.MethodPost,
+		"/v1/replay/consents?key="+publicKey,
+		consentRequestBody,
+		publicKey,
+		"https://example.com",
+	)
+	if repeatedConsent.Code != http.StatusCreated {
+		t.Fatalf(
+			"idempotent replay consent = %d/%s",
+			repeatedConsent.Code,
+			repeatedConsent.Body.String(),
+		)
+	}
+	conflictingConsent := replayRequest(
+		router,
+		http.MethodPost,
+		"/v1/replay/consents?key="+publicKey,
+		strings.Replace(consentRequestBody, "cmp-reference-1", "cmp-reference-2", 1),
+		publicKey,
+		"https://example.com",
+	)
+	if conflictingConsent.Code != http.StatusConflict {
+		t.Fatalf(
+			"conflicting idempotency scope = %d/%s",
+			conflictingConsent.Code,
+			conflictingConsent.Body.String(),
+		)
+	}
+	var consentRows int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM replay_consents WHERE token_hash = $1
+	`, auth.HashToken(consentToken)).Scan(&consentRows); err != nil || consentRows != 1 {
+		t.Fatalf("idempotent replay consent rows = %d, error = %v", consentRows, err)
+	}
+	var replayConsentID string
+	if err := root.QueryRow(ctx, `
+		SELECT id FROM replay_consents WHERE token_hash = $1
+	`, auth.HashToken(consentToken)).Scan(&replayConsentID); err != nil {
+		t.Fatalf("read replay consent evidence: %v", err)
+	}
+	createBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/checkout",`+
+			`"visitor_id":%q,"consent_token":%q}`,
+		clientSessionID, ruleID, visitorID, consentResponse.Token,
 	)
 	created := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
 		createBody, publicKey, "https://example.com")
@@ -180,8 +306,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 	dirtyURL := "https://sentinel-user:sentinel-pass@example.com/checkout/" +
 		"?email=jane.doe%40example.com&token=secret-token#fragment-secret"
 	canonicalizationBody := fmt.Sprintf(
-		`{"session_id":%q,"widget_rule_id":%q,"page_url":%q}`,
-		canonicalizationSessionID, ruleID, dirtyURL,
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":%q,"consent_token":%q}`,
+		canonicalizationSessionID, ruleID, dirtyURL, consentResponse.Token,
 	)
 	canonicalized := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
 		canonicalizationBody, publicKey, "https://example.com")
@@ -204,8 +330,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	foreignPageSessionID := "af32b9ea-c011-42fd-8cdb-c214a26b4959"
 	foreignPageBody := fmt.Sprintf(
-		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://other.example/private"}`,
-		foreignPageSessionID, ruleID,
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://other.example/private","consent_token":%q}`,
+		foreignPageSessionID, ruleID, consentResponse.Token,
 	)
 	foreignPage := replayRequest(
 		router,
@@ -467,10 +593,10 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, session_id, started_at, rrweb_version,
-			max_duration_seconds, max_events, finalize_requested_at
-		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000, $4)
+			max_duration_seconds, max_events, finalize_requested_at, replay_consent_id
+		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000, $4, $5)
 		RETURNING id
-	`, tenantID, projectID, now.Add(-time.Minute), now).Scan(&concurrentSessionID); err != nil {
+	`, tenantID, projectID, now.Add(-time.Minute), now, replayConsentID).Scan(&concurrentSessionID); err != nil {
 		t.Fatalf("create concurrent verification session: %v", err)
 	}
 	works := make([]BatchVerificationWork, 0, 2)
@@ -532,7 +658,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, concurrentSessionID); err != nil {
 		t.Fatalf("delete concurrent verification session: %v", err)
 	}
-	emptyCreateBody := fmt.Sprintf(`{"session_id":"66d6b8fc-f79d-46bb-9a46-a8db9cb7ea0c","widget_rule_id":%q,"page_url":"https://example.com/empty"}`, ruleID)
+	emptyCreateBody := fmt.Sprintf(
+		`{"session_id":"66d6b8fc-f79d-46bb-9a46-a8db9cb7ea0c","widget_rule_id":%q,`+
+			`"page_url":"https://example.com/empty","consent_token":%q}`,
+		ruleID, consentResponse.Token,
+	)
 	emptyCreated := replayRequest(router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
 		emptyCreateBody, publicKey, "https://example.com")
 	if emptyCreated.Code != http.StatusCreated {
@@ -799,10 +929,10 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, session_id, page_url, started_at,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, $3, 'https://example.com/aggregate', $4, $5, 1800, 50000)
+			rrweb_version, max_duration_seconds, max_events, replay_consent_id
+		) VALUES ($1, $2, $3, 'https://example.com/aggregate', $4, $5, 1800, 50000, $6)
 		RETURNING id
-	`, tenantID, projectID, aggregateClientSessionID, now, RRWebVersion).Scan(&aggregateSessionID); err != nil {
+	`, tenantID, projectID, aggregateClientSessionID, now, RRWebVersion, replayConsentID).Scan(&aggregateSessionID); err != nil {
 		t.Fatalf("create aggregate-limit replay: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
@@ -871,7 +1001,10 @@ func TestReplayHTTPFlow(t *testing.T) {
 	var replayMemberID, restrictedMemberID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)
-		VALUES ($1, 'replay@acme.test', ARRAY['session:read', 'session:delete']) RETURNING id
+		VALUES (
+			$1, 'replay@acme.test',
+			ARRAY['session:read', 'session:delete', 'widget_rule:read']
+		) RETURNING id
 	`, tenantID).Scan(&replayMemberID); err != nil {
 		t.Fatalf("create replay member: %v", err)
 	}
@@ -888,13 +1021,14 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	accessToken, _, err := jwtManager.IssueTenant(replayMemberID, tenantID, []string{
 		string(auth.PermissionSessionRead), string(auth.PermissionSessionDelete),
+		string(auth.PermissionWidgetRuleRead),
 	})
 	if err != nil {
 		t.Fatalf("issue tenant access token: %v", err)
 	}
 	tenantRoutes := chi.NewRouter()
 	RegisterTenantRoutes(tenantRoutes, TenantHTTPOptions{
-		Store: Store{}, JWT: jwtManager, Storage: storageClient,
+		Store: Store{}, JWT: jwtManager, Storage: storageClient, Now: func() time.Time { return now },
 	})
 	tenantHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
@@ -907,6 +1041,20 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	if strings.Contains(metadata.Body.String(), "visitor_id") || strings.Contains(metadata.Body.String(), visitorID) {
 		t.Fatalf("backoffice replay session metadata leaked the visitor ID: %s", metadata.Body.String())
+	}
+	diagnosticPath := "/v1/projects/" + projectID + "/widget-rules/" + ruleID +
+		"/replay-consent-diagnostic"
+	diagnostic := tenantReplayRequest(tenantHandler, http.MethodGet, diagnosticPath, accessToken)
+	if diagnostic.Code != http.StatusOK ||
+		!strings.Contains(diagnostic.Body.String(), `"state":"active"`) ||
+		!strings.Contains(diagnostic.Body.String(), `"notice_version":"2026-07"`) ||
+		!strings.Contains(diagnostic.Body.String(), `"latest_session_started_at"`) {
+		t.Fatalf("replay consent diagnostic = %d/%s", diagnostic.Code, diagnostic.Body.String())
+	}
+	for _, forbidden := range []string{"token", "customer_consent_reference", visitorID} {
+		if strings.Contains(diagnostic.Body.String(), forbidden) {
+			t.Fatalf("replay consent diagnostic leaked %q: %s", forbidden, diagnostic.Body.String())
+		}
 	}
 	invalidMetadata := tenantReplayRequest(tenantHandler, http.MethodGet, "/v1/sessions/not-a-uuid", accessToken)
 	if invalidMetadata.Code != http.StatusNotFound {
@@ -989,11 +1137,11 @@ func TestReplayHTTPFlow(t *testing.T) {
 		INSERT INTO sessions (
 			tenant_id, project_id, session_id, started_at, ended_at, events_count, batches_count,
 			storage_key, rrweb_version, merged_at, merge_requested_at,
-			max_duration_seconds, max_events, created_at
+			max_duration_seconds, max_events, created_at, replay_consent_id
 		) VALUES (
-			$1, $2, gen_random_uuid(), $3, $3, 1, 1, $4, '2.1.1', $3, $3, 1800, 50000, $3
+			$1, $2, gen_random_uuid(), $3, $3, 1, 1, $4, '2.1.1', $3, $3, 1800, 50000, $3, $5
 		) RETURNING id
-	`, tenantID, projectID, now.Add(-91*24*time.Hour), expiredKey).Scan(&expiredSessionID); err != nil {
+	`, tenantID, projectID, now.Add(-91*24*time.Hour), expiredKey, replayConsentID).Scan(&expiredSessionID); err != nil {
 		t.Fatalf("create expired replay: %v", err)
 	}
 	if _, err := root.Exec(ctx, `
@@ -1117,46 +1265,46 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 			INSERT INTO sessions (
 				tenant_id, project_id, session_id, page_url, started_at, events_count, batches_count,
-				rrweb_version, max_duration_seconds, max_events
-			) VALUES ($1, $2, gen_random_uuid(), 'https://example.com/', $3, 1, 1, '2.1.1', 1800, 50000)
-		RETURNING id
-	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&abandonedSessionID); err != nil {
+				rrweb_version, max_duration_seconds, max_events, replay_consent_id
+			) VALUES ($1, $2, gen_random_uuid(), 'https://example.com/', $3, 1, 1, '2.1.1', 1800, 50000, $4)
+			RETURNING id
+		`, tenantID, projectID, now.Add(-20*time.Minute), replayConsentID).Scan(&abandonedSessionID); err != nil {
 		t.Fatalf("create abandoned replay: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at, events_count, batches_count,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
-		RETURNING id
-	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&activeSessionID); err != nil {
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at, events_count, batches_count,
+				rrweb_version, max_duration_seconds, max_events, replay_consent_id
+			) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000, $4)
+			RETURNING id
+		`, tenantID, projectID, now.Add(-20*time.Minute), replayConsentID).Scan(&activeSessionID); err != nil {
 		t.Fatalf("create active replay: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at, events_count, batches_count,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000)
-		RETURNING id
-	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&renewedSessionID); err != nil {
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at, events_count, batches_count,
+				rrweb_version, max_duration_seconds, max_events, replay_consent_id
+			) VALUES ($1, $2, gen_random_uuid(), $3, 1, 1, '2.1.1', 1800, 50000, $4)
+			RETURNING id
+		`, tenantID, projectID, now.Add(-20*time.Minute), replayConsentID).Scan(&renewedSessionID); err != nil {
 		t.Fatalf("create renewed replay: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000)
-		RETURNING id
-	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&emptySessionID); err != nil {
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at,
+				rrweb_version, max_duration_seconds, max_events, replay_consent_id
+			) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000, $4)
+			RETURNING id
+		`, tenantID, projectID, now.Add(-20*time.Minute), replayConsentID).Scan(&emptySessionID); err != nil {
 		t.Fatalf("create empty abandoned replay: %v", err)
 	}
 	if err := root.QueryRow(ctx, `
-		INSERT INTO sessions (
-			tenant_id, project_id, session_id, started_at,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000)
-		RETURNING id
-	`, tenantID, projectID, now.Add(-20*time.Minute)).Scan(&incompleteSessionID); err != nil {
+			INSERT INTO sessions (
+				tenant_id, project_id, session_id, started_at,
+				rrweb_version, max_duration_seconds, max_events, replay_consent_id
+			) VALUES ($1, $2, gen_random_uuid(), $3, '2.1.1', 1800, 50000, $4)
+			RETURNING id
+		`, tenantID, projectID, now.Add(-20*time.Minute), replayConsentID).Scan(&incompleteSessionID); err != nil {
 		t.Fatalf("create incomplete abandoned replay: %v", err)
 	}
 	abandonedCompletedKey := "abandoned/completed.json"
@@ -1275,13 +1423,13 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 			INSERT INTO sessions (
 				tenant_id, project_id, session_id, page_url, started_at, ended_at, rrweb_version,
-				merge_requested_at, max_duration_seconds, max_events
+				merge_requested_at, max_duration_seconds, max_events, replay_consent_id
 			) VALUES (
 				$1, $2, gen_random_uuid(), 'https://example.com/',
-				$3, $3, '2.1.1', $3, 1800, 50000
+				$3, $3, '2.1.1', $3, 1800, 50000, $4
 			)
-		RETURNING id
-	`, tenantID, projectID, now).Scan(&failedSessionID); err != nil {
+			RETURNING id
+		`, tenantID, projectID, now, replayConsentID).Scan(&failedSessionID); err != nil {
 		t.Fatalf("create failed merge session: %v", err)
 	}
 	failedBatchKey := "failed/batch.json"
@@ -1319,10 +1467,10 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, session_id, started_at, ended_at, rrweb_version,
-			merge_requested_at, max_duration_seconds, max_events
-		) VALUES ($1, $2, gen_random_uuid(), $3, $3, '2.1.1', $3, 1800, 50000)
+			merge_requested_at, max_duration_seconds, max_events, replay_consent_id
+		) VALUES ($1, $2, gen_random_uuid(), $3, $3, '2.1.1', $3, 1800, 50000, $4)
 		RETURNING id
-	`, tenantID, projectID, now).Scan(&pendingSessionID); err != nil {
+	`, tenantID, projectID, now, replayConsentID).Scan(&pendingSessionID); err != nil {
 		t.Fatalf("create pending merge session: %v", err)
 	}
 	if err := scheduler.ReconcileOnce(ctx); err != nil {
@@ -1355,6 +1503,162 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, pendingSessionID); err != nil {
 		t.Fatalf("delete pending merge session: %v", err)
+	}
+
+	revokedToken, _, err := auth.NewOpaqueToken()
+	if err != nil {
+		t.Fatalf("generate revocable replay consent token: %v", err)
+	}
+	revocableConsent := replayRequest(router, http.MethodPost, "/v1/replay/consents?key="+publicKey,
+		fmt.Sprintf(
+			`{"widget_rule_id":%q,"purpose":"session_replay","notice_version":"2026-07",`+
+				`"locale":"en","source":"customer_cmp","consent_id":"cmp-revocation",`+
+				`"state":"granted","grant_token":%q}`,
+			ruleID, revokedToken,
+		), publicKey, "https://example.com")
+	if revocableConsent.Code != http.StatusCreated {
+		t.Fatalf("grant revocable replay consent = %d/%s", revocableConsent.Code, revocableConsent.Body.String())
+	}
+	revokedSessionClientID := "752a0475-30f0-4c0e-9cac-19dc286e3756"
+	revokedSessionBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/revoked",`+
+			`"consent_token":%q}`,
+		revokedSessionClientID, ruleID, revokedToken,
+	)
+	revokedSessionResponse := replayRequest(
+		router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		revokedSessionBody, publicKey, "https://example.com",
+	)
+	if revokedSessionResponse.Code != http.StatusCreated {
+		t.Fatalf("create revocable replay = %d/%s", revokedSessionResponse.Code, revokedSessionResponse.Body.String())
+	}
+	var revokedSession struct {
+		ID string `json:"id"`
+	}
+	decodeReplayResponse(t, revokedSessionResponse, &revokedSession)
+	revoked := replayRequest(router, http.MethodPost, "/v1/replay/consents/revoke?key="+publicKey,
+		fmt.Sprintf(`{"token":%q}`, revokedToken), publicKey, "https://example.com")
+	if revoked.Code != http.StatusNoContent {
+		t.Fatalf("revoke replay consent = %d/%s", revoked.Code, revoked.Body.String())
+	}
+	revokedRestart := replayRequest(
+		router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		strings.Replace(revokedSessionBody, revokedSessionClientID, "ee426b41-af60-46c1-9a3a-79a634008f26", 1),
+		publicKey, "https://example.com",
+	)
+	if revokedRestart.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(revokedRestart.Body.String(), `"field":"consent_token"`) {
+		t.Fatalf("restart with revoked consent = %d/%s", revokedRestart.Code, revokedRestart.Body.String())
+	}
+	revokedBatch := replayRequest(
+		router, http.MethodPost,
+		"/v1/replay/sessions/"+revokedSession.ID+"/batches?key="+publicKey,
+		`{"batch_index":0,"events_count":1,"size_bytes":2}`,
+		publicKey, "https://example.com",
+	)
+	if revokedBatch.Code != http.StatusForbidden {
+		t.Fatalf("batch after replay consent revocation = %d/%s", revokedBatch.Code, revokedBatch.Body.String())
+	}
+	withdrawnDiagnostic := tenantReplayRequest(
+		tenantHandler, http.MethodGet, diagnosticPath, accessToken,
+	)
+	if withdrawnDiagnostic.Code != http.StatusOK ||
+		!strings.Contains(withdrawnDiagnostic.Body.String(), `"state":"withdrawn"`) ||
+		!strings.Contains(withdrawnDiagnostic.Body.String(), `"withdrawn_at"`) {
+		t.Fatalf(
+			"withdrawn replay consent diagnostic = %d/%s",
+			withdrawnDiagnostic.Code,
+			withdrawnDiagnostic.Body.String(),
+		)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, revokedSession.ID); err != nil {
+		t.Fatalf("delete revoked replay session: %v", err)
+	}
+
+	configurationSessionID := "706bd54d-8fb2-4759-a47f-1c87cdd0bb20"
+	configurationSessionBody := fmt.Sprintf(
+		`{"session_id":%q,"widget_rule_id":%q,"page_url":"https://example.com/configuration",`+
+			`"consent_token":%q}`,
+		configurationSessionID, ruleID, consentToken,
+	)
+	configurationSessionResponse := replayRequest(
+		router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		configurationSessionBody, publicKey, "https://example.com",
+	)
+	if configurationSessionResponse.Code != http.StatusCreated {
+		t.Fatalf(
+			"create configuration-change replay = %d/%s",
+			configurationSessionResponse.Code, configurationSessionResponse.Body.String(),
+		)
+	}
+	var configurationSession struct {
+		ID string `json:"id"`
+	}
+	decodeReplayResponse(t, configurationSessionResponse, &configurationSession)
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET replay_consent = jsonb_set(replay_consent, '{notice_version}', '"2026-08"')
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("change replay notice version: %v", err)
+	}
+	afterConfigurationChange := replayRequest(
+		router, http.MethodPost,
+		"/v1/replay/sessions/"+configurationSession.ID+"/batches?key="+publicKey,
+		`{"batch_index":0,"events_count":1,"size_bytes":2}`,
+		publicKey, "https://example.com",
+	)
+	if afterConfigurationChange.Code != http.StatusForbidden {
+		t.Fatalf(
+			"batch after replay notice change = %d/%s",
+			afterConfigurationChange.Code, afterConfigurationChange.Body.String(),
+		)
+	}
+	restartAfterConfigurationChange := replayRequest(
+		router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		strings.Replace(
+			configurationSessionBody,
+			configurationSessionID,
+			"f4d9675e-765f-4e75-9842-91518ba02ea1",
+			1,
+		),
+		publicKey, "https://example.com",
+	)
+	if restartAfterConfigurationChange.Code != http.StatusUnprocessableEntity {
+		t.Fatalf(
+			"restart after replay notice change = %d/%s",
+			restartAfterConfigurationChange.Code, restartAfterConfigurationChange.Body.String(),
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET replay_consent = jsonb_set(replay_consent, '{notice_version}', '"2026-07"')
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("restore replay notice version: %v", err)
+	}
+	now = consentResponse.ExpiresAt.Add(time.Second)
+	expiredGrant := replayRequest(
+		router, http.MethodPost, "/v1/replay/sessions?key="+publicKey,
+		strings.Replace(
+			configurationSessionBody,
+			configurationSessionID,
+			"36a5fb02-c465-4a1e-bde6-e9eaa8f6e24b",
+			1,
+		),
+		publicKey, "https://example.com",
+	)
+	if expiredGrant.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expired replay grant = %d/%s", expiredGrant.Code, expiredGrant.Body.String())
+	}
+	var expiredConsentState string
+	if err := root.QueryRow(ctx, `
+		SELECT state::text FROM replay_consents WHERE id = $1
+	`, replayConsentID).Scan(&expiredConsentState); err != nil || expiredConsentState != "expired" {
+		t.Fatalf("expired replay consent state = %q, error = %v", expiredConsentState, err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, configurationSession.ID); err != nil {
+		t.Fatalf("delete configuration-change replay session: %v", err)
 	}
 
 	if _, err := root.Exec(ctx, `UPDATE tenants SET plan = 'starter' WHERE id = $1`, tenantID); err != nil {

@@ -25,7 +25,37 @@ var (
 	ErrByteLimit         = errors.New("replay session byte limit exceeded")
 	ErrUploadExpired     = errors.New("replay batch upload expired")
 	ErrPrivacyContract   = errors.New("replay session predates the anonymous privacy contract")
+	ErrConsentRequired   = errors.New("active replay consent is required")
+	ErrConsentExpired    = errors.New("replay consent expired")
 )
+
+type ConsentState string
+
+const (
+	ConsentNotObserved ConsentState = "not_observed"
+	ConsentActive      ConsentState = "active"
+	ConsentDenied      ConsentState = "denied"
+	ConsentWithdrawn   ConsentState = "withdrawn"
+	ConsentExpired     ConsentState = "expired"
+)
+
+type Consent struct {
+	ID                       string       `json:"id"`
+	TenantID                 string       `json:"tenant_id"`
+	ProjectID                string       `json:"project_id"`
+	WidgetRuleID             string       `json:"widget_rule_id"`
+	Purpose                  string       `json:"purpose"`
+	NoticeVersion            string       `json:"notice_version"`
+	Locale                   string       `json:"locale"`
+	Source                   string       `json:"source"`
+	CustomerConsentReference *string      `json:"customer_consent_reference,omitempty"`
+	State                    ConsentState `json:"state"`
+	AcceptedAt               *time.Time   `json:"accepted_at,omitempty"`
+	WithdrawnAt              *time.Time   `json:"withdrawn_at,omitempty"`
+	ExpiresAt                *time.Time   `json:"expires_at,omitempty"`
+	CreatedAt                time.Time    `json:"created_at"`
+	UpdatedAt                time.Time    `json:"updated_at"`
+}
 
 type BatchSafetyStatus string
 
@@ -61,6 +91,7 @@ type Session struct {
 	PrivacyVersion      int        `json:"-"`
 	MaxDurationSeconds  int        `json:"-"`
 	MaxEvents           int        `json:"-"`
+	ReplayConsentID     *string    `json:"-"`
 	CreatedAt           time.Time  `json:"created_at"`
 }
 

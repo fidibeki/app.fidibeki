@@ -31,22 +31,243 @@ func (Store) CreateSession(
 	startedAt time.Time,
 	maxDurationSeconds int,
 	maxEvents int,
+	replayConsentID string,
 ) (Session, error) {
 	if _, err := query.Exec(ctx, `
 		INSERT INTO sessions (
 			id, tenant_id, project_id, session_id, page_url, started_at,
-			rrweb_version, max_duration_seconds, max_events
-		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
+			rrweb_version, max_duration_seconds, max_events, replay_consent_id
+		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10)
 		ON CONFLICT (project_id, session_id) DO NOTHING
 	`, uuid.NewString(), tenantID, projectID, clientSessionID, pageURL, startedAt.UTC(),
-		RRWebVersion, maxDurationSeconds, maxEvents); err != nil {
+		RRWebVersion, maxDurationSeconds, maxEvents, replayConsentID); err != nil {
 		return Session{}, fmt.Errorf("create replay session: %w", err)
 	}
 	found, err := getSessionByClientID(ctx, query, tenantID, projectID, clientSessionID)
 	if err == nil && found.PrivacyVersion < CurrentReplayPrivacyVersion {
 		return Session{}, ErrPrivacyContract
 	}
+	if err == nil && (found.ReplayConsentID == nil || *found.ReplayConsentID != replayConsentID) {
+		return Session{}, ErrConsentRequired
+	}
 	return found, err
+}
+
+func (Store) RecordConsent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	widgetRuleID string,
+	noticeVersion string,
+	locale string,
+	source string,
+	customerReference *string,
+	tokenHash *string,
+	state ConsentState,
+	now time.Time,
+	expiresAt *time.Time,
+) (Consent, error) {
+	var acceptedAt *time.Time
+	if state == ConsentActive {
+		accepted := now.UTC()
+		acceptedAt = &accepted
+	}
+	consent, err := scanConsent(query.QueryRow(ctx, `
+		INSERT INTO replay_consents (
+			id, tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, customer_consent_reference, token_hash, state, accepted_at, expires_at,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, 'session_replay', $5, $6, $7, $8, $9, $10, $11, $12, $13, $13
+		)
+		ON CONFLICT (token_hash) DO UPDATE SET updated_at = replay_consents.updated_at
+		RETURNING id, tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, customer_consent_reference, state, accepted_at, withdrawn_at, expires_at,
+			created_at, updated_at
+	`, uuid.NewString(), tenantID, projectID, widgetRuleID, noticeVersion, locale, source,
+		customerReference, tokenHash, state, acceptedAt, expiresAt, now.UTC()))
+	if err != nil {
+		return Consent{}, fmt.Errorf("record replay consent: %w", err)
+	}
+	if consent.TenantID != tenantID || consent.ProjectID != projectID ||
+		consent.WidgetRuleID != widgetRuleID || consent.NoticeVersion != noticeVersion ||
+		consent.Locale != locale || consent.Source != source || consent.State != state ||
+		!sameOptionalString(consent.CustomerConsentReference, customerReference) {
+		return Consent{}, ErrConsentRequired
+	}
+	return consent, nil
+}
+
+func (Store) AuthorizeConsent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	widgetRuleID string,
+	noticeVersion string,
+	source string,
+	tokenHash string,
+	now time.Time,
+) (Consent, error) {
+	consent, err := scanConsent(query.QueryRow(ctx, `
+		SELECT consent.id, consent.tenant_id, consent.project_id, consent.widget_rule_id,
+			consent.purpose, consent.notice_version, consent.locale, consent.source,
+			consent.customer_consent_reference, consent.state, consent.accepted_at,
+			consent.withdrawn_at, consent.expires_at, consent.created_at, consent.updated_at
+		FROM replay_consents AS consent
+		JOIN widget_rules AS rule
+		  ON rule.project_id = consent.project_id
+		 AND rule.id = consent.widget_rule_id
+		WHERE consent.tenant_id = $1
+		  AND consent.project_id = $2
+		  AND consent.widget_rule_id = $3
+		  AND consent.purpose = 'session_replay'
+		  AND consent.notice_version = $4
+		  AND consent.source = $5
+		  AND consent.token_hash = $6
+		  AND rule.enabled
+		  AND rule.replay_mode <> 'none'
+		  AND rule.replay_consent->>'mode' = consent.source
+		  AND rule.replay_consent->>'notice_version' = consent.notice_version
+		FOR UPDATE OF consent
+	`, tenantID, projectID, widgetRuleID, noticeVersion, source, tokenHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Consent{}, ErrConsentRequired
+	}
+	if err != nil {
+		return Consent{}, fmt.Errorf("authorize replay consent: %w", err)
+	}
+	if consent.State == ConsentActive && consent.ExpiresAt != nil &&
+		!now.UTC().Before(*consent.ExpiresAt) {
+		if _, updateErr := query.Exec(ctx, `
+			UPDATE replay_consents
+			SET state = 'expired', updated_at = $2
+			WHERE id = $1 AND state = 'active'
+		`, consent.ID, now.UTC()); updateErr != nil {
+			return Consent{}, fmt.Errorf("expire replay consent: %w", updateErr)
+		}
+		return Consent{}, errors.Join(ErrConsentRequired, ErrConsentExpired)
+	}
+	if consent.State != ConsentActive || consent.AcceptedAt == nil || consent.ExpiresAt == nil {
+		return Consent{}, ErrConsentRequired
+	}
+	return consent, nil
+}
+
+func sameOptionalString(left *string, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func (Store) RevokeConsent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	tokenHash string,
+	now time.Time,
+) (Consent, error) {
+	consent, err := scanConsent(query.QueryRow(ctx, `
+		SELECT id, tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, customer_consent_reference, state, accepted_at, withdrawn_at, expires_at,
+			created_at, updated_at
+		FROM replay_consents
+		WHERE tenant_id = $1 AND project_id = $2 AND token_hash = $3
+		FOR UPDATE
+	`, tenantID, projectID, tokenHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Consent{}, ErrConsentRequired
+	}
+	if err != nil {
+		return Consent{}, fmt.Errorf("lock replay consent for revocation: %w", err)
+	}
+	if consent.State == ConsentWithdrawn {
+		return consent, nil
+	}
+	if consent.State != ConsentActive {
+		return Consent{}, ErrConsentRequired
+	}
+	withdrawnAt := now.UTC()
+	consent, err = scanConsent(query.QueryRow(ctx, `
+		UPDATE replay_consents
+		SET state = 'withdrawn', withdrawn_at = $2, updated_at = $2
+		WHERE id = $1 AND state = 'active'
+		RETURNING id, tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, customer_consent_reference, state, accepted_at, withdrawn_at, expires_at,
+			created_at, updated_at
+	`, consent.ID, withdrawnAt))
+	if err != nil {
+		return Consent{}, fmt.Errorf("revoke replay consent: %w", err)
+	}
+	return consent, nil
+}
+
+func (Store) AuthorizeSessionConsent(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	sessionID string,
+	now time.Time,
+) (Consent, error) {
+	var consentID *string
+	err := query.QueryRow(ctx, `
+		SELECT replay_consent_id
+		FROM sessions
+		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+		FOR SHARE
+	`, tenantID, projectID, sessionID).Scan(&consentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Consent{}, ErrNotFound
+	}
+	if err != nil {
+		return Consent{}, fmt.Errorf("lock replay session consent: %w", err)
+	}
+	if consentID == nil {
+		return Consent{}, ErrConsentRequired
+	}
+	consent, err := scanConsent(query.QueryRow(ctx, `
+		SELECT consent.id, consent.tenant_id, consent.project_id, consent.widget_rule_id,
+			consent.purpose, consent.notice_version, consent.locale, consent.source,
+			consent.customer_consent_reference, consent.state, consent.accepted_at,
+			consent.withdrawn_at, consent.expires_at, consent.created_at, consent.updated_at
+		FROM replay_consents AS consent
+		JOIN widget_rules AS rule
+		  ON rule.project_id = consent.project_id
+		 AND rule.id = consent.widget_rule_id
+		WHERE consent.tenant_id = $1
+		  AND consent.project_id = $2
+		  AND consent.id = $3
+		  AND rule.enabled
+		  AND rule.replay_mode <> 'none'
+		  AND rule.replay_consent->>'mode' = consent.source
+		  AND rule.replay_consent->>'notice_version' = consent.notice_version
+		FOR UPDATE OF consent
+	`, tenantID, projectID, *consentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Consent{}, ErrConsentRequired
+	}
+	if err != nil {
+		return Consent{}, fmt.Errorf("authorize replay session consent: %w", err)
+	}
+	if consent.State == ConsentActive && consent.ExpiresAt != nil &&
+		!now.UTC().Before(*consent.ExpiresAt) {
+		if _, updateErr := query.Exec(ctx, `
+			UPDATE replay_consents
+			SET state = 'expired', updated_at = $2
+			WHERE id = $1 AND state = 'active'
+		`, consent.ID, now.UTC()); updateErr != nil {
+			return Consent{}, fmt.Errorf("expire replay session consent: %w", updateErr)
+		}
+		return Consent{}, errors.Join(ErrConsentRequired, ErrConsentExpired)
+	}
+	if consent.State != ConsentActive || consent.AcceptedAt == nil || consent.ExpiresAt == nil {
+		return Consent{}, ErrConsentRequired
+	}
+	return consent, nil
 }
 
 func (Store) GetSession(
@@ -438,6 +659,7 @@ func (s Store) PendingMerges(ctx context.Context, limit int, staleBefore time.Ti
 	rows, err := s.Database.Query(ctx, sessionSelect+`
 		WHERE session.merge_requested_at IS NOT NULL AND session.merged_at IS NULL
 		  AND session.replay_privacy_version = $3
+		  AND session.replay_consent_id IS NOT NULL
 		  AND session.merge_attempts < 12
 		  AND (session.merge_enqueued_at IS NULL OR session.merge_enqueued_at < $1)
 		ORDER BY session.merge_requested_at, session.id
@@ -478,6 +700,27 @@ func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batc
 	`, sessionID, CurrentReplayPrivacyVersion))
 	if err != nil {
 		return Session{}, nil, err
+	}
+	if found.ReplayConsentID == nil {
+		return Session{}, nil, ErrConsentRequired
+	}
+	var consentEvidenceValid bool
+	if err := s.Database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM replay_consents
+			WHERE id = $1
+			  AND tenant_id = $2
+			  AND project_id = $3
+			  AND purpose = 'session_replay'
+			  AND accepted_at IS NOT NULL
+			  AND state IN ('active', 'withdrawn', 'expired')
+		)
+	`, *found.ReplayConsentID, found.TenantID, found.ProjectID).Scan(&consentEvidenceValid); err != nil {
+		return Session{}, nil, fmt.Errorf("verify replay merge consent evidence: %w", err)
+	}
+	if !consentEvidenceValid {
+		return Session{}, nil, ErrConsentRequired
 	}
 	rows, err := s.Database.Query(ctx, `
 		SELECT id, tenant_id, project_id, session_id, batch_index, storage_key,
@@ -581,7 +824,8 @@ const sessionSelect = `
 	       session.finalize_requested_at, session.merge_enqueued_at,
 	       session.merge_attempts, session.merge_error,
 	       session.retention_deleted_at, session.replay_privacy_version,
-	       session.max_duration_seconds, session.max_events, session.created_at
+	       session.max_duration_seconds, session.max_events, session.replay_consent_id,
+	       session.created_at
 	FROM sessions AS session
 `
 
@@ -616,7 +860,7 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		&found.RRWebVersion, &found.MergedAt, &found.MergeRequestedAt,
 		&found.FinalizeRequestedAt, &found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
 		&found.RetentionDeletedAt, &found.PrivacyVersion,
-		&found.MaxDurationSeconds, &found.MaxEvents, &found.CreatedAt,
+		&found.MaxDurationSeconds, &found.MaxEvents, &found.ReplayConsentID, &found.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrNotFound
@@ -625,4 +869,15 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		return Session{}, fmt.Errorf("scan replay session: %w", err)
 	}
 	return found, nil
+}
+
+func scanConsent(row rowScanner) (Consent, error) {
+	var consent Consent
+	err := row.Scan(
+		&consent.ID, &consent.TenantID, &consent.ProjectID, &consent.WidgetRuleID,
+		&consent.Purpose, &consent.NoticeVersion, &consent.Locale, &consent.Source,
+		&consent.CustomerConsentReference, &consent.State, &consent.AcceptedAt,
+		&consent.WithdrawnAt, &consent.ExpiresAt, &consent.CreatedAt, &consent.UpdatedAt,
+	)
+	return consent, err
 }

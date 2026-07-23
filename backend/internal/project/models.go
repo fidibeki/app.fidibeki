@@ -50,6 +50,33 @@ const (
 	MaximumReplayEvents          = 50000
 )
 
+type ReplayConsentMode string
+
+const (
+	ReplayConsentNone            ReplayConsentMode = "none"
+	ReplayConsentFidibekiManaged ReplayConsentMode = "fidibeki_managed"
+	ReplayConsentCustomerManaged ReplayConsentMode = "customer_cmp"
+)
+
+type ReplayConsentNotice struct {
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	AcceptLabel   string `json:"accept_label"`
+	RejectLabel   string `json:"reject_label"`
+	WithdrawLabel string `json:"withdraw_label"`
+}
+
+type ReplayConsentConfig struct {
+	Mode             ReplayConsentMode              `json:"mode"`
+	NoticeVersion    string                         `json:"notice_version"`
+	ControllerName   string                         `json:"controller_name"`
+	PrivacyPolicyURL string                         `json:"privacy_policy_url"`
+	SupportedLocales []string                       `json:"supported_locales"`
+	RetentionDays    int                            `json:"retention_days"`
+	ExpiryDays       int                            `json:"expiry_days"`
+	Notices          map[string]ReplayConsentNotice `json:"notices"`
+}
+
 type RecurrenceMode string
 
 const (
@@ -186,6 +213,7 @@ type WidgetRule struct {
 	ReplayMaskTextSelector   *string                          `json:"replay_mask_text_selector"`
 	ReplayRecordCanvas       bool                             `json:"replay_record_canvas"`
 	ReplayCanvasFPS          int                              `json:"replay_canvas_fps"`
+	ReplayConsent            ReplayConsentConfig              `json:"replay_consent"`
 	RecurrenceMode           RecurrenceMode                   `json:"recurrence_mode"`
 	RecurrenceDays           *int                             `json:"recurrence_days"`
 	DefinitionKey            string                           `json:"definition_key"`
@@ -232,6 +260,7 @@ type WidgetRuleInput struct {
 	ReplayMaskTextSelector   *string                           `json:"replay_mask_text_selector"`
 	ReplayRecordCanvas       bool                              `json:"replay_record_canvas"`
 	ReplayCanvasFPS          int                               `json:"replay_canvas_fps"`
+	ReplayConsent            ReplayConsentConfig               `json:"replay_consent"`
 	RecurrenceMode           RecurrenceMode                    `json:"recurrence_mode"`
 	RecurrenceDays           *int                              `json:"recurrence_days"`
 	DefinitionKey            string                            `json:"definition_key"`
@@ -275,6 +304,7 @@ type WidgetRuleValues struct {
 	ReplayMaskTextSelector   *string
 	ReplayRecordCanvas       bool
 	ReplayCanvasFPS          int
+	ReplayConsent            ReplayConsentConfig
 	RecurrenceMode           RecurrenceMode
 	RecurrenceDays           *int
 	DefinitionKey            string

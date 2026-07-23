@@ -13,6 +13,10 @@ const browserRule: WidgetRule = {
   replay_max_duration_seconds: 1800, replay_max_events: 50000,
   replay_mask_all_inputs: true, replay_mask_text_selector: null,
   replay_record_canvas: false, replay_canvas_fps: 2,
+  replay_consent: {
+    mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
+    supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
+  },
   recurrence_mode: 'cooldown', recurrence_days: 30,
   localizations: {
     en: {
@@ -41,6 +45,67 @@ function browserConfiguration(rule: WidgetRule = browserRule): WidgetConfigurati
     },
     rules: [rule],
   }
+}
+
+function customerReplayRule(rule: WidgetRule): WidgetRule {
+  return {
+    ...rule,
+    replay_consent: {
+      mode: 'customer_cmp',
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['en'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    },
+  }
+}
+
+function managedReplayRule(rule: WidgetRule): WidgetRule {
+  return {
+    ...rule,
+    replay_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Help us understand this experience',
+          description: 'Allow Acme Studio to record anonymous interactions on this page.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw consent',
+        },
+      },
+    },
+  }
+}
+
+async function seedActiveReplayConsent(
+  page: Page,
+  source: 'customer_cmp' | 'fidibeki_managed' = 'customer_cmp',
+) {
+  await page.addInitScript((configuredSource) => {
+    localStorage.setItem(
+      'fidibeki:replay-consent:v1:project-browser:rule-browser:2026-07',
+      JSON.stringify({
+        version: 1,
+        state: 'active',
+        token: 'existing-consent-token',
+        locale: 'en',
+        noticeVersion: '2026-07',
+        source: configuredSource,
+        ...(configuredSource === 'customer_cmp' ? { consentId: 'existing-cmp-reference' } : {}),
+        expiresAt: '2099-01-01T00:00:00Z',
+      }),
+    )
+  }, source)
 }
 
 function definitionConfiguration(presentation: WidgetPresentation, key = 'inline-checkout'): WidgetConfiguration {
@@ -749,14 +814,334 @@ test('dismissal records explicit close without manufacturing interaction', async
   await expect.poll(() => events).toEqual(['matched', 'impression', 'dismissed'])
 })
 
-test('anonymous replay suppresses canvas pixels even when a legacy rule requests capture', async ({ page }) => {
+test('customer-managed replay stays dormant until a structured grant and stops on revocation', async ({ page }) => {
   const replayRule: WidgetRule = {
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+    replay_consent: {
+      mode: 'customer_cmp',
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['en'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    },
+  }
+  const baseConfiguration = browserConfiguration(replayRule)
+  const configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+  const replayScripts: string[] = []
+  const sessionRequests: Array<Record<string, unknown>> = []
+  let revocations = 0
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/replay.js')) replayScripts.push(request.url())
+  })
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/replay/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (pathname.endsWith('/replay/consents/revoke')) {
+      revocations++
+      return route.fulfill({ status: 204 })
+    }
+    if (pathname.endsWith('/replay/consents')) {
+      const body = request.postDataJSON() as { grant_token: string }
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          token: body.grant_token,
+          state: 'active',
+          expires_at: '2026-08-23T12:00:00Z',
+        }),
+      })
+    }
+    if (pathname.endsWith('/replay/sessions')) {
+      sessionRequests.push(request.postDataJSON() as Record<string, unknown>)
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'server-session',
+          rrweb_version: '2.1.1',
+          max_duration_seconds: 1800,
+          max_events: 50000,
+        }),
+      })
+    }
+    if (pathname.endsWith('/batches')) {
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          presigned_url: 'http://127.0.0.1:4173/replay-upload',
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          complete_token: 'complete-token',
+        }),
+      })
+    }
+    if (pathname.endsWith('/complete')) return route.fulfill({ status: 204 })
+    if (pathname.endsWith('/finalize')) {
+      return route.fulfill({ status: 202, contentType: 'application/json', body: '{}' })
+    }
+    return route.abort()
+  })
+  await page.route('**/replay-upload', route => route.fulfill({ status: 200 }))
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await page.waitForTimeout(100)
+  expect(replayScripts).toHaveLength(0)
+  expect(sessionRequests).toHaveLength(0)
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: {
+        replay: {
+          grantConsent(assertion: {
+            consentId: string
+            purpose: 'session_replay'
+            noticeVersion: string
+            locale: string
+            source: 'customer_cmp'
+          }): Promise<unknown>
+        }
+      }
+    }).Fidibeki
+    await api.replay.grantConsent({
+      consentId: 'cmp-reference',
+      purpose: 'session_replay',
+      noticeVersion: '2026-07',
+      locale: 'en',
+      source: 'customer_cmp',
+    })
+  })
+  await expect.poll(() => sessionRequests.length).toBe(1)
+  expect(replayScripts).toHaveLength(1)
+  expect(sessionRequests[0]).toMatchObject({
+    widget_rule_id: replayRule.id,
+    consent_token: expect.any(String),
+  })
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: { replay: { revokeConsent(): Promise<void> } }
+    }).Fidibeki
+    await api.replay.revokeConsent()
+  })
+  await expect.poll(() => revocations).toBe(1)
+  await page.evaluate(() => window.dispatchEvent(new Event('fidibeki:navigation')))
+  await page.waitForTimeout(100)
+  expect(sessionRequests).toHaveLength(1)
+})
+
+test('managed replay consent supports reject, accept, persistence, version changes, and withdrawal', async ({ page }) => {
+  const replayRule: WidgetRule = {
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+    replay_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Help us understand this experience',
+          description: 'Allow Acme Studio to record anonymous interactions on this page.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw consent',
+        },
+      },
+    },
+  }
+  const baseConfiguration = browserConfiguration(replayRule)
+  let configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    default_locale: 'en',
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+  const sessionRequests: Array<Record<string, unknown>> = []
+  let revocations = 0
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/replay/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (pathname.endsWith('/replay/consents/revoke')) {
+      revocations++
+      return route.fulfill({ status: 204 })
+    }
+    if (pathname.endsWith('/replay/consents')) {
+      const body = request.postDataJSON() as { state: string, grant_token: string }
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          state: body.state === 'denied' ? 'denied' : 'active',
+          ...(body.state === 'granted' ? { token: body.grant_token } : {}),
+          expires_at: '2026-08-23T12:00:00Z',
+        }),
+      })
+    }
+    if (pathname.endsWith('/replay/sessions')) {
+      sessionRequests.push(request.postDataJSON() as Record<string, unknown>)
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'managed-session',
+          rrweb_version: '2.1.1',
+          max_duration_seconds: 1800,
+          max_events: 50000,
+        }),
+      })
+    }
+    return route.abort()
+  })
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reject', exact: true })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: 'Accept', exact: true })).toBeFocused()
+  expect(sessionRequests).toHaveLength(0)
+  await page.getByRole('button', { name: 'Reject', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toHaveCount(0)
+
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toHaveCount(0)
+  expect(sessionRequests).toHaveLength(0)
+
+  await page.evaluate(() => {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('fidibeki:replay-consent:')) localStorage.removeItem(key)
+    }
+    window.dispatchEvent(new Event('fidibeki:navigation'))
+  })
+  await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toBeVisible()
+  await page.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect.poll(() => sessionRequests.length).toBe(1)
+  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
+
+  configuration = {
+    ...configuration,
+    rules: [{
+      ...replayRule,
+      replay_consent: {
+        ...replayRule.replay_consent,
+        notice_version: '2026-08',
+        notices: {
+          en: {
+            ...replayRule.replay_consent.notices.en!,
+            title: 'Updated replay permission',
+          },
+        },
+      },
+    }],
+  }
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Updated replay permission' })).toBeVisible()
+  expect(sessionRequests).toHaveLength(1)
+  await page.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect.poll(() => sessionRequests.length).toBe(2)
+  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Replay privacy' }).click()
+  await page.getByRole('button', { name: 'Withdraw consent' }).click()
+  await expect.poll(() => revocations).toBe(1)
+  await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
+})
+
+test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {
+  const replayRule: WidgetRule = {
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+    replay_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacidade',
+      supported_locales: ['pt-pt'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        'pt-pt': {
+          title: 'Ajude-nos a melhorar esta experiência',
+          description: 'Autorize a gravação anónima das interações nesta página.',
+          accept_label: 'Aceitar',
+          reject_label: 'Recusar',
+          withdraw_label: 'Retirar consentimento',
+        },
+      },
+    },
+  }
+  const baseConfiguration = browserConfiguration(replayRule)
+  const decisions: Array<Record<string, unknown>> = []
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'language', { configurable: true, get: () => 'pt-PT' })
+    Object.defineProperty(navigator, 'languages', { configurable: true, get: () => ['pt-PT'] })
+  })
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ...baseConfiguration,
+      default_locale: 'pt-pt',
+      features: { ...baseConfiguration.features, session_replay: true },
+    }),
+  }))
+  await page.route('**/v1/replay/consents?*', async (route) => {
+    decisions.push(route.request().postDataJSON() as Record<string, unknown>)
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        state: 'denied',
+        expires_at: '2026-08-23T12:00:00Z',
+      }),
+    })
+  })
+
+  await page.goto('/sample.html')
+  await expect(
+    page.getByRole('heading', { name: 'Ajude-nos a melhorar esta experiência' }),
+  ).toBeVisible()
+  await expect(page.getByText('As interações gravadas são conservadas até 30 dias.')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Política de privacidade' })).toHaveAttribute(
+    'href',
+    'https://example.com/privacidade',
+  )
+  await expect(page.getByRole('button', { name: 'Recusar' })).toBeFocused()
+  await page.getByRole('button', { name: 'Recusar' }).click()
+  await expect.poll(() => decisions.length).toBe(1)
+  expect(decisions[0]).toMatchObject({ locale: 'pt-pt', state: 'denied' })
+})
+
+test('anonymous replay suppresses canvas pixels even when a legacy rule requests capture', async ({ page }) => {
+  const replayRule = customerReplayRule({
     ...browserRule,
     replay_mode: 'full',
     replay_sampling_rate: 0,
     replay_record_canvas: true,
     replay_canvas_fps: 2,
-  }
+  })
   const baseConfiguration = browserConfiguration(replayRule)
   const configuration: WidgetConfiguration = {
     ...baseConfiguration,
@@ -766,6 +1151,7 @@ test('anonymous replay suppresses canvas pixels even when a legacy rule requests
   let batchIndex = 0
   let finalized = false
 
+  await seedActiveReplayConsent(page)
   await page.addInitScript(() => {
     document.addEventListener('DOMContentLoaded', () => {
       const article = document.querySelector('article')
@@ -872,10 +1258,11 @@ test('anonymous replay suppresses canvas pixels even when a legacy rule requests
   expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(1024 * 1024)
 })
 
-test('replay capture is anonymous: no sentinel identity value reaches an uploaded batch, session request, or navigation event', async ({ page }) => {
-  const replayRule: WidgetRule = {
+for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
+  test(`replay capture is anonymous with ${consentMode} consent: no sentinel identity value reaches storage`, async ({ page }) => {
+  const replayRule = (consentMode === 'customer_cmp' ? customerReplayRule : managedReplayRule)({
     ...browserRule, replay_mode: 'full', replay_sampling_rate: 0,
-  }
+  })
   const baseConfiguration = browserConfiguration(replayRule)
   const configuration: WidgetConfiguration = {
     ...baseConfiguration,
@@ -891,6 +1278,7 @@ test('replay capture is anonymous: no sentinel identity value reaches an uploade
   ]
   const safeTextMarker = 'SAFE-TEXT-Powered-By-Fidibeki'
 
+  await seedActiveReplayConsent(page, consentMode)
   await page.addInitScript((marker: string) => {
     document.addEventListener('DOMContentLoaded', () => {
       const article = document.querySelector('article')
@@ -992,7 +1380,8 @@ test('replay capture is anonymous: no sentinel identity value reaches an uploade
   }
   // The explicit safe-text opt-in still lets known-non-identifying static text through.
   expect(serializedBatches).toContain(safeTextMarker)
-})
+  })
+}
 
 test('failed submission can be dismissed but accepted submission cannot', async ({ page }) => {
   const events = await captureAnalytics(page, browserConfiguration())

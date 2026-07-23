@@ -20,6 +20,8 @@ import {
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type {
   Project,
+  ReplayConsentConfig,
+  ReplayMode,
   TenantConfiguration,
   WidgetAppearanceOverrides,
   WidgetLocalization,
@@ -73,6 +75,7 @@ const projectAppearance = ref<WidgetAppearanceOverrides>({})
 const ruleAppearance = ref<WidgetAppearanceOverrides>({})
 const diagnosticsRefreshing = ref(false)
 const previewLauncherOpen = ref(false)
+const replayConsentDialogOpen = ref(false)
 type ProjectDestructiveAction =
   | { kind: 'rule', id: string, name: string }
   | { kind: 'project', id: string, name: string }
@@ -314,6 +317,7 @@ function selectRule(rule: WidgetRule) {
     replay_mask_text_selector: rule.replay_mask_text_selector ?? null,
     replay_record_canvas: false,
     replay_canvas_fps: 2,
+    replay_consent: cloneReactive(rule.replay_consent || defaultWidgetRule().replay_consent),
     recurrence_mode: rule.recurrence_mode || 'cooldown',
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
     definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
@@ -369,6 +373,29 @@ function normalizedRule(): WidgetRuleInput {
     response_blocks: responseBlocks,
     localizations: { ...ruleForm.localizations, [locale]: localized },
   }
+}
+
+function onReplayModeChange(event: Event) {
+  const target = event.target
+  if (!(target instanceof HTMLSelectElement)) return
+  const mode = target.value as ReplayMode
+  ruleForm.replay_mode = mode
+  if (mode === 'none') {
+    ruleForm.replay_consent = cloneReactive(defaultWidgetRule().replay_consent)
+    replayConsentDialogOpen.value = false
+    return
+  }
+  if (ruleForm.replay_consent.mode === 'none') replayConsentDialogOpen.value = true
+}
+
+function cancelReplayConsent() {
+  replayConsentDialogOpen.value = false
+  if (ruleForm.replay_consent.mode === 'none') ruleForm.replay_mode = 'none'
+}
+
+function confirmReplayConsent(configuration: ReplayConsentConfig) {
+  ruleForm.replay_consent = cloneReactive(configuration)
+  replayConsentDialogOpen.value = false
 }
 
 function fallbackLocalization(prompt: string): WidgetLocalization {
@@ -939,13 +966,25 @@ useHead(() => ({
               <div class="project-form-grid">
                 <label>
                   {{ t('projects.editor.replay.mode') }}
-                  <select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay" v-bind="ruleFieldAttributes('replay_mode')">
+                  <select v-model="ruleForm.replay_mode" class="app-select" :disabled="!supportsReplay" v-bind="ruleFieldAttributes('replay_mode')" @change="onReplayModeChange">
                     <option value="none">{{ t('projects.enums.replay.none') }}</option>
                     <option value="full">{{ t('projects.enums.replay.full') }}</option>
                     <option value="sampling">{{ t('projects.enums.replay.sampling') }}</option>
                   </select>
                   <small v-if="ruleFieldError('replay_mode')" :id="ruleErrorID('replay_mode')" class="rule-field-error">{{ ruleFieldError('replay_mode') }}</small>
                 </label>
+                <div v-if="ruleForm.replay_mode !== 'none'" class="replay-consent-status wide" :data-configured="ruleForm.replay_consent.mode !== 'none'">
+                  <div>
+                    <ShieldCheck :size="16" aria-hidden="true" />
+                    <p>
+                      <b>{{ ruleForm.replay_consent.mode === 'none' ? t('projects.editor.replay.consent.requiredTitle') : t('projects.editor.replay.consent.configuredTitle') }}</b>
+                      <span>{{ ruleForm.replay_consent.mode === 'none' ? t('projects.editor.replay.consent.requiredDescription') : t(`projects.editor.replay.consent.configuredDescription.${ruleForm.replay_consent.mode}`) }}</span>
+                    </p>
+                  </div>
+                  <button class="app-button" type="button" @click="replayConsentDialogOpen = true">
+                    <Settings2 :size="14" /> {{ t('projects.editor.replay.consent.configure') }}
+                  </button>
+                </div>
                 <label v-if="ruleForm.replay_mode === 'sampling'">
                   {{ t('projects.editor.replay.samplingPercent') }}
                   <input v-model.number="ruleForm.replay_sampling_rate" class="app-input" type="number" min="1" max="100" v-bind="ruleFieldAttributes('replay_sampling_rate')" />
@@ -1008,6 +1047,16 @@ useHead(() => ({
       :error="destructiveError"
       @cancel="closeDestructiveAction"
       @confirm="confirmDestructiveAction"
+    />
+    <ReplayConsentDialog
+      :open="replayConsentDialogOpen"
+      :initial="ruleForm.replay_consent"
+      :project-name="projectName"
+      :default-locale="projectDefaultLocale"
+      :project-id="projectID"
+      :rule-id="selectedRuleID"
+      @cancel="cancelReplayConsent"
+      @confirm="confirmReplayConsent"
     />
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
@@ -1091,6 +1140,14 @@ useHead(() => ({
 .replay-privacy-note svg { margin-top: 1px; color: var(--amber); }
 .replay-privacy-note p { display: grid; gap: 3px; margin: 0; font-size: 9px; line-height: 1.5; }
 .replay-privacy-note b { color: var(--ink-soft); }
+.replay-consent-status { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; background: #fff8e8; border: 1px solid #e9cc84; border-radius: 5px; }
+.replay-consent-status[data-configured='true'] { background: var(--teal-soft); border-color: #acd5ca; }
+.replay-consent-status > div { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; color: var(--amber); }
+.replay-consent-status[data-configured='true'] > div { color: var(--teal); }
+.replay-consent-status p { display: grid; gap: 3px; margin: 0; }
+.replay-consent-status b { color: var(--ink-soft); font-size: 10px; }
+.replay-consent-status span { color: var(--muted); font-size: 9px; line-height: 1.4; }
+.replay-consent-status .app-button { flex: 0 0 auto; }
 .project-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .project-capability-grid label { display: flex; min-height: 58px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; }
 .project-capability-grid label[data-locked='true'] { background: #f7f8f8; opacity: .65; }
@@ -1160,5 +1217,5 @@ useHead(() => ({
 .project-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 10px; }
 @media (max-width: 1180px) { .project-config-grid { grid-template-columns: 190px minmax(480px, 1fr); } .project-widget-preview { display: none; } }
 @media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-install-diagnostics { grid-template-columns: 1fr; } .project-install-diagnostics > header { min-height: 42px; border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } .project-install-diagnostics dl > div:nth-child(2) { border-right: 0; } .project-install-diagnostics dl > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > form > fieldset { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .project-install-diagnostics dl { grid-template-columns: 1fr; } .project-install-diagnostics dl > div { border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl > div:last-child { border-bottom: 0; } .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } }
+@media (max-width: 600px) { .project-install-diagnostics dl { grid-template-columns: 1fr; } .project-install-diagnostics dl > div { border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl > div:last-child { border-bottom: 0; } .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } .replay-consent-status { align-items: stretch; flex-direction: column; } .replay-consent-status .app-button { width: 100%; } }
 </style>

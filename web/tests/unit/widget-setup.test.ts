@@ -15,6 +15,11 @@ describe('widget setup helpers', () => {
       replay_mode: 'none',
       replay_record_canvas: false,
       replay_canvas_fps: 2,
+      replay_consent: {
+        mode: 'none',
+        notice_version: '',
+        supported_locales: [],
+      },
       recurrence_mode: 'cooldown',
       recurrence_days: 30,
       definition_status: 'draft',

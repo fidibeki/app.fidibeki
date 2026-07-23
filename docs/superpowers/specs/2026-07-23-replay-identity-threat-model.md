@@ -1,7 +1,7 @@
 # Replay Identity Threat Model
 
 **Date:** 2026-07-23
-**Scope:** GitHub issue #53, amended by the rule-safe context contract in #54
+**Scope:** GitHub issue #53, amended by the rule-safe context contract in #54 and consent gate in #57
 **Environment:** Product and staging only; no production or deployment work
 
 ## Problem
@@ -34,6 +34,10 @@ mitigation for each, and records what remains an accepted residual risk.
 | Reporter contact | A reporter can optionally supply an email through the feedback/contact workflow (`reporter_email` on the feedback submission) | Reporter contact is submitted on the feedback record, not the replay session; the two share only an opaque foreign key (`sessions.feedback_id`) used for lookup, never reporter content. `sanitizeReplayEvent` and the attribute/text masking above apply uniformly regardless of whether a reporter later supplies contact information, so contact details typed into the widget's own contact field never reach replay capture (that field is not part of the recorded DOM subtree rrweb observes for capture purposes it shares with the page). |
 | Existing/legacy objects and deletion paths | Sessions created before this change may have raw metadata and already-uploaded objects captured under a weaker policy | Migration `000075` invalidated pre-anonymous objects as version zero. Migration `000077` then invalidates v1 objects because their Meta/navigation events may contain a real pathname, advances new sessions to privacy version two, and selects older merged and batch objects for object-first retention cleanup. |
 | Upload, merge, and stream trust boundary | A modified or old widget can bypass client-side sanitization and upload opaque JSON directly to the presigned object URL | Completed batches remain quarantined until the backend parses every event and validates exact event kinds, equality with the safe session URL, mask-only text, marker-only attributes, safe structural mutations, and the incremental-source allowlist. Unsafe objects are rejected and removed. Merge revalidates promoted batches, and tenant streaming only serves ready current-version sessions. |
+| Capture before permission | Loading the widget, matching a rule, or rendering a consent prompt could import rrweb, create a replay session, or buffer a snapshot before the user grants permission | Existing rules default to consent mode `none`. The loader resolves a current managed or customer assertion before dynamically importing the replay module. Session creation and every batch lifecycle transition also require current server-side evidence scoped to the project, rule, mode, and notice version. |
+| Stale grant after configuration change | A browser could retain a grant after the operator changes consent mode, notice version, or disables replay | Browser evidence is keyed by project/rule/notice, expires locally, and is rejected when versions differ. The backend joins the current rule configuration during session and batch authorization, so old clients fail closed. Configuration changes are recorded as tenant audit events. |
+| Revocation/upload race | Buffered events or an in-flight old client could continue uploading after withdrawal | The runtime stops the recorder and discards unsent events before sending the withdrawal request. The backend marks the evidence withdrawn idempotently and re-authorizes session/batch declare, complete, and finalize operations against current evidence. The merge worker refuses sessions without accepted linked evidence. |
+| Consent evidence becomes an identity graph | CMP references, browser identifiers, page URLs, or request metadata could be joined with replay sessions to identify a visitor | The evidence ledger stores only tenant/project/rule, purpose, mode/source, optional customer reference, notice version, locale, state, and server timestamps. It excludes IP address, user-agent, authenticated ID, reporter ID/email, analytics visitor ID, fingerprint, and URL. Evidence is not exposed in the replay player or copied to event payloads. |
 
 ## What is explicitly not attempted
 
@@ -41,6 +45,10 @@ mitigation for each, and records what remains an accepted residual risk.
 - **No pixel-level canvas redaction.** Pixel analysis is not attempted; canvas recording is suppressed at every enforced boundary.
 - **No personal fingerprinting.** The persistent visitor ID is not correlated with replay content, not exposed in the backoffice, and not used to infer identity.
 - **No URL-content classifier.** Page minimisation is derived from the configured targeting rule, not from heuristics that try to recognize names, account IDs, or tokens.
+- **No consent inferred from configuration.** Enabling replay, matching a rule, or a historical
+  replay setting is never treated as an end-user grant.
+- **No alternative legal-basis switch.** The product exposes managed and customer-managed explicit
+  consent only. Any future non-consent mode requires separate product and legal approval.
 
 ## Accepted residual risks
 
@@ -50,6 +58,10 @@ mitigation for each, and records what remains an accepted residual risk.
 - Removing all ordinary serialized attributes and string-bearing incremental sources reduces replay
   visual fidelity. This is an intentional fail-closed tradeoff for the anonymous replay mode.
 - Exact targets and prefix bases are administrator-configured assertions that the route is safe to retain. Regex, all-pages, unmatched, and otherwise unproven dynamic paths fall back to origin-only.
+- A customer CMP remains the source of truth for the complete proof behind a customer-managed
+  assertion. Fidibeki retains only enough provenance to enforce its gate and support audit.
+- The managed prompt is technical infrastructure presented on the customer's behalf. Its presence
+  is not a legal determination that the configured notice or consent is sufficient.
 
 ## Verification
 
@@ -60,3 +72,7 @@ mitigation for each, and records what remains an accepted residual risk.
   `backend/internal/db/migrations_test.go`) cover structural batch rejection, merge revalidation,
   rule-safe URL enforcement, forced input masking/canvas suppression, legacy stream refusal and object
   cleanup, and isolation of `visitor_id` from storage and API responses.
+- Consent tests cover absent/malformed grants, managed and customer modes, idempotency, withdrawal,
+  expiry, notice/configuration changes, direct API bypass attempts, and tenant-scoped diagnostics.
+  Browser tests assert that no replay network request or rrweb capture happens before a grant and
+  that revocation stops further capture without weakening the sentinel privacy fixtures.

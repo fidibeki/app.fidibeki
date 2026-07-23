@@ -39,6 +39,12 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("replay merge session no longer exists: %w", asynq.SkipRetry)
 		}
+		if errors.Is(err, ErrConsentRequired) {
+			if markErr := p.Store.MarkUnavailable(ctx, payload.SessionID); markErr != nil {
+				return errors.Join(err, markErr)
+			}
+			return fmt.Errorf("replay merge consent evidence is unavailable: %w", asynq.SkipRetry)
+		}
 		if err != nil {
 			return err
 		}

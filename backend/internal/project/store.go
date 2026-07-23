@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -170,6 +171,7 @@ func (Store) CreateWidgetRule(
 	tenantID string,
 	projectID string,
 	values WidgetRuleValues,
+	actorMemberID string,
 ) (WidgetRule, error) {
 	arguments, err := widgetRuleArguments(tenantID, projectID, values)
 	if err != nil {
@@ -183,16 +185,16 @@ func (Store) CreateWidgetRule(
 			can_attach_element, can_attach_screenshot, greeting, position, theme,
 			accent_color, replay_mode, replay_sampling_rate, replay_max_duration_seconds,
 			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
-			replay_record_canvas, replay_canvas_fps,
+			replay_record_canvas, replay_canvas_fps, replay_consent,
 			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
 			response_blocks, localizations, allow_comment, collect_contact,
 			widget_appearance_overrides
 		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-			       $27, $28, $29, $30,
-			       COALESCE(NULLIF($31, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
-			       $32, $33, $34, $35::jsonb, $36::jsonb, $37, $38, $39::jsonb
+			       $27, $28, $29::jsonb, $30, $31,
+			       COALESCE(NULLIF($32, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+			       $33, $34, $35, $36::jsonb, $37::jsonb, $38, $39, $40::jsonb
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -204,6 +206,13 @@ func (Store) CreateWidgetRule(
 	}
 	if err := replaceWidgetRuleTargetConditions(ctx, query, rule.ID, values); err != nil {
 		return WidgetRule{}, err
+	}
+	if values.ReplayMode != ReplayNone || values.ReplayConsent.Mode != ReplayConsentNone {
+		if err := recordReplayConsentConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID, nil, nil, 0,
+		); err != nil {
+			return WidgetRule{}, err
+		}
 	}
 	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
 	if err != nil {
@@ -277,7 +286,24 @@ func (Store) UpdateWidgetRule(
 	projectID string,
 	ruleID string,
 	values WidgetRuleValues,
+	actorMemberID string,
 ) (WidgetRule, error) {
+	var previousReplayMode ReplayMode
+	var previousReplayConsent ReplayConsentConfig
+	var previousDefinitionVersion int
+	if err := query.QueryRow(ctx, `
+		SELECT rule.replay_mode, rule.replay_consent, rule.definition_version
+		FROM widget_rules AS rule
+		JOIN projects AS project ON project.id = rule.project_id
+		WHERE project.tenant_id = $1 AND project.id = $2 AND rule.id = $3
+		FOR UPDATE OF rule
+	`, tenantID, projectID, ruleID).Scan(
+		&previousReplayMode, &previousReplayConsent, &previousDefinitionVersion,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return WidgetRule{}, ErrNotFound
+	} else if err != nil {
+		return WidgetRule{}, fmt.Errorf("lock widget replay consent configuration: %w", err)
+	}
 	valueArguments, err := widgetRuleValueArguments(values)
 	if err != nil {
 		return WidgetRule{}, err
@@ -294,15 +320,16 @@ func (Store) UpdateWidgetRule(
 				replay_sampling_rate = $23, replay_max_duration_seconds = $24,
 				replay_max_events = $25, replay_mask_all_inputs = $26, replay_mask_text_selector = $27,
 				replay_record_canvas = $28, replay_canvas_fps = $29,
-				recurrence_mode = $30, recurrence_days = $31,
-				definition_key = COALESCE(NULLIF($32, ''), rule.definition_key),
+				replay_consent = $30::jsonb,
+				recurrence_mode = $31, recurrence_days = $32,
+				definition_key = COALESCE(NULLIF($33, ''), rule.definition_key),
 				definition_version = rule.definition_version + 1,
-				definition_status = $33, presentation = $34, objective = $35,
-				response_blocks = $36::jsonb, localizations = $37::jsonb,
-				allow_comment = $38, collect_contact = $39,
+				definition_status = $34, presentation = $35, objective = $36,
+				response_blocks = $37::jsonb, localizations = $38::jsonb,
+				allow_comment = $39, collect_contact = $40,
 				widget_appearance_overrides = CASE
-					WHEN $41 THEN $40::jsonb
-					ELSE rule.widget_appearance_overrides || $40::jsonb
+					WHEN $42 THEN $41::jsonb
+					ELSE rule.widget_appearance_overrides || $41::jsonb
 				END
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
@@ -318,11 +345,57 @@ func (Store) UpdateWidgetRule(
 	if err := replaceWidgetRuleTargetConditions(ctx, query, rule.ID, values); err != nil {
 		return WidgetRule{}, err
 	}
+	if previousReplayMode != values.ReplayMode ||
+		!reflect.DeepEqual(previousReplayConsent, values.ReplayConsent) {
+		if err := recordReplayConsentConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID,
+			&previousReplayMode, &previousReplayConsent, previousDefinitionVersion,
+		); err != nil {
+			return WidgetRule{}, err
+		}
+	}
 	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
 	if err != nil {
 		return WidgetRule{}, err
 	}
 	return rules[0], nil
+}
+
+func recordReplayConsentConfigurationAudit(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	rule WidgetRule,
+	actorMemberID string,
+	previousMode *ReplayMode,
+	previousConsent *ReplayConsentConfig,
+	previousDefinitionVersion int,
+) error {
+	data := map[string]any{
+		"project_id":         projectID,
+		"widget_rule_id":     rule.ID,
+		"definition_version": rule.DefinitionVersion,
+		"replay_mode":        rule.ReplayMode,
+		"replay_consent":     rule.ReplayConsent,
+	}
+	if previousMode != nil && previousConsent != nil {
+		data["previous_definition_version"] = previousDefinitionVersion
+		data["previous_replay_mode"] = *previousMode
+		data["previous_replay_consent"] = *previousConsent
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode replay consent configuration audit: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, data
+		) VALUES ($1, 'widget_rule.replay_consent_updated', $2, $3::jsonb)
+	`, tenantID, actorMemberID, string(encoded)); err != nil {
+		return fmt.Errorf("record replay consent configuration audit: %w", err)
+	}
+	return nil
 }
 
 func (Store) DeleteWidgetRule(
@@ -548,6 +621,7 @@ const widgetRuleColumns = `
 	can_attach_element, can_attach_screenshot, greeting, position, theme, accent_color,
 		replay_mode, replay_sampling_rate, replay_max_duration_seconds, replay_max_events,
 		replay_mask_all_inputs, replay_mask_text_selector, replay_record_canvas, replay_canvas_fps,
+		replay_consent,
 		recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
 		response_blocks, localizations, allow_comment, collect_contact,
@@ -562,6 +636,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"position", "theme", "accent_color", "replay_mode", "replay_sampling_rate",
 		"replay_max_duration_seconds", "replay_max_events", "replay_mask_all_inputs",
 		"replay_mask_text_selector", "replay_record_canvas", "replay_canvas_fps",
+		"replay_consent",
 		"recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
 		"response_blocks", "localizations", "allow_comment", "collect_contact",
@@ -606,6 +681,10 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode widget appearance overrides: %w", err)
 	}
+	replayConsent, err := json.Marshal(values.ReplayConsent)
+	if err != nil {
+		return nil, fmt.Errorf("encode replay consent: %w", err)
+	}
 	return []any{
 		values.Name, values.Priority, values.Enabled, values.MatcherType, values.MatcherValue,
 		values.TriggerType, values.TriggerDelaySeconds, values.TriggerScrollPercent,
@@ -614,6 +693,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		values.Theme, values.AccentColor, values.ReplayMode, values.ReplaySamplingRate,
 		values.ReplayMaxDurationSeconds, values.ReplayMaxEvents, values.ReplayMaskAllInputs,
 		values.ReplayMaskTextSelector, values.ReplayRecordCanvas, values.ReplayCanvasFPS,
+		string(replayConsent),
 		values.RecurrenceMode, values.RecurrenceDays,
 		values.DefinitionKey, values.DefinitionStatus, values.Presentation, values.Objective,
 		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
@@ -650,6 +730,7 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.Position, &rule.Theme, &rule.AccentColor, &rule.ReplayMode, &rule.ReplaySamplingRate,
 		&rule.ReplayMaxDurationSeconds, &rule.ReplayMaxEvents, &rule.ReplayMaskAllInputs,
 		&rule.ReplayMaskTextSelector, &rule.ReplayRecordCanvas, &rule.ReplayCanvasFPS,
+		&rule.ReplayConsent,
 		&rule.RecurrenceMode, &rule.RecurrenceDays,
 		&rule.DefinitionKey, &rule.DefinitionVersion, &rule.DefinitionStatus,
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,

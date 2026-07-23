@@ -130,6 +130,16 @@ function createMockState() {
     replay_mask_text_selector: '.private',
     replay_record_canvas: false,
     replay_canvas_fps: 2,
+    replay_consent: {
+      mode: 'customer_cmp' as 'none' | 'fidibeki_managed' | 'customer_cmp',
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['en'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    },
     recurrence_mode: 'cooldown' as 'cooldown' | 'session' | 'never',
     recurrence_days: 30 as number | null,
     appearance_overrides: {
@@ -792,6 +802,23 @@ async function installMockAPI(page: Page, state: MockState) {
         candidate.project_id === projectRuleMatch[1] && candidate.id === projectRuleMatch[2])
       if (index >= 0) state.widgetRules.splice(index, 1)
       return route.fulfill({ status: 204 })
+    }
+    const replayConsentDiagnosticMatch = path.match(
+      /^\/v1\/projects\/([^/]+)\/widget-rules\/([^/]+)\/replay-consent-diagnostic$/,
+    )
+    if (replayConsentDiagnosticMatch && method === 'GET') {
+      const rule = state.widgetRules.find(candidate =>
+        candidate.project_id === replayConsentDiagnosticMatch[1] &&
+        candidate.id === replayConsentDiagnosticMatch[2])
+      return json(route, {
+        diagnostic: {
+          widget_rule_id: replayConsentDiagnosticMatch[2],
+          replay_mode: rule?.replay_mode || 'none',
+          consent_mode: rule?.replay_consent?.mode || 'none',
+          notice_version: rule?.replay_consent?.notice_version || '',
+          state: 'not_observed',
+        },
+      })
     }
     const projectMatch = path.match(/^\/v1\/projects\/([^/]+)$/)
     if (projectMatch && method === 'GET') {
@@ -2180,6 +2207,53 @@ test('widget canvas replay is disabled by the anonymous privacy contract', async
   })
   await canvasNote.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `widget-canvas-policy-${testInfo.project.name}`)
+})
+
+test('replay activation requires an explicit consent mode', async ({ page }, testInfo) => {
+  const state = createMockState()
+  Object.assign(state.widgetRules[0], {
+    replay_mode: 'none',
+    replay_consent: {
+      mode: 'none',
+      notice_version: '',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: [],
+      retention_days: 0,
+      expiry_days: 0,
+      notices: {},
+    },
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Replay mode').selectOption('full')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: 'Choose how consent is collected' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Use this consent mode' })).toBeDisabled()
+
+  await dialog.getByRole('button', { name: /Customer CMP/ }).click()
+  await expect(dialog.getByRole('button', { name: 'Use this consent mode' })).toBeEnabled()
+  await expect(dialog.locator('[data-consent-diagnostic]')).toContainText(
+    'Blocked: save this consent mode and notice version before testing.',
+  )
+  await dialog.getByRole('button', { name: 'Use this consent mode' }).click()
+
+  await expect(page.getByText('Consent gate configured')).toBeVisible()
+  await expect(page.getByText('Replay waits for a structured grant')).toBeVisible()
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0]).toMatchObject({
+    replay_mode: 'full',
+    replay_consent: {
+      mode: 'customer_cmp',
+      notice_version: '2026-07',
+      supported_locales: ['en'],
+      expiry_days: 30,
+    },
+  })
+  await capture(page, testInfo, `replay-consent-configuration-${testInfo.project.name}`)
 })
 
 test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {

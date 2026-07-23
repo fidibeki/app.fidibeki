@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -22,6 +23,7 @@ var (
 	definitionKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}[a-z0-9]$`)
 	responseKeyPattern   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	localePattern        = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$`)
+	noticeVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
 type FieldErrors map[string]string
@@ -142,6 +144,7 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		// fields for wire/storage compatibility, but force capture off at the API boundary.
 		ReplayRecordCanvas: false,
 		ReplayCanvasFPS:    2,
+		ReplayConsent:      normalizeReplayConsent(input.ReplayConsent),
 		RecurrenceMode:     input.RecurrenceMode,
 		RecurrenceDays:     input.RecurrenceDays,
 		IncludeConditions:  normalizeTargetConditions(input.IncludeConditions),
@@ -497,6 +500,104 @@ func validateReplay(values WidgetRuleValues, fields FieldErrors) {
 	}
 	if values.ReplayCanvasFPS < 1 || values.ReplayCanvasFPS > 5 {
 		fields["replay_canvas_fps"] = "must be between 1 and 5"
+	}
+	if values.ReplayMode != ReplayNone && values.ReplayConsent.Mode == ReplayConsentNone {
+		fields["replay_consent.mode"] = "must be selected before replay can be enabled"
+	}
+	validateReplayConsent(values.ReplayConsent, fields)
+}
+
+func normalizeReplayConsent(input ReplayConsentConfig) ReplayConsentConfig {
+	input.Mode = ReplayConsentMode(strings.TrimSpace(string(input.Mode)))
+	if input.Mode == "" {
+		input.Mode = ReplayConsentNone
+	}
+	input.NoticeVersion = strings.TrimSpace(input.NoticeVersion)
+	input.ControllerName = strings.TrimSpace(input.ControllerName)
+	input.PrivacyPolicyURL = strings.TrimSpace(input.PrivacyPolicyURL)
+	locales := make([]string, 0, len(input.SupportedLocales))
+	seen := map[string]struct{}{}
+	for _, value := range input.SupportedLocales {
+		locale := strings.ToLower(strings.TrimSpace(value))
+		if locale == "" {
+			continue
+		}
+		if _, exists := seen[locale]; exists {
+			continue
+		}
+		seen[locale] = struct{}{}
+		locales = append(locales, locale)
+	}
+	input.SupportedLocales = locales
+	notices := make(map[string]ReplayConsentNotice, len(input.Notices))
+	for value, notice := range input.Notices {
+		locale := strings.ToLower(strings.TrimSpace(value))
+		if locale == "" {
+			continue
+		}
+		notice.Title = strings.TrimSpace(notice.Title)
+		notice.Description = strings.TrimSpace(notice.Description)
+		notice.AcceptLabel = strings.TrimSpace(notice.AcceptLabel)
+		notice.RejectLabel = strings.TrimSpace(notice.RejectLabel)
+		notice.WithdrawLabel = strings.TrimSpace(notice.WithdrawLabel)
+		notices[locale] = notice
+	}
+	input.Notices = notices
+	return input
+}
+
+func validateReplayConsent(consent ReplayConsentConfig, fields FieldErrors) {
+	switch consent.Mode {
+	case ReplayConsentNone:
+		return
+	case ReplayConsentFidibekiManaged, ReplayConsentCustomerManaged:
+	default:
+		fields["replay_consent.mode"] = "must be none, fidibeki_managed, or customer_cmp"
+		return
+	}
+	if !noticeVersionPattern.MatchString(consent.NoticeVersion) {
+		fields["replay_consent.notice_version"] = "must contain 1-64 letters, numbers, dots, hyphens, or underscores"
+	}
+	if len(consent.SupportedLocales) < 1 || len(consent.SupportedLocales) > 10 {
+		fields["replay_consent.supported_locales"] = "must contain between 1 and 10 locales"
+	} else {
+		for index, locale := range consent.SupportedLocales {
+			if !localePattern.MatchString(locale) {
+				fields[fmt.Sprintf("replay_consent.supported_locales.%d", index)] = "must be a valid locale"
+			}
+		}
+	}
+	if consent.ExpiryDays < 1 || consent.ExpiryDays > 365 {
+		fields["replay_consent.expiry_days"] = "must be between 1 and 365"
+	}
+	if consent.Mode != ReplayConsentFidibekiManaged {
+		return
+	}
+	if len(consent.ControllerName) < 1 || len(consent.ControllerName) > 160 {
+		fields["replay_consent.controller_name"] = "must be between 1 and 160 characters"
+	}
+	privacyURL, err := url.Parse(consent.PrivacyPolicyURL)
+	if err != nil || privacyURL.Scheme != "https" || privacyURL.Host == "" ||
+		privacyURL.User != nil || privacyURL.RawQuery != "" || privacyURL.Fragment != "" {
+		fields["replay_consent.privacy_policy_url"] = "must be an HTTPS URL without credentials, query parameters, or a fragment"
+	}
+	if consent.RetentionDays < 1 || consent.RetentionDays > 3650 {
+		fields["replay_consent.retention_days"] = "must be between 1 and 3650"
+	}
+	for _, locale := range consent.SupportedLocales {
+		notice, exists := consent.Notices[locale]
+		field := "replay_consent.notices." + locale
+		if !exists {
+			fields[field] = "is required for every supported locale"
+			continue
+		}
+		if len(notice.Title) < 1 || len(notice.Title) > 160 ||
+			len(notice.Description) < 1 || len(notice.Description) > 1000 ||
+			len(notice.AcceptLabel) < 1 || len(notice.AcceptLabel) > 80 ||
+			len(notice.RejectLabel) < 1 || len(notice.RejectLabel) > 80 ||
+			len(notice.WithdrawLabel) < 1 || len(notice.WithdrawLabel) > 80 {
+			fields[field] = "must include bounded title, description, accept, reject, and withdraw copy"
+		}
 	}
 }
 
