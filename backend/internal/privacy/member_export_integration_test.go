@@ -19,7 +19,6 @@ func TestMemberAccessExportTracer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	database := privacyTestDatabase(t, ctx)
-	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
 	tenantID, memberID := seedPrivacyWorkspace(
 		t, ctx, database, "member-access", "Member export issue",
 	)
@@ -145,6 +144,7 @@ func TestMemberAccessExportTracer(t *testing.T) {
 		t.Fatalf("create member access event: %v", err)
 	}
 
+	now := time.Now().UTC().Add(3 * time.Minute).Truncate(time.Microsecond)
 	store := Store{Database: database}
 	rectificationCase, _, _, err := store.CreateCase(
 		ctx, database, tenantID, memberID, "member-export-rectification-case",
