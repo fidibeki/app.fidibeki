@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Inbox,
   Link2,
+  ListFilter,
   LoaderCircle,
   PanelRightOpen,
   Plus,
@@ -62,6 +63,7 @@ const linkIssueOpen = ref(false)
 const issueTitle = ref('')
 const issueDescription = ref('')
 const linkTargetID = ref('')
+const mobileFiltersEl = ref<HTMLDetailsElement | null>(null)
 
 function replaceLocalQuery(query: LocationQueryRaw) {
   const target = router.resolve({ query }).fullPath
@@ -431,6 +433,30 @@ function clearFilters() {
   sort.value = 'newest'
 }
 
+const activeFilterCount = computed(() => [
+  project.value,
+  feedbackStatus.value,
+  rating.value,
+  attachment.value,
+  moderation.value,
+  issue.value,
+  processing.value,
+  sentiment.value,
+  dateFrom.value,
+  dateTo.value,
+].filter(Boolean).length)
+
+const mobileFiltersSummaryLabel = computed(() => activeFilterCount.value > 0
+  ? plural('feedback.filters.mobileTriggerActive', activeFilterCount.value, { count: integer(activeFilterCount.value) })
+  : t('feedback.filters.mobileTrigger'))
+
+function closeMobileFilters() {
+  const details = mobileFiltersEl.value
+  if (!details) return
+  details.open = false
+  details.querySelector('summary')?.focus()
+}
+
 function copy(item: FeedbackItem) {
   return item.title || t('feedback.common.feedbackWithoutDetail')
 }
@@ -462,19 +488,43 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 
       <div class="feedback-filter-bar">
         <label class="feedback-search"><Search :size="15" /><input v-model.trim="query" :placeholder="t('feedback.filters.search')" :aria-label="t('feedback.filters.search')" /></label>
-        <select v-model="project" :aria-label="t('feedback.filters.project')"><option value="">{{ t('feedback.filters.allProjects') }}</option><option v-for="item in projectData?.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select>
-        <select v-model="feedbackStatus" :aria-label="t('feedback.filters.status')"><option value="">{{ t('feedback.filters.allStatuses') }}</option><option value="open">{{ statusLabel('open') }}</option><option value="archived">{{ statusLabel('archived') }}</option><option value="spam">{{ statusLabel('spam') }}</option></select>
-        <select v-model="rating" :aria-label="t('feedback.filters.rating')"><option value="">{{ t('feedback.filters.anyRating') }}</option><option v-for="value in 5" :key="value" :value="String(value)">{{ plural('feedback.filters.star', value, { count: integer(value) }) }}</option></select>
-        <select v-model="attachment" :aria-label="t('feedback.filters.evidence')"><option value="">{{ t('feedback.filters.anyEvidence') }}</option><option value="none">{{ t('feedback.filters.noEvidence') }}</option><option value="screenshot">{{ t('feedback.evidenceKinds.screenshot') }}</option><option value="audio">{{ t('feedback.evidenceKinds.audio') }}</option><option value="video">{{ t('feedback.evidenceKinds.video') }}</option><option value="replay">{{ t('feedback.evidenceKinds.replay') }}</option></select>
-        <details class="feedback-more-filters">
-          <summary>{{ t('feedback.filters.more') }}</summary>
-          <div>
+        <div class="feedback-filter-bar-desktop">
+          <select v-model="project" :aria-label="t('feedback.filters.project')"><option value="">{{ t('feedback.filters.allProjects') }}</option><option v-for="item in projectData?.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select>
+          <select v-model="feedbackStatus" :aria-label="t('feedback.filters.status')"><option value="">{{ t('feedback.filters.allStatuses') }}</option><option value="open">{{ statusLabel('open') }}</option><option value="archived">{{ statusLabel('archived') }}</option><option value="spam">{{ statusLabel('spam') }}</option></select>
+          <select v-model="rating" :aria-label="t('feedback.filters.rating')"><option value="">{{ t('feedback.filters.anyRating') }}</option><option v-for="value in 5" :key="value" :value="String(value)">{{ plural('feedback.filters.star', value, { count: integer(value) }) }}</option></select>
+          <select v-model="attachment" :aria-label="t('feedback.filters.evidence')"><option value="">{{ t('feedback.filters.anyEvidence') }}</option><option value="none">{{ t('feedback.filters.noEvidence') }}</option><option value="screenshot">{{ t('feedback.evidenceKinds.screenshot') }}</option><option value="audio">{{ t('feedback.evidenceKinds.audio') }}</option><option value="video">{{ t('feedback.evidenceKinds.video') }}</option><option value="replay">{{ t('feedback.evidenceKinds.replay') }}</option></select>
+          <details class="feedback-more-filters">
+            <summary>{{ t('feedback.filters.more') }}</summary>
+            <div>
+              <label>{{ t('feedback.filters.moderation') }}<select v-model="moderation"><option value="">{{ t('feedback.filters.any') }}</option><option value="flagged">{{ t('feedback.filters.flagged') }}</option><option value="clean">{{ t('feedback.filters.clean') }}</option></select></label>
+              <label>{{ t('feedback.filters.issue') }}<select v-model="issue"><option value="">{{ t('feedback.filters.any') }}</option><option value="linked">{{ t('feedback.filters.linked') }}</option><option value="unlinked">{{ t('feedback.filters.unlinked') }}</option></select></label>
+              <label>{{ t('feedback.filters.aiStatus') }}<select v-model="processing"><option value="">{{ t('feedback.filters.any') }}</option><option v-for="value in ['failed', 'processing', 'deferred', 'pending', 'completed', 'skipped']" :key="value" :value="value">{{ statusLabel(value) }}</option></select></label>
+              <label>{{ t('feedback.filters.sentiment') }}<select v-model="sentiment"><option value="">{{ t('feedback.filters.any') }}</option><option value="negative">{{ t('feedback.sentiment.negative') }}</option><option value="neutral">{{ t('feedback.sentiment.neutral') }}</option><option value="positive">{{ t('feedback.sentiment.positive') }}</option></select></label>
+              <label>{{ t('feedback.filters.from') }}<input v-model="dateFrom" type="date" /></label><label>{{ t('feedback.filters.to') }}<input v-model="dateTo" type="date" /></label>
+              <button type="button" @click="clearFilters">{{ t('feedback.filters.clear') }}</button>
+            </div>
+          </details>
+        </div>
+        <details ref="mobileFiltersEl" class="feedback-mobile-filters">
+          <summary :aria-label="mobileFiltersSummaryLabel">
+            <ListFilter :size="14" aria-hidden="true" /> {{ t('feedback.filters.mobileTrigger') }}
+            <span v-if="activeFilterCount > 0" class="feedback-mobile-filters-count" aria-hidden="true">{{ activeFilterCount }}</span>
+          </summary>
+          <div class="feedback-mobile-filters-panel">
+            <label>{{ t('feedback.filters.project') }}<select v-model="project"><option value="">{{ t('feedback.filters.allProjects') }}</option><option v-for="item in projectData?.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+            <label>{{ t('feedback.filters.status') }}<select v-model="feedbackStatus"><option value="">{{ t('feedback.filters.allStatuses') }}</option><option value="open">{{ statusLabel('open') }}</option><option value="archived">{{ statusLabel('archived') }}</option><option value="spam">{{ statusLabel('spam') }}</option></select></label>
+            <label>{{ t('feedback.filters.rating') }}<select v-model="rating"><option value="">{{ t('feedback.filters.anyRating') }}</option><option v-for="value in 5" :key="value" :value="String(value)">{{ plural('feedback.filters.star', value, { count: integer(value) }) }}</option></select></label>
+            <label>{{ t('feedback.filters.evidence') }}<select v-model="attachment"><option value="">{{ t('feedback.filters.anyEvidence') }}</option><option value="none">{{ t('feedback.filters.noEvidence') }}</option><option value="screenshot">{{ t('feedback.evidenceKinds.screenshot') }}</option><option value="audio">{{ t('feedback.evidenceKinds.audio') }}</option><option value="video">{{ t('feedback.evidenceKinds.video') }}</option><option value="replay">{{ t('feedback.evidenceKinds.replay') }}</option></select></label>
             <label>{{ t('feedback.filters.moderation') }}<select v-model="moderation"><option value="">{{ t('feedback.filters.any') }}</option><option value="flagged">{{ t('feedback.filters.flagged') }}</option><option value="clean">{{ t('feedback.filters.clean') }}</option></select></label>
             <label>{{ t('feedback.filters.issue') }}<select v-model="issue"><option value="">{{ t('feedback.filters.any') }}</option><option value="linked">{{ t('feedback.filters.linked') }}</option><option value="unlinked">{{ t('feedback.filters.unlinked') }}</option></select></label>
             <label>{{ t('feedback.filters.aiStatus') }}<select v-model="processing"><option value="">{{ t('feedback.filters.any') }}</option><option v-for="value in ['failed', 'processing', 'deferred', 'pending', 'completed', 'skipped']" :key="value" :value="value">{{ statusLabel(value) }}</option></select></label>
             <label>{{ t('feedback.filters.sentiment') }}<select v-model="sentiment"><option value="">{{ t('feedback.filters.any') }}</option><option value="negative">{{ t('feedback.sentiment.negative') }}</option><option value="neutral">{{ t('feedback.sentiment.neutral') }}</option><option value="positive">{{ t('feedback.sentiment.positive') }}</option></select></label>
-            <label>{{ t('feedback.filters.from') }}<input v-model="dateFrom" type="date" /></label><label>{{ t('feedback.filters.to') }}<input v-model="dateTo" type="date" /></label>
-            <button type="button" @click="clearFilters">{{ t('feedback.filters.clear') }}</button>
+            <label>{{ t('feedback.filters.from') }}<input v-model="dateFrom" type="date" /></label>
+            <label>{{ t('feedback.filters.to') }}<input v-model="dateTo" type="date" /></label>
+            <div class="feedback-mobile-filters-actions">
+              <button type="button" class="feedback-mobile-filters-clear" @click="clearFilters">{{ t('feedback.filters.clear') }}</button>
+              <button type="button" class="app-button app-button--primary" @click="closeMobileFilters">{{ t('feedback.filters.done') }}</button>
+            </div>
           </div>
         </details>
       </div>
@@ -587,6 +637,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-stream-head h1 { margin: 2px 0; font-size: 20px; }
 .feedback-stream-head div > span { color: var(--muted); font-size: 10px; }
 .feedback-filter-bar { position: sticky; top: 56px; z-index: 30; display: flex; min-height: 54px; align-items: center; gap: 7px; padding: 8px 12px; background: #fbfcfb; border-bottom: 1px solid var(--line); }
+.feedback-filter-bar-desktop { display: contents; }
 .feedback-filter-bar select,
 .feedback-filter-bar input { height: 34px; min-width: 0; padding: 0 8px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 10px; }
 .feedback-search { display: flex; width: min(190px, 26%); height: 34px; align-items: center; gap: 6px; padding: 0 8px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
@@ -599,6 +650,17 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-more-filters label select,
 .feedback-more-filters label input { width: 100%; }
 .feedback-more-filters button { min-height: 34px; grid-column: 1 / -1; background: var(--surface-soft); border: 0; border-radius: 4px; color: var(--teal); font-size: 10px; font-weight: 750; }
+.feedback-mobile-filters { display: none; }
+.feedback-mobile-filters summary { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); cursor: pointer; font-size: 10px; font-weight: 700; list-style: none; white-space: nowrap; }
+.feedback-mobile-filters summary::-webkit-details-marker { display: none; }
+.feedback-mobile-filters-count { display: inline-flex; min-width: 15px; height: 15px; align-items: center; justify-content: center; padding: 0 4px; background: var(--teal); color: #fff; border-radius: 8px; font-size: 9px; font-weight: 800; }
+.feedback-mobile-filters-panel { position: fixed; z-index: 60; top: 108px; right: 10px; bottom: 12px; left: 10px; display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 10px; overflow-y: auto; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.feedback-mobile-filters-panel label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.feedback-mobile-filters-panel label select,
+.feedback-mobile-filters-panel label input { width: 100%; }
+.feedback-mobile-filters-actions { display: flex; grid-column: 1 / -1; gap: 8px; }
+.feedback-mobile-filters-clear { flex: 1; min-height: 34px; background: var(--surface-soft); border: 0; border-radius: 4px; color: var(--teal); font-size: 10px; font-weight: 750; }
+.feedback-mobile-filters-actions .app-button--primary { flex: 1; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid #efc2c6; font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
 .feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 82px 74px 94px 78px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -671,17 +733,24 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
   .feedback-stream-panel { border: 0; }
   .feedback-inspector { display: none; }
   .feedback-filter-bar { overflow-x: auto; }
-  .feedback-filter-bar > * { flex: 0 0 auto; }
+  .feedback-filter-bar > *,
+  .feedback-filter-bar-desktop > * { flex: 0 0 auto; }
   .feedback-search { width: 180px; }
 }
 
 @media (max-width: 700px) {
   .feedback-stream-head { min-height: 72px; padding: 12px 14px; }
-  .feedback-filter-bar { top: 56px; padding: 7px 10px; }
+  .feedback-filter-bar { top: 56px; padding: 7px 10px; overflow-x: visible; }
+  .feedback-filter-bar-desktop { display: none; }
+  .feedback-mobile-filters { display: block; }
+  .feedback-search { width: auto; flex: 1 1 120px; }
   .feedback-stream article { grid-template-columns: 22px 34px minmax(0, 1fr) 34px 20px; gap: 7px; padding: 0 8px; }
   .feedback-stream article .feedback-triage-markers,
   .feedback-stream article .status-pill,
   .feedback-stream article time { display: none; }
-  .feedback-more-filters > div { position: fixed; top: 118px; right: 10px; left: 10px; width: auto; }
+}
+
+@media (max-width: 360px) {
+  .feedback-mobile-filters-panel { grid-template-columns: 1fr; }
 }
 </style>

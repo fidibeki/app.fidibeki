@@ -36,6 +36,9 @@ export const feedbackMessages = {
     from: 'De',
     to: 'Até',
     clear: 'Limpar filtros',
+    mobileTrigger: 'Filtros',
+    mobileTriggerActive: 'Filtros, 1 ativo | Filtros, {count} ativos',
+    done: 'Concluído',
   },
   status: {
     open: 'Aberto',

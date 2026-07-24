@@ -1127,11 +1127,36 @@ was removed from the staging test tenant.
       - Desktop/mobile screenshots for both variants (including the long Portuguese wrap) and the
         editor's live preview were generated and visually inspected locally. Staging validation was
         not performed under the current no-deployment constraint.
-    - [ ] #72: replace the undiscoverable horizontally scrolling mobile Feedback filter toolbar
+    - [x] #72: replace the undiscoverable horizontally scrolling mobile Feedback filter toolbar
       with one complete, bounded filter disclosure while preserving the current dense desktop
       toolbar, URL synchronization, queue semantics, and backend contract. Approved design:
       `docs/superpowers/specs/2026-07-24-mobile-feedback-filters-design.md`; implementation plan:
       `docs/superpowers/plans/2026-07-24-mobile-feedback-filters-implementation.md`.
+      At and below `700px`, `web/pages/feedback/index.vue` keeps the search field directly visible,
+      replaces the horizontal-scrolling primary row with one native `Filters` disclosure exposing
+      all ten structured filters (project, status, rating, evidence, moderation, Issue relationship,
+      AI state, sentiment, from, to) bound to the existing reactive refs, and shows a pluralized
+      active-count in the summary's accessible name once any of those ten is non-empty. Clear
+      filters reuses the existing reset; Done closes the disclosure and restores focus to its
+      summary. The panel is a bounded, internally scrolling `position: fixed` overlay (two columns,
+      one column at 360px and below) and never creates document-level horizontal overflow. Desktop
+      and tablet keep their exact existing toolbar, controls, and CSS untouched behind a
+      `display: contents` wrapper. English/Portuguese strings were added for the trigger and Done;
+      all existing filter labels and Clear filters copy are reused unchanged.
+      Verification: web unit tests (133 passed), Nuxt typecheck, and Nuxt production build all pass.
+      Three new focused Playwright cases were added to `web/tests/e2e/dispatch-platform.spec.ts`
+      (desktop toolbar preservation, mobile disclosure discovery/filtering/clear/focus-restoration,
+      and short/narrow-viewport geometry); three pre-existing tests that referenced the primary
+      filter controls were updated to scope their locators to the correct desktop/mobile container
+      now that both markup variants coexist in the DOM. The complete Playwright suite passed
+      222/280 (58 intentionally skipped by viewport/project guards, 0 failed) on a clean run; two
+      unrelated `activation-flow.spec.ts` magic-link tests flaked once under full-suite worker
+      contention and passed both in isolation and on the following clean full run, matching a
+      pre-existing timing-sensitive flake unrelated to this slice. Desktop, mobile (open/closed),
+      short-viewport, narrow single-column, and Portuguese screenshots were generated and visually
+      inspected locally, including a real layout defect (CSS Grid row-stretch creating large gaps
+      in the mobile panel) found and fixed during that inspection. No deployment, staging, backend,
+      or query-semantics changes were made.
     - [x] #73: make the dashboard attention queue use the curated Feedback title before the
       compatibility fallbacks to cleaned/raw reporter text. Fixtures must distinguish title from
       description so the independent field contract cannot regress unnoticed. `feedbackCopy()` now

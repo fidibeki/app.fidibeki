@@ -4144,13 +4144,14 @@ test('feedback queue links apply their filters without a document reload', async
   await authenticate(page, state)
   await openPrimary(page, 'Feedback')
   const documentRequestsBeforeQueueNavigation = documentRequests
+  const desktopFilters = page.locator('.feedback-filter-bar-desktop')
 
   const queues = page.getByRole('navigation', { name: 'Feedback queues' })
   await queues.getByRole('link', { name: 'Has replay' }).click()
 
   await expect(page).toHaveURL(/\/feedback\?.*attachment=replay/)
-  await expect(page.getByLabel('Evidence filter')).toHaveValue('replay')
-  await expect(page.getByLabel('Status filter')).toHaveValue('open')
+  await expect(desktopFilters.getByLabel('Evidence filter')).toHaveValue('replay')
+  await expect(desktopFilters.getByLabel('Status filter')).toHaveValue('open')
   await expect(page.getByText('1 loaded')).toBeVisible()
   await expect(queues.locator('a[data-active="true"]')).toHaveCount(1)
   await expect(queues.locator('a[data-active="true"]')).toHaveText('Has replay')
@@ -4159,8 +4160,8 @@ test('feedback queue links apply their filters without a document reload', async
   await queues.getByRole('link', { name: 'Archived' }).click()
 
   await expect(page).toHaveURL(`${tenantOrigin}/feedback?status=archived`)
-  await expect(page.getByLabel('Status filter')).toHaveValue('archived')
-  await expect(page.getByLabel('Evidence filter')).toHaveValue('')
+  await expect(desktopFilters.getByLabel('Status filter')).toHaveValue('archived')
+  await expect(desktopFilters.getByLabel('Evidence filter')).toHaveValue('')
   await expect(page.getByText('1 loaded')).toBeVisible()
   await expect(page.locator('.feedback-stream')).toContainText('FB-1047')
   await expect(queues.locator('a[data-active="true"]')).toHaveCount(1)
@@ -4255,7 +4256,13 @@ test('bulk feedback triage is atomic and responsive', async ({ page }, testInfo)
   await selectBoth()
   await openCompactActions()
   await page.locator('.feedback-bulk-bar').getByRole('button', { name: 'Archive', exact: true }).click()
-  await page.getByLabel('Status filter').selectOption('')
+  if (testInfo.project.name === 'mobile') {
+    await page.locator('.feedback-mobile-filters > summary').click()
+    await page.locator('.feedback-mobile-filters-panel').getByLabel('Status filter').selectOption('')
+    await page.getByRole('button', { name: 'Done', exact: true }).click()
+  } else {
+    await page.locator('.feedback-filter-bar-desktop').getByLabel('Status filter').selectOption('')
+  }
   await expect(rows).toHaveCount(2)
   expect(state.feedback.map(item => item.status)).toEqual(['archived', 'archived'])
 
@@ -4362,6 +4369,18 @@ test('Portuguese feedback operations preserve customer content and exact mutatio
   await expect(positiveFeedbackRow.getByText('The new checkout is much clearer.', { exact: true })).toBeVisible()
   await expect(negativeFeedbackRow).toContainText('Storefront')
 
+  if (testInfo.project.name === 'mobile') {
+    const summary = page.locator('.feedback-mobile-filters > summary')
+    await expect(summary).toHaveAttribute('aria-label', 'Filtros, 1 ativo')
+    await summary.click()
+    const panel = page.locator('.feedback-mobile-filters-panel')
+    await expect(panel.getByRole('combobox', { name: 'Filtro de rating' })).toBeVisible()
+    await expect(panel.getByRole('combobox', { name: 'Sentimento' })).toBeVisible()
+    await capture(page, testInfo, 'feedback-filters-mobile-portuguese')
+    await panel.getByRole('button', { name: 'Concluído', exact: true }).click()
+    await expect(summary).toBeFocused()
+  }
+
   const openBulkActions = async () => {
     if (testInfo.project.name === 'mobile') {
       const trigger = page.getByRole('button', { name: 'Ações em bulk' })
@@ -4427,7 +4446,7 @@ test('all-status and clear-filters choices survive route synchronization', async
   await authenticate(page, state)
   await openPrimary(page, 'Feedback')
 
-  const statusFilter = page.getByLabel('Status filter')
+  const statusFilter = page.locator('.feedback-filter-bar-desktop').getByLabel('Status filter')
   await statusFilter.selectOption('')
 
   await expect(statusFilter).toHaveValue('')
@@ -4446,6 +4465,128 @@ test('all-status and clear-filters choices survive route synchronization', async
   await expect(statusFilter).toHaveValue('')
   await expect(page.getByText('2 loaded')).toBeVisible()
   expect(new URL(page.url()).searchParams.has('status')).toBe(false)
+})
+
+test('desktop feedback toolbar keeps every structured filter directly available', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop toolbar preservation is asserted once')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  const desktopFilters = page.locator('.feedback-filter-bar-desktop')
+  await expect(page.locator('.feedback-mobile-filters')).toBeHidden()
+  await expect(desktopFilters.getByLabel('Project filter')).toBeVisible()
+  await expect(desktopFilters.getByLabel('Status filter')).toBeVisible()
+  await expect(desktopFilters.getByLabel('Rating filter')).toBeVisible()
+  await expect(desktopFilters.getByLabel('Evidence filter')).toBeVisible()
+  await expect(page.getByText('More filters', { exact: true })).toBeVisible()
+  await capture(page, testInfo, 'feedback-filters-desktop-toolbar')
+
+  await desktopFilters.getByLabel('Evidence filter').selectOption('replay')
+  await expect(page).toHaveURL(/attachment=replay/)
+  await expect(page.getByText('1 loaded')).toBeVisible()
+
+  await desktopFilters.getByLabel('Rating filter').selectOption('2')
+  await expect(page).toHaveURL(/rating=2/)
+  await expect(page.getByText('1 loaded')).toBeVisible()
+
+  await page.getByText('More filters', { exact: true }).click()
+  await desktopFilters.getByRole('combobox', { name: 'Sentiment' }).selectOption('negative')
+  await expect(page).toHaveURL(/sentiment=negative/)
+
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  expect(new URL(page.url()).search).toBe('?id=feedback-1')
+  await expect(page.getByText('2 loaded')).toBeVisible()
+})
+
+test('mobile Filters disclosure exposes every structured filter and restores focus', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile disclosure geometry is asserted once')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+  await expectNoPageOverflow(page)
+
+  await expect(page.locator('.feedback-search').getByLabel('Search feedback')).toBeVisible()
+  await expect(page.locator('.feedback-filter-bar-desktop')).toBeHidden()
+  await expect(page.locator('.feedback-mobile-filters-panel')).toBeHidden()
+  await expect(page.getByText('More filters', { exact: true })).toBeHidden()
+
+  const summary = page.locator('.feedback-mobile-filters > summary')
+  await expect(summary).toBeVisible()
+  await expect(summary).toHaveAttribute('aria-label', 'Filters, 1 active')
+  await capture(page, testInfo, 'feedback-filters-mobile-closed')
+
+  await summary.click()
+  await expectNoPageOverflow(page)
+  const panel = page.locator('.feedback-mobile-filters-panel')
+  await expect(panel.getByRole('combobox', { name: 'Project filter' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Status filter' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Rating filter' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Evidence filter' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Moderation' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Issue' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'AI status' })).toBeVisible()
+  await expect(panel.getByRole('combobox', { name: 'Sentiment' })).toBeVisible()
+  await expect(panel.getByRole('textbox', { name: 'From' })).toBeVisible()
+  await expect(panel.getByRole('textbox', { name: 'To' })).toBeVisible()
+
+  await panel.getByRole('combobox', { name: 'Rating filter' }).selectOption('2')
+  await expect(page).toHaveURL(/rating=2/)
+  await expect(summary).toHaveAttribute('aria-label', 'Filters, 2 active')
+
+  await panel.getByRole('combobox', { name: 'Sentiment' }).selectOption('negative')
+  await expect(page).toHaveURL(/sentiment=negative/)
+  await expect(summary).toHaveAttribute('aria-label', 'Filters, 3 active')
+
+  await panel.getByRole('combobox', { name: 'Evidence filter' }).selectOption('replay')
+  await expect(page).toHaveURL(/attachment=replay/)
+  await expect(page.getByText('1 loaded')).toBeVisible()
+  await expect(summary).toHaveAttribute('aria-label', 'Filters, 4 active')
+  await capture(page, testInfo, 'feedback-filters-mobile-open')
+
+  await panel.getByRole('button', { name: 'Clear filters' }).click()
+  expect(new URL(page.url()).search).toBe('?id=feedback-1')
+  await expect(page.getByText('2 loaded')).toBeVisible()
+  await expect(summary).toHaveAttribute('aria-label', 'Filters')
+
+  await panel.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(page.locator('.feedback-mobile-filters-panel')).toBeHidden()
+  await expect(summary).toBeFocused()
+})
+
+test('mobile filter panel stays within the viewport and scrolls internally on short screens', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile panel geometry is asserted once')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Feedback')
+
+  await page.locator('.feedback-mobile-filters > summary').click()
+  const panel = page.locator('.feedback-mobile-filters-panel')
+  await expect(panel).toBeVisible()
+  await expectNoPageOverflow(page)
+  const normalGeometry = await panel.evaluate((element) => ({
+    bottom: element.getBoundingClientRect().bottom,
+    columns: getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
+  }))
+  expect(normalGeometry.bottom).toBeLessThanOrEqual(844)
+  expect(normalGeometry.columns).toBe(2)
+
+  await page.setViewportSize({ width: 390, height: 380 })
+  await expectNoPageOverflow(page)
+  const shortGeometry = await panel.evaluate((element) => ({
+    bottom: element.getBoundingClientRect().bottom,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }))
+  expect(shortGeometry.bottom).toBeLessThanOrEqual(380)
+  expect(shortGeometry.scrollHeight).toBeGreaterThan(shortGeometry.clientHeight)
+  await capture(page, testInfo, 'feedback-filters-mobile-short-viewport')
+
+  await page.setViewportSize({ width: 340, height: 844 })
+  await expectNoPageOverflow(page)
+  const narrowColumns = await panel.evaluate(element => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length)
+  expect(narrowColumns).toBe(1)
+  await capture(page, testInfo, 'feedback-filters-mobile-narrow-single-column')
 })
 
 test('read-only feedback rows preserve grid placement', async ({ page }) => {
