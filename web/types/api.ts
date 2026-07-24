@@ -1153,6 +1153,7 @@ export interface AccessEvent {
   id: string
   kind: string
   actor_type: AccessEventActorType
+  actor_id?: string
   actor_member_id?: string
   actor_api_key_id?: string
   actor_platform_admin_id?: string

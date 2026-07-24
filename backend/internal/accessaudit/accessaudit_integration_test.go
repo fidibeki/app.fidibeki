@@ -365,6 +365,9 @@ func TestDetectSupportAccessVolume(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed quiet support access event: %v", err)
 	}
+	if _, err := database.Exec(ctx, `DELETE FROM platform_admins WHERE id = $1`, frequentAdminID); err != nil {
+		t.Fatalf("delete frequent support admin before anomaly scan: %v", err)
+	}
 
 	signals, err := store.DetectSupportAccessVolume(ctx, database, tenantID, accessaudit.SupportAccessVolumeParams{
 		Window: time.Hour, Threshold: 5, Now: now.Add(time.Minute),
@@ -383,6 +386,88 @@ func TestDetectSupportAccessVolume(t *testing.T) {
 	for _, other := range signals {
 		if other.ActorID == quietAdminID {
 			t.Fatalf("DetectSupportAccessVolume() flagged an actor below threshold: %+v", other)
+		}
+	}
+}
+
+func TestActorProvenanceSurvivesIdentityDeletion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := accessAuditTestDatabase(t, ctx)
+	store := accessaudit.Store{}
+	tenantID := seedAccessAuditTenant(t, ctx, database, "deleted-actor-audit")
+	memberID := seedAccessAuditMember(t, ctx, database, tenantID)
+	apiKeyID := seedAccessAuditAPIKey(t, ctx, database, tenantID)
+	adminID := seedAccessAuditPlatformAdmin(t, ctx, database)
+
+	fixtures := []struct {
+		actor        accessaudit.Actor
+		actorType    string
+		actorID      string
+		resourceID   string
+		resourceType string
+		kind         string
+		permission   string
+		deleteQuery  string
+	}{
+		{
+			actor:     accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: memberID},
+			actorType: accessaudit.ActorHuman, actorID: memberID,
+			resourceID: "77777777-7777-7777-7777-777777777777", resourceType: accessaudit.ResourceFeedbackAttachment,
+			kind: "feedback_attachment.accessed", permission: "feedback:read",
+			deleteQuery: `DELETE FROM tenant_members WHERE id = $1`,
+		},
+		{
+			actor:     accessaudit.Actor{Type: accessaudit.ActorAPIKey, APIKeyID: apiKeyID},
+			actorType: accessaudit.ActorAPIKey, actorID: apiKeyID,
+			resourceID: "88888888-8888-8888-8888-888888888888", resourceType: accessaudit.ResourceReplaySession,
+			kind: "replay_session.accessed", permission: "session:read",
+			deleteQuery: `DELETE FROM api_keys WHERE id = $1`,
+		},
+		{
+			actor:     accessaudit.PlatformAdminActor(adminID),
+			actorType: accessaudit.ActorPlatformAdmin, actorID: adminID,
+			resourceID: "99999999-9999-9999-9999-999999999999", resourceType: accessaudit.ResourceFeedbackAttachment,
+			kind:        "feedback_attachment.support_accessed",
+			permission:  accessaudit.PermissionPathSupportAccess,
+			deleteQuery: `DELETE FROM platform_admins WHERE id = $1`,
+		},
+	}
+
+	for _, fixture := range fixtures {
+		if err := accessaudit.Record(ctx, database, accessaudit.RecordInput{
+			TenantID: tenantID, Kind: fixture.kind,
+			Actor:          fixture.actor,
+			ResourceType:   fixture.resourceType,
+			ResourceID:     fixture.resourceID,
+			Action:         "preview",
+			PermissionPath: fixture.permission,
+			Outcome:        accessaudit.OutcomeSuccess,
+		}); err != nil {
+			t.Fatalf("record %s access: %v", fixture.actorType, err)
+		}
+		if _, err := database.Exec(ctx, fixture.deleteQuery, fixture.actorID); err != nil {
+			t.Fatalf("delete %s identity: %v", fixture.actorType, err)
+		}
+		events, err := store.ListEvents(ctx, database, tenantID, accessaudit.ListFilter{
+			ActorType: fixture.actorType,
+		})
+		if err != nil {
+			t.Fatalf("ListEvents(%s) error = %v", fixture.actorType, err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("ListEvents(%s) returned %d events, want 1", fixture.actorType, len(events))
+		}
+		if events[0].ActorType != fixture.actorType ||
+			events[0].ActorID == nil || *events[0].ActorID != fixture.actorID {
+			t.Fatalf("deleted %s provenance = %+v, want actor %s", fixture.actorType, events[0], fixture.actorID)
+		}
+		if events[0].ActorMemberID != nil || events[0].ActorAPIKeyID != nil ||
+			events[0].ActorPlatformAdminID != nil {
+			t.Fatalf("deleted %s live references were not cleared: %+v", fixture.actorType, events[0])
 		}
 	}
 }

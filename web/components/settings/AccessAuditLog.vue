@@ -85,7 +85,7 @@ async function exportCSV() {
 }
 
 function actorLabel(event: AccessEvent) {
-  const id = event.actor_member_id || event.actor_api_key_id || event.actor_platform_admin_id || ''
+  const id = event.actor_id || event.actor_member_id || event.actor_api_key_id || event.actor_platform_admin_id || ''
   const shortID = id ? id.slice(0, 8) : t('admin.accessAudit.unknownActor')
   return `${t(`admin.accessAudit.actorType.${event.actor_type}`)} · ${shortID}`
 }

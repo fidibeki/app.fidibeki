@@ -198,18 +198,9 @@ func writeEventsCSV(w http.ResponseWriter, events []Event) {
 		events = events[:maxCSVRows]
 	}
 	for _, event := range events {
-		actorID := ""
-		switch event.ActorType {
-		case ActorHuman:
-			actorID = deref(event.ActorMemberID)
-		case ActorAPIKey:
-			actorID = deref(event.ActorAPIKeyID)
-		case ActorPlatformAdmin:
-			actorID = deref(event.ActorPlatformAdminID)
-		}
 		_ = writer.Write([]string{
 			event.ID, event.CreatedAt.UTC().Format(time.RFC3339), event.Kind, event.Outcome,
-			event.ActorType, actorID, deref(event.ResourceType), deref(event.ResourceID),
+			event.ActorType, deref(event.ActorID), deref(event.ResourceType), deref(event.ResourceID),
 			deref(event.Action), deref(event.PermissionPath), deref(event.RequestID),
 		})
 	}

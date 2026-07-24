@@ -22,6 +22,7 @@ type Event struct {
 	ID                   string         `json:"id"`
 	Kind                 string         `json:"kind"`
 	ActorType            string         `json:"actor_type"`
+	ActorID              *string        `json:"actor_id,omitempty"`
 	ActorMemberID        *string        `json:"actor_member_id,omitempty"`
 	ActorAPIKeyID        *string        `json:"actor_api_key_id,omitempty"`
 	ActorPlatformAdminID *string        `json:"actor_platform_admin_id,omitempty"`
@@ -124,7 +125,7 @@ func (Store) ListEvents(ctx context.Context, query db.Querier, tenantID string, 
 	}
 	args = append(args, limit+1)
 	statement := fmt.Sprintf(`
-		SELECT id, kind, actor_type, actor_member_id, actor_api_key_id, actor_platform_admin_id,
+		SELECT id, kind, actor_type, actor_id, actor_member_id, actor_api_key_id, actor_platform_admin_id,
 		       resource_type, resource_id, action, permission_path, request_id, outcome, data, created_at
 		FROM tenant_access_events
 		WHERE %s
@@ -158,7 +159,8 @@ func scanEvent(row rowScanner) (Event, error) {
 	var event Event
 	var data []byte
 	if err := row.Scan(
-		&event.ID, &event.Kind, &event.ActorType, &event.ActorMemberID, &event.ActorAPIKeyID, &event.ActorPlatformAdminID,
+		&event.ID, &event.Kind, &event.ActorType, &event.ActorID,
+		&event.ActorMemberID, &event.ActorAPIKeyID, &event.ActorPlatformAdminID,
 		&event.ResourceType, &event.ResourceID, &event.Action, &event.PermissionPath, &event.RequestID,
 		&event.Outcome, &data, &event.CreatedAt,
 	); err != nil {
@@ -236,8 +238,7 @@ func (Store) DetectAnomalies(
 		deniedCount = 10
 	}
 	rows, err := query.Query(ctx, `
-		SELECT actor_type,
-		       COALESCE(actor_member_id::text, actor_api_key_id::text, actor_platform_admin_id::text, '') AS actor_id,
+		SELECT actor_type, COALESCE(actor_id::text, '') AS actor_id,
 		       count(*) AS event_count,
 		       count(DISTINCT resource_id) AS distinct_resources,
 		       count(*) FILTER (WHERE outcome = 'denied') AS denied_count,
@@ -355,14 +356,14 @@ func (Store) DetectSupportAccessVolume(
 		now = time.Now()
 	}
 	rows, err := query.Query(ctx, `
-		SELECT actor_platform_admin_id,
+		SELECT actor_id,
 		       count(*) AS event_count,
 		       count(DISTINCT resource_id) AS distinct_resources,
 		       max(created_at) AS last_access_at
 		FROM tenant_access_events
 		WHERE tenant_id = $1 AND actor_type = 'platform_admin' AND created_at >= $2
 		  AND resource_id IS NOT NULL
-		GROUP BY actor_platform_admin_id
+		GROUP BY actor_id
 		HAVING count(*) >= $3
 		ORDER BY event_count DESC
 		LIMIT 50

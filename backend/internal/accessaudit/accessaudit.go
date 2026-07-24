@@ -149,23 +149,31 @@ func Record(ctx context.Context, query db.Querier, input RecordInput) error {
 		dedupBucket = strconv.FormatInt(now.Unix()/int64(input.DedupWindow.Seconds()), 10)
 	}
 	var id string
+	actorID := input.Actor.MemberID
+	if input.Actor.APIKeyID != "" {
+		actorID = input.Actor.APIKeyID
+	}
+	if input.Actor.PlatformAdminID != "" {
+		actorID = input.Actor.PlatformAdminID
+	}
 	err = query.QueryRow(ctx, `
 		INSERT INTO tenant_access_events (
-			tenant_id, kind, actor_type, actor_member_id, actor_api_key_id, actor_platform_admin_id,
+			tenant_id, kind, actor_type, actor_id,
+			actor_member_id, actor_api_key_id, actor_platform_admin_id,
 			resource_type, resource_id, action, permission_path, request_id, outcome, dedup_bucket, data,
 			created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16
 		)
 		ON CONFLICT (
 			tenant_id, resource_type, resource_id, actor_type,
-			COALESCE(actor_member_id::text, actor_api_key_id::text, actor_platform_admin_id::text, ''),
+			COALESCE(actor_id::text, ''),
 			action, outcome, dedup_bucket
 		) WHERE resource_id IS NOT NULL AND dedup_bucket IS NOT NULL
 		DO NOTHING
 		RETURNING id
 	`,
-		input.TenantID, input.Kind, input.Actor.Type,
+		input.TenantID, input.Kind, input.Actor.Type, nullable(actorID),
 		nullable(input.Actor.MemberID), nullable(input.Actor.APIKeyID), nullable(input.Actor.PlatformAdminID),
 		nullable(input.ResourceType), nullable(input.ResourceID), nullable(input.Action),
 		nullable(input.PermissionPath), nullable(input.RequestID), input.Outcome, dedupBucket, string(encoded),
