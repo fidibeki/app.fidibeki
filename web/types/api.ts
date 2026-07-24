@@ -818,6 +818,33 @@ export interface PrivacyCaseExecution {
   completed_at?: string
 }
 
+export type PrivacyPortabilityDecision =
+  | 'approved'
+  | 'partially_approved'
+  | 'not_applicable'
+  | 'refused'
+export type PrivacyPortabilityDataCategory =
+  | 'feedback'
+  | 'issues'
+  | 'attachments'
+  | 'replay'
+  | 'ai_processing'
+  | 'consent'
+  | 'delivery'
+  | 'widget_events'
+
+export interface PrivacyPortabilityAssessment {
+  id: string
+  privacy_case_id: string
+  decision: PrivacyPortabilityDecision
+  data_categories: PrivacyPortabilityDataCategory[]
+  export_format?: 'jsonl_zip'
+  reason: string
+  assessed_by_member_id: string
+  assessed_at: string
+  created_at: string
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -844,6 +871,7 @@ export interface PrivacyCase {
   restriction?: PrivacyProcessingRestriction
   legal_holds: PrivacyCaseLegalHold[]
   execution?: PrivacyCaseExecution
+  portability_assessment?: PrivacyPortabilityAssessment
   created_at: string
   updated_at: string
 }

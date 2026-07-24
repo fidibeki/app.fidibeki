@@ -257,6 +257,59 @@ func (handler *HTTPHandler) releaseCaseLegalHold(w http.ResponseWriter, r *http.
 	api.WriteJSON(w, http.StatusOK, map[string]any{"legal_hold": hold})
 }
 
+func (handler *HTTPHandler) recordCasePortabilityAssessment(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
+	var body struct {
+		Decision       string   `json:"decision"`
+		DataCategories []string `json:"data_categories"`
+		ExportFormat   string   `json:"export_format"`
+		Reason         string   `json:"reason"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	decision, err := ParsePortabilityDecision(body.Decision)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	categories := make([]PortabilityDataCategory, len(body.DataCategories))
+	for index, value := range body.DataCategories {
+		category, parseErr := ParsePortabilityDataCategory(value)
+		if parseErr != nil {
+			handler.writeError(w, r, parseErr)
+			return
+		}
+		categories[index] = category
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	assessment, created, err := handler.options.Store.RecordPortabilityAssessment(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), RecordPortabilityAssessmentInput{
+			Decision: decision, DataCategories: categories,
+			ExportFormat: body.ExportFormat, Reason: body.Reason,
+		}, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"portability_assessment": assessment, "created": created,
+	})
+}
+
 func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
 	caseID, ok := privacyCaseID(w, r)
 	if !ok {
@@ -323,9 +376,13 @@ func (handler *HTTPHandler) downloadCaseExecution(w http.ResponseWriter, r *http
 		return
 	}
 	linkExpiresAt := now.Add(downloadLinkTTL)
+	exportKind := "access"
+	if privacyCase.RightType == RightPortabilityAssessment {
+		exportKind = "portability"
+	}
 	filename := fmt.Sprintf(
-		"fidibeki-%s-%s-access-export.zip",
-		resolved.Slug, strings.ToLower(privacyCase.PublicID),
+		"fidibeki-%s-%s-%s-export.zip",
+		resolved.Slug, strings.ToLower(privacyCase.PublicID), exportKind,
 	)
 	url, err := handler.options.Storage.PresignGet(
 		r.Context(), *job.ObjectKey, filename, downloadLinkTTL,

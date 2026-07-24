@@ -58,6 +58,28 @@ const (
 	PurposeBackgroundProcessing ProcessingPurpose = "background_processing"
 )
 
+type PortabilityDecision string
+
+const (
+	PortabilityApproved          PortabilityDecision = "approved"
+	PortabilityPartiallyApproved PortabilityDecision = "partially_approved"
+	PortabilityNotApplicable     PortabilityDecision = "not_applicable"
+	PortabilityRefused           PortabilityDecision = "refused"
+)
+
+type PortabilityDataCategory string
+
+const (
+	PortabilityFeedback     PortabilityDataCategory = "feedback"
+	PortabilityIssues       PortabilityDataCategory = "issues"
+	PortabilityAttachments  PortabilityDataCategory = "attachments"
+	PortabilityReplay       PortabilityDataCategory = "replay"
+	PortabilityAIProcessing PortabilityDataCategory = "ai_processing"
+	PortabilityConsent      PortabilityDataCategory = "consent"
+	PortabilityDelivery     PortabilityDataCategory = "delivery"
+	PortabilityWidgetEvents PortabilityDataCategory = "widget_events"
+)
+
 var (
 	ErrCaseTransition           = errors.New("privacy case transition is invalid")
 	ErrCaseReasonRequired       = errors.New("privacy case decision reason is required")
@@ -68,35 +90,36 @@ var (
 )
 
 type PrivacyCase struct {
-	ID                      string         `json:"id"`
-	TenantID                string         `json:"-"`
-	PublicID                string         `json:"public_id"`
-	SubjectType             SubjectType    `json:"subject_type"`
-	RightType               RightType      `json:"right_type"`
-	ControllerRole          ControllerRole `json:"controller_role"`
-	Status                  CaseStatus     `json:"status"`
-	SubjectEmail            *string        `json:"subject_email,omitempty"`
-	SubjectMemberID         *string        `json:"subject_member_id,omitempty"`
-	RequestedByMemberID     string         `json:"requested_by_member_id"`
-	OwnerMemberID           *string        `json:"owner_member_id,omitempty"`
-	VerificationExpiresAt   *time.Time     `json:"verification_expires_at,omitempty"`
-	VerificationMethod      *string        `json:"verification_method,omitempty"`
-	VerifiedAt              *time.Time     `json:"verified_at,omitempty"`
-	ReceivedAt              time.Time      `json:"received_at"`
-	DeadlineAt              time.Time      `json:"deadline_at"`
-	PauseStartedAt          *time.Time     `json:"pause_started_at,omitempty"`
-	PausedSeconds           int64          `json:"paused_seconds"`
-	CompletedAt             *time.Time     `json:"completed_at,omitempty"`
-	Scope                   map[string]any `json:"scope"`
-	DecisionSummary         *string        `json:"decision_summary,omitempty"`
-	LegalReviewNotes        *string        `json:"legal_review_notes,omitempty"`
-	ExceptionReason         *string        `json:"exception_reason,omitempty"`
-	LegacyReporterRequestID *string        `json:"legacy_reporter_request_id,omitempty"`
-	Restriction             *Restriction   `json:"restriction,omitempty"`
-	LegalHolds              []LegalHold    `json:"legal_holds"`
-	Execution               *CaseExecution `json:"execution,omitempty"`
-	CreatedAt               time.Time      `json:"created_at"`
-	UpdatedAt               time.Time      `json:"updated_at"`
+	ID                      string                 `json:"id"`
+	TenantID                string                 `json:"-"`
+	PublicID                string                 `json:"public_id"`
+	SubjectType             SubjectType            `json:"subject_type"`
+	RightType               RightType              `json:"right_type"`
+	ControllerRole          ControllerRole         `json:"controller_role"`
+	Status                  CaseStatus             `json:"status"`
+	SubjectEmail            *string                `json:"subject_email,omitempty"`
+	SubjectMemberID         *string                `json:"subject_member_id,omitempty"`
+	RequestedByMemberID     string                 `json:"requested_by_member_id"`
+	OwnerMemberID           *string                `json:"owner_member_id,omitempty"`
+	VerificationExpiresAt   *time.Time             `json:"verification_expires_at,omitempty"`
+	VerificationMethod      *string                `json:"verification_method,omitempty"`
+	VerifiedAt              *time.Time             `json:"verified_at,omitempty"`
+	ReceivedAt              time.Time              `json:"received_at"`
+	DeadlineAt              time.Time              `json:"deadline_at"`
+	PauseStartedAt          *time.Time             `json:"pause_started_at,omitempty"`
+	PausedSeconds           int64                  `json:"paused_seconds"`
+	CompletedAt             *time.Time             `json:"completed_at,omitempty"`
+	Scope                   map[string]any         `json:"scope"`
+	DecisionSummary         *string                `json:"decision_summary,omitempty"`
+	LegalReviewNotes        *string                `json:"legal_review_notes,omitempty"`
+	ExceptionReason         *string                `json:"exception_reason,omitempty"`
+	LegacyReporterRequestID *string                `json:"legacy_reporter_request_id,omitempty"`
+	Restriction             *Restriction           `json:"restriction,omitempty"`
+	LegalHolds              []LegalHold            `json:"legal_holds"`
+	Execution               *CaseExecution         `json:"execution,omitempty"`
+	PortabilityAssessment   *PortabilityAssessment `json:"portability_assessment,omitempty"`
+	CreatedAt               time.Time              `json:"created_at"`
+	UpdatedAt               time.Time              `json:"updated_at"`
 }
 
 type Restriction struct {
@@ -149,6 +172,25 @@ type CaseExecution struct {
 	ErrorMessage      *string               `json:"error_message,omitempty"`
 	StartedAt         time.Time             `json:"started_at"`
 	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
+}
+
+type PortabilityAssessment struct {
+	ID                 string                    `json:"id"`
+	PrivacyCaseID      string                    `json:"privacy_case_id"`
+	Decision           PortabilityDecision       `json:"decision"`
+	DataCategories     []PortabilityDataCategory `json:"data_categories"`
+	ExportFormat       *string                   `json:"export_format,omitempty"`
+	Reason             string                    `json:"reason"`
+	AssessedByMemberID string                    `json:"assessed_by_member_id"`
+	AssessedAt         time.Time                 `json:"assessed_at"`
+	CreatedAt          time.Time                 `json:"created_at"`
+}
+
+type RecordPortabilityAssessmentInput struct {
+	Decision       PortabilityDecision
+	DataCategories []PortabilityDataCategory
+	ExportFormat   string
+	Reason         string
 }
 
 type CreateCaseInput struct {
@@ -218,6 +260,27 @@ func ParseCaseStatus(value string) (CaseStatus, error) {
 	case CaseInProgress, CaseAwaitingClarification, CasePaused, CaseAwaitingLegalReview,
 		CasePartiallyFulfilled, CaseCompleted, CaseRefused, CaseCancelled:
 		return status, nil
+	default:
+		return "", ErrInvalidRequest
+	}
+}
+
+func ParsePortabilityDecision(value string) (PortabilityDecision, error) {
+	switch decision := PortabilityDecision(strings.TrimSpace(value)); decision {
+	case PortabilityApproved, PortabilityPartiallyApproved,
+		PortabilityNotApplicable, PortabilityRefused:
+		return decision, nil
+	default:
+		return "", ErrInvalidRequest
+	}
+}
+
+func ParsePortabilityDataCategory(value string) (PortabilityDataCategory, error) {
+	switch category := PortabilityDataCategory(strings.TrimSpace(value)); category {
+	case PortabilityFeedback, PortabilityIssues, PortabilityAttachments, PortabilityReplay,
+		PortabilityAIProcessing, PortabilityConsent, PortabilityDelivery,
+		PortabilityWidgetEvents:
+		return category, nil
 	default:
 		return "", ErrInvalidRequest
 	}

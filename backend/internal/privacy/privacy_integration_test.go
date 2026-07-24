@@ -743,6 +743,63 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		"tenants/"+tenantID+"/replays/reporter.json").Scan(&sessionID); err != nil {
 		t.Fatalf("create reporter replay: %v", err)
 	}
+	var replayConsentID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO replay_consents (
+			tenant_id, project_id, widget_rule_id, purpose, notice_version,
+			locale, source, token_hash, state, accepted_at, expires_at, created_at
+		) VALUES (
+			$1, $2, $3, 'session_replay', 'replay-consent-v1', 'en',
+			'fidibeki_managed', repeat('a', 64), 'active',
+			$4::timestamptz - interval '20 minutes',
+			$4::timestamptz + interval '30 days',
+			$4::timestamptz - interval '20 minutes'
+		) RETURNING id
+	`, tenantID, projectID, ruleID, now).Scan(&replayConsentID); err != nil {
+		t.Fatalf("create reporter replay consent: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE sessions SET replay_consent_id = $2 WHERE id = $1
+	`, sessionID, replayConsentID); err != nil {
+		t.Fatalf("link reporter replay consent: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO widget_funnel_events (
+			event_id, tenant_id, project_id, rule_id, rule_name, event_type,
+			visitor_id, page_view_id, page_url, page_key, feedback_id,
+			occurred_at, received_at
+		) VALUES (
+			gen_random_uuid(), $1, $2, $3, 'Checkout pulse', 'submitted',
+			'00000000-0000-4000-8000-000000000201',
+			'00000000-0000-4000-8000-000000000202',
+			'https://shop.example.test/checkout', digest('checkout', 'sha256'), $4,
+			$5::timestamptz - interval '3 minutes',
+			$5::timestamptz - interval '3 minutes'
+		)
+	`, tenantID, projectID, ruleID, feedbackID, now); err != nil {
+		t.Fatalf("create reporter widget submission event: %v", err)
+	}
+	var outboxID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO outbox_events (
+			tenant_id, event, resource_type, resource_id, created_at
+		) VALUES ($1, 'feedback.created', 'feedback', $2, $3::timestamptz - interval '2 minutes')
+		RETURNING id
+	`, tenantID, feedbackID, now).Scan(&outboxID); err != nil {
+		t.Fatalf("create reporter delivery event: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO delivery_logs (
+			tenant_id, outbox_event_id, event, resource_type, resource_id,
+			attempt_number, status, provider_message_id, sent_at, created_at
+		) VALUES (
+			$1, $2, 'feedback.created', 'feedback', $3, 1, 'sent',
+			'provider-message-reporter', $4::timestamptz - interval '1 minute',
+			$4::timestamptz - interval '2 minutes'
+		)
+	`, tenantID, outboxID, feedbackID, now); err != nil {
+		t.Fatalf("create reporter delivery log: %v", err)
+	}
 	batchKey := "tenants/" + tenantID + "/replays/reporter-batch.json"
 	if _, err := database.Exec(ctx, `
 			INSERT INTO session_batches (
@@ -783,10 +840,20 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		t.Fatalf("reporter export handler: %v", err)
 	}
 	exportFiles := readPrivacyArchive(t, exportStorage.body)
+	for _, filename := range []string{
+		"delivery-logs.jsonl", "privacy-request-history.jsonl",
+		"replay-consents.jsonl", "widget-submission-events.jsonl",
+	} {
+		if _, exists := exportFiles[filename]; !exists {
+			t.Errorf("reporter archive is missing %q", filename)
+		}
+	}
 	archiveText := string(bytes.Join(mapValues(exportFiles), nil))
 	for _, required := range []string{
-		"fidibeki.reporter-export.v1", "Reporter checkout problem", "Checkout audio transcript",
+		"fidibeki.reporter-export.v2", "Reporter checkout problem", "Checkout audio transcript",
 		"Operational comment", "Investigating", "gemini-test", "policy_version",
+		"replay-consent-v1", "provider-message-reporter",
+		"00000000-0000-4000-8000-000000000201",
 	} {
 		if !strings.Contains(archiveText, required) {
 			t.Errorf("reporter archive does not contain %q", required)

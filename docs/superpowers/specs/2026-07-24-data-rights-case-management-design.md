@@ -140,8 +140,15 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   immediately before the worker removes stored objects or database data.
 - Starting or completing the underlying job does not automatically complete the case. Manual
   review findings and the operator's recorded legal decision remain distinct evidence.
-- Remaining slice 2 work includes expanded discovery, portability assessment, member access,
-  field-level rectification with derived-data invalidation, itemized erasure exceptions, and
-  first-class partial/refusal execution evidence.
+- Slice 2b1 is implemented through migration 88. Reporter discovery now adds linked replay-consent,
+  delivery, widget-submission, and privacy-request evidence to the existing feedback, issue,
+  attachment, AI, and replay records. Anonymous analytics consent and aggregates are not falsely
+  attributed to a reporter. A reporter portability case requires an append-only, reasoned
+  assessment with an approved category set and `jsonl_zip` format before execution. Partial
+  approvals filter unapproved files from the generated archive instead of treating the assessment
+  as display-only metadata.
+- Remaining slice 2 work includes member access and authentication/profile discovery, field-level
+  rectification with derived-data invalidation, itemized erasure exceptions, and first-class
+  partial/refusal execution evidence.
 - Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
   workflow remain pending.

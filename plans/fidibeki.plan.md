@@ -548,7 +548,12 @@ was removed from the staging test tenant.
         Reasoned legal holds are tenant-isolated, idempotent, visible in the backoffice, and block
         erasure both at scheduling and immediately before worker side effects. Failed jobs remain
         retryable after a hold is reviewed and released.
-      - [ ] Slice 2b: expanded discovery, portability assessment, member access, field-level
+      - [x] Slice 2b1: reporter discovery now includes linked consent, delivery, widget-submission,
+        replay, AI, and privacy-request evidence. Portability assessments are append-only,
+        idempotent, tenant-isolated, reasoned, and approve an explicit data-category set and
+        `jsonl_zip` format before execution; partial approvals filter unapproved files from the
+        generated archive. Bilingual desktop/mobile E2E covers assessment and execution gating.
+      - [ ] Slice 2b2: member access, broader authentication/profile discovery, field-level
         rectification and derived-data invalidation, itemized erasure exceptions, and explicit
         partial/refusal execution evidence.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,

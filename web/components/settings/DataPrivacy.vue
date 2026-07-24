@@ -22,6 +22,8 @@ import type {
   PrivacyCaseDashboard,
   PrivacyControllerRole,
   PrivacyExport,
+  PrivacyPortabilityDataCategory,
+  PrivacyPortabilityDecision,
   PrivacyRightType,
   PrivacySubjectType,
   ReporterPrivacyAction,
@@ -89,6 +91,19 @@ const expandedCases = ref<Record<string, boolean>>({})
 const holdReasons = ref<Record<string, string>>({})
 const holdReferences = ref<Record<string, string>>({})
 const releaseReasons = ref<Record<string, string>>({})
+const portabilityDecisions = ref<Record<string, PrivacyPortabilityDecision>>({})
+const portabilityReasons = ref<Record<string, string>>({})
+const portabilitySelections = ref<Record<string, PrivacyPortabilityDataCategory[]>>({})
+const portabilityCategoryOptions: PrivacyPortabilityDataCategory[] = [
+  'feedback',
+  'issues',
+  'attachments',
+  'replay',
+  'ai_processing',
+  'consent',
+  'delivery',
+  'widget_events',
+]
 
 const activeMembers = computed(() => props.members.filter(member => member.status === 'active'))
 
@@ -131,10 +146,13 @@ function activeCaseHolds(item: PrivacyCase) {
 }
 
 function caseCanExecute(item: PrivacyCase) {
+  const portabilityApproved = item.right_type !== 'portability_assessment'
+    || ['approved', 'partially_approved'].includes(item.portability_assessment?.decision || '')
   return item.subject_type === 'reporter'
     && Boolean(item.verified_at)
     && !item.execution
-    && ['access', 'erasure'].includes(item.right_type)
+    && ['access', 'erasure', 'portability_assessment'].includes(item.right_type)
+    && portabilityApproved
     && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
 }
 
@@ -142,6 +160,13 @@ function toggleCase(item: PrivacyCase) {
   expandedCases.value = {
     ...expandedCases.value,
     [item.id]: !expandedCases.value[item.id],
+  }
+  if (item.right_type === 'portability_assessment' && !portabilityDecisions.value[item.id]) {
+    portabilityDecisions.value = { ...portabilityDecisions.value, [item.id]: 'approved' }
+    portabilitySelections.value = {
+      ...portabilitySelections.value,
+      [item.id]: [...portabilityCategoryOptions],
+    }
   }
 }
 
@@ -156,19 +181,47 @@ async function startCaseExecution(item: PrivacyCase) {
     })
     actionNotice.value = t(item.right_type === 'erasure'
       ? 'admin.privacy.settings.cases.erasureQueued'
-      : 'admin.privacy.settings.cases.exportQueued')
+      : item.right_type === 'portability_assessment'
+        ? 'admin.privacy.settings.cases.portabilityQueued'
+        : 'admin.privacy.settings.cases.exportQueued')
     await refresh()
   })
 }
 
 async function downloadCaseExecution(item: PrivacyCase) {
-  if (item.execution?.right_type !== 'access' || item.execution.job_status !== 'completed') return
+  if (!['access', 'portability_assessment'].includes(item.execution?.right_type || '')
+    || item.execution?.job_status !== 'completed') return
   await runAction(`download-case:${item.id}`, async () => {
     const response = await $apiFetch<{ url: string }>(
       `/v1/privacy/cases/${item.id}/execution/download`,
       { method: 'POST' },
     )
-    triggerSignedDownload(response.url, `fidibeki-${item.public_id.toLowerCase()}-access-export.zip`)
+    const kind = item.right_type === 'portability_assessment' ? 'portability' : 'access'
+    triggerSignedDownload(response.url, `fidibeki-${item.public_id.toLowerCase()}-${kind}-export.zip`)
+  })
+}
+
+async function recordPortabilityAssessment(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || item.right_type !== 'portability_assessment') return
+  const decision = portabilityDecisions.value[item.id] || 'approved'
+  const reason = (portabilityReasons.value[item.id] || '').trim()
+  const approved = ['approved', 'partially_approved'].includes(decision)
+  const categories = approved ? (portabilitySelections.value[item.id] || []) : []
+  if (!reason || (approved && categories.length === 0)) return
+  await runAction(`portability:${item.id}`, async () => {
+    await $apiFetch(`/v1/privacy/cases/${item.id}/portability-assessments`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: {
+        decision,
+        data_categories: categories,
+        export_format: approved ? 'jsonl_zip' : '',
+        reason,
+      },
+    })
+    portabilityReasons.value = { ...portabilityReasons.value, [item.id]: '' }
+    actionNotice.value = t('admin.privacy.settings.cases.portabilityRecorded')
+    await refresh()
   })
 }
 
@@ -476,6 +529,40 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                 </button>
               </div>
               <div v-if="expandedCases[item.id]" class="privacy-case-detail">
+                <div v-if="item.right_type === 'portability_assessment'" class="privacy-case-portability">
+                  <header>
+                    <div><p class="app-eyebrow">{{ t('admin.privacy.settings.cases.portability') }}</p><b>{{ t('admin.privacy.settings.cases.portabilityTitle') }}</b></div>
+                    <span v-if="item.portability_assessment" class="privacy-status" :data-tone="['approved', 'partially_approved'].includes(item.portability_assessment.decision) ? 'success' : 'pending'"><i />{{ t(`admin.privacy.settings.cases.portabilityDecisions.${item.portability_assessment.decision}`) }}</span>
+                  </header>
+                  <template v-if="item.portability_assessment">
+                    <p>{{ item.portability_assessment.reason }}</p>
+                    <small>{{ dateTime(item.portability_assessment.assessed_at) }} · {{ memberLabel(item.portability_assessment.assessed_by_member_id) }}</small>
+                    <div v-if="item.portability_assessment.data_categories.length" class="privacy-portability-summary">
+                      <span v-for="category in item.portability_assessment.data_categories" :key="category">{{ t(`admin.privacy.settings.cases.portabilityCategories.${category}`) }}</span>
+                      <span>{{ t('admin.privacy.settings.cases.portabilityFormat') }}</span>
+                    </div>
+                  </template>
+                  <p v-else>{{ t('admin.privacy.settings.cases.portabilityPending') }}</p>
+                  <form v-if="item.subject_type === 'reporter' && !item.execution" @submit.prevent="recordPortabilityAssessment(item)">
+                    <label>{{ t('admin.privacy.settings.cases.portabilityDecision') }}
+                      <select v-model="portabilityDecisions[item.id]" class="app-select">
+                        <option v-for="decision in ['approved', 'partially_approved', 'not_applicable', 'refused']" :key="decision" :value="decision">{{ t(`admin.privacy.settings.cases.portabilityDecisions.${decision}`) }}</option>
+                      </select>
+                    </label>
+                    <fieldset v-if="['approved', 'partially_approved'].includes(portabilityDecisions[item.id] || 'approved')">
+                      <legend>{{ t('admin.privacy.settings.cases.portabilityData') }}</legend>
+                      <label v-for="category in portabilityCategoryOptions" :key="category">
+                        <input v-model="portabilitySelections[item.id]" type="checkbox" :value="category" />
+                        {{ t(`admin.privacy.settings.cases.portabilityCategories.${category}`) }}
+                      </label>
+                    </fieldset>
+                    <label>{{ t('admin.privacy.settings.cases.portabilityReason') }}
+                      <textarea v-model.trim="portabilityReasons[item.id]" class="app-textarea" maxlength="2000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending)"><ShieldCheck :size="14" />{{ t('admin.privacy.settings.cases.recordPortability') }}</button>
+                  </form>
+                  <p v-else-if="item.subject_type === 'member'" class="privacy-portability-member-note">{{ t('admin.privacy.settings.cases.memberPortabilityPending') }}</p>
+                </div>
                 <div class="privacy-case-execution">
                   <div>
                     <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
@@ -490,10 +577,14 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   <button v-if="caseCanExecute(item)" class="app-button" :class="{ 'privacy-danger-button': item.right_type === 'erasure' }" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="startCaseExecution(item)">
                     <ShieldAlert v-if="item.right_type === 'erasure'" :size="15" />
                     <Play v-else :size="15" />
-                    {{ t(item.right_type === 'erasure' ? 'admin.privacy.settings.cases.startErasure' : 'admin.privacy.settings.cases.startExport') }}
+                    {{ t(item.right_type === 'erasure'
+                      ? 'admin.privacy.settings.cases.startErasure'
+                      : item.right_type === 'portability_assessment'
+                        ? 'admin.privacy.settings.cases.startPortability'
+                        : 'admin.privacy.settings.cases.startExport') }}
                   </button>
-                  <button v-else-if="item.execution?.right_type === 'access' && item.execution.job_status === 'completed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="downloadCaseExecution(item)">
-                    <Download :size="15" />{{ t('admin.privacy.settings.cases.downloadExport') }}
+                  <button v-else-if="['access', 'portability_assessment'].includes(item.execution?.right_type || '') && item.execution?.job_status === 'completed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="downloadCaseExecution(item)">
+                    <Download :size="15" />{{ t(item.right_type === 'portability_assessment' ? 'admin.privacy.settings.cases.downloadPortability' : 'admin.privacy.settings.cases.downloadExport') }}
                   </button>
                   <button v-else-if="item.execution?.job_id && item.execution.job_status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="retryJob(item.execution.job_id)">
                     <RefreshCw :size="15" />{{ t('admin.privacy.settings.cases.retryExecution') }}
@@ -689,6 +780,21 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-case-entry > .privacy-row { border-bottom: 0; }
 .privacy-case-entry .app-icon-button { align-self: center; justify-self: end; }
 .privacy-case-detail { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.5fr); border-top: 1px solid var(--line); background: var(--surface-soft); }
+.privacy-case-portability { display: grid; grid-column: 1 / -1; gap: 8px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-portability > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.privacy-case-portability > header > div { display: grid; gap: 4px; }
+.privacy-case-portability > header b { color: var(--ink); font-size: 11px; }
+.privacy-case-portability > p { margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.privacy-case-portability > small { color: var(--muted); font-size: 9px; }
+.privacy-portability-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.privacy-portability-summary span { padding: 4px 7px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 9px; }
+.privacy-case-portability form { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(280px, 1.2fr) minmax(220px, 1fr) auto; align-items: end; gap: 10px; margin-top: 3px; }
+.privacy-case-portability form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-case-portability fieldset { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px 12px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 4px; }
+.privacy-case-portability legend { padding: 0 4px; color: var(--muted); font-size: 8px; font-weight: 750; }
+.privacy-case-portability fieldset label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 9px; }
+.privacy-case-portability .app-textarea { min-height: 62px; resize: vertical; }
+.privacy-portability-member-note { color: var(--muted) !important; }
 .privacy-case-execution, .privacy-case-holds { padding: 14px 15px; }
 .privacy-case-execution { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-right: 1px solid var(--line); }
 .privacy-case-execution > div { display: grid; gap: 6px; }
@@ -746,6 +852,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) 140px 120px 34px; }
   .privacy-case-table .privacy-row > span:nth-child(2), .privacy-case-table .privacy-row > span:nth-child(5) { display: none; }
   .privacy-case-detail { grid-template-columns: 1fr; }
+  .privacy-case-portability form { grid-template-columns: 1fr 1fr; }
+  .privacy-case-portability form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
   .privacy-case-hold-form { grid-template-columns: 1fr; }
   .privacy-request-form .app-button { grid-column: 1 / -1; justify-self: end; }
@@ -766,6 +874,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-table .privacy-row > span:not(:first-child):not(:nth-child(3)) { display: none; }
   .privacy-case-execution { align-items: stretch; flex-direction: column; }
   .privacy-case-execution .app-button { width: 100%; }
+  .privacy-case-portability > header { flex-direction: column; }
+  .privacy-case-portability form { grid-template-columns: 1fr; }
+  .privacy-case-portability form .app-button { width: 100%; }
   .privacy-case-hold { grid-template-columns: 1fr; }
   .privacy-case-hold form { align-items: stretch; flex-direction: column; }
   .privacy-case-hold form .app-input { width: 100%; }

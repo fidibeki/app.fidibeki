@@ -234,6 +234,21 @@ func (Store) StartCaseExecution(
 	switch privacyCase.RightType {
 	case RightAccess:
 		action, kind = ReporterExport, JobReporterExport
+	case RightPortabilityAssessment:
+		assessment, assessmentErr := loadLatestPortabilityAssessment(
+			ctx, query, tenantID, caseID,
+		)
+		if errors.Is(assessmentErr, ErrNotFound) {
+			return CaseExecution{}, false, ErrCaseExecutionUnsupported
+		}
+		if assessmentErr != nil {
+			return CaseExecution{}, false, assessmentErr
+		}
+		if assessment.Decision != PortabilityApproved &&
+			assessment.Decision != PortabilityPartiallyApproved {
+			return CaseExecution{}, false, ErrCaseExecutionUnsupported
+		}
+		action, kind = ReporterExport, JobReporterExport
 	case RightErasure:
 		var activeHolds int
 		if err := query.QueryRow(ctx, `
@@ -360,6 +375,33 @@ func attachCaseOperationalState(
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, fmt.Errorf("iterate privacy case legal holds: %w", err)
+	}
+	rows.Close()
+
+	rows, err = query.Query(ctx, `
+		SELECT DISTINCT ON (assessment.privacy_case_id)
+		       `+portabilityAssessmentSelectColumns("assessment")+`
+		FROM privacy_case_portability_assessments AS assessment
+		WHERE assessment.tenant_id = $1
+		  AND assessment.privacy_case_id = ANY($2::uuid[])
+		ORDER BY assessment.privacy_case_id, assessment.assessed_at DESC, assessment.id DESC
+	`, tenantID, caseIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list latest portability assessments: %w", err)
+	}
+	for rows.Next() {
+		assessment, _, scanErr := scanPortabilityAssessment(rows, false)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		if index, exists := caseIndex[assessment.PrivacyCaseID]; exists {
+			cases[index].PortabilityAssessment = &assessment
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate latest portability assessments: %w", err)
 	}
 	rows.Close()
 

@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 import { allTenantPermissions } from '../../data/permissions'
+import type { PrivacyCase } from '../../types/api'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
@@ -400,7 +401,29 @@ function createMockState() {
       execution: undefined,
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
-    }],
+    }, {
+      id: 'privacy-case-portability',
+      public_id: 'PRV-PORT1',
+      subject_type: 'reporter',
+      right_type: 'portability_assessment',
+      controller_role: 'customer_controller_assistance',
+      status: 'in_progress',
+      subject_email: 'portable.requester@example.test',
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1',
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verification_method: 'email_link',
+      verified_at: '2026-07-21T12:02:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      execution: undefined,
+      portability_assessment: undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:00:00.000Z',
+    }] as PrivacyCase[],
     reviewItems: [] as Array<{
       id: string
       resource_type: 'feedback' | 'issue' | 'issue_comment' | 'clarification_request' | 'legacy_unlinked'
@@ -1305,6 +1328,24 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (path === '/v1/privacy/cases' && method === 'POST') {
       return json(route, { case: state.privacyCases[0], verification_email_queued: true }, 202)
+    }
+    const portabilityAssessmentMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/portability-assessments$/)
+    if (portabilityAssessmentMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === portabilityAssessmentMatch[1])
+      if (!item) return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      const input = body()
+      item.portability_assessment = {
+        id: `${item.id}-assessment`,
+        privacy_case_id: item.id,
+        decision: String(input.decision) as 'approved' | 'partially_approved' | 'not_applicable' | 'refused',
+        data_categories: input.data_categories as Array<'feedback' | 'issues' | 'attachments' | 'replay' | 'ai_processing' | 'consent' | 'delivery' | 'widget_events'>,
+        export_format: input.export_format ? 'jsonl_zip' : undefined,
+        reason: String(input.reason),
+        assessed_by_member_id: 'member-1',
+        assessed_at: now,
+        created_at: now,
+      }
+      return json(route, { portability_assessment: item.portability_assessment, created: true }, 201)
     }
     const caseExecutionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/execute$/)
     if (caseExecutionMatch && method === 'POST') {
@@ -3982,6 +4023,37 @@ test('data-rights cases execute access and erasure around legal holds', async ({
 
   await erasureCase.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-data-rights-cases-${testInfo.project.name}`)
+})
+
+test('portability assessment gates the reporter archive', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+
+  const portabilityCase = page.locator('.privacy-case-entry', { hasText: 'PRV-PORT1' })
+  await portabilityCase.getByTitle('Toggle case details').click()
+  await expect(portabilityCase).toContainText('No portability decision has been recorded.')
+  await expect(portabilityCase.getByRole('button', { name: 'Generate portable archive' })).toHaveCount(0)
+
+  await portabilityCase.getByLabel('Decision').selectOption('partially_approved')
+  await portabilityCase.getByRole('checkbox', { name: 'Session replay manifests' }).uncheck()
+  await portabilityCase.getByLabel('Assessment reason').fill(
+    'Reporter-provided records and linked operational evidence are portable.',
+  )
+  await portabilityCase.getByRole('button', { name: 'Record assessment' }).click()
+  await expect(portabilityCase).toContainText('Partially approved')
+  await expect(portabilityCase).toContainText('JSONL files in a ZIP archive')
+  await expect(portabilityCase.getByRole('button', { name: 'Generate portable archive' })).toBeEnabled()
+
+  await portabilityCase.getByRole('button', { name: 'Generate portable archive' }).click()
+  await expect(page.getByRole('status')).toContainText('portable archive was queued')
+  expect(state.privacyCases.find(item => item.id === 'privacy-case-portability')?.execution).toMatchObject({
+    right_type: 'portability_assessment',
+    job_status: 'pending',
+  })
+  await portabilityCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-portability-assessment-${testInfo.project.name}`)
 })
 
 test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {

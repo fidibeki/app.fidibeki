@@ -441,3 +441,161 @@ func TestPrivacyCaseReporterExecutionRespectsLegalHolds(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivacyCasePortabilityAssessmentGatesExport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := privacyTestDatabase(t, ctx)
+	now := time.Date(2026, 7, 24, 16, 0, 0, 0, time.UTC)
+	tenantID, memberID := seedPrivacyWorkspace(
+		t, ctx, database, "case-portability", "Portable reporter feedback",
+	)
+	otherTenantID, otherMemberID := seedPrivacyWorkspace(
+		t, ctx, database, "case-portability-other", "Other reporter feedback",
+	)
+	store := Store{Database: database}
+
+	portabilityCase, token, _, err := store.CreateCase(
+		ctx, database, tenantID, memberID, "portability-case",
+		CreateCaseInput{
+			SubjectType: SubjectReporter, RightType: RightPortabilityAssessment,
+			ControllerRole: RoleCustomerControllerAssistance,
+			SubjectEmail:   "reporter@example.test",
+		}, now,
+	)
+	if err != nil {
+		t.Fatalf("create portability case: %v", err)
+	}
+	tokenHash, ok := parseReporterRequestToken(token)
+	if !ok {
+		t.Fatal("parse portability verification token")
+	}
+	if _, err := store.VerifyCase(ctx, database, tokenHash, now.Add(time.Minute)); err != nil {
+		t.Fatalf("verify portability case: %v", err)
+	}
+	if _, _, err := store.StartCaseExecution(
+		ctx, database, tenantID, portabilityCase.ID, memberID,
+		"execute-before-assessment", now.Add(2*time.Minute),
+	); !errors.Is(err, ErrCaseExecutionUnsupported) {
+		t.Fatalf("execution before portability approval error = %v", err)
+	}
+	if _, _, err := store.RecordPortabilityAssessment(
+		ctx, database, tenantID, portabilityCase.ID, memberID, "assessment-invalid",
+		RecordPortabilityAssessmentInput{
+			Decision: PortabilityApproved, ExportFormat: portabilityExportFormat,
+			Reason: "No categories were approved.",
+		}, now.Add(3*time.Minute),
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("categoryless portability approval error = %v", err)
+	}
+
+	input := RecordPortabilityAssessmentInput{
+		Decision: PortabilityPartiallyApproved,
+		DataCategories: []PortabilityDataCategory{
+			PortabilityReplay, PortabilityFeedback, PortabilityReplay,
+		},
+		ExportFormat: portabilityExportFormat,
+		Reason:       "Reporter-provided feedback and linked replay data are portable.",
+	}
+	assessment, created, err := store.RecordPortabilityAssessment(
+		ctx, database, tenantID, portabilityCase.ID, memberID, "assessment-approved",
+		input, now.Add(4*time.Minute),
+	)
+	if err != nil || !created || assessment.Decision != PortabilityPartiallyApproved ||
+		len(assessment.DataCategories) != 2 ||
+		assessment.DataCategories[0] != PortabilityFeedback ||
+		assessment.DataCategories[1] != PortabilityReplay ||
+		assessment.ExportFormat == nil || *assessment.ExportFormat != portabilityExportFormat {
+		t.Fatalf("RecordPortabilityAssessment() = %#v created=%t error=%v",
+			assessment, created, err)
+	}
+	replayed, created, err := store.RecordPortabilityAssessment(
+		ctx, database, tenantID, portabilityCase.ID, memberID, "assessment-approved",
+		input, now.Add(5*time.Minute),
+	)
+	if err != nil || created || replayed.ID != assessment.ID {
+		t.Fatalf("idempotent portability assessment = %#v created=%t error=%v",
+			replayed, created, err)
+	}
+	conflicting := input
+	conflicting.Reason = "A conflicting reason must not reuse the key."
+	if _, _, err := store.RecordPortabilityAssessment(
+		ctx, database, tenantID, portabilityCase.ID, memberID, "assessment-approved",
+		conflicting, now.Add(5*time.Minute),
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting portability assessment error = %v", err)
+	}
+	if _, _, err := store.RecordPortabilityAssessment(
+		ctx, database, otherTenantID, portabilityCase.ID, otherMemberID,
+		"assessment-cross-tenant", input, now.Add(5*time.Minute),
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant portability assessment error = %v", err)
+	}
+
+	execution, created, err := store.StartCaseExecution(
+		ctx, database, tenantID, portabilityCase.ID, memberID,
+		"execute-after-assessment", now.Add(6*time.Minute),
+	)
+	if err != nil || !created || execution.RightType != RightPortabilityAssessment ||
+		execution.Primitive != ReporterExport || execution.JobID == nil {
+		t.Fatalf("StartCaseExecution(portability) = %#v created=%t error=%v",
+			execution, created, err)
+	}
+	job, err := store.GetJob(ctx, database, tenantID, *execution.JobID)
+	if err != nil {
+		t.Fatalf("load portability export job: %v", err)
+	}
+	exportStorage := &privacyStorageCapture{}
+	exporter := Exporter{
+		Database: database, Store: store, Storage: exportStorage,
+		Now: func() time.Time { return now.Add(6 * time.Minute) },
+	}
+	if err := exporter.Handler()(ctx, reporterJobTask(job)); err != nil {
+		t.Fatalf("run portability export: %v", err)
+	}
+	files := readPrivacyArchive(t, exportStorage.body)
+	for _, filename := range []string{
+		"feedback.jsonl", "replays.jsonl", "replay-consents.jsonl",
+		"request.json", "manifest.json",
+	} {
+		if _, exists := files[filename]; !exists {
+			t.Errorf("portable archive is missing approved file %q", filename)
+		}
+	}
+	for _, filename := range []string{
+		"issues.jsonl", "attachments.jsonl", "ai-processing-runs.jsonl",
+		"delivery-logs.jsonl", "widget-submission-events.jsonl",
+		"feedback-consents.jsonl", "privacy-request-history.jsonl",
+	} {
+		if _, exists := files[filename]; exists {
+			t.Errorf("portable archive included unapproved file %q", filename)
+		}
+	}
+	if !bytes.Contains(files["manifest.json"], []byte(`"partially_approved"`)) ||
+		!bytes.Contains(files["manifest.json"], []byte(`"feedback"`)) ||
+		!bytes.Contains(files["manifest.json"], []byte(`"replay"`)) {
+		t.Errorf("portable archive manifest = %s", files["manifest.json"])
+	}
+	if _, _, err := store.RecordPortabilityAssessment(
+		ctx, database, tenantID, portabilityCase.ID, memberID,
+		"assessment-after-execution", input, now.Add(7*time.Minute),
+	); !errors.Is(err, ErrCaseExecutionUnsupported) {
+		t.Fatalf("assessment after export started error = %v", err)
+	}
+
+	loaded, err := store.GetCase(ctx, database, tenantID, portabilityCase.ID)
+	if err != nil || loaded.PortabilityAssessment == nil ||
+		loaded.PortabilityAssessment.ID != assessment.ID ||
+		loaded.Execution == nil || loaded.Execution.RightType != RightPortabilityAssessment {
+		t.Fatalf("GetCase(portability) = %#v error=%v", loaded, err)
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE privacy_case_portability_assessments SET reason = 'tampered'
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, assessment.ID); err == nil {
+		t.Fatal("append-only portability assessment accepted an update")
+	}
+}

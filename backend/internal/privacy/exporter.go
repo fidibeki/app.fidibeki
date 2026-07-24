@@ -32,8 +32,9 @@ type Exporter struct {
 }
 
 type exportFile struct {
-	Name  string
-	Query string
+	Name                  string
+	Query                 string
+	PortabilityCategories []PortabilityDataCategory
 }
 
 type manifestFile struct {
@@ -42,13 +43,16 @@ type manifestFile struct {
 }
 
 type archiveManifest struct {
-	SchemaVersion      string         `json:"schema_version"`
-	Scope              string         `json:"scope"`
-	WorkspaceID        string         `json:"workspace_id,omitempty"`
-	GeneratedAt        time.Time      `json:"generated_at"`
-	Files              []manifestFile `json:"files"`
-	BinaryDataPolicy   string         `json:"binary_data_policy"`
-	SensitiveOmissions []string       `json:"sensitive_omissions"`
+	SchemaVersion          string                    `json:"schema_version"`
+	Scope                  string                    `json:"scope"`
+	WorkspaceID            string                    `json:"workspace_id,omitempty"`
+	GeneratedAt            time.Time                 `json:"generated_at"`
+	Files                  []manifestFile            `json:"files"`
+	BinaryDataPolicy       string                    `json:"binary_data_policy"`
+	SensitiveOmissions     []string                  `json:"sensitive_omissions"`
+	DiscoveryNotes         []string                  `json:"discovery_notes,omitempty"`
+	PortabilityDecision    *PortabilityDecision      `json:"portability_decision,omitempty"`
+	ApprovedDataCategories []PortabilityDataCategory `json:"approved_data_categories,omitempty"`
 }
 
 var workspaceExportFiles = []exportFile{
