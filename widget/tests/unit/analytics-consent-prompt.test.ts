@@ -27,10 +27,8 @@ describe('managed analytics consent prompt', () => {
     const unmount = mountAnalyticsConsentPrompt({
       consent,
       locale: 'pt-pt',
-      state: 'new',
       onAccept: accept,
       onReject: reject,
-      onWithdraw: vi.fn(),
     })
     const host = document.querySelector<HTMLElement>('[data-fidibeki-analytics-consent]')
     const root = host?.shadowRoot
@@ -51,38 +49,28 @@ describe('managed analytics consent prompt', () => {
     expect(document.querySelector('[data-fidibeki-analytics-consent]')).toBeNull()
   })
 
-  it('keeps withdrawal one action away from the compact privacy control', async () => {
-    const withdraw = vi.fn(async () => {})
+  it('offers the decision only, leaving no standing control over the host page', () => {
     const unmount = mountAnalyticsConsentPrompt({
       consent,
       locale: 'pt-pt',
-      state: 'active',
       onAccept: vi.fn(),
       onReject: vi.fn(),
-      onWithdraw: withdraw,
     })
     const root = document.querySelector<HTMLElement>('[data-fidibeki-analytics-consent]')!.shadowRoot!
-    const launcher = root.querySelector<HTMLButtonElement>('.privacy-launcher')!
-    expect(launcher.textContent).toContain('Privacidade de análise')
 
-    launcher.click()
-    const withdrawButton = root.querySelector<HTMLButtonElement>('.withdraw')!
-    expect(withdrawButton.textContent).toContain('Retirar consentimento')
-    withdrawButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true)
-    expect(root.activeElement).toBe(launcher)
-
-    launcher.click()
-    withdrawButton.click()
-    await Promise.resolve()
-    expect(withdraw).toHaveBeenCalledTimes(1)
+    // Withdrawal lives in the feedback widget's privacy column, so this host must never keep a
+    // launcher pinned over the customer's layout once a decision exists.
+    expect(root.querySelector('.privacy-launcher')).toBeNull()
+    expect(root.querySelector('.withdraw')).toBeNull()
+    expect([...root.querySelectorAll('button')].map(button => button.className))
+      .toEqual(['decision reject', 'decision accept'])
     unmount()
   })
 
   it('does not render the same dataset host used by the replay consent prompt', () => {
     const unmount = mountAnalyticsConsentPrompt({
-      consent, locale: 'pt-pt', state: 'new',
-      onAccept: vi.fn(), onReject: vi.fn(), onWithdraw: vi.fn(),
+      consent, locale: 'pt-pt',
+      onAccept: vi.fn(), onReject: vi.fn(),
     })
     expect(document.querySelector('[data-fidibeki-replay-consent]')).toBeNull()
     expect(document.querySelector('[data-fidibeki-analytics-consent]')).not.toBeNull()

@@ -1217,7 +1217,10 @@ test('managed replay consent supports reject, accept, persistence, version chang
   await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toBeVisible()
   await page.getByRole('button', { name: 'Accept', exact: true }).click()
   await expect.poll(() => sessionRequests.length).toBe(1)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
+  // A granted purpose leaves nothing pinned over the customer's layout: the withdrawal path is
+  // the feedback widget's privacy column, which appears without the panel being remounted.
+  await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Privacy choices' })).toBeVisible()
 
   configuration = {
     ...configuration,
@@ -1240,12 +1243,21 @@ test('managed replay consent supports reject, accept, persistence, version chang
   expect(sessionRequests).toHaveLength(1)
   await page.getByRole('button', { name: 'Accept', exact: true }).click()
   await expect.poll(() => sessionRequests.length).toBe(2)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Replay privacy' }).click()
+  await page.getByRole('button', { name: 'Privacy choices' }).click()
+  const column = page.locator('[data-privacy-column]')
+  await expect(column).toBeVisible()
+  await expect(page.locator('[data-panel]')).toHaveClass(/privacy-open/)
+  // Analytics on this rule is customer_cmp: that CMP owns the decision, so the column must offer
+  // the managed replay grant and nothing else.
+  await expect(column.locator('.privacy-choice')).toHaveCount(1)
+  await expect(column.locator('[data-purpose="session_replay"]')).toBeVisible()
+  await expect(column).toContainText('Acme Studio · Retained for up to 30 days.')
+
   await page.getByRole('button', { name: 'Withdraw consent' }).click()
   await expect.poll(() => revocations).toBe(1)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Privacy choices' })).toHaveCount(0)
+  await expect(column).toContainText('Consent withdrawn.')
 })
 
 test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {

@@ -19,6 +19,8 @@ import type {
 	AttachmentKind,
 	ElementAttachment,
 	PendingAttachment,
+	PrivacyChoice,
+	PrivacyChoices,
 	SubmissionResponse,
 	WidgetConfiguration,
 	WidgetResponseBlock,
@@ -42,6 +44,10 @@ interface MountOptions {
   submissionAnalytics(): FunnelEvent | null
   onSubmitted(): void
   onDismissed(): void
+  // Withdrawal for every Fidibeki-managed grant that is currently active. Consent that has been
+  // given no longer keeps a standing control pinned over the host page: the only entry point is
+  // the privacy column inside this panel, opened on demand from the "Privacy choices" link.
+  privacy?: PrivacyChoices
   target?: HTMLElement
   hostID?: string
 }
@@ -115,6 +121,12 @@ export function mountWidget(options: MountOptions): () => void {
   const contactDetail = shadow.querySelector<HTMLElement>('[data-contact]')
   const launcher = shadow.querySelector<HTMLButtonElement>('[data-launcher]')
   const panel = requiredElement<HTMLElement>(shadow, '[data-panel]')
+  const privacyLinks = requiredElement<HTMLElement>(shadow, '[data-privacy-links]')
+  const privacyOpenButton = requiredElement<HTMLButtonElement>(shadow, '[data-privacy-open]')
+  const privacyCloseButton = requiredElement<HTMLButtonElement>(shadow, '[data-privacy-close]')
+  const privacyColumn = requiredElement<HTMLElement>(shadow, '[data-privacy-column]')
+  const privacyList = requiredElement<HTMLElement>(shadow, '[data-privacy-list]')
+  const privacyStatus = requiredElement<HTMLElement>(shadow, '[data-privacy-status]')
   const honeypot = requiredElement<HTMLInputElement>(shadow, 'input[name="company_website"]')
   let attachment: ElementAttachment | null = null
   let ratingValue: (() => number | null) | null = null
@@ -144,6 +156,66 @@ export function mountWidget(options: MountOptions): () => void {
   const setMessage = (copy: MessageCopy) => {
     messageCopy = copy
     renderMessage()
+  }
+  const closePrivacyColumn = (returnFocus: boolean) => {
+    if (privacyColumn.hidden) return
+    privacyColumn.hidden = true
+    panel.classList.remove('privacy-open')
+    privacyOpenButton.setAttribute('aria-expanded', 'false')
+    privacyStatus.textContent = ''
+    if (returnFocus && privacyOpenButton.isConnected && !privacyLinks.hidden) privacyOpenButton.focus()
+  }
+  const withdrawChoice = async (choice: PrivacyChoice, button: HTMLButtonElement) => {
+    privacyStatus.textContent = ''
+    button.disabled = true
+    try {
+      await choice.withdraw()
+      privacyStatus.textContent = localization.system.withdrawn
+    } catch {
+      // The controller marks the grant revoked locally before it calls the API, so collection has
+      // already stopped even when the receipt could not be recorded; the entry disappears either
+      // way and the status line reports the failure rather than pretending it succeeded.
+      privacyStatus.textContent = localization.system.withdrawError
+    }
+    renderPrivacyChoices({ keepStatus: true })
+  }
+  const privacyChoiceEntry = (choice: PrivacyChoice): HTMLElement => {
+    const entry = document.createElement('article')
+    entry.className = 'privacy-choice'
+    entry.dataset.purpose = choice.purpose
+    const title = document.createElement('h4')
+    title.textContent = choice.title
+    const description = document.createElement('p')
+    description.textContent = choice.description
+    const meta = document.createElement('p')
+    meta.className = 'privacy-meta'
+    meta.textContent = `${choice.controllerName} · ${localization.system.consentRetention.replace(
+      '{days}',
+      String(choice.retentionDays),
+    )}`
+    const policy = document.createElement('p')
+    const policyLink = document.createElement('a')
+    policyLink.href = choice.privacyPolicyURL
+    policyLink.target = '_blank'
+    policyLink.rel = 'noopener noreferrer'
+    policyLink.textContent = localization.system.privacyPolicy
+    policy.append(policyLink)
+    const withdraw = document.createElement('button')
+    withdraw.type = 'button'
+    withdraw.className = 'secondary'
+    withdraw.textContent = choice.withdrawLabel
+    withdraw.addEventListener('click', () => void withdrawChoice(choice, withdraw))
+    entry.append(title, description, meta, policy, withdraw)
+    return entry
+  }
+  const renderPrivacyChoices = (options_: { keepStatus?: boolean } = {}) => {
+    const choices = options.privacy?.choices() ?? []
+    privacyLinks.hidden = choices.length === 0
+    privacyList.replaceChildren(...choices.map(privacyChoiceEntry))
+    if (!options_.keepStatus) privacyStatus.textContent = ''
+    // A column emptied by a withdrawal the visitor just made stays open so its outcome stays
+    // readable; one emptied silently (expiry, another tab) has nothing left to say and closes.
+    if (choices.length === 0 && !privacyStatus.textContent) closePrivacyColumn(false)
   }
   const applyLocalization = (next: ResolvedWidgetLocalization) => {
     localization = next
@@ -194,6 +266,13 @@ export function mountWidget(options: MountOptions): () => void {
     const aiPrivacyLink = shadow.querySelector<HTMLAnchorElement>('[data-copy="ai-privacy-link"]')
     if (aiPrivacyLink) aiPrivacyLink.textContent = localization.system.privacyPolicy
     requiredElement<HTMLElement>(shadow, '[data-copy="managed-by"]').textContent = localization.system.managedBy
+    privacyOpenButton.textContent = localization.system.privacyChoices
+    requiredElement<HTMLElement>(shadow, '[data-copy="privacy-choices-title"]').textContent =
+      localization.system.privacyChoices
+    privacyColumn.setAttribute('aria-label', localization.system.privacyChoices)
+    privacyCloseButton.setAttribute('aria-label', localization.system.closePrivacyChoices)
+    privacyCloseButton.title = localization.system.closePrivacyChoices
+    renderPrivacyChoices({ keepStatus: true })
     submitButton.textContent = submitCopy === 'retry' ? localization.system.retry : content.submit_label
     responseControls?.localize(localization)
     localizeRating?.(localization.system)
@@ -269,6 +348,24 @@ export function mountWidget(options: MountOptions): () => void {
 		panel.hidden = false
 		panel.querySelector<HTMLElement>('button,textarea,select,input')?.focus()
 	})
+
+  privacyOpenButton.addEventListener('click', () => {
+    renderPrivacyChoices()
+    if (privacyLinks.hidden) return
+    privacyColumn.hidden = false
+    panel.classList.add('privacy-open')
+    privacyOpenButton.setAttribute('aria-expanded', 'true')
+    privacyColumn.focus()
+  })
+  privacyCloseButton.addEventListener('click', () => closePrivacyColumn(true))
+  shadow.addEventListener('keydown', (event) => {
+    const keyboardEvent = event as KeyboardEvent
+    if (keyboardEvent.key !== 'Escape' || privacyColumn.hidden) return
+    keyboardEvent.preventDefault()
+    closePrivacyColumn(true)
+  })
+  if (options.privacy) cleanups.push(options.privacy.subscribe(() => renderPrivacyChoices({ keepStatus: true })))
+  renderPrivacyChoices()
 
   if (options.rule.can_attach_element && options.configuration.features.dom_capture) {
     const button = document.createElement('button')
@@ -426,6 +523,7 @@ export function mountWidget(options: MountOptions): () => void {
       }
       accepted = true
       submitting = false
+      closePrivacyColumn(false)
       try {
         options.onSubmitted()
       } catch {
@@ -861,17 +959,29 @@ function markup(
       ? ` <a data-copy="ai-privacy-link" href="${escapeHTML(rule.ai_processing.privacy_policy_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(localization.system.privacyPolicy)}</a>`
       : ''}</p>`
     : ''
+  // Rendered hidden and populated at mount: whether any grant is withdrawable is loader state, not
+  // rule state, and it can change while the panel is open.
+  const privacyLink = `<p class="privacy-choices-link" data-privacy-links hidden><button class="linklike" type="button" data-privacy-open aria-expanded="false">${escapeHTML(localization.system.privacyChoices)}</button></p>`
+  const privacyColumn = `<aside class="privacy-column" data-privacy-column tabindex="-1" aria-label="${escapeHTML(localization.system.privacyChoices)}" hidden>
+        <div class="privacy-head"><h3 data-copy="privacy-choices-title">${escapeHTML(localization.system.privacyChoices)}</h3>
+          <button class="icon" type="button" data-privacy-close aria-label="${escapeHTML(localization.system.closePrivacyChoices)}" title="${escapeHTML(localization.system.closePrivacyChoices)}">&#215;</button></div>
+        <div data-privacy-list></div>
+        <p class="privacy-status" data-privacy-status role="status" aria-live="polite"></p>
+      </aside>`
   return `${launcher}<section class="panel ${presentation}" data-panel aria-label="${escapeHTML(localization.system.formLabel)}"${panelHidden}>
     <header><div>${logoURL
       ? `<img class="brand" src="${escapeHTML(logoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
       : '<span class="eyebrow">FIDIBEKI</span>'}<h2 data-copy="prompt">${escapeHTML(content.prompt)}</h2></div>
       <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
-    <form novalidate>
-      <div data-optional class="optional"></div>
-      ${legacyText}${comment}${controllerNotice}${contact}${aiDisclosure}
-      <label class="honeypot" aria-hidden="true">Website<input name="company_website" tabindex="-1" autocomplete="off"></label>
-      <footer><span data-message aria-live="polite"></span><button class="primary" type="submit" data-submit>${escapeHTML(content.submit_label)}</button></footer>
-    </form>
+    <div class="body">
+      <form novalidate>
+        <div data-optional class="optional"></div>
+        ${legacyText}${comment}${controllerNotice}${contact}${aiDisclosure}${privacyLink}
+        <label class="honeypot" aria-hidden="true">Website<input name="company_website" tabindex="-1" autocomplete="off"></label>
+        <footer><span data-message aria-live="polite"></span><button class="primary" type="submit" data-submit>${escapeHTML(content.submit_label)}</button></footer>
+      </form>
+      ${privacyColumn}
+    </div>
     <p class="managed-by"><span data-copy="managed-by">${escapeHTML(localization.system.managedBy)}</span> <a href="https://fidibeki.com?ref=widget" target="_blank" rel="noopener noreferrer">fidibeki.com</a></p>
   </section>`
 }
@@ -906,7 +1016,14 @@ function styles(
   .launcher.edge-tab{top:50%;bottom:auto;${side}:0;transform:translateY(-50%);min-width:44px;width:44px;min-height:96px;max-height:min(240px,70vh);padding:16px 10px;border-radius:${exposedRadius};writing-mode:vertical-rl;text-orientation:mixed;display:flex;align-items:center;justify-content:center;text-align:center;white-space:normal;overflow:hidden}
   .panel{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;width:min(368px,calc(100vw - 32px));max-height:calc(100dvh - 40px);display:flex;flex-direction:column;box-sizing:border-box;background:var(--fb-bg);color:var(--fb-fg);border:1px solid var(--fb-line);border-top:4px solid var(--fb-accent);border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.2);overflow:hidden}
   .panel.inline{position:relative;inset:auto;width:100%;max-width:720px;box-shadow:none}.panel.reaction{width:min(420px,calc(100vw - 32px))}
-  header{display:flex;flex:none;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}.brand{display:block;width:auto;max-width:132px;height:24px;object-fit:contain;object-position:left center;margin-bottom:7px}form{min-height:0;overflow-y:auto;padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.controller-notice{margin:12px 0 0;padding:10px 0;border-top:1px solid var(--fb-line);border-bottom:1px solid var(--fb-line);font:400 11px/1.45 sans-serif;color:var(--fb-muted)}.controller-notice summary{cursor:pointer;font-weight:650;color:var(--fb-fg)}.controller-notice p{margin:7px 0 0}.controller-links{display:flex;flex-wrap:wrap;gap:5px 12px}.controller-links a,.consent-notice a,.ai-disclosure a{color:var(--fb-accent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.consent-notice,.ai-disclosure{margin:6px 0 0;font:400 11px/1.4 sans-serif;color:var(--fb-muted)}.ai-disclosure{padding-top:9px;border-top:1px solid var(--fb-line)}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:var(--fb-on-accent);padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}.managed-by{flex:none;margin:0;padding:6px 20px;border-top:1px solid var(--fb-line);text-align:center;font:500 9px/1.3 sans-serif;color:var(--fb-muted)}.managed-by a{color:var(--fb-muted);font-weight:700;text-decoration:none}.managed-by a:hover,.managed-by a:focus-visible{color:var(--fb-accent)}
+  .panel.privacy-open{width:min(664px,calc(100vw - 32px))}.panel.inline.privacy-open{width:100%}
+  header{display:flex;flex:none;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}.brand{display:block;width:auto;max-width:132px;height:24px;object-fit:contain;object-position:left center;margin-bottom:7px}.body{display:flex;flex:1 1 auto;min-height:0}form{flex:1 1 auto;min-width:0;min-height:0;overflow-y:auto;padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.controller-notice{margin:12px 0 0;padding:10px 0;border-top:1px solid var(--fb-line);border-bottom:1px solid var(--fb-line);font:400 11px/1.45 sans-serif;color:var(--fb-muted)}.controller-notice summary{cursor:pointer;font-weight:650;color:var(--fb-fg)}.controller-notice p{margin:7px 0 0}.controller-links{display:flex;flex-wrap:wrap;gap:5px 12px}.controller-links a,.consent-notice a,.ai-disclosure a{color:var(--fb-accent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.consent-notice,.ai-disclosure{margin:6px 0 0;font:400 11px/1.4 sans-serif;color:var(--fb-muted)}.ai-disclosure{padding-top:9px;border-top:1px solid var(--fb-line)}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:var(--fb-on-accent);padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}.managed-by{flex:none;margin:0;padding:6px 20px;border-top:1px solid var(--fb-line);text-align:center;font:500 9px/1.3 sans-serif;color:var(--fb-muted)}.managed-by a{color:var(--fb-muted);font-weight:700;text-decoration:none}.managed-by a:hover,.managed-by a:focus-visible{color:var(--fb-accent)}
+  .privacy-choices-link{margin:12px 0 0}.linklike{padding:0;border:0;background:transparent;color:var(--fb-accent);font:650 11px/1.4 sans-serif;text-decoration:underline;cursor:pointer}
+  .privacy-column{flex:0 0 248px;min-width:0;min-height:0;overflow-y:auto;padding:0 20px 20px;border-left:1px solid var(--fb-line)}.privacy-column:focus{outline:none}
+  .privacy-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.privacy-head h3{margin:2px 0 0;font:700 13px/1.3 sans-serif;letter-spacing:0}
+  .privacy-choice{padding:12px 0;border-bottom:1px solid var(--fb-line)}.privacy-choice:last-child{border-bottom:0}.privacy-choice h4{margin:0 0 6px;font:650 13px/1.3 sans-serif}.privacy-choice p{margin:0 0 9px;font:400 12px/1.45 sans-serif;color:var(--fb-muted)}.privacy-choice a{color:var(--fb-accent)}.privacy-choice .privacy-meta{font:400 11px/1.4 sans-serif}
+  .privacy-status{margin:10px 0 0;font:500 11px/1.4 sans-serif;color:var(--fb-muted)}
+  @media(max-width:700px){.panel .body{flex-direction:column}.panel .privacy-column{flex:none;border-left:0;border-top:1px solid var(--fb-line);padding-top:12px}}
   ${automatic ? '@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}' : ''}
   @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:auto;${side}:12px}
   .launcher.edge-tab{top:auto;bottom:96px;left:auto;right:auto;${side}:0;transform:none;width:auto;max-width:128px;min-width:44px;min-height:44px;max-height:none;padding:10px 14px;border-radius:${exposedRadius};writing-mode:horizontal-tb;white-space:normal;line-height:1.25;overflow:visible}}
