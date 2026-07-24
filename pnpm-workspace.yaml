@@ -26,3 +26,4 @@ minimumReleaseAgeExclude:
   - '@rrweb/packer@2.1.1'
   - '@rrweb/replay@2.1.1'
   - rrweb-player@2.1.1
+  - tar@7.5.21
