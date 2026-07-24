@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, Download, ShieldAlert, ShieldCheck } from '@lucide/vue'
-import type { AccessEvent, AccessEventPage } from '~/types/api'
+import type { AccessEvent, AccessEventPage, AccessEventSignal } from '~/types/api'
 import { triggerBlobDownload } from '~/utils/download'
 
 const { $apiFetch } = useNuxtApp()
@@ -94,6 +94,16 @@ function outcomeTone(value: string) {
 function resourceLabel(event: AccessEvent) {
   return event.resource_type ? t(`admin.accessAudit.resourceType.${event.resource_type}`) : '—'
 }
+
+function signalDetail(signal: AccessEventSignal) {
+  if (signal.type === 'bulk_access') {
+    return t('admin.accessAudit.signalDetail.bulkAccess', {
+      distinct: integer(signal.distinct_resources ?? 0),
+      denied: integer(signal.denied_count ?? 0),
+    })
+  }
+  return signal.detail ? t(`admin.accessAudit.signalDetail.${signal.detail}`) : '—'
+}
 </script>
 
 <template>
@@ -178,15 +188,17 @@ function resourceLabel(event: AccessEvent) {
         <div class="access-audit-table access-audit-signals-table">
           <div class="access-audit-row access-audit-row--head">
             <span>{{ t('admin.accessAudit.columns.actor') }}</span>
+            <span>{{ t('admin.accessAudit.columns.signalType') }}</span>
             <span>{{ t('admin.accessAudit.columns.events') }}</span>
-            <span>{{ t('admin.accessAudit.columns.distinctResources') }}</span>
-            <span>{{ t('admin.accessAudit.columns.denied') }}</span>
+            <span>{{ t('admin.accessAudit.columns.detail') }}</span>
+            <span>{{ t('admin.accessAudit.columns.lastAccess') }}</span>
           </div>
-          <div v-for="signal in data?.signals" :key="`${signal.actor_type}:${signal.actor_id}`" class="access-audit-row">
+          <div v-for="signal in data?.signals" :key="`${signal.type}:${signal.actor_type}:${signal.actor_id}`" class="access-audit-row">
             <span>{{ t(`admin.accessAudit.actorType.${signal.actor_type}`) }} · {{ signal.actor_id.slice(0, 8) }}</span>
+            <span>{{ t(`admin.accessAudit.signalType.${signal.type}`) }}</span>
             <span>{{ integer(signal.event_count) }}</span>
-            <span>{{ integer(signal.distinct_resources) }}</span>
-            <span>{{ integer(signal.denied_count) }}</span>
+            <span>{{ signalDetail(signal) }}</span>
+            <span>{{ dateTime(signal.last_access_at) }}</span>
           </div>
         </div>
       </section>
@@ -206,7 +218,7 @@ function resourceLabel(event: AccessEvent) {
 .access-audit-empty h3 { margin: 0; font-size: 12px; color: var(--ink-soft); }
 .access-audit-table { width: 100%; }
 .access-audit-row { display: grid; grid-template-columns: minmax(150px, .9fr) minmax(150px, 1fr) minmax(150px, 1fr) 110px 120px; min-height: 52px; align-items: center; gap: 14px; padding: 7px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
-.access-audit-signals-table .access-audit-row { grid-template-columns: minmax(180px, 1.2fr) 100px 140px 100px; }
+.access-audit-signals-table .access-audit-row { grid-template-columns: minmax(160px, 1fr) 140px 90px minmax(160px, 1.2fr) 140px; }
 .access-audit-row:last-child { border-bottom: 0; }
 .access-audit-row--head { min-height: 36px; padding-top: 0; padding-bottom: 0; background: #f8faf9; font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .access-audit-row > span { min-width: 0; }

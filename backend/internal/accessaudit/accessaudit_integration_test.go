@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,6 +217,206 @@ func TestDetectAnomalies(t *testing.T) {
 	}
 }
 
+func TestDetectRevokedCredentialAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := accessAuditTestDatabase(t, ctx)
+	store := accessaudit.Store{}
+	tenantID := seedAccessAuditTenant(t, ctx, database, "revoked-audit")
+	activeMemberID := seedAccessAuditMember(t, ctx, database, tenantID)
+	removedMemberID := seedAccessAuditMember(t, ctx, database, tenantID)
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	for _, memberID := range []string{activeMemberID, removedMemberID} {
+		if err := accessaudit.Record(ctx, database, accessaudit.RecordInput{
+			TenantID: tenantID, Kind: "feedback_attachment.accessed",
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: memberID},
+			ResourceType: accessaudit.ResourceFeedbackAttachment,
+			ResourceID:   "55555555-5555-5555-5555-555555555555",
+			Action:       "preview",
+			Outcome:      accessaudit.OutcomeSuccess,
+			Now:          now,
+		}); err != nil {
+			t.Fatalf("seed revoked-credential event for %s: %v", memberID, err)
+		}
+	}
+
+	// Only removedMemberID's credential is revoked after the access above.
+	if _, err := database.Exec(ctx, `UPDATE tenant_members SET status = 'removed' WHERE id = $1`, removedMemberID); err != nil {
+		t.Fatalf("revoke member: %v", err)
+	}
+
+	signals, err := store.DetectRevokedCredentialAccess(ctx, database, tenantID, accessaudit.RevokedCredentialParams{
+		Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("DetectRevokedCredentialAccess() error = %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("DetectRevokedCredentialAccess() = %+v, want exactly one flagged (removed) member", signals)
+	}
+	signal := signals[0]
+	if signal.ActorID != removedMemberID || signal.Type != accessaudit.SignalRevokedCredential ||
+		signal.ActorType != accessaudit.ActorHuman || signal.Detail != "removed" || signal.EventCount != 1 {
+		t.Fatalf("DetectRevokedCredentialAccess() = %+v, want removed member signal", signal)
+	}
+	for _, other := range signals {
+		if other.ActorID == activeMemberID {
+			t.Fatalf("DetectRevokedCredentialAccess() flagged still-active member: %+v", other)
+		}
+	}
+}
+
+func TestDetectUnusualAPIKeyAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := accessAuditTestDatabase(t, ctx)
+	store := accessaudit.Store{}
+	tenantID := seedAccessAuditTenant(t, ctx, database, "unusual-key-audit")
+	nonExpiringKeyID := seedAccessAuditAPIKey(t, ctx, database, tenantID)
+	var expiringKeyID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions, expires_at)
+		VALUES ($1, 'expiring key', $2, 'fk_live_exp', ARRAY['session:read'], now() + interval '30 days')
+		RETURNING id
+	`, tenantID, sha256Hex(tenantID+"-expiring")).Scan(&expiringKeyID); err != nil {
+		t.Fatalf("create expiring api key: %v", err)
+	}
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	for _, keyID := range []string{nonExpiringKeyID, expiringKeyID} {
+		if err := accessaudit.Record(ctx, database, accessaudit.RecordInput{
+			TenantID: tenantID, Kind: "replay_session.accessed",
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorAPIKey, APIKeyID: keyID},
+			ResourceType: accessaudit.ResourceReplaySession,
+			ResourceID:   "66666666-6666-6666-6666-666666666666",
+			Action:       "playback",
+			Outcome:      accessaudit.OutcomeSuccess,
+			Now:          now,
+		}); err != nil {
+			t.Fatalf("seed unusual-api-key event for %s: %v", keyID, err)
+		}
+	}
+
+	signals, err := store.DetectUnusualAPIKeyAccess(ctx, database, tenantID, accessaudit.UnusualAPIKeyParams{
+		Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("DetectUnusualAPIKeyAccess() error = %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("DetectUnusualAPIKeyAccess() = %+v, want exactly one flagged (non-expiring) key", signals)
+	}
+	signal := signals[0]
+	if signal.ActorID != nonExpiringKeyID || signal.Type != accessaudit.SignalUnusualAPIKey ||
+		signal.ActorType != accessaudit.ActorAPIKey || signal.Detail != "no_expiration" || signal.EventCount != 1 {
+		t.Fatalf("DetectUnusualAPIKeyAccess() = %+v, want non-expiring key signal", signal)
+	}
+	for _, other := range signals {
+		if other.ActorID == expiringKeyID {
+			t.Fatalf("DetectUnusualAPIKeyAccess() flagged an expiring key: %+v", other)
+		}
+	}
+}
+
+// TestConcurrentDedupUnderLoad exercises the dedup unique index under real
+// concurrent write pressure (as opposed to the sequential dedup coverage in
+// TestRecordAndListAccessEvents), matching the load this endpoint sees from
+// replay chunk polling or attachment range-request retries: many concurrent
+// requests for the same actor/resource/action landing in the same dedup
+// bucket. Every concurrent Record call must return nil (ON CONFLICT DO
+// NOTHING, never a unique-violation error), and exactly one row must survive.
+func TestConcurrentDedupUnderLoad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := accessAuditTestDatabase(t, ctx)
+	tenantID := seedAccessAuditTenant(t, ctx, database, "concurrent-dedup-audit")
+	memberID := seedAccessAuditMember(t, ctx, database, tenantID)
+	apiKeyID := seedAccessAuditAPIKey(t, ctx, database, tenantID)
+	now := time.Date(2026, 7, 24, 15, 0, 0, 0, time.UTC)
+
+	const concurrency = 40
+	const sharedResourceID = "77777777-7777-7777-7777-777777777777"
+	const distinctResourceIDPrefix = "88888888-8888-8888-8888-88888888880"
+
+	errs := make(chan error, concurrency*2)
+	var wg sync.WaitGroup
+
+	// All of these race to insert the *same* dedup bucket: only one should win.
+	for range concurrency {
+		wg.Go(func() {
+			errs <- accessaudit.Record(ctx, database, accessaudit.RecordInput{
+				TenantID: tenantID, Kind: "feedback_attachment.accessed",
+				Actor:          accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: memberID},
+				ResourceType:   accessaudit.ResourceFeedbackAttachment,
+				ResourceID:     sharedResourceID,
+				Action:         "preview",
+				PermissionPath: "feedback:read",
+				Outcome:        accessaudit.OutcomeSuccess,
+				DedupWindow:    time.Minute,
+				Now:            now,
+			})
+		})
+	}
+	// Concurrently, these fan out across 10 distinct resources (4 racing
+	// writers per resource) - proves the dedup index scopes per resource_id
+	// under concurrent load rather than collapsing everything together.
+	for index := range concurrency {
+		wg.Go(func() {
+			resourceID := distinctResourceIDPrefix + string(rune('0'+index%10))
+			errs <- accessaudit.Record(ctx, database, accessaudit.RecordInput{
+				TenantID: tenantID, Kind: "replay_session.accessed",
+				Actor:        accessaudit.Actor{Type: accessaudit.ActorAPIKey, APIKeyID: apiKeyID},
+				ResourceType: accessaudit.ResourceReplaySession,
+				ResourceID:   resourceID,
+				Action:       "playback",
+				Outcome:      accessaudit.OutcomeSuccess,
+				DedupWindow:  time.Minute,
+				Now:          now.Add(time.Duration(index) * time.Millisecond),
+			})
+		})
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Record() returned an error instead of deduplicating: %v", err)
+		}
+	}
+
+	var sharedCount int
+	if err := database.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3
+	`, tenantID, accessaudit.ResourceFeedbackAttachment, sharedResourceID).Scan(&sharedCount); err != nil {
+		t.Fatalf("count shared-resource rows: %v", err)
+	}
+	if sharedCount != 1 {
+		t.Fatalf("concurrent dedup left %d rows for the same actor/resource/action/bucket, want 1", sharedCount)
+	}
+
+	var distinctCount int
+	if err := database.QueryRow(ctx, `
+		SELECT count(DISTINCT resource_id) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_type = $2
+	`, tenantID, accessaudit.ResourceReplaySession).Scan(&distinctCount); err != nil {
+		t.Fatalf("count distinct replay resources: %v", err)
+	}
+	if distinctCount != 10 {
+		t.Fatalf("concurrent load under distinct resources produced %d distinct rows, want 10 (dedup must not cross resources)", distinctCount)
+	}
+}
+
 func uuidFromIndex(index int) string {
 	return "44444444-4444-4444-4444-4444444444" + string(rune('0'+index)) + "0"
 }
@@ -232,13 +433,16 @@ func seedAccessAuditTenant(t *testing.T, ctx context.Context, database *pgxpool.
 	return tenantID
 }
 
+// seedAccessAuditMember creates an active member with a unique email (via
+// gen_random_uuid()) so callers can seed more than one member per tenant.
 func seedAccessAuditMember(t *testing.T, ctx context.Context, database *pgxpool.Pool, tenantID string) string {
 	t.Helper()
 	var memberID string
 	if err := database.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions, status)
-		VALUES ($1, $2, ARRAY['feedback:read', 'session:read'], 'active') RETURNING id
-	`, tenantID, "member@"+tenantID+".test").Scan(&memberID); err != nil {
+		VALUES ($1, gen_random_uuid()::text || '@' || $2 || '.test', ARRAY['feedback:read', 'session:read'], 'active')
+		RETURNING id
+	`, tenantID, tenantID).Scan(&memberID); err != nil {
 		t.Fatalf("create access-audit member: %v", err)
 	}
 	return memberID

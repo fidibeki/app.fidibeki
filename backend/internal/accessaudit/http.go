@@ -23,6 +23,8 @@ import (
 type EventStore interface {
 	ListEvents(context.Context, db.Querier, string, ListFilter) ([]Event, error)
 	DetectAnomalies(context.Context, db.Querier, string, AnomalySignalParams) ([]ActorSignal, error)
+	DetectRevokedCredentialAccess(context.Context, db.Querier, string, RevokedCredentialParams) ([]ActorSignal, error)
+	DetectUnusualAPIKeyAccess(context.Context, db.Querier, string, UnusualAPIKeyParams) ([]ActorSignal, error)
 }
 
 type TokenVerifier interface {
@@ -72,7 +74,8 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
-	filter, err := parseListFilter(r)
+	isCSV := r.URL.Query().Get("format") == "csv"
+	filter, err := parseListFilter(r, isCSV)
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, err.Error(), nil)
 		return
@@ -90,7 +93,7 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		events = events[:filter.Limit]
 	}
-	if r.URL.Query().Get("format") == "csv" {
+	if isCSV {
 		writeEventsCSV(w, events)
 		return
 	}
@@ -104,6 +107,20 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	revokedCredentialSignals, err := h.options.Store.DetectRevokedCredentialAccess(
+		r.Context(), query, resolved.ID, RevokedCredentialParams{Now: h.now()})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	unusualAPIKeySignals, err := h.options.Store.DetectUnusualAPIKeyAccess(
+		r.Context(), query, resolved.ID, UnusualAPIKeyParams{Now: h.now()})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	signals = append(signals, revokedCredentialSignals...)
+	signals = append(signals, unusualAPIKeySignals...)
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"events": events, "signals": signals,
 		"pagination": map[string]any{
@@ -112,7 +129,12 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func parseListFilter(r *http.Request) (ListFilter, error) {
+// parseListFilter parses the request's list filters. CSV exports default to
+// (and cap at) maxCSVRows rather than the JSON view's defaultListLimit/
+// maxListLimit, since a CSV export is a single bounded bulk pull rather than
+// a paginated view (see maxCSVRows for the safe maximum this endpoint
+// guarantees for a single export).
+func parseListFilter(r *http.Request, isCSV bool) (ListFilter, error) {
 	q := r.URL.Query()
 	filter := ListFilter{
 		ResourceType: q.Get("resource_type"),
@@ -121,12 +143,23 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 		Cursor:       q.Get("cursor"),
 		Limit:        defaultListLimit,
 	}
+	if isCSV {
+		filter.Limit = maxCSVRows
+		filter.MaxLimit = maxCSVRows
+	}
 	if raw := q.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit <= 0 {
 			return ListFilter{}, fmt.Errorf("limit must be a positive integer")
 		}
 		filter.Limit = limit
+	}
+	maxLimit := filter.MaxLimit
+	if maxLimit <= 0 {
+		maxLimit = maxListLimit
+	}
+	if filter.Limit > maxLimit {
+		filter.Limit = maxLimit
 	}
 	if raw := q.Get("from"); raw != "" {
 		from, err := time.Parse(time.RFC3339, raw)

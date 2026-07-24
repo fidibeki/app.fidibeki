@@ -44,6 +44,10 @@ type ListFilter struct {
 	To           *time.Time
 	Cursor       string
 	Limit        int
+	// MaxLimit overrides maxListLimit for this call. Zero means maxListLimit.
+	// The tenant HTTP handler raises this to maxCSVRows for a CSV export,
+	// which is a single bounded bulk pull rather than a paginated view.
+	MaxLimit int
 }
 
 const (
@@ -79,12 +83,16 @@ type Store struct{}
 // has_more), ordered newest first, matching the resource-scoped keyset
 // pagination convention used elsewhere in the tenant API.
 func (Store) ListEvents(ctx context.Context, query db.Querier, tenantID string, filter ListFilter) ([]Event, error) {
+	maxLimit := filter.MaxLimit
+	if maxLimit <= 0 {
+		maxLimit = maxListLimit
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = defaultListLimit
 	}
-	if limit > maxListLimit {
-		limit = maxListLimit
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 	conditions := []string{"tenant_id = $1"}
 	args := []any{tenantID}
@@ -168,16 +176,37 @@ func scanEvent(row rowScanner) (Event, error) {
 	return event, nil
 }
 
-// ActorSignal flags an actor whose recent volume of resource access crosses a
-// bounded, non-alerting threshold: bulk downloads, repeated cross-resource
-// access, or unusual denied-access volume. It carries no evidence content, so
-// it is safe to surface directly in the admin audit view.
+const (
+	// SignalBulkAccess flags an actor whose recent volume of resource access
+	// crosses a bounded, non-alerting threshold: bulk downloads, repeated
+	// cross-resource access, or unusual denied-access volume.
+	SignalBulkAccess = "bulk_access"
+	// SignalRevokedCredential flags a human actor whose tenant_members
+	// credential has since been deactivated or removed, surfacing what a
+	// departed/suspended member accessed while still active.
+	SignalRevokedCredential = "revoked_credential"
+	// SignalUnusualAPIKey flags an API key with no expiration date that has
+	// recorded access to sensitive resources - a non-expiring credential
+	// able to read sensitive tenant data indefinitely is a recognized
+	// governance anti-pattern worth surfacing for review.
+	SignalUnusualAPIKey = "unusual_api_key"
+)
+
+// ActorSignal is a bounded, non-alerting anomaly surfaced in the admin audit
+// view. It carries no evidence content - only actor identity, volume, and a
+// short reason - so it is safe to render directly. Detail's meaning depends
+// on Type: for SignalRevokedCredential it is the actor's current
+// tenant_members status ("deactivated" or "removed"); for SignalUnusualAPIKey
+// it is a fixed reason code ("no_expiration").
 type ActorSignal struct {
-	ActorType         string `json:"actor_type"`
-	ActorID           string `json:"actor_id"`
-	EventCount        int    `json:"event_count"`
-	DistinctResources int    `json:"distinct_resources"`
-	DeniedCount       int    `json:"denied_count"`
+	Type              string    `json:"type"`
+	ActorType         string    `json:"actor_type"`
+	ActorID           string    `json:"actor_id"`
+	EventCount        int       `json:"event_count"`
+	DistinctResources int       `json:"distinct_resources,omitempty"`
+	DeniedCount       int       `json:"denied_count,omitempty"`
+	Detail            string    `json:"detail,omitempty"`
+	LastAccessAt      time.Time `json:"last_access_at"`
 }
 
 // AnomalySignalParams bounds the anomaly scan so it never runs unbounded
@@ -218,7 +247,8 @@ func (Store) DetectAnomalies(
 		       COALESCE(actor_member_id::text, actor_api_key_id::text, actor_platform_admin_id::text, '') AS actor_id,
 		       count(*) AS event_count,
 		       count(DISTINCT resource_id) AS distinct_resources,
-		       count(*) FILTER (WHERE outcome = 'denied') AS denied_count
+		       count(*) FILTER (WHERE outcome = 'denied') AS denied_count,
+		       max(created_at) AS last_access_at
 		FROM tenant_access_events
 		WHERE tenant_id = $1 AND created_at >= $2 AND resource_id IS NOT NULL
 		GROUP BY actor_type, actor_id
@@ -234,9 +264,10 @@ func (Store) DetectAnomalies(
 	defer rows.Close()
 	signals := make([]ActorSignal, 0)
 	for rows.Next() {
-		var signal ActorSignal
+		signal := ActorSignal{Type: SignalBulkAccess}
 		if err := rows.Scan(
-			&signal.ActorType, &signal.ActorID, &signal.EventCount, &signal.DistinctResources, &signal.DeniedCount,
+			&signal.ActorType, &signal.ActorID, &signal.EventCount, &signal.DistinctResources,
+			&signal.DeniedCount, &signal.LastAccessAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan access anomaly: %w", err)
 		}
@@ -244,6 +275,121 @@ func (Store) DetectAnomalies(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("detect access anomalies: %w", err)
+	}
+	return signals, nil
+}
+
+// RevokedCredentialParams bounds the revoked-credential scan.
+type RevokedCredentialParams struct {
+	// Window looks back this far for historical access by now-revoked
+	// members. Defaults to 90 days: unlike the live bulk-access signal, this
+	// is a retrospective/forensic view (e.g. offboarding review), so a
+	// short window would hide most of what it exists to surface.
+	Window time.Duration
+	Now    time.Time
+}
+
+// DetectRevokedCredentialAccess flags human actors whose tenant_members
+// credential has since been deactivated or removed, alongside what they
+// accessed while still active. This is well-founded on real data because
+// tenant_members rows are never hard-deleted (removal/deactivation is a
+// status update, see tenantmember.Store), so actor_member_id and the
+// member's current status both survive indefinitely - unlike API-key
+// revocation, which hard-deletes the row (see DetectUnusualAPIKeyAccess).
+func (Store) DetectRevokedCredentialAccess(
+	ctx context.Context, query db.Querier, tenantID string, params RevokedCredentialParams,
+) ([]ActorSignal, error) {
+	window := params.Window
+	if window <= 0 {
+		window = 90 * 24 * time.Hour
+	}
+	now := params.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := query.Query(ctx, `
+		SELECT events.actor_member_id, members.status::text,
+		       count(*) AS event_count, max(events.created_at) AS last_access_at
+		FROM tenant_access_events AS events
+		JOIN tenant_members AS members
+		  ON members.tenant_id = events.tenant_id AND members.id = events.actor_member_id
+		WHERE events.tenant_id = $1 AND events.actor_type = 'human' AND members.status <> 'active'
+		  AND events.created_at >= $2
+		GROUP BY events.actor_member_id, members.status
+		ORDER BY last_access_at DESC
+		LIMIT 50
+	`, tenantID, now.Add(-window).UTC())
+	if err != nil {
+		return nil, fmt.Errorf("detect revoked credential access: %w", err)
+	}
+	defer rows.Close()
+	signals := make([]ActorSignal, 0)
+	for rows.Next() {
+		signal := ActorSignal{Type: SignalRevokedCredential, ActorType: ActorHuman}
+		if err := rows.Scan(&signal.ActorID, &signal.Detail, &signal.EventCount, &signal.LastAccessAt); err != nil {
+			return nil, fmt.Errorf("scan revoked credential access: %w", err)
+		}
+		signals = append(signals, signal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("detect revoked credential access: %w", err)
+	}
+	return signals, nil
+}
+
+// UnusualAPIKeyParams bounds the unusual-API-key scan.
+type UnusualAPIKeyParams struct {
+	Window time.Duration
+	Now    time.Time
+}
+
+// DetectUnusualAPIKeyAccess flags API keys with no expiration date
+// (expires_at IS NULL) that have recorded access to sensitive resources.
+// Deleting an API key hard-removes the row (see apikey.Store.Delete) and the
+// FK from tenant_access_events.actor_api_key_id sets to NULL on delete, which
+// also reclassifies actor_type to "system" (see the
+// tenant_access_events_classify_actor trigger) - so a since-revoked key
+// cannot be identified retroactively from the ledger alone. What can be
+// evidenced today is the inverse governance concern: a durable, non-expiring
+// credential that is actively reading sensitive tenant data and can
+// therefore never be "revoked by expiry".
+func (Store) DetectUnusualAPIKeyAccess(
+	ctx context.Context, query db.Querier, tenantID string, params UnusualAPIKeyParams,
+) ([]ActorSignal, error) {
+	window := params.Window
+	if window <= 0 {
+		window = 30 * 24 * time.Hour
+	}
+	now := params.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := query.Query(ctx, `
+		SELECT events.actor_api_key_id,
+		       count(*) AS event_count, max(events.created_at) AS last_access_at
+		FROM tenant_access_events AS events
+		JOIN api_keys AS keys
+		  ON keys.tenant_id = events.tenant_id AND keys.id = events.actor_api_key_id
+		WHERE events.tenant_id = $1 AND events.actor_type = 'api_key' AND keys.expires_at IS NULL
+		  AND events.resource_id IS NOT NULL AND events.created_at >= $2
+		GROUP BY events.actor_api_key_id
+		ORDER BY event_count DESC
+		LIMIT 50
+	`, tenantID, now.Add(-window).UTC())
+	if err != nil {
+		return nil, fmt.Errorf("detect unusual API key access: %w", err)
+	}
+	defer rows.Close()
+	signals := make([]ActorSignal, 0)
+	for rows.Next() {
+		signal := ActorSignal{Type: SignalUnusualAPIKey, ActorType: ActorAPIKey, Detail: "no_expiration"}
+		if err := rows.Scan(&signal.ActorID, &signal.EventCount, &signal.LastAccessAt); err != nil {
+			return nil, fmt.Errorf("scan unusual API key access: %w", err)
+		}
+		signals = append(signals, signal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("detect unusual API key access: %w", err)
 	}
 	return signals, nil
 }

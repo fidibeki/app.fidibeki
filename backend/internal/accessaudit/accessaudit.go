@@ -4,6 +4,20 @@
 // streaming, replay playback, and privacy export downloads. It never stores
 // the underlying evidence, raw credentials, signed URLs, or reporter emails —
 // only who accessed what resource, how, and whether it succeeded.
+//
+// Platform-admin/support access to attachment or replay content is
+// intentionally out of scope: no such code path exists today. Every
+// sensitive-content route (feedback/tenant_attachment_stream.go,
+// replay/tenant_http.go) is mounted on the tenant router and authenticates
+// exclusively via middleware.AuthenticateTenantCredential (human member or
+// API key); platformadmin's routes (backend/internal/platformadmin/http.go)
+// cover only tenant lifecycle/ownership/auth, never feedback or replay
+// content, and are never mounted on the tenant router
+// (backend/cmd/fidibeki-api/main.go). Introducing a privileged
+// platform-admin/support read path into attachments or replay is future
+// work explicitly deferred to issue #65's follow-up (it also depends on
+// #53's replay identity/privacy contract) - this package must not invent one
+// to audit.
 package accessaudit
 
 import (

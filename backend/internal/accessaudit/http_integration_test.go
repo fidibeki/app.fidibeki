@@ -196,6 +196,128 @@ func TestAccessEventsHTTPPermissionAndTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestAccessEventsCSVExportSafeMaximum proves the CSV export's documented
+// safe maximum (maxCSVRows = 5000) is the actual bound a caller observes,
+// closing the gap where the JSON list path's maxListLimit (500) silently
+// capped every export far below the intended 5000.
+func TestAccessEventsCSVExportSafeMaximum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	directURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL URL: %v", err)
+	}
+	migrator, err := db.NewMigrator(directURL, accessAuditHTTPMigrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	root, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect as root: %v", err)
+	}
+	t.Cleanup(func() { _ = root.Close(ctx) })
+	if _, err := root.Exec(ctx, `ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password'`); err != nil {
+		t.Fatalf("enable app login: %v", err)
+	}
+
+	tenantID := seedAccessAuditHTTPTenant(t, ctx, root, "csv-max-audit")
+	var adminMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, status)
+		VALUES ($1, 'admin@csv-max-audit.test', ARRAY['audit:read'], 'active') RETURNING id
+	`, tenantID).Scan(&adminMemberID); err != nil {
+		t.Fatalf("create audit-read member: %v", err)
+	}
+
+	// Bulk-seed rows well above the JSON view's maxListLimit (500) and past
+	// the CSV export's maxCSVRows (5000), each with a distinct resource_id
+	// and a NULL dedup_bucket so the dedup unique index never collapses them.
+	const seededRows = 5010
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_type, actor_member_id, resource_type, resource_id, action, outcome, created_at
+		)
+		SELECT $1, 'feedback_attachment.accessed', 'human', $2, 'feedback_attachment', gen_random_uuid(), 'preview',
+		       'success', now() - (series * interval '1 second')
+		FROM generate_series(1, $3) AS series
+	`, tenantID, adminMemberID, seededRows); err != nil {
+		t.Fatalf("bulk seed access events: %v", err)
+	}
+
+	appURL := accessAuditAppRoleURL(t, directURL)
+	pools, err := db.OpenPools(ctx, appURL, directURL, 4, 2)
+	if err != nil {
+		t.Fatalf("open database pools: %v", err)
+	}
+	t.Cleanup(pools.Close)
+
+	jwtManager, err := auth.NewJWTManager(strings.Repeat("a", 32), "fidibeki", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("create JWT manager: %v", err)
+	}
+	adminToken, _, err := jwtManager.IssueTenant(adminMemberID, tenantID, []string{"audit:read"})
+	if err != nil {
+		t.Fatalf("issue admin token: %v", err)
+	}
+
+	routes := chi.NewRouter()
+	accessaudit.RegisterTenantRoutes(routes, accessaudit.HTTPOptions{Store: accessaudit.Store{}, JWT: jwtManager})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
+		Begin: db.BeginFromPool(pools.App),
+	})(routes)
+
+	// Request well above maxListLimit (500) to prove the JSON path's cap is
+	// unchanged by the CSV path's higher MaxLimit override.
+	jsonResponse := performAccessEventsRequest(handler, "csv-max-audit", adminToken, "limit=10000")
+	if jsonResponse.Code != http.StatusOK {
+		t.Fatalf("json access-events status = %d body=%s", jsonResponse.Code, jsonResponse.Body.String())
+	}
+	var jsonEnvelope struct {
+		Events     []accessaudit.Event `json:"events"`
+		Pagination struct {
+			HasMore bool `json:"has_more"`
+			Limit   int  `json:"limit"`
+		} `json:"pagination"`
+	}
+	if err := json.NewDecoder(jsonResponse.Body).Decode(&jsonEnvelope); err != nil {
+		t.Fatalf("decode json access-events response: %v", err)
+	}
+	if len(jsonEnvelope.Events) != 500 || !jsonEnvelope.Pagination.HasMore || jsonEnvelope.Pagination.Limit != 500 {
+		t.Fatalf("json access-events = %d rows, limit=%d, has_more=%v; want the unchanged 500-row JSON page cap",
+			len(jsonEnvelope.Events), jsonEnvelope.Pagination.Limit, jsonEnvelope.Pagination.HasMore)
+	}
+
+	csvResponse := performAccessEventsRequest(handler, "csv-max-audit", adminToken, "format=csv")
+	if csvResponse.Code != http.StatusOK {
+		t.Fatalf("csv access-events status = %d body=%s", csvResponse.Code, csvResponse.Body.String())
+	}
+	lines := strings.Split(strings.TrimRight(csvResponse.Body.String(), "\n"), "\n")
+	dataRows := len(lines) - 1 // drop the header row
+	if dataRows != 5000 {
+		t.Fatalf("csv export returned %d data rows, want exactly 5000 (the documented maxCSVRows safe maximum)", dataRows)
+	}
+}
+
 func performAccessEventsRequest(handler http.Handler, hostSlug, token, query string) *httptest.ResponseRecorder {
 	path := "/v1/access-events"
 	if query != "" {

@@ -449,8 +449,9 @@ export const adminMessages = {
       action: 'Action',
       outcome: 'Outcome',
       events: 'Events',
-      distinctResources: 'Distinct resources',
-      denied: 'Denied',
+      signalType: 'Signal',
+      detail: 'Detail',
+      lastAccess: 'Last access',
     },
     actorType: {
       human: 'Member',
@@ -467,6 +468,17 @@ export const adminMessages = {
       success: 'Success',
       denied: 'Denied',
       not_found: 'Not found',
+    },
+    signalType: {
+      bulk_access: 'Bulk access',
+      revoked_credential: 'Revoked credential',
+      unusual_api_key: 'Non-expiring API key',
+    },
+    signalDetail: {
+      bulkAccess: '{distinct} resources · {denied} denied',
+      deactivated: 'Deactivated',
+      removed: 'Removed',
+      no_expiration: 'No expiration',
     },
   },
   privacy: {

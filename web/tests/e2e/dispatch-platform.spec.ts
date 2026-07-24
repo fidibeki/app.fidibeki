@@ -495,11 +495,14 @@ function createMockState() {
       created_at: '2026-07-21T11:55:00.000Z',
     }],
     accessEventSignals: [] as Array<{
+      type: 'bulk_access' | 'revoked_credential' | 'unusual_api_key'
       actor_type: 'human' | 'api_key' | 'platform_admin'
       actor_id: string
       event_count: number
-      distinct_resources: number
-      denied_count: number
+      distinct_resources?: number
+      denied_count?: number
+      detail?: string
+      last_access_at: string
     }>,
     privacyPublicUnavailable: false,
     memberInviteFailure: null as null | { status: number; code: string; message: string },

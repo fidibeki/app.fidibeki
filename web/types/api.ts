@@ -918,12 +918,17 @@ export interface AccessEvent {
   created_at: string
 }
 
+export type AccessEventSignalType = 'bulk_access' | 'revoked_credential' | 'unusual_api_key'
+
 export interface AccessEventSignal {
+  type: AccessEventSignalType
   actor_type: AccessEventActorType
   actor_id: string
   event_count: number
-  distinct_resources: number
-  denied_count: number
+  distinct_resources?: number
+  denied_count?: number
+  detail?: string
+  last_access_at: string
 }
 
 export interface AccessEventPage {
