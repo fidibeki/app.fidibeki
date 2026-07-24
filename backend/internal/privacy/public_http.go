@@ -33,6 +33,46 @@ func RegisterPublicRoutes(router chi.Router, options PublicHTTPOptions) {
 	router.Post("/v1/privacy/requests/{token}/verify", handler.verifyReporterRequest)
 	router.Get("/v1/privacy/requests/{token}", handler.reporterRequestStatus)
 	router.Post("/v1/privacy/requests/{token}/download", handler.reporterRequestDownload)
+	router.Post("/v1/privacy/cases/{token}/verify", handler.verifyCase)
+}
+
+func (handler *PublicHTTPHandler) verifyCase(w http.ResponseWriter, r *http.Request) {
+	tokenHash, ok := handler.reporterToken(w, r)
+	if !ok {
+		return
+	}
+	if handler.options.Begin == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tx, err := handler.options.Begin(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(r.Context())
+		}
+	}()
+	view, err := handler.options.Store.VerifyCase(r.Context(), tx, tokenHash, handler.now())
+	if errors.Is(err, ErrNotFound) {
+		writeReporterPrivacyUnavailable(w)
+		return
+	}
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	committed = true
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	api.WriteJSON(w, http.StatusOK, map[string]any{"case": view})
 }
 
 func (handler *PublicHTTPHandler) reporterRequestDownload(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/hibiken/asynq"
 )
@@ -44,6 +45,12 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 				return errors.Join(err, markErr)
 			}
 			return fmt.Errorf("replay merge consent evidence is unavailable: %w", asynq.SkipRetry)
+		}
+		if errors.Is(err, privacy.ErrProcessingRestricted) {
+			if markErr := p.Store.MarkUnavailable(ctx, payload.SessionID); markErr != nil {
+				return errors.Join(err, markErr)
+			}
+			return fmt.Errorf("replay merge suppressed by privacy restriction: %w", asynq.SkipRetry)
 		}
 		if err != nil {
 			return err

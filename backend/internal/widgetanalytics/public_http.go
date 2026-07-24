@@ -120,6 +120,9 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	if result.DuplicateEventIDs == nil {
 		result.DuplicateEventIDs = []string{}
 	}
+	if result.SuppressedEventIDs == nil {
+		result.SuppressedEventIDs = []string{}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		h.writeStoreError(w, r, fmt.Errorf("commit widget analytics transaction: %w", err))
 		return

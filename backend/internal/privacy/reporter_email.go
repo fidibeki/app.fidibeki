@@ -72,3 +72,20 @@ func reporterPrivacyURL(publicBaseURL, baseDomain, slug, token string) (string, 
 	base.Fragment = ""
 	return base.String(), nil
 }
+
+func privacyCaseURL(publicBaseURL, baseDomain, slug, token string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(publicBaseURL))
+	if err != nil || !base.IsAbs() || base.Host == "" || baseDomain == "" || slug == "" || token == "" {
+		return "", errors.New("privacy case URL configuration is invalid")
+	}
+	port := base.Port()
+	base.Host = slug + "." + baseDomain
+	if port != "" {
+		base.Host += ":" + port
+	}
+	base.Path = "/privacy/cases/" + url.PathEscape(token)
+	base.RawPath = ""
+	base.RawQuery = ""
+	base.Fragment = ""
+	return base.String(), nil
+}

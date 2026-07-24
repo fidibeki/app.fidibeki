@@ -17,6 +17,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -422,6 +423,17 @@ func (h DeliveryHandler) Handler() asynq.HandlerFunc {
 		}
 		if attempt.Completed {
 			return nil
+		}
+		if err := privacy.EnsureResourceProcessingAllowed(
+			ctx, h.Store.Database, notification.TenantID, notification.ResourceType,
+			notification.ResourceID, privacy.PurposeIntegration,
+		); err != nil {
+			if errors.Is(err, privacy.ErrProcessingRestricted) {
+				return h.Store.MarkDeliveryFailed(
+					ctx, attempt.ID, "integration delivery suppressed by privacy restriction",
+				)
+			}
+			return err
 		}
 		providerID, err := h.deliver(ctx, notification)
 		if err != nil {

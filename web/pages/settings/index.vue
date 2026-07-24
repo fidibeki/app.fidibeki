@@ -720,7 +720,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
       </section>
 
       <SubmissionHealth v-else-if="activeTab === 'health'" :projects="data.projects" />
-      <DataPrivacy v-else />
+      <DataPrivacy v-else :members="data.members" />
     </template>
 
     <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">

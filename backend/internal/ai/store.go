@@ -48,6 +48,7 @@ func (s Store) PrepareFeedback(
 	var textEnqueuedAt *time.Time
 	var textDeferredUntil *time.Time
 	var aiEnabled, textAIEnabled, screenshotAIEnabled, audioAIEnabled, videoAIEnabled bool
+	var processingRestricted bool
 	err = tx.QueryRow(ctx, `
 		SELECT feedback.tenant_id, feedback.project_id, tenant.plan, feedback.text,
 		       feedback.text_process_status, feedback.ai_job_enqueued_at,
@@ -56,7 +57,8 @@ func (s Store) PrepareFeedback(
 		       COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false),
 		       COALESCE(rule.ai_processing->'input_categories' ? 'screenshot', false),
 		       COALESCE(rule.ai_processing->'input_categories' ? 'audio', false),
-		       COALESCE(rule.ai_processing->'input_categories' ? 'video', false)
+		       COALESCE(rule.ai_processing->'input_categories' ? 'video', false),
+		       fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai')
 		FROM feedbacks AS feedback
 		JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
 		LEFT JOIN widget_rules AS rule
@@ -66,7 +68,7 @@ func (s Store) PrepareFeedback(
 	`, feedbackID).Scan(
 		&tenantID, &projectID, &planValue, &text, &textStatus, &textEnqueuedAt,
 		&textGeneration, &textDeferredUntil, &aiEnabled, &textAIEnabled,
-		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled,
+		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled, &processingRestricted,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrNotFound
@@ -76,7 +78,7 @@ func (s Store) PrepareFeedback(
 	}
 
 	definition, planExists := config.PlanFor(tenant.Plan(planValue))
-	if !planExists || !definition.Features.AI || !aiEnabled {
+	if !planExists || !definition.Features.AI || !aiEnabled || processingRestricted {
 		if _, err := tx.Exec(ctx, `
 				UPDATE feedbacks
 				SET text_process_status = 'skipped', ai_job_enqueued_at = NULL,
@@ -366,6 +368,9 @@ func (s Store) PendingFeedbackIDs(
 			 AND project_usage.usage_date = $2
 				WHERE tenant.plan IN ('growth', 'scale', 'enterprise')
 				  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
+			  AND NOT fidibeki_privacy_feedback_restricted(
+			      feedback.tenant_id, feedback.id, 'ai'
+			  )
 			  AND COALESCE(usage.requests, 0) < $3
 			  AND COALESCE(project_usage.requests, 0) < $5
 			  AND (
@@ -426,6 +431,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 			       text_processing_generation AS generation, ai_job_enqueued_at AS enqueued_at
 			FROM feedbacks
 			WHERE text_process_status = 'processing' AND ai_job_enqueued_at IS NOT NULL
+			  AND NOT fidibeki_privacy_feedback_restricted(tenant_id, id, 'ai')
 			UNION ALL
 			SELECT 'attachment', attachment.tenant_id, feedback.project_id,
 			       attachment.id, attachment.processing_attempts, 0, attachment.created_at
@@ -434,6 +440,9 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 			WHERE attachment.processing_status = 'processing'
 			  AND attachment.safety_status = 'safe'
 			  AND attachment.retention_deleted_at IS NULL
+			  AND NOT fidibeki_privacy_feedback_restricted(
+			      attachment.tenant_id, feedback.id, 'ai'
+			  )
 			UNION ALL
 			SELECT 'file_delete', file.tenant_id, feedback.project_id,
 			       file.id, file.delete_attempts, 0, file.delete_enqueued_at
@@ -785,6 +794,7 @@ func (s Store) ClaimText(
 		  AND feedback.text IS NOT NULL AND btrim(feedback.text) <> ''
 		  AND feedback.text_process_status IN ('pending', 'processing')
 		  AND feedback.text_processing_generation = $3
+		  AND NOT fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai')
 		RETURNING feedback.text, feedback.project_id, rule.id,
 		          rule.ai_processing->>'policy_version'
 	`, feedbackID, tenantID, generation).Scan(
@@ -842,6 +852,9 @@ func (s Store) ClaimAttachment(
 			  AND attachment.retention_deleted_at IS NULL
 			  AND attachment.processing_status IN ('pending', 'processing')
 			  AND feedback.id = attachment.feedback_id
+			  AND NOT fidibeki_privacy_feedback_restricted(
+			      attachment.tenant_id, feedback.id, 'ai'
+			  )
 			  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
 			  AND COALESCE(
 			      (rule.ai_processing->'input_categories') ?

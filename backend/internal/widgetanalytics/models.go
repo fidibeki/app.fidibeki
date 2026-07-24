@@ -46,8 +46,9 @@ type EventValues struct {
 type FieldErrors map[string]string
 
 type IngestResult struct {
-	AcceptedEventIDs  []string `json:"accepted_event_ids"`
-	DuplicateEventIDs []string `json:"duplicate_event_ids"`
+	AcceptedEventIDs   []string `json:"accepted_event_ids"`
+	DuplicateEventIDs  []string `json:"duplicate_event_ids"`
+	SuppressedEventIDs []string `json:"suppressed_event_ids"`
 }
 
 type Summary struct {

@@ -16,6 +16,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 )
@@ -57,6 +58,14 @@ func (r OutboxResolver) Resolve(
 	}
 	if !active {
 		return nil, nil
+	}
+	if err := privacy.EnsureResourceProcessingAllowed(
+		ctx, r.Database, event.TenantID, event.ResourceType, event.ResourceID,
+		privacy.PurposeReporterEmail,
+	); errors.Is(err, privacy.ErrProcessingRestricted) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
 	return []outbox.Destination{{
 		Kind: "reporter", ID: event.ResourceID, TaskType: TaskReporterNotify, Queue: email.QueueName,
@@ -318,6 +327,17 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 		if attempt.Completed {
 			return h.Store.RecordReporterNotification(ctx, notification, h.now())
 		}
+		if err := privacy.EnsureEmailProcessingAllowed(
+			ctx, h.Store.Database, notification.TenantID, notification.ReporterEmail,
+			privacy.PurposeReporterEmail,
+		); err != nil {
+			if errors.Is(err, privacy.ErrProcessingRestricted) {
+				return h.Store.MarkDeliveryFailed(
+					ctx, attempt.ID, "reporter notification suppressed by privacy restriction",
+				)
+			}
+			return err
+		}
 		var unsubscribeToken string
 		if notification.ResourceType == "feedback" {
 			unsubscribeToken, _, err = h.Tokens.IssueFeedbackReporterUnsubscribe(
@@ -359,6 +379,17 @@ func (h ReporterHandler) Handler() asynq.HandlerFunc {
 		}
 		if !active {
 			return h.Store.MarkDeliveryFailed(ctx, attempt.ID, "reporter consent is no longer active")
+		}
+		if err := privacy.EnsureEmailProcessingAllowed(
+			ctx, h.Store.Database, notification.TenantID, notification.ReporterEmail,
+			privacy.PurposeReporterEmail,
+		); err != nil {
+			if errors.Is(err, privacy.ErrProcessingRestricted) {
+				return h.Store.MarkDeliveryFailed(
+					ctx, attempt.ID, "reporter notification suppressed by privacy restriction",
+				)
+			}
+			return err
 		}
 		providerID, err := h.Sender.Send(ctx, message)
 		if err != nil {

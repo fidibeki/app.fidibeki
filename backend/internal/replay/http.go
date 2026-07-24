@@ -22,6 +22,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
@@ -903,6 +904,9 @@ func (h *HTTPHandler) writeDomainError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "replay session has incomplete or no batches", nil)
 	case errors.Is(err, ErrConsentRequired):
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active replay consent is required", nil)
+	case errors.Is(err, privacy.ErrProcessingRestricted):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict,
+			"replay processing is restricted for this data subject", nil)
 	case errors.Is(err, ErrEventLimit):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
 			"replay session event limit exceeded", []map[string]string{replayField("events_count", "exceeds the session limit")})

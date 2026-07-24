@@ -32,6 +32,13 @@ type HTTPStore interface {
 	ListReviewItems(context.Context, db.Querier, string, string) ([]ReviewItem, error)
 	DecideReviewItem(context.Context, db.Querier, string, string, string, string, ReviewDecision, time.Time) (ReviewItem, error)
 	FinalizeReporterAnonymization(context.Context, db.Querier, string, string, time.Time) (bool, int, error)
+	CreateCase(context.Context, db.Querier, string, string, string, CreateCaseInput, time.Time) (PrivacyCase, string, bool, error)
+	ListCases(context.Context, db.Querier, string, int) ([]PrivacyCase, error)
+	GetCase(context.Context, db.Querier, string, string) (PrivacyCase, error)
+	ListCaseEvents(context.Context, db.Querier, string, string) ([]CaseEvent, error)
+	TransitionCase(context.Context, db.Querier, string, string, string, string, TransitionCaseInput, time.Time) (PrivacyCase, error)
+	CaseDashboard(context.Context, db.Querier, string, time.Time) (CaseDashboard, error)
+	SetCaseRestriction(context.Context, db.Querier, string, string, string, string, bool, string, time.Time) (Restriction, error)
 }
 
 type DownloadStorage interface {
@@ -87,6 +94,15 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/privacy/requests/{requestID}/review-items/{itemID}/decide", handler.decideReviewItem)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/requests/{requestID}/finalize", handler.finalizeReporterRequest)
+	router.With(read...).Get("/v1/privacy/cases", handler.listCases)
+	router.With(read...).Get("/v1/privacy/cases/dashboard", handler.caseDashboard)
+	router.With(read...).Get("/v1/privacy/cases/{caseID}", handler.getCase)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases", handler.createCase)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/transition", handler.transitionCase)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/restriction", handler.setCaseRestriction)
 }
 
 func (handler *HTTPHandler) retention(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +441,12 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "a decision reason is required", nil)
 	case errors.Is(err, ErrReviewItemDecided):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy review item is already decided", nil)
+	case errors.Is(err, ErrIdempotencyConflict):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "idempotency key conflicts with an existing command", nil)
+	case errors.Is(err, ErrCaseTransition):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy case transition is invalid", nil)
+	case errors.Is(err, ErrCaseReasonRequired):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "a reason is required for this decision", nil)
 	default:
 		handler.logger.ErrorContext(r.Context(), "privacy request failed", "error", err)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)

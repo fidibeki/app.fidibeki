@@ -8,6 +8,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -537,6 +538,11 @@ func (store Store) Finalize(
 	if err != nil {
 		return Session{}, false, fmt.Errorf("lock replay session for finalization: %w", err)
 	}
+	if err := privacy.EnsureSessionProcessingAllowed(
+		ctx, query, tenantID, sessionID, privacy.PurposeReplay,
+	); err != nil {
+		return Session{}, false, err
+	}
 	if endedAt != nil {
 		found, getErr := store.GetSession(ctx, query, tenantID, sessionID)
 		return found, false, getErr
@@ -703,6 +709,11 @@ func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batc
 	}
 	if found.ReplayConsentID == nil {
 		return Session{}, nil, ErrConsentRequired
+	}
+	if err := privacy.EnsureSessionProcessingAllowed(
+		ctx, s.Database, found.TenantID, found.ID, privacy.PurposeReplay,
+	); err != nil {
+		return Session{}, nil, err
 	}
 	var consentEvidenceValid bool
 	if err := s.Database.QueryRow(ctx, `

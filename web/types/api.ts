@@ -720,6 +720,92 @@ export interface ReporterPrivacyView {
   access_expires_at: string
 }
 
+export type PrivacyRightType =
+  | 'access'
+  | 'rectification'
+  | 'erasure'
+  | 'restriction'
+  | 'objection'
+  | 'portability_assessment'
+  | 'consent_withdrawal'
+export type PrivacyCaseStatus =
+  | 'received'
+  | 'pending_verification'
+  | 'in_progress'
+  | 'awaiting_clarification'
+  | 'paused'
+  | 'awaiting_legal_review'
+  | 'partially_fulfilled'
+  | 'completed'
+  | 'refused'
+  | 'cancelled'
+
+export interface ReporterPrivacyCaseView {
+  public_id: string
+  right_type: PrivacyRightType
+  status: PrivacyCaseStatus
+  received_at: string
+  deadline_at: string
+}
+
+export type PrivacySubjectType = 'reporter' | 'member'
+export type PrivacyControllerRole = 'controller' | 'customer_controller_assistance'
+export type PrivacyProcessingPurpose =
+  | 'ai'
+  | 'integration'
+  | 'reporter_email'
+  | 'replay'
+  | 'analytics'
+  | 'background_processing'
+
+export interface PrivacyProcessingRestriction {
+  id: string
+  privacy_case_id: string
+  purposes: PrivacyProcessingPurpose[]
+  active: boolean
+  reason: string
+  activated_at: string
+  deactivated_at?: string
+  deactivated_by_member_id?: string
+}
+
+export interface PrivacyCase {
+  id: string
+  public_id: string
+  subject_type: PrivacySubjectType
+  right_type: PrivacyRightType
+  controller_role: PrivacyControllerRole
+  status: PrivacyCaseStatus
+  subject_email?: string
+  subject_member_id?: string
+  requested_by_member_id: string
+  owner_member_id?: string
+  verification_expires_at?: string
+  verification_method?: string
+  verified_at?: string
+  received_at: string
+  deadline_at: string
+  pause_started_at?: string
+  paused_seconds: number
+  completed_at?: string
+  scope: Record<string, unknown>
+  decision_summary?: string
+  legal_review_notes?: string
+  exception_reason?: string
+  restriction?: PrivacyProcessingRestriction
+  created_at: string
+  updated_at: string
+}
+
+export interface PrivacyCaseDashboard {
+  overdue: number
+  due_soon: number
+  awaiting_manual: number
+  awaiting_legal_review: number
+  failed_external: number
+  completed: number
+}
+
 export interface RetentionPolicy {
   category: string
   label: string

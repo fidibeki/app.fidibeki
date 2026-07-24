@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -32,8 +33,9 @@ func (Store) InsertEvents(
 	events []EventValues,
 ) (IngestResult, error) {
 	result := IngestResult{
-		AcceptedEventIDs:  make([]string, 0, len(events)),
-		DuplicateEventIDs: make([]string, 0),
+		AcceptedEventIDs:   make([]string, 0, len(events)),
+		DuplicateEventIDs:  make([]string, 0),
+		SuppressedEventIDs: make([]string, 0),
 	}
 	if len(events) == 0 {
 		return result, nil
@@ -48,6 +50,18 @@ func (Store) InsertEvents(
 		return IngestResult{}, err
 	}
 	for _, event := range events {
+		if event.FeedbackID != nil {
+			err := privacy.EnsureFeedbackProcessingAllowed(
+				ctx, query, event.TenantID, *event.FeedbackID, privacy.PurposeAnalytics,
+			)
+			if errors.Is(err, privacy.ErrProcessingRestricted) {
+				result.SuppressedEventIDs = append(result.SuppressedEventIDs, event.EventID)
+				continue
+			}
+			if err != nil {
+				return IngestResult{}, err
+			}
+		}
 		inserted, err := insertEvent(ctx, query, event, event.EventType != EventMatched)
 		if err != nil {
 			return IngestResult{}, err
@@ -68,6 +82,13 @@ func (Store) InsertSubmittedEvent(
 ) (bool, error) {
 	if event.EventType != EventSubmitted || event.FeedbackID == nil {
 		return false, errors.New("submitted widget funnel event requires feedback context")
+	}
+	if err := privacy.EnsureFeedbackProcessingAllowed(
+		ctx, query, event.TenantID, *event.FeedbackID, privacy.PurposeAnalytics,
+	); errors.Is(err, privacy.ErrProcessingRestricted) {
+		return false, nil
+	} else if err != nil {
+		return false, err
 	}
 	if err := lockAnalyticsProject(ctx, query, event.TenantID, event.ProjectID); err != nil {
 		return false, err
