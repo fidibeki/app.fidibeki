@@ -2413,6 +2413,25 @@ test('unknown standard workspace offers explicit signup with an editable slug', 
   await expect(page.getByLabel('Workspace URL')).toHaveValue('another-workspace')
 })
 
+test('platform login hosts the workspace locator instead of redirecting to signup', async ({ page }) => {
+  const state = createMockState()
+  await installMockAPI(page, state)
+  const platformOrigin = `http://localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
+
+  await page.goto(`${platformOrigin}/login`)
+  await page.waitForLoadState('networkidle')
+
+  await expect(page).toHaveURL(`${platformOrigin}/login`)
+  await expect(page.getByRole('heading', { name: 'Find your workspace' })).toBeVisible()
+  await expect(page.getByLabel('Work email')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Create a workspace' })).toHaveAttribute('href', /\/signup$/)
+  await page.getByLabel('Workspace address').fill('acme')
+  await page.getByRole('button', { name: 'Continue' }).click()
+
+  await expect(page).toHaveURL(`${tenantOrigin}/login`)
+  await expect(page.getByLabel('Work email')).toBeVisible()
+})
+
 test('inaccessible workspace uses the same neutral unavailable state', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The unavailable layout is responsive in the signup-prefill test')
   const state = createMockState()

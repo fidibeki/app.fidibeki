@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { ArrowRight, Building2, CheckCircle2, RefreshCw } from '@lucide/vue'
 import type { TenantConfiguration } from '~/types/api'
-import { applicationURL, workspaceSlugFromStandardHost } from '~/utils/workspace-url'
+import {
+  applicationURL,
+  isApplicationHost,
+  normalizeWorkspaceSlug,
+  workspaceLoginURL,
+  workspaceSlugError,
+  workspaceSlugFromStandardHost,
+} from '~/utils/workspace-url'
 
 definePageMeta({ layout: false })
 
@@ -20,6 +27,9 @@ const config = useRuntimeConfig()
 const baseDomain = String(config.public.baseDomain || requestURL.hostname)
 const appURL = String(config.public.appUrl || '')
 const signupURL = applicationURL(appURL, baseDomain, '/signup', requestURL)
+const locatorMode = isApplicationHost(requestURL.hostname, baseDomain, appURL)
+const locatorSlug = ref('')
+const locatorError = ref('')
 const suggestedSlug = workspaceSlugFromStandardHost(requestURL.hostname, baseDomain)
 const suggestedSignupURL = suggestedSlug
   ? applicationURL(appURL, baseDomain, `/signup?slug=${encodeURIComponent(suggestedSlug)}`, requestURL)
@@ -82,9 +92,18 @@ async function submit() {
   }
 }
 
-if (import.meta.server && !import.meta.dev) await checkWorkspace()
+async function openWorkspace() {
+  const normalized = normalizeWorkspaceSlug(locatorSlug.value)
+  locatorSlug.value = normalized
+  locatorError.value = workspaceSlugError(normalized) ? t('auth.signup.slugInvalid') : ''
+  if (locatorError.value) return
+  await navigateTo(workspaceLoginURL(normalized, baseDomain, requestURL), { external: true })
+}
+
+if (import.meta.server && !import.meta.dev && !locatorMode) await checkWorkspace()
 
 onMounted(async () => {
+  if (locatorMode) return
   if (workspaceState.value === 'checking') await checkWorkspace()
   if (workspaceState.value === 'available' && authenticated.value) {
     const destination = typeof route.query.return_to === 'string' ? route.query.return_to : '/'
@@ -105,7 +124,24 @@ useHead({ title: computed(() => t('auth.login.pageTitle')) })
       </div>
     </section>
     <section class="auth-panel">
-      <div v-if="workspaceState === 'checking'" class="auth-form auth-workspace-state" role="status">
+      <form v-if="locatorMode" class="auth-form" @submit.prevent="openWorkspace">
+        <p class="app-eyebrow">{{ t('auth.login.workspaceAccess') }}</p>
+        <h2>{{ t('auth.login.locatorTitle') }}</h2>
+        <p>{{ t('auth.login.locatorDescription') }}</p>
+        <label>
+          {{ t('auth.login.locatorLabel') }}
+          <span class="locator-control" :data-invalid="Boolean(locatorError)">
+            <input v-model="locatorSlug" type="text" autocomplete="organization" required :placeholder="t('auth.signup.workspacePlaceholder')" />
+            <b>.{{ baseDomain }}</b>
+          </span>
+        </label>
+        <p v-if="locatorError" class="auth-message auth-message--error" role="alert">{{ locatorError }}</p>
+        <button class="app-button app-button--primary" type="submit" :disabled="!locatorSlug">
+          {{ t('auth.login.locatorSubmit') }} <ArrowRight :size="16" />
+        </button>
+        <p class="auth-signup-link">{{ t('auth.login.newAccount') }} <a :href="signupURL">{{ t('auth.login.signup') }}</a></p>
+      </form>
+      <div v-else-if="workspaceState === 'checking'" class="auth-form auth-workspace-state" role="status">
         <span class="app-spinner" />
         <p>{{ t('auth.login.checkingWorkspace') }}</p>
       </div>
@@ -152,4 +188,9 @@ useHead({ title: computed(() => t('auth.login.pageTitle')) })
 .auth-workspace-state > p:not(.app-eyebrow) { margin-bottom: 22px; }
 .auth-signup-link { margin-top: 20px !important; text-align: center; }
 .auth-signup-link a { color: var(--teal); font-weight: 750; }
+.locator-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; margin-top: 6px; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
+.locator-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgb(8 127 115 / 10%); }
+.locator-control[data-invalid='true'] { border-color: var(--red); }
+.locator-control input { min-width: 80px; flex: 1; padding: 0 0 0 10px; border: 0; outline: 0; }
+.locator-control b { max-width: 55%; padding: 0 10px; overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 </style>

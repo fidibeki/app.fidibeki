@@ -1,6 +1,6 @@
 export default defineNuxtRouteMiddleware(async (to) => {
   const config = useRuntimeConfig()
-  if ((to.path === '/' || to.path === '/login') &&
+  if (to.path === '/' &&
     isApplicationHost(
       useRequestURL().hostname,
       String(config.public.baseDomain || ''),
