@@ -22,6 +22,7 @@ type fakeStore struct {
 	createdKey                 string
 	incidents                  []Incident
 	listErr                    error
+	listCalls                  int
 	getIncident                Incident
 	getEntries                 []ChronologyEntry
 	getAssessments             []Assessment
@@ -30,6 +31,7 @@ type fakeStore struct {
 	getNotifications           []ControllerNotification
 	getProviderIntakes         []ProviderIncidentIntake
 	getErr                     error
+	getCalls                   int
 	createdProviderIntake      ProviderIncidentIntake
 	createProviderIntakeErr    error
 	providerIntakeActor        string
@@ -77,6 +79,7 @@ func (f *fakeStore) CreateIncident(
 }
 
 func (f *fakeStore) ListIncidents(context.Context, ListFilter) ([]Incident, error) {
+	f.listCalls++
 	return f.incidents, f.listErr
 }
 
@@ -86,6 +89,7 @@ func (f *fakeStore) GetIncident(
 	Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent,
 	[]ControllerNotification, []ProviderIncidentIntake, error,
 ) {
+	f.getCalls++
 	return f.getIncident, f.getEntries, f.getAssessments, f.getActions, f.getActionEvents,
 		f.getNotifications, f.getProviderIntakes, f.getErr
 }

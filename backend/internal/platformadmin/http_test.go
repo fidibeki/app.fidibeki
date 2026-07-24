@@ -91,7 +91,7 @@ func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	cookies := recorder.Result().Cookies()
-	if len(cookies) != 2 {
+	if len(cookies) != 3 {
 		t.Errorf("cookies = %#v", cookies)
 	}
 	for _, cookie := range cookies {
@@ -102,6 +102,10 @@ func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
 	queueCookie := cookieByName(cookies, PlatformQueueAccessCookie)
 	if queueCookie == nil || queueCookie.Path != "/admin/queues" {
 		t.Errorf("queue access cookie = %#v", queueCookie)
+	}
+	operationsCookie := cookieByName(cookies, PlatformOperationsAccessCookie)
+	if operationsCookie == nil || operationsCookie.Path != "/admin/operations" {
+		t.Errorf("operations access cookie = %#v", operationsCookie)
 	}
 	var response map[string]any
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
@@ -145,6 +149,9 @@ func TestPlatformAdminMagicLinkRequiresConfirmationBeforeRedirectingToQueues(t *
 	}
 	if cookieByName(confirmed.Result().Cookies(), PlatformQueueAccessCookie) == nil {
 		t.Error("queue access cookie missing")
+	}
+	if cookieByName(confirmed.Result().Cookies(), PlatformOperationsAccessCookie) == nil {
+		t.Error("operations access cookie missing")
 	}
 }
 
@@ -228,6 +235,11 @@ func TestAuthenticatedTenantManagementAndSessionRoutes(t *testing.T) {
 	handler.ServeHTTP(loggedOut, request)
 	if loggedOut.Code != http.StatusNoContent || authStore.revokedHash != auth.HashToken("refresh-token") {
 		t.Errorf("logout status = %d, revoked hash = %q", loggedOut.Code, authStore.revokedHash)
+	}
+	operationsCookie := cookieByName(loggedOut.Result().Cookies(), PlatformOperationsAccessCookie)
+	if operationsCookie == nil || operationsCookie.Path != "/admin/operations" ||
+		operationsCookie.MaxAge != -1 {
+		t.Errorf("cleared operations access cookie = %#v", operationsCookie)
 	}
 }
 

@@ -66,9 +66,10 @@ additional sessions. Reuse outside that window, from a different fingerprint, or
 has rotated revokes that administrator or member's active session family.
 
 Request a platform magic link with `POST /admin/auth/login`, then open the captured or delivered
-link and confirm the sign-in. The confirmation sets a short-lived, HTTP-only cookie scoped to the
-Asynq monitor at `http://api.localhost:8088/admin/queues/`; merely previewing the email link does
-not consume its one-time token.
+link and confirm the sign-in. The confirmation sets separate short-lived, HTTP-only cookies scoped
+to the Asynq monitor at `http://api.localhost:8088/admin/queues/` and the read-only
+privacy-incident workspace at `http://api.localhost:8088/admin/operations/privacy-incidents`;
+merely previewing the email link does not consume its one-time token.
 
 Authenticated platform administrators manage tenants under `/admin/tenants`. Authenticated tenant
 members can invite and manage members under `/auth/invite` and `/v1/members`; every route enforces

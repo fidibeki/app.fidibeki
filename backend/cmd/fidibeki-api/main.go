@@ -354,6 +354,13 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	breachregister.RegisterPlatformRoutes(platformRoutes, breachregister.HTTPOptions{
 		Store: breachregister.Store{Database: pools.Admin}, JWT: jwtManager,
 	})
+	breachregister.RegisterPlatformOperationsRoutes(
+		platformRoutes,
+		breachregister.HTTPOptions{
+			Store: breachregister.Store{Database: pools.Admin}, JWT: jwtManager,
+		},
+		platformadmin.PlatformOperationsAccessCookie,
+	)
 	feedback.RegisterPlatformSupportRoutes(platformRoutes, feedback.PlatformSupportAttachmentHTTPOptions{
 		Begin: db.BeginFromPool(pools.App), Store: feedback.Store{}, JWT: jwtManager,
 		Storage: objectStorage, Logger: logger,

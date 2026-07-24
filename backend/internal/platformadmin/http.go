@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	platformRefreshCookie     = "fidibeki_platform_refresh"
-	PlatformQueueAccessCookie = "fidibeki_platform_queue_access"
+	platformRefreshCookie          = "fidibeki_platform_refresh"
+	PlatformQueueAccessCookie      = "fidibeki_platform_queue_access"
+	PlatformOperationsAccessCookie = "fidibeki_platform_operations_access"
 )
 
 type TenantStore interface {
@@ -124,6 +125,7 @@ func (h *HTTPHandler) verify(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setRefreshCookie(w, tokens.RefreshToken)
 	h.setQueueAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
+	h.setOperationsAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
 	if formRequest {
 		http.Redirect(w, r, "/admin/queues/", http.StatusSeeOther)
 		return
@@ -163,11 +165,13 @@ func (h *HTTPHandler) refresh(w http.ResponseWriter, r *http.Request) {
 		}
 		h.clearRefreshCookie(w)
 		h.clearQueueAccessCookie(w)
+		h.clearOperationsAccessCookie(w)
 		writeAuthError(w, err)
 		return
 	}
 	h.setRefreshCookie(w, tokens.RefreshToken)
 	h.setQueueAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
+	h.setOperationsAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
 	writeSession(w, tokens)
 }
 
@@ -180,6 +184,7 @@ func (h *HTTPHandler) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	h.clearRefreshCookie(w)
 	h.clearQueueAccessCookie(w)
+	h.clearOperationsAccessCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -453,6 +458,25 @@ func (h *HTTPHandler) setQueueAccessCookie(w http.ResponseWriter, value string, 
 func (h *HTTPHandler) clearQueueAccessCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name: PlatformQueueAccessCookie, Path: "/admin/queues", MaxAge: -1,
+		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *HTTPHandler) setOperationsAccessCookie(w http.ResponseWriter, value string, expiresAt time.Time) {
+	maxAge := int(expiresAt.Sub(h.now()).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: PlatformOperationsAccessCookie, Value: value, Path: "/admin/operations",
+		Expires: expiresAt, MaxAge: maxAge, HttpOnly: true,
+		Secure: h.options.SecureCookies, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *HTTPHandler) clearOperationsAccessCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: PlatformOperationsAccessCookie, Path: "/admin/operations", MaxAge: -1,
 		HttpOnly: true, Secure: h.options.SecureCookies, SameSite: http.SameSiteStrictMode,
 	})
 }

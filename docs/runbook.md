@@ -4,6 +4,11 @@ Start every incident by recording the UTC start time, affected environment, last
 request IDs, and tenant IDs. Do not paste access tokens, magic links, webhook payload secrets, or
 customer evidence into chat or tickets.
 
+Personal-data breach facts belong in the restricted platform-admin register at
+`/admin/operations/privacy-incidents`, not in general logs, chat, or tickets. The browser workspace
+is read-only; use the separately authenticated platform-admin API for deliberate append or
+notification commands.
+
 ## 1. Database migration failure
 
 1. Keep the failed deploy inactive; Railway pre-deploy failure leaves the previous instance live.

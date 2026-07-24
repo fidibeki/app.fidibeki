@@ -38,7 +38,11 @@ func TestQueueMonitorRendersEscapedReadOnlyOperationsData(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	for _, expected := range []string{"Queue operations", "email.send", "task-1", "Read only", "3s", "&lt;script&gt;alert(1)&lt;/script&gt;"} {
+	for _, expected := range []string{
+		"Queue operations", "email.send", "task-1", "Read only", "3s",
+		`href="/admin/operations/privacy-incidents"`, "Privacy incidents",
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+	} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("body missing %q", expected)
 		}

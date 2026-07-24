@@ -918,10 +918,28 @@ was removed from the staging test tenant.
         Domain, HTTP, export-safety/parity, PostgreSQL scope/idempotency/grant/immutability,
         retention-registry, and migration `106` up/down/up coverage pass locally across all 74
         tables. No provider was contacted and no deployment or production work was performed.
+      - [x] Slice 7 (read-only platform operations UI): the existing platform-admin verification
+        flow now issues a second short-lived, HttpOnly, SameSite=Strict access cookie scoped only to
+        `/admin/operations`; refresh and logout rotate or clear it together with the queue cookie.
+        A server-rendered surface at `/admin/operations/privacy-incidents` reuses the existing
+        `platform:breach:read` authorization and the established `Store.ListIncidents`/
+        `Store.GetIncident` snapshot rather than adding a parallel API or data model. Its list and
+        detail views expose factual incident state, assessment clock, chronology, current action
+        revisions, staged controller notifications and delivery attempts, provider intakes, and
+        exact JSON/Markdown export aliases. It is intentionally read-only: there is no browser
+        mutation or JavaScript, so the surface cannot bypass the bearer API's idempotency,
+        validation, or audit contracts and does not introduce an unaudited CSRF path. Restrictive
+        no-store, framing, referrer, MIME-sniffing, and CSP headers apply to every HTML response;
+        Go templates escape operator-controlled content. Desktop and 390px mobile screenshots were
+        inspected, with document-width assertions proving only the internal data tables scroll.
+        Authentication/audience/permission, escaping, empty/not-found, complete-section, exact
+        bearer-export parity, HEAD, cookie lifecycle, and queue-navigation coverage pass locally.
+        No incident was changed, no notification was sent, and no deployment or production work
+        was performed.
       - Still remaining for later #64 slices: staged processor-to-controller notifications with
-        an authenticated staging capture exercise; staging-only tabletop scenarios; and an
-        internal platform-admin UI (the first real consumer of the new register and export routes)
-        when that product surface exists.
+        an authenticated staging capture exercise; staging-only tabletop scenarios; and any future
+        browser mutation forms, which must add explicit CSRF protection without weakening the
+        bearer API contracts.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

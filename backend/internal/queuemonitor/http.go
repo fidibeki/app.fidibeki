@@ -212,6 +212,9 @@ var monitorPage = template.Must(template.New("queue-monitor").Parse(`<!doctype h
     header { display: flex; min-height: 58px; align-items: center; gap: 12px; padding: 0 24px; background: #fff; border-bottom: 1px solid #dbe3e0; }
     .brand { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 750; }
     .brand i { display: grid; width: 29px; height: 29px; place-items: center; background: #172321; color: #fff; border-radius: 5px; font-style: normal; }
+    nav { display: flex; align-self: stretch; gap: 4px; }
+    nav a { display: flex; align-items: center; padding: 0 10px; border-bottom: 2px solid transparent; color: #65736f; font-size: 11px; font-weight: 700; text-decoration: none; }
+    nav a[aria-current="page"] { border-color: #087f73; color: #172321; }
     .readonly { margin-left: auto; padding: 4px 8px; background: #e4f2ee; color: #087f73; border-radius: 4px; font-size: 10px; font-weight: 750; text-transform: uppercase; }
     main { width: min(1320px, 100%); margin: 0 auto; padding: 26px 28px 50px; }
     .heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
@@ -237,11 +240,18 @@ var monitorPage = template.Must(template.New("queue-monitor").Parse(`<!doctype h
     .state-retry, .state-archived { background: #fff0d7; color: #8b4b05; }
     .state-active { background: #e6effc; color: #285ea9; }
     .empty { padding: 34px; color: #6a7874; font-size: 12px; text-align: center; }
-    @media (max-width: 760px) { main { padding: 18px 12px 36px; } .heading { align-items: start; flex-direction: column; } .ledger { grid-template-columns: 1fr 1fr; } .ledger div:nth-child(2) { border-right: 0; } .ledger div:nth-child(-n+2) { border-bottom: 1px solid #e4e9e7; } .wide { display: none; } }
+    @media (max-width: 760px) { header { align-items: flex-start; flex-wrap: wrap; padding: 11px 14px 0; } .brand { min-height: 36px; } .readonly { min-height: 22px; margin-top: 7px; } nav { width: 100%; height: 42px; order: 3; overflow-x: auto; } nav a { flex: 0 0 auto; } main { padding: 18px 12px 36px; } .heading { align-items: start; flex-direction: column; } .ledger { grid-template-columns: 1fr 1fr; } .ledger div:nth-child(2) { border-right: 0; } .ledger div:nth-child(-n+2) { border-bottom: 1px solid #e4e9e7; } .wide { display: none; } }
   </style>
 </head>
 <body>
-  <header><div class="brand"><i>F</i> fidibeki operations</div><span class="readonly">Read only</span></header>
+  <header>
+    <div class="brand"><i>F</i> fidibeki operations</div>
+    <nav aria-label="Platform operations">
+      <a href="/admin/queues/" aria-current="page">Queue operations</a>
+      <a href="/admin/operations/privacy-incidents">Privacy incidents</a>
+    </nav>
+    <span class="readonly">Read only</span>
+  </header>
   <main>
     <div class="heading"><div><p>Platform admin</p><h1>Queue operations</h1></div><time>Refreshed {{.RefreshedAt}}</time></div>
     {{if .Error}}<p class="error">{{.Error}}</p>{{else}}
