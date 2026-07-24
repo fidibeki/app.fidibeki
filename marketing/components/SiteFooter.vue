@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { footerGroups, siteTagline, loopStages } from '~/data/site'
 
-// Placeholder only — Fidibeki has no active social profiles yet. Point this at
-// the real LinkedIn page when one exists.
-const linkedInUrl = ''
+const linkedInUrl = 'https://www.linkedin.com/company/fidibeki'
 
 const links = useAppLinks()
 </script>
