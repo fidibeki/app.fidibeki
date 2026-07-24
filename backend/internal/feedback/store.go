@@ -11,7 +11,6 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -153,7 +152,7 @@ func (Store) CreateSubmission(
 			values.PageURL, values.Referrer,
 			values.UserAgent, values.OS, values.Browser, values.Device, values.ViewportWidth,
 			values.ViewportHeight, values.Language, values.DOMSnapshotHTML, values.DOMSnapshotStyles,
-			textProcessingStatus(values.Text, configuration.Plan), values.ReplaySessionID,
+			textProcessingStatus(values.Text, configuration, values.WidgetRuleID), values.ReplaySessionID,
 		).Scan(&publicID)
 		if err == nil {
 			break
@@ -424,15 +423,40 @@ func feedbackTitle(text *string) string {
 	return string([]rune(title)[:80])
 }
 
-func textProcessingStatus(text *string, plan tenant.Plan) string {
+func textProcessingStatus(
+	text *string,
+	configuration project.PublicConfiguration,
+	widgetRuleID string,
+) string {
 	if text == nil || strings.TrimSpace(*text) == "" {
 		return "skipped"
 	}
-	definition, exists := config.PlanFor(plan)
+	definition, exists := config.PlanFor(configuration.Plan)
 	if !exists || !definition.Features.AI {
 		return "skipped"
 	}
-	return "pending"
+	if ruleAIInputEnabled(configuration, widgetRuleID, project.AIInputFeedbackText) {
+		return "pending"
+	}
+	return "skipped"
+}
+
+func ruleAIInputEnabled(
+	configuration project.PublicConfiguration,
+	widgetRuleID string,
+	category project.AIInputCategory,
+) bool {
+	for _, rule := range configuration.Rules {
+		if rule.ID != widgetRuleID || !rule.AIProcessing.Enabled {
+			continue
+		}
+		for _, allowed := range rule.AIProcessing.InputCategories {
+			if allowed == category {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func NewID() string {

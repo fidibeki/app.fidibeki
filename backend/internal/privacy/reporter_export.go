@@ -26,6 +26,7 @@ var reporterExportFiles = []exportFile{
 			'rating', feedback.rating, 'title', feedback.title,
 			'description', feedback.description, 'text', feedback.text,
 			'text_cleaned', feedback.text_cleaned, 'responses', feedback.responses,
+			'ai_redaction_manifest', feedback.ai_redaction_manifest,
 			'comment', feedback.comment, 'reporter_email', feedback.reporter_email,
 			'reporter_consent_granted_at', feedback.reporter_consent_granted_at,
 			'reporter_consent_withdrawn_at', feedback.reporter_consent_withdrawn_at,
@@ -154,6 +155,7 @@ var reporterExportFiles = []exportFile{
 			'size_bytes', attachment.size_bytes, 'duration_seconds', attachment.duration_seconds,
 				'processing_status', attachment.processing_status,
 				'transcription', attachment.transcription,
+				'ai_redaction_manifest', attachment.ai_redaction_manifest,
 				'completed_at', attachment.completed_at,
 				'retention_deleted_at', attachment.retention_deleted_at,
 				'safety_status', attachment.safety_status,
@@ -172,6 +174,37 @@ var reporterExportFiles = []exportFile{
 		WHERE attachment.tenant_id = $1 AND lower(feedback.reporter_email) = $2
 		  AND feedback.created_at <= $3 AND attachment.created_at <= $3
 		ORDER BY attachment.created_at, attachment.id
+	`},
+	{Name: "ai-processing-runs.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', run.id, 'project_id', run.project_id, 'feedback_id', run.feedback_id,
+			'attachment_id', run.attachment_id, 'widget_rule_id', run.widget_rule_id,
+			'generation', run.generation, 'attempt', run.attempt,
+			'policy_version', run.policy_version, 'provider', run.provider,
+			'model', run.model, 'purpose', run.purpose,
+			'input_category', run.input_category, 'status', run.status,
+			'redaction_manifest', run.redaction_manifest,
+			'failure_reason', run.failure_reason, 'started_at', run.started_at,
+			'completed_at', run.completed_at, 'created_at', run.created_at,
+			'provider_file_deleted_at', (
+				SELECT max(file.deleted_at) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			),
+			'provider_file_delete_failed_at', (
+				SELECT max(file.failed_at) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			),
+			'provider_file_delete_attempts', (
+				SELECT COALESCE(sum(file.delete_attempts), 0) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			)
+		)
+		FROM ai_processing_runs AS run
+		JOIN feedbacks AS feedback
+		  ON feedback.tenant_id = run.tenant_id AND feedback.id = run.feedback_id
+		WHERE run.tenant_id = $1 AND lower(feedback.reporter_email) = $2
+		  AND feedback.created_at <= $3 AND run.created_at <= $3
+		ORDER BY run.started_at, run.id
 	`},
 	{Name: "replays.jsonl", Query: `
 		SELECT jsonb_build_object(

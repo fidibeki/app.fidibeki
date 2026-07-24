@@ -82,6 +82,16 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 				"pt-ao": {LauncherLabel: "Opinião", Prompt: "Como correu?"},
 			},
 			AllowComment: true, CollectContact: true,
+			AIProcessing: project.AIProcessingConfig{
+				Enabled: true, PolicyVersion: project.AIProcessingPolicyVersion,
+				Provider: project.AIProviderGoogleGemini,
+				InputCategories: []project.AIInputCategory{
+					project.AIInputFeedbackText, project.AIInputAudio,
+				},
+				PrivacyPolicyURL:  "https://example.com/privacy",
+				SensitiveDataMode: project.AISensitiveDataProhibit,
+				Acknowledged:      true, AcknowledgedByMemberID: stringPointer("member-private"),
+			},
 			Appearance: widgetconfig.Appearance{
 				Position: "bottom-right", Theme: "dark", AccentColor: "#005f56",
 				AccentForeground: "#ffffff",
@@ -118,12 +128,21 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,
 		`"replay_record_canvas":false`, `"replay_canvas_fps":2`,
 		`"replay_consent":{"mode":"customer_cmp","notice_version":"2026-07"`,
+		`"ai_processing":{"enabled":true,"provider":"google_gemini","input_categories":["feedback_text","audio"],"privacy_policy_url":"https://example.com/privacy","policy_version":"2026-07-24"}`,
 		`"include_conditions":[{"id":"condition-include"`,
 		`"exclude_conditions":[{"id":"condition-exclude"`,
 		`"appearance":{"position":"bottom-right","theme":"dark","accent_color":"#005f56","accent_foreground":"#ffffff"}`,
 	} {
 		if !strings.Contains(recorder.Body.String(), fragment) {
 			t.Errorf("body = %s, missing %s", recorder.Body.String(), fragment)
+		}
+	}
+	for _, private := range []string{
+		`"acknowledged"`, `"acknowledged_at"`, `"acknowledged_by_member_id"`,
+		`"sensitive_data_mode"`, `"purposes"`, "member-private",
+	} {
+		if strings.Contains(recorder.Body.String(), private) {
+			t.Errorf("public configuration leaked private AI governance field %q: %s", private, recorder.Body.String())
 		}
 	}
 	if strings.Contains(strings.Split(recorder.Body.String(), `"definitions"`)[0], `"id":"paused-rule-id"`) {

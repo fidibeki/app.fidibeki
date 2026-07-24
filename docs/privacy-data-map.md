@@ -22,7 +22,7 @@ customer-facing claims.
 | Anonymous widget analytics | Visitor/page-view/event IDs, page path, funnel event and daily counts | Measure matched, impression, interaction, submit, and dismiss funnels | PostgreSQL | Raw events 90 days; daily aggregates 730 days |
 | Integration delivery | Slack/Teams/webhook configuration, encrypted credentials, attempts and errors | Send operational notifications and retry delivery | PostgreSQL, Asynq/Redis | Workspace/integration lifecycle; credentials are never exported |
 | Email delivery | Recipient, message metadata, delivery/bounce/complaint events | Send authentication, lifecycle, and reporter messages | PostgreSQL, Asynq/Redis, configured email provider | Operational and audit lifecycle |
-| AI processing | Submitted text/media required for configured analysis, job state, external file cleanup ledger | Suggest triage and analyze supported attachments | PostgreSQL, private storage, configured AI provider | Source follows workflow/media retention; provider file deletion uses the cleanup ledger |
+| AI processing | Rule-owned authorization; minimized submitted text or explicitly selected media; redacted advisory results; provider/model/purpose/category/status evidence; category-only redaction manifest; external file deletion evidence | Suggest triage and analyze only the input categories explicitly enabled for the matching rule | PostgreSQL, private storage, Google Gemini Developer API when explicitly enabled | Existing and new rules default off. Source follows workflow/media retention; reporter anonymization removes derived values, manifests, and runs. Provider files are deleted immediately after processing with a retry ledger; Google documents a 48-hour automatic expiry as a fallback, not Fidibeki's deletion target. |
 | Billing | Plan/subscription state and external customer/subscription references | Entitlement, invoicing, dunning, and deletion scheduling | PostgreSQL and configured billing provider | Contractual/accounting review required; billing identifiers are never exported |
 | Audit and observability | Actor/resource IDs, change metadata, request/error telemetry | Security investigation, accountability, and service operation | PostgreSQL and configured telemetry provider | Technical operational lifecycle; avoid direct reporter email in privacy audit payloads |
 | Privacy jobs and requests | Hashed verification token, one-way email digest, job state, counts, private archive key | Verified access/anonymization, export, retry, and audit | PostgreSQL, Asynq/Redis, private object storage | Archives 7 days; unverified requests 48 hours; verified access 30 days |
@@ -77,6 +77,24 @@ be verified independently.
   is isolated from any authenticated account identity.
 - Reporter anonymization deletes/nulls session replay storage objects and manifests reachable
   through the reporter's feedback, in addition to attachments.
+- Plan entitlement never enables AI processing. AI is disabled by default per widget rule and can
+  only be enabled after an authorized operator acknowledges the current provider/purpose policy,
+  chooses allowed input categories, and supplies an HTTPS customer privacy notice. The current rule
+  is rechecked before scheduling, claim, and persistence; disabling it discards queued and in-flight
+  results.
+- Written feedback is deterministically minimized before the Gemini request. Reporter email,
+  contact consent, page/referrer/device metadata, replay, analytics IDs, and resource IDs are not
+  included. Media uploads use a constant display name. Every returned text field is redacted again
+  by the backend using the exact `[REDACTED]` marker before persistence; invalid output is
+  quarantined. Redaction manifests contain categories/counts only.
+- AI processing evidence never stores prompts, source content, raw provider output, or removed
+  values. Workspace and verified reporter exports include safe run/deletion evidence. Reporter
+  anonymization removes derived analysis, manifests, and the reporter's processing runs.
+- The application uses the Gemini Developer API `generateContent` and Files API without grounding,
+  explicit context caching, the Interactions API, tuning, or dataset contribution. Provider project
+  billing, logging/data-sharing settings, executed DPA, ZDR status, and transfer terms remain
+  environment controls that must be verified before broad enablement. See
+  `docs/ai-provider-assessment.md`.
 - Canvas recording is forced off in the widget, API normalization, and database constraint. A
   modified or old client cannot make canvas events playable because batch verification rejects the
   canvas source before storage promotion.
@@ -133,3 +151,7 @@ controller/processor roles.
 - Privacy/legal review must approve the replay consent copy, withdrawal/expiry behavior, evidence
   retention, DPA wording, and current subprocessor inventory before replay is enabled broadly in
   staging. Production enablement and deployment remain explicitly out of scope.
+- Privacy/legal and platform owners must close the blocking checks in
+  `docs/ai-provider-assessment.md` before AI is broadly enabled, including proof that the Gemini API
+  project is a Paid Service, request logging and voluntary data sharing are off, the applicable DPA
+  and transfer mechanism are accepted, and the DPIA screening decision is recorded.

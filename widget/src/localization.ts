@@ -1,4 +1,4 @@
-import type { WidgetLocalization, WidgetRule } from './types'
+import type { AIInputCategory, WidgetLocalization, WidgetRule } from './types'
 
 export interface WidgetSystemCopy {
   close: string
@@ -17,6 +17,9 @@ export interface WidgetSystemCopy {
   emailRequired: string
   consentNotice: string
   privacyPolicy: string
+  aiDisclosure: string
+  aiScope: string
+  aiInputNames: Record<AIInputCategory, string>
   required: string
   retry: string
   retryInSecond: string
@@ -51,6 +54,12 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailRequired: 'Enter an email address to receive updates.',
     consentNotice: "We'll only use your email for updates about this feedback. Unsubscribe anytime.",
     privacyPolicy: 'Privacy policy',
+    aiDisclosure: 'Selected feedback content may be processed by Google Gemini for advisory analysis.',
+    aiScope: 'Content types: {categories}.',
+    aiInputNames: {
+      feedback_text: 'written feedback', screenshot: 'screenshots',
+      audio: 'audio recordings', video: 'video recordings',
+    },
     required: 'Please complete the required response.',
     retry: 'Retry',
     retryInSecond: 'Try again in {seconds} second.',
@@ -77,6 +86,12 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailRequired: 'Introduz um endereço de email para receber atualizações.',
     consentNotice: 'Utilizamos o teu email apenas para atualizações sobre este feedback. Cancela quando quiseres.',
     privacyPolicy: 'Política de privacidade',
+    aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo Google Gemini para análise consultiva.',
+    aiScope: 'Tipos de conteúdo: {categories}.',
+    aiInputNames: {
+      feedback_text: 'feedback escrito', screenshot: 'capturas de ecrã',
+      audio: 'gravações de áudio', video: 'gravações de vídeo',
+    },
     required: 'Preenche a resposta obrigatória.',
     retry: 'Tentar novamente',
     retryInSecond: 'Tenta novamente dentro de {seconds} segundo.',

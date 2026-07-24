@@ -91,7 +91,7 @@ func TestWorkspaceExportTracer(t *testing.T) {
 
 	files := readPrivacyArchive(t, storage.body)
 	wantFiles := []string{
-		"attachments.jsonl", "feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
+		"ai-processing-runs.jsonl", "attachments.jsonl", "feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
 		"issue-activities.jsonl", "issue-comments.jsonl", "issue-tags.jsonl", "issue-updates.jsonl",
 		"issues.jsonl", "manifest.json", "projects.jsonl", "replays.jsonl", "tags.jsonl",
 		"widget-analytics-daily.jsonl", "widget-rules.jsonl", "widget-target-conditions.jsonl",
@@ -673,19 +673,49 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	now := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	tenantID, memberID := seedPrivacyWorkspace(t, ctx, database, "rights-privacy", "Reporter checkout problem")
 	otherTenantID, _ := seedPrivacyWorkspace(t, ctx, database, "rights-other", "Other reporter private data")
-	var feedbackID, issueID, projectID string
+	var feedbackID, issueID, projectID, ruleID string
 	if err := database.QueryRow(ctx, `
-		SELECT feedback.id, feedback.issue_id, feedback.project_id
+		SELECT feedback.id, feedback.issue_id, feedback.project_id, feedback.widget_rule_id
 		FROM feedbacks AS feedback WHERE feedback.tenant_id = $1
-	`, tenantID).Scan(&feedbackID, &issueID, &projectID); err != nil {
+	`, tenantID).Scan(&feedbackID, &issueID, &projectID, &ruleID); err != nil {
 		t.Fatalf("read reporter fixture IDs: %v", err)
 	}
 	if _, err := database.Exec(ctx, `
 		UPDATE feedbacks SET dom_snapshot_html = '<main>Reporter Name</main>',
-		                     dom_snapshot_styles = 'main{color:red}'
+		                     dom_snapshot_styles = 'main{color:red}',
+		                     text_cleaned = 'Cleaned reporter feedback',
+		                     text_sentiment_score = -0.5,
+		                     text_moderation_flags = ARRAY['frustration'],
+		                     ai_suggested_title = 'Checkout needs attention',
+		                     ai_actionability = 'actionable',
+		                     ai_category = 'checkout',
+		                     ai_priority = 'high',
+		                     ai_redaction_manifest = '{"policy_version":"2026-07-24","categories":{"email":1}}',
+		                     ai_processed_at = $2
 		WHERE id = $1
-	`, feedbackID); err != nil {
+	`, feedbackID, now); err != nil {
 		t.Fatalf("add reporter DOM snapshot: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE attachments
+		SET ai_redaction_manifest = '{"policy_version":"2026-07-24","categories":{"phone":1}}'
+		WHERE feedback_id = $1
+	`, feedbackID); err != nil {
+		t.Fatalf("add reporter attachment AI manifest: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO ai_processing_runs (
+			tenant_id, project_id, feedback_id, widget_rule_id, generation,
+			policy_version, provider, model, purpose, input_category, status,
+			redaction_manifest, started_at, completed_at
+		) VALUES (
+			$1, $2, $3, $4, 1, '2026-07-24', 'google_gemini', 'gemini-test',
+			'cleanup,moderation,sentiment,triage_recommendations', 'feedback_text',
+			'completed', '{"policy_version":"2026-07-24","categories":{"email":1}}',
+			$5::timestamptz - interval '1 minute', $5
+		)
+	`, tenantID, projectID, feedbackID, ruleID, now); err != nil {
+		t.Fatalf("add reporter AI processing evidence: %v", err)
 	}
 	var sessionID string
 	if err := database.QueryRow(ctx, `
@@ -744,7 +774,7 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	archiveText := string(bytes.Join(mapValues(exportFiles), nil))
 	for _, required := range []string{
 		"fidibeki.reporter-export.v1", "Reporter checkout problem", "Checkout audio transcript",
-		"Operational comment", "Investigating",
+		"Operational comment", "Investigating", "gemini-test", "policy_version",
 	} {
 		if !strings.Contains(archiveText, required) {
 			t.Errorf("reporter archive does not contain %q", required)
@@ -808,26 +838,40 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	var notify bool
 	var domHTML, domStyles *string
 	var feedbackTitle, feedbackDescription string
+	var textCleaned, suggestedTitle *string
+	var redactionManifest string
 	if err := database.QueryRow(ctx, `
 		SELECT reporter_email, notify_reporter, dom_snapshot_html, dom_snapshot_styles,
-		       title, description
+		       title, description, text_cleaned, ai_suggested_title,
+		       ai_redaction_manifest::text
 		FROM feedbacks WHERE id = $1
 	`, feedbackID).Scan(
 		&reporterEmail, &notify, &domHTML, &domStyles, &feedbackTitle, &feedbackDescription,
+		&textCleaned, &suggestedTitle, &redactionManifest,
 	); err != nil || reporterEmail != nil || notify || domHTML != nil || domStyles != nil ||
-		feedbackTitle != "Reporter checkout problem" || feedbackDescription != "Reporter checkout problem" {
-		t.Fatalf("anonymized feedback = email=%v notify=%t dom=%v/%v title=%q description=%q error=%v",
-			reporterEmail, notify, domHTML, domStyles, feedbackTitle, feedbackDescription, err)
+		feedbackTitle != "Reporter checkout problem" || feedbackDescription != "Reporter checkout problem" ||
+		textCleaned != nil || suggestedTitle != nil || redactionManifest != "{}" {
+		t.Fatalf("anonymized feedback = email=%v notify=%t dom=%v/%v title=%q description=%q cleaned=%v suggested=%v manifest=%s error=%v",
+			reporterEmail, notify, domHTML, domStyles, feedbackTitle, feedbackDescription,
+			textCleaned, suggestedTitle, redactionManifest, err)
 	}
 	var attachmentKey, transcription *string
 	var attachmentDeleted *time.Time
+	var attachmentManifest string
 	if err := database.QueryRow(ctx, `
-		SELECT storage_key, transcription, retention_deleted_at
+		SELECT storage_key, transcription, retention_deleted_at, ai_redaction_manifest::text
 		FROM attachments WHERE feedback_id = $1
-	`, feedbackID).Scan(&attachmentKey, &transcription, &attachmentDeleted); err != nil ||
-		attachmentKey != nil || transcription != nil || attachmentDeleted == nil {
-		t.Fatalf("anonymized attachment = key=%v transcript=%v deleted=%v error=%v",
-			attachmentKey, transcription, attachmentDeleted, err)
+	`, feedbackID).Scan(&attachmentKey, &transcription, &attachmentDeleted, &attachmentManifest); err != nil ||
+		attachmentKey != nil || transcription != nil || attachmentDeleted == nil ||
+		attachmentManifest != "{}" {
+		t.Fatalf("anonymized attachment = key=%v transcript=%v deleted=%v manifest=%s error=%v",
+			attachmentKey, transcription, attachmentDeleted, attachmentManifest, err)
+	}
+	var processingRuns int
+	if err := database.QueryRow(ctx, `
+		SELECT count(*) FROM ai_processing_runs WHERE tenant_id = $1 AND feedback_id = $2
+	`, tenantID, feedbackID).Scan(&processingRuns); err != nil || processingRuns != 0 {
+		t.Fatalf("AI processing evidence after anonymization = %d, error=%v", processingRuns, err)
 	}
 	var sessionKey, storedBatchKey *string
 	var sessionDeleted, batchDeleted *time.Time

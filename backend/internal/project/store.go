@@ -173,6 +173,7 @@ func (Store) CreateWidgetRule(
 	values WidgetRuleValues,
 	actorMemberID string,
 ) (WidgetRule, error) {
+	values.AIProcessing = finalizeAIProcessing(values.AIProcessing, actorMemberID, time.Now().UTC())
 	arguments, err := widgetRuleArguments(tenantID, projectID, values)
 	if err != nil {
 		return WidgetRule{}, err
@@ -187,14 +188,15 @@ func (Store) CreateWidgetRule(
 			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
 			replay_record_canvas, replay_canvas_fps, replay_consent,
 			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
-			response_blocks, localizations, allow_comment, collect_contact,
-			widget_appearance_overrides
+				response_blocks, localizations, allow_comment, collect_contact, ai_processing,
+				widget_appearance_overrides
 		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
 			       $27, $28, $29::jsonb, $30, $31,
 			       COALESCE(NULLIF($32, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
-			       $33, $34, $35, $36::jsonb, $37::jsonb, $38, $39, $40::jsonb
+			       $33, $34, $35, $36::jsonb, $37::jsonb, $38, $39, $40::jsonb,
+			       $41::jsonb
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -210,6 +212,13 @@ func (Store) CreateWidgetRule(
 	if values.ReplayMode != ReplayNone || values.ReplayConsent.Mode != ReplayConsentNone {
 		if err := recordReplayConsentConfigurationAudit(
 			ctx, query, tenantID, projectID, rule, actorMemberID, nil, nil, 0,
+		); err != nil {
+			return WidgetRule{}, err
+		}
+	}
+	if rule.AIProcessing.Enabled {
+		if err := recordAIProcessingConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID, nil,
 		); err != nil {
 			return WidgetRule{}, err
 		}
@@ -290,20 +299,24 @@ func (Store) UpdateWidgetRule(
 ) (WidgetRule, error) {
 	var previousReplayMode ReplayMode
 	var previousReplayConsent ReplayConsentConfig
+	var previousAIProcessing AIProcessingConfig
 	var previousDefinitionVersion int
 	if err := query.QueryRow(ctx, `
-		SELECT rule.replay_mode, rule.replay_consent, rule.definition_version
+			SELECT rule.replay_mode, rule.replay_consent, rule.ai_processing, rule.definition_version
 		FROM widget_rules AS rule
 		JOIN projects AS project ON project.id = rule.project_id
 		WHERE project.tenant_id = $1 AND project.id = $2 AND rule.id = $3
 		FOR UPDATE OF rule
 	`, tenantID, projectID, ruleID).Scan(
-		&previousReplayMode, &previousReplayConsent, &previousDefinitionVersion,
+		&previousReplayMode, &previousReplayConsent, &previousAIProcessing, &previousDefinitionVersion,
 	); errors.Is(err, pgx.ErrNoRows) {
 		return WidgetRule{}, ErrNotFound
 	} else if err != nil {
 		return WidgetRule{}, fmt.Errorf("lock widget replay consent configuration: %w", err)
 	}
+	values.AIProcessing = finalizeAIProcessingUpdate(
+		previousAIProcessing, values.AIProcessing, actorMemberID, time.Now().UTC(),
+	)
 	valueArguments, err := widgetRuleValueArguments(values)
 	if err != nil {
 		return WidgetRule{}, err
@@ -326,10 +339,11 @@ func (Store) UpdateWidgetRule(
 				definition_version = rule.definition_version + 1,
 				definition_status = $34, presentation = $35, objective = $36,
 				response_blocks = $37::jsonb, localizations = $38::jsonb,
-				allow_comment = $39, collect_contact = $40,
-				widget_appearance_overrides = CASE
-					WHEN $42 THEN $41::jsonb
-					ELSE rule.widget_appearance_overrides || $41::jsonb
+					allow_comment = $39, collect_contact = $40,
+					ai_processing = $41::jsonb,
+					widget_appearance_overrides = CASE
+						WHEN $43 THEN $42::jsonb
+						ELSE rule.widget_appearance_overrides || $42::jsonb
 				END
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
@@ -354,11 +368,146 @@ func (Store) UpdateWidgetRule(
 			return WidgetRule{}, err
 		}
 	}
+	if !reflect.DeepEqual(previousAIProcessing, rule.AIProcessing) {
+		if err := recordAIProcessingConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID, &previousAIProcessing,
+		); err != nil {
+			return WidgetRule{}, err
+		}
+	}
+	if previousAIProcessing.Enabled && !rule.AIProcessing.Enabled {
+		if err := disableWidgetRuleAI(ctx, query, tenantID, projectID, ruleID, time.Now().UTC()); err != nil {
+			return WidgetRule{}, err
+		}
+	}
 	rules, err := attachWidgetRuleTargetConditions(ctx, query, projectID, []WidgetRule{rule})
 	if err != nil {
 		return WidgetRule{}, err
 	}
 	return rules[0], nil
+}
+
+func finalizeAIProcessing(
+	configuration AIProcessingConfig,
+	actorMemberID string,
+	now time.Time,
+) AIProcessingConfig {
+	if !configuration.Enabled {
+		return AIProcessingConfig{}
+	}
+	configuration.Acknowledged = true
+	configuration.AcknowledgedAt = &now
+	configuration.AcknowledgedByMemberID = &actorMemberID
+	return configuration
+}
+
+func finalizeAIProcessingUpdate(
+	previous AIProcessingConfig,
+	next AIProcessingConfig,
+	actorMemberID string,
+	now time.Time,
+) AIProcessingConfig {
+	if !next.Enabled {
+		return AIProcessingConfig{}
+	}
+	if aiProcessingContractEqual(previous, next) && previous.AcknowledgedAt != nil &&
+		previous.AcknowledgedByMemberID != nil {
+		next.Acknowledged = true
+		next.AcknowledgedAt = previous.AcknowledgedAt
+		next.AcknowledgedByMemberID = previous.AcknowledgedByMemberID
+		return next
+	}
+	return finalizeAIProcessing(next, actorMemberID, now)
+}
+
+func aiProcessingContractEqual(left, right AIProcessingConfig) bool {
+	left.AcknowledgedAt, right.AcknowledgedAt = nil, nil
+	left.AcknowledgedByMemberID, right.AcknowledgedByMemberID = nil, nil
+	return reflect.DeepEqual(left, right)
+}
+
+func recordAIProcessingConfigurationAudit(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	rule WidgetRule,
+	actorMemberID string,
+	previous *AIProcessingConfig,
+) error {
+	data := map[string]any{
+		"project_id":         projectID,
+		"widget_rule_id":     rule.ID,
+		"definition_version": rule.DefinitionVersion,
+		"ai_processing":      rule.AIProcessing,
+	}
+	if previous != nil {
+		data["previous_ai_processing"] = *previous
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode AI processing configuration audit: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, data
+		) VALUES ($1, 'widget_rule.ai_processing_updated', $2, $3::jsonb)
+	`, tenantID, actorMemberID, string(encoded)); err != nil {
+		return fmt.Errorf("record AI processing configuration audit: %w", err)
+	}
+	return nil
+}
+
+func disableWidgetRuleAI(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, projectID, ruleID string,
+	now time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks
+		SET text_process_status = 'skipped', ai_job_enqueued_at = NULL,
+		    ai_budget_deferred_until = NULL, ai_budget_deferred_reason = NULL
+		WHERE tenant_id = $1 AND project_id = $2 AND widget_rule_id = $3
+		  AND text_process_status IN ('pending', 'processing')
+	`, tenantID, projectID, ruleID); err != nil {
+		return fmt.Errorf("disable widget rule text AI: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE attachments AS attachment
+		SET processing_status = 'skipped', error_message = NULL,
+		    ai_budget_deferred_until = NULL
+		FROM feedbacks AS feedback
+		WHERE feedback.tenant_id = $1 AND feedback.project_id = $2
+		  AND feedback.widget_rule_id = $3 AND feedback.id = attachment.feedback_id
+		  AND attachment.tenant_id = feedback.tenant_id
+		  AND attachment.processing_status IN ('pending', 'processing')
+	`, tenantID, projectID, ruleID); err != nil {
+		return fmt.Errorf("disable widget rule attachment AI: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks AS feedback
+		SET ai_processed_at = $4
+		WHERE feedback.tenant_id = $1 AND feedback.project_id = $2
+		  AND feedback.widget_rule_id = $3
+		  AND feedback.text_process_status IN ('completed', 'failed', 'skipped')
+		  AND NOT EXISTS (
+		      SELECT 1 FROM attachments AS attachment
+		      WHERE attachment.feedback_id = feedback.id
+		        AND attachment.processing_status IN ('pending', 'processing')
+		  )
+	`, tenantID, projectID, ruleID, now); err != nil {
+		return fmt.Errorf("complete disabled widget rule AI: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_processing_runs
+		SET status = 'discarded', failure_reason = 'policy_disabled', completed_at = $4
+		WHERE tenant_id = $1 AND project_id = $2 AND widget_rule_id = $3
+		  AND status = 'processing'
+	`, tenantID, projectID, ruleID, now); err != nil {
+		return fmt.Errorf("discard disabled widget rule AI evidence: %w", err)
+	}
+	return nil
 }
 
 func recordReplayConsentConfigurationAudit(
@@ -405,6 +554,18 @@ func (Store) DeleteWidgetRule(
 	projectID string,
 	ruleID string,
 ) error {
+	if err := disableWidgetRuleAI(
+		ctx, query, tenantID, projectID, ruleID, time.Now().UTC(),
+	); err != nil {
+		return err
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE feedbacks
+		SET widget_rule_id = NULL
+		WHERE tenant_id = $1 AND project_id = $2 AND widget_rule_id = $3
+	`, tenantID, projectID, ruleID); err != nil {
+		return fmt.Errorf("detach feedback from widget rule: %w", err)
+	}
 	tag, err := query.Exec(ctx, `
 		DELETE FROM widget_rules AS rule
 		USING projects AS project
@@ -624,7 +785,7 @@ const widgetRuleColumns = `
 		replay_consent,
 		recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
-		response_blocks, localizations, allow_comment, collect_contact,
+		response_blocks, localizations, allow_comment, collect_contact, ai_processing,
 		widget_appearance_overrides,
 		created_at, updated_at`
 
@@ -639,7 +800,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"replay_consent",
 		"recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
-		"response_blocks", "localizations", "allow_comment", "collect_contact",
+		"response_blocks", "localizations", "allow_comment", "collect_contact", "ai_processing",
 		"widget_appearance_overrides",
 		"created_at", "updated_at",
 	}
@@ -685,6 +846,10 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode replay consent: %w", err)
 	}
+	aiProcessing, err := json.Marshal(values.AIProcessing)
+	if err != nil {
+		return nil, fmt.Errorf("encode AI processing configuration: %w", err)
+	}
 	return []any{
 		values.Name, values.Priority, values.Enabled, values.MatcherType, values.MatcherValue,
 		values.TriggerType, values.TriggerDelaySeconds, values.TriggerScrollPercent,
@@ -697,6 +862,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		values.RecurrenceMode, values.RecurrenceDays,
 		values.DefinitionKey, values.DefinitionStatus, values.Presentation, values.Objective,
 		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
+		string(aiProcessing),
 		string(appearance),
 	}, nil
 }
@@ -735,6 +901,7 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.DefinitionKey, &rule.DefinitionVersion, &rule.DefinitionStatus,
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
 		&rule.AllowComment, &rule.CollectContact,
+		&rule.AIProcessing,
 		&rule.AppearanceOverrides,
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)

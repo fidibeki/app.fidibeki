@@ -248,6 +248,38 @@ test('records visibility and only the first meaningful interaction', async ({ pa
   expect(eventTypes).toEqual(['matched', 'impression', 'interaction'])
 })
 
+test('shows the governed AI disclosure and customer privacy link before collection', async ({ page }) => {
+  const aiRule: WidgetRule = {
+    ...browserRule,
+    ai_processing: {
+      enabled: true,
+      provider: 'google_gemini',
+      input_categories: ['feedback_text', 'audio'],
+      privacy_policy_url: 'https://customer.example/privacy',
+      policy_version: '2026-07-24',
+    },
+  }
+  const configuration = browserConfiguration(aiRule)
+  configuration.features.ai = true
+  await page.route('**/v1/widget/config*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/connected*', (route) => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html')
+  const disclosure = page.getByText(
+    'Selected feedback content may be processed by Google Gemini for advisory analysis. Content types: written feedback, audio recordings.',
+  )
+  await expect(disclosure).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute(
+    'href',
+    'https://customer.example/privacy',
+  )
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+})
+
 const meaningfulInteractions: Array<{ name: string; act(page: Page): Promise<void> }> = [
   {
     name: 'rating selection',

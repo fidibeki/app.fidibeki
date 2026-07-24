@@ -166,6 +166,10 @@ func anonymizeReporterRows(
 		query      string
 		includeNow bool
 	}{
+		{query: `DELETE FROM ai_processing_runs AS run USING feedbacks AS feedback
+		 WHERE run.tenant_id = $1 AND feedback.tenant_id = run.tenant_id
+		   AND feedback.id = run.feedback_id AND lower(feedback.reporter_email) = $2
+		   AND feedback.created_at <= $3 AND run.created_at <= $3`},
 		{query: `DELETE FROM session_batches AS batch USING sessions AS session, feedbacks AS feedback
 		 WHERE batch.tenant_id = $1 AND session.tenant_id = batch.tenant_id
 		   AND session.id = batch.session_id AND feedback.tenant_id = session.tenant_id
@@ -193,7 +197,7 @@ func anonymizeReporterRows(
 		   AND attachment.completed_at IS NULL`},
 		{query: `UPDATE attachments AS attachment
 		 SET storage_key = NULL, retention_deleted_at = $4, transcription = NULL,
-		     sentiment_score = NULL, moderation_flags = '{}'
+		     sentiment_score = NULL, moderation_flags = '{}', ai_redaction_manifest = '{}'
 		 FROM feedbacks AS feedback
 		 WHERE attachment.tenant_id = $1 AND feedback.tenant_id = attachment.tenant_id
 		   AND feedback.id = attachment.feedback_id AND lower(feedback.reporter_email) = $2
@@ -206,7 +210,11 @@ func anonymizeReporterRows(
 		{query: `UPDATE feedbacks
 		 SET reporter_email = NULL, notify_reporter = false,
 		     reporter_consent_withdrawn_at = $4,
-		     dom_snapshot_html = NULL, dom_snapshot_styles = NULL
+		     dom_snapshot_html = NULL, dom_snapshot_styles = NULL,
+		     text_cleaned = NULL, text_sentiment_score = NULL,
+		     text_moderation_flags = '{}', ai_suggested_title = NULL,
+		     ai_actionability = NULL, ai_category = NULL, ai_priority = NULL,
+		     ai_redaction_manifest = '{}', ai_processed_at = NULL
 		 WHERE tenant_id = $1 AND lower(reporter_email) = $2 AND created_at <= $3`, includeNow: true},
 		{query: `UPDATE issues
 		 SET reporter_email = NULL, notify_reporter = false,

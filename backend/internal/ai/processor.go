@@ -56,7 +56,13 @@ func (p Processor) TextHandler() asynq.HandlerFunc {
 		if err != nil {
 			return p.handleTextFailure(ctx, work, err)
 		}
-		if err := p.Store.CompleteText(ctx, work, result, p.now()); err != nil {
+		result, err = ProtectResult(result)
+		if err != nil {
+			return p.handleTextFailure(ctx, work, err)
+		}
+		if err := p.Store.CompleteText(ctx, work, result, p.now()); errors.Is(err, ErrNoWork) {
+			return nil
+		} else if err != nil {
 			return err
 		}
 		return nil
@@ -94,7 +100,13 @@ func (p Processor) AttachmentHandler() asynq.HandlerFunc {
 		if closeErr != nil {
 			return p.handleAttachmentFailure(ctx, work, fmt.Errorf("close attachment stream: %w", closeErr))
 		}
-		if err := p.Store.CompleteAttachment(ctx, work, result, p.now()); err != nil {
+		result, err = ProtectResult(result)
+		if err != nil {
+			return p.handleAttachmentFailure(ctx, work, err)
+		}
+		if err := p.Store.CompleteAttachment(ctx, work, result, p.now()); errors.Is(err, ErrNoWork) {
+			return nil
+		} else if err != nil {
 			return err
 		}
 		return nil

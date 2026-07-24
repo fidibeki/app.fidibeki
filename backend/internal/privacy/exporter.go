@@ -92,6 +92,7 @@ var workspaceExportFiles = []exportFile{
 			'recurrence_mode', rule.recurrence_mode, 'recurrence_days', rule.recurrence_days,
 			'response_blocks', rule.response_blocks, 'localizations', rule.localizations,
 			'widget_appearance_overrides', rule.widget_appearance_overrides,
+			'ai_processing', rule.ai_processing,
 			'created_at', rule.created_at, 'updated_at', rule.updated_at
 		)
 		FROM widget_rules AS rule
@@ -143,6 +144,7 @@ var workspaceExportFiles = []exportFile{
 			'ai_suggested_title', feedback.ai_suggested_title,
 			'ai_actionability', feedback.ai_actionability,
 			'ai_category', feedback.ai_category, 'ai_priority', feedback.ai_priority,
+			'ai_redaction_manifest', feedback.ai_redaction_manifest,
 			'ai_processed_at', feedback.ai_processed_at,
 			'created_at', feedback.created_at, 'updated_at', feedback.updated_at
 		)
@@ -239,6 +241,7 @@ var workspaceExportFiles = []exportFile{
 			'transcription', attachment.transcription,
 			'sentiment_score', attachment.sentiment_score,
 			'moderation_flags', attachment.moderation_flags,
+				'ai_redaction_manifest', attachment.ai_redaction_manifest,
 				'processing_attempts', attachment.processing_attempts,
 				'completed_at', attachment.completed_at, 'processed_at', attachment.processed_at,
 				'safety_status', attachment.safety_status,
@@ -254,6 +257,34 @@ var workspaceExportFiles = []exportFile{
 		FROM attachments AS attachment
 		WHERE attachment.tenant_id = $1
 		ORDER BY attachment.created_at, attachment.id
+	`},
+	{Name: "ai-processing-runs.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', run.id, 'project_id', run.project_id, 'feedback_id', run.feedback_id,
+			'attachment_id', run.attachment_id, 'widget_rule_id', run.widget_rule_id,
+			'generation', run.generation, 'attempt', run.attempt,
+			'policy_version', run.policy_version, 'provider', run.provider,
+			'model', run.model, 'purpose', run.purpose,
+			'input_category', run.input_category, 'status', run.status,
+			'redaction_manifest', run.redaction_manifest,
+			'failure_reason', run.failure_reason, 'started_at', run.started_at,
+			'completed_at', run.completed_at, 'created_at', run.created_at,
+			'provider_file_deleted_at', (
+				SELECT max(file.deleted_at) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			),
+			'provider_file_delete_failed_at', (
+				SELECT max(file.failed_at) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			),
+			'provider_file_delete_attempts', (
+				SELECT COALESCE(sum(file.delete_attempts), 0) FROM ai_gemini_files AS file
+				WHERE file.processing_run_id = run.id
+			)
+		)
+		FROM ai_processing_runs AS run
+		WHERE run.tenant_id = $1
+		ORDER BY run.started_at, run.id
 	`},
 	{Name: "replays.jsonl", Query: `
 		SELECT jsonb_build_object(

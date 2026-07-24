@@ -31,6 +31,7 @@ const (
 	testTenantID            = "10000000-0000-4000-8000-000000000001"
 	testMemberID            = "10000000-0000-4000-8000-000000000010"
 	testProjectID           = "10000000-0000-4000-8000-000000000002"
+	testWidgetRuleID        = "10000000-0000-4000-8000-000000000012"
 	testIssueID             = "10000000-0000-4000-8000-000000000003"
 	testFeedbackID          = "10000000-0000-4000-8000-000000000004"
 	testAudioID             = "10000000-0000-4000-8000-000000000005"
@@ -38,6 +39,7 @@ const (
 	testReplayID            = "10000000-0000-4000-8000-000000000007"
 	testStarterTenantID     = "30000000-0000-4000-8000-000000000001"
 	testStarterProjectID    = "30000000-0000-4000-8000-000000000002"
+	testStarterWidgetRuleID = "30000000-0000-4000-8000-000000000012"
 	testStarterIssueID      = "30000000-0000-4000-8000-000000000003"
 	testStarterFeedbackID   = "30000000-0000-4000-8000-000000000004"
 	testStarterAttachmentID = "30000000-0000-4000-8000-000000000005"
@@ -218,9 +220,22 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	if err := runPreparedTask(ctx, processor, textTask); err == nil || errors.Is(err, asynq.SkipRetry) {
 		t.Errorf("transient text error = %v", err)
 	}
-	analyzer.textErr = permanent(errors.New("text policy blocked"))
+	analyzer.textErr = permanent(ErrUnsafeAIResult)
 	if err := runPreparedTask(ctx, processor, textTask); !errors.Is(err, asynq.SkipRetry) {
 		t.Errorf("permanent text error = %v, want SkipRetry", err)
+	}
+	var unsafeRunStatus, unsafeRunReason string
+	if err := pool.QueryRow(ctx, `
+		SELECT status, failure_reason
+		FROM ai_processing_runs
+		WHERE tenant_id = $1 AND feedback_id = $2 AND generation = $3
+	`, testTenantID, testFeedbackID, textTask.Generation).Scan(
+		&unsafeRunStatus, &unsafeRunReason,
+	); err != nil {
+		t.Fatalf("read quarantined AI run: %v", err)
+	}
+	if unsafeRunStatus != "quarantined" || unsafeRunReason != "redaction_policy_failed" {
+		t.Fatalf("unsafe AI run = %s/%s", unsafeRunStatus, unsafeRunReason)
 	}
 	analyzer.textErr = nil
 	for _, task := range prepared {
@@ -307,13 +322,13 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO feedbacks (
-			id, tenant_id, project_id, public_id, issue_id, client_feedback_id,
+			id, tenant_id, project_id, widget_rule_id, public_id, issue_id, client_feedback_id,
 			text, page_url, text_process_status
 		) VALUES (
-			$1, $2, $3, 'fb_Stale001', $4, '40000000-0000-4000-8000-000000000003',
+			$1, $2, $3, $4, 'fb_Stale001', $5, '40000000-0000-4000-8000-000000000003',
 			'Feedback generation one', 'https://example.com/stale', 'pending'
 		)
-	`, staleFeedbackID, testTenantID, testProjectID, staleIssueID); err != nil {
+	`, staleFeedbackID, testTenantID, testProjectID, testWidgetRuleID, staleIssueID); err != nil {
 		t.Fatalf("seed stale-generation feedback: %v", err)
 	}
 	daySeven := daySix.Add(24 * time.Hour)
@@ -649,6 +664,7 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	eligibleTenantID := "50000000-0000-4000-8000-000000000001"
 	eligibleProjectID := "50000000-0000-4000-8000-000000000002"
 	eligibleFeedbackID := "50000000-0000-4000-8000-000000000003"
+	eligibleRuleID := "50000000-0000-4000-8000-000000000005"
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tenants (id, name, slug, plan, status)
 		VALUES ($1, 'Eligible Tenant', 'eligible-tenant', 'growth', 'active')
@@ -662,13 +678,29 @@ func TestAIPipelineStateMachine(t *testing.T) {
 		t.Fatalf("seed eligible project: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO feedbacks (
-			id, tenant_id, project_id, public_id, client_feedback_id, text, page_url, text_process_status
+		INSERT INTO widget_rules (
+			id, project_id, name, matcher_type, trigger_type, trigger_delay_seconds, ai_processing
 		) VALUES (
-			$1, $2, $3, 'fb_Elig0001', '50000000-0000-4000-8000-000000000004',
+			$1, $2, 'Eligible AI feedback', 'all_pages', 'delay', 0,
+			'{"enabled":true,"policy_version":"2026-07-24","provider":"google_gemini",
+			  "purposes":["transcription","cleanup","moderation","sentiment","triage_recommendations"],
+			  "input_categories":["feedback_text"],"privacy_policy_url":"https://eligible.example.com/privacy",
+			  "sensitive_data_mode":"prohibit_and_quarantine","acknowledged":true,
+			  "acknowledged_at":"2026-07-21T00:00:00Z",
+			  "acknowledged_by_member_id":"50000000-0000-4000-8000-000000000006"}'
+		)
+	`, eligibleRuleID, eligibleProjectID); err != nil {
+		t.Fatalf("seed eligible AI rule: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO feedbacks (
+			id, tenant_id, project_id, widget_rule_id, public_id, client_feedback_id,
+			text, page_url, text_process_status
+		) VALUES (
+			$1, $2, $3, $4, 'fb_Elig0001', '50000000-0000-4000-8000-000000000004',
 			'Eligible work', 'https://eligible.example.com', 'pending'
 		)
-	`, eligibleFeedbackID, eligibleTenantID, eligibleProjectID); err != nil {
+	`, eligibleFeedbackID, eligibleTenantID, eligibleProjectID, eligibleRuleID); err != nil {
 		t.Fatalf("seed eligible tenant AI work: %v", err)
 	}
 	dayEight := daySeven.Add(24 * time.Hour)
@@ -683,6 +715,75 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	}
 	exerciseAIHTTP(t, ctx, pool)
 	exerciseIdempotentAIBudgets(t, ctx, pool, store, dayEight.Add(24*time.Hour))
+}
+
+func TestAIProcessingPolicyDisableDiscardsInFlightResult(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pool := aiTestDatabase(t, ctx)
+	seedAIFeedback(t, ctx, pool)
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	store := Store{Database: pool, Model: "gemini-test"}
+
+	prepared, _, err := store.PrepareFeedback(ctx, testFeedbackID, 10, now)
+	if err != nil {
+		t.Fatalf("PrepareFeedback() error = %v", err)
+	}
+	var textTask PreparedTask
+	for _, task := range prepared {
+		if task.Kind == TaskKindText {
+			textTask = task
+			break
+		}
+	}
+	if textTask.ResourceID == "" {
+		t.Fatalf("PrepareFeedback() did not return a text task: %#v", prepared)
+	}
+	work, err := store.ClaimText(
+		ctx, textTask.TenantID, textTask.ResourceID, textTask.Generation,
+	)
+	if err != nil {
+		t.Fatalf("ClaimText() error = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE widget_rules SET ai_processing = '{"enabled":false}' WHERE id = $1
+	`, testWidgetRuleID); err != nil {
+		t.Fatalf("disable AI policy during processing: %v", err)
+	}
+	result := Result{
+		CleanedText:    "This result must not be saved",
+		SuggestedTitle: "Discard this",
+		Actionability:  "actionable",
+		Category:       "checkout",
+		Priority:       "high",
+	}
+	if err := store.CompleteText(ctx, work, result, now.Add(time.Minute)); !errors.Is(err, ErrNoWork) {
+		t.Fatalf("CompleteText() error = %v, want ErrNoWork", err)
+	}
+
+	var status, reason string
+	var completedAt *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT status, failure_reason, completed_at
+		FROM ai_processing_runs WHERE id = $1
+	`, work.RunID).Scan(&status, &reason, &completedAt); err != nil {
+		t.Fatalf("read discarded AI evidence: %v", err)
+	}
+	if status != "discarded" || reason != "policy_disabled" || completedAt == nil {
+		t.Fatalf("discarded AI evidence = %s/%s/%v", status, reason, completedAt)
+	}
+	var cleaned, title *string
+	if err := pool.QueryRow(ctx, `
+		SELECT text_cleaned, ai_suggested_title FROM feedbacks WHERE id = $1
+	`, testFeedbackID).Scan(&cleaned, &title); err != nil {
+		t.Fatalf("read feedback after policy disable: %v", err)
+	}
+	if cleaned != nil || title != nil {
+		t.Fatalf("disabled policy persisted derived values: cleaned=%v title=%v", cleaned, title)
+	}
 }
 
 func exerciseIdempotentAIBudgets(
@@ -792,14 +893,14 @@ func exerciseIdempotentAIBudgets(
 	deferredFeedbackID := "60000000-0000-4000-8000-000000000005"
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO feedbacks (
-			id, tenant_id, project_id, public_id, client_feedback_id,
+			id, tenant_id, project_id, widget_rule_id, public_id, client_feedback_id,
 			text, title, page_url, text_process_status
 		) VALUES (
-			$1, $2, $3, 'fb_Budget01', gen_random_uuid(),
+			$1, $2, $3, $4, 'fb_Budget01', gen_random_uuid(),
 			'Please analyze this later', 'Please analyze this later',
 			'https://example.com/budget', 'pending'
 		)
-	`, deferredFeedbackID, testTenantID, testProjectID); err != nil {
+	`, deferredFeedbackID, testTenantID, testProjectID, testWidgetRuleID); err != nil {
 		t.Fatalf("create deferred AI feedback: %v", err)
 	}
 	queue := &capturingTaskQueue{}
@@ -916,19 +1017,32 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		INSERT INTO tenant_members (id, tenant_id, email, permissions)
 		VALUES ($1, $2, 'analyst@ai-tenant.test', ARRAY['feedback:update'])`, args: []any{testMemberID, testTenantID}},
 		{query: `
-		INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
-		VALUES ($1, $2, 'Web', 'pk_live_ABCDEFGHIJKLMNOPQRSTUV', '{example.com}')`, args: []any{testProjectID, testTenantID}},
+			INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
+			VALUES ($1, $2, 'Web', 'pk_live_ABCDEFGHIJKLMNOPQRSTUV', '{example.com}')`, args: []any{testProjectID, testTenantID}},
+		{query: `
+			INSERT INTO widget_rules (
+				id, project_id, name, matcher_type, trigger_type, trigger_delay_seconds, ai_processing
+			) VALUES (
+				$1, $2, 'AI feedback', 'all_pages', 'delay', 0,
+				'{"enabled":true,"policy_version":"2026-07-24","provider":"google_gemini",
+				  "purposes":["transcription","cleanup","moderation","sentiment","triage_recommendations"],
+				  "input_categories":["feedback_text","screenshot","audio","video"],
+				  "privacy_policy_url":"https://example.com/privacy",
+				  "sensitive_data_mode":"prohibit_and_quarantine","acknowledged":true,
+				  "acknowledged_at":"2026-07-21T00:00:00Z",
+				  "acknowledged_by_member_id":"10000000-0000-4000-8000-000000000010"}'
+			)`, args: []any{testWidgetRuleID, testProjectID}},
 		{query: `
 		INSERT INTO issues (id, tenant_id, project_id, public_id, title)
 		VALUES ($1, $2, $3, 'AI-TENANT-2026-0001', 'Checkout feedback')`, args: []any{testIssueID, testTenantID, testProjectID}},
 		{query: `
-		INSERT INTO feedbacks (
-			id, tenant_id, project_id, public_id, issue_id, client_feedback_id,
-			text, page_url, text_process_status
-		) VALUES (
-			$1, $2, $3, 'fb_AbCd1234', $4, '10000000-0000-4000-8000-000000000009',
-			'Um, the checkout is damn confusing', 'https://example.com/checkout', 'pending'
-		)`, args: []any{testFeedbackID, testTenantID, testProjectID, testIssueID}},
+			INSERT INTO feedbacks (
+				id, tenant_id, project_id, widget_rule_id, public_id, issue_id, client_feedback_id,
+				text, page_url, text_process_status
+			) VALUES (
+				$1, $2, $3, $4, 'fb_AbCd1234', $5, '10000000-0000-4000-8000-000000000009',
+				'Um, the checkout is damn confusing', 'https://example.com/checkout', 'pending'
+			)`, args: []any{testFeedbackID, testTenantID, testProjectID, testWidgetRuleID, testIssueID}},
 		{query: `
 			INSERT INTO attachments (
 				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,
@@ -947,21 +1061,37 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		INSERT INTO tenants (id, name, slug, plan, status)
 		VALUES ($1, 'Starter Tenant', 'starter-tenant', 'starter', 'active')`, args: []any{testStarterTenantID}},
 		{query: `
-		INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
-		VALUES ($1, $2, 'Starter Web', 'pk_live_ZYXWVUTSRQPONMLKJIHGFE', '{starter.example.com}')`,
+			INSERT INTO projects (id, tenant_id, name, public_key, allowed_domains)
+			VALUES ($1, $2, 'Starter Web', 'pk_live_ZYXWVUTSRQPONMLKJIHGFE', '{starter.example.com}')`,
 			args: []any{testStarterProjectID, testStarterTenantID}},
+		{query: `
+			INSERT INTO widget_rules (
+				id, project_id, name, matcher_type, trigger_type, trigger_delay_seconds, ai_processing
+			) VALUES (
+				$1, $2, 'Starter AI feedback', 'all_pages', 'delay', 0,
+				'{"enabled":true,"policy_version":"2026-07-24","provider":"google_gemini",
+				  "purposes":["transcription","cleanup","moderation","sentiment","triage_recommendations"],
+				  "input_categories":["feedback_text","screenshot"],
+				  "privacy_policy_url":"https://starter.example.com/privacy",
+				  "sensitive_data_mode":"prohibit_and_quarantine","acknowledged":true,
+				  "acknowledged_at":"2026-07-21T00:00:00Z",
+				  "acknowledged_by_member_id":"30000000-0000-4000-8000-000000000010"}'
+			)`, args: []any{testStarterWidgetRuleID, testStarterProjectID}},
 		{query: `
 		INSERT INTO issues (id, tenant_id, project_id, public_id, title)
 		VALUES ($1, $2, $3, 'STARTER-TENANT-2026-0001', 'Starter feedback')`,
 			args: []any{testStarterIssueID, testStarterTenantID, testStarterProjectID}},
 		{query: `
-		INSERT INTO feedbacks (
-			id, tenant_id, project_id, public_id, issue_id, client_feedback_id,
-			text, page_url, text_process_status
-		) VALUES (
-			$1, $2, $3, 'fb_ZyXw9876', $4, '30000000-0000-4000-8000-000000000009',
-			'Starter feedback', 'https://starter.example.com', 'pending'
-		)`, args: []any{testStarterFeedbackID, testStarterTenantID, testStarterProjectID, testStarterIssueID}},
+			INSERT INTO feedbacks (
+				id, tenant_id, project_id, widget_rule_id, public_id, issue_id, client_feedback_id,
+				text, page_url, text_process_status
+			) VALUES (
+				$1, $2, $3, $4, 'fb_ZyXw9876', $5, '30000000-0000-4000-8000-000000000009',
+				'Starter feedback', 'https://starter.example.com', 'pending'
+			)`, args: []any{
+			testStarterFeedbackID, testStarterTenantID, testStarterProjectID,
+			testStarterWidgetRuleID, testStarterIssueID,
+		}},
 		{query: `
 			INSERT INTO attachments (
 				id, tenant_id, feedback_id, kind, client_attachment_id, storage_key,

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 type Store struct {
 	Database          *pgxpool.Pool
 	ProjectDailyLimit int
+	Model             string
 	Diagnostics       DiagnosticRecorder
 	Logger            *slog.Logger
 }
@@ -45,17 +47,26 @@ func (s Store) PrepareFeedback(
 	var text *string
 	var textEnqueuedAt *time.Time
 	var textDeferredUntil *time.Time
+	var aiEnabled, textAIEnabled, screenshotAIEnabled, audioAIEnabled, videoAIEnabled bool
 	err = tx.QueryRow(ctx, `
 		SELECT feedback.tenant_id, feedback.project_id, tenant.plan, feedback.text,
 		       feedback.text_process_status, feedback.ai_job_enqueued_at,
-		       feedback.text_processing_generation, feedback.ai_budget_deferred_until
+		       feedback.text_processing_generation, feedback.ai_budget_deferred_until,
+		       COALESCE((rule.ai_processing->>'enabled')::boolean, false),
+		       COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false),
+		       COALESCE(rule.ai_processing->'input_categories' ? 'screenshot', false),
+		       COALESCE(rule.ai_processing->'input_categories' ? 'audio', false),
+		       COALESCE(rule.ai_processing->'input_categories' ? 'video', false)
 		FROM feedbacks AS feedback
 		JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
+		LEFT JOIN widget_rules AS rule
+		  ON rule.id = feedback.widget_rule_id AND rule.project_id = feedback.project_id
 		WHERE feedback.id = $1
 		FOR UPDATE OF feedback
 	`, feedbackID).Scan(
 		&tenantID, &projectID, &planValue, &text, &textStatus, &textEnqueuedAt,
-		&textGeneration, &textDeferredUntil,
+		&textGeneration, &textDeferredUntil, &aiEnabled, &textAIEnabled,
+		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrNotFound
@@ -65,7 +76,7 @@ func (s Store) PrepareFeedback(
 	}
 
 	definition, planExists := config.PlanFor(tenant.Plan(planValue))
-	if !planExists || !definition.Features.AI {
+	if !planExists || !definition.Features.AI || !aiEnabled {
 		if _, err := tx.Exec(ctx, `
 				UPDATE feedbacks
 				SET text_process_status = 'skipped', ai_job_enqueued_at = NULL,
@@ -95,7 +106,7 @@ func (s Store) PrepareFeedback(
 	deferredUntil := usageDate.AddDate(0, 0, 1)
 	prepared := make([]PreparedTask, 0)
 	budgetExhausted := false
-	if text == nil || strings.TrimSpace(*text) == "" {
+	if !textAIEnabled || text == nil || strings.TrimSpace(*text) == "" {
 		if textStatus == "pending" || textStatus == "processing" {
 			if _, err := tx.Exec(ctx, `
 				UPDATE feedbacks
@@ -151,9 +162,14 @@ func (s Store) PrepareFeedback(
 		UPDATE attachments
 		SET processing_status = 'skipped', error_message = NULL,
 		    ai_budget_deferred_until = NULL
-		WHERE feedback_id = $1 AND kind = 'replay' AND processing_status IN ('pending', 'processing')
-	`, feedbackID); err != nil {
-		return nil, false, fmt.Errorf("skip replay AI: %w", err)
+		WHERE feedback_id = $1 AND processing_status IN ('pending', 'processing')
+		  AND NOT (
+		      (kind = 'screenshot' AND $2)
+		      OR (kind = 'audio' AND $3)
+		      OR (kind = 'video' AND $4)
+		  )
+	`, feedbackID, screenshotAIEnabled, audioAIEnabled, videoAIEnabled); err != nil {
+		return nil, false, fmt.Errorf("skip unauthorized attachment AI: %w", err)
 	}
 
 	rows, err := tx.Query(ctx, `
@@ -339,19 +355,23 @@ func (s Store) PendingFeedbackIDs(
 			       row_number() OVER (
 				   PARTITION BY feedback.tenant_id ORDER BY feedback.created_at, feedback.id
 			       ) AS tenant_position
-			FROM feedbacks AS feedback
-			JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
+				FROM feedbacks AS feedback
+				JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
+				JOIN widget_rules AS rule
+				  ON rule.id = feedback.widget_rule_id AND rule.project_id = feedback.project_id
 			LEFT JOIN ai_daily_usage AS usage
 			  ON usage.tenant_id = feedback.tenant_id AND usage.usage_date = $2
 			LEFT JOIN ai_project_daily_usage AS project_usage
 			  ON project_usage.project_id = feedback.project_id
 			 AND project_usage.usage_date = $2
-			WHERE tenant.plan IN ('growth', 'scale', 'enterprise')
+				WHERE tenant.plan IN ('growth', 'scale', 'enterprise')
+				  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
 			  AND COALESCE(usage.requests, 0) < $3
 			  AND COALESCE(project_usage.requests, 0) < $5
 			  AND (
 				(
-				    feedback.text_process_status = 'pending'
+					    feedback.text_process_status = 'pending'
+					    AND COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false)
 				    AND feedback.ai_job_enqueued_at IS NULL
 				    AND (
 				        feedback.ai_budget_deferred_until IS NULL
@@ -538,10 +558,12 @@ func (s Store) TrackGeminiFile(
 ) (string, error) {
 	var id string
 	err := s.Database.QueryRow(ctx, `
-		INSERT INTO ai_gemini_files (tenant_id, attachment_id, file_name, delete_after)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO ai_gemini_files (
+			tenant_id, attachment_id, processing_run_id, file_name, delete_after
+		)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, work.TenantID, work.AttachmentID, fileName, deleteAfter).Scan(&id)
+	`, work.TenantID, work.AttachmentID, nullableText(work.RunID), fileName, deleteAfter).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("track Gemini file: %w", err)
 	}
@@ -745,22 +767,52 @@ func (s Store) ClaimText(
 	tenantID, feedbackID string,
 	generation int64,
 ) (TextWork, error) {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return TextWork{}, fmt.Errorf("begin text AI claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var work TextWork
 	work.TenantID, work.FeedbackID, work.Generation = tenantID, feedbackID, generation
-	err := s.Database.QueryRow(ctx, `
-		UPDATE feedbacks
+	err = tx.QueryRow(ctx, `
+		UPDATE feedbacks AS feedback
 		SET text_process_status = 'processing'
-		WHERE id = $1 AND tenant_id = $2
-		  AND text IS NOT NULL AND btrim(text) <> ''
-		  AND text_process_status IN ('pending', 'processing')
-		  AND text_processing_generation = $3
-		RETURNING text, project_id
-	`, feedbackID, tenantID, generation).Scan(&work.Text, &work.ProjectID)
+		FROM widget_rules AS rule
+		WHERE feedback.id = $1 AND feedback.tenant_id = $2
+		  AND feedback.widget_rule_id = rule.id AND feedback.project_id = rule.project_id
+		  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
+		  AND COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false)
+		  AND feedback.text IS NOT NULL AND btrim(feedback.text) <> ''
+		  AND feedback.text_process_status IN ('pending', 'processing')
+		  AND feedback.text_processing_generation = $3
+		RETURNING feedback.text, feedback.project_id, rule.id,
+		          rule.ai_processing->>'policy_version'
+	`, feedbackID, tenantID, generation).Scan(
+		&work.Text, &work.ProjectID, &work.RuleID, &work.PolicyVersion,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TextWork{}, ErrNoWork
 	}
 	if err != nil {
 		return TextWork{}, fmt.Errorf("claim text AI: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ai_processing_runs (
+			tenant_id, project_id, feedback_id, widget_rule_id, generation,
+			policy_version, provider, model, purpose, input_category, status
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, 'google_gemini', $7,
+			'advisory_feedback_analysis', 'feedback_text', 'processing'
+		)
+		ON CONFLICT (tenant_id, feedback_id, generation) WHERE attachment_id IS NULL
+		DO UPDATE SET status = 'processing', completed_at = NULL, failure_reason = NULL
+		RETURNING id
+	`, work.TenantID, work.ProjectID, work.FeedbackID, work.RuleID, work.Generation,
+		work.PolicyVersion, s.model()).Scan(&work.RunID); err != nil {
+		return TextWork{}, fmt.Errorf("start text AI processing evidence: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TextWork{}, fmt.Errorf("commit text AI claim: %w", err)
 	}
 	return work, nil
 }
@@ -770,12 +822,19 @@ func (s Store) ClaimAttachment(
 	tenantID, attachmentID string,
 	attempt int,
 ) (AttachmentWork, error) {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return AttachmentWork{}, fmt.Errorf("begin attachment AI claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var work AttachmentWork
 	work.TenantID, work.AttachmentID, work.Attempt = tenantID, attachmentID, attempt
-	err := s.Database.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE attachments AS attachment
 		SET processing_status = 'processing'
 		FROM feedbacks AS feedback
+		JOIN widget_rules AS rule
+		  ON rule.id = feedback.widget_rule_id AND rule.project_id = feedback.project_id
 			WHERE attachment.id = $1 AND attachment.tenant_id = $2
 			  AND attachment.processing_attempts = $3
 			  AND attachment.completed_at IS NOT NULL AND attachment.kind <> 'replay'
@@ -783,16 +842,47 @@ func (s Store) ClaimAttachment(
 			  AND attachment.retention_deleted_at IS NULL
 			  AND attachment.processing_status IN ('pending', 'processing')
 			  AND feedback.id = attachment.feedback_id
+			  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
+			  AND COALESCE(
+			      (rule.ai_processing->'input_categories') ?
+			      (CASE attachment.kind
+			          WHEN 'screenshot' THEN 'screenshot'
+			          WHEN 'audio' THEN 'audio'
+			          WHEN 'video' THEN 'video'
+			          ELSE ''
+			      END),
+			      false
+			  )
 		RETURNING feedback.id, feedback.project_id, attachment.kind,
-		          attachment.storage_key, attachment.content_type
+		          attachment.storage_key, attachment.content_type, rule.id,
+		          rule.ai_processing->>'policy_version'
 	`, attachmentID, tenantID, attempt).Scan(
 		&work.FeedbackID, &work.ProjectID, &work.Kind, &work.StorageKey, &work.ContentType,
+		&work.RuleID, &work.PolicyVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AttachmentWork{}, ErrNoWork
 	}
 	if err != nil {
 		return AttachmentWork{}, fmt.Errorf("claim attachment AI: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ai_processing_runs (
+			tenant_id, project_id, feedback_id, attachment_id, widget_rule_id, attempt,
+			policy_version, provider, model, purpose, input_category, status
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, 'google_gemini', $8,
+			'advisory_feedback_analysis', $9, 'processing'
+		)
+		ON CONFLICT (tenant_id, attachment_id, attempt) WHERE attachment_id IS NOT NULL
+		DO UPDATE SET status = 'processing', completed_at = NULL, failure_reason = NULL
+		RETURNING id
+	`, work.TenantID, work.ProjectID, work.FeedbackID, work.AttachmentID, work.RuleID,
+		work.Attempt, work.PolicyVersion, s.model(), work.Kind).Scan(&work.RunID); err != nil {
+		return AttachmentWork{}, fmt.Errorf("start attachment AI processing evidence: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AttachmentWork{}, fmt.Errorf("commit attachment AI claim: %w", err)
 	}
 	return work, nil
 }
@@ -804,22 +894,37 @@ func (s Store) CompleteText(ctx context.Context, work TextWork, result Result, n
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
-		UPDATE feedbacks
+		UPDATE feedbacks AS feedback
 		SET text_cleaned = $3, text_sentiment_score = $4,
 		    text_moderation_flags = $5, text_process_status = 'completed',
 		    ai_job_enqueued_at = NULL, ai_suggested_title = $7,
-		    ai_actionability = $8, ai_category = $9, ai_priority = $10
-		WHERE id = $1 AND tenant_id = $2 AND text_process_status = 'processing'
-		  AND text_processing_generation = $6
+		    ai_actionability = $8, ai_category = $9, ai_priority = $10,
+		    ai_redaction_manifest = $11::jsonb
+		FROM widget_rules AS rule
+		WHERE feedback.id = $1 AND feedback.tenant_id = $2
+		  AND feedback.widget_rule_id = rule.id AND feedback.project_id = rule.project_id
+		  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
+		  AND COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false)
+		  AND feedback.text_process_status = 'processing'
+		  AND feedback.text_processing_generation = $6
 	`, work.FeedbackID, work.TenantID, nullableText(result.CleanedText),
 		result.SentimentScore, moderationFlags(result.ModerationFlags), work.Generation,
 		nullableText(result.SuggestedTitle), nullableText(result.Actionability),
-		nullableText(result.Category), nullableText(result.Priority))
+		nullableText(result.Category), nullableText(result.Priority), redactionManifest(result))
 	if err != nil {
 		return fmt.Errorf("complete text AI: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		if err := discardProcessingRun(ctx, tx, work.RunID, "policy_disabled", now); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit discarded text AI result: %w", err)
+		}
 		return ErrNoWork
+	}
+	if err := completeProcessingRun(ctx, tx, work.RunID, result, now); err != nil {
+		return err
 	}
 	if err := updateCompletion(ctx, tx, work.FeedbackID, now); err != nil {
 		return err
@@ -843,16 +948,43 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 	tag, err := tx.Exec(ctx, `
 		UPDATE attachments
 		SET transcription = $4, sentiment_score = $5, moderation_flags = $6,
-		    processing_status = 'completed', error_message = NULL, processed_at = $7
-			WHERE id = $1 AND tenant_id = $2 AND processing_attempts = $3
-			  AND processing_status = 'processing' AND safety_status = 'safe'
+		    processing_status = 'completed', error_message = NULL, processed_at = $7,
+		    ai_redaction_manifest = $8::jsonb
+		FROM feedbacks AS feedback
+		JOIN widget_rules AS rule
+		  ON rule.id = feedback.widget_rule_id AND rule.project_id = feedback.project_id
+			WHERE attachments.id = $1 AND attachments.tenant_id = $2
+			  AND attachments.feedback_id = feedback.id
+			  AND attachments.processing_attempts = $3
+			  AND attachments.processing_status = 'processing'
+			  AND attachments.safety_status = 'safe'
+			  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
+			  AND COALESCE(
+			      (rule.ai_processing->'input_categories') ?
+			      (CASE attachments.kind
+			          WHEN 'screenshot' THEN 'screenshot'
+			          WHEN 'audio' THEN 'audio'
+			          WHEN 'video' THEN 'video'
+			          ELSE ''
+			      END),
+			      false
+			  )
 	`, work.AttachmentID, work.TenantID, work.Attempt, nullableText(transcription),
-		result.SentimentScore, moderationFlags(result.ModerationFlags), now)
+		result.SentimentScore, moderationFlags(result.ModerationFlags), now, redactionManifest(result))
 	if err != nil {
 		return fmt.Errorf("complete attachment AI: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
+		if err := discardProcessingRun(ctx, tx, work.RunID, "policy_disabled", now); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit discarded attachment AI result: %w", err)
+		}
 		return ErrNoWork
+	}
+	if err := completeProcessingRun(ctx, tx, work.RunID, result, now); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE feedbacks
@@ -875,7 +1007,7 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 	return nil
 }
 
-func (s Store) FailText(ctx context.Context, work TextWork, _ error, permanentFailure bool, now time.Time) error {
+func (s Store) FailText(ctx context.Context, work TextWork, failure error, permanentFailure bool, now time.Time) error {
 	status := "pending"
 	if permanentFailure {
 		status = "failed"
@@ -899,6 +1031,11 @@ func (s Store) FailText(ctx context.Context, work TextWork, _ error, permanentFa
 		  AND text_processing_generation = $5
 	`, work.FeedbackID, work.TenantID, status, permanentFailure, work.Generation); updateErr != nil {
 		return fmt.Errorf("record text AI failure: %w", updateErr)
+	}
+	if permanentFailure {
+		if err := failProcessingRun(ctx, query, work.RunID, failure, now); err != nil {
+			return err
+		}
 	}
 	if permanentFailure {
 		if err := updateCompletion(ctx, query, work.FeedbackID, now); err != nil {
@@ -944,6 +1081,9 @@ func (s Store) FailAttachment(
 		return fmt.Errorf("record attachment AI failure: %w", err)
 	}
 	if permanentFailure {
+		if err := failProcessingRun(ctx, query, work.RunID, failure, now); err != nil {
+			return err
+		}
 		if err := updateCompletion(ctx, query, work.FeedbackID, now); err != nil {
 			return err
 		}
@@ -1298,6 +1438,95 @@ func nullableText(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func redactionManifest(result Result) string {
+	manifest := result.Redactions
+	if manifest == nil {
+		manifest = map[string]int{}
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"policy_version": RedactionPolicyVersion,
+		"categories":     manifest,
+	})
+	if err != nil {
+		return `{"policy_version":"` + RedactionPolicyVersion + `","categories":{}}`
+	}
+	return string(encoded)
+}
+
+func (s Store) model() string {
+	if strings.TrimSpace(s.Model) == "" {
+		return "unreported"
+	}
+	return strings.TrimSpace(s.Model)
+}
+
+func completeProcessingRun(
+	ctx context.Context,
+	query db.Querier,
+	runID string,
+	result Result,
+	now time.Time,
+) error {
+	if runID == "" {
+		return nil
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_processing_runs
+		SET status = 'completed', redaction_manifest = $2::jsonb,
+		    failure_reason = NULL, completed_at = $3
+		WHERE id = $1 AND status = 'processing'
+	`, runID, redactionManifest(result), now); err != nil {
+		return fmt.Errorf("complete AI processing evidence: %w", err)
+	}
+	return nil
+}
+
+func discardProcessingRun(
+	ctx context.Context,
+	query db.Querier,
+	runID string,
+	reason string,
+	now time.Time,
+) error {
+	if runID == "" {
+		return nil
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_processing_runs
+		SET status = 'discarded', failure_reason = $2, completed_at = $3
+		WHERE id = $1 AND status = 'processing'
+	`, runID, reason, now); err != nil {
+		return fmt.Errorf("discard AI processing evidence: %w", err)
+	}
+	return nil
+}
+
+func failProcessingRun(
+	ctx context.Context,
+	query db.Querier,
+	runID string,
+	failure error,
+	now time.Time,
+) error {
+	if runID == "" {
+		return nil
+	}
+	status := "failed"
+	reason := providerDiagnosticReason(failure)
+	if errors.Is(failure, ErrUnsafeAIResult) {
+		status = "quarantined"
+		reason = "redaction_policy_failed"
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE ai_processing_runs
+		SET status = $2, failure_reason = $3, completed_at = $4
+		WHERE id = $1 AND status = 'processing'
+	`, runID, status, reason, now); err != nil {
+		return fmt.Errorf("fail AI processing evidence: %w", err)
+	}
+	return nil
 }
 
 func moderationFlags(values []string) []string {

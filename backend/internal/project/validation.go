@@ -115,6 +115,7 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 	validateReplay(values, fields)
 	validateRecurrence(values, fields)
 	validateDefinition(values, fields)
+	validateAIProcessing(values, resolved, fields)
 	validatePlanFeatures(values, resolved, fields)
 	return values, fields
 }
@@ -158,6 +159,7 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		Localizations:      normalizeLocalizations(input.Localizations),
 		AllowComment:       valueOr(input.AllowComment, false),
 		CollectContact:     input.CollectContact,
+		AIProcessing:       normalizeAIProcessing(input.AIProcessing),
 	}
 	if legacyTargeting {
 		values.IncludeConditions = []WidgetRuleTargetConditionValues{{
@@ -228,6 +230,91 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		values.Greeting = &prompt
 	}
 	return values
+}
+
+func normalizeAIProcessing(input AIProcessingConfig) AIProcessingConfig {
+	if !input.Enabled {
+		return AIProcessingConfig{}
+	}
+	input.PolicyVersion = strings.TrimSpace(input.PolicyVersion)
+	input.Provider = strings.TrimSpace(input.Provider)
+	input.PrivacyPolicyURL = strings.TrimSpace(input.PrivacyPolicyURL)
+	input.SensitiveDataMode = strings.TrimSpace(input.SensitiveDataMode)
+	if input.PolicyVersion == "" {
+		input.PolicyVersion = AIProcessingPolicyVersion
+	}
+	if input.Provider == "" {
+		input.Provider = AIProviderGoogleGemini
+	}
+	if input.SensitiveDataMode == "" {
+		input.SensitiveDataMode = AISensitiveDataProhibit
+	}
+	input.Purposes = []string{
+		"transcription", "cleanup", "moderation", "sentiment", "triage_recommendations",
+	}
+	input.AcknowledgedAt = nil
+	input.AcknowledgedByMemberID = nil
+	seen := make(map[AIInputCategory]struct{}, len(input.InputCategories))
+	categories := make([]AIInputCategory, 0, len(input.InputCategories))
+	for _, category := range input.InputCategories {
+		category = AIInputCategory(strings.ToLower(strings.TrimSpace(string(category))))
+		if _, exists := seen[category]; exists {
+			continue
+		}
+		seen[category] = struct{}{}
+		categories = append(categories, category)
+	}
+	input.InputCategories = categories
+	return input
+}
+
+func validateAIProcessing(values WidgetRuleValues, resolved tenant.Tenant, fields FieldErrors) {
+	configuration := values.AIProcessing
+	if !configuration.Enabled {
+		return
+	}
+	if !config.CanUseFeature(resolved, config.FeatureAI) {
+		fields["ai_processing.enabled"] = "is not available on the current plan"
+	}
+	if !configuration.Acknowledged {
+		fields["ai_processing.acknowledged"] = "must be explicitly acknowledged"
+	}
+	if configuration.PolicyVersion != AIProcessingPolicyVersion {
+		fields["ai_processing.policy_version"] = "must acknowledge the current policy version"
+	}
+	if configuration.Provider != AIProviderGoogleGemini {
+		fields["ai_processing.provider"] = "must use the configured Google Gemini provider"
+	}
+	if configuration.SensitiveDataMode != AISensitiveDataProhibit {
+		fields["ai_processing.sensitive_data_mode"] = "must prohibit and quarantine sensitive data"
+	}
+	if len(configuration.InputCategories) == 0 {
+		fields["ai_processing.input_categories"] = "must contain at least one supported input category"
+	}
+	for index, category := range configuration.InputCategories {
+		field := fmt.Sprintf("ai_processing.input_categories[%d]", index)
+		switch category {
+		case AIInputFeedbackText:
+		case AIInputScreenshot:
+			if !values.CanAttachScreenshot {
+				fields[field] = "requires screenshot attachments to be enabled"
+			}
+		case AIInputAudio:
+			if !values.CanRecordAudio {
+				fields[field] = "requires audio recording to be enabled"
+			}
+		case AIInputVideo:
+			if !values.CanRecordVideo {
+				fields[field] = "requires video recording to be enabled"
+			}
+		default:
+			fields[field] = "must be feedback_text, screenshot, audio, or video"
+		}
+	}
+	parsed, err := url.Parse(configuration.PrivacyPolicyURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		fields["ai_processing.privacy_policy_url"] = "must be an absolute HTTPS URL"
+	}
 }
 
 func normalizeResponseBlocks(blocks []WidgetResponseBlock) []WidgetResponseBlock {

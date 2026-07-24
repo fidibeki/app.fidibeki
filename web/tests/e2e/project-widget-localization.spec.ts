@@ -369,3 +369,49 @@ test('Portuguese project and widget rule editor preserve customer content and ex
   await page.waitForURL(`${tenantOrigin}/projects`)
   expect(state.projectDeleted).toBe(true)
 })
+
+test('AI analysis requires an explicit governed decision and remains usable on mobile', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const state: Captured = {}
+  await installAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=ai-governance-token`)
+  await page.waitForURL(`${tenantOrigin}/`)
+  await openProjects(page, testInfo)
+  await page.getByRole('link', { name: 'Loja Central' }).click()
+  await page.waitForURL(`${tenantOrigin}/projects/project-1`)
+
+  await page.getByRole('checkbox', { name: /^Ativar análise Gemini/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'Ativar análise por AI' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Processamento Google Gemini')).toBeVisible()
+  await expect(dialog.getByText('As recomendações são apenas consultivas')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Ativar análise por AI' })).toBeDisabled()
+
+  await dialog.getByLabel('URL do aviso de privacidade do cliente').fill('https://loja.ao/privacidade')
+  await dialog.getByRole('checkbox', { name: /Confirmo que este workspace/ }).check()
+  await expect(dialog.getByRole('button', { name: 'Ativar análise por AI' })).toBeEnabled()
+
+  const box = await dialog.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+
+  await dialog.getByRole('button', { name: 'Ativar análise por AI' }).click()
+  await expect(dialog).not.toBeVisible()
+  await page.getByRole('button', { name: 'Guardar regra' }).click()
+  await expect.poll(() => state.updateRuleBody?.ai_processing).toEqual({
+    enabled: true,
+    policy_version: '2026-07-24',
+    provider: 'google_gemini',
+    purposes: ['transcription', 'cleanup', 'moderation', 'sentiment', 'triage_recommendations'],
+    input_categories: ['feedback_text'],
+    privacy_policy_url: 'https://loja.ao/privacidade',
+    sensitive_data_mode: 'prohibit_and_quarantine',
+    acknowledged: true,
+  })
+
+  await page.getByRole('checkbox', { name: /^Ativar análise Gemini/ }).uncheck()
+  await page.getByRole('button', { name: 'Guardar regra' }).click()
+  await expect.poll(() => state.updateRuleBody?.ai_processing).toEqual({ enabled: false })
+})

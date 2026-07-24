@@ -30,6 +30,7 @@ export function defaultWidgetRule(): WidgetRuleInput {
       },
     },
     allow_comment: false, collect_contact: false,
+    ai_processing: { enabled: false },
     appearance_overrides: {},
   }
 }

@@ -44,22 +44,28 @@ type PreparedTask struct {
 }
 
 type TextWork struct {
-	TenantID   string
-	ProjectID  string
-	FeedbackID string
-	Text       string
-	Generation int64
+	TenantID      string
+	ProjectID     string
+	FeedbackID    string
+	RuleID        string
+	RunID         string
+	PolicyVersion string
+	Text          string
+	Generation    int64
 }
 
 type AttachmentWork struct {
-	TenantID     string
-	ProjectID    string
-	FeedbackID   string
-	AttachmentID string
-	Kind         string
-	StorageKey   string
-	ContentType  string
-	Attempt      int
+	TenantID      string
+	ProjectID     string
+	FeedbackID    string
+	AttachmentID  string
+	RuleID        string
+	RunID         string
+	PolicyVersion string
+	Kind          string
+	StorageKey    string
+	ContentType   string
+	Attempt       int
 }
 
 type GeminiFileWork struct {
@@ -70,14 +76,15 @@ type GeminiFileWork struct {
 }
 
 type Result struct {
-	Transcription   string   `json:"transcription"`
-	CleanedText     string   `json:"cleaned_text"`
-	SentimentScore  float64  `json:"sentiment_score"`
-	ModerationFlags []string `json:"moderation_flags"`
-	SuggestedTitle  string   `json:"suggested_title"`
-	Actionability   string   `json:"actionability"`
-	Category        string   `json:"category"`
-	Priority        string   `json:"priority"`
+	Transcription   string         `json:"transcription"`
+	CleanedText     string         `json:"cleaned_text"`
+	SentimentScore  float64        `json:"sentiment_score"`
+	ModerationFlags []string       `json:"moderation_flags"`
+	SuggestedTitle  string         `json:"suggested_title"`
+	Actionability   string         `json:"actionability"`
+	Category        string         `json:"category"`
+	Priority        string         `json:"priority"`
+	Redactions      map[string]int `json:"-"`
 }
 
 func (r *Result) Normalize() error {
@@ -104,10 +111,17 @@ func (r *Result) Normalize() error {
 	}
 	seen := make(map[string]struct{}, len(r.ModerationFlags))
 	flags := make([]string, 0, len(r.ModerationFlags))
+	allowedFlags := map[string]struct{}{
+		"hate": {}, "harassment": {}, "sexual": {}, "violence": {},
+		"self_harm": {}, "profanity": {}, "pii": {},
+	}
 	for _, value := range r.ModerationFlags {
 		value = strings.ToLower(strings.TrimSpace(value))
 		if value == "" {
 			continue
+		}
+		if _, allowed := allowedFlags[value]; !allowed {
+			return fmt.Errorf("moderation flag is invalid")
 		}
 		if _, exists := seen[value]; exists {
 			continue

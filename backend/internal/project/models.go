@@ -144,6 +144,34 @@ type WidgetLocalization struct {
 	OptionLabels       map[string]map[string]string `json:"option_labels,omitempty"`
 }
 
+const (
+	AIProcessingPolicyVersion = "2026-07-24"
+	AIProviderGoogleGemini    = "google_gemini"
+	AISensitiveDataProhibit   = "prohibit_and_quarantine"
+)
+
+type AIInputCategory string
+
+const (
+	AIInputFeedbackText AIInputCategory = "feedback_text"
+	AIInputScreenshot   AIInputCategory = "screenshot"
+	AIInputAudio        AIInputCategory = "audio"
+	AIInputVideo        AIInputCategory = "video"
+)
+
+type AIProcessingConfig struct {
+	Enabled                bool              `json:"enabled"`
+	PolicyVersion          string            `json:"policy_version,omitempty"`
+	Provider               string            `json:"provider,omitempty"`
+	Purposes               []string          `json:"purposes,omitempty"`
+	InputCategories        []AIInputCategory `json:"input_categories,omitempty"`
+	PrivacyPolicyURL       string            `json:"privacy_policy_url,omitempty"`
+	SensitiveDataMode      string            `json:"sensitive_data_mode,omitempty"`
+	Acknowledged           bool              `json:"acknowledged,omitempty"`
+	AcknowledgedAt         *time.Time        `json:"acknowledged_at,omitempty"`
+	AcknowledgedByMemberID *string           `json:"acknowledged_by_member_id,omitempty"`
+}
+
 type TargetConditionKind string
 
 const (
@@ -225,6 +253,7 @@ type WidgetRule struct {
 	Localizations            map[string]WidgetLocalization    `json:"localizations"`
 	AllowComment             bool                             `json:"allow_comment"`
 	CollectContact           bool                             `json:"collect_contact"`
+	AIProcessing             AIProcessingConfig               `json:"ai_processing"`
 	AppearanceOverrides      widgetconfig.AppearanceOverrides `json:"appearance_overrides"`
 	Appearance               widgetconfig.Appearance          `json:"appearance"`
 	CreatedAt                time.Time                        `json:"created_at"`
@@ -271,6 +300,7 @@ type WidgetRuleInput struct {
 	Localizations            map[string]WidgetLocalization     `json:"localizations"`
 	AllowComment             *bool                             `json:"allow_comment"`
 	CollectContact           bool                              `json:"collect_contact"`
+	AIProcessing             AIProcessingConfig                `json:"ai_processing"`
 	AppearanceOverrides      *widgetconfig.AppearanceOverrides `json:"appearance_overrides"`
 }
 
@@ -315,6 +345,7 @@ type WidgetRuleValues struct {
 	Localizations            map[string]WidgetLocalization
 	AllowComment             bool
 	CollectContact           bool
+	AIProcessing             AIProcessingConfig
 	AppearanceOverrides      widgetconfig.AppearanceOverrides
 	ExplicitAppearance       bool
 }

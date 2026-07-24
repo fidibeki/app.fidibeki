@@ -167,9 +167,42 @@ func TestGeminiAnalyzerProcessesTextAndMediaLifecycle(t *testing.T) {
 		t.Errorf("media result = %#v, deleted = %q", mediaResult, api.deletedName)
 	}
 	if api.uploadConfig == nil || api.uploadConfig.MIMEType != "video/mp4" ||
+		api.uploadConfig.DisplayName != "fidibeki-feedback-attachment" ||
+		strings.Contains(api.uploadConfig.DisplayName, "attachment-id") ||
 		api.generatedModel != "gemini-2.5-flash" || api.generatedConfig.ResponseMIMEType != "application/json" {
 		t.Errorf("Gemini calls = upload %#v model %q config %#v",
 			api.uploadConfig, api.generatedModel, api.generatedConfig)
+	}
+}
+
+func TestGeminiAnalyzerMinimizesReporterIdentifiersBeforeProviderRequest(t *testing.T) {
+	t.Parallel()
+	api := &fakeGeminiAPI{response: structuredGeminiResponse(
+		`{"transcription":"","cleaned_text":"[REDACTED]","sentiment_score":0,"moderation_flags":[]}`,
+	)}
+	analyzer := &GeminiAnalyzer{api: api, model: "gemini-test", fileLedger: &fakeGeminiLedger{}}
+	sentinel := "private.person@example.com"
+	result, err := analyzer.AnalyzeText(context.Background(),
+		"My name is Private Person and my email is "+sentinel,
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeText() error = %v", err)
+	}
+	var requestText strings.Builder
+	for _, content := range api.generatedContents {
+		for _, part := range content.Parts {
+			requestText.WriteString(part.Text)
+		}
+	}
+	if strings.Contains(requestText.String(), sentinel) ||
+		strings.Contains(requestText.String(), "Private Person") {
+		t.Fatalf("provider request leaked reporter identity: %s", requestText.String())
+	}
+	if !strings.Contains(requestText.String(), RedactionLiteral) {
+		t.Fatalf("provider request did not preserve redaction marker: %s", requestText.String())
+	}
+	if result.Redactions["email"] == 0 || result.Redactions["name"] == 0 {
+		t.Fatalf("provider input redaction manifest = %#v", result.Redactions)
 	}
 }
 
@@ -194,9 +227,9 @@ func TestGeminiAnalyzerClassifiesServiceAndResponseFailures(t *testing.T) {
 		{name: "candidate sensitive PII", permanent: true, api: &fakeGeminiAPI{response: finishReasonResponse(genai.FinishReasonSPII)}},
 		{name: "candidate recitation", permanent: true, api: &fakeGeminiAPI{response: finishReasonResponse(genai.FinishReasonRecitation)}},
 		{name: "candidate language", permanent: true, api: &fakeGeminiAPI{response: finishReasonResponse(genai.FinishReasonLanguage)}},
-		{name: "empty response", api: &fakeGeminiAPI{response: &genai.GenerateContentResponse{}}},
-		{name: "invalid JSON", api: &fakeGeminiAPI{response: structuredGeminiResponse(`not-json`)}},
-		{name: "invalid score", api: &fakeGeminiAPI{response: structuredGeminiResponse(
+		{name: "empty response", permanent: true, api: &fakeGeminiAPI{response: &genai.GenerateContentResponse{}}},
+		{name: "invalid JSON", permanent: true, api: &fakeGeminiAPI{response: structuredGeminiResponse(`not-json`)}},
+		{name: "invalid score", permanent: true, api: &fakeGeminiAPI{response: structuredGeminiResponse(
 			`{"transcription":"","cleaned_text":"x","sentiment_score":2,"moderation_flags":[]}`,
 		)}},
 	}
@@ -668,18 +701,19 @@ type fakeTaskClient struct {
 }
 
 type fakeGeminiAPI struct {
-	uploadFile      *genai.File
-	uploadErr       error
-	uploadConfig    *genai.UploadFileConfig
-	getFiles        []*genai.File
-	getErr          error
-	response        *genai.GenerateContentResponse
-	generateErr     error
-	generatedModel  string
-	generatedConfig *genai.GenerateContentConfig
-	deletedName     string
-	deleteErrors    []error
-	deleteCalls     int
+	uploadFile        *genai.File
+	uploadErr         error
+	uploadConfig      *genai.UploadFileConfig
+	getFiles          []*genai.File
+	getErr            error
+	response          *genai.GenerateContentResponse
+	generateErr       error
+	generatedModel    string
+	generatedConfig   *genai.GenerateContentConfig
+	generatedContents []*genai.Content
+	deletedName       string
+	deleteErrors      []error
+	deleteCalls       int
 }
 
 type fakeGeminiLedger struct {
@@ -800,11 +834,12 @@ func (a *fakeGeminiAPI) DeleteFile(_ context.Context, name string) error {
 func (a *fakeGeminiAPI) GenerateContent(
 	_ context.Context,
 	model string,
-	_ []*genai.Content,
+	contents []*genai.Content,
 	config *genai.GenerateContentConfig,
 ) (*genai.GenerateContentResponse, error) {
 	a.generatedModel = model
 	a.generatedConfig = config
+	a.generatedContents = contents
 	return a.response, a.generateErr
 }
 

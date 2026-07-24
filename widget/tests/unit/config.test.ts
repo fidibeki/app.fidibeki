@@ -140,6 +140,8 @@ describe('configuration fetch and cache', () => {
 
     expect(result.rules[0]?.replay_consent).toEqual(expect.objectContaining({ mode: 'none' }))
     expect(result.definitions?.[0]?.replay_consent).toEqual(expect.objectContaining({ mode: 'none' }))
+    expect(result.rules[0]?.ai_processing).toEqual({ enabled: false })
+    expect(result.definitions?.[0]?.ai_processing).toEqual({ enabled: false })
   })
 
   it('reports only the selected rule without page data', async () => {

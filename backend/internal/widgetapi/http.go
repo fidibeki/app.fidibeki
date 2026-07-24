@@ -91,7 +91,16 @@ type PublicWidgetRule struct {
 	Localizations            map[string]project.WidgetLocalization `json:"localizations"`
 	AllowComment             bool                                  `json:"allow_comment"`
 	CollectContact           bool                                  `json:"collect_contact"`
+	AIProcessing             PublicAIProcessing                    `json:"ai_processing"`
 	Appearance               widgetconfig.Appearance               `json:"appearance"`
+}
+
+type PublicAIProcessing struct {
+	Enabled          bool                      `json:"enabled"`
+	Provider         string                    `json:"provider,omitempty"`
+	InputCategories  []project.AIInputCategory `json:"input_categories,omitempty"`
+	PrivacyPolicyURL string                    `json:"privacy_policy_url,omitempty"`
+	PolicyVersion    string                    `json:"policy_version,omitempty"`
 }
 
 func NewHTTPHandler(options HTTPOptions) http.Handler {
@@ -317,6 +326,13 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
 		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,
 		Localizations: rule.Localizations, AllowComment: rule.AllowComment,
-		CollectContact: rule.CollectContact, Appearance: rule.Appearance,
+		CollectContact: rule.CollectContact,
+		AIProcessing: PublicAIProcessing{
+			Enabled: rule.AIProcessing.Enabled, Provider: rule.AIProcessing.Provider,
+			InputCategories:  rule.AIProcessing.InputCategories,
+			PrivacyPolicyURL: rule.AIProcessing.PrivacyPolicyURL,
+			PolicyVersion:    rule.AIProcessing.PolicyVersion,
+		},
+		Appearance: rule.Appearance,
 	}
 }

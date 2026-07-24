@@ -80,9 +80,12 @@ describe('widget localization', () => {
       const result = resolveWidgetLocalization(rule, 'en', [locale])
       expect(result.system.consentNotice.length).toBeGreaterThan(0)
       expect(result.system.privacyPolicy.length).toBeGreaterThan(0)
+      expect(result.system.aiDisclosure.length).toBeGreaterThan(0)
     }
     expect(resolveWidgetLocalization(rule, 'en', ['en']).system.consentNotice)
       .not.toBe(resolveWidgetLocalization(rule, 'en', ['pt']).system.consentNotice)
+    expect(resolveWidgetLocalization(rule, 'en', ['en']).system.aiDisclosure)
+      .not.toBe(resolveWidgetLocalization(rule, 'en', ['pt']).system.aiDisclosure)
   })
 
   it('falls back to English consent copy for the legacy default localization', () => {

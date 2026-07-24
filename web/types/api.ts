@@ -123,6 +123,7 @@ export type WidgetPosition = 'bottom-left' | 'bottom-right'
 export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
 export type ReplayConsentMode = 'none' | 'fidibeki_managed' | 'customer_cmp'
+export type AIInputCategory = 'feedback_text' | 'screenshot' | 'audio' | 'video'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
 export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
@@ -188,6 +189,19 @@ export interface ReplayConsentConfig {
   retention_days: number
   expiry_days: number
   notices: Record<string, ReplayConsentNotice>
+}
+
+export interface AIProcessingConfig {
+  enabled: boolean
+  policy_version?: string
+  provider?: 'google_gemini'
+  purposes?: string[]
+  input_categories?: AIInputCategory[]
+  privacy_policy_url?: string
+  sensitive_data_mode?: 'prohibit_and_quarantine'
+  acknowledged?: boolean
+  acknowledged_at?: string
+  acknowledged_by_member_id?: string
 }
 
 export interface ReplayConsentDiagnostic {
@@ -259,6 +273,7 @@ export interface WidgetRule {
   localizations: Record<string, WidgetLocalization>
   allow_comment: boolean
   collect_contact: boolean
+  ai_processing: AIProcessingConfig
   appearance_overrides?: WidgetAppearanceOverrides
   appearance?: WidgetAppearance
   created_at: string

@@ -19,6 +19,7 @@ import {
 } from '@lucide/vue'
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type {
+  AIProcessingConfig,
   Project,
   ReplayConsentConfig,
   ReplayMode,
@@ -76,6 +77,7 @@ const ruleAppearance = ref<WidgetAppearanceOverrides>({})
 const diagnosticsRefreshing = ref(false)
 const previewLauncherOpen = ref(false)
 const replayConsentDialogOpen = ref(false)
+const aiProcessingDialogOpen = ref(false)
 type ProjectDestructiveAction =
   | { kind: 'rule', id: string, name: string }
   | { kind: 'project', id: string, name: string }
@@ -121,6 +123,7 @@ const selectedRule = computed(() => data.value?.rules.find((rule) => rule.id ===
 const visibleRules = computed(() => (data.value?.rules || []).filter(rule =>
   showArchivedRules.value || rule.definition_status !== 'archived'))
 const supportsAudio = computed(() => tenant.value?.plan !== 'starter')
+const supportsAI = computed(() => data.value?.configuration.plan.features.ai === true)
 const supportsDOM = computed(() => tenant.value?.plan !== 'starter')
 const supportsReplay = computed(() => tenant.value?.plan !== 'starter')
 const supportsVideo = computed(() => tenant.value?.plan === 'scale' || tenant.value?.plan === 'enterprise')
@@ -325,6 +328,7 @@ function selectRule(rule: WidgetRule) {
     presentation: rule.presentation || 'prompt', objective: rule.objective || 'continuous_feedback',
     response_blocks: rule.response_blocks || legacyResponseBlocks(rule), localizations,
     allow_comment: rule.allow_comment || false, collect_contact: rule.collect_contact || false,
+    ai_processing: cloneReactive(rule.ai_processing || defaultWidgetRule().ai_processing),
   })
   editingLocale.value = locale
 }
@@ -396,6 +400,26 @@ function cancelReplayConsent() {
 function confirmReplayConsent(configuration: ReplayConsentConfig) {
   ruleForm.replay_consent = cloneReactive(configuration)
   replayConsentDialogOpen.value = false
+}
+
+function onAIProcessingChange(event: Event) {
+  const target = event.target
+  if (!(target instanceof HTMLInputElement)) return
+  if (!target.checked) {
+    ruleForm.ai_processing = { enabled: false }
+    aiProcessingDialogOpen.value = false
+    return
+  }
+  aiProcessingDialogOpen.value = true
+}
+
+function cancelAIProcessing() {
+  aiProcessingDialogOpen.value = false
+}
+
+function confirmAIProcessing(configuration: AIProcessingConfig) {
+  ruleForm.ai_processing = cloneReactive(configuration)
+  aiProcessingDialogOpen.value = false
 }
 
 function fallbackLocalization(prompt: string): WidgetLocalization {
@@ -860,6 +884,26 @@ useHead(() => ({
               </div>
             </section>
             <section>
+              <h3>{{ t('projects.editor.ai.title') }}</h3>
+              <div class="ai-processing-setting" :data-enabled="ruleForm.ai_processing.enabled">
+                <label :data-locked="!supportsAI && !ruleForm.ai_processing.enabled">
+                  <input
+                    type="checkbox"
+                    :checked="ruleForm.ai_processing.enabled"
+                    :disabled="!supportsAI && !ruleForm.ai_processing.enabled"
+                    v-bind="ruleFieldAttributes('ai_processing.enabled')"
+                    @change="onAIProcessingChange"
+                  />
+                  <span><b>{{ t('projects.editor.ai.toggle') }}</b><small>{{ supportsAI || ruleForm.ai_processing.enabled ? t('projects.editor.ai.toggleHint') : t('projects.editor.methods.upgradeRequired') }}</small></span>
+                </label>
+                <button v-if="ruleForm.ai_processing.enabled && supportsAI" class="app-button" type="button" @click="aiProcessingDialogOpen = true">
+                  <ShieldCheck :size="14" /> {{ t('projects.editor.ai.review') }}
+                </button>
+              </div>
+              <small v-if="ruleFieldError('ai_processing.enabled')" :id="ruleErrorID('ai_processing.enabled')" class="rule-field-error">{{ ruleFieldError('ai_processing.enabled') }}</small>
+              <small v-if="ruleFieldError('ai_processing.acknowledged')" :id="ruleErrorID('ai_processing.acknowledged')" class="rule-field-error">{{ ruleFieldError('ai_processing.acknowledged') }}</small>
+            </section>
+            <section>
               <h3>{{ t('projects.editor.blocks.title') }}</h3>
               <div
                 class="response-block-list"
@@ -1058,6 +1102,16 @@ useHead(() => ({
       @cancel="cancelReplayConsent"
       @confirm="confirmReplayConsent"
     />
+    <AIProcessingDialog
+      :open="aiProcessingDialogOpen"
+      :initial="ruleForm.ai_processing"
+      :default-privacy-url="tenant?.privacy_policy_url"
+      :screenshot="ruleForm.can_attach_screenshot"
+      :audio="ruleForm.can_record_audio"
+      :video="ruleForm.can_record_video"
+      @cancel="cancelAIProcessing"
+      @confirm="confirmAIProcessing"
+    />
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>
 </template>
@@ -1155,6 +1209,13 @@ useHead(() => ({
 .project-capability-grid label span { display: flex; flex-direction: column; gap: 3px; }
 .project-capability-grid b { font-size: 10px; }
 .project-capability-grid small { color: var(--muted); font-size: 8px; }
+.ai-processing-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; }
+.ai-processing-setting[data-enabled='true'] { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); background: color-mix(in srgb, var(--green) 5%, #fff); }
+.ai-processing-setting > label { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.ai-processing-setting > label[data-locked='true'] { opacity: .65; }
+.ai-processing-setting > label span { display: grid; min-width: 0; gap: 3px; }
+.ai-processing-setting b { font-size: 10px; }
+.ai-processing-setting small { color: var(--muted); font-size: 8px; line-height: 1.4; }
 .response-block-list { display: grid; gap: 14px; }
 .response-block-row { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .response-block-row:last-child { padding-bottom: 0; border-bottom: 0; }

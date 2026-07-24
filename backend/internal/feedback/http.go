@@ -231,7 +231,8 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 		}
 		feedbackID := NewID()
 		prepared, err := prepareAttachments(
-			configuration, feedbackID, values.Attachments, definition.Features.AI, rawTokens,
+			configuration, feedbackID, values.WidgetRuleID, values.Attachments,
+			definition.Features.AI, rawTokens,
 			h.now().UTC(),
 		)
 		if err != nil {
@@ -710,6 +711,7 @@ func (h *HTTPHandler) writeStoreError(w http.ResponseWriter, r *http.Request, er
 func prepareAttachments(
 	configuration project.PublicConfiguration,
 	feedbackID string,
+	widgetRuleID string,
 	values []AttachmentValues,
 	aiEnabled bool,
 	rawTokens map[string]string,
@@ -717,13 +719,21 @@ func prepareAttachments(
 ) ([]PreparedAttachment, error) {
 	prepared := make([]PreparedAttachment, 0, len(values))
 	status := "skipped"
-	if aiEnabled {
-		status = "pending"
-	}
 	for _, value := range values {
 		attachmentStatus := status
-		if value.Kind == AttachmentReplay {
-			attachmentStatus = "skipped"
+		if aiEnabled {
+			var category project.AIInputCategory
+			switch value.Kind {
+			case AttachmentScreenshot:
+				category = project.AIInputScreenshot
+			case AttachmentAudio:
+				category = project.AIInputAudio
+			case AttachmentVideo:
+				category = project.AIInputVideo
+			}
+			if category != "" && ruleAIInputEnabled(configuration, widgetRuleID, category) {
+				attachmentStatus = "pending"
+			}
 		}
 		attachmentID := uuid.NewString()
 		raw, tokenHash, err := auth.NewOpaqueToken()

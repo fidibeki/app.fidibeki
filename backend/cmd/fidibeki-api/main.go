@@ -686,6 +686,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	aiStore := aiprocessing.Store{
 		Database: pools.Admin, ProjectDailyLimit: settings.AIProjectDailyLimit,
+		Model:       settings.GeminiModel,
 		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
 		Logger:      logger,
 	}

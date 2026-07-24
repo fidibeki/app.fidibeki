@@ -167,6 +167,10 @@ export function mountWidget(options: MountOptions): () => void {
     if (consentNotice) consentNotice.textContent = localization.system.consentNotice
     const privacyLink = shadow.querySelector<HTMLAnchorElement>('[data-copy="privacy-link"]')
     if (privacyLink) privacyLink.textContent = localization.system.privacyPolicy
+    const aiDisclosure = shadow.querySelector<HTMLElement>('[data-copy="ai-disclosure"]')
+    if (aiDisclosure) aiDisclosure.textContent = aiDisclosureCopy(options.rule, localization)
+    const aiPrivacyLink = shadow.querySelector<HTMLAnchorElement>('[data-copy="ai-privacy-link"]')
+    if (aiPrivacyLink) aiPrivacyLink.textContent = localization.system.privacyPolicy
     submitButton.textContent = submitCopy === 'retry' ? localization.system.retry : content.submit_label
     responseControls?.localize(localization)
     localizeRating?.(localization.system)
@@ -800,6 +804,11 @@ function markup(
          <p class="consent-notice"><span data-copy="consent-notice">${escapeHTML(localization.system.consentNotice)}</span> <a data-copy="privacy-link" href="${escapeHTML(PRIVACY_POLICY_URL)}" target="_blank" rel="noopener noreferrer">${escapeHTML(localization.system.privacyPolicy)}</a></p>
        </div>`
     : ''
+  const aiDisclosure = rule.ai_processing?.enabled
+    ? `<p class="ai-disclosure" role="note"><span data-copy="ai-disclosure">${escapeHTML(aiDisclosureCopy(rule, localization))}</span>${rule.ai_processing.privacy_policy_url
+      ? ` <a data-copy="ai-privacy-link" href="${escapeHTML(rule.ai_processing.privacy_policy_url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(localization.system.privacyPolicy)}</a>`
+      : ''}</p>`
+    : ''
   return `${launcher}<section class="panel ${presentation}" data-panel aria-label="${escapeHTML(localization.system.formLabel)}"${panelHidden}>
     <header><div>${logoURL
       ? `<img class="brand" src="${escapeHTML(logoURL)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
@@ -807,11 +816,25 @@ function markup(
       <button class="icon" type="button" data-close aria-label="${escapeHTML(localization.system.close)}" title="${escapeHTML(localization.system.close)}">&#215;</button></header>
     <form novalidate>
       <div data-optional class="optional"></div>
-      ${legacyText}${comment}${contact}
+      ${legacyText}${comment}${contact}${aiDisclosure}
       <label class="honeypot" aria-hidden="true">Website<input name="company_website" tabindex="-1" autocomplete="off"></label>
       <footer><span data-message aria-live="polite"></span><button class="primary" type="submit" data-submit>${escapeHTML(content.submit_label)}</button></footer>
     </form>
   </section>`
+}
+
+function aiDisclosureCopy(
+  rule: WidgetRule,
+  localization: ResolvedWidgetLocalization,
+): string {
+  const categories = (rule.ai_processing?.input_categories ?? [])
+    .map(category => localization.system.aiInputNames[category])
+    .filter(Boolean)
+  if (categories.length === 0) return localization.system.aiDisclosure
+  return `${localization.system.aiDisclosure} ${localization.system.aiScope.replace(
+    '{categories}',
+    categories.join(', '),
+  )}`
 }
 
 function styles(
@@ -828,7 +851,7 @@ function styles(
   [hidden]{display:none!important}.launcher{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;min-height:44px;padding:0 16px;border:1px solid var(--fb-accent);border-radius:6px;background:var(--fb-accent);color:var(--fb-on-accent);font:700 13px/1 sans-serif;letter-spacing:0;box-shadow:0 10px 28px rgba(0,0,0,.18);cursor:pointer}
   .panel{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;width:min(368px,calc(100vw - 32px));max-height:calc(100dvh - 40px);display:flex;flex-direction:column;box-sizing:border-box;background:var(--fb-bg);color:var(--fb-fg);border:1px solid var(--fb-line);border-top:4px solid var(--fb-accent);border-radius:6px;box-shadow:0 18px 50px rgba(0,0,0,.2);overflow:hidden}
   .panel.inline{position:relative;inset:auto;width:100%;max-width:720px;box-shadow:none}.panel.reaction{width:min(420px,calc(100vw - 32px))}
-  header{display:flex;flex:none;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}.brand{display:block;width:auto;max-width:132px;height:24px;object-fit:contain;object-position:left center;margin-bottom:7px}form{min-height:0;overflow-y:auto;padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.consent-notice{margin:6px 0 0;font:400 11px/1.4 sans-serif;color:var(--fb-muted)}.consent-notice a{color:var(--fb-accent)}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:var(--fb-on-accent);padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
+  header{display:flex;flex:none;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 20px 14px}h2{font:700 18px/1.3 "Avenir Next","Segoe UI",sans-serif;margin:3px 0 0;letter-spacing:0}.eyebrow{font:700 10px/1 sans-serif;color:var(--fb-accent);letter-spacing:0}.brand{display:block;width:auto;max-width:132px;height:24px;object-fit:contain;object-position:left center;margin-bottom:7px}form{min-height:0;overflow-y:auto;padding:0 20px 20px}.icon{width:32px;height:32px;display:grid;place-items:center;border:0;background:transparent;color:var(--fb-muted);font-size:24px;line-height:1;cursor:pointer}.icon:hover{color:var(--fb-fg);background:color-mix(in srgb,var(--fb-fg) 7%,transparent)}.icon:disabled{opacity:.5;cursor:wait}label>span,legend{display:block;margin:14px 0 7px;font:650 12px/1.2 sans-serif;color:var(--fb-muted)}textarea,input[type=email],select{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid var(--fb-line);border-radius:5px;background:var(--fb-bg);color:var(--fb-fg);font:400 14px/1.45 "Avenir Next","Segoe UI",sans-serif;letter-spacing:0;outline:none}textarea{resize:vertical;min-height:92px}textarea:focus,input[type=email]:focus,select:focus{border-color:var(--fb-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--fb-accent) 22%,transparent)}.consent{display:flex;align-items:flex-start;gap:9px;margin-top:12px}.consent input{margin:2px 0 0}.consent span{margin:0}.consent-notice,.ai-disclosure{margin:6px 0 0;font:400 11px/1.4 sans-serif;color:var(--fb-muted)}.consent-notice a,.ai-disclosure a{color:var(--fb-accent)}.ai-disclosure{padding-top:9px;border-top:1px solid var(--fb-line)}.optional{display:grid;gap:10px}.optional fieldset{border:0;padding:0;margin:0;min-width:0}.scale,.choices{display:flex;flex-wrap:wrap;gap:6px}.choice{min-width:38px;height:38px;padding:0 10px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-muted);font:650 13px/1 sans-serif;cursor:pointer}.scale .choice{width:38px;padding:0;font-size:21px}.choice[aria-pressed=true]{border-color:var(--fb-accent);background:color-mix(in srgb,var(--fb-accent) 10%,transparent);color:var(--fb-accent)}[data-invalid=true]{outline:2px solid #b42318;outline-offset:3px}.primary,.secondary{min-height:38px;border-radius:5px;font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.primary{border:1px solid var(--fb-accent);background:var(--fb-accent);color:var(--fb-on-accent);padding:0 15px}.primary:disabled{opacity:.6;cursor:wait}.secondary{width:100%;border:1px solid var(--fb-line);background:transparent;color:var(--fb-fg);padding:0 12px}.secondary:hover{border-color:var(--fb-accent)}footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:16px}footer span{flex:1;color:var(--fb-muted);font:500 11px/1.3 sans-serif}.honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}.success{display:grid;gap:6px;padding:22px 0 8px;text-align:center}.success strong{font:700 18px/1.2 sans-serif}.success span{font:400 13px/1.4 sans-serif;color:var(--fb-muted)}
   ${automatic ? '@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}' : ''}
   @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:12px}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`

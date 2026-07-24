@@ -113,6 +113,65 @@ func TestValidateWidgetRuleForcesAnonymousReplayCanvasOff(t *testing.T) {
 	}
 }
 
+func TestValidateWidgetRuleKeepsAIProcessingDisabledByDefault(t *testing.T) {
+	t.Parallel()
+	values, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "No implicit AI", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+	}, tenant.Tenant{Plan: tenant.PlanEnterprise})
+	if len(fields) != 0 {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if values.AIProcessing.Enabled || values.AIProcessing.Acknowledged {
+		t.Fatalf("AI processing = %#v, want safe disabled default", values.AIProcessing)
+	}
+}
+
+func TestValidateWidgetRuleRequiresExplicitCurrentAIProcessingAcknowledgment(t *testing.T) {
+	t.Parallel()
+	input := WidgetRuleInput{
+		Name: "AI analysis", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		AIProcessing: AIProcessingConfig{
+			Enabled: true, InputCategories: []AIInputCategory{AIInputFeedbackText},
+			PrivacyPolicyURL: "https://example.com/privacy",
+		},
+	}
+	_, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanEnterprise})
+	if fields["ai_processing.acknowledged"] == "" {
+		t.Fatalf("fields = %#v, want acknowledgment error", fields)
+	}
+
+	input.AIProcessing.Acknowledged = true
+	values, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanEnterprise})
+	if len(fields) != 0 {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if values.AIProcessing.PolicyVersion != AIProcessingPolicyVersion ||
+		values.AIProcessing.Provider != AIProviderGoogleGemini ||
+		values.AIProcessing.SensitiveDataMode != AISensitiveDataProhibit {
+		t.Fatalf("AI processing = %#v", values.AIProcessing)
+	}
+}
+
+func TestValidateWidgetRuleRejectsUnavailableAIInputsAndUnsafePrivacyURL(t *testing.T) {
+	t.Parallel()
+	_, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Unsafe AI", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		AIProcessing: AIProcessingConfig{
+			Enabled: true, Acknowledged: true,
+			InputCategories:  []AIInputCategory{AIInputAudio, "replay"},
+			PrivacyPolicyURL: "http://example.com/privacy",
+		},
+	}, tenant.Tenant{Plan: tenant.PlanStarter})
+	for _, field := range []string{
+		"ai_processing.enabled", "ai_processing.input_categories[0]",
+		"ai_processing.input_categories[1]", "ai_processing.privacy_policy_url",
+	} {
+		if fields[field] == "" {
+			t.Errorf("fields[%q] missing from %#v", field, fields)
+		}
+	}
+}
+
 func TestValidateDefaultLocale(t *testing.T) {
 	t.Parallel()
 	if locale, message := ValidateDefaultLocale(""); locale != "en" || message != "" {

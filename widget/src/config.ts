@@ -45,6 +45,7 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
         notices: {},
       }
     }
+    if (!rule.ai_processing) rule.ai_processing = { enabled: false }
   }
   return configuration
 }

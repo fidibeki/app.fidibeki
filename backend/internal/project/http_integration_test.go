@@ -365,6 +365,9 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"consent_label":"Email me about this feedback","submit_label":"Send",`+
 			`"success_message":"Feedback received."}},`+
 			`"allow_comment":true,"collect_contact":true,`+
+			`"ai_processing":{"enabled":true,"acknowledged":true,`+
+			`"input_categories":["feedback_text","audio"],`+
+			`"privacy_policy_url":"https://example.com/privacy"},`+
 			`"appearance_overrides":{"logo_url":""}}`, ownerToken,
 	)
 	if updatedRule.Code != http.StatusOK || !strings.Contains(updatedRule.Body.String(), `"can_record_audio":true`) ||
@@ -376,10 +379,28 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(updatedRule.Body.String(), `"definition_version":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"presentation":"reaction"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"ai_processing":{"enabled":true`) ||
+		!strings.Contains(updatedRule.Body.String(), `"acknowledged_by_member_id":"`+ownerID+`"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"replay_record_canvas":false`) ||
 		!strings.Contains(updatedRule.Body.String(), `"replay_canvas_fps":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"appearance_overrides":{"logo_url":""}`) {
 		t.Errorf("update widget rule status = %d, body = %s", updatedRule.Code, updatedRule.Body.String())
+	}
+	var aiAuditActor, aiAuditData string
+	if err := root.QueryRow(ctx, `
+		SELECT actor_member_id::text, data::text
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'widget_rule.ai_processing_updated'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, acmeID).Scan(&aiAuditActor, &aiAuditData); err != nil {
+		t.Fatalf("read AI processing configuration audit: %v", err)
+	}
+	if aiAuditActor != ownerID ||
+		!strings.Contains(aiAuditData, `"enabled": true`) ||
+		!strings.Contains(aiAuditData, `"provider": "google_gemini"`) ||
+		!strings.Contains(aiAuditData, `"privacy_policy_url": "https://example.com/privacy"`) {
+		t.Fatalf("AI processing configuration audit = actor %q data %s", aiAuditActor, aiAuditData)
 	}
 	var replayAuditActor, replayAuditKind, replayAuditData string
 	if err := root.QueryRow(ctx, `
@@ -481,6 +502,32 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	`, createdRule.WidgetRule.ID); err != nil {
 		t.Fatalf("configure rule appearance before legacy edit: %v", err)
 	}
+	var inFlightFeedbackID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, widget_rule_id, public_id, client_feedback_id,
+			text, title, description, page_url, text_process_status,
+			text_processing_generation
+		) VALUES (
+			$1, $2, $3, 'fb_AIRace01', gen_random_uuid(),
+			'In-flight AI work', 'In-flight AI work', 'In-flight AI work',
+			'https://example.com/checkout', 'processing', 1
+		)
+		RETURNING id
+	`, acmeID, created.Project.ID, createdRule.WidgetRule.ID).Scan(&inFlightFeedbackID); err != nil {
+		t.Fatalf("seed in-flight AI feedback: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO ai_processing_runs (
+			tenant_id, project_id, feedback_id, widget_rule_id, generation,
+			policy_version, provider, model, purpose, input_category, status
+		) VALUES (
+			$1, $2, $3, $4, 1, '2026-07-24', 'google_gemini', 'gemini-test',
+			'advisory_feedback_analysis', 'feedback_text', 'processing'
+		)
+	`, acmeID, created.Project.ID, inFlightFeedbackID, createdRule.WidgetRule.ID); err != nil {
+		t.Fatalf("seed in-flight AI processing evidence: %v", err)
+	}
 	legacyAppearanceUpdate := performProjectRequest(
 		handler, "acme", http.MethodPatch,
 		"/v1/projects/"+created.Project.ID+"/widget-rules/"+createdRule.WidgetRule.ID,
@@ -500,6 +547,22 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	}
 	if legacySurface != "#101817" || legacyLogo != "https://cdn.example.com/rule.svg" {
 		t.Errorf("legacy edit dropped appearance overrides: surface = %q, logo = %q", legacySurface, legacyLogo)
+	}
+	var disabledTextStatus, disabledRunStatus, disabledRunReason string
+	if err := root.QueryRow(ctx, `
+		SELECT feedback.text_process_status, run.status, run.failure_reason
+		FROM feedbacks AS feedback
+		JOIN ai_processing_runs AS run ON run.feedback_id = feedback.id
+		WHERE feedback.id = $1
+	`, inFlightFeedbackID).Scan(
+		&disabledTextStatus, &disabledRunStatus, &disabledRunReason,
+	); err != nil {
+		t.Fatalf("read AI state after rule disable: %v", err)
+	}
+	if disabledTextStatus != "skipped" || disabledRunStatus != "discarded" ||
+		disabledRunReason != "policy_disabled" {
+		t.Fatalf("AI state after disable = %s/%s/%s",
+			disabledTextStatus, disabledRunStatus, disabledRunReason)
 	}
 	if _, err := root.Exec(ctx, `
 		UPDATE widget_rules SET enabled = false, definition_status = 'paused' WHERE id = $1
@@ -526,6 +589,12 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	)
 	if deletedRule.Code != http.StatusNotFound {
 		t.Errorf("deleted rule status = %d, body = %s", deletedRule.Code, deletedRule.Body.String())
+	}
+	var detachedRuleID *string
+	if err := root.QueryRow(ctx, `
+		SELECT widget_rule_id::text FROM feedbacks WHERE id = $1
+	`, inFlightFeedbackID).Scan(&detachedRuleID); err != nil || detachedRuleID != nil {
+		t.Fatalf("feedback after rule deletion = widget_rule_id %v, error %v", detachedRuleID, err)
 	}
 	deleteProject := performProjectRequest(
 		handler, "acme", http.MethodDelete, "/v1/projects/"+created.Project.ID, "", ownerToken,
