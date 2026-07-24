@@ -83,8 +83,8 @@ func retentionRegistry() []retentionDefinition {
 			Source:       "Platform default", Trigger: "Authoritative expires_at timestamp.",
 			Action:  "Hard-delete credential row and retain a non-content audit event.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
-			Implementation: "tenantmember.Maintainer",
-			Resources:      tables("tenant_magic_links"),
+			Implementation: "tenantmember.Maintainer, platformadmin.Maintainer",
+			Resources:      tables("platform_admin_magic_links", "tenant_magic_links"),
 		},
 		{
 			Category: "authentication_security", Label: "Authentication and security records",
@@ -95,7 +95,7 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Security-record period and IP/user-agent minimization require approval.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"platform_admin_magic_links", "platform_admin_sessions", "platform_admins",
+				"platform_admin_sessions", "platform_admins", "platform_security_events",
 				"reporter_access_tokens", "tenant_member_sessions",
 			),
 		},

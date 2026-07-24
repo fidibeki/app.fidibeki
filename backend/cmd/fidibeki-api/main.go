@@ -679,6 +679,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	tenantAuthRetention := tenantmember.Maintainer{
 		Store: tenantmember.MaintenanceStore{Database: pools.Admin}, Logger: logger,
 	}
+	platformAuthRetention := platformadmin.Maintainer{
+		Store: platformadmin.MaintenanceStore{Database: pools.Admin}, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -772,7 +775,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 14)
+	backgroundDone := make(chan error, 15)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
@@ -785,6 +788,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- aiBudgetMaintainer.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -794,7 +798,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 	)
 }
 

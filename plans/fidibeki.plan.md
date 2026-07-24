@@ -658,12 +658,29 @@ was removed from the staging test tenant.
         role, and resource coverage without presenting `Workspace lifetime` as an effective
         maximum. This descriptive slice adds no migration, cleaner, expiry clock, or deletion
         authority.
+      - [x] Platform-admin magic-link tracer: `platform_admin_magic_links` had the same authoritative
+        `expires_at` shape as `tenant_magic_links` but no audit-event sink, since platform-admin
+        actions have no tenant scope to write `tenant_access_events` into. Migration `102` adds
+        `idx_platform_admin_magic_links_expires_at` and a new minimized, append-only
+        `platform_security_events` ledger (server-issued id, bounded dotted `kind`, bounded
+        `resource_type`, opaque `resource_id`, JSON `data`, unique on the three identity columns),
+        granted only `SELECT, INSERT` to `fidibeki_admin` and nothing to `fidibeki_app`. A new
+        `platformadmin.MaintenanceStore.ExpiredMagicLinks` mirrors `tenantmember`'s shape: one
+        statement selects/locks/deletes expired rows (`FOR UPDATE SKIP LOCKED`) and inserts one
+        `auth.platform_magic_link_expired` event per deleted row recording only whether it was
+        consumed — no email, token hash, admin id, IP, or user agent, and an event-insertion failure
+        rolls back the deletion. `platformadmin.Maintainer` wires the same batched-drain (200/batch,
+        20 batches, one-minute phase timeout, hourly) as an admin-pool worker goroutine beside
+        `tenantmember.Maintainer`. `platform_admin_magic_links` moved into the enforced
+        `auth_magic_links` registry category; `platform_security_events` was added to
+        `authentication_security`, which remains `decision_required`. Boundary/idempotent-rerun/
+        consumed-unconsumed/minimization/batch-limit/concurrent-sweep/atomic-rollback coverage
+        passed against real PostgreSQL; the registry now covers 68 tables across the same 27
+        categories; migration replay picked up migration 102 automatically.
       - Remaining cleanup-policy slices: `tenant_member_sessions`/`platform_admin_sessions` retention
         (blocked on a founder/legal decision for security-record retention, since these carry
         IP/user-agent and are arguably security evidence — no `expires_at` exists yet either, so
-        this needs schema work, not just a sweep); `platform_admin_magic_links` (same shape as
-        this slice, but platform admin actions have no audit-event sink today, so it needs one
-        first or an explicit decision to log via `slog` only); `outbox_events`/`delivery_logs`/
+        this needs schema work, not just a sweep); `outbox_events`/`delivery_logs`/
         `member_notifications` retention; workflow/feedback/issue/comment/AI-derived-text
         retention; IP/user-agent minimization; Sentry/error telemetry retention and scrubbing;
         consent-evidence-after-withdrawal retention; tenant-configurable shorter retention;
