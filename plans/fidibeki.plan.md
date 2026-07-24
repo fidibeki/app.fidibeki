@@ -405,7 +405,7 @@ was removed from the staging test tenant.
       API/worker/web source. The authenticated Tauview journey proved avatar and workspace-logo
       upload, immutable 64/256 reads through the tenant proxy, immediate propagation, removal,
       fallbacks, and cleanup without lock. Temporary identity data was restored.
-  - [ ] Complete member-aware internationalization issue #32.
+  - [x] Complete member-aware internationalization issue #32.
     - Audit result: organization locale/timezone defaults and independent widget localization
       exist; member preferences, Nuxt i18n, SSR-aware precedence, regional formatters, localized
       API errors, message catalogs, and extraction enforcement are missing.
@@ -508,15 +508,63 @@ was removed from the staging test tenant.
       including public submit to backoffice visibility and hostile HTML.
     - Staging web deployment `c21ea9ce-a1b5-49dc-a779-7ca6213b4479` passed a real reporter API and
       SSR journey in English and Portuguese; its temporary reporter token was removed.
-  - [x] Complete the new non-postponed privacy issues before continuous improvement.
+  - [ ] Complete the new non-postponed privacy and governance issues before continuous improvement.
     - [x] #53: make replay anonymous by default across identifiers, locations, rrweb content,
       canvas, storage, streaming, playback, and deletion.
-    - [x] #55: require explicit, structured, auditable, revocable reporter-update consent before
-      email transmission, persistence, enqueue, or provider delivery.
     - [x] #54: reuse the resulting privacy primitives for automatic feedback context, referrers,
       element attachments, backend validation, downstream projections, and existing-data
       remediation.
-    - The three slices are integrated on `main` through `81de75c`. Backend tests and 80.1%
+    - [x] #55: require explicit, structured, auditable, revocable reporter-update consent before
+      email transmission, persistence, enqueue, or provider delivery.
+    - [x] #56: make binary attachment declaration, upload, completion, retry, and degraded success
+      reliable across supported browsers.
+    - [x] #57: gate anonymous session replay behind independent managed/CMP consent with grant,
+      reject, withdrawal, expiry, version-change, and zero-capture-before-grant behavior.
+    - [x] #59: keep reporter anonymization pending until manual-review findings are explicitly
+      resolved, preserving evidence and retryability.
+    - [ ] #58: complete purpose-specific widget analytics consent.
+      - [x] Technical core: independent managed/CMP evidence ledger, dormant default, zero
+        persistent analytics identity/outbox/network before grant, withdrawal cleanup, backend
+        fail-closed ingestion, and server-authorized optional `submitted` conversion.
+      - [x] Local backend/web/widget gates and 54 browser journeys pass. Staging commit `f2e8211`
+        is healthy on API `c6cf9de4-853a-41bc-8b10-221a44326a1d`, worker
+        `a6676969-fcef-4069-8b3b-d853d932b5b3`, web
+        `94426592-c796-49f5-b63a-1d12ff830996`, and widget
+        `e1601da2-dad4-4c5f-aabf-1095c09d8e21`; migration `86` is clean.
+      - [x] Disposable staging validation proved `422` before grant, `201` grant, `202` after
+        grant, feedback remains usable with stale evidence, only valid evidence produces
+        `submitted`, no Issue is auto-created, and all synthetic data was removed.
+      - [ ] Add tenant diagnostics for current analytics consent/configuration and close the
+        documented legal decision on targeting/functional storage before broad enablement.
+    - [ ] #60: complete data-rights case management and execution.
+      - [x] Slice 1: canonical reporter/member cases, verification, deadlines, ownership,
+        idempotent lifecycle/events, explicit processing restrictions, fail-closed AI,
+        integrations, reporter email, replay, and analytics enforcement, public status, and
+        backoffice case intake/list/dashboard.
+      - [x] Restriction details now populate case lists as well as detail views.
+      - [ ] Slices 2-3: execute access/rectification/erasure/objection/withdrawal workflows,
+        legal holds and partial/refusal outcomes, recipient action tracking, and communications.
+    - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
+      data quarantine, policy disablement, and external provider-assessment gates.
+    - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,
+      delivery, audit, and telemetry data.
+    - [ ] #63: establish layered notices, role matrix, DPA/subprocessor/transfer inventory,
+      ROPA, and DPIA governance without publishing unverified claims.
+    - [ ] #64: add a restricted personal-data breach register, immutable chronology,
+      processor-to-controller notifications, decision evidence, and staging exercises.
+    - [ ] #65: complete sensitive-access governance.
+      - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
+        distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
+        deduplicates range traffic, and has backend/web coverage.
+      - [ ] Add supported platform-admin access paths with mandatory support reason/case,
+        revoked-credential and unusual API-key anomaly signals, load coverage, and explicit CSV
+        limit UX before closing.
+    - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
+      capabilities, restriction enforcement, and rectification/erasure action tracking.
+    - [x] #67: refine language and timezone preferences layout.
+    - [x] #68: fix sidebar navigation label alignment and overflow.
+    - [x] #69: make the attention queue note actionable.
+    - The #53-#55 privacy foundation is integrated on `main` through `81de75c`. Backend tests and 80.1%
       coverage, widget unit/typecheck/build and 40 browser journeys, web
       unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.
     - Staging API `df9bda9a-f529-4971-ad88-f4f3512ebeb3`, worker
@@ -526,9 +574,9 @@ was removed from the staging test tenant.
     - A disposable staging gate verified consent rejection without persistence, exact/prefix/origin
       URL projection in raw and daily funnel rows, unsafe element-context omission, anonymous replay
       privacy v2, no leaked sentinels, and complete cleanup without triggering email or text AI.
-  - [ ] After the approved roadmap is complete, audit every GitHub issue against the shipped code,
-    close work already delivered, and implement every remaining issue without the `postpone` label
-    before starting open-ended continuous improvement.
+  - [ ] After the entries above are complete, repeat the full GitHub issue audit against code,
+    tests, and staging, close materially completed issues, and implement every remaining issue
+    without the `postpone` label before starting open-ended continuous improvement.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
