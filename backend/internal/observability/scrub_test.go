@@ -30,8 +30,10 @@ func TestScrubEventRemovesRequestUserBreadcrumbsContextsAndTags(t *testing.T) {
 			Category: "http", Message: "GET /tenants/acme/reports?token=secret",
 			Data: map[string]any{"body": "reporter feedback text"},
 		}},
-		Contexts: map[string]sentry.Context{"custom": {"customer_field": "sensitive"}},
-		Tags:     map[string]string{"customer_id": "acme"},
+		Contexts:   map[string]sentry.Context{"custom": {"customer_field": "sensitive"}},
+		Tags:       map[string]string{"customer_id": "acme"},
+		ServerName: "customer-acme-host",
+		Modules:    map[string]string{"customer-module": "person@example.com"},
 	}
 
 	scrubbed := observability.ScrubEvent(event, nil)
@@ -51,6 +53,10 @@ func TestScrubEventRemovesRequestUserBreadcrumbsContextsAndTags(t *testing.T) {
 	}
 	if scrubbed.Tags != nil {
 		t.Errorf("Tags = %#v, want nil", scrubbed.Tags)
+	}
+	if scrubbed.ServerName != "" || scrubbed.Modules != nil {
+		t.Errorf("server/module metadata survived: ServerName=%q Modules=%#v",
+			scrubbed.ServerName, scrubbed.Modules)
 	}
 
 	serialized, err := json.Marshal(scrubbed)
@@ -94,16 +100,19 @@ func TestScrubEventGenericizesMessageAndExceptionValue(t *testing.T) {
 	}
 }
 
-func TestScrubEventDropsMechanismDataButKeepsMechanismMetadata(t *testing.T) {
+func TestScrubEventDropsMechanismFreeTextAndDataButKeepsStructuralMetadata(t *testing.T) {
 	t.Parallel()
 
 	handled := true
+	parentID := 7
 	event := &sentry.Event{
 		Exception: []sentry.Exception{{
 			Type: "*runtime.PanicNilError",
 			Mechanism: &sentry.Mechanism{
-				Type: "generic", Handled: &handled,
-				Data: map[string]any{"customer_field": "person@example.com"},
+				Type: "generic", Handled: &handled, ParentID: &parentID, ExceptionID: 8,
+				Description: "failed for person@example.com", HelpLink: "https://example.test/?token=secret",
+				Source: "reporter feedback text",
+				Data:   map[string]any{"customer_field": "person@example.com"},
 			},
 		}},
 	}
@@ -114,15 +123,23 @@ func TestScrubEventDropsMechanismDataButKeepsMechanismMetadata(t *testing.T) {
 	if mechanism == nil {
 		t.Fatal("Mechanism = nil, want preserved")
 	}
-	if mechanism.Type != "generic" || mechanism.Handled == nil || !*mechanism.Handled {
+	if mechanism.Type != "generic" || mechanism.Handled == nil || !*mechanism.Handled ||
+		mechanism.ParentID == nil || *mechanism.ParentID != 7 || mechanism.ExceptionID != 8 {
 		t.Errorf("Mechanism metadata not preserved: %#v", mechanism)
 	}
-	if mechanism.Data != nil {
-		t.Errorf("Mechanism.Data = %#v, want nil", mechanism.Data)
+	if mechanism.Description != "" || mechanism.HelpLink != "" || mechanism.Source != "" ||
+		mechanism.Data != nil {
+		t.Errorf("Mechanism free text/data survived: %#v", mechanism)
+	}
+	handled = false
+	parentID = 9
+	if mechanism.Handled == nil || !*mechanism.Handled ||
+		mechanism.ParentID == nil || *mechanism.ParentID != 7 {
+		t.Errorf("Mechanism retained mutable pointers from source: %#v", mechanism)
 	}
 }
 
-func TestScrubEventPreservesUsefulEvidence(t *testing.T) {
+func TestScrubEventDeepScrubsStackFramesAndPreservesStructuralEvidence(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -132,19 +149,34 @@ func TestScrubEventPreservesUsefulEvidence(t *testing.T) {
 		Timestamp:   now,
 		Release:     "fidibeki-api@1.2.3",
 		Environment: "staging",
-		ServerName:  "api-worker-7",
 		Exception: []sentry.Exception{{
 			Type: "*fmt.wrapError",
 			Stacktrace: &sentry.Stacktrace{
-				Frames: []sentry.Frame{{Function: "handleSubmit", Module: "widgetapi", Lineno: 42, InApp: true}},
+				Frames: []sentry.Frame{{
+					Function: "handleSubmit", Symbol: "submit", Module: "widgetapi",
+					Filename: "handler.go", AbsPath: "/Users/person@example.com/private/handler.go",
+					Lineno: 42, Colno: 7, InApp: true, Package: "widgetapi", Platform: "go",
+					PreContext: []string{"token=before-secret"}, ContextLine: "email := person@example.com",
+					PostContext: []string{"token=after-secret"},
+					Vars:        map[string]any{"authorization": "Bearer secret"},
+				}},
+				FramesOmitted: []uint{1, 2},
 			},
+		}},
+		Threads: []sentry.Thread{{
+			ID: "9", Name: "customer-person@example.com",
+			Stacktrace: &sentry.Stacktrace{Frames: []sentry.Frame{{
+				Function: "worker", Filename: "worker.go", Lineno: 17,
+				ContextLine: "token=thread-secret", Vars: map[string]any{"email": "thread@example.com"},
+			}}},
+			Crashed: true, Current: true,
 		}},
 	}
 
 	scrubbed := observability.ScrubEvent(event, nil)
 
 	if scrubbed.EventID != "abc123" || scrubbed.Level != sentry.LevelFatal || !scrubbed.Timestamp.Equal(now) ||
-		scrubbed.Release != "fidibeki-api@1.2.3" || scrubbed.Environment != "staging" || scrubbed.ServerName != "api-worker-7" {
+		scrubbed.Release != "fidibeki-api@1.2.3" || scrubbed.Environment != "staging" {
 		t.Errorf("evidence fields not preserved: %#v", scrubbed)
 	}
 	if scrubbed.Exception[0].Stacktrace == nil || len(scrubbed.Exception[0].Stacktrace.Frames) != 1 {
@@ -152,6 +184,35 @@ func TestScrubEventPreservesUsefulEvidence(t *testing.T) {
 	}
 	if scrubbed.Exception[0].Stacktrace.Frames[0].Function != "handleSubmit" {
 		t.Errorf("Stacktrace frame function = %q, want preserved", scrubbed.Exception[0].Stacktrace.Frames[0].Function)
+	}
+	frame := scrubbed.Exception[0].Stacktrace.Frames[0]
+	if frame.Filename != "handler.go" || frame.Lineno != 42 || frame.Colno != 7 ||
+		!frame.InApp || frame.Module != "widgetapi" {
+		t.Errorf("safe frame evidence not preserved: %#v", frame)
+	}
+	if frame.AbsPath != "" || frame.PreContext != nil || frame.ContextLine != "" ||
+		frame.PostContext != nil || frame.Vars != nil {
+		t.Errorf("frame free text survived: %#v", frame)
+	}
+	if scrubbed.Exception[0].Stacktrace == event.Exception[0].Stacktrace {
+		t.Error("exception stacktrace pointer was reused")
+	}
+	if len(scrubbed.Threads) != 1 || scrubbed.Threads[0].Name != "" ||
+		scrubbed.Threads[0].Stacktrace == nil ||
+		scrubbed.Threads[0].Stacktrace.Frames[0].Function != "worker" {
+		t.Errorf("thread structural evidence = %#v", scrubbed.Threads)
+	}
+	serialized, err := json.Marshal(scrubbed)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	for _, leak := range []string{
+		"person@example.com", "before-secret", "after-secret", "Bearer secret",
+		"thread-secret", "thread@example.com",
+	} {
+		if strings.Contains(string(serialized), leak) {
+			t.Errorf("scrubbed stack serialization contains %q: %s", leak, serialized)
+		}
 	}
 }
 

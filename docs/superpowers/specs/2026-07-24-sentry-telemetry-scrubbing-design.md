@@ -80,36 +80,35 @@ fields `ScrubEvent`/`scrubEvent` copies.
 
 | Kept as-is | Genericized | Always dropped |
 |---|---|---|
-| `EventID`, `Level`, `Platform`, `Timestamp`, `Release`, `Environment`, `ServerName`, `Sdk`, `Modules`, `Type` | `Message` → placeholder (if set) | `Request` (URL/method/data/query/cookies/headers/env) |
-| `Exception[].Type`, `.Module`, `.ThreadID`, `.Stacktrace` (frames, incl. `filename`/`function`/`lineno`) | `Exception[].Value` → placeholder (if set) | `User` (id/email/ip/username/name/data) |
-| `Exception[].Mechanism.Type/Description/Handled/ExceptionID/ParentID/IsExceptionGroup` | | `Exception[].Mechanism.Data` (arbitrary map) |
-| `Threads[].Stacktrace`, `.Crashed`, `.Current`, `.Name` | | `Breadcrumbs` (all — message and data) |
+| `EventID`, `Level`, `Platform`, `Timestamp`, `Release`, `Environment`, `Type` | `Message` → placeholder (if set) | `Request` (URL/method/data/query/cookies/headers/env) |
+| `Exception[].Type`, `.Module`, `.ThreadID`; reconstructed stack frames limited to function/symbol/module/filename/line/column/in-app/package/platform/stack-start | `Exception[].Value` → placeholder (if set) | `User` (id/email/ip/username/name/data) |
+| `Exception[].Mechanism.Type/Handled/ExceptionID/ParentID/IsExceptionGroup` | | Stack-frame absolute paths, source context, locals, and address metadata; mechanism description/help-link/source/data |
+| `Threads[].ID`, reconstructed stack trace, `.Crashed`, `.Current` | | Thread names, `ServerName`, `Sdk`, `Modules`, and `Breadcrumbs` |
 | | | `Contexts`, `Tags` (both fully arbitrary; nothing in this codebase sets them today) |
 
-`Frame.Vars` (would-be local-variable dump) is not scrubbed explicitly because `sentry-go`'s own
-`NewFrame`/`NewStacktrace` never populate it for Go stack traces (confirmed by reading
-`stacktrace.go`; the field only appears in the SDK's own JSON-marshalling test fixtures) — there is
-nothing to drop, so no dead code was added to handle it.
+Stack traces are themselves reconstructed. This is necessary even though the current Go SDK does
+not normally populate `Frame.Vars` or source context: custom events and future SDK behavior must not
+be able to bypass the allowlist by placing customer data inside a frame.
 
 **Widget (`@sentry/browser` `ErrorEvent`):**
 
 | Kept as-is | Genericized | Always dropped |
 |---|---|---|
-| `event_id`, `timestamp`, `platform`, `level`, `release`, `environment`, `sdk`, `type` | `message` → placeholder (if set) | `request` (no URL at all, incl. path/query/fragment) |
-| `exception.values[].type`, `.stacktrace` | `exception.values[].value` → placeholder (if set) | `user`, `contexts`, `tags` |
-| `exception.values[].mechanism.type/handled` | | `exception.values[].mechanism.data`, `breadcrumbs` (all) |
-| `extra.phase`, `extra.project_id`, `extra.widget_rule_id` (only these three keys, only if their value is a string) | | every other `extra` key, however named |
+| `event_id`, `timestamp`, `platform`, `level`, `release`, `environment`, `type` | `message` → placeholder (if set) | `request` (no URL at all, incl. path/query/fragment) |
+| `exception.values[].type`; reconstructed stack frames limited to filename/function/module/platform/line/column/in-app/instruction-address/address-mode/debug-id | `exception.values[].value` → placeholder (if set) | `user`, `contexts`, `tags`, `sdk` |
+| `exception.values[].mechanism.type/handled` | | Stack-frame absolute paths, source context, locals and module metadata; mechanism data; breadcrumbs |
+| `extra.phase` from the nine code-owned phases; `project_id`/`widget_rule_id` only when they match `[A-Za-z0-9_-]{1,128}` | | every other `extra` key or invalid/oversized allowed-key value |
 
 The three `extra` keys are the widget's existing bounded, code-owned operational context (see
-`widget/src/loader.ts:184` and `widget/src/widget.ts:604-607`, both unchanged by this slice — they
-already only ever send `phase`/`project_id`/`widget_rule_id`). The allowlist in `scrubEvent` is what
-makes that boundary durable: it drops any *other* key regardless of name, so a future call site that
-carelessly adds a fourth context field (or a caller that reuses `captureWidgetError` with reporter
-text in `context`) is scrubbed by construction rather than by remembering to update a blocklist.
+`widget/src/loader.ts:184` and `widget/src/widget.ts:604-607`, both unchanged by this slice).
+`phase` must be one of `analytics`, `targeting`, `mount`, `configuration`, `replay`,
+`replay_consent_prompt`, `analytics_consent_prompt`, `attachments`, or `submission`; project and
+rule IDs must match the bounded identifier pattern above. The allowlist drops any other key and any
+invalid allowed-key value, so future call sites cannot place free text under an apparently safe key.
 
 Both sides use the same fixed placeholder string for genericized values
 (`"[fidibeki] value removed before Sentry send; see exception type and stacktrace"`), so a Sentry
-issue still reads as "an exception happened, here is its Go/JS type and full stack trace," which is
+issue still reads as "an exception happened, here is its Go/JS type and structural stack trace," which is
 the evidence engineers actually triage on — the free-text message is what could carry customer data,
 and Go/JS error messages are unstructured strings with no reliable way to prove one never
 interpolated a request value, so it is always replaced rather than conditionally inspected.
@@ -155,17 +154,18 @@ returns early on `!options.dsn`).
 
 - Backend: sentinel tests proving a raw `Request` (URL with path/query/fragment, headers, cookies,
   body), `User` (id/email/IP/username), `Breadcrumbs` (message and data), arbitrary `Contexts`/`Tags`,
-  and a panic value/wrapped error containing an email or token string are all absent from the
-  scrubbed event, while `Exception.Type`, `Stacktrace` (with frames), `Timestamp`, `Release`,
-  `Environment`, and `EventID` survive unchanged. One test exercises the real
+  frame absolute path/source context/locals, mechanism free text/data, and a panic value/wrapped
+  error containing an email or token string are all absent from the scrubbed event, while
+  `Exception.Type`, structural stack frames, `Timestamp`, `Release`, `Environment`, and `EventID`
+  survive unchanged. One test exercises the real
   `sentry.Init`-with-`BeforeSend` → `RecoverWithContext` → transport path (not just the pure
   function) to prove the wiring, not just the function in isolation.
 - Widget: sentinel tests proving `request`/`user`/`contexts`/`tags`/`breadcrumbs` are absent
   regardless of what the raw event contained, a thrown string and a thrown `Error` whose
   `message`/`stack` embeds an email/token/raw URL never reach the scrubbed event's `message` or
-  `exception.values[].value`, and that `extra` survives only for `phase`/`project_id`/`widget_rule_id`
-  even when the caller-supplied context carries extra keys (reporter text, attachment detail, or
-  anything else).
+  `exception.values[].value`; stack-frame source context, locals, absolute paths and module metadata
+  are removed; and `extra` survives only for a known phase and bounded project/rule identifiers,
+  even when caller-supplied context carries extra keys or invalid values.
 - `gofmt`, `go vet ./...`, `go build ./...`, focused `observability`/`logging` package tests, full
   `go test ./...`, `make governance-check`, widget `typecheck`, `test` (coverage), and `build`.
   `git diff --check` for whitespace/EOL hygiene.

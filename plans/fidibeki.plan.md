@@ -699,17 +699,19 @@ was removed from the staging test tenant.
         touched a thrown error's own `message`/`stack` text. `backend/internal/observability/scrub.go`
         (`ScrubEvent`, wired as `InitSentry`'s `BeforeSend`) and the rewritten
         `widget/src/modules/error-reporting.ts` (`scrubEvent`) now both reconstruct the outgoing
-        event from an explicit allowlist instead: exception type/stacktrace/timestamp/release/
-        environment (plus the widget's existing bounded `phase`/`project_id`/`widget_rule_id`
-        context) survive; request (URL/method/data/query/cookies/headers), user/IP, breadcrumbs,
-        arbitrary contexts/tags, and the free-text exception/message value are always dropped or
-        replaced with a fixed placeholder. A field neither function names — including one a future
+        event from an explicit allowlist instead: exception type/structural stack frames/timestamp/
+        release/environment (plus a known widget phase and bounded `project_id`/`widget_rule_id`)
+        survive; request (URL/method/data/query/cookies/headers), user/IP, frame absolute paths/
+        source context/locals, breadcrumbs, arbitrary contexts/tags, and the free-text exception/
+        message value are always dropped or replaced with a fixed placeholder. A field neither
+        function names — including one a future
         `sentry-go`/`@sentry/browser` upgrade might add — is absent by construction. The `#63`
         provider governance row's `PersonalDataCategories` text and `docs/privacy-data-map.md`'s
         Audit and observability row were tightened to describe the actual allowlist. Sentinel tests
         on both sides cover email/token/raw-URL-with-query-and-fragment/headers/cookies/body/
         user/IP/breadcrumb-data/arbitrary-nested-context-and-tag/thrown-string-and-`Error`-message
-        removal while proving type/stacktrace/timestamp/release/environment evidence survives; one
+        removal while proving type/structural-stack/timestamp/release/environment evidence survives;
+        invalid or oversized operational-context values are also rejected, and one
         backend test exercises the real `sentry.Init`-with-`BeforeSend` → `RecoverWithContext` →
         transport path, not just the pure function. See
         `docs/superpowers/specs/2026-07-24-sentry-telemetry-scrubbing-design.md`. This slice adds no

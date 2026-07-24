@@ -248,12 +248,12 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceBoundaryServiceProvider,
 			"Capture error and exception telemetry for operational monitoring.",
 			[]string{
-				"backend error telemetry: exception type/stacktrace/timestamp/release/environment " +
-					"only; message, request, user, breadcrumbs, contexts, tags removed by a " +
-					"deterministic BeforeSend allowlist",
-				"widget error telemetry: exception type/stacktrace plus phase/project_id/" +
-					"widget_rule_id only; message, request URL, user, breadcrumbs, contexts, tags, " +
-					"other extras removed by a deterministic allowlist",
+				"backend error telemetry: exception type, structural stack frames, timestamp, " +
+					"release, environment; message, request, user, frame context/locals, " +
+					"breadcrumbs, contexts, and tags removed before send",
+				"widget error telemetry: exception type, structural stack frames, known phase, " +
+					"bounded project/rule IDs; message, request, user, frame context/locals, " +
+					"breadcrumbs, contexts, tags, and extras removed",
 			},
 			"backend/internal/config/config.go (SentryDSN); backend/cmd/fidibeki-api/main.go "+
 				"(sentry.Init); widget/src/modules/error-reporting.ts (@sentry/browser)",

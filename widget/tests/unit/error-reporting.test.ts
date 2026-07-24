@@ -14,12 +14,18 @@ describe('Sentry event scrubbing', () => {
       },
       contexts: { custom: { customer_field: 'sensitive' } },
       tags: { customer_id: 'acme' },
+      sdk: {
+        name: 'sentry.javascript.browser',
+        version: '10.67.0',
+        integrations: ['customer-person@example.com'],
+      },
     }
     const scrubbed = scrubEvent(event)
     expect(scrubbed.user).toBeUndefined()
     expect(scrubbed.request).toBeUndefined()
     expect(scrubbed.contexts).toBeUndefined()
     expect(scrubbed.tags).toBeUndefined()
+    expect(scrubbed.sdk).toBeUndefined()
     expect(JSON.stringify(scrubbed)).not.toMatch(/person@example\.com|secret|203\.0\.113\.9|private feedback|acme/)
   })
 
@@ -43,7 +49,23 @@ describe('Sentry event scrubbing', () => {
         values: [{
           type: 'AttachmentPipelineError',
           value: 'attachment pipeline failed: reporter feedback text was "I earn 3000 EUR and my email is a@b.com"',
-          stacktrace: { frames: [{ filename: 'error-reporting.js', function: 'reportError', lineno: 12, in_app: true }] },
+          stacktrace: {
+            frames: [{
+              filename: 'error-reporting.js',
+              function: 'reportError',
+              module: 'widget',
+              lineno: 12,
+              colno: 7,
+              in_app: true,
+              abs_path: 'https://person@example.com/private/error-reporting.js?token=secret',
+              context_line: 'const email = "person@example.com"',
+              pre_context: ['const token = "before-secret"'],
+              post_context: ['send("after-secret")'],
+              vars: { authorization: 'Bearer secret' },
+              module_metadata: { reporter_text: 'private feedback' },
+            }],
+            frames_omitted: [1, 2],
+          },
         }],
       },
     }
@@ -51,8 +73,18 @@ describe('Sentry event scrubbing', () => {
     expect(scrubbed.message).toBe(REDACTED_TELEMETRY_VALUE)
     expect(scrubbed.exception!.values![0]!.value).toBe(REDACTED_TELEMETRY_VALUE)
     expect(scrubbed.exception!.values![0]!.type).toBe('AttachmentPipelineError')
-    expect(scrubbed.exception!.values![0]!.stacktrace?.frames?.[0]?.function).toBe('reportError')
-    expect(JSON.stringify(scrubbed)).not.toMatch(/passport-scan|3000 EUR|a@b\.com/)
+    expect(scrubbed.exception!.values![0]!.stacktrace?.frames?.[0]).toEqual({
+      filename: 'error-reporting.js',
+      function: 'reportError',
+      module: 'widget',
+      lineno: 12,
+      colno: 7,
+      in_app: true,
+    })
+    expect(scrubbed.exception!.values![0]!.stacktrace?.frames_omitted).toEqual([1, 2])
+    expect(JSON.stringify(scrubbed)).not.toMatch(
+      /passport-scan|3000 EUR|a@b\.com|before-secret|after-secret|Bearer secret|private feedback/,
+    )
   })
 
   it('sanitizes a thrown raw string so it cannot leak host-page or token content', () => {
@@ -95,6 +127,18 @@ describe('Sentry event scrubbing', () => {
     }
     const scrubbed = scrubEvent(event)
     expect(scrubbed.extra).toEqual({ phase: 'submission', project_id: 'project-1', widget_rule_id: 'rule-1' })
+  })
+
+  it('rejects unknown phases and malformed or oversized operational identifiers', () => {
+    const event: ErrorEvent = {
+      type: undefined,
+      extra: {
+        phase: 'reporter typed private feedback',
+        project_id: 'project/with/query?token=secret',
+        widget_rule_id: 'x'.repeat(129),
+      },
+    }
+    expect(scrubEvent(event).extra).toBeUndefined()
   })
 
   it('omits extra entirely when no allowed context key is present', () => {

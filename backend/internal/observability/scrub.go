@@ -14,15 +14,15 @@ const RedactedTelemetryValue = "[fidibeki] value removed before Sentry send; see
 // this function does not name — whether a future call site sets it or a future sentry-go upgrade
 // adds it to the protocol — is absent from the scrubbed event by construction.
 //
-// Kept as-is: EventID, Level, Platform, Timestamp, Release, Environment, ServerName, Sdk, Modules,
-// Type, Exception[].Type/Module/ThreadID/Stacktrace/Mechanism (minus Mechanism.Data), and
-// Threads[].Stacktrace/Crashed/Current/Name.
+// Kept as-is: EventID, Level, Platform, Timestamp, Release, Environment, Type,
+// Exception[].Type/Module/ThreadID, structural stack-frame fields, mechanism type/handled state,
+// and Threads[].ID/Stacktrace/Crashed/Current.
 //
 // Genericized: Message and Exception[].Value (replaced with RedactedTelemetryValue when set).
 //
 // Always dropped: Request (URL/method/data/query/cookies/headers/env), User (id/email/IP/
-// username/name/data), Breadcrumbs (message and data), Contexts, Tags, and Exception[].
-// Mechanism.Data — all arbitrary-shaped surfaces nothing in this codebase populates today.
+// username/name/data), Breadcrumbs (message and data), Contexts, Tags, ServerName, Sdk, Modules,
+// thread names, frame absolute paths/source context/locals, and mechanism free text/data.
 func ScrubEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	if event == nil {
 		return nil
@@ -35,9 +35,6 @@ func ScrubEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 		Timestamp:   event.Timestamp,
 		Release:     event.Release,
 		Environment: event.Environment,
-		ServerName:  event.ServerName,
-		Sdk:         event.Sdk,
-		Modules:     event.Modules,
 		Type:        event.Type,
 		Threads:     scrubThreads(event.Threads),
 		Exception:   scrubExceptions(event.Exception),
@@ -56,8 +53,7 @@ func scrubThreads(threads []sentry.Thread) []sentry.Thread {
 	for i, thread := range threads {
 		scrubbed[i] = sentry.Thread{
 			ID:         thread.ID,
-			Name:       thread.Name,
-			Stacktrace: thread.Stacktrace,
+			Stacktrace: scrubStacktrace(thread.Stacktrace),
 			Crashed:    thread.Crashed,
 			Current:    thread.Current,
 		}
@@ -75,7 +71,7 @@ func scrubExceptions(exceptions []sentry.Exception) []sentry.Exception {
 			Type:       exception.Type,
 			Module:     exception.Module,
 			ThreadID:   exception.ThreadID,
-			Stacktrace: exception.Stacktrace,
+			Stacktrace: scrubStacktrace(exception.Stacktrace),
 			Mechanism:  scrubMechanism(exception.Mechanism),
 		}
 		if exception.Value != "" {
@@ -86,18 +82,48 @@ func scrubExceptions(exceptions []sentry.Exception) []sentry.Exception {
 	return scrubbed
 }
 
+func scrubStacktrace(stacktrace *sentry.Stacktrace) *sentry.Stacktrace {
+	if stacktrace == nil {
+		return nil
+	}
+	frames := make([]sentry.Frame, len(stacktrace.Frames))
+	for i, frame := range stacktrace.Frames {
+		frames[i] = sentry.Frame{
+			Function:   frame.Function,
+			Symbol:     frame.Symbol,
+			Module:     frame.Module,
+			Filename:   frame.Filename,
+			Lineno:     frame.Lineno,
+			Colno:      frame.Colno,
+			InApp:      frame.InApp,
+			Package:    frame.Package,
+			Platform:   frame.Platform,
+			StackStart: frame.StackStart,
+		}
+	}
+	return &sentry.Stacktrace{
+		Frames:        frames,
+		FramesOmitted: append([]uint(nil), stacktrace.FramesOmitted...),
+	}
+}
+
 func scrubMechanism(mechanism *sentry.Mechanism) *sentry.Mechanism {
 	if mechanism == nil {
 		return nil
 	}
 	return &sentry.Mechanism{
 		Type:             mechanism.Type,
-		Description:      mechanism.Description,
-		HelpLink:         mechanism.HelpLink,
-		Source:           mechanism.Source,
-		Handled:          mechanism.Handled,
-		ParentID:         mechanism.ParentID,
+		Handled:          copyPointer(mechanism.Handled),
+		ParentID:         copyPointer(mechanism.ParentID),
 		ExceptionID:      mechanism.ExceptionID,
 		IsExceptionGroup: mechanism.IsExceptionGroup,
 	}
+}
+
+func copyPointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
