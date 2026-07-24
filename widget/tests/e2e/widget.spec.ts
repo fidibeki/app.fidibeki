@@ -943,6 +943,99 @@ test('customer-managed replay stays dormant until a structured grant and stops o
   expect(sessionRequests).toHaveLength(1)
 })
 
+test('revocation discards a replay capture that finishes starting after withdrawal', async ({ page }) => {
+  const replayRule = customerReplayRule({
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+  })
+  const baseConfiguration = browserConfiguration(replayRule)
+  const configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/replay/consents/revoke*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/replay/consents*', async (route) => {
+    const request = route.request().postDataJSON() as { grant_token: string }
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        token: request.grant_token,
+        state: 'active',
+        expires_at: '2026-08-23T12:00:00Z',
+      }),
+    })
+  })
+  await page.route('**/v1/replay.js', route => route.fulfill({
+    status: 200,
+    contentType: 'application/javascript',
+    body: `
+      export async function startReplayCapture() {
+        window.__replayStartCount = (window.__replayStartCount || 0) + 1
+        await new Promise(resolve => { window.__releaseReplayCapture = resolve })
+        return {
+          sessionID: 'delayed-session',
+          stop: async () => { window.__replayStopCount = (window.__replayStopCount || 0) + 1 },
+          revoke: () => { window.__replayRevokeCount = (window.__replayRevokeCount || 0) + 1 },
+        }
+      }
+    `,
+  }))
+
+  await page.goto('/sample.html')
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: {
+        replay: {
+          grantConsent(assertion: {
+            consentId: string
+            purpose: 'session_replay'
+            noticeVersion: string
+            locale: string
+            source: 'customer_cmp'
+          }): Promise<unknown>
+        }
+      }
+    }).Fidibeki
+    await api.replay.grantConsent({
+      consentId: 'cmp-reference',
+      purpose: 'session_replay',
+      noticeVersion: '2026-07',
+      locale: 'en',
+      source: 'customer_cmp',
+    })
+  })
+  await expect.poll(() => page.evaluate(() =>
+    (window as typeof window & { __replayStartCount?: number }).__replayStartCount ?? 0,
+  )).toBe(1)
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: { replay: { revokeConsent(): Promise<void> } }
+    }).Fidibeki
+    await api.replay.revokeConsent()
+    ;(window as typeof window & { __releaseReplayCapture?: () => void }).__releaseReplayCapture?.()
+  })
+
+  await expect.poll(() => page.evaluate(() => {
+    const state = window as typeof window & {
+      __replayStopCount?: number
+      __replayRevokeCount?: number
+    }
+    return (state.__replayStopCount ?? 0) + (state.__replayRevokeCount ?? 0)
+  })).toBe(1)
+  expect(await page.evaluate(() =>
+    (window as typeof window & { __replayRevokeCount?: number }).__replayRevokeCount ?? 0,
+  )).toBe(1)
+  expect(await page.evaluate(() =>
+    (window as typeof window & { __replayStopCount?: number }).__replayStopCount ?? 0,
+  )).toBe(0)
+})
+
 test('managed replay consent supports reject, accept, persistence, version changes, and withdrawal', async ({ page }) => {
   const replayRule: WidgetRule = {
     ...browserRule,

@@ -38,6 +38,7 @@ describe('managed replay consent prompt', () => {
     const buttons = [...(root?.querySelectorAll<HTMLButtonElement>('.decision') ?? [])]
 
     expect(dialog?.getAttribute('aria-labelledby')).toBe('replay-consent-title')
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
     expect(root?.textContent).toContain('Reprodução da sessão')
     expect(root?.textContent).toContain('Acme')
     expect(buttons.map(button => button.textContent)).toEqual(['Recusar', 'Aceitar'])
@@ -68,6 +69,11 @@ describe('managed replay consent prompt', () => {
     launcher.click()
     const withdrawButton = root.querySelector<HTMLButtonElement>('.withdraw')!
     expect(withdrawButton.textContent).toContain('Retirar consentimento')
+    withdrawButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true)
+    expect(root.activeElement).toBe(launcher)
+
+    launcher.click()
     withdrawButton.click()
     await Promise.resolve()
     expect(withdraw).toHaveBeenCalledTimes(1)

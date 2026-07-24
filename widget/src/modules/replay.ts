@@ -57,7 +57,9 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   const location = privacySafeLocation(window.location.href, options.rule)
   if (!location) throw new Error('replay session page URL could not be projected safely')
   const session = await createSession(options, clientSessionID, location.target)
+  const uploadAbortController = new AbortController()
   let stopped = false
+  let revoked = false
   let stopPromise: Promise<void> | null = null
   let eventCount = 0
   let batchIndex = 0
@@ -85,7 +87,8 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     serializedEvents = []
     serializedBytes = 2
     uploadChain = uploadChain.then(async () => {
-      await uploadBatch(options, session.id, batch)
+      if (revoked) return
+      await uploadBatch(options, session.id, batch, uploadAbortController.signal)
       completedBatches++
     })
   }
@@ -168,9 +171,12 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   function revoke(): void {
     if (stopped) return
     stopped = true
+    revoked = true
+    uploadAbortController.abort()
     cleanup()
     serializedEvents = []
     serializedBytes = 2
+    void uploadChain.catch(() => {})
   }
 
   return { sessionID: session.id, stop, revoke }
@@ -203,10 +209,12 @@ async function uploadBatch(
   options: ReplayCaptureOptions,
   sessionID: string,
   batch: PendingBatch,
+  signal: AbortSignal,
 ): Promise<void> {
   await retry(async () => {
     const declared = await widgetFetch(options, `replay/sessions/${sessionID}/batches`, {
       method: 'POST',
+      signal,
       body: JSON.stringify({
         batch_index: batch.index,
         events_count: batch.eventsCount,
@@ -219,19 +227,20 @@ async function uploadBatch(
       method: upload.method,
       headers: upload.headers,
       body: batch.body,
+      signal,
       credentials: 'omit',
     })
     if (!stored.ok) throw new Error(`replay batch upload failed with status ${stored.status}`)
     const completed = await widgetFetch(
       options,
       `replay/sessions/${sessionID}/batches/${batch.index}/complete`,
-      { method: 'POST', body: JSON.stringify({ complete_token: upload.complete_token }) },
+      { method: 'POST', signal, body: JSON.stringify({ complete_token: upload.complete_token }) },
     )
 		// A lost 204 response makes the retry observe an already-completed batch.
 		if (!completed.ok && completed.status !== 409) {
 			throw new Error(`replay batch completion failed with status ${completed.status}`)
 		}
-  })
+  }, signal)
 }
 
 async function finalizeSession(options: ReplayCaptureOptions, sessionID: string): Promise<void> {
@@ -258,18 +267,26 @@ function widgetFetch(options: ReplayCaptureOptions, path: string, init: RequestI
   })
 }
 
-async function retry(operation: () => Promise<void>): Promise<void> {
+async function retry(operation: () => Promise<void>, signal?: AbortSignal): Promise<void> {
   let lastError: unknown
   for (const delay of retryDelays) {
+    throwIfAborted(signal)
     if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay))
+    throwIfAborted(signal)
     try {
       await operation()
       return
     } catch (error) {
+      throwIfAborted(signal)
       lastError = error
     }
   }
   throw lastError
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
 }
 
 function randomID(): string {

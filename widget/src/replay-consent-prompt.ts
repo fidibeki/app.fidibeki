@@ -85,7 +85,7 @@ export function mountReplayConsentPrompt(options: ReplayConsentPromptOptions): (
     </style>
     <div class="host">
       ${options.state === 'active' ? `<button class="privacy-launcher" type="button">${escapeHTML(copy.launcher)}</button>` : ''}
-      <section class="panel" role="dialog" lang="${escapeAttribute(locale)}" aria-labelledby="replay-consent-title" aria-describedby="replay-consent-description replay-consent-meta" ${options.state === 'active' ? 'hidden' : ''}>
+      <section class="panel" role="dialog" aria-modal="true" lang="${escapeAttribute(locale)}" aria-labelledby="replay-consent-title" aria-describedby="replay-consent-description replay-consent-meta" ${options.state === 'active' ? 'hidden' : ''}>
         <div class="header">
           <h2 id="replay-consent-title">${escapeHTML(notice.title)}</h2>
           ${options.state === 'active' ? `<button class="close" type="button" aria-label="${escapeHTML(copy.close)}">&times;</button>` : ''}
@@ -126,9 +126,16 @@ export function mountReplayConsentPrompt(options: ReplayConsentPromptOptions): (
     panel.hidden = false
     root.querySelector<HTMLButtonElement>('.withdraw')?.focus()
   })
-  root.querySelector('.close')?.addEventListener('click', () => {
+  const closePanel = () => {
     panel.hidden = true
     root.querySelector<HTMLButtonElement>('.privacy-launcher')?.focus()
+  }
+  root.querySelector('.close')?.addEventListener('click', closePanel)
+  root.addEventListener('keydown', (event) => {
+    const keyboardEvent = event as KeyboardEvent
+    if (keyboardEvent.key !== 'Escape' || options.state !== 'active' || panel.hidden) return
+    keyboardEvent.preventDefault()
+    closePanel()
   })
   if (options.state === 'new') {
     queueMicrotask(() => root.querySelector<HTMLButtonElement>('.reject')?.focus())

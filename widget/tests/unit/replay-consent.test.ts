@@ -81,6 +81,114 @@ describe('replay consent orchestration', () => {
     expect(changed).toHaveBeenCalledTimes(2)
   })
 
+  it('persists an asynchronous grant only for the rule that requested it', async () => {
+    const storage = new MemoryStorage()
+    let resolveGrant!: (response: Response) => void
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveGrant = resolve
+    }))
+    const consent = {
+      mode: 'customer_cmp' as const,
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['en'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    }
+    const firstRule = rule({ id: 'rule-a', replay_mode: 'full', replay_consent: consent })
+    const secondRule = rule({ id: 'rule-b', replay_mode: 'full', replay_consent: consent })
+    const controller = createReplayConsentController({
+      endpoint: new URL('https://widget.example/v1/replay/consents'),
+      publicKey: 'pk_live_test',
+      projectID: 'project-1',
+      storage,
+      now: () => new Date('2026-07-23T12:00:00Z'),
+      createToken: () => 'grant-token',
+      fetchImpl,
+    })
+    controller.setRule(firstRule)
+    const grant = controller.grant({
+      consentId: 'cmp-reference',
+      purpose: 'session_replay',
+      noticeVersion: '2026-07',
+      locale: 'en',
+      source: 'customer_cmp',
+    })
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1))
+
+    controller.setRule(secondRule)
+    resolveGrant(new Response(JSON.stringify({
+      token: 'grant-token',
+      state: 'active',
+      expires_at: '2026-08-23T12:00:00Z',
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    await grant
+
+    const firstKey = 'fidibeki:replay-consent:v1:project-1:rule-a:2026-07'
+    const secondKey = 'fidibeki:replay-consent:v1:project-1:rule-b:2026-07'
+    expect(storage.getItem(firstKey)).not.toBeNull()
+    expect(storage.getItem(secondKey)).toBeNull()
+    expect(controller.status()).toBe('new')
+    controller.setRule(firstRule)
+    expect(controller.activeGrant()).toMatchObject({ token: 'grant-token' })
+  })
+
+  it('persists an asynchronous denial only for the rule that requested it', async () => {
+    const storage = new MemoryStorage()
+    let resolveDenial!: (response: Response) => void
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveDenial = resolve
+    }))
+    const consent = {
+      mode: 'fidibeki_managed' as const,
+      notice_version: '2026-07',
+      controller_name: 'Acme',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Session replay',
+          description: 'Help us improve.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw',
+        },
+      },
+    }
+    const firstRule = rule({ id: 'rule-a', replay_mode: 'full', replay_consent: consent })
+    const secondRule = rule({ id: 'rule-b', replay_mode: 'full', replay_consent: consent })
+    const controller = createReplayConsentController({
+      endpoint: new URL('https://widget.example/v1/replay/consents'),
+      publicKey: 'pk_live_test',
+      projectID: 'project-1',
+      storage,
+      now: () => new Date('2026-07-23T12:00:00Z'),
+      fetchImpl,
+    })
+    controller.setRule(firstRule)
+    const denial = controller.deny('en')
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1))
+
+    controller.setRule(secondRule)
+    resolveDenial(new Response(JSON.stringify({
+      state: 'denied',
+      expires_at: '2026-08-23T12:00:00Z',
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    await denial
+
+    const firstKey = 'fidibeki:replay-consent:v1:project-1:rule-a:2026-07'
+    const secondKey = 'fidibeki:replay-consent:v1:project-1:rule-b:2026-07'
+    expect(storage.getItem(firstKey)).not.toBeNull()
+    expect(storage.getItem(secondKey)).toBeNull()
+    expect(controller.status()).toBe('new')
+    controller.setRule(firstRule)
+    expect(controller.status()).toBe('denied')
+  })
+
   it('expires grants locally and requires a fresh grant after a notice version change', async () => {
     const storage = new MemoryStorage()
     let now = new Date('2026-07-23T12:00:00Z')

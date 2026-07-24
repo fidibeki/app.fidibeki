@@ -2253,6 +2253,13 @@ test('replay activation requires an explicit consent mode', async ({ page }, tes
       expiry_days: 30,
     },
   })
+  await page.getByRole('button', { name: 'Configure consent' }).click()
+  const revisionDialog = page.getByRole('dialog')
+  await revisionDialog.getByLabel('Notice version').fill('2026-08')
+  await expect(revisionDialog.getByRole('alert')).toContainText(
+    'Changing the consent mode or notice version invalidates existing grants.',
+  )
+  await revisionDialog.locator('footer').getByRole('button').first().click()
   await capture(page, testInfo, `replay-consent-configuration-${testInfo.project.name}`)
 })
 

@@ -871,6 +871,7 @@ export const portugueseMessages = {
           runtimeExpired: 'Bloqueado: a autorização mais recente expirou.',
           runtimeDenied: 'Bloqueado: a decisão gerida mais recente foi recusada.',
           runtimeRefresh: 'Atualizar diagnóstico de consentimento',
+          revisionWarning: 'Alterar o modo de consentimento ou a versão do aviso invalida as autorizações existentes. Os visitantes terão de escolher novamente.',
           confirm: 'Usar este modo de consentimento',
           configure: 'Configurar consentimento',
           requiredTitle: 'Configuração de consentimento obrigatória',

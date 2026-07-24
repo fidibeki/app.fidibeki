@@ -106,6 +106,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let replayConsentPromptTransition = 0
   let replayFingerprint = ''
   let replayTransition = 0
+  let replayRevokedThroughTransition = 0
   let evaluation = 0
   let automaticRuleID: string | null = null
   let configurationRequest: Promise<WidgetConfiguration> | null = null
@@ -127,7 +128,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       storage: durableStorage,
       onChanged: (state) => {
         if (state === 'revoked') {
-          replayTransition++
+          replayRevokedThroughTransition = ++replayTransition
           replayFingerprint = ''
           const capture = replayCapture
           replayCapture = null
@@ -383,11 +384,12 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 					visitorID: analytics.visitorID,
           consentToken: grant.token,
 					onError: (error) => void report(error, 'replay'),
-			})
-			if (transition !== replayTransition) {
-				if (capture) void capture.stop()
-				return
-			}
+				})
+				if (transition !== replayTransition) {
+					if (capture?.revoke && transition < replayRevokedThroughTransition) capture.revoke()
+					else if (capture) void capture.stop()
+					return
+				}
 			replayCapture = capture
 		} catch (error) {
 			void report(error, 'replay')

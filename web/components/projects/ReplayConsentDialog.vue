@@ -65,6 +65,14 @@ const valid = computed(() => {
   })
 })
 
+const invalidatesExistingGrants = computed(() =>
+  props.initial.mode !== 'none' &&
+  (
+    draft.value.mode !== props.initial.mode ||
+    draft.value.notice_version !== props.initial.notice_version
+  ),
+)
+
 const diagnosticMessage = computed(() => {
   if (!props.ruleId) return t('projects.editor.replay.consent.runtimeSaveFirst')
   if (diagnosticPending.value) return t('projects.editor.replay.consent.runtimeChecking')
@@ -262,6 +270,10 @@ function confirm() {
             </label>
           </div>
 
+          <p v-if="invalidatesExistingGrants" class="replay-consent-revision-warning" role="alert">
+            {{ t('projects.editor.replay.consent.revisionWarning') }}
+          </p>
+
           <fieldset class="replay-consent-locales">
             <legend>{{ t('projects.editor.replay.consent.locales') }}</legend>
             <label v-for="locale in localeOptions" :key="locale">
@@ -350,6 +362,7 @@ function confirm() {
 .replay-consent-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
 .replay-consent-grid .wide { grid-column: 1 / -1; }
 .replay-consent-grid textarea { min-height: 86px; resize: vertical; }
+.replay-consent-revision-warning { margin: 0; padding: 9px 10px; background: #fff8e8; color: #72520d; border: 1px solid #e9cc84; border-radius: 5px; font-size: 10px; line-height: 1.5; }
 .replay-consent-locales { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 0; border: 0; }
 .replay-consent-locales legend { width: 100%; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 700; }
 .replay-consent-locales label { display: flex; align-items: center; gap: 6px; }

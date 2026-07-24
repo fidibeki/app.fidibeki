@@ -59,19 +59,19 @@ export function createReplayConsentController(
   const fetchImpl = options.fetchImpl ?? fetch
   let currentRule: WidgetRule | null = null
 
-  const storageKey = () => {
-    if (!currentRule) return null
+  const storageKey = (rule = currentRule) => {
+    if (!rule) return null
     return [
       'fidibeki:replay-consent:v1',
       options.projectID,
-      currentRule.id,
-      currentRule.replay_consent.notice_version,
+      rule.id,
+      rule.replay_consent.notice_version,
     ].join(':')
   }
 
-  const readStored = (): StoredReplayConsent | null => {
-    const key = storageKey()
-    if (!key || !currentRule) return null
+  const readStored = (rule = currentRule): StoredReplayConsent | null => {
+    const key = storageKey(rule)
+    if (!key || !rule) return null
     const raw = options.storage.getItem(key)
     if (!raw) return null
     try {
@@ -85,9 +85,9 @@ export function createReplayConsentController(
         typeof stored.source !== 'string' ||
         (stored.source === 'customer_cmp' && typeof stored.consentId !== 'string') ||
         typeof stored.expiresAt !== 'string' ||
-        stored.noticeVersion !== currentRule.replay_consent.notice_version ||
-        stored.source !== currentRule.replay_consent.mode ||
-        !currentRule.replay_consent.supported_locales.some(locale =>
+        stored.noticeVersion !== rule.replay_consent.notice_version ||
+        stored.source !== rule.replay_consent.mode ||
+        !rule.replay_consent.supported_locales.some(locale =>
           locale.toLowerCase() === stored.locale?.toLowerCase()) ||
         !Number.isFinite(Date.parse(stored.expiresAt))
       ) {
@@ -101,9 +101,9 @@ export function createReplayConsentController(
     }
   }
 
-  const activeGrant = (): ReplayConsentGrant | null => {
-    const key = storageKey()
-    const stored = readStored()
+  const activeGrant = (rule = currentRule): ReplayConsentGrant | null => {
+    const key = storageKey(rule)
+    const stored = readStored(rule)
     if (!key || !stored || stored.state !== 'active') return null
     if (Date.parse(stored.expiresAt) <= now().getTime()) {
       options.storage.removeItem(key)
@@ -134,37 +134,39 @@ export function createReplayConsentController(
     },
     activeGrant,
     async grant(assertion) {
-      if (!currentRule || currentRule.replay_consent.mode === 'none') {
+      const rule = currentRule
+      if (!rule || rule.replay_consent.mode === 'none') {
         throw new Error('replay consent is not configured for the current rule')
       }
       const locale = assertion.locale.trim().toLowerCase()
-      const source = currentRule.replay_consent.mode
+      const source = rule.replay_consent.mode
       const customerReference = assertion.consentId?.trim() ?? ''
       if (
         assertion.purpose !== replayPurpose ||
-        assertion.noticeVersion.trim() !== currentRule.replay_consent.notice_version ||
+        assertion.noticeVersion.trim() !== rule.replay_consent.notice_version ||
         assertion.source !== source ||
-        !currentRule.replay_consent.supported_locales.some(value => value.toLowerCase() === locale) ||
+        !rule.replay_consent.supported_locales.some(value => value.toLowerCase() === locale) ||
         (source === 'customer_cmp' && !customerReference)
       ) {
         throw new Error('replay consent assertion does not match the current rule')
       }
-      const existing = readStored()
+      const key = storageKey(rule)!
+      const existing = readStored(rule)
       if (
         existing?.state === 'active' &&
         Date.parse(existing.expiresAt) > now().getTime() &&
         existing.locale === locale &&
-        existing.noticeVersion === currentRule.replay_consent.notice_version &&
+        existing.noticeVersion === rule.replay_consent.notice_version &&
         existing.source === source &&
         (source !== 'customer_cmp' || existing.consentId === customerReference)
       ) {
-        return activeGrant()!
+        return activeGrant(rule)!
       }
       const token = createToken()
       const response = await replayConsentFetch(options.endpoint, options.publicKey, fetchImpl, {
-        widget_rule_id: currentRule.id,
+        widget_rule_id: rule.id,
         purpose: replayPurpose,
-        notice_version: currentRule.replay_consent.notice_version,
+        notice_version: rule.replay_consent.notice_version,
         locale,
         source,
         consent_id: source === 'customer_cmp' ? customerReference : '',
@@ -190,13 +192,11 @@ export function createReplayConsentController(
         state: 'active',
         token,
         locale,
-        noticeVersion: currentRule.replay_consent.notice_version,
+        noticeVersion: rule.replay_consent.notice_version,
         source,
         ...(source === 'customer_cmp' ? { consentId: customerReference } : {}),
         expiresAt: payload.expires_at,
       }
-      const key = storageKey()
-      if (!key) throw new Error('replay consent rule changed during the grant')
       options.storage.setItem(key, JSON.stringify(stored))
       options.onChanged?.('granted')
       return {
@@ -208,17 +208,19 @@ export function createReplayConsentController(
       }
     },
     async deny(localeValue) {
-      if (!currentRule || currentRule.replay_consent.mode !== 'fidibeki_managed') {
+      const rule = currentRule
+      if (!rule || rule.replay_consent.mode !== 'fidibeki_managed') {
         throw new Error('Fidibeki-managed replay consent is not configured for the current rule')
       }
       const locale = localeValue.trim().toLowerCase()
-      if (!currentRule.replay_consent.supported_locales.some(value => value.toLowerCase() === locale)) {
+      if (!rule.replay_consent.supported_locales.some(value => value.toLowerCase() === locale)) {
         throw new Error('replay consent locale is not supported by the current rule')
       }
+      const key = storageKey(rule)!
       const response = await replayConsentFetch(options.endpoint, options.publicKey, fetchImpl, {
-        widget_rule_id: currentRule.id,
+        widget_rule_id: rule.id,
         purpose: replayPurpose,
-        notice_version: currentRule.replay_consent.notice_version,
+        notice_version: rule.replay_consent.notice_version,
         locale,
         source: 'fidibeki_managed',
         consent_id: '',
@@ -234,13 +236,11 @@ export function createReplayConsentController(
       ) {
         throw new Error('replay consent denial response is invalid')
       }
-      const key = storageKey()
-      if (!key) throw new Error('replay consent rule changed during the decision')
       const stored: StoredReplayConsent = {
         version: storageVersion,
         state: 'denied',
         locale,
-        noticeVersion: currentRule.replay_consent.notice_version,
+        noticeVersion: rule.replay_consent.notice_version,
         source: 'fidibeki_managed',
         expiresAt: payload.expires_at,
       }

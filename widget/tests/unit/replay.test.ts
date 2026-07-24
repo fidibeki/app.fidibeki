@@ -323,6 +323,80 @@ describe('rrweb replay capture', () => {
     await capture?.stop()
   })
 
+  it('discards a queued batch when consent is revoked before upload starts', async () => {
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      requests.push(url)
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({
+          id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000,
+        }, 201)
+      }
+      if (url.endsWith('/batches?key=key')) {
+        return jsonResponse({
+          presigned_url: 'https://storage.example/batch',
+          method: 'PUT', headers: {}, complete_token: 'token',
+        }, 201)
+      }
+      if (url === 'https://storage.example/batch') return new Response(null, { status: 200 })
+      if (url.includes('/complete?')) return new Response(null, { status: 204 })
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    for (let index = 0; index < 50; index++) emit({ type: 0, timestamp: index, data: {} })
+
+    capture?.revoke()
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+
+    expect(requests.filter(url => url.endsWith('/batches?key=key'))).toHaveLength(0)
+    expect(requests.filter(url => url.startsWith('https://storage.example/'))).toHaveLength(0)
+  })
+
+  it('aborts an in-flight batch request when consent is revoked', async () => {
+    vi.useFakeTimers()
+    let declarationCount = 0
+    let declarationStarted = false
+    let declarationSignal: AbortSignal | null = null
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo, init: RequestInit = {}) => {
+      const url = input.toString()
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({
+          id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000,
+        }, 201)
+      }
+      if (url.endsWith('/batches?key=key')) {
+        declarationCount++
+        declarationStarted = true
+        declarationSignal = init.signal ?? null
+        return new Promise<Response>((_resolve, reject) => {
+          if (init.signal?.aborted) {
+            reject(new DOMException('The operation was aborted', 'AbortError'))
+            return
+          }
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'))
+          }, { once: true })
+        })
+      }
+      throw new Error(`unexpected request ${url}`)
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    for (let index = 0; index < 50; index++) emit({ type: 0, timestamp: index, data: {} })
+    await vi.waitFor(() => expect(declarationStarted).toBe(true))
+
+    capture?.revoke()
+    expect((declarationSignal as AbortSignal | null)?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(declarationCount).toBe(1)
+  })
+
   it('retries a failed upload and treats an already-complete response as success', async () => {
     let declarations = 0
     let uploads = 0

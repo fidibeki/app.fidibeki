@@ -871,6 +871,7 @@ export const englishMessages = {
           runtimeExpired: 'Blocked: the latest grant expired.',
           runtimeDenied: 'Blocked: the latest managed decision was rejected.',
           runtimeRefresh: 'Refresh consent diagnostic',
+          revisionWarning: 'Changing the consent mode or notice version invalidates existing grants. Visitors must choose again.',
           confirm: 'Use this consent mode',
           configure: 'Configure consent',
           requiredTitle: 'Consent configuration required',
