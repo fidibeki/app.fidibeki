@@ -65,11 +65,20 @@ func (v TurnstileVerifier) Verify(ctx context.Context, token, remoteIP, idempote
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return fmt.Errorf("decode Turnstile response: %w", err)
 	}
-	if !result.Success || result.Action != "signup" ||
-		(v.ExpectedHost != "" && !strings.EqualFold(result.Hostname, v.ExpectedHost)) {
+	if !result.Success || result.Action != "signup" || !v.hostAllowed(result.Hostname) {
 		return ErrTurnstile
 	}
 	return nil
+}
+
+// hostAllowed accepts the base domain and its subdomains, since signup is
+// served from the app subdomain while ExpectedHost carries BASE_DOMAIN.
+func (v TurnstileVerifier) hostAllowed(hostname string) bool {
+	if v.ExpectedHost == "" {
+		return true
+	}
+	return strings.EqualFold(hostname, v.ExpectedHost) ||
+		strings.HasSuffix(strings.ToLower(hostname), "."+strings.ToLower(v.ExpectedHost))
 }
 
 type LocalSignupVerifier struct{}
