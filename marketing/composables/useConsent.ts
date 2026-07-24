@@ -13,9 +13,10 @@ function readStoredChoice(): ConsentChoice {
 }
 
 /**
- * Consent-gated analytics. Umami is cookieless and collects no personal
- * data, but we still only load it after an explicit opt-in and remember
- * the visitor's choice either way.
+ * Consent-gated analytics and feedback widget. Umami is cookieless and
+ * collects no personal data, and the Fidibeki widget only activates once
+ * a visitor opts in, but we still only load either after an explicit
+ * opt-in and remember the visitor's choice either way.
  */
 export function useConsent() {
   const choice = useState<ConsentChoice>('consent', () => 'pending')
@@ -32,6 +33,17 @@ export function useConsent() {
     document.head.appendChild(script)
   }
 
+  function loadWidget() {
+    if (!import.meta.client) return
+    if (!config.public.widgetKey) return
+    if (document.querySelector('script[data-fidibeki-key]')) return
+    const script = document.createElement('script')
+    script.async = true
+    script.src = config.public.widgetScriptUrl
+    script.dataset.fidibekiKey = config.public.widgetKey
+    document.head.appendChild(script)
+  }
+
   function persist(value: 'granted' | 'denied') {
     choice.value = value
     try {
@@ -44,6 +56,7 @@ export function useConsent() {
   function accept() {
     persist('granted')
     loadAnalytics()
+    loadWidget()
   }
 
   function decline() {
@@ -53,7 +66,10 @@ export function useConsent() {
   function initialize() {
     if (!import.meta.client) return
     choice.value = readStoredChoice()
-    if (choice.value === 'granted') loadAnalytics()
+    if (choice.value === 'granted') {
+      loadAnalytics()
+      loadWidget()
+    }
   }
 
   return { choice, accept, decline, initialize }
