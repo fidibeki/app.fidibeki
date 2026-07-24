@@ -93,7 +93,7 @@ describe('single-purpose consent prompt', () => {
 })
 
 describe('combined consent prompt', () => {
-  it('renders both purposes in one decision-only dialog with a shared header and one policy link', () => {
+  it('opens as a point-by-point summary without checkboxes', () => {
     const unmount = mountConsentPrompt({ purposes: [analyticsPurpose(), replayPurpose()] })
     expect(document.querySelectorAll('[data-fidibeki-consent]')).toHaveLength(1)
     const root = shadowRoot()
@@ -103,11 +103,34 @@ describe('combined consent prompt', () => {
     expect(root.textContent).toContain('Os dados de análise são conservados até 90 dias.')
     expect(root.textContent).toContain('As interações gravadas são conservadas até 30 dias.')
     expect(root.querySelectorAll('a')).toHaveLength(1)
+    // The summary offers only the equal-weight bulk decisions: the toggles stay inert and hidden
+    // behind "more options", and nothing is pre-selected.
     const toggles = [...root.querySelectorAll<HTMLInputElement>('.toggle')]
     expect(toggles).toHaveLength(2)
+    expect(toggles.every(toggle => toggle.disabled)).toBe(true)
     expect(toggles.every(toggle => !toggle.checked)).toBe(true)
+    expect(getComputedStyle(toggles[0]!).display).toBe('none')
+    expect(root.querySelector<HTMLButtonElement>('.save')?.hidden).toBe(true)
+    expect(root.querySelector('.more-options')?.textContent).toBe('Mais opções')
     // Decision-only: withdrawal lives in the privacy column, never in this dialog.
     expect(root.textContent).not.toContain('Retirar consentimento')
+    unmount()
+  })
+
+  it('reveals the per-purpose toggles behind "more options"', () => {
+    const unmount = mountConsentPrompt({ purposes: [analyticsPurpose(), replayPurpose()] })
+    const root = shadowRoot()
+    const moreOptions = root.querySelector<HTMLButtonElement>('.more-options')!
+    expect(moreOptions.getAttribute('aria-expanded')).toBe('false')
+
+    moreOptions.click()
+    expect(moreOptions.getAttribute('aria-expanded')).toBe('true')
+    expect(getComputedStyle(moreOptions).display).toBe('none')
+    const toggles = [...root.querySelectorAll<HTMLInputElement>('.toggle')]
+    expect(toggles.every(toggle => !toggle.disabled)).toBe(true)
+    expect(getComputedStyle(toggles[0]!).display).not.toBe('none')
+    expect(root.querySelector<HTMLButtonElement>('.save')?.hidden).toBe(false)
+    expect(root.activeElement).toBe(toggles[0])
     unmount()
   })
 
@@ -144,6 +167,7 @@ describe('combined consent prompt', () => {
     const replay = replayPurpose()
     const unmount = mountConsentPrompt({ purposes: [analytics, replay] })
     const root = shadowRoot()
+    root.querySelector<HTMLButtonElement>('.more-options')!.click()
     root.querySelector<HTMLInputElement>('.toggle[data-purpose="widget_analytics"]')!.checked = true
     root.querySelector<HTMLButtonElement>('.save')!.click()
     await vi.waitFor(() => {

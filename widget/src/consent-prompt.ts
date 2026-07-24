@@ -61,6 +61,7 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
         },
         acceptAll: 'Aceitar tudo',
         rejectAll: 'Recusar tudo',
+        moreOptions: 'Mais opções',
         save: 'Guardar escolhas',
         policy: 'Política de privacidade',
         error: 'Não foi possível guardar a escolha. Tenta novamente.',
@@ -73,6 +74,7 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
         },
         acceptAll: 'Accept all',
         rejectAll: 'Reject all',
+        moreOptions: 'More options',
         save: 'Save choices',
         policy: 'Privacy policy',
         error: 'Your choice could not be saved. Please try again.',
@@ -95,11 +97,15 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
     </div>`
     : ''
 
+  // The combined dialog opens as a plain-language summary — every purpose spelled out point by
+  // point with its retention terms, and only the equal-weight bulk decisions offered. The
+  // per-purpose checkboxes sit one step behind the "more options" link so neither pre-selection
+  // nor visual emphasis nudges the visitor toward a particular decision.
   const combinedBody = `
     ${purposes.map(purpose => `
       <section class="purpose" lang="${escapeAttribute(purpose.locale)}">
         <label class="choice">
-          <input class="toggle" type="checkbox" data-purpose="${purpose.purpose}">
+          <input class="toggle" type="checkbox" data-purpose="${purpose.purpose}" disabled>
           <span class="choice-copy">
             <span class="purpose-title">${escapeHTML(purpose.notice.title)}</span>
             <span class="purpose-description">${escapeHTML(purpose.notice.description)}</span>
@@ -112,7 +118,8 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
       <button class="decision reject-all" type="button">${escapeHTML(copy.rejectAll)}</button>
       <button class="decision accept-all" type="button">${escapeHTML(copy.acceptAll)}</button>
     </div>
-    <button class="save" type="button">${escapeHTML(copy.save)}</button>
+    <button class="more-options" type="button" aria-expanded="false">${escapeHTML(copy.moreOptions)}</button>
+    <button class="save" type="button" hidden>${escapeHTML(copy.save)}</button>
   `
 
   const host = document.createElement('div')
@@ -156,13 +163,27 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
       button:disabled { cursor: wait; opacity: .62; }
       .purpose { margin-top: 14px; padding-top: 14px; border-top: 1px solid #e2e8e6; }
       .purpose:first-of-type { margin-top: 10px; padding-top: 0; border-top: 0; }
-      .choice { display: flex; gap: 10px; cursor: pointer; }
-      .choice .toggle { flex: none; margin: 3px 0 0; width: 16px; height: 16px; accent-color: #087f73; }
+      .choice { display: flex; gap: 10px; }
+      .choice .toggle { display: none; flex: none; margin: 3px 0 0; width: 16px; height: 16px; accent-color: #087f73; }
+      .panel.options .choice { cursor: pointer; }
+      .panel.options .choice .toggle { display: block; }
       .purpose-title { display: block; color: #17201e; font-weight: 700; }
       .purpose-description { display: block; margin-top: 4px; color: #495956; }
       .choice .meta { display: block; margin-top: 4px; }
       .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
       .decision:hover { border-color: #087f73; color: #087f73; }
+      .more-options {
+        display: block;
+        min-height: auto;
+        margin-top: 12px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: #087f73;
+        font-weight: 650;
+        text-decoration: underline;
+      }
+      .panel.options .more-options { display: none; }
       .save { width: 100%; margin-top: 8px; }
       .save:hover { border-color: #087f73; color: #087f73; }
       .status { min-height: 18px; margin-top: 8px; color: #9c3f37; font-size: 12px; }
@@ -182,6 +203,8 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
   document.body.append(host)
 
   const status = root.querySelector<HTMLElement>('.status')!
+  const panel = root.querySelector<HTMLElement>('.panel')!
+  let optionsOpen = false
   const controls = () => [...root.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')]
   const run = async (action: () => Promise<void>) => {
     status.textContent = ''
@@ -190,7 +213,9 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
       await exclusive(action)
     } catch {
       status.textContent = copy.error
-      controls().forEach(control => { control.disabled = false })
+      controls().forEach(control => {
+        control.disabled = control.classList.contains('toggle') && !optionsOpen
+      })
     }
   }
   const decideAll = (decide: (purpose: ResolvedPurpose) => Promise<void>) => async () => {
@@ -208,6 +233,16 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
       const toggle = root.querySelector<HTMLInputElement>(`.toggle[data-purpose="${purpose.purpose}"]`)
       return toggle?.checked ? purpose.onAccept() : purpose.onReject()
     })))
+  root.querySelector('.more-options')?.addEventListener('click', (event) => {
+    optionsOpen = true
+    panel.classList.add('options')
+    ;(event.currentTarget as HTMLButtonElement).setAttribute('aria-expanded', 'true')
+    const save = root.querySelector<HTMLButtonElement>('.save')
+    if (save) save.hidden = false
+    const toggles = [...root.querySelectorAll<HTMLInputElement>('.toggle')]
+    toggles.forEach(toggle => { toggle.disabled = false })
+    toggles[0]?.focus()
+  })
   queueMicrotask(() => root.querySelector<HTMLButtonElement>('.reject, .reject-all')?.focus())
 
   return () => host.remove()

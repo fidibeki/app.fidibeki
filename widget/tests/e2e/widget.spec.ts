@@ -1426,6 +1426,10 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
   await expect(dialog.getByText('Help us improve this experience')).toBeVisible()
   expect(await dialog.count()).toBe(1)
 
+  // The first screen is a summary without checkboxes; the granular toggles sit behind the
+  // link-style "More options" so neither decision is visually favored.
+  await expect(dialog.getByRole('checkbox', { name: /Help us understand how this widget is used/ })).toBeHidden()
+  await dialog.getByRole('button', { name: 'More options' }).click()
   // Customize: allow analytics, leave replay unchecked, then save.
   await dialog.getByRole('checkbox', { name: /Help us understand how this widget is used/ }).check()
   await dialog.getByRole('button', { name: 'Save choices' }).click()
