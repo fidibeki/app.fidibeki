@@ -13,6 +13,11 @@ export default defineNuxtConfig({
   ],
   css: ['~/assets/css/main.css', '~/assets/css/app.css'],
   devtools: { enabled: false },
+  app: {
+    head: {
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    },
+  },
   modules: ['@nuxtjs/i18n'],
   i18n: {
     strategy: 'no_prefix',
