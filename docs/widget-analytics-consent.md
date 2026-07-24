@@ -8,6 +8,18 @@ purpose. It is not legal advice, a published notice, or approval to enable analy
 broadly. Privacy/legal review is required before broad staging enablement. Production remains out
 of scope until explicitly authorized.
 
+## Documented Classification Decision (D1)
+
+Decided by the founder on 2026-07-24 (decision D1 in
+`docs/superpowers/specs/2026-07-24-founder-decision-package-58-62-63.md`): widget targeting visit
+state and funnel-analytics browser storage remain classified as **non-essential, consent-required
+storage** — the currently shipped behavior. No "strictly necessary"/functional exemption is
+claimed for any part of it, so nothing activates before an explicit grant and withdrawal cleanup
+stays authoritative. The decision is recorded "for now": reclassifying any subset as functional
+would require a new documented legal review and a new decision entry, not a code change alone.
+Broad enablement follows this classification; the retention durations for the stored state remain
+separate #62 decisions (D6/D7) and are not approved by this entry.
+
 This purpose is deliberately independent from session replay (`docs/session-replay-consent.md`) and
 from reporter-contact consent (`purpose feedback_updates`, see `docs/privacy-data-map.md`). A grant,
 denial, or withdrawal for one purpose never implies, and is never inferred from, a grant/denial/

@@ -525,7 +525,10 @@ was removed from the staging test tenant.
       reject, withdrawal, expiry, version-change, and zero-capture-before-grant behavior.
     - [x] #59: keep reporter anonymization pending until manual-review findings are explicitly
       resolved, preserving evidence and retryability.
-    - [ ] #58: complete purpose-specific widget analytics consent.
+    - [x] #58: complete purpose-specific widget analytics consent. Closed on 2026-07-24 after
+      the founder decided D1: targeting visit state and funnel-analytics browser storage remain
+      non-essential, consent-required storage (current shipped behavior); no functional
+      exemption is claimed, and reclassification requires a new documented legal review.
       - [x] Technical core: independent managed/CMP evidence ledger, dormant default, zero
         persistent analytics identity/outbox/network before grant, withdrawal cleanup, backend
         fail-closed ingestion, and server-authorized optional `submitted` conversion.
@@ -542,8 +545,9 @@ was removed from the staging test tenant.
         mode/notice/active/expiring/denied/withdrawn/expired/recent counts and last-activity
         timestamp, scoped to the rule's current notice cohort, without exposing tokens, consent
         references, locale, or source.
-      - [ ] Close the documented legal decision on targeting/functional storage before broad
-        enablement.
+      - [x] Closed the documented legal decision on targeting/functional storage: decision D1
+        (2026-07-24) keeps the consent-required classification, recorded in
+        `docs/widget-analytics-consent.md`.
     - [x] #60: complete data-rights case management and execution. Closed on 2026-07-24 after
       the authenticated staging gate passed end to end on `fb3f508` (case `PRV-60DFB5A0`:
       member intake, progress and decision communications with confirmed delivery, completed
@@ -800,8 +804,16 @@ was removed from the staging test tenant.
         processing activities, with mitigations, owners, and approval evidence; staging
         reconciliation, link tests, localized E2E, and a reviewed change-notification/objection
         process for newly approved providers.
-    - [ ] #64: add a restricted personal-data breach register, immutable chronology,
-      processor-to-controller notifications, decision evidence, and staging exercises.
+    - [x] #64: add a restricted personal-data breach register, immutable chronology,
+      processor-to-controller notifications, decision evidence, and staging exercises. Closed on
+      2026-07-24 with founder approval after the staging tabletop covered all five scenarios
+      (attachment disclosure, replay access, database cross-tenant exposure, leaked integration
+      secret end-to-end with delivered initial/update/closure notifications, and subprocessor
+      breach via provider intake) with synthetic data only. The drill exposed that action
+      revisions failed under fidibeki_admin grants (SELECT ... FOR UPDATE on the append-only
+      ledger); fixed with an integration test that runs the lifecycle under the production role.
+      The revision re-verification runs after the fix deploys to staging; the register's own
+      retention policy (D14) and DPA notification terms (D26) stay tracked under #62/#63.
       - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only
         chronology. Migration `92` adds `breach_incidents`, `breach_incident_tenants`, and
         `breach_chronology_entries` with no `fidibeki_app` grant at all — the fidibeki_admin-only

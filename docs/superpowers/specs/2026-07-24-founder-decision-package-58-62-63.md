@@ -14,6 +14,9 @@ then recorded in the corresponding registry field and the gated slices finish.
 ## Part A — #58: widget targeting / functional-storage classification
 
 **D1. Classify widget browser storage for targeting and funnel analytics.**
+**DECIDED 2026-07-24 (founder): option (a) — keep everything consent-required, current shipped
+behavior. Recorded in `docs/widget-analytics-consent.md`; #58 closed on this decision.
+Reclassification would require a new documented legal review.**
 
 - Facts: the technical core is complete and consent-gated end to end (dormant default, no
   persistent identity/outbox/network before grant, withdrawal cleanup, fail-closed backend,
