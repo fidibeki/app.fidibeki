@@ -859,6 +859,18 @@ export interface PrivacyPortabilityAssessment {
   created_at: string
 }
 
+export interface PrivacyCaseRectification {
+  id: string
+  privacy_case_id: string
+  subject_member_id: string
+  changes: Partial<Record<'name' | 'locale' | 'timezone', string | null>>
+  previous_values: Partial<Record<'name' | 'locale' | 'timezone', string | null>>
+  reason: string
+  applied_by_member_id: string
+  applied_at: string
+  created_at: string
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -886,6 +898,7 @@ export interface PrivacyCase {
   legal_holds: PrivacyCaseLegalHold[]
   execution?: PrivacyCaseExecution
   portability_assessment?: PrivacyPortabilityAssessment
+  rectifications?: PrivacyCaseRectification[]
   created_at: string
   updated_at: string
 }

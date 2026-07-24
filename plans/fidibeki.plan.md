@@ -568,8 +568,15 @@ was removed from the staging test tenant.
           failure, retry, authenticated download, isolation, and the omission contract are audited
           and covered through migrations `89` and `90`, PostgreSQL integration tests, and
           bilingual desktop/mobile backoffice E2E.
-        - [ ] Implement field-level rectification with derived-data invalidation, itemized erasure
-          exceptions, and explicit partial/refusal execution evidence.
+        - [x] Verified member rectification cases apply an explicit subset of `name`, `locale`, and
+          `timezone` to the canonical member profile. Migration `91` preserves append-only
+          before/after evidence, reason, actor, idempotency, tenant isolation, case activity,
+          subject-aware access audit, and member-export history. The bilingual backoffice keeps the
+          case open while applying corrections, refreshes the visible member profile without
+          remounting the workflow, and exposes the immutable correction history in desktop/mobile
+          E2E.
+        - [ ] Implement reporter content rectification with derived-data invalidation, itemized
+          erasure exceptions, and explicit partial/refusal execution evidence.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive

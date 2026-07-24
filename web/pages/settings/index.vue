@@ -139,6 +139,12 @@ const currentWorkspaceMember = computed(() => data.value?.members.find(member =>
 const isCurrentOwner = computed(() => currentWorkspaceMember.value?.role === 'owner')
 const transferCandidates = computed(() => (data.value?.members || []).filter(member =>
   member.id !== currentMember.value?.id && member.status === 'active' && member.verified && member.role !== 'owner'))
+
+function updatePrivacyMember(member: Member) {
+  const index = data.value?.members.findIndex(candidate => candidate.id === member.id) ?? -1
+  if (index >= 0) data.value?.members.splice(index, 1, member)
+}
+
 const modalTitle = computed(() => {
   if (modal.value === 'member') return memberMode.value === 'invite'
     ? t('admin.settings.modal.inviteMember')
@@ -721,7 +727,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 
       <SubmissionHealth v-else-if="activeTab === 'health'" :projects="data.projects" />
       <AccessAuditLog v-else-if="activeTab === 'audit'" />
-      <DataPrivacy v-else :members="data.members" />
+      <DataPrivacy v-else :members="data.members" @member-changed="updatePrivacyMember" />
     </template>
 
     <AppDialog :open="Boolean(modal)" aria-labelledby="settings-modal-title" @close="modal = null">

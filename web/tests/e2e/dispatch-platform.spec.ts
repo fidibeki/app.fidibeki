@@ -60,6 +60,8 @@ function createMockState() {
     email: 'jamie@acme.test',
     name: 'Jamie Torres',
     avatar_version: null as string | null,
+    locale: 'en' as string | null,
+    timezone: 'America/Toronto' as string | null,
     permissions: ['feedback:read', 'feedback:update', 'issue:read', 'issue:update'],
     status: 'active' as 'active' | 'deactivated' | 'removed',
     role: 'member' as 'owner' | 'member',
@@ -441,6 +443,26 @@ function createMockState() {
       scope: { intake_channel: 'backoffice' },
       legal_holds: [],
       execution: undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:00:00.000Z',
+    }, {
+      id: 'privacy-case-member-rectification',
+      public_id: 'PRV-RECTIFY',
+      subject_type: 'member',
+      right_type: 'rectification',
+      controller_role: 'controller',
+      status: 'in_progress',
+      subject_member_id: 'member-2',
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1',
+      verification_method: 'workspace_membership',
+      verified_at: '2026-07-21T12:00:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      rectifications: [],
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
     }] as PrivacyCase[],
@@ -976,6 +998,32 @@ async function installMockAPI(page: Page, state: MockState) {
         },
       })
     }
+    const analyticsConsentDiagnosticMatch = path.match(
+      /^\/v1\/projects\/([^/]+)\/widget-rules\/([^/]+)\/analytics-consent-diagnostic$/,
+    )
+    if (analyticsConsentDiagnosticMatch && method === 'GET') {
+      const rule = state.widgetRules.find(candidate =>
+        candidate.project_id === analyticsConsentDiagnosticMatch[1] &&
+        candidate.id === analyticsConsentDiagnosticMatch[2])
+      const consent = (rule as unknown as {
+        analytics_consent?: { mode: string, notice_version: string }
+      } | undefined)?.analytics_consent
+      return json(route, {
+        diagnostic: {
+          widget_rule_id: analyticsConsentDiagnosticMatch[2],
+          consent_mode: consent?.mode || 'none',
+          notice_version: consent?.notice_version || '',
+          active_count: 42,
+          expiring_soon_count: 3,
+          denied_count: 8,
+          withdrawn_count: 5,
+          expired_count: 11,
+          recent_count: 27,
+          next_expires_at: '2026-07-24T12:00:00.000Z',
+          last_activity_at: '2026-07-21T11:45:00.000Z',
+        },
+      })
+    }
     const projectMatch = path.match(/^\/v1\/projects\/([^/]+)$/)
     if (projectMatch && method === 'GET') {
       return json(route, { project: state.projects.find(project => project.id === projectMatch[1]) })
@@ -1351,6 +1399,39 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (path === '/v1/privacy/cases' && method === 'POST') {
       return json(route, { case: state.privacyCases[0], verification_email_queued: true }, 202)
+    }
+    const caseRectificationMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/rectifications$/)
+    if (caseRectificationMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseRectificationMatch[1])
+      const subject = state.members.find(candidate => candidate.id === item?.subject_member_id)
+      if (!item || !subject) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const input = body()
+      const changes = input.changes as Partial<Record<'name' | 'locale' | 'timezone', string | null>>
+      const previousValues: Partial<Record<'name' | 'locale' | 'timezone', string | null>> = {}
+      for (const field of ['name', 'locale', 'timezone'] as const) {
+        if (!Object.prototype.hasOwnProperty.call(changes, field)) continue
+        previousValues[field] = subject[field] ?? null
+        if (field === 'name') subject.name = changes.name || ''
+        if (field === 'locale') subject.locale = changes.locale ?? null
+        if (field === 'timezone') subject.timezone = changes.timezone ?? null
+      }
+      const rectification = {
+        id: `${item.id}-rectification-${(item.rectifications?.length || 0) + 1}`,
+        privacy_case_id: item.id,
+        subject_member_id: subject.id,
+        changes,
+        previous_values: previousValues,
+        reason: String(input.reason),
+        applied_by_member_id: 'member-1',
+        applied_at: now,
+        created_at: now,
+      }
+      item.rectifications ||= []
+      item.rectifications.unshift(rectification)
+      item.updated_at = now
+      return json(route, { rectification, created: true }, 201)
     }
     const portabilityAssessmentMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/portability-assessments$/)
     if (portabilityAssessmentMatch && method === 'POST') {
@@ -2498,6 +2579,9 @@ test('replay activation requires an explicit consent mode', async ({ page }, tes
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
 
+  const replaySection = page.locator('.project-rule-editor section').filter({
+    has: page.getByRole('heading', { name: 'Session replay' }),
+  })
   await page.getByLabel('Replay mode').selectOption('full')
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: 'Choose how consent is collected' })).toBeVisible()
@@ -2538,7 +2622,7 @@ test('replay activation requires an explicit consent mode', async ({ page }, tes
       expiry_days: 30,
     },
   })
-  await page.getByRole('button', { name: 'Configure consent' }).click()
+  await replaySection.getByRole('button', { name: 'Configure consent' }).click()
   const revisionDialog = page.getByRole('dialog')
   await revisionDialog.getByLabel('Notice version').fill('2026-08')
   await expect(revisionDialog.getByRole('alert')).toContainText(
@@ -2546,6 +2630,64 @@ test('replay activation requires an explicit consent mode', async ({ page }, tes
   )
   await revisionDialog.locator('footer').getByRole('button').first().click()
   await capture(page, testInfo, `replay-consent-configuration-${testInfo.project.name}`)
+})
+
+test('analytics consent diagnostic summarizes the saved rule cohort', async ({ page }, testInfo) => {
+  const state = createMockState()
+  Object.assign(state.widgetRules[0], {
+    analytics_consent: {
+      mode: 'customer_cmp',
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['en'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    },
+  })
+  let diagnosticRequests = 0
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/analytics-consent-diagnostic')) {
+      diagnosticRequests += 1
+    }
+  })
+
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const analyticsSection = page.locator('.project-rule-editor section').filter({
+    has: page.getByRole('heading', { name: 'Widget analytics' }),
+  })
+  await analyticsSection.getByRole('button', { name: 'Configure consent' }).click()
+
+  const dialog = page.getByRole('dialog')
+  const diagnostic = dialog.locator('[data-consent-diagnostic]')
+  const stats = dialog.locator('[data-diagnostic-stats]')
+  await expect(diagnostic).toContainText('42 active · 3 expiring soon')
+  await expect(stats).toContainText('Active42')
+  await expect(stats).toContainText('Recent (30d)27')
+  await expect(stats).toContainText('Denied8')
+  await expect(stats).toContainText('Withdrawn5')
+  await expect(stats).toContainText('Expired11')
+  await expect(dialog).toContainText('Last activity')
+  expect(diagnosticRequests).toBe(1)
+
+  await dialog.getByLabel('Notice version').fill('2026-08')
+  await expect(diagnostic).toContainText(
+    'Blocked: save this consent mode and notice version before checking evidence.',
+  )
+  expect(diagnosticRequests).toBe(1)
+  await dialog.getByRole('button', { name: 'Refresh consent diagnostic' }).click()
+  await expect.poll(() => diagnosticRequests).toBe(2)
+  await expect(diagnostic).toContainText(
+    'Blocked: save this consent mode and notice version before checking evidence.',
+  )
+
+  await dialog.getByLabel('Notice version').fill('2026-07')
+  await expect(diagnostic).toContainText('42 active · 3 expiring soon')
+  await capture(page, testInfo, `analytics-consent-diagnostic-${testInfo.project.name}`)
 })
 
 test('widget definitions persist response blocks and localized content', async ({ page }, testInfo) => {
@@ -4103,6 +4245,43 @@ test('member access case queues a member-scoped archive', async ({ page }, testI
   await capture(page, testInfo, `settings-member-access-${testInfo.project.name}`)
 })
 
+test('member rectification applies selected profile changes and preserves evidence', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+
+  const rectificationCase = page.locator('.privacy-case-entry', { hasText: 'PRV-RECTIFY' })
+  await expect(rectificationCase).toContainText('Jamie Torres')
+  await rectificationCase.getByTitle('Toggle case details').click()
+  await expect(rectificationCase).toContainText('No profile corrections have been applied.')
+
+  await rectificationCase.getByRole('checkbox', { name: 'Name' }).check()
+  await rectificationCase.getByRole('textbox', { name: 'Name' }).fill('Jamie Corrected')
+  await rectificationCase.getByRole('checkbox', { name: 'Locale' }).check()
+  await rectificationCase.getByRole('combobox', { name: 'Locale' }).selectOption('pt-PT')
+  await rectificationCase.getByLabel('Decision reason').fill(
+    'Identity evidence confirmed the corrected member profile.',
+  )
+  await rectificationCase.getByRole('button', { name: 'Apply correction' }).click()
+
+  await expect(page.getByRole('status')).toContainText('Member profile correction applied.')
+  await expect(rectificationCase).toContainText('Jamie Corrected')
+  await expect(rectificationCase).toContainText('Jamie Torres')
+  await expect(rectificationCase).toContainText('en')
+  await expect(rectificationCase).toContainText('pt-PT')
+  await expect(rectificationCase).toContainText(
+    'Identity evidence confirmed the corrected member profile.',
+  )
+  expect(state.members.find(member => member.id === 'member-2')).toMatchObject({
+    name: 'Jamie Corrected',
+    locale: 'pt-PT',
+    timezone: 'America/Toronto',
+  })
+  await rectificationCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-member-rectification-${testInfo.project.name}`)
+})
+
 test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Filter interactions are viewport independent')
   const state = createMockState()
@@ -4424,7 +4603,7 @@ test('settings identifies and transfers workspace ownership', async ({ page }, t
   const state = createMockState()
   state.members.push({
     id: 'member-unverified', tenant_id: state.tenant.id, email: 'pending@acme.test', name: 'Pending Member',
-    avatar_version: null,
+    avatar_version: null, locale: null, timezone: null,
     permissions: ['project:read'], status: 'active', role: 'member', verified: false,
   })
   await authenticate(page, state)

@@ -154,7 +154,12 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   and case history. The allowlist excludes other members' content, hashes/tokens, raw audit
   payloads, queue data, avatar binary, and internal legal-review notes. Start, completion, terminal
   failure, retry, tenant isolation, and omission behavior are audited and tested.
-- Remaining slice 2 work includes field-level rectification with derived-data invalidation,
+- Member profile rectification is implemented through migration 91. A verified member
+  rectification case can atomically change an explicit subset of `name`, `locale`, and `timezone`.
+  Each effective correction preserves append-only before/after values, reason, actor, case
+  activity, subject-aware access audit, idempotency, tenant isolation, member-export evidence, and
+  a bilingual desktop/mobile backoffice history.
+- Remaining slice 2 work includes reporter content rectification with derived-data invalidation,
   itemized erasure exceptions, and first-class partial/refusal execution evidence.
 - Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
   workflow remain pending.

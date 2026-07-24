@@ -8,6 +8,8 @@ import {
   Download,
   FileArchive,
   LockKeyhole,
+  MoveRight,
+  PencilLine,
   Play,
   RefreshCw,
   ShieldAlert,
@@ -20,6 +22,7 @@ import type {
   Member,
   PrivacyCase,
   PrivacyCaseDashboard,
+  PrivacyCaseRectification,
   PrivacyControllerRole,
   PrivacyExport,
   PrivacyPortabilityDataCategory,
@@ -40,6 +43,7 @@ const { t } = useI18n()
 const localizedError = useLocalizedAPIError()
 const { dateTime, decimal, plural } = useRegionalFormat()
 const props = defineProps<{ members: Member[] }>()
+const emit = defineEmits<{ memberChanged: [member: Member] }>()
 const canReadRetention = computed(() => can('tenant:read'))
 const canManagePrivacy = computed(() => can('tenant:update'))
 
@@ -94,6 +98,14 @@ const releaseReasons = ref<Record<string, string>>({})
 const portabilityDecisions = ref<Record<string, PrivacyPortabilityDecision>>({})
 const portabilityReasons = ref<Record<string, string>>({})
 const portabilitySelections = ref<Record<string, PrivacyPortabilityDataCategory[]>>({})
+type MemberRectificationField = 'name' | 'locale' | 'timezone'
+type MemberRectificationDraft = {
+  selected: Record<MemberRectificationField, boolean>
+  values: Record<MemberRectificationField, string>
+  reason: string
+}
+const rectificationFields: MemberRectificationField[] = ['name', 'locale', 'timezone']
+const rectificationDrafts = ref<Record<string, MemberRectificationDraft>>({})
 const portabilityCategoryOptions: PrivacyPortabilityDataCategory[] = [
   'feedback',
   'issues',
@@ -170,6 +182,82 @@ function toggleCase(item: PrivacyCase) {
       [item.id]: [...portabilityCategoryOptions],
     }
   }
+  if (item.right_type === 'rectification' && item.subject_type === 'member') {
+    ensureRectificationDraft(item)
+  }
+}
+
+function ensureRectificationDraft(item: PrivacyCase) {
+  if (rectificationDrafts.value[item.id]) return
+  const member = props.members.find(candidate => candidate.id === item.subject_member_id)
+  rectificationDrafts.value = {
+    ...rectificationDrafts.value,
+    [item.id]: {
+      selected: { name: false, locale: false, timezone: false },
+      values: {
+        name: member?.name || '',
+        locale: member?.locale || '',
+        timezone: member?.timezone || '',
+      },
+      reason: '',
+    },
+  }
+}
+
+function caseCanRectify(item: PrivacyCase) {
+  return item.subject_type === 'member'
+    && item.right_type === 'rectification'
+    && Boolean(item.verified_at)
+    && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
+}
+
+function rectificationReady(item: PrivacyCase) {
+  const draft = rectificationDrafts.value[item.id]
+  return caseCanRectify(item)
+    && Boolean(draft?.reason.trim())
+    && rectificationFields.some(field => draft?.selected[field])
+}
+
+function rectificationValue(value: string | null | undefined) {
+  return value || t('admin.privacy.settings.cases.rectificationCleared')
+}
+
+function rectificationChangedFields(rectification: PrivacyCaseRectification) {
+  return rectificationFields.filter(field =>
+    Object.prototype.hasOwnProperty.call(rectification.changes, field),
+  )
+}
+
+async function applyMemberRectification(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !rectificationReady(item)) return
+  const draft = rectificationDrafts.value[item.id]
+  const changes: Partial<Record<MemberRectificationField, string | null>> = {}
+  for (const field of rectificationFields) {
+    if (!draft.selected[field]) continue
+    const value = draft.values[field].trim()
+    changes[field] = value || null
+  }
+  await runAction(`rectification:${item.id}`, async () => {
+    const response = await $apiFetch<{ rectification: PrivacyCaseRectification }>(
+      `/v1/privacy/cases/${item.id}/rectifications`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: { changes, reason: draft.reason.trim() },
+      },
+    )
+    const member = props.members.find(candidate => candidate.id === item.subject_member_id)
+    if (member) {
+      const updated = { ...member }
+      for (const field of rectificationChangedFields(response.rectification)) {
+        updated[field] = response.rectification.changes[field] ?? null
+      }
+      emit('memberChanged', updated)
+    }
+    draft.selected = { name: false, locale: false, timezone: false }
+    draft.reason = ''
+    actionNotice.value = t('admin.privacy.settings.cases.rectificationApplied')
+    await refresh()
+  })
 }
 
 async function startCaseExecution(item: PrivacyCase) {
@@ -565,6 +653,63 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   </form>
                   <p v-else-if="item.subject_type === 'member'" class="privacy-portability-member-note">{{ t('admin.privacy.settings.cases.memberPortabilityPending') }}</p>
                 </div>
+                <div v-if="item.right_type === 'rectification' && item.subject_type === 'member'" class="privacy-case-rectification">
+                  <header>
+                    <PencilLine :size="16" />
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.rectification') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.rectificationTitle') }}</b>
+                      <small>{{ t('admin.privacy.settings.cases.rectificationDescription') }}</small>
+                    </div>
+                  </header>
+                  <form v-if="caseCanRectify(item) && rectificationDrafts[item.id]" @submit.prevent="applyMemberRectification(item)">
+                    <fieldset>
+                      <legend>{{ t('admin.privacy.settings.cases.rectificationFields') }}</legend>
+                      <div class="privacy-rectification-field">
+                        <label :for="`rectification-name-${item.id}`"><input :id="`rectification-name-${item.id}`" v-model="rectificationDrafts[item.id].selected.name" type="checkbox" />{{ t('admin.privacy.settings.cases.rectificationName') }}</label>
+                        <input v-model="rectificationDrafts[item.id].values.name" class="app-input" maxlength="120" :aria-label="t('admin.privacy.settings.cases.rectificationName')" :disabled="!rectificationDrafts[item.id].selected.name" />
+                      </div>
+                      <div class="privacy-rectification-field">
+                        <label :for="`rectification-locale-${item.id}`"><input :id="`rectification-locale-${item.id}`" v-model="rectificationDrafts[item.id].selected.locale" type="checkbox" />{{ t('admin.privacy.settings.cases.rectificationLocale') }}</label>
+                        <select v-model="rectificationDrafts[item.id].values.locale" class="app-select" :aria-label="t('admin.privacy.settings.cases.rectificationLocale')" :disabled="!rectificationDrafts[item.id].selected.locale">
+                          <option value="">{{ t('admin.privacy.settings.cases.rectificationDefault') }}</option>
+                          <option value="en">English</option>
+                          <option value="pt">Português</option>
+                          <option value="pt-AO">Português (Angola)</option>
+                          <option value="pt-PT">Português (Portugal)</option>
+                        </select>
+                      </div>
+                      <div class="privacy-rectification-field">
+                        <label :for="`rectification-timezone-${item.id}`"><input :id="`rectification-timezone-${item.id}`" v-model="rectificationDrafts[item.id].selected.timezone" type="checkbox" />{{ t('admin.privacy.settings.cases.rectificationTimezone') }}</label>
+                        <input v-model="rectificationDrafts[item.id].values.timezone" class="app-input" maxlength="100" placeholder="Europe/Lisbon" :aria-label="t('admin.privacy.settings.cases.rectificationTimezone')" :disabled="!rectificationDrafts[item.id].selected.timezone" />
+                      </div>
+                    </fieldset>
+                    <label>{{ t('admin.privacy.settings.cases.rectificationReason') }}
+                      <textarea v-model.trim="rectificationDrafts[item.id].reason" class="app-textarea" maxlength="2000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !rectificationReady(item)">
+                      <PencilLine :size="14" />{{ actionPending === `rectification:${item.id}` ? t('admin.common.saving') : t('admin.privacy.settings.cases.applyRectification') }}
+                    </button>
+                  </form>
+                  <section class="privacy-rectification-history">
+                    <header><b>{{ t('admin.privacy.settings.cases.rectificationHistory') }}</b></header>
+                    <p v-if="!item.rectifications?.length">{{ t('admin.privacy.settings.cases.noRectifications') }}</p>
+                    <article v-for="rectification in item.rectifications || []" :key="rectification.id">
+                      <div v-for="field in rectificationChangedFields(rectification)" :key="field" class="privacy-rectification-change">
+                        <b>{{ t(`admin.privacy.settings.cases.rectification${field[0].toUpperCase()}${field.slice(1)}`) }}</b>
+                        <span>
+                          <code>{{ rectificationValue(rectification.previous_values[field]) }}</code>
+                          <MoveRight :size="13" />
+                          <code>{{ rectificationValue(rectification.changes[field]) }}</code>
+                        </span>
+                      </div>
+                      <footer>
+                        <span>{{ dateTime(rectification.applied_at) }} · {{ memberLabel(rectification.applied_by_member_id) }}</span>
+                        <p>{{ rectification.reason }}</p>
+                      </footer>
+                    </article>
+                  </section>
+                </div>
                 <div class="privacy-case-execution">
                   <div>
                     <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
@@ -797,6 +942,29 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-case-portability fieldset label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 9px; }
 .privacy-case-portability .app-textarea { min-height: 62px; resize: vertical; }
 .privacy-portability-member-note { color: var(--muted) !important; }
+.privacy-case-rectification { display: grid; grid-column: 1 / -1; gap: 12px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-rectification > header { display: flex; align-items: flex-start; gap: 8px; color: var(--ink-soft); }
+.privacy-case-rectification > header > div { display: grid; gap: 4px; }
+.privacy-case-rectification > header b { color: var(--ink); font-size: 11px; }
+.privacy-case-rectification > header small { max-width: 680px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-case-rectification > form { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, .8fr) auto; align-items: end; gap: 10px; }
+.privacy-case-rectification > form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-case-rectification > form .app-textarea { min-height: 72px; resize: vertical; }
+.privacy-case-rectification fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 4px; }
+.privacy-case-rectification legend { padding: 0 4px; color: var(--muted); font-size: 8px; font-weight: 750; }
+.privacy-rectification-field { display: grid; align-content: end; gap: 6px; min-width: 0; }
+.privacy-rectification-field label { display: flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-rectification-history { display: grid; gap: 8px; padding-top: 2px; }
+.privacy-rectification-history > header b { color: var(--ink-soft); font-size: 10px; }
+.privacy-rectification-history > p { margin: 0; color: var(--muted); font-size: 9px; }
+.privacy-rectification-history article { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); }
+.privacy-rectification-change { display: grid; gap: 4px; min-width: 0; }
+.privacy-rectification-change > b { color: var(--muted); font-size: 8px; text-transform: uppercase; }
+.privacy-rectification-change > span { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; color: var(--muted); }
+.privacy-rectification-change code { overflow-wrap: anywhere; color: var(--ink-soft); font-family: inherit; font-size: 9px; }
+.privacy-rectification-history article footer { display: grid; grid-column: 1 / -1; gap: 3px; }
+.privacy-rectification-history article footer span { color: var(--muted); font-size: 8px; }
+.privacy-rectification-history article footer p { margin: 0; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
 .privacy-case-execution, .privacy-case-holds { padding: 14px 15px; }
 .privacy-case-execution { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-right: 1px solid var(--line); }
 .privacy-case-execution > div { display: grid; gap: 6px; }
@@ -856,6 +1024,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-detail { grid-template-columns: 1fr; }
   .privacy-case-portability form { grid-template-columns: 1fr 1fr; }
   .privacy-case-portability form .app-button { justify-self: end; }
+  .privacy-case-rectification > form { grid-template-columns: 1fr; }
+  .privacy-case-rectification > form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
   .privacy-case-hold-form { grid-template-columns: 1fr; }
   .privacy-request-form .app-button { grid-column: 1 / -1; justify-self: end; }
@@ -879,6 +1049,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-portability > header { flex-direction: column; }
   .privacy-case-portability form { grid-template-columns: 1fr; }
   .privacy-case-portability form .app-button { width: 100%; }
+  .privacy-case-rectification fieldset, .privacy-rectification-history article { grid-template-columns: 1fr; }
+  .privacy-case-rectification > form .app-button { width: 100%; }
   .privacy-case-hold { grid-template-columns: 1fr; }
   .privacy-case-hold form { align-items: stretch; flex-direction: column; }
   .privacy-case-hold form .app-input { width: 100%; }
