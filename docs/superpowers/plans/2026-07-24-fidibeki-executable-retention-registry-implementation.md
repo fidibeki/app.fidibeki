@@ -29,12 +29,12 @@ privacy backoffice:
 
 ## Acceptance
 
-- [ ] No category uses "Workspace lifetime" as an effective maximum period.
-- [ ] Every table created by current up migrations is covered exactly once.
-- [ ] Every maintained object-prefix, queue, browser-key, and provider family is represented.
-- [ ] `enforced`/`configurable` entries identify a real implementation and bounded lifecycle.
-- [ ] Pending legal decisions and external provider controls are visually and semantically explicit.
-- [ ] Existing API fields remain usable by old clients.
-- [ ] The registry cannot trigger deletion or change current cleaner behavior.
-- [ ] Backend, web, type/build, and focused desktop/mobile E2E checks pass locally.
-- [ ] No staging or production deployment is performed.
+- [x] No category uses "Workspace lifetime" as an effective maximum period.
+- [x] Every table created by current up migrations is covered exactly once.
+- [x] Every maintained object-prefix, queue, browser-key, and provider family is represented.
+- [x] `enforced`/`configurable` entries identify a real implementation and bounded lifecycle.
+- [x] Pending legal decisions and external provider controls are visually and semantically explicit.
+- [x] Existing API fields remain usable by old clients.
+- [x] The registry cannot trigger deletion or change current cleaner behavior.
+- [x] Backend, web, type/build, and focused desktop/mobile E2E checks pass locally.
+- [x] No staging or production deployment is performed.

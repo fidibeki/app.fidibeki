@@ -648,7 +648,17 @@ was removed from the staging test tenant.
         match. Boundary (exact-`expires_at` sweep), idempotent-rerun, cross-tenant-isolation,
         audit-content, batch-limit, and concurrent-sweep (no double-delete/lost-row) coverage
         passed against real PostgreSQL; migration replay picked up migration 98 automatically.
-      - Remaining for later slices: `tenant_member_sessions`/`platform_admin_sessions` retention
+      - [x] Executable registry slice: `GET /v1/privacy/retention` now derives its backward-compatible
+        response from a versioned, typed, code-owned registry with 26 lifecycle categories and
+        explicit `enforced`, `configurable`, `decision_required`, and `external_control` states.
+        Migration-DDL tests prove that all 66 current PostgreSQL tables are assigned exactly once;
+        object-prefix, queue, browser-key, and provider families are separately inventoried.
+        Validation rejects duplicate ownership and unsupported enforcement claims. The bilingual
+        Data & privacy surface exposes state counts, plan/rule duration, cadence, hold behavior,
+        role, and resource coverage without presenting `Workspace lifetime` as an effective
+        maximum. This descriptive slice adds no migration, cleaner, expiry clock, or deletion
+        authority.
+      - Remaining cleanup-policy slices: `tenant_member_sessions`/`platform_admin_sessions` retention
         (blocked on a founder/legal decision for security-record retention, since these carry
         IP/user-agent and are arguably security evidence — no `expires_at` exists yet either, so
         this needs schema work, not just a sweep); `platform_admin_magic_links` (same shape as
@@ -658,9 +668,8 @@ was removed from the staging test tenant.
         retention; IP/user-agent minimization; Sentry/error telemetry retention and scrubbing;
         consent-evidence-after-withdrawal retention; tenant-configurable shorter retention;
         general legal-hold enforcement for the categories added here; overdue-cleanup
-        metrics/alerts; and the full executable registry the issue's acceptance criteria describe.
-        Published legal periods for security/audit/billing records still require founder/legal
-        review before any of those categories can be swept.
+        metrics/alerts. Published legal periods for security/audit/billing records still require
+        founder/legal review before any of those categories can be swept.
     - [ ] #63: establish layered notices, role matrix, DPA/subprocessor/transfer inventory,
       ROPA, and DPIA governance without publishing unverified claims.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,

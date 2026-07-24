@@ -3,76 +3,88 @@ package privacy
 import (
 	"fmt"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
+type RetentionLifecycleStatus string
+
+const (
+	RetentionEnforced         RetentionLifecycleStatus = "enforced"
+	RetentionConfigurable     RetentionLifecycleStatus = "configurable"
+	RetentionExternalControl  RetentionLifecycleStatus = "external_control"
+	RetentionDecisionRequired RetentionLifecycleStatus = "decision_required"
+)
+
+type RetentionHoldBehavior string
+
+const (
+	RetentionHoldCaseScoped       RetentionHoldBehavior = "case_scoped"
+	RetentionHoldSupported        RetentionHoldBehavior = "supported"
+	RetentionHoldNotApplicable    RetentionHoldBehavior = "not_applicable"
+	RetentionHoldDecisionRequired RetentionHoldBehavior = "decision_required"
+)
+
+type RetentionRole string
+
+const (
+	RetentionRoleController          RetentionRole = "controller"
+	RetentionRoleProcessor           RetentionRole = "processor"
+	RetentionRoleControllerProcessor RetentionRole = "controller_and_processor"
+)
+
+type RetentionResourceKind string
+
+const (
+	RetentionPostgresTable RetentionResourceKind = "postgres_table"
+	RetentionDatabaseScope RetentionResourceKind = "database_scope"
+	RetentionObjectPrefix  RetentionResourceKind = "object_prefix"
+	RetentionQueue         RetentionResourceKind = "queue"
+	RetentionBrowserKey    RetentionResourceKind = "browser_key"
+	RetentionProvider      RetentionResourceKind = "provider"
+)
+
+type RetentionResourceCount struct {
+	Kind  RetentionResourceKind `json:"kind"`
+	Count int                   `json:"count"`
+}
+
 type RetentionPolicy struct {
-	Category     string `json:"category"`
-	Label        string `json:"label"`
-	Duration     string `json:"duration"`
-	DurationDays *int   `json:"duration_days,omitempty"`
-	Source       string `json:"source"`
+	Category       string                   `json:"category"`
+	Label          string                   `json:"label"`
+	Duration       string                   `json:"duration"`
+	DurationDays   *int                     `json:"duration_days,omitempty"`
+	Source         string                   `json:"source"`
+	Purpose        string                   `json:"purpose"`
+	Role           RetentionRole            `json:"role"`
+	Status         RetentionLifecycleStatus `json:"status"`
+	Trigger        string                   `json:"trigger"`
+	Action         string                   `json:"action"`
+	Cadence        string                   `json:"cadence"`
+	HoldBehavior   RetentionHoldBehavior    `json:"hold_behavior"`
+	Implementation string                   `json:"implementation,omitempty"`
+	ResourceCounts []RetentionResourceCount `json:"resource_counts"`
+}
+
+type RetentionSummary struct {
+	Enforced         int `json:"enforced"`
+	Configurable     int `json:"configurable"`
+	ExternalControl  int `json:"external_control"`
+	DecisionRequired int `json:"decision_required"`
 }
 
 type EffectiveRetention struct {
-	Plan     tenant.Plan       `json:"plan"`
-	Policies []RetentionPolicy `json:"policies"`
+	Plan            tenant.Plan       `json:"plan"`
+	RegistryVersion int               `json:"registry_version"`
+	Summary         RetentionSummary  `json:"summary"`
+	Policies        []RetentionPolicy `json:"policies"`
 }
 
 func EffectiveRetentionForPlan(plan tenant.Plan) (EffectiveRetention, error) {
-	definition, ok := config.PlanFor(plan)
-	if !ok {
-		return EffectiveRetention{}, fmt.Errorf("retention policy is unavailable for plan %q", plan)
+	effective, err := buildEffectiveRetention(plan, retentionRegistry())
+	if err != nil {
+		return EffectiveRetention{}, fmt.Errorf(
+			"retention policy is unavailable for plan %q: %w", plan, err,
+		)
 	}
-	storageDays := definition.Limits.StorageDays
-	storageDuration := "Custom"
-	var storageDurationDays *int
-	if storageDays >= 0 {
-		storageDuration = fmt.Sprintf("%d days", storageDays)
-		storageDurationDays = &storageDays
-	}
-	fixedDays := func(value int) *int { return &value }
-	return EffectiveRetention{
-		Plan: plan,
-		Policies: []RetentionPolicy{
-			{
-				Category: "workflow_metadata", Label: "Feedback and issue workflow metadata",
-				Duration: "Workspace lifetime", Source: "Workspace lifecycle",
-			},
-			{
-				Category: "auth_magic_links", Label: "Login and invitation magic links",
-				Duration: "Configured link expiry, deleted within 1 hour of expiring",
-				Source:   "Platform default",
-			},
-			{
-				Category: "attachments", Label: "Attachments", Duration: storageDuration,
-				DurationDays: storageDurationDays, Source: "Plan storage limit",
-			},
-			{
-				Category: "session_replays", Label: "Session replay objects", Duration: storageDuration,
-				DurationDays: storageDurationDays, Source: "Plan storage limit",
-			},
-			{
-				Category: "widget_events", Label: "Raw widget funnel events", Duration: "90 days",
-				DurationDays: fixedDays(90), Source: "Platform default",
-			},
-			{
-				Category: "widget_daily", Label: "Daily widget funnel aggregates", Duration: "730 days",
-				DurationDays: fixedDays(730), Source: "Platform default",
-			},
-			{
-				Category: "export_archives", Label: "Export archives", Duration: "7 days",
-				DurationDays: fixedDays(7), Source: "Platform default",
-			},
-			{
-				Category: "unverified_requests", Label: "Unverified reporter requests",
-				Duration: "48 hours", DurationDays: fixedDays(2), Source: "Platform default",
-			},
-			{
-				Category: "verified_requests", Label: "Verified reporter request access",
-				Duration: "30 days", DurationDays: fixedDays(30), Source: "Platform default",
-			},
-		},
-	}, nil
+	return effective, nil
 }

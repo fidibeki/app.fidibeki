@@ -4,10 +4,47 @@ import type {
   PrivacyCase,
   PrivacyCaseCommunication,
   PrivacyIntegrationAction,
+  RetentionPolicy,
 } from '../../types/api'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
+
+function mockRetentionPolicy(
+  category: string,
+  label: string,
+  duration: string,
+  status: RetentionPolicy['status'],
+  source: string,
+  overrides: Partial<RetentionPolicy> = {},
+): RetentionPolicy {
+  return {
+    category,
+    label,
+    duration,
+    source,
+    purpose: `${label} lifecycle`,
+    role: 'processor',
+    status,
+    trigger: 'Resource lifecycle',
+    action: status === 'decision_required'
+      ? 'Approved policy is not yet implemented.'
+      : status === 'external_control'
+        ? 'Provider configuration must be verified.'
+        : 'Expire the resource through its maintained lifecycle.',
+    cadence: status === 'decision_required'
+      ? 'Not scheduled'
+      : status === 'external_control'
+        ? 'Provider controlled'
+        : 'Daily',
+    hold_behavior: status === 'decision_required' || status === 'external_control'
+      ? 'decision_required'
+      : 'not_applicable',
+    implementation: ['enforced', 'configurable'].includes(status) ? 'test.Maintainer' : undefined,
+    resource_counts: [{ kind: 'postgres_table', count: 1 }],
+    ...overrides,
+  }
+}
 
 const planCatalog = [{
   plan: 'starter', monthly_price_cents: 499, yearly_discount_percent: 7,
@@ -1464,15 +1501,51 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/privacy/retention' && method === 'GET') {
       return json(route, { retention: {
         plan: state.tenant.plan,
+        registry_version: 1,
+        summary: {
+          enforced: 5,
+          configurable: 2,
+          decision_required: 1,
+          external_control: 1,
+        },
         policies: [
-          { category: 'workflow_metadata', label: 'Feedback and issue workflow metadata', duration: 'Workspace lifetime', source: 'Workspace lifecycle' },
-          { category: 'attachments', label: 'Attachments', duration: '90 days', duration_days: 90, source: 'Plan storage limit' },
-          { category: 'session_replays', label: 'Session replay objects', duration: '90 days', duration_days: 90, source: 'Plan storage limit' },
-          { category: 'widget_events', label: 'Raw widget funnel events', duration: '90 days', duration_days: 90, source: 'Platform default' },
-          { category: 'widget_daily', label: 'Daily widget funnel aggregates', duration: '730 days', duration_days: 730, source: 'Platform default' },
-          { category: 'export_archives', label: 'Export archives', duration: '7 days', duration_days: 7, source: 'Platform default' },
-          { category: 'unverified_requests', label: 'Unverified reporter requests', duration: '48 hours', duration_days: 2, source: 'Platform default' },
-          { category: 'verified_requests', label: 'Verified reporter request access', duration: '30 days', duration_days: 30, source: 'Platform default' },
+          mockRetentionPolicy(
+            'workflow_metadata', 'Feedback and issue workflow content',
+            'Decision required', 'decision_required', 'Policy decision required',
+          ),
+          mockRetentionPolicy(
+            'attachments', 'Attachments', '90 days', 'configurable', 'Plan storage limit',
+            { duration_days: 90 },
+          ),
+          mockRetentionPolicy(
+            'session_replays', 'Session replay objects', '90 days', 'configurable',
+            'Plan storage limit', { duration_days: 90 },
+          ),
+          mockRetentionPolicy(
+            'widget_events', 'Raw widget funnel events', '90 days', 'enforced',
+            'Platform default', { duration_days: 90 },
+          ),
+          mockRetentionPolicy(
+            'widget_daily', 'Daily widget funnel aggregates', '730 days', 'enforced',
+            'Platform default', { duration_days: 730 },
+          ),
+          mockRetentionPolicy(
+            'export_archives', 'Export archives', '7 days', 'enforced',
+            'Platform default', { duration_days: 7 },
+          ),
+          mockRetentionPolicy(
+            'unverified_requests', 'Unverified reporter requests', '48 hours', 'enforced',
+            'Platform default', { duration_days: 2 },
+          ),
+          mockRetentionPolicy(
+            'verified_requests', 'Verified reporter request access', '30 days', 'enforced',
+            'Platform default', { duration_days: 30 },
+          ),
+          mockRetentionPolicy(
+            'external_infrastructure', 'Infrastructure and telemetry boundaries',
+            'External configuration', 'external_control', 'External configuration',
+            { role: 'controller_and_processor', resource_counts: [{ kind: 'provider', count: 4 }] },
+          ),
         ],
       } })
     }
@@ -4520,6 +4593,14 @@ test('data privacy controls cover retention, exports, reporter verification, and
   await expect(page.getByRole('heading', { name: 'Retention schedule' })).toBeVisible()
   await expect(page.locator('.privacy-retention-table')).toContainText('Attachments')
   await expect(page.locator('.privacy-retention-table')).toContainText('90 days')
+  await expect(page.locator('.privacy-retention-summary')).toContainText('Enforced')
+  await expect(page.locator('.privacy-retention-summary')).toContainText('Decision required')
+  await expect(page.locator('.privacy-retention-table')).toContainText('External control')
+  await expect(page.locator('.privacy-retention-table')).not.toContainText('Workspace lifetime')
+  await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Feedback and issue workflow content' })
+    .getByTitle('View retention details').click()
+  await expect(page.locator('.privacy-retention-detail')).toContainText('Approved policy is not yet implemented')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await expect(page.locator('.privacy-export-table')).toContainText('1.8 MB')
   await expect(page.locator('.privacy-request-table')).toContainText('former.customer@example.test')
   await expect(page.locator('.privacy-request-table')).toContainText('Manual review: 2')
@@ -5089,6 +5170,12 @@ test('Portuguese administration preserves permissions and operational mutations'
   await page.getByRole('link', { name: 'Dados e privacidade' }).click()
   await expect(page.getByRole('heading', { name: 'Calendário de retenção' })).toBeVisible()
   await expect(page.locator('.privacy-retention-table')).toContainText('90 dias')
+  await expect(page.locator('.privacy-retention-summary')).toContainText('Decisão necessária')
+  await expect(page.locator('.privacy-retention-table')).toContainText('Controlo externo')
+  await expect(page.locator('.privacy-retention-table')).not.toContainText('Vida útil do workspace')
+  await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Conteúdo do fluxo de feedback e issues' })
+    .getByTitle('Ver detalhes de retenção').click()
+  await expect(page.locator('.privacy-retention-detail')).toContainText('Finalidade')
   await expect(page.locator('.privacy-request-table')).toContainText('former.customer@example.test')
   const requestForm = page.locator('.privacy-request-form')
   await requestForm.getByLabel('Email do reporter').fill('requester@example.test')

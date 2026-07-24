@@ -299,7 +299,11 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	retention := privacyHTTPRequest(handler, viewerToken, http.MethodGet, "/v1/privacy/retention")
 	if retention.Code != http.StatusOK ||
 		!strings.Contains(retention.Body.String(), `"plan":"growth"`) ||
+		!strings.Contains(retention.Body.String(), `"registry_version":1`) ||
+		!strings.Contains(retention.Body.String(), `"decision_required":13`) ||
 		!strings.Contains(retention.Body.String(), `"duration_days":90`) ||
+		!strings.Contains(retention.Body.String(), `"status":"configurable"`) ||
+		!strings.Contains(retention.Body.String(), `"hold_behavior":"case_scoped"`) ||
 		!strings.Contains(retention.Body.String(), `"category":"attachments"`) {
 		t.Fatalf("viewer retention = %d body=%s", retention.Code, retention.Body.String())
 	}

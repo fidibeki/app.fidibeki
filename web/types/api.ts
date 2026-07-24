@@ -1067,10 +1067,29 @@ export interface RetentionPolicy {
   duration: string
   duration_days?: number
   source: string
+  purpose: string
+  role: 'controller' | 'processor' | 'controller_and_processor'
+  status: 'enforced' | 'configurable' | 'external_control' | 'decision_required'
+  trigger: string
+  action: string
+  cadence: string
+  hold_behavior: 'case_scoped' | 'supported' | 'not_applicable' | 'decision_required'
+  implementation?: string
+  resource_counts: Array<{
+    kind: 'postgres_table' | 'database_scope' | 'object_prefix' | 'queue' | 'browser_key' | 'provider'
+    count: number
+  }>
 }
 
 export interface EffectiveRetention {
   plan: TenantPlan
+  registry_version: number
+  summary: {
+    enforced: number
+    configurable: number
+    external_control: number
+    decision_required: number
+  }
   policies: RetentionPolicy[]
 }
 

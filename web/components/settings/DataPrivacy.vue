@@ -95,6 +95,7 @@ const actionError = ref('')
 const actionNotice = ref('')
 const reporterEmail = ref('')
 const reporterAction = ref<ReporterPrivacyAction>('export')
+const expandedRetentionCategories = ref(new Set<string>())
 const anonymizeDialogOpen = ref(false)
 const anonymizeConfirmation = ref('')
 const caseSubjectType = ref<PrivacySubjectType>('reporter')
@@ -869,21 +870,71 @@ function retentionLabel(policy: RetentionPolicy) {
 }
 
 function retentionDuration(policy: RetentionPolicy) {
-  if (policy.category === 'workflow_metadata') return t('admin.privacy.settings.duration.workspaceLifetime')
+  if (policy.status === 'decision_required') return t('admin.privacy.settings.duration.decisionRequired')
+  if (policy.status === 'external_control') return t('admin.privacy.settings.duration.externalConfiguration')
   if (policy.category === 'auth_magic_links') return t('admin.privacy.settings.duration.magicLinkExpiry')
   if (policy.category === 'unverified_requests') {
     return plural('admin.privacy.settings.duration.hours', 48, { count: 48 })
   }
+  if (policy.category === 'widget_recurrence') return t('admin.privacy.settings.duration.ruleControlled')
+  if (policy.category === 'ai_provider_files') return t('admin.privacy.settings.duration.providerFileExpiry')
   if (policy.duration_days != null) {
     return plural('admin.privacy.settings.duration.days', policy.duration_days, { count: policy.duration_days })
   }
-  return t('admin.common.custom')
+  return policy.duration
 }
 
 function retentionSource(source: string) {
-  if (source === 'Workspace lifecycle') return t('admin.privacy.settings.source.workspaceLifecycle')
   if (source === 'Plan storage limit') return t('admin.privacy.settings.source.planStorageLimit')
+  if (source === 'Policy decision required') return t('admin.privacy.settings.source.policyDecision')
+  if (source === 'Widget rule') return t('admin.privacy.settings.source.widgetRule')
+  if (source === 'Platform and provider boundary') return t('admin.privacy.settings.source.platformProvider')
+  if (source === 'External configuration') return t('admin.privacy.settings.source.externalConfiguration')
   return t('admin.privacy.settings.source.platformDefault')
+}
+
+function retentionStatusTone(status: RetentionPolicy['status']) {
+  if (status === 'enforced') return 'success'
+  if (status === 'external_control') return 'external'
+  return 'pending'
+}
+
+function retentionStatusLabel(status: RetentionPolicy['status']) {
+  return t(`admin.privacy.settings.retentionStatus.${status}`)
+}
+
+function retentionLifecycleAction(status: RetentionPolicy['status']) {
+  return t(`admin.privacy.settings.retentionAction.${status}`)
+}
+
+function retentionCadence(cadence: string) {
+  const key = cadence.toLowerCase().replaceAll(' ', '_').replaceAll('-', '_')
+  return t(`admin.privacy.settings.cadence.${key}`)
+}
+
+function retentionHold(hold: RetentionPolicy['hold_behavior']) {
+  return t(`admin.privacy.settings.hold.${hold}`)
+}
+
+function retentionRole(role: RetentionPolicy['role']) {
+  return t(`admin.privacy.settings.role.${role}`)
+}
+
+function retentionResources(policy: RetentionPolicy) {
+  return policy.resource_counts.map((resource) => {
+    return plural(
+      `admin.privacy.settings.resources.${resource.kind}`,
+      resource.count,
+      { count: resource.count },
+    )
+  }).join(' · ')
+}
+
+function toggleRetentionDetails(category: string) {
+  const expanded = new Set(expandedRetentionCategories.value)
+  if (expanded.has(category)) expanded.delete(category)
+  else expanded.add(category)
+  expandedRetentionCategories.value = expanded
 }
 
 function actionLabel(action: ReporterPrivacyAction) {
@@ -1549,12 +1600,54 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
           <span v-if="data.retention" class="privacy-plan">{{ t('admin.privacy.settings.plan', { plan: t(`admin.plans.${data.retention.plan}`) }) }}</span>
         </header>
         <div v-if="!canReadRetention" class="privacy-empty"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.readRequired') }}</h3></div>
-        <div v-else class="privacy-table privacy-retention-table">
-          <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.category') }}</span><span>{{ t('admin.privacy.settings.columns.retention') }}</span><span>{{ t('admin.privacy.settings.columns.source') }}</span></div>
-          <div v-for="policy in data.retention?.policies || []" :key="policy.category" class="privacy-row">
-            <span><b>{{ retentionLabel(policy) }}</b><small>{{ policy.category }}</small></span>
-            <span>{{ retentionDuration(policy) }}</span>
-            <span>{{ retentionSource(policy.source) }}</span>
+        <div v-else>
+          <div v-if="data.retention" class="privacy-retention-summary" :aria-label="t('admin.privacy.settings.lifecycleSummary')">
+            <div><b>{{ data.retention.summary.enforced }}</b><span>{{ retentionStatusLabel('enforced') }}</span></div>
+            <div><b>{{ data.retention.summary.configurable }}</b><span>{{ retentionStatusLabel('configurable') }}</span></div>
+            <div><b>{{ data.retention.summary.decision_required }}</b><span>{{ retentionStatusLabel('decision_required') }}</span></div>
+            <div><b>{{ data.retention.summary.external_control }}</b><span>{{ retentionStatusLabel('external_control') }}</span></div>
+          </div>
+          <div class="privacy-table privacy-retention-table">
+            <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.category') }}</span><span>{{ t('admin.privacy.settings.columns.retention') }}</span><span>{{ t('admin.privacy.settings.columns.lifecycle') }}</span><span>{{ t('admin.privacy.settings.columns.operation') }}</span></div>
+            <template v-for="policy in data.retention?.policies || []" :key="policy.category">
+              <div class="privacy-row">
+                <span class="privacy-retention-category">
+                  <b>{{ retentionLabel(policy) }}</b>
+                  <small>{{ retentionRole(policy.role) }}</small>
+                </span>
+                <span class="privacy-retention-duration">
+                  <b>{{ retentionDuration(policy) }}</b>
+                  <small>{{ retentionSource(policy.source) }}</small>
+                </span>
+                <span class="privacy-retention-lifecycle">
+                  <span class="privacy-status" :data-tone="retentionStatusTone(policy.status)"><i />{{ retentionStatusLabel(policy.status) }}</span>
+                  <small>{{ retentionLifecycleAction(policy.status) }}</small>
+                </span>
+                <span class="privacy-retention-operation">
+                  <span>
+                    <b>{{ retentionCadence(policy.cadence) }}</b>
+                    <button
+                      class="app-icon-button"
+                      type="button"
+                      :title="t('admin.privacy.settings.retentionDetails')"
+                      :aria-expanded="expandedRetentionCategories.has(policy.category)"
+                      @click="toggleRetentionDetails(policy.category)"
+                    >
+                      <ChevronUp v-if="expandedRetentionCategories.has(policy.category)" :size="14" />
+                      <ListTree v-else :size="14" />
+                    </button>
+                  </span>
+                  <small>{{ retentionHold(policy.hold_behavior) }}</small>
+                  <small>{{ retentionResources(policy) }}</small>
+                </span>
+              </div>
+              <div v-if="expandedRetentionCategories.has(policy.category)" class="privacy-retention-detail">
+                <div><b>{{ t('admin.privacy.settings.detail.purpose') }}</b><p>{{ policy.purpose }}</p></div>
+                <div><b>{{ t('admin.privacy.settings.detail.trigger') }}</b><p>{{ policy.trigger }}</p></div>
+                <div><b>{{ t('admin.privacy.settings.detail.action') }}</b><p>{{ policy.action }}</p></div>
+                <div><b>{{ t('admin.privacy.settings.detail.control') }}</b><p>{{ policy.implementation || t('admin.privacy.settings.detail.notAutomated') }}</p></div>
+              </div>
+            </template>
           </div>
         </div>
       </section>
@@ -1687,13 +1780,29 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-row > span { min-width: 0; }
 .privacy-row b { display: block; overflow: hidden; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .privacy-row small { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.privacy-retention-table .privacy-row { grid-template-columns: minmax(220px, 1.3fr) minmax(110px, .5fr) minmax(140px, .7fr); }
+.privacy-retention-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.privacy-retention-summary div { display: flex; min-height: 46px; align-items: baseline; gap: 7px; padding: 10px 15px; border-right: 1px solid var(--line); }
+.privacy-retention-summary div:last-child { border-right: 0; }
+.privacy-retention-summary b { color: var(--ink); font-size: 16px; }
+.privacy-retention-summary span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.privacy-retention-table .privacy-row { grid-template-columns: minmax(190px, 1.15fr) minmax(135px, .7fr) minmax(170px, .9fr) minmax(180px, 1fr); }
+.privacy-retention-lifecycle { display: grid; align-content: center; }
+.privacy-retention-operation { text-align: right; }
+.privacy-retention-operation > span { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.privacy-retention-operation .app-icon-button { width: 26px; height: 26px; min-height: 26px; }
+.privacy-retention-operation small { overflow: visible; text-overflow: clip; white-space: normal; }
+.privacy-retention-detail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--surface-soft); border-bottom: 1px solid var(--line); }
+.privacy-retention-detail > div { min-width: 0; padding: 11px 15px; border-right: 1px solid var(--line); }
+.privacy-retention-detail > div:last-child { border-right: 0; }
+.privacy-retention-detail b { color: var(--muted); font-size: 8px; text-transform: uppercase; }
+.privacy-retention-detail p { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
 .privacy-export-table .privacy-row { grid-template-columns: minmax(190px, 1.1fr) 110px 90px minmax(170px, .9fr) 38px; }
 .privacy-request-table .privacy-row { grid-template-columns: minmax(220px, 1.2fr) 90px 140px minmax(180px, .9fr) 38px; }
 .privacy-status { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 700; text-transform: capitalize; }
 .privacy-status i { width: 7px; height: 7px; background: #b98a26; border-radius: 50%; }
 .privacy-status[data-tone='success'] i { background: var(--green); }
 .privacy-status[data-tone='danger'] i { background: var(--red); }
+.privacy-status[data-tone='external'] i { background: #3375a7; }
 .privacy-action-label { color: var(--ink-soft); font-weight: 700; text-transform: capitalize; }
 .privacy-actions { display: flex; justify-content: flex-end; }
 .privacy-request-form { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(190px, .8fr) auto; align-items: end; gap: 12px; padding: 14px 15px; background: var(--surface-soft); border-bottom: 1px solid var(--line); }
@@ -1911,7 +2020,11 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 @media (max-width: 900px) {
   .privacy-row--head { display: none; }
   .privacy-retention-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .privacy-retention-table .privacy-row > span:last-child { display: none; }
+  .privacy-retention-lifecycle { grid-column: 1; }
+  .privacy-retention-operation { grid-column: 2; }
+  .privacy-retention-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .privacy-retention-detail > div:nth-child(2) { border-right: 0; }
+  .privacy-retention-detail > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
   .privacy-export-table .privacy-row, .privacy-request-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto 38px; }
   .privacy-export-table .privacy-row > span:nth-child(3), .privacy-export-table .privacy-row > span:nth-child(4), .privacy-request-table .privacy-row > span:nth-child(4) { display: none; }
   .privacy-request-form { grid-template-columns: 1fr 1fr; }
@@ -1947,7 +2060,12 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-section > header .app-button { width: 100%; }
   .privacy-row b { overflow: visible; line-height: 1.35; text-overflow: clip; white-space: normal; }
   .privacy-retention-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .privacy-retention-table .privacy-row > span:last-child { display: none; }
+  .privacy-retention-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .privacy-retention-summary div:nth-child(2) { border-right: 0; }
+  .privacy-retention-summary div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .privacy-retention-detail { grid-template-columns: 1fr; }
+  .privacy-retention-detail > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .privacy-retention-detail > div:last-child { border-bottom: 0; }
   .privacy-export-table .privacy-row, .privacy-request-table .privacy-row { grid-template-columns: minmax(0, 1fr) 38px; }
   .privacy-export-table .privacy-row > span:not(:first-child):not(:last-child), .privacy-request-table .privacy-row > span:not(:first-child):not(:last-child) { display: none; }
   .privacy-request-form { grid-template-columns: 1fr; }
