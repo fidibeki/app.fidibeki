@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 96
+	const latestMigrationVersion = 97
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2522,6 +2522,45 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			"recipient action privileges select=%t insert=%t delete=%t status_update=%t email_update=%t",
 			canSelectActions, canInsertActions, canDeleteActions,
 			canUpdateActionStatus, canUpdateRecipientEmail,
+		)
+	}
+	var communicationTablesProtected bool
+	if err := root.QueryRow(ctx, `
+		SELECT bool_and(relrowsecurity AND relforcerowsecurity)
+		FROM pg_class
+		WHERE oid = ANY(ARRAY[
+			'privacy_case_communications'::regclass,
+			'privacy_case_communication_attempts'::regclass
+		])
+	`).Scan(&communicationTablesProtected); err != nil || !communicationTablesProtected {
+		t.Fatalf("case communication RLS protected = %t, error = %v",
+			communicationTablesProtected, err)
+	}
+	var canSelectCommunications, canInsertCommunications, canDeleteCommunications bool
+	var canUpdateCommunicationStatus, canUpdateCommunicationBody bool
+	if err := root.QueryRow(ctx, `
+		SELECT
+			has_table_privilege('fidibeki_app', 'privacy_case_communications', 'SELECT'),
+			has_table_privilege('fidibeki_app', 'privacy_case_communications', 'INSERT'),
+			has_table_privilege('fidibeki_app', 'privacy_case_communications', 'DELETE'),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_case_communications', 'status', 'UPDATE'
+			),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_case_communications', 'message_body', 'UPDATE'
+			)
+	`).Scan(
+		&canSelectCommunications, &canInsertCommunications, &canDeleteCommunications,
+		&canUpdateCommunicationStatus, &canUpdateCommunicationBody,
+	); err != nil {
+		t.Fatalf("read case communication privileges: %v", err)
+	}
+	if !canSelectCommunications || !canInsertCommunications || canDeleteCommunications ||
+		!canUpdateCommunicationStatus || canUpdateCommunicationBody {
+		t.Fatalf(
+			"case communication privileges select=%t insert=%t delete=%t status_update=%t body_update=%t",
+			canSelectCommunications, canInsertCommunications, canDeleteCommunications,
+			canUpdateCommunicationStatus, canUpdateCommunicationBody,
 		)
 	}
 

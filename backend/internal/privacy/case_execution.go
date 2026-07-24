@@ -417,6 +417,7 @@ func attachCaseOperationalState(
 		cases[index].Rectifications = []CaseRectification{}
 		cases[index].FeedbackRectifications = []FeedbackRectification{}
 		cases[index].RecipientActions = []RecipientAction{}
+		cases[index].Communications = []CaseCommunication{}
 	}
 	recipientActions, err := listRecipientActions(ctx, query, tenantID, caseIDs)
 	if err != nil {
@@ -426,6 +427,16 @@ func attachCaseOperationalState(
 		cases[index].RecipientActions = recipientActions[cases[index].ID]
 		if cases[index].RecipientActions == nil {
 			cases[index].RecipientActions = []RecipientAction{}
+		}
+	}
+	communications, err := listCaseCommunications(ctx, query, tenantID, caseIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range cases {
+		cases[index].Communications = communications[cases[index].ID]
+		if cases[index].Communications == nil {
+			cases[index].Communications = []CaseCommunication{}
 		}
 	}
 	rows, err := query.Query(ctx, `

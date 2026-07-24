@@ -652,7 +652,18 @@ func (Store) CaseDashboard(
 			),
 			count(*) FILTER (WHERE status IN ('awaiting_clarification', 'paused')),
 			count(*) FILTER (WHERE status = 'awaiting_legal_review'),
-			0,
+			(
+				SELECT count(DISTINCT failed.privacy_case_id)
+				FROM (
+					SELECT action.privacy_case_id
+					FROM privacy_recipient_actions AS action
+					WHERE action.tenant_id = $1 AND action.status = 'failed'
+					UNION
+					SELECT communication.privacy_case_id
+					FROM privacy_case_communications AS communication
+					WHERE communication.tenant_id = $1 AND communication.status = 'failed'
+				) AS failed
+			),
 			count(*) FILTER (WHERE status IN ('partially_fulfilled', 'completed'))
 		FROM privacy_cases
 		WHERE tenant_id = $1

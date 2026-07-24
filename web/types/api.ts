@@ -936,6 +936,52 @@ export interface PrivacyRecipientAction {
   delivery_attempts: PrivacyRecipientDelivery[]
 }
 
+export type PrivacyCaseCommunicationKind =
+  | 'progress_update'
+  | 'clarification_request'
+  | 'decision_notice'
+export type PrivacyCaseCommunicationStatus = 'pending' | 'processing' | 'sent' | 'failed'
+
+export interface PrivacyCaseCommunicationDelivery {
+  id: string
+  attempt_number: number
+  status: PrivacyCaseCommunicationStatus
+  provider_message_id?: string
+  error_message?: string
+  started_at: string
+  completed_at?: string
+}
+
+export interface PrivacyCaseCommunication {
+  id: string
+  privacy_case_id: string
+  communication_kind: PrivacyCaseCommunicationKind
+  recipient_email: string
+  subject_line: string
+  message_body: string
+  status: PrivacyCaseCommunicationStatus
+  attempts: number
+  last_error?: string
+  provider_message_id?: string
+  last_attempt_at?: string
+  sent_at?: string
+  created_by_member_id: string
+  created_at: string
+  updated_at: string
+  delivery_attempts: PrivacyCaseCommunicationDelivery[]
+}
+
+export interface PrivacyCaseEvent {
+  id: string
+  sequence: number
+  privacy_case_id: string
+  event_type: string
+  actor_member_id?: string
+  previous_status?: PrivacyCaseStatus
+  new_status?: PrivacyCaseStatus
+  occurred_at: string
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -966,6 +1012,8 @@ export interface PrivacyCase {
   rectifications?: PrivacyCaseRectification[]
   feedback_rectifications?: PrivacyFeedbackRectification[]
   recipient_actions?: PrivacyRecipientAction[]
+  communications?: PrivacyCaseCommunication[]
+  events?: PrivacyCaseEvent[]
   created_at: string
   updated_at: string
 }

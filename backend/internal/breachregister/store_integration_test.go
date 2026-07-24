@@ -401,8 +401,8 @@ func TestMigration096RollsBackAndReappliesCleanly(t *testing.T) {
 	if err := migrator.Up(); err != nil {
 		t.Fatalf("migrate up: %v", err)
 	}
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("migrate 96 down: %v", err)
+	if err := migrator.Migrate(95); err != nil {
+		t.Fatalf("migrate to pre-96 version: %v", err)
 	}
 
 	connection, err := pgxpool.New(ctx, databaseURL)
@@ -459,8 +459,8 @@ func TestMigration096RollsBackAndReappliesCleanly(t *testing.T) {
 	`, legacyIncidentID); err == nil {
 		t.Fatal("post-migration breach incident UPDATE succeeded, want append-only rejection")
 	}
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("migrate 96 down after existing-row upgrade: %v", err)
+	if err := migrator.Migrate(95); err != nil {
+		t.Fatalf("migrate to pre-96 version after existing-row upgrade: %v", err)
 	}
 	if err := migrator.Up(); err != nil {
 		t.Fatalf("migrate 96 up after rollback: %v", err)

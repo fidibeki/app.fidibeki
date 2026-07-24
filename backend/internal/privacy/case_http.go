@@ -474,6 +474,76 @@ func (handler *HTTPHandler) retryRecipientAction(w http.ResponseWriter, r *http.
 	})
 }
 
+func (handler *HTTPHandler) createCaseCommunication(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body struct {
+		CommunicationKind string `json:"communication_kind"`
+		SubjectLine       string `json:"subject_line"`
+		MessageBody       string `json:"message_body"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	communicationKind, err := ParseCaseCommunicationKind(body.CommunicationKind)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	communication, created, err := handler.options.Store.CreateCaseCommunication(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), CreateCaseCommunicationInput{
+			CommunicationKind: communicationKind,
+			SubjectLine:       body.SubjectLine,
+			MessageBody:       body.MessageBody,
+		}, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"communication": communication, "created": created,
+	})
+}
+
+func (handler *HTTPHandler) retryCaseCommunication(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	communicationID, ok := privacyCaseCommunicationID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	communication, retried, err := handler.options.Store.RetryCaseCommunication(
+		r.Context(), query, resolved.ID, caseID, communicationID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"communication": communication, "retried": retried,
+	})
+}
+
 func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
 	caseID, ok := privacyCaseID(w, r)
 	if !ok {
@@ -615,6 +685,18 @@ func privacyRecipientActionID(w http.ResponseWriter, r *http.Request) (string, b
 		return "", false
 	}
 	return actionID, true
+}
+
+func privacyCaseCommunicationID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	communicationID := strings.TrimSpace(chi.URLParam(r, "communicationID"))
+	if _, err := uuid.Parse(communicationID); err != nil {
+		api.WriteError(
+			w, http.StatusNotFound, api.CodeNotFound,
+			"privacy case communication not found", nil,
+		)
+		return "", false
+	}
+	return communicationID, true
 }
 
 func privacyCaseVerificationMessage(

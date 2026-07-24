@@ -81,15 +81,18 @@ const (
 )
 
 var (
-	ErrCaseTransition              = errors.New("privacy case transition is invalid")
-	ErrCaseReasonRequired          = errors.New("privacy case decision reason is required")
-	ErrCaseExecutionUnsupported    = errors.New("privacy case execution is not supported")
-	ErrLegalHoldActive             = errors.New("privacy case has an active legal hold")
-	ErrIdempotencyConflict         = errors.New("idempotency key was reused with different input")
-	ErrProcessingRestricted        = errors.New("processing is restricted for this data subject")
-	ErrRecipientActionEvidence     = errors.New("privacy recipient action requires completed evidence")
-	ErrRecipientActionNotRetryable = errors.New("privacy recipient action is not retryable")
-	ErrRecipientDeliveryInProgress = errors.New("privacy recipient delivery is already in progress")
+	ErrCaseTransition                = errors.New("privacy case transition is invalid")
+	ErrCaseReasonRequired            = errors.New("privacy case decision reason is required")
+	ErrCaseExecutionUnsupported      = errors.New("privacy case execution is not supported")
+	ErrLegalHoldActive               = errors.New("privacy case has an active legal hold")
+	ErrIdempotencyConflict           = errors.New("idempotency key was reused with different input")
+	ErrProcessingRestricted          = errors.New("processing is restricted for this data subject")
+	ErrRecipientActionEvidence       = errors.New("privacy recipient action requires completed evidence")
+	ErrRecipientActionNotRetryable   = errors.New("privacy recipient action is not retryable")
+	ErrRecipientDeliveryInProgress   = errors.New("privacy recipient delivery is already in progress")
+	ErrCaseCommunicationUnavailable  = errors.New("privacy case communication is unavailable")
+	ErrCaseCommunicationNotRetryable = errors.New("privacy case communication is not retryable")
+	ErrCaseCommunicationInProgress   = errors.New("privacy case communication delivery is already in progress")
 )
 
 type PrivacyCase struct {
@@ -124,6 +127,7 @@ type PrivacyCase struct {
 	Rectifications          []CaseRectification     `json:"rectifications"`
 	FeedbackRectifications  []FeedbackRectification `json:"feedback_rectifications"`
 	RecipientActions        []RecipientAction       `json:"recipient_actions"`
+	Communications          []CaseCommunication     `json:"communications"`
 	CreatedAt               time.Time               `json:"created_at"`
 	UpdatedAt               time.Time               `json:"updated_at"`
 }
@@ -319,6 +323,75 @@ type CreateRecipientActionInput struct {
 func ParseRecipientActionKind(value string) (RecipientActionKind, error) {
 	switch kind := RecipientActionKind(strings.TrimSpace(value)); kind {
 	case RecipientActionRectification, RecipientActionErasure:
+		return kind, nil
+	default:
+		return "", ErrInvalidRequest
+	}
+}
+
+type CaseCommunicationKind string
+
+const (
+	CaseCommunicationProgress      CaseCommunicationKind = "progress_update"
+	CaseCommunicationClarification CaseCommunicationKind = "clarification_request"
+	CaseCommunicationDecision      CaseCommunicationKind = "decision_notice"
+)
+
+type CaseCommunicationStatus string
+
+const (
+	CaseCommunicationPending    CaseCommunicationStatus = "pending"
+	CaseCommunicationProcessing CaseCommunicationStatus = "processing"
+	CaseCommunicationSent       CaseCommunicationStatus = "sent"
+	CaseCommunicationFailed     CaseCommunicationStatus = "failed"
+)
+
+type CaseCommunicationDeliveryStatus string
+
+const (
+	CaseCommunicationDeliveryPending CaseCommunicationDeliveryStatus = "pending"
+	CaseCommunicationDeliverySent    CaseCommunicationDeliveryStatus = "sent"
+	CaseCommunicationDeliveryFailed  CaseCommunicationDeliveryStatus = "failed"
+)
+
+type CaseCommunication struct {
+	ID                string                      `json:"id"`
+	PrivacyCaseID     string                      `json:"privacy_case_id"`
+	CommunicationKind CaseCommunicationKind       `json:"communication_kind"`
+	RecipientEmail    string                      `json:"recipient_email"`
+	SubjectLine       string                      `json:"subject_line"`
+	MessageBody       string                      `json:"message_body"`
+	Status            CaseCommunicationStatus     `json:"status"`
+	Attempts          int                         `json:"attempts"`
+	LastError         *string                     `json:"last_error,omitempty"`
+	ProviderMessageID *string                     `json:"provider_message_id,omitempty"`
+	LastAttemptAt     *time.Time                  `json:"last_attempt_at,omitempty"`
+	SentAt            *time.Time                  `json:"sent_at,omitempty"`
+	CreatedByMemberID string                      `json:"created_by_member_id"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	UpdatedAt         time.Time                   `json:"updated_at"`
+	DeliveryAttempts  []CaseCommunicationDelivery `json:"delivery_attempts"`
+}
+
+type CaseCommunicationDelivery struct {
+	ID                string                          `json:"id"`
+	AttemptNumber     int                             `json:"attempt_number"`
+	Status            CaseCommunicationDeliveryStatus `json:"status"`
+	ProviderMessageID *string                         `json:"provider_message_id,omitempty"`
+	ErrorMessage      *string                         `json:"error_message,omitempty"`
+	StartedAt         time.Time                       `json:"started_at"`
+	CompletedAt       *time.Time                      `json:"completed_at,omitempty"`
+}
+
+type CreateCaseCommunicationInput struct {
+	CommunicationKind CaseCommunicationKind
+	SubjectLine       string
+	MessageBody       string
+}
+
+func ParseCaseCommunicationKind(value string) (CaseCommunicationKind, error) {
+	switch kind := CaseCommunicationKind(strings.TrimSpace(value)); kind {
+	case CaseCommunicationProgress, CaseCommunicationClarification, CaseCommunicationDecision:
 		return kind, nil
 	default:
 		return "", ErrInvalidRequest

@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 import { allTenantPermissions } from '../../data/permissions'
-import type { PrivacyCase } from '../../types/api'
+import type { PrivacyCase, PrivacyCaseCommunication } from '../../types/api'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
@@ -1472,6 +1472,38 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/privacy/cases' && method === 'POST') {
       return json(route, { case: state.privacyCases[0], verification_email_queued: true }, 202)
     }
+    const caseDetailMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)$/)
+    if (caseDetailMatch && method === 'GET') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseDetailMatch[1])
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const events = [{
+        id: `${item.id}-event-created`,
+        sequence: 1,
+        privacy_case_id: item.id,
+        event_type: 'privacy_case.created',
+        actor_member_id: item.requested_by_member_id,
+        new_status: 'pending_verification',
+        occurred_at: item.created_at,
+      }, {
+        id: `${item.id}-event-verified`,
+        sequence: 2,
+        privacy_case_id: item.id,
+        event_type: 'privacy_case.verified',
+        previous_status: 'pending_verification',
+        new_status: item.status,
+        occurred_at: item.verified_at || item.created_at,
+      }, ...(item.communications || []).map((communication, index) => ({
+        id: `${communication.id}-event`,
+        sequence: index + 3,
+        privacy_case_id: item.id,
+        event_type: 'privacy_case.communication_created',
+        actor_member_id: communication.created_by_member_id,
+        occurred_at: communication.created_at,
+      }))]
+      return json(route, { case: item, events })
+    }
     const caseTransitionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/transition$/)
     if (caseTransitionMatch && method === 'POST') {
       const item = state.privacyCases.find(candidate => candidate.id === caseTransitionMatch[1])
@@ -1644,6 +1676,59 @@ async function installMockAPI(page: Page, state: MockState) {
       action.last_error = undefined
       action.updated_at = now
       return json(route, { recipient_action: action, retried: true }, 202)
+    }
+    const caseCommunicationMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/communications$/,
+    )
+    if (caseCommunicationMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseCommunicationMatch[1])
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const input = body()
+      const subjectMember = state.members.find(candidate => candidate.id === item.subject_member_id)
+      const communication: PrivacyCaseCommunication = {
+        id: `${item.id}-communication-${(item.communications?.length || 0) + 1}`,
+        privacy_case_id: item.id,
+        communication_kind: String(input.communication_kind) as PrivacyCaseCommunication['communication_kind'],
+        recipient_email: item.subject_email || subjectMember?.email || '',
+        subject_line: String(input.subject_line),
+        message_body: String(input.message_body),
+        status: 'failed',
+        attempts: 1,
+        last_error: 'email provider delivery failed',
+        last_attempt_at: now,
+        created_by_member_id: 'member-1',
+        created_at: now,
+        updated_at: now,
+        delivery_attempts: [{
+          id: `${item.id}-communication-attempt-1`,
+          attempt_number: 1,
+          status: 'failed',
+          error_message: 'email provider delivery failed',
+          started_at: now,
+          completed_at: now,
+        }],
+      }
+      item.communications ||= []
+      item.communications.unshift(communication)
+      return json(route, { communication, created: true }, 201)
+    }
+    const caseCommunicationRetryMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/communications\/([^/]+)\/retry$/,
+    )
+    if (caseCommunicationRetryMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseCommunicationRetryMatch[1])
+      const communication = item?.communications?.find(
+        candidate => candidate.id === caseCommunicationRetryMatch[2],
+      )
+      if (!communication) {
+        return json(route, { error: { code: 'not_found', message: 'case communication not found' } }, 404)
+      }
+      communication.status = 'pending'
+      communication.last_error = undefined
+      communication.updated_at = now
+      return json(route, { communication, retried: true }, 202)
     }
     const caseExecutionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/execute$/)
     if (caseExecutionMatch && method === 'POST') {
@@ -4353,6 +4438,32 @@ test('data-rights cases execute access and erasure around legal holds', async ({
   await accessCase.getByTitle('Toggle case details').click()
   await expect(accessCase).toContainText('Access')
   await expect(accessCase).toContainText('12 records in scope')
+  await expect(accessCase).toContainText('Identity and ownership')
+  await expect(accessCase).toContainText('access.requester@example.test')
+  await expect(accessCase).toContainText('Request scope')
+  await expect(accessCase).toContainText('intake_channel')
+  await expect(accessCase).toContainText('Case timeline')
+  await expect(accessCase).toContainText('Case created')
+  const communicationSection = accessCase.locator('.privacy-case-communications')
+  await expect(communicationSection.getByLabel('Subject')).toHaveValue(
+    'Update on data-rights case PRV-ACCESS1',
+  )
+  await communicationSection.getByRole('textbox', { name: 'Message', exact: true }).fill(
+    'The requested archive is ready and remains available through the secure case workflow.',
+  )
+  await communicationSection.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByRole('status')).toContainText('case communication was queued')
+  await expect(communicationSection).toContainText('email provider delivery failed')
+  await communicationSection.getByRole('button', { name: 'Retry delivery' }).click()
+  await expect(page.getByRole('status')).toContainText('communication retry was queued')
+  await expect(communicationSection).toContainText('Pending')
+  expect(
+    state.privacyCases.find(item => item.id === 'privacy-case-access')?.communications?.[0],
+  ).toMatchObject({
+    recipient_email: 'access.requester@example.test',
+    status: 'pending',
+    attempts: 1,
+  })
   await accessCase.getByRole('button', { name: 'Download access export' }).click()
   expect(state.privacyDownloadCount).toBe(1)
 

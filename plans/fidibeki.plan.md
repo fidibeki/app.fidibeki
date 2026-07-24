@@ -606,8 +606,19 @@ was removed from the staging test tenant.
           exposes evidence-gated creation, pending/processing/sent/failed state, attempt count,
           failure recovery, and retry. PostgreSQL integration, worker/resolver, frontend
           typecheck, and desktop/mobile E2E cover the vertical.
-        - [ ] Add subject-facing case communications and the remaining complete case-detail
-          timeline/scope/identity presentation before closing Slice 3 and #60.
+        - [x] Migration `97` adds explicit case-administration communications for verified
+          reporter/member subjects. Progress, clarification, and decision messages are gated by
+          case state, idempotent, tenant-isolated, queued through the transactional outbox, and
+          preserve provider-confirmed delivery attempts, bounded generic failures, explicit retry,
+          a short processing lease, and a stable provider idempotency key. These operational
+          rights-request messages do not reuse non-essential reporter-update consent; safe case
+          events/audit contain identifiers and kind only, never email, subject, or body.
+        - [x] The bilingual case detail now loads its authoritative resource before exposing
+          actions and presents subject/verification/ownership evidence, scope, append-only
+          timeline, communication history/retry, and the dashboard's failed-external count.
+          Migration/RLS, backend/worker, typecheck, and desktop/mobile E2E pass locally.
+        - [ ] Deploy this completed slice to staging and run the authenticated staging E2E before
+          closing Slice 3 and #60.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
       data quarantine, policy disablement, and external provider-assessment gates.
     - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,

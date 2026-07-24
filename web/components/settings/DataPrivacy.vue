@@ -8,7 +8,9 @@ import {
   Download,
   FileArchive,
   LockKeyhole,
+  ListTree,
   MailCheck,
+  MessageSquareText,
   MoveRight,
   PencilLine,
   Play,
@@ -23,7 +25,10 @@ import type {
   EffectiveRetention,
   Member,
   PrivacyCase,
+  PrivacyCaseCommunication,
+  PrivacyCaseCommunicationKind,
   PrivacyCaseDashboard,
+  PrivacyCaseEvent,
   PrivacyCaseRectification,
   PrivacyCaseStatus,
   PrivacyControllerRole,
@@ -53,7 +58,7 @@ const emit = defineEmits<{ memberChanged: [member: Member] }>()
 const canReadRetention = computed(() => can('tenant:read'))
 const canManagePrivacy = computed(() => can('tenant:update'))
 
-const { data, status, error, refresh } = await useAsyncData('privacy-settings-data', async () => {
+const { data, status, error, refresh: refreshData } = await useAsyncData('privacy-settings-data', async () => {
   const retention = canReadRetention.value
     ? $apiFetch<{ retention: EffectiveRetention }>('/v1/privacy/retention')
     : Promise.resolve<{ retention?: EffectiveRetention }>({})
@@ -126,6 +131,13 @@ type RecipientActionDraft = {
   instructionSummary: string
 }
 const recipientActionDrafts = ref<Record<string, RecipientActionDraft>>({})
+type CaseCommunicationDraft = {
+  kind: PrivacyCaseCommunicationKind
+  subjectLine: string
+  messageBody: string
+}
+const caseCommunicationDrafts = ref<Record<string, CaseCommunicationDraft>>({})
+const caseDetailLoading = ref<Record<string, boolean>>({})
 type CaseDecisionDraft = {
   status: PrivacyCaseStatus
   decisionSummary: string
@@ -146,10 +158,27 @@ const portabilityCategoryOptions: PrivacyPortabilityDataCategory[] = [
 
 const activeMembers = computed(() => props.members.filter(member => member.status === 'active'))
 
+async function refresh() {
+  await refreshData()
+  const openCaseIDs = Object.entries(expandedCases.value)
+    .filter(([, expanded]) => expanded)
+    .map(([caseID]) => caseID)
+  await Promise.all(openCaseIDs.map(async (caseID) => {
+    const item = data.value?.cases.find(candidate => candidate.id === caseID)
+    if (item) await loadCaseDetail(item)
+  }))
+}
+
 function memberLabel(memberID?: string) {
   if (!memberID) return '—'
   const member = props.members.find(item => item.id === memberID)
   return member?.name || member?.email || memberID.slice(0, 8)
+}
+
+function controllerRoleLabel(role: PrivacyControllerRole) {
+  return t(role === 'controller'
+    ? 'admin.privacy.settings.cases.controller'
+    : 'admin.privacy.settings.cases.assistance')
 }
 
 async function createPrivacyCase() {
@@ -296,7 +325,9 @@ async function toggleCase(item: PrivacyCase) {
     [item.id]: opening,
   }
   if (!opening) return
+  await loadCaseDetail(item)
   ensureCaseDecisionDraft(item)
+  ensureCaseCommunicationDraft(item)
   if (item.right_type === 'portability_assessment' && !portabilityDecisions.value[item.id]) {
     portabilityDecisions.value = { ...portabilityDecisions.value, [item.id]: 'approved' }
     portabilitySelections.value = {
@@ -313,6 +344,113 @@ async function toggleCase(item: PrivacyCase) {
   if (item.right_type === 'rectification' || item.right_type === 'erasure') {
     ensureRecipientActionDraft(item)
   }
+}
+
+async function loadCaseDetail(item: PrivacyCase) {
+  caseDetailLoading.value = { ...caseDetailLoading.value, [item.id]: true }
+  try {
+    const response = await $apiFetch<{ case: PrivacyCase, events: PrivacyCaseEvent[] }>(
+      `/v1/privacy/cases/${item.id}`,
+    )
+    Object.assign(item, response.case, { events: response.events })
+  } catch (operationError) {
+    actionError.value = localizedError.message(operationError, 'admin.privacy.settings.error')
+  } finally {
+    caseDetailLoading.value = { ...caseDetailLoading.value, [item.id]: false }
+  }
+}
+
+function caseCommunicationKinds(item: PrivacyCase): PrivacyCaseCommunicationKind[] {
+  if (!item.verified_at) return []
+  if (caseIsTerminal(item)) return ['decision_notice']
+  if (item.status === 'awaiting_clarification') {
+    return ['clarification_request', 'progress_update']
+  }
+  return ['progress_update']
+}
+
+function ensureCaseCommunicationDraft(item: PrivacyCase) {
+  const kinds = caseCommunicationKinds(item)
+  const existing = caseCommunicationDrafts.value[item.id]
+  if (existing && kinds.includes(existing.kind)) return
+  const kind = kinds[0] || 'progress_update'
+  caseCommunicationDrafts.value = {
+    ...caseCommunicationDrafts.value,
+    [item.id]: {
+      kind,
+      subjectLine: t(`admin.privacy.settings.cases.communicationSubjects.${kind}`, {
+        case: item.public_id,
+      }),
+      messageBody: '',
+    },
+  }
+}
+
+function updateCaseCommunicationSubject(item: PrivacyCase) {
+  const draft = caseCommunicationDrafts.value[item.id]
+  if (!draft) return
+  draft.subjectLine = t(`admin.privacy.settings.cases.communicationSubjects.${draft.kind}`, {
+    case: item.public_id,
+  })
+}
+
+function caseCommunicationReady(item: PrivacyCase) {
+  const draft = caseCommunicationDrafts.value[item.id]
+  return Boolean(
+    draft
+    && caseCommunicationKinds(item).includes(draft.kind)
+    && draft.subjectLine.trim()
+    && draft.messageBody.trim(),
+  )
+}
+
+async function createCaseCommunication(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !caseCommunicationReady(item)) return
+  const draft = caseCommunicationDrafts.value[item.id]
+  await runAction(`case-communication:${item.id}`, async () => {
+    await $apiFetch<{ communication: PrivacyCaseCommunication }>(
+      `/v1/privacy/cases/${item.id}/communications`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: {
+          communication_kind: draft.kind,
+          subject_line: draft.subjectLine.trim(),
+          message_body: draft.messageBody.trim(),
+        },
+      },
+    )
+    draft.messageBody = ''
+    actionNotice.value = t('admin.privacy.settings.cases.communicationQueued')
+    await refresh()
+  })
+}
+
+async function retryCaseCommunication(item: PrivacyCase, communication: PrivacyCaseCommunication) {
+  if (!canWrite('tenant:update') || communication.status !== 'failed') return
+  await runAction(`case-communication-retry:${communication.id}`, async () => {
+    await $apiFetch(
+      `/v1/privacy/cases/${item.id}/communications/${communication.id}/retry`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      },
+    )
+    actionNotice.value = t('admin.privacy.settings.cases.communicationRetryQueued')
+    await refresh()
+  })
+}
+
+function caseScopeEntries(item: PrivacyCase) {
+  return Object.entries(item.scope || {}).sort(([left], [right]) => left.localeCompare(right))
+}
+
+function caseScopeValue(value: unknown) {
+  if (value == null || value === '') return '—'
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+function caseEventLabel(event: PrivacyCaseEvent) {
+  const key = event.event_type.replace(/^privacy_case\./, '')
+  return t(`admin.privacy.settings.cases.timelineEvents.${key}`, event.event_type)
 }
 
 function ensureRectificationDraft(item: PrivacyCase) {
@@ -838,6 +976,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
             <div><b>{{ data.dashboard.due_soon }}</b><span>{{ t('admin.privacy.settings.cases.dueSoon') }}</span></div>
             <div><b>{{ data.dashboard.awaiting_manual }}</b><span>{{ t('admin.privacy.settings.cases.manual') }}</span></div>
             <div><b>{{ data.dashboard.awaiting_legal_review }}</b><span>{{ t('admin.privacy.settings.cases.legal') }}</span></div>
+            <div><b>{{ data.dashboard.failed_external }}</b><span>{{ t('admin.privacy.settings.cases.failedExternal') }}</span></div>
             <div><b>{{ data.dashboard.completed }}</b><span>{{ t('admin.privacy.settings.cases.completed') }}</span></div>
           </div>
           <form class="privacy-case-form" @submit.prevent="createPrivacyCase">
@@ -893,6 +1032,43 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                 </button>
               </div>
               <div v-if="expandedCases[item.id]" class="privacy-case-detail">
+                <p v-if="caseDetailLoading[item.id]" class="privacy-case-detail-loading"><span class="app-spinner" />{{ t('admin.privacy.settings.cases.detailLoading') }}</p>
+                <section v-else class="privacy-case-overview">
+                  <div class="privacy-case-identity">
+                    <header><ShieldCheck :size="15" /><b>{{ t('admin.privacy.settings.cases.identity') }}</b></header>
+                    <dl>
+                      <div><dt>{{ t('admin.privacy.settings.cases.subject') }}</dt><dd>{{ item.subject_email || memberLabel(item.subject_member_id) }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.verification') }}</dt><dd>{{ item.verified_at ? t('admin.privacy.settings.cases.verifiedAt', { date: dateTime(item.verified_at) }) : t('admin.privacy.settings.cases.notVerified') }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.verificationMethod') }}</dt><dd>{{ item.verification_method || '—' }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.controllerRole') }}</dt><dd>{{ controllerRoleLabel(item.controller_role) }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.requestedBy') }}</dt><dd>{{ memberLabel(item.requested_by_member_id) }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.owner') }}</dt><dd>{{ memberLabel(item.owner_member_id) }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.received') }}</dt><dd>{{ dateTime(item.received_at) }}</dd></div>
+                      <div><dt>{{ t('admin.privacy.settings.cases.deadline') }}</dt><dd>{{ dateTime(item.deadline_at) }}</dd></div>
+                    </dl>
+                  </div>
+                  <div class="privacy-case-scope">
+                    <header><ListTree :size="15" /><b>{{ t('admin.privacy.settings.cases.scope') }}</b></header>
+                    <p v-if="!caseScopeEntries(item).length">{{ t('admin.privacy.settings.cases.noScope') }}</p>
+                    <dl v-else>
+                      <div v-for="[key, value] in caseScopeEntries(item)" :key="key"><dt>{{ key }}</dt><dd>{{ caseScopeValue(value) }}</dd></div>
+                    </dl>
+                  </div>
+                  <div class="privacy-case-timeline">
+                    <header><Clock3 :size="15" /><b>{{ t('admin.privacy.settings.cases.timeline') }}</b></header>
+                    <p v-if="!item.events?.length">{{ t('admin.privacy.settings.cases.noTimeline') }}</p>
+                    <ol v-else>
+                      <li v-for="event in item.events" :key="event.id">
+                        <i />
+                        <div>
+                          <b>{{ caseEventLabel(event) }}</b>
+                          <span v-if="event.previous_status && event.new_status">{{ statusLabel(event.previous_status) }} → {{ statusLabel(event.new_status) }}</span>
+                          <small>{{ dateTime(event.occurred_at) }} · {{ event.actor_member_id ? memberLabel(event.actor_member_id) : t('admin.privacy.settings.cases.systemActor') }}</small>
+                        </div>
+                      </li>
+                    </ol>
+                  </div>
+                </section>
                 <div v-if="item.right_type === 'portability_assessment'" class="privacy-case-portability">
                   <header>
                     <div><p class="app-eyebrow">{{ t('admin.privacy.settings.cases.portability') }}</p><b>{{ t('admin.privacy.settings.cases.portabilityTitle') }}</b></div>
@@ -1104,6 +1280,53 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                         <small v-if="action.last_error">{{ action.last_error }}</small>
                         <button v-if="action.status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="retryRecipientAction(item, action)">
                           <RefreshCw :size="14" />{{ t('admin.privacy.settings.cases.retryRecipientAction') }}
+                        </button>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+                <section class="privacy-case-communications">
+                  <header>
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.communicationEyebrow') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.communicationTitle') }}</b>
+                      <small>{{ t('admin.privacy.settings.cases.communicationDescription') }}</small>
+                    </div>
+                    <MessageSquareText :size="17" />
+                  </header>
+                  <p v-if="!caseCommunicationKinds(item).length" class="privacy-communication-gate">{{ t('admin.privacy.settings.cases.communicationUnavailable') }}</p>
+                  <form v-else-if="caseCommunicationDrafts[item.id]" @submit.prevent="createCaseCommunication(item)">
+                    <label>{{ t('admin.privacy.settings.cases.communicationKind') }}
+                      <select v-model="caseCommunicationDrafts[item.id].kind" class="app-select" @change="updateCaseCommunicationSubject(item)">
+                        <option v-for="kind in caseCommunicationKinds(item)" :key="kind" :value="kind">{{ t(`admin.privacy.settings.cases.communicationKinds.${kind}`) }}</option>
+                      </select>
+                    </label>
+                    <label>{{ t('admin.privacy.settings.cases.communicationSubject') }}
+                      <input v-model.trim="caseCommunicationDrafts[item.id].subjectLine" class="app-input" maxlength="200" required />
+                    </label>
+                    <label class="privacy-communication-message">{{ t('admin.privacy.settings.cases.communicationMessage') }}
+                      <textarea v-model="caseCommunicationDrafts[item.id].messageBody" class="app-textarea" maxlength="4000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !caseCommunicationReady(item)">
+                      <Send :size="14" />{{ actionPending === `case-communication:${item.id}` ? t('admin.common.queuing') : t('admin.privacy.settings.cases.sendCommunication') }}
+                    </button>
+                  </form>
+                  <div class="privacy-communication-history">
+                    <p v-if="!item.communications?.length">{{ t('admin.privacy.settings.cases.noCommunications') }}</p>
+                    <article v-for="communication in item.communications || []" :key="communication.id">
+                      <div class="privacy-communication-summary">
+                        <b>{{ communication.subject_line }}</b>
+                        <span>{{ communication.recipient_email }}</span>
+                        <small>{{ t(`admin.privacy.settings.cases.communicationKinds.${communication.communication_kind}`) }} · {{ dateTime(communication.created_at) }} · {{ memberLabel(communication.created_by_member_id) }}</small>
+                      </div>
+                      <p>{{ communication.message_body }}</p>
+                      <div class="privacy-communication-delivery">
+                        <span class="privacy-status" :data-tone="statusTone(communication.status)"><i />{{ statusLabel(communication.status) }}</span>
+                        <small>{{ plural('admin.common.attempts', communication.attempts, { count: communication.attempts }) }}</small>
+                        <small v-if="communication.sent_at">{{ t('admin.privacy.settings.cases.communicationSentAt', { date: dateTime(communication.sent_at) }) }}</small>
+                        <small v-if="communication.last_error">{{ communication.last_error }}</small>
+                        <button v-if="communication.status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="retryCaseCommunication(item, communication)">
+                          <RefreshCw :size="14" />{{ t('admin.privacy.settings.cases.retryCommunication') }}
                         </button>
                       </div>
                     </article>
@@ -1344,7 +1567,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-actions { display: flex; justify-content: flex-end; }
 .privacy-request-form { display: grid; grid-template-columns: minmax(220px, 1.4fr) minmax(190px, .8fr) auto; align-items: end; gap: 12px; padding: 14px 15px; background: var(--surface-soft); border-bottom: 1px solid var(--line); }
 .privacy-request-form label, .privacy-case-form label, .privacy-dialog label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
-.privacy-case-dashboard { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+.privacy-case-dashboard { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
 .privacy-case-dashboard > div { display: grid; gap: 3px; padding: 13px 15px; border-right: 1px solid var(--line); }
 .privacy-case-dashboard > div:last-child { border-right: 0; }
 .privacy-case-dashboard b { color: var(--ink); font-size: 16px; }
@@ -1356,6 +1579,26 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-case-entry > .privacy-row { border-bottom: 0; }
 .privacy-case-entry .app-icon-button { align-self: center; justify-self: end; }
 .privacy-case-detail { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.5fr); border-top: 1px solid var(--line); background: var(--surface-soft); }
+.privacy-case-detail-loading { display: flex; grid-column: 1 / -1; min-height: 76px; align-items: center; justify-content: center; gap: 8px; margin: 0; color: var(--muted); font-size: 9px; }
+.privacy-case-overview { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(250px, .9fr) minmax(180px, .65fr) minmax(300px, 1.2fr); background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-overview > div { min-width: 0; padding: 14px 15px; border-right: 1px solid var(--line); }
+.privacy-case-overview > div:last-child { border-right: 0; }
+.privacy-case-overview header { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; color: var(--teal); }
+.privacy-case-overview header b { color: var(--ink); font-size: 10px; }
+.privacy-case-overview dl { display: grid; gap: 7px; margin: 0; }
+.privacy-case-identity dl { grid-template-columns: 1fr 1fr; }
+.privacy-case-overview dl div { min-width: 0; }
+.privacy-case-overview dt { color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
+.privacy-case-overview dd { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--ink-soft); font-size: 9px; line-height: 1.4; }
+.privacy-case-scope > p, .privacy-case-timeline > p { margin: 0; color: var(--muted); font-size: 9px; }
+.privacy-case-timeline ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.privacy-case-timeline li { position: relative; display: grid; grid-template-columns: 9px minmax(0, 1fr); gap: 8px; min-height: 42px; }
+.privacy-case-timeline li::before { position: absolute; top: 10px; bottom: -4px; left: 3px; width: 1px; background: var(--line); content: ''; }
+.privacy-case-timeline li:last-child::before { display: none; }
+.privacy-case-timeline li > i { position: relative; z-index: 1; width: 7px; height: 7px; margin-top: 4px; background: var(--teal); border: 2px solid var(--surface); border-radius: 50%; box-sizing: content-box; }
+.privacy-case-timeline li > div { display: grid; align-content: start; gap: 2px; }
+.privacy-case-timeline li b { color: var(--ink-soft); font-size: 9px; }
+.privacy-case-timeline li span, .privacy-case-timeline li small { color: var(--muted); font-size: 8px; }
 .privacy-case-portability { display: grid; grid-column: 1 / -1; gap: 8px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .privacy-case-portability > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .privacy-case-portability > header > div { display: grid; gap: 4px; }
@@ -1438,6 +1681,26 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-recipient-summary span { overflow-wrap: anywhere; color: var(--muted); font-size: 9px; }
 .privacy-recipient-summary small, .privacy-recipient-delivery small { color: var(--muted); font-size: 8px; line-height: 1.4; }
 .privacy-recipient-delivery .app-button { justify-self: start; margin-top: 3px; }
+.privacy-case-communications { display: grid; grid-column: 1 / -1; gap: 11px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-communications > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; color: var(--teal); }
+.privacy-case-communications > header > div { display: grid; gap: 4px; }
+.privacy-case-communications > header b { color: var(--ink); font-size: 11px; }
+.privacy-case-communications > header small { max-width: 700px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-case-communications > form { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(220px, .85fr) minmax(280px, 1.4fr) auto; align-items: end; gap: 10px; }
+.privacy-case-communications > form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-case-communications .app-textarea { min-height: 72px; resize: vertical; }
+.privacy-communication-gate { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-communication-history { display: grid; border-top: 1px solid var(--line); }
+.privacy-communication-history > p { margin: 9px 0 0; color: var(--muted); font-size: 9px; }
+.privacy-communication-history article { display: grid; grid-template-columns: minmax(210px, .85fr) minmax(280px, 1.35fr) minmax(150px, .55fr); align-items: start; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.privacy-communication-history article:last-child { border-bottom: 0; }
+.privacy-communication-history article > p { margin: 0; color: var(--ink-soft); font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+.privacy-communication-summary, .privacy-communication-delivery { display: grid; gap: 4px; min-width: 0; }
+.privacy-communication-summary b, .privacy-communication-summary span { overflow-wrap: anywhere; }
+.privacy-communication-summary b { color: var(--ink-soft); font-size: 10px; }
+.privacy-communication-summary span { color: var(--muted); font-size: 9px; }
+.privacy-communication-summary small, .privacy-communication-delivery small { color: var(--muted); font-size: 8px; line-height: 1.4; }
+.privacy-communication-delivery .app-button { justify-self: start; margin-top: 3px; }
 .privacy-case-decision form { display: grid; grid-template-columns: minmax(150px, .5fr) minmax(240px, 1fr) auto; align-items: end; gap: 10px; }
 .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: minmax(150px, .5fr) repeat(3, minmax(210px, 1fr)) auto; }
 .privacy-case-decision form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
@@ -1502,6 +1765,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) 140px 120px 34px; }
   .privacy-case-table .privacy-row > span:nth-child(2), .privacy-case-table .privacy-row > span:nth-child(5) { display: none; }
   .privacy-case-detail { grid-template-columns: 1fr; }
+  .privacy-case-overview { grid-template-columns: 1fr 1fr; }
+  .privacy-case-timeline { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+  .privacy-case-overview > div:nth-child(2) { border-right: 0; }
   .privacy-case-portability form { grid-template-columns: 1fr 1fr; }
   .privacy-case-portability form .app-button { justify-self: end; }
   .privacy-case-rectification > form { grid-template-columns: 1fr; }
@@ -1511,6 +1777,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-recipient-actions > form { grid-template-columns: 1fr 1fr; }
   .privacy-recipient-instruction { grid-column: 1 / -1; }
   .privacy-recipient-actions > form .app-button { justify-self: end; }
+  .privacy-case-communications > form { grid-template-columns: 1fr 1fr; }
+  .privacy-communication-message { grid-column: 1 / -1; }
+  .privacy-case-communications > form .app-button { justify-self: end; }
   .privacy-case-decision form, .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: 1fr 1fr; }
   .privacy-case-decision form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -1531,6 +1800,11 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-form .app-button { width: 100%; }
   .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto 34px; }
   .privacy-case-table .privacy-row > span:not(:first-child):not(:nth-child(3)) { display: none; }
+  .privacy-case-overview { grid-template-columns: 1fr; }
+  .privacy-case-overview > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .privacy-case-overview > div:last-child { border-bottom: 0; }
+  .privacy-case-timeline { grid-column: auto; border-top: 0; }
+  .privacy-case-identity dl { grid-template-columns: 1fr; }
   .privacy-case-execution { align-items: stretch; flex-direction: column; }
   .privacy-case-execution .app-button { width: 100%; }
   .privacy-case-portability > header { flex-direction: column; }
@@ -1546,6 +1820,10 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-recipient-actions > form, .privacy-recipient-history article { grid-template-columns: 1fr; }
   .privacy-recipient-instruction { grid-column: auto; }
   .privacy-recipient-actions > form .app-button { width: 100%; }
+  .privacy-case-communications > header { flex-direction: row; }
+  .privacy-case-communications > form, .privacy-communication-history article { grid-template-columns: 1fr; }
+  .privacy-communication-message { grid-column: auto; }
+  .privacy-case-communications > form .app-button { width: 100%; }
   .privacy-erasure-totals { grid-template-columns: 1fr 1fr; }
   .privacy-erasure-totals span:nth-child(2) { border-right: 0; }
   .privacy-erasure-totals span:nth-child(-n+2) { border-bottom: 1px solid var(--line); }

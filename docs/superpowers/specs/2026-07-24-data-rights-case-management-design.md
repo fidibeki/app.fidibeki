@@ -40,6 +40,15 @@ be updated or deleted.
 notification, delivery state, attempts, and completion evidence. It never implies successful
 notification before a recorded delivery result.
 
+`PrivacyCaseCommunication` records an explicit operator-authored progress update, clarification
+request, or final decision notice to the verified subject. These are necessary case-administration
+messages, not product updates or marketing subscriptions, and therefore do not reuse reporter
+update consent. State gates prevent clarification requests outside `awaiting_clarification`,
+decision notices before a terminal decision, and progress notices after a terminal decision.
+Provider acceptance, bounded generic failures, attempts, and retries are preserved independently
+from the case event/audit record; the latter contains identifiers and kind only, never recipient
+email, subject, or message content.
+
 Recipient corrective/erasure notices are explicit operator-created rights-compliance actions, not
 reporter update subscriptions. They therefore do not reuse the reporter marketing/progress consent
 gate or get silently suppressed as a generic integration. Creation still requires verified subject
@@ -192,5 +201,14 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   retried explicitly. A processing lease prevents concurrent automatic/manual attempts, while a
   stable action-scoped provider idempotency key protects ambiguous provider responses. The
   bilingual backoffice exposes evidence-gated creation, delivery state, attempts, and retry in the
-  case. Subject-facing case communications and the remaining complete case-detail presentation
-  are still pending before Slice 3 is complete.
+  case.
+- The remaining Slice 3 implementation is complete locally through migration 97. Verified
+  reporter/member cases can receive explicit progress, clarification, or decision communications
+  according to case state. Creation and retry are tenant-isolated and idempotent, enqueue through
+  the transactional outbox, use a short processing lease and stable provider idempotency key, and
+  record provider-confirmed delivery attempts without leaking content into access audit or case
+  events. The bilingual backoffice now loads authoritative case detail on expansion and presents
+  identity evidence, requested scope, append-only timeline, communications, failure recovery, and
+  the external-delivery failure count. PostgreSQL migration/isolation, backend, worker, frontend,
+  and desktop/mobile E2E coverage pass locally. Staging E2E remains the final closure gate for
+  Slice 3 and issue #60.

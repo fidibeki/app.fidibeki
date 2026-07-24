@@ -584,6 +584,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Resolver: outbox.MultiResolver{
 			outbox.FeedbackResolver{}, issue.OutboxResolver{Database: pools.Admin},
 			email.LifecycleResolver{}, privacy.RecipientOutboxResolver{},
+			privacy.CaseCommunicationOutboxResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
 		},
 		Enqueuer: outboxQueue, Logger: logger,
@@ -695,6 +696,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	caseCommunicationHandler := privacy.CaseCommunicationHandler{
+		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+	}
 	lifecycleHandler := email.LifecycleHandler{
 		Database: pools.Admin, Sender: sender,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
@@ -747,6 +752,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		AIErrorHandler:                processor.ErrorHandler(),
 		ReporterHandler:               reporterHandler.Handler(),
 		RecipientHandler:              recipientHandler.Handler(),
+		CaseCommunicationHandler:      caseCommunicationHandler.Handler(),
 		LifecycleHandler:              lifecycleHandler.Handler(),
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),

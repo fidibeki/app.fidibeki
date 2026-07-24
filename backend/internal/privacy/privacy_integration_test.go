@@ -432,6 +432,98 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		t.Errorf("cross-tenant member download = %d body=%s",
 			crossTenantMemberDownload.Code, crossTenantMemberDownload.Body.String())
 	}
+	communicationPath := "/v1/privacy/cases/" + memberCase.ID + "/communications"
+	communicationBody := `{
+		"communication_kind":"progress_update",
+		"subject_line":"Your data request is in progress",
+		"message_body":"We are reviewing the records covered by your request."
+	}`
+	communicationCreated := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, communicationPath,
+		communicationBody, "http-case-communication-create",
+	)
+	var communicationEnvelope struct {
+		Communication CaseCommunication `json:"communication"`
+		Created       bool              `json:"created"`
+	}
+	if communicationCreated.Code != http.StatusCreated ||
+		json.Unmarshal(communicationCreated.Body.Bytes(), &communicationEnvelope) != nil ||
+		!communicationEnvelope.Created || communicationEnvelope.Communication.ID == "" ||
+		communicationEnvelope.Communication.Status != CaseCommunicationPending {
+		t.Fatalf("create case communication = %d body=%s",
+			communicationCreated.Code, communicationCreated.Body.String())
+	}
+	communicationReplay := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, communicationPath,
+		communicationBody, "http-case-communication-create",
+	)
+	if communicationReplay.Code != http.StatusOK ||
+		!strings.Contains(communicationReplay.Body.String(), `"created":false`) {
+		t.Fatalf("replay case communication = %d body=%s",
+			communicationReplay.Code, communicationReplay.Body.String())
+	}
+	communicationConflict := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, communicationPath,
+		`{
+			"communication_kind":"progress_update",
+			"subject_line":"Your data request is in progress",
+			"message_body":"A materially different update."
+		}`, "http-case-communication-create",
+	)
+	if communicationConflict.Code != http.StatusConflict {
+		t.Fatalf("case communication conflict = %d body=%s",
+			communicationConflict.Code, communicationConflict.Body.String())
+	}
+	detailWithCommunication := privacyHTTPRequest(
+		handler, ownerToken, http.MethodGet, "/v1/privacy/cases/"+memberCase.ID,
+	)
+	if detailWithCommunication.Code != http.StatusOK ||
+		!strings.Contains(
+			detailWithCommunication.Body.String(), communicationEnvelope.Communication.ID,
+		) ||
+		!strings.Contains(
+			detailWithCommunication.Body.String(), `"privacy_case.communication_created"`,
+		) {
+		t.Fatalf("case communication detail = %d body=%s",
+			detailWithCommunication.Code, detailWithCommunication.Body.String())
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE privacy_case_communications
+		SET status = 'failed', last_error = 'email provider delivery failed',
+		    updated_at = $3
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, communicationEnvelope.Communication.ID, now); err != nil {
+		t.Fatalf("prepare case communication retry: %v", err)
+	}
+	communicationRetryPath := communicationPath + "/" +
+		communicationEnvelope.Communication.ID + "/retry"
+	communicationRetried := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, communicationRetryPath,
+		`{}`, "http-case-communication-retry",
+	)
+	if communicationRetried.Code != http.StatusAccepted ||
+		!strings.Contains(communicationRetried.Body.String(), `"retried":true`) ||
+		!strings.Contains(communicationRetried.Body.String(), `"status":"pending"`) {
+		t.Fatalf("retry case communication = %d body=%s",
+			communicationRetried.Code, communicationRetried.Body.String())
+	}
+	communicationRetryReplay := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, communicationRetryPath,
+		`{}`, "http-case-communication-retry",
+	)
+	if communicationRetryReplay.Code != http.StatusAccepted ||
+		!strings.Contains(communicationRetryReplay.Body.String(), `"retried":false`) {
+		t.Fatalf("replay case communication retry = %d body=%s",
+			communicationRetryReplay.Code, communicationRetryReplay.Body.String())
+	}
+	crossTenantCommunication := privacyHTTPJSONIdempotentRequest(
+		handler, otherToken, http.MethodPost, communicationPath,
+		communicationBody, "http-cross-tenant-case-communication",
+	)
+	if crossTenantCommunication.Code != http.StatusForbidden {
+		t.Fatalf("cross-tenant case communication = %d body=%s",
+			crossTenantCommunication.Code, crossTenantCommunication.Body.String())
+	}
 
 	rectificationCase, _, _, err := privacyStore.CreateCase(
 		ctx, database, tenantID, ownerID, "http-member-rectification",
