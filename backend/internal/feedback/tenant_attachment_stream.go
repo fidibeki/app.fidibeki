@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -105,7 +106,42 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.writeError(w, r, err)
 		return
 	}
+	mode := "preview"
+	if r.URL.Query().Get("mode") == "download" {
+		mode = "download"
+	}
+	recordAccess := func(outcome string, data map[string]any) error {
+		if r.Method == http.MethodHead {
+			// HEAD requests are protocol probes, not evidence views; the
+			// access-audit contract explicitly excludes them.
+			return nil
+		}
+		return accessaudit.Record(r.Context(), tx, accessaudit.RecordInput{
+			TenantID: resolved.ID, Kind: "feedback_attachment.accessed",
+			Actor:          accessaudit.ActorFromClaims(claims),
+			ResourceType:   accessaudit.ResourceFeedbackAttachment,
+			ResourceID:     attachmentID,
+			Action:         mode,
+			PermissionPath: string(auth.PermissionFeedbackRead),
+			RequestID:      appmiddleware.RequestIDFromContext(r.Context()),
+			Outcome:        outcome,
+			Data:           data,
+			DedupWindow:    accessaudit.DefaultDedupWindow,
+		})
+	}
 	if !auth.HasPermission(claims.Permissions, auth.PermissionFeedbackRead) {
+		// Audit recording and the authorization decision commit atomically:
+		// if persistence fails we fail closed and never disclose whether the
+		// attachment exists.
+		if err := recordAccess(accessaudit.OutcomeDenied, nil); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		committed = true
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "permission denied", nil)
 		return
 	}
@@ -113,10 +149,23 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		r.Context(), tx, resolved.ID, feedbackID, attachmentID,
 	)
 	if errors.Is(err, ErrNotFound) {
+		if err := recordAccess(accessaudit.OutcomeNotFound, nil); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		committed = true
 		writeAttachmentStreamNotFound(w)
 		return
 	}
 	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := recordAccess(accessaudit.OutcomeSuccess, map[string]any{"content_type": object.ContentType}); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -140,9 +189,13 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		}
 	}()
 
+	disposition := "inline"
+	if mode == "download" {
+		disposition = "attachment"
+	}
 	w.Header().Set("Content-Type", object.ContentType)
 	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Content-Disposition", "inline; filename=\"feedback-"+feedbackID+"-"+string(object.Kind)+"\"")
+	w.Header().Set("Content-Disposition", disposition+"; filename=\"feedback-"+feedbackID+"-"+string(object.Kind)+"\"")
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if seeker, seekable := reader.(io.ReadSeeker); seekable {

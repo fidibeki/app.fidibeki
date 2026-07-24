@@ -24,6 +24,11 @@ type Claims struct {
 	Permissions          []string `json:"permissions"`
 	TenantID             string   `json:"tenant_id,omitempty"`
 	AuthorizationVersion *int     `json:"authorization_version,omitempty"`
+	// IsAPIKey distinguishes an API-key-authenticated tenant credential from a
+	// human session. It is never part of the signed token payload (json:"-")
+	// so it cannot be forged by a caller; middleware.AuthenticateTenantCredential
+	// sets it fresh on every request based on which credential branch matched.
+	IsAPIKey bool `json:"-"`
 	jwt.RegisteredClaims
 }
 

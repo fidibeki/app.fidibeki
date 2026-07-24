@@ -152,8 +152,8 @@ func TestPlatformPermissionsAreExplicit(t *testing.T) {
 func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	t.Parallel()
 	permissions := TenantPermissionStrings()
-	if len(permissions) != 32 {
-		t.Fatalf("tenant permission count = %d, want 32", len(permissions))
+	if len(permissions) != 33 {
+		t.Fatalf("tenant permission count = %d, want 33", len(permissions))
 	}
 	if !ValidTenantPermissions(permissions) {
 		t.Error("full tenant permission set is invalid")

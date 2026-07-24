@@ -1,0 +1,193 @@
+package accessaudit
+
+import (
+	"context"
+	"encoding/csv"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/go-chi/chi/v5"
+)
+
+// EventStore is the read-side dependency the HTTP handler needs. It is
+// satisfied by Store.
+type EventStore interface {
+	ListEvents(context.Context, db.Querier, string, ListFilter) ([]Event, error)
+	DetectAnomalies(context.Context, db.Querier, string, AnomalySignalParams) ([]ActorSignal, error)
+}
+
+type TokenVerifier interface {
+	Verify(string, string) (auth.Claims, error)
+}
+
+type HTTPOptions struct {
+	Store  EventStore
+	JWT    TokenVerifier
+	Now    func() time.Time
+	Logger *slog.Logger
+}
+
+type httpHandler struct {
+	options HTTPOptions
+	logger  *slog.Logger
+}
+
+// RegisterTenantRoutes mounts GET /v1/access-events for tenant administrators
+// (gated on auth.PermissionAuditRead) — the bounded, tenant-visible view of
+// the sensitive-data access ledger required by the access-governance audit
+// contract.
+func RegisterTenantRoutes(router chi.Router, options HTTPOptions) {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
+	handler := &httpHandler{options: options, logger: logger}
+	router.With(
+		appmiddleware.RequireActive,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionAuditRead),
+	).Get("/v1/access-events", handler.list)
+}
+
+func (h *httpHandler) now() time.Time {
+	if h.options.Now != nil {
+		return h.options.Now()
+	}
+	return time.Now()
+}
+
+func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	filter, err := parseListFilter(r)
+	if err != nil {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, err.Error(), nil)
+		return
+	}
+	events, err := h.options.Store.ListEvents(r.Context(), query, resolved.ID, filter)
+	if errors.Is(err, ErrInvalidCursor) {
+		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "invalid cursor", nil)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	hasMore := len(events) > filter.Limit
+	if hasMore {
+		events = events[:filter.Limit]
+	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeEventsCSV(w, events)
+		return
+	}
+	var nextCursor *string
+	if hasMore && len(events) > 0 {
+		encoded := EncodeCursor(events[len(events)-1])
+		nextCursor = &encoded
+	}
+	signals, err := h.options.Store.DetectAnomalies(r.Context(), query, resolved.ID, AnomalySignalParams{Now: h.now()})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"events": events, "signals": signals,
+		"pagination": map[string]any{
+			"next_cursor": nextCursor, "has_more": hasMore, "limit": filter.Limit,
+		},
+	})
+}
+
+func parseListFilter(r *http.Request) (ListFilter, error) {
+	q := r.URL.Query()
+	filter := ListFilter{
+		ResourceType: q.Get("resource_type"),
+		ActorType:    q.Get("actor_type"),
+		Outcome:      q.Get("outcome"),
+		Cursor:       q.Get("cursor"),
+		Limit:        defaultListLimit,
+	}
+	if raw := q.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			return ListFilter{}, fmt.Errorf("limit must be a positive integer")
+		}
+		filter.Limit = limit
+	}
+	if raw := q.Get("from"); raw != "" {
+		from, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return ListFilter{}, fmt.Errorf("from must be an RFC3339 timestamp")
+		}
+		filter.From = &from
+	}
+	if raw := q.Get("to"); raw != "" {
+		to, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return ListFilter{}, fmt.Errorf("to must be an RFC3339 timestamp")
+		}
+		filter.To = &to
+	}
+	return filter, nil
+}
+
+// maxCSVRows bounds a single export so the endpoint can't be used to pull an
+// unbounded dump of the ledger in one request.
+const maxCSVRows = 5000
+
+func writeEventsCSV(w http.ResponseWriter, events []Event) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"access-events.csv\"")
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{
+		"id", "created_at", "kind", "outcome", "actor_type", "actor_id",
+		"resource_type", "resource_id", "action", "permission_path", "request_id",
+	})
+	if len(events) > maxCSVRows {
+		events = events[:maxCSVRows]
+	}
+	for _, event := range events {
+		actorID := ""
+		switch event.ActorType {
+		case ActorHuman:
+			actorID = deref(event.ActorMemberID)
+		case ActorAPIKey:
+			actorID = deref(event.ActorAPIKeyID)
+		case ActorPlatformAdmin:
+			actorID = deref(event.ActorPlatformAdminID)
+		}
+		_ = writer.Write([]string{
+			event.ID, event.CreatedAt.UTC().Format(time.RFC3339), event.Kind, event.Outcome,
+			event.ActorType, actorID, deref(event.ResourceType), deref(event.ResourceID),
+			deref(event.Action), deref(event.PermissionPath), deref(event.RequestID),
+		})
+	}
+	writer.Flush()
+}
+
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (h *httpHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
+	h.logger.ErrorContext(r.Context(), "access event request failed", "error", err)
+	api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+}

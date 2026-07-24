@@ -819,6 +819,44 @@ export interface EffectiveRetention {
   policies: RetentionPolicy[]
 }
 
+export type AccessEventActorType = 'human' | 'api_key' | 'platform_admin' | 'system'
+export type AccessEventOutcome = 'success' | 'denied' | 'not_found'
+
+export interface AccessEvent {
+  id: string
+  kind: string
+  actor_type: AccessEventActorType
+  actor_member_id?: string
+  actor_api_key_id?: string
+  actor_platform_admin_id?: string
+  resource_type?: string
+  resource_id?: string
+  action?: string
+  permission_path?: string
+  request_id?: string
+  outcome: AccessEventOutcome
+  data: Record<string, unknown>
+  created_at: string
+}
+
+export interface AccessEventSignal {
+  actor_type: AccessEventActorType
+  actor_id: string
+  event_count: number
+  distinct_resources: number
+  denied_count: number
+}
+
+export interface AccessEventPage {
+  events: AccessEvent[]
+  signals: AccessEventSignal[]
+  pagination: {
+    next_cursor?: string
+    has_more: boolean
+    limit: number
+  }
+}
+
 export interface APIKey {
   id: string
   tenant_id: string

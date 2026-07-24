@@ -35,6 +35,7 @@ const (
 	PermissionBillingRead       Permission = "billing:read"
 	PermissionTenantUpdate      Permission = "tenant:update"
 	PermissionTenantRead        Permission = "tenant:read"
+	PermissionAuditRead         Permission = "audit:read"
 )
 
 const (
@@ -71,6 +72,7 @@ var AllTenantPermissions = []Permission{
 	PermissionAPIKeyCreate, PermissionAPIKeyRead, PermissionAPIKeyDelete,
 	PermissionIntegrationCreate, PermissionIntegrationRead, PermissionIntegrationUpdate, PermissionIntegrationDelete,
 	PermissionBillingManage, PermissionBillingRead, PermissionTenantUpdate, PermissionTenantRead,
+	PermissionAuditRead,
 }
 
 func HasPermission(permissions []string, required Permission) bool {

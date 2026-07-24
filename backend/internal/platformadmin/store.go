@@ -511,8 +511,8 @@ func insertPlatformAccessEvent(
 	}
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_access_events (
-			tenant_id, kind, actor_platform_admin_id, subject_member_id, data
-		) VALUES ($1, $2, $3, $4, $5::jsonb)
+			tenant_id, kind, actor_type, actor_platform_admin_id, subject_member_id, data
+		) VALUES ($1, $2, 'platform_admin', $3, $4, $5::jsonb)
 	`, tenantID, kind, actorPlatformAdminID, subjectMemberID, string(payload)); err != nil {
 		return fmt.Errorf("record platform access event: %w", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -364,8 +366,18 @@ func (Store) RecordDownload(
 	if err := requireActiveHuman(ctx, query, tenantID, actorMemberID); err != nil {
 		return err
 	}
-	return recordPrivacyAudit(ctx, query, tenantID, "privacy.export_download_granted", actorMemberID, jobID, map[string]any{
-		"link_expires_at": expiresAt.UTC(),
+	// Only the signed-URL grant is observable server-side: the actual
+	// download goes directly to object storage, so this is both the "grant"
+	// and the sole access-audit event for a workspace export download.
+	return accessaudit.Record(ctx, query, accessaudit.RecordInput{
+		TenantID: tenantID, Kind: "privacy.export_download_granted",
+		Actor:          accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: actorMemberID},
+		ResourceType:   accessaudit.ResourcePrivacyExport,
+		ResourceID:     jobID,
+		Action:         "export_grant",
+		PermissionPath: string(auth.PermissionTenantRead),
+		Outcome:        accessaudit.OutcomeSuccess,
+		Data:           map[string]any{"link_expires_at": expiresAt.UTC()},
 	})
 }
 

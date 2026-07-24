@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	aiprocessing "github.com/acidiney/app.fidibeki/backend/internal/ai"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/apikey"
@@ -392,6 +393,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
+	})
+	accessaudit.RegisterTenantRoutes(tenantRoutes, accessaudit.HTTPOptions{
+		Store: accessaudit.Store{}, JWT: jwtManager, Logger: logger,
 	})
 	aiprocessing.RegisterRoutes(tenantRoutes, aiprocessing.HTTPOptions{
 		Store: aiprocessing.Store{}, JWT: jwtManager, Scheduler: aiScheduler,

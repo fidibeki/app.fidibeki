@@ -93,7 +93,7 @@ func AuthenticateTenantCredential(
 		if err != nil {
 			return auth.Claims{}, fmt.Errorf("authenticate tenant API key: %w", err)
 		}
-		claims := auth.Claims{TenantID: tenantID, Permissions: permissions}
+		claims := auth.Claims{TenantID: tenantID, Permissions: permissions, IsAPIKey: true}
 		claims.Subject = keyID
 		return claims, nil
 	}

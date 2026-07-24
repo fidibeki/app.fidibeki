@@ -348,6 +348,38 @@ function createMockState() {
     },
     privacyDownloadCount: 0,
     privacyVerifyCount: 0,
+    accessEvents: [{
+      id: 'access-event-1',
+      kind: 'feedback_attachment.accessed',
+      actor_type: 'human' as 'human' | 'api_key' | 'platform_admin',
+      actor_member_id: 'member-owner',
+      resource_type: 'feedback_attachment',
+      resource_id: 'attachment-1',
+      action: 'preview',
+      permission_path: 'feedback:read',
+      outcome: 'success' as 'success' | 'denied' | 'not_found',
+      data: {},
+      created_at: '2026-07-21T12:00:00.000Z',
+    }, {
+      id: 'access-event-2',
+      kind: 'replay_session.accessed',
+      actor_type: 'api_key' as 'human' | 'api_key' | 'platform_admin',
+      actor_api_key_id: 'api-key-1',
+      resource_type: 'replay_session',
+      resource_id: 'session-1',
+      action: 'playback',
+      permission_path: 'session:read',
+      outcome: 'denied' as 'success' | 'denied' | 'not_found',
+      data: {},
+      created_at: '2026-07-21T11:55:00.000Z',
+    }],
+    accessEventSignals: [] as Array<{
+      actor_type: 'human' | 'api_key' | 'platform_admin'
+      actor_id: string
+      event_count: number
+      distinct_resources: number
+      denied_count: number
+    }>,
     privacyPublicUnavailable: false,
     memberInviteFailure: null as null | { status: number; code: string; message: string },
     billingDeletionRequestedAt: null as string | null,
@@ -1216,6 +1248,32 @@ async function installMockAPI(page: Page, state: MockState) {
         request.job_status = 'pending'
       }
       return json(route, { export: exportItem || { id: privacyExportRetryMatch[1], kind: 'reporter_anonymize', status: 'pending', attempts: 1, created_at: now, updated_at: now } }, 202)
+    }
+    if (path === '/v1/access-events' && method === 'GET') {
+      let events = state.accessEvents
+      const resourceType = url.searchParams.get('resource_type')
+      const actorType = url.searchParams.get('actor_type')
+      const outcome = url.searchParams.get('outcome')
+      if (resourceType) events = events.filter(event => event.resource_type === resourceType)
+      if (actorType) events = events.filter(event => event.actor_type === actorType)
+      if (outcome) events = events.filter(event => event.outcome === outcome)
+      if (url.searchParams.get('format') === 'csv') {
+        const header = 'id,created_at,kind,outcome,actor_type,actor_id,resource_type,resource_id,action,permission_path,request_id'
+        const rows = events.map(event => [
+          event.id, event.created_at, event.kind, event.outcome, event.actor_type,
+          event.actor_member_id || event.actor_api_key_id || '', event.resource_type || '',
+          event.resource_id || '', event.action || '', event.permission_path || '', '',
+        ].join(','))
+        return route.fulfill({
+          status: 200, contentType: 'text/csv',
+          headers: { 'content-disposition': 'attachment; filename="access-events.csv"' },
+          body: [header, ...rows].join('\n'),
+        })
+      }
+      return json(route, {
+        events, signals: state.accessEventSignals,
+        pagination: { next_cursor: undefined, has_more: false, limit: 50 },
+      })
     }
     if (path === '/v1/privacy/requests' && method === 'GET') return json(route, { requests: state.privacyRequests })
     if (path === '/v1/privacy/requests' && method === 'POST') {
@@ -3740,6 +3798,42 @@ test('data privacy controls cover retention, exports, reporter verification, and
   expect(state.privacyRequests[0].action).toBe('anonymize')
 })
 
+test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Filter interactions are viewport independent')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Access audit' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=audit$/)
+
+  await expect(page.getByRole('heading', { name: 'Access audit log' })).toBeVisible()
+  await expect(page.locator('.access-audit-table')).toContainText('attachment-1')
+  await expect(page.locator('.access-audit-table')).toContainText('session-1')
+  await capture(page, testInfo, `settings-access-audit-${testInfo.project.name}`)
+
+  await page.locator('.access-audit-filters select').nth(2).selectOption('denied')
+  await expect(page.locator('.access-audit-table')).not.toContainText('attachment-1')
+  await expect(page.locator('.access-audit-table')).toContainText('session-1')
+  await page.locator('.access-audit-filters select').nth(2).selectOption('')
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export CSV' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('fidibeki-access-events.csv')
+})
+
+test('access audit tab requires audit:read and is hidden without it', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Permission behavior is viewport independent')
+  const state = createMockState()
+  state.member.permissions = state.member.permissions.filter(permission => permission !== 'audit:read')
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Access audit' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=audit$/)
+  await expect(page.getByText('Audit read access required')).toBeVisible()
+  await expect(page.locator('.access-audit-table')).toHaveCount(0)
+})
+
 test('admin resolves a manual-review queue and the request completes only once every item is decided', async ({ page }, testInfo) => {
   const state = createMockState()
   state.privacyRequests[0].status = 'awaiting_manual_review'
@@ -3959,7 +4053,7 @@ test('member and API key permissions share a compact custom-aware editor', async
   const memberDialog = page.getByRole('dialog', { name: 'Invite member' })
   const memberEditor = memberDialog.locator('.permission-editor')
   await expect(memberEditor).toBeVisible()
-  await expect(memberEditor.locator('fieldset')).toHaveCount(9)
+  await expect(memberEditor.locator('fieldset')).toHaveCount(10)
   await memberEditor.getByRole('button', { name: 'Admin' }).click()
   await expect(memberEditor.getByRole('button', { name: 'Admin' })).toHaveAttribute('data-active', 'true')
   await memberEditor.getByRole('checkbox', { name: 'Delete project' }).uncheck()
@@ -3974,7 +4068,7 @@ test('member and API key permissions share a compact custom-aware editor', async
   const keyDialog = page.getByRole('dialog', { name: 'Create API key' })
   const keyEditor = keyDialog.locator('.permission-editor')
   await expect(keyEditor).toBeVisible()
-  await expect(keyEditor.locator('fieldset')).toHaveCount(9)
+  await expect(keyEditor.locator('fieldset')).toHaveCount(10)
   await expect(keyEditor.getByRole('button', { name: 'Viewer' })).toHaveAttribute('data-active', 'true')
   await expectNoPageOverflow(page)
 })

@@ -1110,10 +1110,22 @@ func TestReplayHTTPFlow(t *testing.T) {
 		streamed.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("stream status = %d headers = %#v body = %s", streamed.Code, streamed.Header(), streamed.Body.String())
 	}
+	streamedAgain := tenantReplayRequest(streamRoutes, http.MethodGet,
+		"/v1/sessions/"+createResponse.ID+"/replay", accessToken)
+	if streamedAgain.Code != http.StatusOK {
+		t.Errorf("repeated stream status = %d", streamedAgain.Code)
+	}
 	streamedWithAPIKey := tenantReplayRequest(streamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", streamAPIKey)
 	if streamedWithAPIKey.Code != http.StatusOK || streamedWithAPIKey.Body.String() != string(batchData) {
 		t.Errorf("API-key replay stream = %d body=%q", streamedWithAPIKey.Code, streamedWithAPIKey.Body.String())
+	}
+	headRequest := httptest.NewRequest(http.MethodHead, "http://acme.localhost/v1/sessions/"+createResponse.ID+"/replay", nil)
+	headRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	headResponse := httptest.NewRecorder()
+	streamRoutes.ServeHTTP(headResponse, headRequest)
+	if headResponse.Code != http.StatusMethodNotAllowed {
+		t.Errorf("replay HEAD status = %d", headResponse.Code)
 	}
 	delete(storageClient.objects, mergedKey)
 	missingObject := tenantReplayRequest(streamRoutes, http.MethodGet,
@@ -1122,6 +1134,60 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Errorf("missing replay object status = %d", missingObject.Code)
 	}
 	storageClient.objects[mergedKey] = batchData
+
+	// Access-audit assertions (issue #65): human, API-key, and denied access
+	// are each recorded once; the repeated playback request and HEAD probe
+	// must not flood the ledger, and no evidence content or credentials may
+	// appear in the stored payload.
+	var replayEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'replay_session.accessed' AND resource_id = $2
+	`, tenantID, createResponse.ID).Scan(&replayEventCount); err != nil {
+		t.Fatalf("count replay access events: %v", err)
+	}
+	// human success (streamedAgain and missingObject dedupe into it) +
+	// api-key success + human denied = 3; HEAD and the unauthenticated/bad
+	// session-id/method-not-allowed requests never reach the audit trail.
+	if replayEventCount != 3 {
+		t.Fatalf("replay access event count = %d, want 3", replayEventCount)
+	}
+	var humanSuccessCount, apiKeySuccessCount, deniedCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND outcome = 'success' AND actor_type = 'human'
+		  AND actor_member_id = $3 AND action = 'playback' AND permission_path = 'session:read'
+	`, tenantID, createResponse.ID, replayMemberID).Scan(&humanSuccessCount); err != nil {
+		t.Fatalf("count human replay success events: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND outcome = 'success' AND actor_type = 'api_key'
+	`, tenantID, createResponse.ID).Scan(&apiKeySuccessCount); err != nil {
+		t.Fatalf("count api-key replay success events: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND outcome = 'denied' AND actor_member_id = $3
+	`, tenantID, createResponse.ID, restrictedMemberID).Scan(&deniedCount); err != nil {
+		t.Fatalf("count denied replay events: %v", err)
+	}
+	if humanSuccessCount != 1 || apiKeySuccessCount != 1 || deniedCount != 1 {
+		t.Fatalf("replay access event breakdown = human:%d api_key:%d denied:%d, want 1/1/1",
+			humanSuccessCount, apiKeySuccessCount, deniedCount)
+	}
+	var replayAuditText string
+	if err := root.QueryRow(ctx, `
+		SELECT coalesce(string_agg(data::text, ' '), '') FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'replay_session.accessed'
+	`, tenantID).Scan(&replayAuditText); err != nil {
+		t.Fatalf("read replay audit payloads: %v", err)
+	}
+	for _, forbidden := range []string{string(batchData), streamAPIKey, accessToken, readDeniedToken, "fk_live_"} {
+		if strings.Contains(replayAuditText, forbidden) {
+			t.Errorf("replay audit payload leaked %q", forbidden)
+		}
+	}
 	deleted := tenantReplayRequest(tenantHandler, http.MethodDelete, "/v1/sessions/"+createResponse.ID, accessToken)
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, body = %s", deleted.Code, deleted.Body.String())

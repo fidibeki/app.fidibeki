@@ -347,6 +347,18 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	`, tenantID).Scan(&grants); err != nil || grants != 1 {
 		t.Fatalf("download grant audits = %d, error=%v", grants, err)
 	}
+	var grantResourceType, grantAction, grantOutcome, grantPermissionPath, grantActorType string
+	if err := database.QueryRow(ctx, `
+		SELECT resource_type, action, outcome, permission_path, actor_type FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'privacy.export_download_granted'
+	`, tenantID).Scan(&grantResourceType, &grantAction, &grantOutcome, &grantPermissionPath, &grantActorType); err != nil {
+		t.Fatalf("read download grant audit: %v", err)
+	}
+	if grantResourceType != "privacy_export" || grantAction != "export_grant" || grantOutcome != "success" ||
+		grantPermissionPath != "tenant:read" || grantActorType != "human" {
+		t.Fatalf("download grant audit = resource_type=%q action=%q outcome=%q permission_path=%q actor_type=%q",
+			grantResourceType, grantAction, grantOutcome, grantPermissionPath, grantActorType)
+	}
 	missing := privacyHTTPRequest(
 		handler, ownerToken, http.MethodPost,
 		"/v1/privacy/exports/00000000-0000-4000-8000-000000000099/download",

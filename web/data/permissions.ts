@@ -35,6 +35,10 @@ export const tenantPermissionGroups = [
     label: 'Account',
     permissions: ['billing:manage', 'billing:read', 'tenant:update', 'tenant:read'],
   },
+  {
+    label: 'Access audit',
+    permissions: ['audit:read'],
+  },
 ] as const
 
 export const allTenantPermissions = tenantPermissionGroups.flatMap((group) => [...group.permissions])

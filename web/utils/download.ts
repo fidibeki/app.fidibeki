@@ -17,3 +17,14 @@ export function triggerSignedDownload(value: string, filename: string) {
   anchor.click()
   anchor.remove()
 }
+
+export function triggerBlobDownload(blob: Blob, filename: string) {
+  const href = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = href
+  anchor.download = filename
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(href)
+}

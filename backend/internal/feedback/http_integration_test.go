@@ -953,6 +953,7 @@ func assertTenantFeedbackReadFlow(
 	})
 	streamRoutes := chi.NewRouter()
 	streamRoutes.Get("/v1/feedbacks/{feedbackID}/attachments/{attachmentID}/content", streamHandler.ServeHTTP)
+	streamRoutes.Head("/v1/feedbacks/{feedbackID}/attachments/{attachmentID}/content", streamHandler.ServeHTTP)
 	streamPath := "/v1/feedbacks/" + feedbackID + "/attachments/" + attachmentID + "/content"
 	streamAPIKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
 	if _, err := root.Exec(ctx, `
@@ -992,6 +993,121 @@ func assertTenantFeedbackReadFlow(
 	)
 	if crossFeedback.Code != http.StatusNotFound {
 		t.Errorf("cross-feedback attachment status = %d", crossFeedback.Code)
+	}
+	unknownTenantRequest := httptest.NewRequest(http.MethodGet, "http://unknown-tenant.localhost"+streamPath, nil)
+	unknownTenantRequest.Header.Set("Authorization", "Bearer "+ownerToken)
+	unknownTenantResponse := httptest.NewRecorder()
+	streamRoutes.ServeHTTP(unknownTenantResponse, unknownTenantRequest)
+	if unknownTenantResponse.Code != http.StatusNotFound {
+		t.Errorf("unknown tenant attachment stream status = %d", unknownTenantResponse.Code)
+	}
+	var wrongTenantID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Wrong Tenant', 'wrong-attachment-tenant', 'growth', 'active') RETURNING id
+	`).Scan(&wrongTenantID); err != nil {
+		t.Fatalf("create wrong-tenant fixture: %v", err)
+	}
+	wrongTenantRequest := httptest.NewRequest(http.MethodGet, "http://wrong-attachment-tenant.localhost"+streamPath, nil)
+	wrongTenantRequest.Header.Set("Authorization", "Bearer "+ownerToken)
+	wrongTenantResponse := httptest.NewRecorder()
+	streamRoutes.ServeHTTP(wrongTenantResponse, wrongTenantRequest)
+	if wrongTenantResponse.Code != http.StatusForbidden {
+		t.Errorf("wrong tenant attachment stream status = %d", wrongTenantResponse.Code)
+	}
+	var wrongTenantEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events WHERE tenant_id = $1
+	`, wrongTenantID).Scan(&wrongTenantEventCount); err != nil {
+		t.Fatalf("count wrong-tenant access events: %v", err)
+	}
+	if wrongTenantEventCount != 0 {
+		t.Fatalf("wrong-tenant access event count = %d, want 0 (cannot attribute a foreign-tenant actor)", wrongTenantEventCount)
+	}
+	headRequest := httptest.NewRequest(http.MethodHead, "http://acme.localhost"+streamPath, nil)
+	headRequest.Header.Set("Authorization", "Bearer "+ownerToken)
+	headResponse := httptest.NewRecorder()
+	streamRoutes.ServeHTTP(headResponse, headRequest)
+	if headResponse.Code != http.StatusOK {
+		t.Errorf("attachment HEAD status = %d", headResponse.Code)
+	}
+	downloadResponse := performTenantFeedbackRequest(streamRoutes, http.MethodGet, streamPath+"?mode=download", "", ownerToken)
+	if downloadResponse.Code != http.StatusOK ||
+		!strings.HasPrefix(downloadResponse.Header().Get("Content-Disposition"), "attachment;") {
+		t.Errorf("attachment download mode = %d disposition=%q",
+			downloadResponse.Code, downloadResponse.Header().Get("Content-Disposition"))
+	}
+
+	// Access-audit assertions (issue #65): every authenticated GET must be
+	// recorded exactly once, HEAD and duplicate range requests must not
+	// flood the ledger, and the stored payload must never contain the
+	// attachment content, raw tokens, or credentials.
+	var accessEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.accessed' AND resource_id = $2
+	`, tenantID, attachmentID).Scan(&accessEventCount); err != nil {
+		t.Fatalf("count attachment access events: %v", err)
+	}
+	// owner preview success (range request dedupes into it) + api-key preview
+	// success + viewer preview denied + owner preview not_found (cross-feedback,
+	// a distinct outcome so it is never collapsed into the success row) +
+	// owner download success = 5; HEAD is never recorded.
+	if accessEventCount != 5 {
+		t.Fatalf("attachment access event count = %d, want 5", accessEventCount)
+	}
+	var deniedOutcome, deniedActorType, deniedPermissionPath string
+	if err := root.QueryRow(ctx, `
+		SELECT outcome, actor_type, permission_path FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND action = 'preview' AND actor_member_id = $3
+	`, tenantID, attachmentID, viewerID).Scan(&deniedOutcome, &deniedActorType, &deniedPermissionPath); err != nil {
+		t.Fatalf("read denied attachment access event: %v", err)
+	}
+	if deniedOutcome != "denied" || deniedActorType != "human" || deniedPermissionPath != "feedback:read" {
+		t.Fatalf("denied attachment access event = outcome=%q actor_type=%q permission_path=%q",
+			deniedOutcome, deniedActorType, deniedPermissionPath)
+	}
+	var notFoundCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.accessed' AND outcome = 'not_found'
+	`, tenantID).Scan(&notFoundCount); err != nil {
+		t.Fatalf("count not-found attachment access events: %v", err)
+	}
+	if notFoundCount != 1 {
+		t.Fatalf("not-found attachment access event count = %d, want 1", notFoundCount)
+	}
+	var apiKeyEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND actor_type = 'api_key' AND actor_api_key_id IS NOT NULL
+	`, tenantID, attachmentID).Scan(&apiKeyEventCount); err != nil {
+		t.Fatalf("count api key attachment access events: %v", err)
+	}
+	if apiKeyEventCount != 1 {
+		t.Fatalf("api key attachment access event count = %d, want 1", apiKeyEventCount)
+	}
+	var downloadEventCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_id = $2 AND action = 'download' AND outcome = 'success'
+	`, tenantID, attachmentID).Scan(&downloadEventCount); err != nil {
+		t.Fatalf("count download attachment access events: %v", err)
+	}
+	if downloadEventCount != 1 {
+		t.Fatalf("download attachment access event count = %d, want 1", downloadEventCount)
+	}
+	var auditText string
+	if err := root.QueryRow(ctx, `
+		SELECT coalesce(string_agg(data::text, ' '), '') FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.accessed'
+	`, tenantID).Scan(&auditText); err != nil {
+		t.Fatalf("read attachment audit payloads: %v", err)
+	}
+	for _, forbidden := range []string{"audio-evidence", streamAPIKey, ownerToken, deniedToken, "fk_live_"} {
+		if strings.Contains(auditText, forbidden) {
+			t.Errorf("attachment audit payload leaked %q", forbidden)
+		}
 	}
 
 	dashboardResponse := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/dashboard?range=7d", "", ownerToken)

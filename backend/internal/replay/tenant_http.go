@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -257,17 +258,55 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	recordAccess := func(outcome string) error {
+		return accessaudit.Record(r.Context(), tx, accessaudit.RecordInput{
+			TenantID: resolved.ID, Kind: "replay_session.accessed",
+			Actor:          accessaudit.ActorFromClaims(claims),
+			ResourceType:   accessaudit.ResourceReplaySession,
+			ResourceID:     sessionID,
+			Action:         "playback",
+			PermissionPath: string(auth.PermissionSessionRead),
+			RequestID:      appmiddleware.RequestIDFromContext(r.Context()),
+			Outcome:        outcome,
+			DedupWindow:    accessaudit.DefaultDedupWindow,
+		})
+	}
 	if !auth.HasPermission(claims.Permissions, auth.PermissionSessionRead) {
+		// Audit recording and the authorization decision commit atomically:
+		// if persistence fails we fail closed and never disclose whether the
+		// session exists.
+		if err := recordAccess(accessaudit.OutcomeDenied); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		committed = true
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "permission denied", nil)
 		return
 	}
 	session, err := h.options.Store.GetSession(r.Context(), tx, resolved.ID, sessionID)
 	if errors.Is(err, ErrNotFound) ||
 		(err == nil && (session.Status() != "ready" || session.MergedAt == nil || session.StorageKey == nil)) {
+		if err := recordAccess(accessaudit.OutcomeNotFound); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		committed = true
 		writeTenantReplayNotFound(w)
 		return
 	}
 	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := recordAccess(accessaudit.OutcomeSuccess); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
