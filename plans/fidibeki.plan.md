@@ -1049,6 +1049,10 @@ was removed from the staging test tenant.
     - [x] #67: refine language and timezone preferences layout.
     - [x] #68: fix sidebar navigation label alignment and overflow.
     - [x] #69: make the attention queue note actionable.
+    - [x] #70: make replay and widget-analytics consent panels span the complete project-rule
+      editor width. Long Portuguese copy now grows within the available row without colliding with
+      the action; narrow viewports stack a full-width action below the copy. Focused desktop/mobile
+      geometry assertions, overflow checks, and inspected screenshots cover both panels.
     - The #53-#55 privacy foundation is integrated on `main` through `81de75c`. Backend tests and 80.1%
       coverage, widget unit/typecheck/build and 40 browser journeys, web
       unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.

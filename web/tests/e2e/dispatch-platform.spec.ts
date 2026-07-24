@@ -3156,6 +3156,94 @@ test('widget canvas replay is disabled by the anonymous privacy contract', async
   await capture(page, testInfo, `widget-canvas-policy-${testInfo.project.name}`)
 })
 
+test('replay and analytics notices use the full editor width with Portuguese copy', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.member.locale = 'pt-AO'
+  Object.assign(state.widgetRules[0], {
+    analytics_consent: {
+      mode: 'customer_cmp',
+      notice_version: '2026-07',
+      controller_name: '',
+      privacy_policy_url: '',
+      supported_locales: ['pt-AO'],
+      retention_days: 0,
+      expiry_days: 30,
+      notices: {},
+    },
+  })
+  await installMockAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=settings-panel-width-token`)
+  await expect(page.getByRole('heading', { name: /Boa tarde/ })).toBeVisible()
+
+  if (testInfo.project.name === 'mobile') await page.getByTitle('Abrir navegação').click()
+  await page
+    .getByRole('navigation', { name: 'Navegação principal' })
+    .getByRole('link', { name: 'Projetos', exact: true })
+    .click()
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  const replaySection = page.locator('.project-rule-editor section').filter({
+    has: page.getByRole('heading', { name: 'Replay de sessão' }),
+  })
+  const analyticsSection = page.locator('.project-rule-editor section').filter({
+    has: page.getByRole('heading', { name: 'Análise do widget' }),
+  })
+  const replayPanel = replaySection.locator('.replay-consent-status')
+  const replayNotices = replaySection.locator('.replay-privacy-note')
+  const analyticsPanel = analyticsSection.locator('.replay-consent-status')
+  await analyticsPanel.scrollIntoViewIfNeeded()
+  await expect(replayPanel).toContainText('Barreira de consentimento configurada')
+  await expect(replayNotices).toHaveCount(2)
+  await expect(analyticsPanel).toContainText(
+    'A análise do widget aguarda uma autorização estruturada do gestor de consentimento do cliente.',
+  )
+
+  for (const element of [
+    replayPanel, replayNotices.first(), replayNotices.last(), analyticsPanel,
+  ]) {
+    const geometry = await element.evaluate((node) => {
+      const item = node.getBoundingClientRect()
+      const grid = node.parentElement!.getBoundingClientRect()
+      return {
+        item: { left: item.left, right: item.right, width: item.width },
+        grid: { left: grid.left, right: grid.right, width: grid.width },
+      }
+    })
+    expect(geometry.item.left).toBeGreaterThanOrEqual(geometry.grid.left - 1)
+    expect(geometry.item.right).toBeLessThanOrEqual(geometry.grid.right + 1)
+    expect(geometry.item.width).toBeGreaterThanOrEqual(geometry.grid.width - 1)
+  }
+
+  for (const panel of [replayPanel, analyticsPanel]) {
+    const geometry = await panel.evaluate((node) => {
+      const panelRect = node.getBoundingClientRect()
+      const contentRect = node.firstElementChild!.getBoundingClientRect()
+      const buttonRect = node.querySelector('button')!.getBoundingClientRect()
+      return {
+        panel: { left: panelRect.left, right: panelRect.right, width: panelRect.width },
+        content: {
+          left: contentRect.left, right: contentRect.right,
+          top: contentRect.top, bottom: contentRect.bottom, width: contentRect.width,
+        },
+        button: {
+          left: buttonRect.left, right: buttonRect.right,
+          top: buttonRect.top, bottom: buttonRect.bottom, width: buttonRect.width,
+        },
+      }
+    })
+    expect(geometry.content.left).toBeGreaterThanOrEqual(geometry.panel.left)
+    expect(geometry.button.right).toBeLessThanOrEqual(geometry.panel.right + 1)
+    if (testInfo.project.name === 'mobile') {
+      expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.content.bottom)
+      expect(geometry.button.width).toBeGreaterThanOrEqual(geometry.panel.width - 26)
+    } else {
+      expect(geometry.content.width).toBeGreaterThan(240)
+      expect(geometry.button.left).toBeGreaterThanOrEqual(geometry.content.right)
+    }
+  }
+  await capture(page, testInfo, `settings-panel-width-portuguese-${testInfo.project.name}`)
+})
+
 test('replay activation requires an explicit consent mode', async ({ page }, testInfo) => {
   const state = createMockState()
   Object.assign(state.widgetRules[0], {
@@ -3410,7 +3498,7 @@ test('widget preview mirrors launcher and inline presentation states', async ({ 
   const previewContact = page.locator('.widget-preview-contact')
   await expect(previewContact).toBeVisible()
   await expect(previewContact.locator('input[type="email"]')).toHaveAttribute('placeholder', 'Email address')
-  await expect(previewContact).toContainText('Email me about this feedback')
+  await expect(previewContact).toContainText('Email me updates about this feedback')
 
   await page.getByLabel('Presentation').selectOption('inline')
   await expect(page.locator('.widget-preview-modal')).toBeVisible()
