@@ -750,13 +750,22 @@ was removed from the staging test tenant.
         reviewer/review-timestamp, reusing the provider governance registry's staleness window and
         placeholder detection. `make governance-check`'s pattern now covers `Governance`, `ROPA`, and
         `DPIA` tests. No lawful basis, DPIA decision, or legal approval is recorded.
+      - [x] Provider code release gate: every direct Go dependency and dependency in the widget,
+        web, and marketing manifests is explicitly classified as application, build/test, or a
+        governed provider boundary. Non-test backend source is parsed to inventory
+        standard-library outbound HTTP constructors, and every provider row must retain verified
+        source signals. New or stale dependencies, HTTP call sites, provider references, and code
+        evidence fail `make governance-check`; the existing Sentry row now also evidences the
+        widget's `@sentry/browser` path. This detects the repository's supported adapter entry
+        points without claiming that an environment enables a provider or that arbitrary
+        lower-level transports can be statically excluded.
       - Remaining #63 slices: founder/legal review of actual provider entities, regions, contracts,
         transfer mechanisms, roles, owners, and review dates; approved/published provider register
         and Article 28 DPA; provider change authorization/objection workflow; founder/legal lawful-
         basis identification and DPIA screening decisions (required/not-required) for each of the 19
         processing activities, with mitigations, owners, and approval evidence; staging
-        reconciliation, link tests, localized E2E, and release gating for providers newly introduced
-        in code as well as those added to the retention inventory.
+        reconciliation, link tests, localized E2E, and a reviewed change-notification/objection
+        process for newly approved providers.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,
       processor-to-controller notifications, decision evidence, and staging exercises.
       - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only

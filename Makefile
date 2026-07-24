@@ -18,12 +18,14 @@ lint:
 
 # Local release gate for issue #63: fails if the provider governance registry is incomplete,
 # diverges from the retention registry's evidenced provider set, falsely marks an entry approved,
-# carries a stale review, or omits a personal-data category from the role matrix; and fails if the
-# ROPA/DPIA processing-activity registry diverges from the retention/provider registries, drops or
-# duplicates retention-category coverage, or claims a lawful-basis/DPIA decision without complete,
-# current, non-placeholder evidence. This only detects drift BETWEEN these hand-maintained
-# registries; it cannot discover a wholly new external adapter or processing purpose that was never
-# added to any of them. Enables no provider and changes no runtime behavior.
+# carries a stale review, omits a personal-data category from the role matrix, introduces an
+# unclassified direct dependency or outbound HTTP call, or carries stale provider code evidence;
+# and fails if the ROPA/DPIA processing-activity registry diverges from the retention/provider
+# registries, drops or duplicates retention-category coverage, or claims a lawful-basis/DPIA
+# decision without complete, current, non-placeholder evidence. Registry parity only detects drift
+# between the hand-maintained registries. The code gate covers the supported adapter entry points (direct
+# dependencies and standard-library HTTP construction), but cannot prove the absence of arbitrary
+# lower-level network transports. Enables no provider and changes no runtime behavior.
 governance-check:
 	cd backend && go test ./internal/privacy/... -run 'Governance|ROPA|DPIA' -v
 

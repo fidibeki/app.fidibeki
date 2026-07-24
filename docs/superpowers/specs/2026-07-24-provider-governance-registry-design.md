@@ -22,6 +22,11 @@ later slices need: a provider/subprocessor registry, a validator that fails the 
 or overstated entries, and a controller/processor role matrix derived from evidenced code, so that
 no later slice can silently drift from what the code actually does.
 
+The code-discovery limitation described below was subsequently narrowed by
+`2026-07-24-provider-code-release-gate-design.md`: direct Go/browser dependencies,
+standard-library backend HTTP construction, and per-provider source evidence are now checked
+against the registry. Arbitrary lower-level transports remain a review boundary.
+
 ## Audit Result
 
 `docs/privacy-data-map.md` already lists configurable providers in prose ("Configurable Providers"
@@ -186,12 +191,11 @@ registry.
 2. **Provider adapters absent from (or extra in) the registry** — the set of `ProviderID` values
    must equal, exactly, the set of `RetentionProvider` resource names already validated by the
    retention registry. Removing or renaming a covered provider, or adding it to the retention
-   registry without adding it here, fails the test. **Limitation:** this only detects drift
-   *between the two registries*. It cannot discover a wholly new external adapter that was never
-   added to either one — that still depends on whoever writes the new outbound call also recording
-   it in both registries. This is a consistency check between two hand-maintained lists, not a
-   static-analysis scan of the codebase for network calls; see `LoadProviderGovernance`'s doc
-   comment for the same caveat in code.
+   registry without adding it here, fails the test. **Limitation:** this check itself only detects
+   drift *between the two registries*. The follow-up provider code release gate also rejects
+   unclassified direct Go/browser dependencies and new standard-library backend HTTP call sites,
+   and verifies current source evidence for every row. It still cannot prove the absence of
+   arbitrary lower-level transports; see `2026-07-24-provider-code-release-gate-design.md`.
 3. **Falsely approved incomplete entries** — `Approval == approved` requires every governance field
    to be filled with a real (non-unknown/non-placeholder) value: legal entity, processing
    locations, transfer mechanism, executed contract status, a named owner, a review date, an
@@ -241,9 +245,9 @@ falsely approved, or stale.
   slice adds no such evidence for any of the 12 providers.
 - No runtime behavior, credential, or provider enablement changes. This is a static, code-owned
   inventory plus tests; there is no new HTTP endpoint, migration, or UI in this slice.
-- Cross-checking against the retention registry catches drift between the two lists; it does not,
-  by itself, discover a new external adapter that was never added to either registry (see point 2
-  under Validator above).
+- Cross-checking against the retention registry catches drift between the two lists. The follow-up
+  code gate covers direct dependencies and standard-library HTTP construction, but cannot prove
+  the absence of arbitrary lower-level transports (see point 2 under Validator above).
 
 ## Verification
 

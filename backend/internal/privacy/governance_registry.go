@@ -133,12 +133,11 @@ type ProviderGovernanceRegistry struct {
 // controller/processor role matrix. now is required explicitly (never time.Now() internally) so
 // staleness can be tested deterministically.
 //
-// Limitation: cross-checking this registry's provider set against the retention registry's
-// evidenced RetentionProvider resources detects drift BETWEEN the two registries (a boundary added
-// to one but not the other). It cannot, on its own, discover a wholly new external adapter that was
-// never added to either registry — that still depends on a human recording the new boundary when
-// the code introducing it is written. This is a consistency check between two hand-maintained
-// registries, not a static-analysis scan of the codebase for outbound network calls.
+// Cross-checking this registry's provider set against the retention registry's evidenced
+// RetentionProvider resources detects drift between those registries. The repository-aware
+// governance code gate separately classifies direct dependencies, standard-library HTTP call
+// sites, and current source evidence. That gate covers the supported adapter patterns, but cannot
+// prove the absence of arbitrary lower-level transports.
 func LoadProviderGovernance(now time.Time) (ProviderGovernanceRegistry, error) {
 	retentionDefinitions := retentionRegistry()
 	if err := validateRetentionRegistry(retentionDefinitions); err != nil {
@@ -249,12 +248,14 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceBoundaryServiceProvider,
 			"Capture error and exception telemetry for operational monitoring.",
 			[]string{
-				"error and exception telemetry (message, stack trace); " +
-					"default PII capture disabled (backend/internal/observability/sentry.go, SendDefaultPII: false)",
+				"backend and widget error and exception telemetry (message, stack trace, " +
+					"scrubbed widget context); backend default PII capture disabled and widget " +
+					"events scrub user, request body, credentials, query, and sensitive context",
 			},
-			"backend/internal/config/config.go (SentryDSN); backend/cmd/fidibeki-api/main.go (sentry.Init)",
-			"SENTRY_DSN is read and passed to sentry.Init unconditionally, but is never required; "+
-				"an empty value is the SDK's documented no-op state",
+			"backend/internal/config/config.go (SentryDSN); backend/cmd/fidibeki-api/main.go "+
+				"(sentry.Init); widget/src/modules/error-reporting.ts (@sentry/browser)",
+			"SENTRY_DSN is read by the backend and projected into public widget configuration, but "+
+				"is never required; an empty value leaves both SDK paths inactive",
 			GovernanceEnvironmentOptionalNeverRequired, "external_infrastructure",
 		),
 		pendingProvider(
