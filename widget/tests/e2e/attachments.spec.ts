@@ -13,6 +13,10 @@ const attachmentRule: WidgetRule = {
   replay_max_duration_seconds: 1800, replay_max_events: 50000,
   replay_mask_all_inputs: true, replay_mask_text_selector: null,
   replay_record_canvas: false, replay_canvas_fps: 2,
+  replay_consent: {
+    mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
+    supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
+  },
   recurrence_mode: 'cooldown', recurrence_days: 30,
   localizations: {
     en: {
