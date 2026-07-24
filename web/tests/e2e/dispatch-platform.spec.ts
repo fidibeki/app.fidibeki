@@ -587,9 +587,21 @@ function createMockState() {
       outcome: 'denied' as 'success' | 'denied' | 'not_found',
       data: {},
       created_at: '2026-07-21T11:55:00.000Z',
+    }, {
+      id: 'access-event-3',
+      kind: 'feedback_attachment.support_accessed',
+      actor_type: 'platform_admin' as 'human' | 'api_key' | 'platform_admin',
+      actor_platform_admin_id: 'platform-admin-1',
+      resource_type: 'feedback_attachment',
+      resource_id: 'attachment-2',
+      action: 'preview',
+      permission_path: 'platform_admin:support_access',
+      outcome: 'success' as 'success' | 'denied' | 'not_found',
+      data: { support_reason: 'Investigating a reported checkout bug', support_case_reference: 'CASE-42' },
+      created_at: '2026-07-21T11:50:00.000Z',
     }],
     accessEventSignals: [] as Array<{
-      type: 'bulk_access' | 'revoked_credential' | 'unusual_api_key'
+      type: 'bulk_access' | 'revoked_credential' | 'unusual_api_key' | 'support_access_volume'
       actor_type: 'human' | 'api_key' | 'platform_admin'
       actor_id: string
       event_count: number
@@ -4709,6 +4721,7 @@ test('access audit log lists events, applies filters, and exports CSV', async ({
   await expect(page.getByRole('heading', { name: 'Access audit log' })).toBeVisible()
   await expect(page.locator('.access-audit-table')).toContainText('attachment-1')
   await expect(page.locator('.access-audit-table')).toContainText('session-1')
+  await expect(page.locator('.access-audit-table')).toContainText('Support access · CASE-42')
   await expect(page.getByRole('button', { name: 'Export CSV · max. 5,000' })).toBeVisible()
   await capture(page, testInfo, `settings-access-audit-${testInfo.project.name}`)
 
@@ -4716,6 +4729,12 @@ test('access audit log lists events, applies filters, and exports CSV', async ({
   await expect(page.locator('.access-audit-table')).not.toContainText('attachment-1')
   await expect(page.locator('.access-audit-table')).toContainText('session-1')
   await page.locator('.access-audit-filters select').nth(2).selectOption('')
+
+  await page.getByLabel('Support access only').check()
+  await expect(page.locator('.access-audit-table')).not.toContainText('session-1')
+  await expect(page.locator('.access-audit-table')).toContainText('Support access · CASE-42')
+  await page.getByLabel('Support access only').uncheck()
+  await expect(page.locator('.access-audit-table')).toContainText('session-1')
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export CSV · max. 5,000' }).click()
@@ -4747,6 +4766,13 @@ test('access audit surfaces governance signals', async ({ page }, testInfo) => {
     event_count: 31,
     detail: 'no_expiration',
     last_access_at: '2026-07-19T09:00:00.000Z',
+  }, {
+    type: 'support_access_volume',
+    actor_type: 'platform_admin',
+    actor_id: 'platform-admin-1',
+    event_count: 7,
+    distinct_resources: 7,
+    last_access_at: '2026-07-22T08:00:00.000Z',
   }]
 
   await authenticate(page, state)
@@ -4760,6 +4786,8 @@ test('access audit surfaces governance signals', async ({ page }, testInfo) => {
   await expect(signals).toContainText('Removed')
   await expect(signals).toContainText('Non-expiring API key')
   await expect(signals).toContainText('No expiration')
+  await expect(signals).toContainText('Unusual platform-support access volume')
+  await expect(signals).toContainText('7 resources accessed')
   await signals.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-access-audit-signals-${testInfo.project.name}`)
 })

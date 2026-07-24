@@ -19,6 +19,11 @@ const dateTo = ref('')
 const exportPending = ref(false)
 const exportError = ref('')
 
+const supportAccessOnly = computed({
+  get: () => actorType.value === 'platform_admin',
+  set: (value: boolean) => { actorType.value = value ? 'platform_admin' : '' },
+})
+
 function buildQuery(cursor?: string) {
   const query: Record<string, string> = {}
   if (resourceType.value) query.resource_type = resourceType.value
@@ -85,6 +90,20 @@ function actorLabel(event: AccessEvent) {
   return `${t(`admin.accessAudit.actorType.${event.actor_type}`)} · ${shortID}`
 }
 
+function isSupportAccess(event: AccessEvent) {
+  return event.actor_type === 'platform_admin'
+}
+
+function supportCaseReference(event: AccessEvent) {
+  const value = event.data?.support_case_reference
+  return typeof value === 'string' && value ? value : t('admin.accessAudit.unknownActor')
+}
+
+function supportReason(event: AccessEvent) {
+  const value = event.data?.support_reason
+  return typeof value === 'string' ? value : ''
+}
+
 function outcomeTone(value: string) {
   if (value === 'success') return 'success'
   if (value === 'denied') return 'danger'
@@ -100,6 +119,11 @@ function signalDetail(signal: AccessEventSignal) {
     return t('admin.accessAudit.signalDetail.bulkAccess', {
       distinct: integer(signal.distinct_resources ?? 0),
       denied: integer(signal.denied_count ?? 0),
+    })
+  }
+  if (signal.type === 'support_access_volume') {
+    return t('admin.accessAudit.signalDetail.supportAccessVolume', {
+      distinct: integer(signal.distinct_resources ?? 0),
     })
   }
   return signal.detail ? t(`admin.accessAudit.signalDetail.${signal.detail}`) : '—'
@@ -147,6 +171,10 @@ function signalDetail(signal: AccessEventSignal) {
           </label>
           <label>{{ t('admin.accessAudit.filters.from') }}<input v-model="dateFrom" class="app-input" type="date" /></label>
           <label>{{ t('admin.accessAudit.filters.to') }}<input v-model="dateTo" class="app-input" type="date" /></label>
+          <label class="access-audit-support-filter">
+            <input v-model="supportAccessOnly" type="checkbox" />
+            {{ t('admin.accessAudit.filters.supportAccessOnly') }}
+          </label>
         </div>
 
         <p v-if="exportError" class="access-audit-alert" role="alert"><AlertTriangle :size="15" />{{ exportError }}</p>
@@ -169,7 +197,12 @@ function signalDetail(signal: AccessEventSignal) {
             </div>
             <div v-for="event in events" :key="event.id" class="access-audit-row">
               <span>{{ dateTime(event.created_at) }}</span>
-              <span>{{ actorLabel(event) }}</span>
+              <span>
+                {{ actorLabel(event) }}
+                <small v-if="isSupportAccess(event)" class="access-audit-support-badge" :title="supportReason(event)">
+                  <ShieldAlert :size="11" />{{ t('admin.accessAudit.supportAccess') }} · {{ supportCaseReference(event) }}
+                </small>
+              </span>
               <span>{{ resourceLabel(event) }}<small v-if="event.resource_id">{{ event.resource_id }}</small></span>
               <span>{{ event.action || '—' }}</span>
               <span class="access-audit-status" :data-tone="outcomeTone(event.outcome)"><i />{{ t(`admin.accessAudit.outcome.${event.outcome}`) }}</span>
@@ -213,6 +246,8 @@ function signalDetail(signal: AccessEventSignal) {
 .access-audit-section h2 { margin: 3px 0 0; font-size: 14px; }
 .access-audit-filters { display: flex; flex-wrap: wrap; gap: 12px; padding: 14px 16px; background: var(--surface-soft); border-bottom: 1px solid var(--line); }
 .access-audit-filters label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
+.access-audit-support-filter { flex-direction: row !important; align-items: center; gap: 6px !important; align-self: flex-end; }
+.access-audit-support-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; max-width: 220px; overflow: hidden; color: var(--red); font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .access-audit-alert { display: flex; min-height: 38px; align-items: center; gap: 8px; margin: 0; padding: 8px 11px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; font-weight: 700; }
 .access-audit-empty { display: grid; place-items: center; gap: 6px; padding: 40px 16px; color: var(--muted); text-align: center; }
 .access-audit-empty h3 { margin: 0; font-size: 12px; color: var(--ink-soft); }

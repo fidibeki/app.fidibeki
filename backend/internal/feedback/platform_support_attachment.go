@@ -160,6 +160,21 @@ func (h *platformSupportAttachmentHandler) serveHTTP(w http.ResponseWriter, r *h
 		h.writeError(w, r, err)
 		return
 	}
+	if h.options.Storage == nil {
+		h.writeError(w, r, errors.New("attachment storage is unavailable"))
+		return
+	}
+	reader, err := h.options.Storage.OpenObject(r.Context(), object.StorageKey)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	streamOwnsObject := false
+	defer func() {
+		if !streamOwnsObject {
+			closeAttachmentObject(r, reader, object.ID, h.logger)
+		}
+	}()
 	successData := map[string]any{"content_type": object.ContentType}
 	maps.Copy(successData, supportData)
 	if err := recordAccess(accessaudit.OutcomeSuccess, successData); err != nil {
@@ -171,13 +186,8 @@ func (h *platformSupportAttachmentHandler) serveHTTP(w http.ResponseWriter, r *h
 		return
 	}
 	committed = true
-	if h.options.Storage == nil {
-		h.writeError(w, r, errors.New("attachment storage is unavailable"))
-		return
-	}
-	writeAttachmentStreamContent(w, r, h.options.Storage, object, feedbackID, mode, h.logger, func(err error) {
-		h.writeError(w, r, err)
-	})
+	streamOwnsObject = true
+	writeAttachmentStreamContent(w, r, reader, object, feedbackID, mode, h.logger)
 }
 
 func (h *platformSupportAttachmentHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {

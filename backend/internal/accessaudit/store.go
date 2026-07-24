@@ -182,6 +182,12 @@ const (
 	SignalRevokedCredential = "revoked_credential"
 	// SignalUnusualAPIKey flags sensitive access by a non-expiring API key.
 	SignalUnusualAPIKey = "unusual_api_key"
+	// SignalSupportAccessVolume flags a platform-admin/support actor whose
+	// access volume for this tenant crosses a bounded threshold. Platform
+	// support access is expected to be rare and always justified by a
+	// support case, so its threshold is far lower than the general
+	// SignalBulkAccess check.
+	SignalSupportAccessVolume = "support_access_volume"
 )
 
 // ActorSignal is a bounded governance signal without evidence content.
@@ -321,6 +327,66 @@ type UnusualAPIKeyParams struct {
 }
 
 // DetectUnusualAPIKeyAccess finds recent sensitive access by non-expiring keys.
+// SupportAccessVolumeParams bounds the platform-admin/support volume scan.
+type SupportAccessVolumeParams struct {
+	Window    time.Duration
+	Threshold int
+	Now       time.Time
+}
+
+// DetectSupportAccessVolume finds platform-admin/support actors whose recent
+// access volume for this tenant crosses Threshold within Window. Every event
+// with actor_type = 'platform_admin' is, by construction, a support-access
+// event (see PlatformAdminActor), so this scan never needs to distinguish
+// support access from other platform-admin activity.
+func (Store) DetectSupportAccessVolume(
+	ctx context.Context, query db.Querier, tenantID string, params SupportAccessVolumeParams,
+) ([]ActorSignal, error) {
+	window := params.Window
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	threshold := params.Threshold
+	if threshold <= 0 {
+		threshold = 5
+	}
+	now := params.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := query.Query(ctx, `
+		SELECT actor_platform_admin_id,
+		       count(*) AS event_count,
+		       count(DISTINCT resource_id) AS distinct_resources,
+		       max(created_at) AS last_access_at
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND actor_type = 'platform_admin' AND created_at >= $2
+		  AND resource_id IS NOT NULL
+		GROUP BY actor_platform_admin_id
+		HAVING count(*) >= $3
+		ORDER BY event_count DESC
+		LIMIT 50
+	`, tenantID, now.Add(-window).UTC(), threshold)
+	if err != nil {
+		return nil, fmt.Errorf("detect support access volume: %w", err)
+	}
+	defer rows.Close()
+	signals := make([]ActorSignal, 0)
+	for rows.Next() {
+		signal := ActorSignal{Type: SignalSupportAccessVolume, ActorType: ActorPlatformAdmin}
+		if err := rows.Scan(
+			&signal.ActorID, &signal.EventCount, &signal.DistinctResources, &signal.LastAccessAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan support access volume: %w", err)
+		}
+		signals = append(signals, signal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("detect support access volume: %w", err)
+	}
+	return signals, nil
+}
+
 func (Store) DetectUnusualAPIKeyAccess(
 	ctx context.Context, query db.Querier, tenantID string, params UnusualAPIKeyParams,
 ) ([]ActorSignal, error) {

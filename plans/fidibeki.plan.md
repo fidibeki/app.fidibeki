@@ -726,7 +726,7 @@ was removed from the staging test tenant.
         checklists, post-incident actions/owners/corrective-issue links, and the tabletop
         exercises across attachment disclosure, replay access, database cross-tenant exposure,
         leaked integration secret, and subprocessor breach.
-    - [ ] #65: complete sensitive-access governance.
+    - [x] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
         deduplicates range traffic, and has backend/web coverage.
@@ -764,13 +764,42 @@ was removed from the staging test tenant.
         unknown-session not-found (each isolated to its own tenant), not-yet-merged session
         not-found, successful playback streaming the merged object with the correct headers, and
         audit-event identity/content-omission assertions.
-      - [ ] Extend the same platform-admin/support access primitive to the privacy-export access
-        path (currently only feedback attachments and replay playback are covered), add a
-        tenant-visible indicator/filter for support access reason and case in the audit UI (the
-        `data` blob is API-visible but not yet rendered), and add anomaly signals specific to
-        platform-admin/support access volume before closing #65.
-      - [ ] Tighten attachment support-access outcome evidence so an object-storage `OpenObject`
-        failure cannot remain represented as a successful access after metadata lookup.
+      - [x] Extend the same platform-admin/support access primitive to the privacy-export access
+        path: `GET /admin/tenants/{tenantID}/privacy-exports/{jobID}/support-access` requires
+        platform-admin auth plus the same explicit, length-bounded
+        `X-Fidibeki-Support-Reason`/`X-Fidibeki-Support-Case` headers, reuses `privacy.Store.GetJob`
+        under the same tenant-scoped RLS context, and folds a not-yet-completed, expired, or
+        otherwise unavailable export into the same not-found response as a missing job so support
+        access never discloses more about a tenant's export lifecycle than "not currently
+        downloadable". Unlike the tenant-facing download grant (which mints a 10-minute presigned
+        URL the caller fetches directly from object storage), this path proxies the archive itself
+        through `Storage.OpenObject` and streams it — a platform admin is never handed a signed URL
+        or raw object key they could retain or forward outside the audited path. Records
+        `actor_type=platform_admin` with kind `privacy_export.support_accessed` and the reason/case
+        as safe metadata only; denied/not-found/success outcomes audit fail-closed with the same
+        dedup-window flood protection as the attachment and replay paths. No migration was required.
+        Integration coverage mirrors the replay path: authorization, missing-reason/case/query-only
+        rejection with dedup, wrong-tenant and unknown-job not-found (isolated to their own tenant),
+        pending and expired-export not-found, storage-open failure returning unavailable without a
+        false success event, successful streaming with the correct `application/zip` headers, and
+        audit-event identity/content-omission assertions (no object key, URL, or archive bytes).
+      - [x] Add a tenant-visible indicator/filter for platform-admin/support access in the audit UI:
+        each event row shows a "Support access" badge with the bounded case reference (full reason
+        on hover) already held in the event's `data`, and a dedicated "Support access only" checkbox
+        filters the ledger to `actor_type=platform_admin` — every such event is a support access by
+        construction, so no new backend filter was needed. Added a `support_access_volume` anomaly
+        signal (`accessaudit.Store.DetectSupportAccessVolume`, default 5 events/24h per platform
+        admin — far lower than the general bulk-access threshold, since support access is expected
+        to be rare and always case-justified) surfaced alongside the existing signals. Covered by
+        backend unit/integration tests (store-level detection, HTTP-level signal wiring) and web
+        typecheck/unit/e2e coverage (badge/filter rendering, signal display, i18n in en/pt).
+      - [x] Tighten attachment support-access outcome evidence so an object-storage `OpenObject`
+        failure cannot remain represented as a successful access after metadata lookup. Both the
+        platform-support and tenant-facing attachment streams now open the storage object before
+        recording a successful access (mirroring the replay fix), refactored `writeAttachmentStreamContent`
+        to stream an already-opened reader instead of opening it after commit, and added integration
+        coverage proving a storage-open failure returns 503 without a false `success` audit row on
+        both paths.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
     - [x] #67: refine language and timezone preferences layout.

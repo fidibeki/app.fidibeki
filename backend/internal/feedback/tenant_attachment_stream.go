@@ -165,6 +165,21 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.writeError(w, r, err)
 		return
 	}
+	if h.options.Storage == nil {
+		h.writeError(w, r, errors.New("attachment storage is unavailable"))
+		return
+	}
+	reader, err := h.options.Storage.OpenObject(r.Context(), object.StorageKey)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	streamOwnsObject := false
+	defer func() {
+		if !streamOwnsObject {
+			closeAttachmentObject(r, reader, object.ID, h.logger)
+		}
+	}()
 	if err := recordAccess(accessaudit.OutcomeSuccess, map[string]any{"content_type": object.ContentType}); err != nil {
 		h.writeError(w, r, err)
 		return
@@ -174,16 +189,11 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		return
 	}
 	committed = true
-	if h.options.Storage == nil {
-		h.writeError(w, r, errors.New("attachment storage is unavailable"))
-		return
-	}
-	writeAttachmentStreamContent(w, r, h.options.Storage, object, feedbackID, mode, h.logger, func(err error) {
-		h.writeError(w, r, err)
-	})
+	streamOwnsObject = true
+	writeAttachmentStreamContent(w, r, reader, object, feedbackID, mode, h.logger)
 }
 
-// writeAttachmentStreamContent opens and streams an already-authorized
+// writeAttachmentStreamContent streams an already-opened, authorized
 // attachment object. Shared by the tenant-facing stream above and the
 // platform-admin/support stream (platform_support_attachment.go) so the
 // disposition, caching, and range-request handling stay identical regardless
@@ -191,23 +201,13 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 func writeAttachmentStreamContent(
 	w http.ResponseWriter,
 	r *http.Request,
-	storage AttachmentStreamStorage,
+	reader io.ReadCloser,
 	object AttachmentObject,
 	feedbackID string,
 	mode string,
 	logger *slog.Logger,
-	writeError func(error),
 ) {
-	reader, err := storage.OpenObject(r.Context(), object.StorageKey)
-	if err != nil {
-		writeError(err)
-		return
-	}
-	defer func() {
-		if err := reader.Close(); err != nil {
-			logger.WarnContext(r.Context(), "close feedback attachment stream", "error", err, "attachment_id", object.ID)
-		}
-	}()
+	defer closeAttachmentObject(r, reader, object.ID, logger)
 
 	disposition := "inline"
 	if mode == "download" {
@@ -230,6 +230,12 @@ func writeAttachmentStreamContent(
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, reader); err != nil {
 		logger.WarnContext(r.Context(), "stream feedback attachment", "error", err, "attachment_id", object.ID)
+	}
+}
+
+func closeAttachmentObject(r *http.Request, reader io.Closer, attachmentID string, logger *slog.Logger) {
+	if err := reader.Close(); err != nil {
+		logger.WarnContext(r.Context(), "close feedback attachment stream", "error", err, "attachment_id", attachmentID)
 	}
 }
 

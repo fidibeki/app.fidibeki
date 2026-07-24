@@ -318,6 +318,149 @@ func TestAccessEventsCSVExportSafeMaximum(t *testing.T) {
 	}
 }
 
+// TestAccessEventsSupportAccessVolumeSignal proves the tenant-visible
+// GET /v1/access-events response surfaces the platform-admin/support volume
+// anomaly signal (issue #65): a platform admin whose support-access volume
+// for this tenant crosses the threshold appears in "signals", and a
+// platform admin below the threshold does not.
+func TestAccessEventsSupportAccessVolumeSignal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	directURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL URL: %v", err)
+	}
+	migrator, err := db.NewMigrator(directURL, accessAuditHTTPMigrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	root, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect as root: %v", err)
+	}
+	t.Cleanup(func() { _ = root.Close(ctx) })
+	if _, err := root.Exec(ctx, `ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password'`); err != nil {
+		t.Fatalf("enable app login: %v", err)
+	}
+
+	tenantID := seedAccessAuditHTTPTenant(t, ctx, root, "support-volume-http")
+	var adminMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, status)
+		VALUES ($1, 'admin@support-volume-http.test', ARRAY['audit:read'], 'active') RETURNING id
+	`, tenantID).Scan(&adminMemberID); err != nil {
+		t.Fatalf("create audit-read member: %v", err)
+	}
+	var frequentAdminID, quietAdminID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('frequent@fidibeki-support.test', ARRAY['platform:tenant:support_access']) RETURNING id
+	`).Scan(&frequentAdminID); err != nil {
+		t.Fatalf("create frequent support admin: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('quiet@fidibeki-support.test', ARRAY['platform:tenant:support_access']) RETURNING id
+	`).Scan(&quietAdminID); err != nil {
+		t.Fatalf("create quiet support admin: %v", err)
+	}
+
+	appURL := accessAuditAppRoleURL(t, directURL)
+	pools, err := db.OpenPools(ctx, appURL, directURL, 4, 2)
+	if err != nil {
+		t.Fatalf("open database pools: %v", err)
+	}
+	t.Cleanup(pools.Close)
+
+	base := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_type, actor_platform_admin_id, resource_type, resource_id,
+			action, permission_path, outcome, created_at
+		)
+		SELECT $1, 'feedback_attachment.support_accessed', 'platform_admin', $2, 'feedback_attachment',
+		       gen_random_uuid(), 'preview', 'platform_admin:support_access', 'success',
+		       $3::timestamptz - (series * interval '1 second')
+		FROM generate_series(1, 6) AS series
+	`, tenantID, frequentAdminID, base); err != nil {
+		t.Fatalf("seed frequent support access events: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_type, actor_platform_admin_id, resource_type, resource_id,
+			action, permission_path, outcome, created_at
+		) VALUES (
+			$1, 'feedback_attachment.support_accessed', 'platform_admin', $2, 'feedback_attachment',
+			gen_random_uuid(), 'preview', 'platform_admin:support_access', 'success', $3
+		)
+	`, tenantID, quietAdminID, base); err != nil {
+		t.Fatalf("seed quiet support access event: %v", err)
+	}
+
+	jwtManager, err := auth.NewJWTManager(strings.Repeat("a", 32), "fidibeki", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("create JWT manager: %v", err)
+	}
+	adminToken, _, err := jwtManager.IssueTenant(adminMemberID, tenantID, []string{"audit:read"})
+	if err != nil {
+		t.Fatalf("issue admin token: %v", err)
+	}
+
+	routes := chi.NewRouter()
+	accessaudit.RegisterTenantRoutes(routes, accessaudit.HTTPOptions{
+		Store: accessaudit.Store{}, JWT: jwtManager,
+		Now: func() time.Time { return base.Add(time.Minute) },
+	})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
+		Begin: db.BeginFromPool(pools.App),
+	})(routes)
+
+	response := performAccessEventsRequest(handler, "support-volume-http", adminToken, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("access-events status = %d body=%s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Signals []accessaudit.ActorSignal `json:"signals"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode access-events response: %v", err)
+	}
+	var flagged *accessaudit.ActorSignal
+	for index := range envelope.Signals {
+		if envelope.Signals[index].Type == accessaudit.SignalSupportAccessVolume {
+			flagged = &envelope.Signals[index]
+		}
+		if envelope.Signals[index].Type == accessaudit.SignalSupportAccessVolume &&
+			envelope.Signals[index].ActorID == quietAdminID {
+			t.Fatalf("support access volume signal flagged the actor below threshold: %+v", envelope.Signals[index])
+		}
+	}
+	if flagged == nil || flagged.ActorID != frequentAdminID || flagged.ActorType != accessaudit.ActorPlatformAdmin ||
+		flagged.EventCount != 6 {
+		t.Fatalf("support access volume signals = %+v, want the frequent platform admin flagged with count 6", envelope.Signals)
+	}
+}
+
 func performAccessEventsRequest(handler http.Handler, hostSlug, token, query string) *httptest.ResponseRecorder {
 	path := "/v1/access-events"
 	if query != "" {

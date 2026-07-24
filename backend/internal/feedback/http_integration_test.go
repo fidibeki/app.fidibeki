@@ -1163,6 +1163,38 @@ func assertTenantFeedbackReadFlow(
 		}
 	}
 
+	// A storage-open failure must never be recorded as a successful access
+	// (issue #65 residual): use a fresh actor/action combination (API key +
+	// download) so a false-success row, if the bug were still present, could
+	// not hide behind the existing preview/download success rows' dedup
+	// bucket.
+	var preFailureSuccessCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.accessed' AND resource_id = $2 AND outcome = 'success'
+	`, tenantID, attachmentID).Scan(&preFailureSuccessCount); err != nil {
+		t.Fatalf("count attachment success events before storage failure: %v", err)
+	}
+	streamStorage.err = errors.New("object storage open failed")
+	storageUnavailable := performTenantFeedbackRequest(
+		streamRoutes, http.MethodGet, streamPath+"?mode=download", "", streamAPIKey,
+	)
+	if storageUnavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("storage-unavailable attachment stream status = %d", storageUnavailable.Code)
+	}
+	var postFailureSuccessCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.accessed' AND resource_id = $2 AND outcome = 'success'
+	`, tenantID, attachmentID).Scan(&postFailureSuccessCount); err != nil {
+		t.Fatalf("count attachment success events after storage failure: %v", err)
+	}
+	if postFailureSuccessCount != preFailureSuccessCount {
+		t.Fatalf("attachment success count after storage-open failure = %d, want unchanged at %d (no false success)",
+			postFailureSuccessCount, preFailureSuccessCount)
+	}
+	streamStorage.err = nil
+
 	dashboardResponse := performTenantFeedbackRequest(handler, http.MethodGet, "/v1/dashboard?range=7d", "", ownerToken)
 	var dashboardEnvelope struct {
 		Dashboard Dashboard `json:"dashboard"`
@@ -1424,6 +1456,7 @@ type feedbackStorageStub struct {
 type attachmentStreamStorageStub struct {
 	data []byte
 	key  string
+	err  error
 }
 
 type seekReadCloser struct{ *bytes.Reader }
@@ -1432,6 +1465,9 @@ func (*seekReadCloser) Close() error { return nil }
 
 func (s *attachmentStreamStorageStub) OpenObject(_ context.Context, key string) (io.ReadCloser, error) {
 	s.key = key
+	if s.err != nil {
+		return nil, s.err
+	}
 	return &seekReadCloser{Reader: bytes.NewReader(s.data)}, nil
 }
 

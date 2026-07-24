@@ -244,6 +244,25 @@ func TestPlatformSupportAttachmentStream(t *testing.T) {
 		t.Fatalf("other-tenant access event count = %d, want 1 (the cross-tenant not_found attempt, isolated to its own tenant)", otherTenantEventCount)
 	}
 
+	storageStub.err = fmt.Errorf("object storage open failed")
+	storageUnavailable := performPlatformSupportRequest(router,
+		path, supportToken, "investigating reported checkout bug", "CASE-1")
+	if storageUnavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("storage-unavailable status = %d", storageUnavailable.Code)
+	}
+	var prematureSuccessCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'feedback_attachment.support_accessed'
+		  AND resource_id = $2 AND outcome = 'success'
+	`, tenantID, attachmentID).Scan(&prematureSuccessCount); err != nil {
+		t.Fatalf("count premature support access successes: %v", err)
+	}
+	if prematureSuccessCount != 0 {
+		t.Fatalf("support access success count before storage opens = %d, want 0", prematureSuccessCount)
+	}
+	storageStub.err = nil
+
 	success := performPlatformSupportRequest(router,
 		path, supportToken, "investigating reported checkout bug", "CASE-1")
 	if success.Code != http.StatusOK || success.Body.String() != "investigation-evidence" ||

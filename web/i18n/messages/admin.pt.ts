@@ -434,6 +434,7 @@ export const adminMessages = {
     exportCSV: 'Exportar CSV · máx. 5.000',
     loadMore: 'Carregar mais',
     unknownActor: 'desconhecido',
+    supportAccess: 'Acesso de suporte',
     signalsEyebrow: 'Sinais de governação',
     signals: 'Acessos a rever',
     filters: {
@@ -443,6 +444,7 @@ export const adminMessages = {
       outcome: 'Resultado',
       from: 'De',
       to: 'Até',
+      supportAccessOnly: 'Apenas acesso de suporte',
     },
     columns: {
       timestamp: 'Data/hora',
@@ -475,9 +477,11 @@ export const adminMessages = {
       bulk_access: 'Acesso em massa',
       revoked_credential: 'Acesso de membro inativo',
       unusual_api_key: 'Chave de API sem expiração',
+      support_access_volume: 'Volume invulgar de acesso de suporte da plataforma',
     },
     signalDetail: {
       bulkAccess: '{distinct} recursos · {denied} negados',
+      supportAccessVolume: '{distinct} recursos acedidos',
       deactivated: 'Desativado',
       removed: 'Removido',
       no_expiration: 'Sem expiração',

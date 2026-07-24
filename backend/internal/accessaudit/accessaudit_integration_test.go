@@ -325,6 +325,68 @@ func TestDetectUnusualAPIKeyAccess(t *testing.T) {
 	}
 }
 
+func TestDetectSupportAccessVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := accessAuditTestDatabase(t, ctx)
+	store := accessaudit.Store{}
+	tenantID := seedAccessAuditTenant(t, ctx, database, "support-volume-audit")
+	frequentAdminID := seedAccessAuditPlatformAdmin(t, ctx, database)
+	quietAdminID := seedAccessAuditPlatformAdmin(t, ctx, database)
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	for index := range 5 {
+		resourceID := uuidFromIndex(index)
+		if err := accessaudit.Record(ctx, database, accessaudit.RecordInput{
+			TenantID: tenantID, Kind: "feedback_attachment.support_accessed",
+			Actor:          accessaudit.PlatformAdminActor(frequentAdminID),
+			ResourceType:   accessaudit.ResourceFeedbackAttachment,
+			ResourceID:     resourceID,
+			Action:         "preview",
+			PermissionPath: accessaudit.PermissionPathSupportAccess,
+			Outcome:        accessaudit.OutcomeSuccess,
+			Now:            now.Add(time.Duration(index) * time.Second),
+		}); err != nil {
+			t.Fatalf("seed support access volume event %d: %v", index, err)
+		}
+	}
+	if err := accessaudit.Record(ctx, database, accessaudit.RecordInput{
+		TenantID: tenantID, Kind: "feedback_attachment.support_accessed",
+		Actor:          accessaudit.PlatformAdminActor(quietAdminID),
+		ResourceType:   accessaudit.ResourceFeedbackAttachment,
+		ResourceID:     uuidFromIndex(5),
+		Action:         "preview",
+		PermissionPath: accessaudit.PermissionPathSupportAccess,
+		Outcome:        accessaudit.OutcomeSuccess,
+		Now:            now,
+	}); err != nil {
+		t.Fatalf("seed quiet support access event: %v", err)
+	}
+
+	signals, err := store.DetectSupportAccessVolume(ctx, database, tenantID, accessaudit.SupportAccessVolumeParams{
+		Window: time.Hour, Threshold: 5, Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("DetectSupportAccessVolume() error = %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("DetectSupportAccessVolume() = %+v, want exactly one flagged platform admin", signals)
+	}
+	signal := signals[0]
+	if signal.ActorID != frequentAdminID || signal.Type != accessaudit.SignalSupportAccessVolume ||
+		signal.ActorType != accessaudit.ActorPlatformAdmin || signal.EventCount != 5 || signal.DistinctResources != 5 {
+		t.Fatalf("DetectSupportAccessVolume() = %+v, want the frequent platform admin flagged with count 5", signal)
+	}
+	for _, other := range signals {
+		if other.ActorID == quietAdminID {
+			t.Fatalf("DetectSupportAccessVolume() flagged an actor below threshold: %+v", other)
+		}
+	}
+}
+
 // TestConcurrentDedupUnderLoad exercises the dedup unique index under real
 // concurrent write pressure (as opposed to the sequential dedup coverage in
 // TestRecordAndListAccessEvents), matching the load this endpoint sees from
@@ -446,6 +508,21 @@ func seedAccessAuditMember(t *testing.T, ctx context.Context, database *pgxpool.
 		t.Fatalf("create access-audit member: %v", err)
 	}
 	return memberID
+}
+
+// seedAccessAuditPlatformAdmin creates a platform admin with a unique email
+// (via gen_random_uuid()) so callers can seed more than one per test.
+func seedAccessAuditPlatformAdmin(t *testing.T, ctx context.Context, database *pgxpool.Pool) string {
+	t.Helper()
+	var adminID string
+	if err := database.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES (gen_random_uuid()::text || '@fidibeki-support.test', ARRAY['platform:tenant:support_access'])
+		RETURNING id
+	`).Scan(&adminID); err != nil {
+		t.Fatalf("create access-audit platform admin: %v", err)
+	}
+	return adminID
 }
 
 func seedAccessAuditAPIKey(t *testing.T, ctx context.Context, database *pgxpool.Pool, tenantID string) string {

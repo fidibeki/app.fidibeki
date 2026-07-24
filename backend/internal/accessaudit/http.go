@@ -25,6 +25,7 @@ type EventStore interface {
 	DetectAnomalies(context.Context, db.Querier, string, AnomalySignalParams) ([]ActorSignal, error)
 	DetectRevokedCredentialAccess(context.Context, db.Querier, string, RevokedCredentialParams) ([]ActorSignal, error)
 	DetectUnusualAPIKeyAccess(context.Context, db.Querier, string, UnusualAPIKeyParams) ([]ActorSignal, error)
+	DetectSupportAccessVolume(context.Context, db.Querier, string, SupportAccessVolumeParams) ([]ActorSignal, error)
 }
 
 type TokenVerifier interface {
@@ -119,8 +120,15 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	supportAccessVolumeSignals, err := h.options.Store.DetectSupportAccessVolume(
+		r.Context(), query, resolved.ID, SupportAccessVolumeParams{Now: h.now()})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
 	signals = append(signals, revokedCredentialSignals...)
 	signals = append(signals, unusualAPIKeySignals...)
+	signals = append(signals, supportAccessVolumeSignals...)
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"events": events, "signals": signals,
 		"pagination": map[string]any{

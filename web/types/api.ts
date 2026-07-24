@@ -1060,7 +1060,7 @@ export interface AccessEvent {
   created_at: string
 }
 
-export type AccessEventSignalType = 'bulk_access' | 'revoked_credential' | 'unusual_api_key'
+export type AccessEventSignalType = 'bulk_access' | 'revoked_credential' | 'unusual_api_key' | 'support_access_volume'
 
 export interface AccessEventSignal {
   type: AccessEventSignalType

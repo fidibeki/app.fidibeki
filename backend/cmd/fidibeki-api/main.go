@@ -361,6 +361,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin: db.BeginFromPool(pools.App), Store: replay.Store{}, JWT: jwtManager,
 		Storage: objectStorage, Logger: logger,
 	})
+	privacy.RegisterPlatformSupportRoutes(platformRoutes, privacy.PlatformSupportExportHTTPOptions{
+		Begin: db.BeginFromPool(pools.App), Store: privacy.Store{}, JWT: jwtManager,
+		Storage: objectStorage, Logger: logger,
+	})
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,
