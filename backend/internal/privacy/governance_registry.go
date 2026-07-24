@@ -248,9 +248,10 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceBoundaryServiceProvider,
 			"Capture error and exception telemetry for operational monitoring.",
 			[]string{
-				"backend and widget error and exception telemetry (message, stack trace, " +
-					"scrubbed widget context); backend default PII capture disabled and widget " +
-					"events scrub user, request body, credentials, query, and sensitive context",
+				"backend error and exception telemetry (message and stack trace); " +
+					"default PII capture disabled",
+				"widget error and exception telemetry with scrubbed context; user, request body, " +
+					"credentials, query, and sensitive context removed",
 			},
 			"backend/internal/config/config.go (SentryDSN); backend/cmd/fidibeki-api/main.go "+
 				"(sentry.Init); widget/src/modules/error-reporting.ts (@sentry/browser)",

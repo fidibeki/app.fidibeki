@@ -123,6 +123,29 @@ func TestProviderGovernanceCoversTurnstileAsAnExternalBoundary(t *testing.T) {
 	}
 }
 
+func TestProviderGovernanceSentryCoversBackendAndWidget(t *testing.T) {
+	t.Parallel()
+	var sentry ProviderGovernanceRecord
+	for _, provider := range providerGovernanceRegistry() {
+		if provider.ProviderID == "sentry_error_telemetry" {
+			sentry = provider
+			break
+		}
+	}
+	if sentry.ProviderID == "" {
+		t.Fatal("sentry_error_telemetry provider is missing")
+	}
+	if !strings.Contains(sentry.CodeEvidence, "widget/src/modules/error-reporting.ts") {
+		t.Errorf("Sentry code evidence omits the widget path: %q", sentry.CodeEvidence)
+	}
+	categories := strings.Join(sentry.PersonalDataCategories, " ")
+	for _, boundary := range []string{"backend error", "widget error"} {
+		if !strings.Contains(categories, boundary) {
+			t.Errorf("Sentry personal-data categories omit %q: %#v", boundary, sentry.PersonalDataCategories)
+		}
+	}
+}
+
 func TestProviderGovernanceCoversExactlyTheEvidencedProviderSet(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
