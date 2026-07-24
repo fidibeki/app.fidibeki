@@ -80,6 +80,132 @@ func TestPrivacyStoresPropagateInfrastructureFailures(t *testing.T) {
 			_, err := store.ListReporterRequests(context.Background(), query, "tenant", 50)
 			return err
 		}},
+		{name: "create rights case", call: func() error {
+			_, _, _, err := store.CreateCase(
+				context.Background(), query, "tenant", "member", "case-create",
+				CreateCaseInput{}, now,
+			)
+			return err
+		}},
+		{name: "list rights cases", call: func() error {
+			_, err := store.ListCases(context.Background(), query, "tenant", 50)
+			return err
+		}},
+		{name: "get rights case", call: func() error {
+			_, err := store.GetCase(context.Background(), query, "tenant", "case")
+			return err
+		}},
+		{name: "list rights case events", call: func() error {
+			_, err := store.ListCaseEvents(context.Background(), query, "tenant", "case")
+			return err
+		}},
+		{name: "transition rights case", call: func() error {
+			_, err := store.TransitionCase(
+				context.Background(), query, "tenant", "case", "member",
+				"case-transition", TransitionCaseInput{}, now,
+			)
+			return err
+		}},
+		{name: "rights case dashboard", call: func() error {
+			_, err := store.CaseDashboard(context.Background(), query, "tenant", now)
+			return err
+		}},
+		{name: "set rights case restriction", call: func() error {
+			_, err := store.SetCaseRestriction(
+				context.Background(), query, "tenant", "case", "member",
+				"case-restriction", true, "reason", now,
+			)
+			return err
+		}},
+		{name: "place rights case legal hold", call: func() error {
+			_, err := store.PlaceLegalHold(
+				context.Background(), query, "tenant", "case", "member",
+				"hold-place", "reason", "reference", now,
+			)
+			return err
+		}},
+		{name: "release rights case legal hold", call: func() error {
+			_, err := store.ReleaseLegalHold(
+				context.Background(), query, "tenant", "case", "hold", "member",
+				"hold-release", "reason", now,
+			)
+			return err
+		}},
+		{name: "record portability assessment", call: func() error {
+			_, _, err := store.RecordPortabilityAssessment(
+				context.Background(), query, "tenant", "case", "member",
+				"portability", RecordPortabilityAssessmentInput{}, now,
+			)
+			return err
+		}},
+		{name: "apply case rectification", call: func() error {
+			_, _, err := store.ApplyCaseRectification(
+				context.Background(), query, "tenant", "case", "member",
+				"rectification", RecordCaseRectificationInput{}, now,
+			)
+			return err
+		}},
+		{name: "list rectifiable feedbacks", call: func() error {
+			_, err := store.ListRectifiableFeedbacks(
+				context.Background(), query, "tenant", "case",
+			)
+			return err
+		}},
+		{name: "apply feedback rectification", call: func() error {
+			_, _, err := store.ApplyFeedbackRectification(
+				context.Background(), query, "tenant", "case", "member",
+				"feedback-rectification", RecordFeedbackRectificationInput{}, now,
+			)
+			return err
+		}},
+		{name: "refresh integration actions", call: func() error {
+			_, _, _, err := store.RefreshIntegrationActions(
+				context.Background(), query, "tenant", "case", "member", now,
+			)
+			return err
+		}},
+		{name: "complete integration action", call: func() error {
+			_, _, err := store.CompleteIntegrationAction(
+				context.Background(), query, "tenant", "case", "action", "member",
+				"integration-action", CompleteIntegrationActionInput{}, now,
+			)
+			return err
+		}},
+		{name: "create recipient action", call: func() error {
+			_, _, err := store.CreateRecipientAction(
+				context.Background(), query, "tenant", "case", "member",
+				"recipient-action", CreateRecipientActionInput{}, now,
+			)
+			return err
+		}},
+		{name: "retry recipient action", call: func() error {
+			_, _, err := store.RetryRecipientAction(
+				context.Background(), query, "tenant", "case", "action", "member",
+				"recipient-retry", now,
+			)
+			return err
+		}},
+		{name: "create case communication", call: func() error {
+			_, _, err := store.CreateCaseCommunication(
+				context.Background(), query, "tenant", "case", "member",
+				"communication", CreateCaseCommunicationInput{}, now,
+			)
+			return err
+		}},
+		{name: "retry case communication", call: func() error {
+			_, _, err := store.RetryCaseCommunication(
+				context.Background(), query, "tenant", "case", "communication",
+				"member", "communication-retry", now,
+			)
+			return err
+		}},
+		{name: "start case execution", call: func() error {
+			_, _, err := store.StartCaseExecution(
+				context.Background(), query, "tenant", "case", "member",
+				"case-execution", now,
+			)
+			return err
+		}},
 		{name: "expired attachments", call: func() error {
 			_, err := store.ExpiredAttachments(context.Background(), now, 10)
 			return err
