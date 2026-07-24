@@ -1140,6 +1140,14 @@ was removed from the staging test tenant.
   - [ ] After the entries above are complete, repeat the full GitHub issue audit against code,
     tests, and staging, close materially completed issues, and implement every remaining issue
     without the `postpone` label before starting open-ended continuous improvement.
+    - [x] Repeated the local code/test/GitHub audit after integrating #71 on 2026-07-24. No
+      non-postponed issue has unimplemented local product scope: #58 and #63 await documented
+      legal/factual decisions; #60, #62, #64, #65, #66, and #71 await deployment of the exact
+      validated commits plus authenticated staging evidence. Each issue contains its current
+      evidence and remains open rather than claiming an unperformed gate.
+    - [ ] Revisit these external gates only after the founder authorizes deployment or supplies the
+      outstanding legal decisions. Do not let this item redirect local product work into production
+      or infrastructure.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
