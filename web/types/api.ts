@@ -790,6 +790,34 @@ export interface PrivacyProcessingRestriction {
   deactivated_by_member_id?: string
 }
 
+export interface PrivacyCaseLegalHold {
+  id: string
+  privacy_case_id: string
+  reason: string
+  legal_reference?: string
+  active: boolean
+  placed_by_member_id: string
+  placed_at: string
+  released_by_member_id?: string
+  released_at?: string
+  release_reason?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PrivacyCaseExecution {
+  right_type: PrivacyRightType
+  request_status: ReporterPrivacyRequest['status']
+  job_id?: string
+  job_status?: PrivacyExport['status']
+  job_expires_at?: string
+  record_count?: number
+  manual_review_count?: number
+  error_message?: string
+  started_at: string
+  completed_at?: string
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -814,6 +842,8 @@ export interface PrivacyCase {
   legal_review_notes?: string
   exception_reason?: string
   restriction?: PrivacyProcessingRestriction
+  legal_holds: PrivacyCaseLegalHold[]
+  execution?: PrivacyCaseExecution
   created_at: string
   updated_at: string
 }

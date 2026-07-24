@@ -323,6 +323,84 @@ function createMockState() {
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:05:00.000Z',
     }],
+    privacyCases: [{
+      id: 'privacy-case-access',
+      public_id: 'PRV-ACCESS1',
+      subject_type: 'reporter' as 'reporter' | 'member',
+      right_type: 'access' as 'access' | 'erasure',
+      controller_role: 'customer_controller_assistance' as const,
+      status: 'in_progress' as 'pending_verification' | 'in_progress' | 'completed',
+      subject_email: 'access.requester@example.test' as string | undefined,
+      subject_member_id: undefined as string | undefined,
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1' as string | undefined,
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verification_method: 'email_link',
+      verified_at: '2026-07-21T12:02:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [] as Array<{
+        id: string
+        privacy_case_id: string
+        reason: string
+        legal_reference?: string
+        active: boolean
+        placed_by_member_id: string
+        placed_at: string
+        released_by_member_id?: string
+        released_at?: string
+        release_reason?: string
+        created_at: string
+        updated_at: string
+      }>,
+      execution: {
+        right_type: 'access' as 'access' | 'erasure',
+        request_status: 'completed' as 'processing' | 'completed' | 'failed',
+        job_id: 'privacy-case-access-job',
+        job_status: 'completed' as 'pending' | 'processing' | 'completed' | 'failed',
+        job_expires_at: '2026-07-28T12:04:00.000Z',
+        record_count: 12,
+        manual_review_count: 0,
+        started_at: '2026-07-21T12:02:00.000Z',
+        completed_at: '2026-07-21T12:04:00.000Z',
+      } as {
+        right_type: 'access' | 'erasure'
+        request_status: 'processing' | 'completed' | 'failed'
+        job_id?: string
+        job_status?: 'pending' | 'processing' | 'completed' | 'failed'
+        job_expires_at?: string
+        record_count?: number
+        manual_review_count?: number
+        started_at: string
+        completed_at?: string
+      } | undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:04:00.000Z',
+    }, {
+      id: 'privacy-case-erasure',
+      public_id: 'PRV-ERASE1',
+      subject_type: 'reporter' as 'reporter' | 'member',
+      right_type: 'erasure' as 'access' | 'erasure',
+      controller_role: 'customer_controller_assistance' as const,
+      status: 'in_progress' as 'pending_verification' | 'in_progress' | 'completed',
+      subject_email: 'erase.requester@example.test' as string | undefined,
+      subject_member_id: undefined as string | undefined,
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1' as string | undefined,
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verification_method: 'email_link',
+      verified_at: '2026-07-21T12:02:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      execution: undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:00:00.000Z',
+    }],
     reviewItems: [] as Array<{
       id: string
       resource_type: 'feedback' | 'issue' | 'issue_comment' | 'clarification_request' | 'legacy_unlinked'
@@ -1216,6 +1294,71 @@ async function installMockAPI(page: Page, state: MockState) {
       } })
     }
     if (path === '/v1/privacy/exports' && method === 'GET') return json(route, { exports: state.privacyExports })
+    if (path === '/v1/privacy/cases/dashboard' && method === 'GET') {
+      return json(route, { dashboard: {
+        overdue: 0, due_soon: 1, awaiting_manual: 0,
+        awaiting_legal_review: 0, failed_external: 0, completed: 0,
+      } })
+    }
+    if (path === '/v1/privacy/cases' && method === 'GET') {
+      return json(route, { cases: state.privacyCases })
+    }
+    if (path === '/v1/privacy/cases' && method === 'POST') {
+      return json(route, { case: state.privacyCases[0], verification_email_queued: true }, 202)
+    }
+    const caseExecutionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/execute$/)
+    if (caseExecutionMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseExecutionMatch[1])
+      if (!item) return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      item.execution = {
+        right_type: item.right_type,
+        request_status: 'processing',
+        job_id: `${item.id}-job`,
+        job_status: 'pending',
+        started_at: now,
+      }
+      item.updated_at = now
+      return json(route, { execution: item.execution, created: true }, 202)
+    }
+    const caseExecutionDownloadMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/execution\/download$/)
+    if (caseExecutionDownloadMatch && method === 'POST') {
+      state.privacyDownloadCount += 1
+      return json(route, {
+        url: 'https://downloads.example.test/case-access-export.zip?signature=test',
+        expires_at: '2026-07-21T12:10:00.000Z',
+      })
+    }
+    const caseHoldMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/legal-holds$/)
+    if (caseHoldMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseHoldMatch[1])
+      if (!item) return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      const input = body()
+      const hold = {
+        id: `privacy-hold-${item.legal_holds.length + 1}`,
+        privacy_case_id: item.id,
+        reason: String(input.reason),
+        legal_reference: input.legal_reference ? String(input.legal_reference) : undefined,
+        active: true,
+        placed_by_member_id: 'member-1',
+        placed_at: now,
+        created_at: now,
+        updated_at: now,
+      }
+      item.legal_holds.unshift(hold)
+      return json(route, { legal_hold: hold }, 201)
+    }
+    const caseHoldReleaseMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/legal-holds\/([^/]+)\/release$/)
+    if (caseHoldReleaseMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseHoldReleaseMatch[1])
+      const hold = item?.legal_holds.find(candidate => candidate.id === caseHoldReleaseMatch[2])
+      if (!hold) return json(route, { error: { code: 'not_found', message: 'privacy legal hold not found' } }, 404)
+      hold.active = false
+      hold.released_by_member_id = 'member-1'
+      hold.released_at = now
+      hold.release_reason = String(body().reason)
+      hold.updated_at = now
+      return json(route, { legal_hold: hold })
+    }
     if (path === '/v1/privacy/exports' && method === 'POST') {
       const active = state.privacyExports.find(item => item.status === 'pending' || item.status === 'processing')
       if (active) return json(route, { export: active, created: false })
@@ -3796,6 +3939,49 @@ test('data privacy controls cover retention, exports, reporter verification, and
   await confirmButton.click()
   await expect(dialog).not.toBeVisible()
   expect(state.privacyRequests[0].action).toBe('anonymize')
+})
+
+test('data-rights cases execute access and erasure around legal holds', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+  await expect(page).toHaveURL(/\/settings\?tab=privacy$/)
+
+  await expect(page.getByRole('heading', { name: 'Data-rights cases' })).toBeVisible()
+  const accessCase = page.locator('.privacy-case-entry', { hasText: 'PRV-ACCESS1' })
+  await accessCase.getByTitle('Toggle case details').click()
+  await expect(accessCase).toContainText('Access')
+  await expect(accessCase).toContainText('12 records in scope')
+  await accessCase.getByRole('button', { name: 'Download access export' }).click()
+  expect(state.privacyDownloadCount).toBe(1)
+
+  const erasureCase = page.locator('.privacy-case-entry', { hasText: 'PRV-ERASE1' })
+  await erasureCase.getByTitle('Toggle case details').click()
+  await erasureCase.getByPlaceholder('Preservation reason').fill('Preserve while the dispute is reviewed.')
+  await erasureCase.getByPlaceholder('Legal or case reference (optional)').fill('CASE-2026-17')
+  await erasureCase.getByRole('button', { name: 'Place hold' }).click()
+  await expect(erasureCase).toContainText('Preserve while the dispute is reviewed.')
+  await expect(erasureCase).toContainText('1 active hold')
+  await expect(erasureCase.getByRole('button', { name: 'Start erasure' })).toBeDisabled()
+
+  await erasureCase.getByPlaceholder('Reason for releasing the hold').fill('Preservation duty reviewed and ended.')
+  await erasureCase.getByRole('button', { name: 'Release hold' }).click()
+  await expect(erasureCase).toContainText('Released')
+  await expect(erasureCase.getByRole('button', { name: 'Start erasure' })).toBeEnabled()
+
+  page.once('dialog', dialog => dialog.accept())
+  await erasureCase.getByRole('button', { name: 'Start erasure' }).click()
+  await expect(page.getByRole('status')).toContainText('erasure operation was queued')
+  await expect(erasureCase).toContainText('Erasure')
+  await expect(erasureCase).toContainText('Pending')
+  expect(state.privacyCases.find(item => item.id === 'privacy-case-erasure')?.execution).toMatchObject({
+    right_type: 'erasure',
+    job_status: 'pending',
+  })
+
+  await erasureCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-data-rights-cases-${testInfo.project.name}`)
 })
 
 test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {

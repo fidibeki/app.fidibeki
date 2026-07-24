@@ -265,3 +265,179 @@ func TestPrivacyCaseMemberVerificationAndTenantIsolation(t *testing.T) {
 		t.Fatalf("CaseDashboard(overdue) = %#v error=%v", dashboard, err)
 	}
 }
+
+func TestPrivacyCaseReporterExecutionRespectsLegalHolds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := privacyTestDatabase(t, ctx)
+	now := time.Date(2026, 7, 24, 14, 0, 0, 0, time.UTC)
+	tenantID, memberID := seedPrivacyWorkspace(
+		t, ctx, database, "case-execution", "Reporter erasure fixture",
+	)
+	otherTenantID, otherMemberID := seedPrivacyWorkspace(
+		t, ctx, database, "case-execution-other", "Other tenant fixture",
+	)
+	store := Store{Database: database}
+
+	erasureCase, token, _, err := store.CreateCase(
+		ctx, database, tenantID, memberID, "erasure-case",
+		CreateCaseInput{
+			SubjectType: SubjectReporter, RightType: RightErasure,
+			ControllerRole: RoleCustomerControllerAssistance,
+			SubjectEmail:   "reporter@example.test",
+		}, now,
+	)
+	if err != nil {
+		t.Fatalf("create erasure case: %v", err)
+	}
+	tokenHash, ok := parseReporterRequestToken(token)
+	if !ok {
+		t.Fatal("parse erasure verification token")
+	}
+	if _, err := store.VerifyCase(ctx, database, tokenHash, now.Add(time.Minute)); err != nil {
+		t.Fatalf("verify erasure case: %v", err)
+	}
+
+	hold, err := store.PlaceLegalHold(
+		ctx, database, tenantID, erasureCase.ID, memberID, "hold-1",
+		"Preserve records while the contractual dispute is reviewed.", "CASE-2026-17",
+		now.Add(2*time.Minute),
+	)
+	if err != nil || !hold.Active || hold.LegalReference == nil ||
+		*hold.LegalReference != "CASE-2026-17" {
+		t.Fatalf("PlaceLegalHold() = %#v error=%v", hold, err)
+	}
+	duplicateHold, err := store.PlaceLegalHold(
+		ctx, database, tenantID, erasureCase.ID, memberID, "hold-1",
+		"Preserve records while the contractual dispute is reviewed.", "CASE-2026-17",
+		now.Add(3*time.Minute),
+	)
+	if err != nil || duplicateHold.ID != hold.ID {
+		t.Fatalf("idempotent PlaceLegalHold() = %#v error=%v", duplicateHold, err)
+	}
+	if _, err := store.PlaceLegalHold(
+		ctx, database, tenantID, erasureCase.ID, memberID, "hold-1",
+		"Different reason", "CASE-2026-17", now.Add(3*time.Minute),
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting PlaceLegalHold() error = %v", err)
+	}
+	if _, _, err := store.StartCaseExecution(
+		ctx, database, tenantID, erasureCase.ID, memberID, "execute-1",
+		now.Add(4*time.Minute),
+	); !errors.Is(err, ErrLegalHoldActive) {
+		t.Fatalf("erasure with active hold error = %v", err)
+	}
+	if _, err := store.ReleaseLegalHold(
+		ctx, database, otherTenantID, erasureCase.ID, hold.ID, otherMemberID,
+		"release-cross-tenant", "Must not release.", now.Add(5*time.Minute),
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant ReleaseLegalHold() error = %v", err)
+	}
+	released, err := store.ReleaseLegalHold(
+		ctx, database, tenantID, erasureCase.ID, hold.ID, memberID, "release-1",
+		"The dispute ended and the preservation duty was reviewed.", now.Add(5*time.Minute),
+	)
+	if err != nil || released.Active || released.ReleasedAt == nil {
+		t.Fatalf("ReleaseLegalHold() = %#v error=%v", released, err)
+	}
+
+	execution, created, err := store.StartCaseExecution(
+		ctx, database, tenantID, erasureCase.ID, memberID, "execute-1",
+		now.Add(6*time.Minute),
+	)
+	if err != nil || !created || execution.RightType != RightErasure ||
+		execution.Primitive != ReporterAnonymize ||
+		execution.RequestStatus != ReporterProcessing ||
+		execution.JobID == nil || execution.JobStatus == nil ||
+		*execution.JobStatus != JobPending {
+		t.Fatalf("StartCaseExecution(erasure) = %#v created=%t error=%v",
+			execution, created, err)
+	}
+	replayed, created, err := store.StartCaseExecution(
+		ctx, database, tenantID, erasureCase.ID, memberID, "execute-1",
+		now.Add(7*time.Minute),
+	)
+	if err != nil || created || replayed.JobID == nil ||
+		*replayed.JobID != *execution.JobID {
+		t.Fatalf("idempotent StartCaseExecution() = %#v created=%t error=%v",
+			replayed, created, err)
+	}
+	lateHold, err := store.PlaceLegalHold(
+		ctx, database, tenantID, erasureCase.ID, memberID, "hold-after-queue",
+		"Preserve records before the queued worker begins.", "", now.Add(7*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("place hold after queue: %v", err)
+	}
+	queuedJob, err := store.GetJob(ctx, database, tenantID, *execution.JobID)
+	if err != nil {
+		t.Fatalf("load queued erasure job: %v", err)
+	}
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin erasure hold check: %v", err)
+	}
+	if err := ensureCaseErasureAllowed(ctx, tx, queuedJob); !errors.Is(err, ErrLegalHoldActive) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("queued worker legal hold error = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("roll back erasure hold check: %v", err)
+	}
+	if _, err := store.ReleaseLegalHold(
+		ctx, database, tenantID, erasureCase.ID, lateHold.ID, memberID,
+		"release-after-queue", "Worker may proceed after review.", now.Add(8*time.Minute),
+	); err != nil {
+		t.Fatalf("release queued execution hold: %v", err)
+	}
+
+	accessCase, accessToken, _, err := store.CreateCase(
+		ctx, database, tenantID, memberID, "access-case",
+		CreateCaseInput{
+			SubjectType: SubjectReporter, RightType: RightAccess,
+			ControllerRole: RoleCustomerControllerAssistance,
+			SubjectEmail:   "reporter@example.test",
+		}, now.Add(9*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("create access case: %v", err)
+	}
+	accessHash, ok := parseReporterRequestToken(accessToken)
+	if !ok {
+		t.Fatal("parse access verification token")
+	}
+	if _, err := store.VerifyCase(ctx, database, accessHash, now.Add(10*time.Minute)); err != nil {
+		t.Fatalf("verify access case: %v", err)
+	}
+	accessExecution, created, err := store.StartCaseExecution(
+		ctx, database, tenantID, accessCase.ID, memberID, "access-execute-1",
+		now.Add(11*time.Minute),
+	)
+	if err != nil || !created || accessExecution.RightType != RightAccess ||
+		accessExecution.Primitive != ReporterExport {
+		t.Fatalf("StartCaseExecution(access) = %#v created=%t error=%v",
+			accessExecution, created, err)
+	}
+
+	listed, err := store.ListCases(ctx, database, tenantID, 100)
+	if err != nil {
+		t.Fatalf("ListCases() after execution: %v", err)
+	}
+	for _, privacyCase := range listed {
+		switch privacyCase.ID {
+		case erasureCase.ID:
+			if privacyCase.Execution == nil || len(privacyCase.LegalHolds) != 2 ||
+				privacyCase.LegalHolds[0].Active || privacyCase.LegalHolds[1].Active {
+				t.Fatalf("listed erasure case state = %#v", privacyCase)
+			}
+		case accessCase.ID:
+			if privacyCase.Execution == nil ||
+				privacyCase.Execution.RightType != RightAccess {
+				t.Fatalf("listed access case state = %#v", privacyCase)
+			}
+		}
+	}
+}

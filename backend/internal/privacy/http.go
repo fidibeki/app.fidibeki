@@ -39,6 +39,9 @@ type HTTPStore interface {
 	TransitionCase(context.Context, db.Querier, string, string, string, string, TransitionCaseInput, time.Time) (PrivacyCase, error)
 	CaseDashboard(context.Context, db.Querier, string, time.Time) (CaseDashboard, error)
 	SetCaseRestriction(context.Context, db.Querier, string, string, string, string, bool, string, time.Time) (Restriction, error)
+	PlaceLegalHold(context.Context, db.Querier, string, string, string, string, string, string, time.Time) (LegalHold, error)
+	ReleaseLegalHold(context.Context, db.Querier, string, string, string, string, string, string, time.Time) (LegalHold, error)
+	StartCaseExecution(context.Context, db.Querier, string, string, string, string, time.Time) (CaseExecution, bool, error)
 }
 
 type DownloadStorage interface {
@@ -103,6 +106,14 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/privacy/cases/{caseID}/transition", handler.transitionCase)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/restriction", handler.setCaseRestriction)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/legal-holds", handler.placeCaseLegalHold)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/legal-holds/{holdID}/release", handler.releaseCaseLegalHold)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/execute", handler.startCaseExecution)
+	router.With(read...).
+		Post("/v1/privacy/cases/{caseID}/execution/download", handler.downloadCaseExecution)
 }
 
 func (handler *HTTPHandler) retention(w http.ResponseWriter, r *http.Request) {
@@ -447,6 +458,10 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy case transition is invalid", nil)
 	case errors.Is(err, ErrCaseReasonRequired):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "a reason is required for this decision", nil)
+	case errors.Is(err, ErrLegalHoldActive):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "an active legal hold blocks this privacy operation", nil)
+	case errors.Is(err, ErrCaseExecutionUnsupported):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "this privacy case cannot use automated execution", nil)
 	default:
 		handler.logger.ErrorContext(r.Context(), "privacy request failed", "error", err)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)

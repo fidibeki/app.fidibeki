@@ -19,15 +19,6 @@ func (exporter Exporter) anonymizeReporter(ctx context.Context, job Job) error {
 	if err != nil {
 		return exporter.fail(ctx, job, err)
 	}
-	objectKeys, err := reporterObjectKeys(ctx, exporter.Database, job.TenantID, scope.Email, scope.VerifiedAt)
-	if err != nil {
-		return exporter.fail(ctx, job, err)
-	}
-	for _, key := range objectKeys {
-		if err := exporter.Storage.RemoveObject(ctx, key); err != nil {
-			return exporter.fail(ctx, job, fmt.Errorf("remove reporter object %q: %w", key, err))
-		}
-	}
 	tx, err := exporter.Database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return exporter.fail(ctx, job, fmt.Errorf("begin reporter anonymization: %w", err))
@@ -39,9 +30,23 @@ func (exporter Exporter) anonymizeReporter(ctx context.Context, job Job) error {
 		cancel()
 		return exporter.fail(ctx, job, errors.Join(failure, rollbackErr))
 	}
+	if err := ensureCaseErasureAllowed(ctx, tx, job); err != nil {
+		return failTransaction(err)
+	}
 	scope, err = loadReporterScope(ctx, tx, job, ReporterAnonymize)
 	if err != nil {
 		return failTransaction(err)
+	}
+	objectKeys, err := reporterObjectKeys(
+		ctx, tx, job.TenantID, scope.Email, scope.VerifiedAt,
+	)
+	if err != nil {
+		return failTransaction(err)
+	}
+	for _, key := range objectKeys {
+		if err := exporter.Storage.RemoveObject(ctx, key); err != nil {
+			return failTransaction(fmt.Errorf("remove reporter object %q: %w", key, err))
+		}
 	}
 	recordCount, err := reporterRecordCount(ctx, tx, job.TenantID, scope.Email, scope.VerifiedAt)
 	if err != nil {

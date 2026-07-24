@@ -542,8 +542,17 @@ was removed from the staging test tenant.
         integrations, reporter email, replay, and analytics enforcement, public status, and
         backoffice case intake/list/dashboard.
       - [x] Restriction details now populate case lists as well as detail views.
-      - [ ] Slices 2-3: execute access/rectification/erasure/objection/withdrawal workflows,
-        legal holds and partial/refusal outcomes, recipient action tracking, and communications.
+      - [x] Slice 2a: verified reporter access cases queue the existing scoped export and expose an
+        authenticated, audited download; erasure cases queue the existing structured
+        deletion/anonymization primitive without relabelling that primitive as the legal decision.
+        Reasoned legal holds are tenant-isolated, idempotent, visible in the backoffice, and block
+        erasure both at scheduling and immediately before worker side effects. Failed jobs remain
+        retryable after a hold is reviewed and released.
+      - [ ] Slice 2b: expanded discovery, portability assessment, member access, field-level
+        rectification and derived-data invalidation, itemized erasure exceptions, and explicit
+        partial/refusal execution evidence.
+      - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
+        failure recovery, and the complete bilingual case-detail workflow.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
       data quarantine, policy disablement, and external provider-assessment gates.
     - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,

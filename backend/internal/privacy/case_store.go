@@ -242,7 +242,11 @@ func (Store) ListCases(
 		return nil, fmt.Errorf("iterate privacy cases: %w", err)
 	}
 	rows.Close()
-	return attachCaseRestrictions(ctx, query, tenantID, cases)
+	cases, err = attachCaseRestrictions(ctx, query, tenantID, cases)
+	if err != nil {
+		return nil, err
+	}
+	return attachCaseOperationalState(ctx, query, tenantID, cases)
 }
 
 func attachCaseRestrictions(
@@ -312,7 +316,13 @@ func (Store) GetCase(
 	if err == nil {
 		privacyCase.Restriction = &restriction
 	}
-	return privacyCase, nil
+	cases, err := attachCaseOperationalState(
+		ctx, query, tenantID, []PrivacyCase{privacyCase},
+	)
+	if err != nil {
+		return PrivacyCase{}, err
+	}
+	return cases[0], nil
 }
 
 func (Store) ListCaseEvents(

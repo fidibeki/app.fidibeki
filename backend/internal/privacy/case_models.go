@@ -59,10 +59,12 @@ const (
 )
 
 var (
-	ErrCaseTransition       = errors.New("privacy case transition is invalid")
-	ErrCaseReasonRequired   = errors.New("privacy case decision reason is required")
-	ErrIdempotencyConflict  = errors.New("idempotency key was reused with different input")
-	ErrProcessingRestricted = errors.New("processing is restricted for this data subject")
+	ErrCaseTransition           = errors.New("privacy case transition is invalid")
+	ErrCaseReasonRequired       = errors.New("privacy case decision reason is required")
+	ErrCaseExecutionUnsupported = errors.New("privacy case execution is not supported")
+	ErrLegalHoldActive          = errors.New("privacy case has an active legal hold")
+	ErrIdempotencyConflict      = errors.New("idempotency key was reused with different input")
+	ErrProcessingRestricted     = errors.New("processing is restricted for this data subject")
 )
 
 type PrivacyCase struct {
@@ -91,6 +93,8 @@ type PrivacyCase struct {
 	ExceptionReason         *string        `json:"exception_reason,omitempty"`
 	LegacyReporterRequestID *string        `json:"legacy_reporter_request_id,omitempty"`
 	Restriction             *Restriction   `json:"restriction,omitempty"`
+	LegalHolds              []LegalHold    `json:"legal_holds"`
+	Execution               *CaseExecution `json:"execution,omitempty"`
 	CreatedAt               time.Time      `json:"created_at"`
 	UpdatedAt               time.Time      `json:"updated_at"`
 }
@@ -116,6 +120,35 @@ type CaseEvent struct {
 	NewStatus      *CaseStatus    `json:"new_status,omitempty"`
 	Data           map[string]any `json:"data"`
 	OccurredAt     time.Time      `json:"occurred_at"`
+}
+
+type LegalHold struct {
+	ID                 string     `json:"id"`
+	PrivacyCaseID      string     `json:"privacy_case_id"`
+	Reason             string     `json:"reason"`
+	LegalReference     *string    `json:"legal_reference,omitempty"`
+	Active             bool       `json:"active"`
+	PlacedByMemberID   string     `json:"placed_by_member_id"`
+	PlacedAt           time.Time  `json:"placed_at"`
+	ReleasedByMemberID *string    `json:"released_by_member_id,omitempty"`
+	ReleasedAt         *time.Time `json:"released_at,omitempty"`
+	ReleaseReason      *string    `json:"release_reason,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type CaseExecution struct {
+	RightType         RightType             `json:"right_type"`
+	Primitive         ReporterAction        `json:"-"`
+	RequestStatus     ReporterRequestStatus `json:"request_status"`
+	JobID             *string               `json:"job_id,omitempty"`
+	JobStatus         *JobStatus            `json:"job_status,omitempty"`
+	JobExpiresAt      *time.Time            `json:"job_expires_at,omitempty"`
+	RecordCount       *int                  `json:"record_count,omitempty"`
+	ManualReviewCount *int                  `json:"manual_review_count,omitempty"`
+	ErrorMessage      *string               `json:"error_message,omitempty"`
+	StartedAt         time.Time             `json:"started_at"`
+	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
 }
 
 type CreateCaseInput struct {

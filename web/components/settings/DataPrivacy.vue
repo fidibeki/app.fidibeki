@@ -7,9 +7,12 @@ import {
   Clock3,
   Download,
   FileArchive,
+  LockKeyhole,
+  Play,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  UnlockKeyhole,
   X,
 } from '@lucide/vue'
 import type {
@@ -82,6 +85,10 @@ const caseControllerRole = ref<PrivacyControllerRole>('customer_controller_assis
 const caseReporterEmail = ref('')
 const caseSubjectMemberID = ref('')
 const caseOwnerMemberID = ref('')
+const expandedCases = ref<Record<string, boolean>>({})
+const holdReasons = ref<Record<string, string>>({})
+const holdReferences = ref<Record<string, string>>({})
+const releaseReasons = ref<Record<string, string>>({})
 
 const activeMembers = computed(() => props.members.filter(member => member.status === 'active'))
 
@@ -115,6 +122,88 @@ async function createPrivacyCase() {
       : t('admin.privacy.settings.cases.created')
     caseReporterEmail.value = ''
     caseSubjectMemberID.value = ''
+    await refresh()
+  })
+}
+
+function activeCaseHolds(item: PrivacyCase) {
+  return item.legal_holds.filter(hold => hold.active)
+}
+
+function caseCanExecute(item: PrivacyCase) {
+  return item.subject_type === 'reporter'
+    && Boolean(item.verified_at)
+    && !item.execution
+    && ['access', 'erasure'].includes(item.right_type)
+    && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
+}
+
+function toggleCase(item: PrivacyCase) {
+  expandedCases.value = {
+    ...expandedCases.value,
+    [item.id]: !expandedCases.value[item.id],
+  }
+}
+
+async function startCaseExecution(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !caseCanExecute(item)) return
+  if (item.right_type === 'erasure'
+    && !window.confirm(t('admin.privacy.settings.cases.confirmErasure'))) return
+  await runAction(`execute-case:${item.id}`, async () => {
+    await $apiFetch(`/v1/privacy/cases/${item.id}/execute`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    })
+    actionNotice.value = t(item.right_type === 'erasure'
+      ? 'admin.privacy.settings.cases.erasureQueued'
+      : 'admin.privacy.settings.cases.exportQueued')
+    await refresh()
+  })
+}
+
+async function downloadCaseExecution(item: PrivacyCase) {
+  if (item.execution?.right_type !== 'access' || item.execution.job_status !== 'completed') return
+  await runAction(`download-case:${item.id}`, async () => {
+    const response = await $apiFetch<{ url: string }>(
+      `/v1/privacy/cases/${item.id}/execution/download`,
+      { method: 'POST' },
+    )
+    triggerSignedDownload(response.url, `fidibeki-${item.public_id.toLowerCase()}-access-export.zip`)
+  })
+}
+
+async function placeCaseHold(item: PrivacyCase) {
+  if (!canWrite('tenant:update')) return
+  const reason = (holdReasons.value[item.id] || '').trim()
+  if (!reason) return
+  await runAction(`hold-case:${item.id}`, async () => {
+    await $apiFetch(`/v1/privacy/cases/${item.id}/legal-holds`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: {
+        reason,
+        legal_reference: (holdReferences.value[item.id] || '').trim(),
+      },
+    })
+    holdReasons.value = { ...holdReasons.value, [item.id]: '' }
+    holdReferences.value = { ...holdReferences.value, [item.id]: '' }
+    actionNotice.value = t('admin.privacy.settings.cases.holdPlaced')
+    await refresh()
+  })
+}
+
+async function releaseCaseHold(item: PrivacyCase, holdID: string) {
+  if (!canWrite('tenant:update')) return
+  const reason = (releaseReasons.value[holdID] || '').trim()
+  if (!reason) return
+  await runAction(`release-hold:${holdID}`, async () => {
+    await $apiFetch(`/v1/privacy/cases/${item.id}/legal-holds/${holdID}/release`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { reason },
+    })
+    releaseReasons.value = { ...releaseReasons.value, [holdID]: '' }
+    actionNotice.value = t('admin.privacy.settings.cases.holdReleased')
     await refresh()
   })
 }
@@ -373,13 +462,61 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
           </form>
           <div v-if="!data.cases.length" class="privacy-empty privacy-empty--compact"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.cases.empty') }}</h3></div>
           <div v-else class="privacy-table privacy-case-table">
-            <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.cases.case') }}</span><span>{{ t('admin.privacy.settings.cases.subject') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.cases.deadline') }}</span><span>{{ t('admin.privacy.settings.cases.owner') }}</span></div>
-            <div v-for="item in data.cases" :key="item.id" class="privacy-row">
-              <span><b>{{ item.public_id }}</b><small>{{ t(`admin.privacy.casePublic.rights.${item.right_type}`) }}</small></span>
-              <span><b>{{ item.subject_email || memberLabel(item.subject_member_id) }}</b><small>{{ t(`admin.privacy.settings.cases.${item.subject_type}`) }}</small></span>
-              <span><span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span><small v-if="item.restriction?.active">{{ t('admin.privacy.settings.cases.restricted') }}</small></span>
-              <span>{{ dateTime(item.deadline_at) }}</span>
-              <span>{{ memberLabel(item.owner_member_id) }}</span>
+            <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.cases.case') }}</span><span>{{ t('admin.privacy.settings.cases.subject') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.cases.deadline') }}</span><span>{{ t('admin.privacy.settings.cases.owner') }}</span><span /></div>
+            <div v-for="item in data.cases" :key="item.id" class="privacy-case-entry">
+              <div class="privacy-row">
+                <span><b>{{ item.public_id }}</b><small>{{ t(`admin.privacy.casePublic.rights.${item.right_type}`) }}</small></span>
+                <span><b>{{ item.subject_email || memberLabel(item.subject_member_id) }}</b><small>{{ t(`admin.privacy.settings.cases.${item.subject_type}`) }}</small></span>
+                <span><span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span><small v-if="item.restriction?.active">{{ t('admin.privacy.settings.cases.restricted') }}</small><small v-if="activeCaseHolds(item).length">{{ t('admin.privacy.settings.cases.activeHolds', { count: activeCaseHolds(item).length }) }}</small></span>
+                <span>{{ dateTime(item.deadline_at) }}</span>
+                <span>{{ memberLabel(item.owner_member_id) }}</span>
+                <button class="app-icon-button" type="button" :title="t('admin.privacy.settings.cases.toggleDetails')" @click="toggleCase(item)">
+                  <ChevronUp v-if="expandedCases[item.id]" :size="15" />
+                  <ChevronDown v-else :size="15" />
+                </button>
+              </div>
+              <div v-if="expandedCases[item.id]" class="privacy-case-detail">
+                <div class="privacy-case-execution">
+                  <div>
+                    <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
+                    <template v-if="item.execution">
+                      <b>{{ t(`admin.privacy.casePublic.rights.${item.execution.right_type}`) }}</b>
+                      <span class="privacy-status" :data-tone="statusTone(item.execution.job_status || item.execution.request_status)"><i />{{ statusLabel(item.execution.job_status || item.execution.request_status) }}</span>
+                      <small v-if="item.execution.record_count != null">{{ t('admin.privacy.settings.cases.records', { count: item.execution.record_count }) }}</small>
+                      <small v-if="item.execution.manual_review_count">{{ t('admin.privacy.settings.cases.manualRecords', { count: item.execution.manual_review_count }) }}</small>
+                    </template>
+                    <small v-else>{{ t('admin.privacy.settings.cases.notStarted') }}</small>
+                  </div>
+                  <button v-if="caseCanExecute(item)" class="app-button" :class="{ 'privacy-danger-button': item.right_type === 'erasure' }" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="startCaseExecution(item)">
+                    <ShieldAlert v-if="item.right_type === 'erasure'" :size="15" />
+                    <Play v-else :size="15" />
+                    {{ t(item.right_type === 'erasure' ? 'admin.privacy.settings.cases.startErasure' : 'admin.privacy.settings.cases.startExport') }}
+                  </button>
+                  <button v-else-if="item.execution?.right_type === 'access' && item.execution.job_status === 'completed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="downloadCaseExecution(item)">
+                    <Download :size="15" />{{ t('admin.privacy.settings.cases.downloadExport') }}
+                  </button>
+                  <button v-else-if="item.execution?.job_id && item.execution.job_status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="retryJob(item.execution.job_id)">
+                    <RefreshCw :size="15" />{{ t('admin.privacy.settings.cases.retryExecution') }}
+                  </button>
+                </div>
+                <div class="privacy-case-holds">
+                  <header><LockKeyhole :size="15" /><b>{{ t('admin.privacy.settings.cases.legalHolds') }}</b></header>
+                  <div v-if="!item.legal_holds.length" class="privacy-case-hold-empty">{{ t('admin.privacy.settings.cases.noHolds') }}</div>
+                  <div v-for="hold in item.legal_holds" :key="hold.id" class="privacy-case-hold">
+                    <div><b>{{ hold.reason }}</b><small v-if="hold.legal_reference">{{ hold.legal_reference }}</small><small>{{ dateTime(hold.placed_at) }} · {{ memberLabel(hold.placed_by_member_id) }}</small><small v-if="!hold.active && hold.release_reason">{{ t('admin.privacy.settings.cases.releasedReason', { reason: hold.release_reason }) }}</small></div>
+                    <form v-if="hold.active" @submit.prevent="releaseCaseHold(item, hold.id)">
+                      <input v-model.trim="releaseReasons[hold.id]" class="app-input" maxlength="2000" required :placeholder="t('admin.privacy.settings.cases.releaseReason')" />
+                      <button class="app-button" type="submit" :disabled="Boolean(actionPending)"><UnlockKeyhole :size="14" />{{ t('admin.privacy.settings.cases.releaseHold') }}</button>
+                    </form>
+                    <span v-else class="privacy-status" data-tone="success"><i />{{ t('admin.privacy.settings.cases.released') }}</span>
+                  </div>
+                  <form class="privacy-case-hold-form" @submit.prevent="placeCaseHold(item)">
+                    <input v-model.trim="holdReasons[item.id]" class="app-input" maxlength="2000" required :placeholder="t('admin.privacy.settings.cases.holdReason')" />
+                    <input v-model.trim="holdReferences[item.id]" class="app-input" maxlength="500" :placeholder="t('admin.privacy.settings.cases.legalReference')" />
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending)"><LockKeyhole :size="14" />{{ t('admin.privacy.settings.cases.placeHold') }}</button>
+                  </form>
+                </div>
+              </div>
             </div>
           </div>
         </template>
@@ -547,7 +684,26 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-case-dashboard span { color: var(--muted); font-size: 9px; }
 .privacy-case-form { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)) auto; align-items: end; gap: 10px; padding: 14px 15px; background: var(--surface-soft); border-bottom: 1px solid var(--line); }
 .privacy-case-form .app-button { white-space: nowrap; }
-.privacy-case-table .privacy-row { grid-template-columns: 110px minmax(180px, 1.2fr) 150px minmax(160px, .8fr) minmax(120px, .7fr); }
+.privacy-case-table .privacy-row { grid-template-columns: 110px minmax(180px, 1.2fr) 150px minmax(160px, .8fr) minmax(120px, .7fr) 34px; }
+.privacy-case-entry { border-bottom: 1px solid var(--line); }
+.privacy-case-entry > .privacy-row { border-bottom: 0; }
+.privacy-case-entry .app-icon-button { align-self: center; justify-self: end; }
+.privacy-case-detail { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.5fr); border-top: 1px solid var(--line); background: var(--surface-soft); }
+.privacy-case-execution, .privacy-case-holds { padding: 14px 15px; }
+.privacy-case-execution { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-right: 1px solid var(--line); }
+.privacy-case-execution > div { display: grid; gap: 6px; }
+.privacy-case-execution b { color: var(--ink); font-size: 11px; }
+.privacy-case-execution small { color: var(--muted); font-size: 9px; }
+.privacy-case-holds { display: grid; gap: 9px; }
+.privacy-case-holds > header { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 10px; }
+.privacy-case-hold-empty { color: var(--muted); font-size: 9px; }
+.privacy-case-hold { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
+.privacy-case-hold > div { display: grid; gap: 3px; }
+.privacy-case-hold b { color: var(--ink); font-size: 10px; }
+.privacy-case-hold small { color: var(--muted); font-size: 9px; }
+.privacy-case-hold form { display: flex; align-items: center; gap: 7px; }
+.privacy-case-hold form .app-input { width: min(260px, 30vw); }
+.privacy-case-hold-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(130px, .65fr) auto; gap: 7px; }
 .privacy-request-form .app-button { white-space: nowrap; }
 .privacy-danger-button { background: var(--red); color: #fff; border-color: var(--red); }
 .privacy-danger-button:hover:not(:disabled) { background: #962f3a; color: #fff; border-color: #962f3a; }
@@ -587,8 +743,11 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-request-form { grid-template-columns: 1fr 1fr; }
   .privacy-case-dashboard { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .privacy-case-form { grid-template-columns: 1fr 1fr; }
-  .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) 140px 120px; }
+  .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) 140px 120px 34px; }
   .privacy-case-table .privacy-row > span:nth-child(2), .privacy-case-table .privacy-row > span:nth-child(5) { display: none; }
+  .privacy-case-detail { grid-template-columns: 1fr; }
+  .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
+  .privacy-case-hold-form { grid-template-columns: 1fr; }
   .privacy-request-form .app-button { grid-column: 1 / -1; justify-self: end; }
 }
 @media (max-width: 650px) {
@@ -603,8 +762,13 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-dashboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .privacy-case-form { grid-template-columns: 1fr; }
   .privacy-case-form .app-button { width: 100%; }
-  .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .privacy-case-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto 34px; }
   .privacy-case-table .privacy-row > span:not(:first-child):not(:nth-child(3)) { display: none; }
+  .privacy-case-execution { align-items: stretch; flex-direction: column; }
+  .privacy-case-execution .app-button { width: 100%; }
+  .privacy-case-hold { grid-template-columns: 1fr; }
+  .privacy-case-hold form { align-items: stretch; flex-direction: column; }
+  .privacy-case-hold form .app-input { width: 100%; }
   .privacy-request-form .app-button { grid-column: auto; width: 100%; }
   .privacy-dialog footer { flex-direction: column-reverse; }
   .privacy-dialog footer .app-button { width: 100%; }

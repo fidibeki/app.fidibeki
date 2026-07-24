@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -196,6 +197,155 @@ func (handler *HTTPHandler) setCaseRestriction(w http.ResponseWriter, r *http.Re
 	api.WriteJSON(w, http.StatusOK, map[string]any{"restriction": restriction})
 }
 
+func (handler *HTTPHandler) placeCaseLegalHold(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body struct {
+		Reason         string `json:"reason"`
+		LegalReference string `json:"legal_reference"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	hold, err := handler.options.Store.PlaceLegalHold(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), body.Reason, body.LegalReference,
+		handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"legal_hold": hold})
+}
+
+func (handler *HTTPHandler) releaseCaseLegalHold(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	holdID, ok := privacyLegalHoldID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	hold, err := handler.options.Store.ReleaseLegalHold(
+		r.Context(), query, resolved.ID, caseID, holdID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), body.Reason, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"legal_hold": hold})
+}
+
+func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	execution, created, err := handler.options.Store.StartCaseExecution(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusAccepted
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"execution": execution, "created": created,
+	})
+}
+
+func (handler *HTTPHandler) downloadCaseExecution(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	privacyCase, err := handler.options.Store.GetCase(
+		r.Context(), query, resolved.ID, caseID,
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	if privacyCase.Execution == nil ||
+		privacyCase.Execution.Primitive != ReporterExport ||
+		privacyCase.Execution.JobID == nil {
+		handler.writeError(w, r, ErrJobUnavailable)
+		return
+	}
+	job, err := handler.options.Store.GetJob(
+		r.Context(), query, resolved.ID, *privacyCase.Execution.JobID,
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	now := handler.now()
+	if job.Kind != JobReporterExport || job.Status != JobCompleted ||
+		job.ObjectKey == nil || job.ExpiresAt == nil || !job.ExpiresAt.After(now) {
+		handler.writeError(w, r, ErrJobUnavailable)
+		return
+	}
+	if handler.options.Storage == nil {
+		handler.writeError(w, r, errors.New("privacy export storage is unavailable"))
+		return
+	}
+	linkExpiresAt := now.Add(downloadLinkTTL)
+	filename := fmt.Sprintf(
+		"fidibeki-%s-%s-access-export.zip",
+		resolved.Slug, strings.ToLower(privacyCase.PublicID),
+	)
+	url, err := handler.options.Storage.PresignGet(
+		r.Context(), *job.ObjectKey, filename, downloadLinkTTL,
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	if err := handler.options.Store.RecordDownload(
+		r.Context(), query, resolved.ID, claims.Subject, job.ID, linkExpiresAt,
+	); err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"url": url, "expires_at": linkExpiresAt,
+	})
+}
+
 func decodeCaseJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -218,6 +368,15 @@ func privacyCaseID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return caseID, true
+}
+
+func privacyLegalHoldID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	holdID := strings.TrimSpace(chi.URLParam(r, "holdID"))
+	if _, err := uuid.Parse(holdID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "privacy legal hold not found", nil)
+		return "", false
+	}
+	return holdID, true
 }
 
 func privacyCaseVerificationMessage(

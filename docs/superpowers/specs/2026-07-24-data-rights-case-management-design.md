@@ -128,3 +128,20 @@ English and Portuguese copy must describe operational facts without presenting l
 
 Each slice includes migration compatibility tests, tenant isolation, idempotency, backend and
 frontend tests, and staging E2E validation. Production remains out of scope.
+
+## Implementation Status
+
+- Slice 1 is implemented through migration 86.
+- Slice 2a is implemented through migration 87: a verified reporter access case can start the
+  existing reporter export job and download its archive from the authenticated case; a verified
+  reporter erasure case can start the existing structured deletion/anonymization primitive while
+  retaining `erasure` as the case right and operational decision. Case-level legal holds are
+  idempotent, tenant-isolated, reasoned, releasable, and checked both when the job is queued and
+  immediately before the worker removes stored objects or database data.
+- Starting or completing the underlying job does not automatically complete the case. Manual
+  review findings and the operator's recorded legal decision remain distinct evidence.
+- Remaining slice 2 work includes expanded discovery, portability assessment, member access,
+  field-level rectification with derived-data invalidation, itemized erasure exceptions, and
+  first-class partial/refusal execution evidence.
+- Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
+  workflow remain pending.
