@@ -94,8 +94,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 66 {
-		t.Fatalf("migration table count = %d, want 66", len(migrated))
+	if len(migrated) != 67 {
+		t.Fatalf("migration table count = %d, want 67", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(

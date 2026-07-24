@@ -141,6 +141,9 @@ func (s Store) CreateIncident(
 		}
 	}
 	incident.AffectedTenantIDs = normalized.AffectedTenantIDs
+	if err := insertContainmentChecklist(ctx, tx, incident.ID, actorPlatformAdminID, now); err != nil {
+		return Incident{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Incident{}, fmt.Errorf("commit breach incident creation: %w", err)
@@ -190,8 +193,17 @@ func (s Store) ListIncidents(ctx context.Context, filter ListFilter) ([]Incident
 
 func (s Store) GetIncident(
 	ctx context.Context, incidentID string,
-) (Incident, []ChronologyEntry, []Assessment, error) {
-	incident, err := scanIncidentWithTenants(s.Database.QueryRow(ctx, `
+) (Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent, error) {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return Incident{}, nil, nil, nil, nil, fmt.Errorf("begin breach incident read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`); err != nil {
+		return Incident{}, nil, nil, nil, nil, fmt.Errorf("configure breach incident read snapshot: %w", err)
+	}
+
+	incident, err := scanIncidentWithTenants(tx.QueryRow(ctx, `
 		SELECT `+breachIncidentSelectColumns("incident")+`,
 		       COALESCE((
 		           SELECT array_agg(link.tenant_id::text ORDER BY link.tenant_id)
@@ -202,24 +214,33 @@ func (s Store) GetIncident(
 		WHERE incident.id = $1
 	`, incidentID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Incident{}, nil, nil, ErrNotFound
+		return Incident{}, nil, nil, nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return Incident{}, nil, nil, fmt.Errorf("get breach incident: %w", err)
+		return Incident{}, nil, nil, nil, nil, fmt.Errorf("get breach incident: %w", err)
 	}
-	entries, err := s.listChronologyEntries(ctx, incidentID)
+	entries, err := s.listChronologyEntries(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, err
 	}
-	assessments, err := s.listAssessments(ctx, incidentID)
+	assessments, err := s.listAssessments(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, err
 	}
-	return incident, entries, assessments, nil
+	actions, actionEvents, err := s.listActions(ctx, tx, incidentID)
+	if err != nil {
+		return Incident{}, nil, nil, nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Incident{}, nil, nil, nil, nil, fmt.Errorf("commit breach incident read: %w", err)
+	}
+	return incident, entries, assessments, actions, actionEvents, nil
 }
 
-func (s Store) listChronologyEntries(ctx context.Context, incidentID string) ([]ChronologyEntry, error) {
-	rows, err := s.Database.Query(ctx, `
+func (s Store) listChronologyEntries(
+	ctx context.Context, query db.Querier, incidentID string,
+) ([]ChronologyEntry, error) {
+	rows, err := query.Query(ctx, `
 		SELECT `+chronologyEntrySelectColumns("entry")+`
 		FROM breach_chronology_entries AS entry
 		WHERE entry.breach_incident_id = $1
@@ -322,8 +343,10 @@ func (s Store) AppendChronologyEntry(
 	return entry, nil
 }
 
-func (s Store) listAssessments(ctx context.Context, incidentID string) ([]Assessment, error) {
-	rows, err := s.Database.Query(ctx, `
+func (s Store) listAssessments(
+	ctx context.Context, query db.Querier, incidentID string,
+) ([]Assessment, error) {
+	rows, err := query.Query(ctx, `
 		SELECT `+breachAssessmentSelectColumns("assessment")+`
 		FROM breach_assessments AS assessment
 		WHERE assessment.breach_incident_id = $1

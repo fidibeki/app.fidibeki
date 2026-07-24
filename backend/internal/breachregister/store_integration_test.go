@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,7 +61,8 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	// without an application bug — this is the actual enforcement boundary,
 	// not merely an application-layer permission check.
 	for _, table := range []string{
-		"breach_incidents", "breach_incident_tenants", "breach_chronology_entries", "breach_assessments",
+		"breach_incidents", "breach_incident_tenants", "breach_chronology_entries",
+		"breach_assessments", "breach_action_events",
 	} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 			var allowed bool
@@ -83,6 +85,45 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 			if !allowed {
 				t.Errorf("fidibeki_admin lacks %s on %s", privilege, table)
 			}
+		}
+	}
+	for _, role := range []string{"fidibeki_app"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+			var allowed bool
+			if err := connection.QueryRow(ctx,
+				`SELECT has_table_privilege($1, 'breach_action_events', $2)`,
+				role, privilege,
+			).Scan(&allowed); err != nil {
+				t.Fatalf("check %s %s privilege on breach_action_events: %v", role, privilege, err)
+			}
+			if allowed {
+				t.Errorf("%s has %s on breach_action_events, want no grant", role, privilege)
+			}
+		}
+	}
+	var publicPrivilegeCount int
+	if err := connection.QueryRow(ctx, `
+		SELECT count(*)
+		FROM information_schema.table_privileges
+		WHERE table_schema = 'public'
+		  AND table_name = 'breach_action_events'
+		  AND grantee = 'PUBLIC'
+	`).Scan(&publicPrivilegeCount); err != nil {
+		t.Fatalf("check PUBLIC privileges on breach_action_events: %v", err)
+	}
+	if publicPrivilegeCount != 0 {
+		t.Errorf("PUBLIC breach_action_events privilege count = %d, want 0", publicPrivilegeCount)
+	}
+	for _, privilege := range []string{"UPDATE", "DELETE"} {
+		var allowed bool
+		if err := connection.QueryRow(ctx,
+			`SELECT has_table_privilege('fidibeki_admin', 'breach_action_events', $1)`,
+			privilege,
+		).Scan(&allowed); err != nil {
+			t.Fatalf("check fidibeki_admin %s privilege on breach_action_events: %v", privilege, err)
+		}
+		if allowed {
+			t.Errorf("fidibeki_admin has %s on breach_action_events, want no grant", privilege)
 		}
 	}
 
@@ -187,10 +228,12 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		)
 	}
 
-	fetched, entries, assessments, err := store.GetIncident(ctx, incident.ID)
-	if err != nil || fetched.ID != incident.ID || len(entries) != 0 || len(assessments) != 0 {
+	fetched, entries, assessments, actions, actionEvents, err := store.GetIncident(ctx, incident.ID)
+	if err != nil || fetched.ID != incident.ID || len(entries) != 0 || len(assessments) != 0 ||
+		len(actions) != 9 || len(actionEvents) != 9 {
 		t.Fatalf(
-			"GetIncident() = %#v/%#v/%#v, error = %v", fetched, entries, assessments, err,
+			"GetIncident() = %#v/%#v/%#v/%#v/%#v, error = %v",
+			fetched, entries, assessments, actions, actionEvents, err,
 		)
 	}
 	if !fetched.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
@@ -199,7 +242,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 			fetched.AuthorityNotificationDeadlineAt, wantDeadline,
 		)
 	}
-	if _, _, _, err := store.GetIncident(
+	if _, _, _, _, _, err := store.GetIncident(
 		ctx, "00000000-0000-4000-8000-000000000000",
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetIncident(missing) error = %v, want ErrNotFound", err)
@@ -247,7 +290,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("AppendChronologyEntry(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, entriesAfterAppend, _, err := store.GetIncident(ctx, incident.ID)
+	_, entriesAfterAppend, _, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(entriesAfterAppend) != 1 || entriesAfterAppend[0].ID != entry.ID {
 		t.Fatalf("GetIncident() chronology = %#v, error = %v", entriesAfterAppend, err)
 	}
@@ -326,9 +369,289 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("CreateAssessment(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, _, assessmentsAfterCreate, err := store.GetIncident(ctx, incident.ID)
+	_, _, assessmentsAfterCreate, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(assessmentsAfterCreate) != 1 || assessmentsAfterCreate[0].ID != assessment.ID {
 		t.Fatalf("GetIncident() assessments = %#v, error = %v", assessmentsAfterCreate, err)
+	}
+
+	// Every new incident receives the complete code-owned containment
+	// checklist in the same transaction.
+	if len(actions) != len(containmentControls) {
+		t.Fatalf("initial containment actions = %d, want %d", len(actions), len(containmentControls))
+	}
+	containmentAction := actions[0]
+	for _, action := range actions {
+		if action.ActionKind != ActionContainment || action.ContainmentArea == nil ||
+			action.Status != ActionPending || action.Revision != 1 ||
+			action.ActorPlatformAdminID != platformAdminID ||
+			!action.CreatedAt.Equal(now) || !action.OccurredAt.Equal(now) {
+			t.Fatalf("invalid initial containment action = %#v", action)
+		}
+	}
+
+	dueAt := now.Add(48 * time.Hour)
+	correctiveReference := "issue:FID-64"
+	postInput := CreatePostIncidentActionInput{
+		Title:                "Complete the credential rotation review",
+		OwnerPlatformAdminID: platformAdminID, DueAt: dueAt,
+		CorrectiveReference: &correctiveReference,
+	}
+	postAction, err := store.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-key-1", postInput,
+	)
+	if err != nil {
+		t.Fatalf("CreatePostIncidentAction() error = %v", err)
+	}
+	if postAction.ActionKind != ActionPostIncident || postAction.Status != ActionPending ||
+		postAction.OwnerPlatformAdminID == nil || *postAction.OwnerPlatformAdminID != platformAdminID ||
+		postAction.DueAt == nil || !postAction.DueAt.Equal(dueAt) {
+		t.Fatalf("created post-incident action = %#v", postAction)
+	}
+	replayedPostAction, err := store.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-key-1", postInput,
+	)
+	if err != nil || replayedPostAction.ID != postAction.ID {
+		t.Fatalf("idempotent CreatePostIncidentAction() = %#v, error = %v", replayedPostAction, err)
+	}
+	afterDeadlineStore := Store{
+		Database: connection, Now: func() time.Time { return dueAt.Add(time.Hour) },
+	}
+	replayedAfterDeadline, err := afterDeadlineStore.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-key-1", postInput,
+	)
+	if err != nil || replayedAfterDeadline.ID != postAction.ID {
+		t.Fatalf(
+			"post-deadline idempotent CreatePostIncidentAction() = %#v, error = %v",
+			replayedAfterDeadline, err,
+		)
+	}
+	pastDueInput := postInput
+	pastDueInput.DueAt = now
+	if _, err := store.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-past-due", pastDueInput,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("past-due CreatePostIncidentAction() error = %v, want ErrInvalidRequest", err)
+	}
+	conflictingPostInput := postInput
+	conflictingPostInput.Title = "Different corrective work"
+	if _, err := store.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-key-1", conflictingPostInput,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting CreatePostIncidentAction() error = %v", err)
+	}
+	unknownOwnerInput := postInput
+	unknownOwnerInput.OwnerPlatformAdminID = "00000000-0000-4000-8000-000000000000"
+	if _, err := store.CreatePostIncidentAction(
+		ctx, incident.ID, platformAdminID, "post-action-unknown-owner", unknownOwnerInput,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("unknown-owner CreatePostIncidentAction() error = %v", err)
+	}
+
+	ownerID := platformAdminID
+	inProgressInput := AppendActionRevisionInput{
+		ExpectedRevision: 1, Status: ActionInProgress, OwnerPlatformAdminID: &ownerID,
+	}
+	inProgress, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-progress-key", inProgressInput,
+	)
+	if err != nil {
+		t.Fatalf("AppendActionRevision(in_progress) error = %v", err)
+	}
+	if inProgress.Revision != 2 || inProgress.Title != containmentAction.Title ||
+		inProgress.ContainmentArea == nil ||
+		*inProgress.ContainmentArea != *containmentAction.ContainmentArea {
+		t.Fatalf("in-progress containment action = %#v", inProgress)
+	}
+	replayedProgress, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-progress-key", inProgressInput,
+	)
+	if err != nil || replayedProgress.ID != inProgress.ID {
+		t.Fatalf("idempotent AppendActionRevision() = %#v, error = %v", replayedProgress, err)
+	}
+	changedProgress := inProgressInput
+	changedProgress.Status = ActionPending
+	if _, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-progress-key", changedProgress,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting AppendActionRevision() error = %v", err)
+	}
+	if _, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-stale-key", inProgressInput,
+	); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale AppendActionRevision() error = %v", err)
+	}
+
+	completionOutcome := "Credential rotation was independently verified."
+	completedInput := AppendActionRevisionInput{
+		ExpectedRevision: 2, Status: ActionCompleted, OwnerPlatformAdminID: &ownerID,
+		OutcomeSummary: &completionOutcome, EvidenceReferences: []string{"ticket:INC-42"},
+	}
+	completed, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-complete-key", completedInput,
+	)
+	if err != nil || completed.Revision != 3 {
+		t.Fatalf("AppendActionRevision(completed) = %#v, error = %v", completed, err)
+	}
+	invalidTerminalUpdate := completedInput
+	invalidTerminalUpdate.ExpectedRevision = 3
+	invalidTerminalUpdate.Status = ActionPending
+	if _, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-terminal-invalid", invalidTerminalUpdate,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("terminal action update error = %v, want ErrInvalidRequest", err)
+	}
+	reopenedInput := AppendActionRevisionInput{
+		ExpectedRevision: 3, Status: ActionInProgress, OwnerPlatformAdminID: &ownerID,
+	}
+	reopened, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-reopen-key", reopenedInput,
+	)
+	if err != nil || reopened.Revision != 4 {
+		t.Fatalf("AppendActionRevision(reopen) = %#v, error = %v", reopened, err)
+	}
+
+	// Two callers may observe revision 4, but only one can commit revision
+	// 5. The parent/action locks make the second return a clean conflict.
+	var waitGroup sync.WaitGroup
+	concurrentErrors := make([]error, 2)
+	for index := range concurrentErrors {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			_, concurrentErrors[index] = store.AppendActionRevision(
+				ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+				"containment-concurrent-"+string(rune('a'+index)),
+				AppendActionRevisionInput{
+					ExpectedRevision: 4, Status: ActionInProgress,
+					OwnerPlatformAdminID: &ownerID,
+				},
+			)
+		}(index)
+	}
+	waitGroup.Wait()
+	successes, revisionConflicts := 0, 0
+	for _, concurrentErr := range concurrentErrors {
+		if concurrentErr == nil {
+			successes++
+		} else if errors.Is(concurrentErr, ErrRevisionConflict) {
+			revisionConflicts++
+		} else {
+			t.Fatalf("concurrent AppendActionRevision() error = %v", concurrentErr)
+		}
+	}
+	if successes != 1 || revisionConflicts != 1 {
+		t.Fatalf(
+			"concurrent AppendActionRevision() successes/conflicts = %d/%d, want 1/1",
+			successes, revisionConflicts,
+		)
+	}
+
+	_, _, _, actionsAfterUpdates, eventsAfterUpdates, err := store.GetIncident(ctx, incident.ID)
+	if err != nil || len(actionsAfterUpdates) != 10 || len(eventsAfterUpdates) != 14 {
+		t.Fatalf(
+			"GetIncident() actions/events = %d/%d, error = %v, want 10/14",
+			len(actionsAfterUpdates), len(eventsAfterUpdates), err,
+		)
+	}
+
+	// Incident detail is one repeatable-read snapshot. Hold the chronology
+	// table after the incident row has been read, commit a new action
+	// revision, then let the read continue: the in-flight response must
+	// remain on revision 5 while a later response can see revision 6.
+	blocker, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin incident-read blocker: %v", err)
+	}
+	blockerReleased := false
+	defer func() {
+		if !blockerReleased {
+			_ = blocker.Rollback(ctx)
+		}
+	}()
+	if _, err := blocker.Exec(ctx,
+		`LOCK TABLE breach_chronology_entries IN ACCESS EXCLUSIVE MODE`,
+	); err != nil {
+		t.Fatalf("lock chronology table: %v", err)
+	}
+	type incidentReadResult struct {
+		actions []ActionEvent
+		events  []ActionEvent
+		err     error
+	}
+	readResult := make(chan incidentReadResult, 1)
+	go func() {
+		_, _, _, readActions, readEvents, readErr := store.GetIncident(ctx, incident.ID)
+		readResult <- incidentReadResult{actions: readActions, events: readEvents, err: readErr}
+	}()
+	snapshotObserved := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		var lockCount int
+		if err := connection.QueryRow(ctx, `
+			SELECT count(*)
+			FROM pg_locks
+			WHERE relation = 'breach_incidents'::regclass
+			  AND mode = 'AccessShareLock'
+			  AND granted
+		`).Scan(&lockCount); err != nil {
+			t.Fatalf("inspect incident-read snapshot lock: %v", err)
+		}
+		if lockCount > 0 {
+			snapshotObserved = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !snapshotObserved {
+		t.Fatal("incident detail read did not establish its repeatable-read snapshot")
+	}
+	snapshotRevision, err := store.AppendActionRevision(
+		ctx, incident.ID, containmentAction.ActionID, platformAdminID,
+		"containment-snapshot-write", AppendActionRevisionInput{
+			ExpectedRevision: 5, Status: ActionInProgress,
+			OwnerPlatformAdminID: &ownerID,
+		},
+	)
+	if err != nil || snapshotRevision.Revision != 6 {
+		t.Fatalf("snapshot concurrent action revision = %#v, error = %v", snapshotRevision, err)
+	}
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatalf("release incident-read blocker: %v", err)
+	}
+	blockerReleased = true
+	var snapshotRead incidentReadResult
+	select {
+	case snapshotRead = <-readResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for incident detail snapshot")
+	}
+	if snapshotRead.err != nil {
+		t.Fatalf("GetIncident() snapshot error = %v", snapshotRead.err)
+	}
+	snapshotCurrentRevision := 0
+	snapshotHistoryRevision := 0
+	for _, action := range snapshotRead.actions {
+		if action.ActionID == containmentAction.ActionID {
+			snapshotCurrentRevision = action.Revision
+		}
+	}
+	for _, event := range snapshotRead.events {
+		if event.ActionID == containmentAction.ActionID &&
+			event.Revision > snapshotHistoryRevision {
+			snapshotHistoryRevision = event.Revision
+		}
+	}
+	if snapshotCurrentRevision != 5 || snapshotHistoryRevision != 5 {
+		t.Fatalf(
+			"incident snapshot current/history revision = %d/%d, want 5/5",
+			snapshotCurrentRevision, snapshotHistoryRevision,
+		)
 	}
 
 	// Facts that change are new rows, never a rewrite of history: every
@@ -360,6 +683,31 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		`DELETE FROM breach_assessments WHERE id = $1`, assessment.ID,
 	); err == nil {
 		t.Fatal("DELETE breach_assessments succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx,
+		`UPDATE breach_action_events SET title = 'rewritten' WHERE id = $1`, containmentAction.ID,
+	); err == nil {
+		t.Fatal("UPDATE breach_action_events succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx,
+		`DELETE FROM breach_action_events WHERE id = $1`, containmentAction.ID,
+	); err == nil {
+		t.Fatal("DELETE breach_action_events succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_action_events (
+			breach_incident_id, action_id, revision, action_kind, containment_area,
+			title, status, owner_platform_admin_id, evidence_references,
+			actor_platform_admin_id, idempotency_key, request_fingerprint,
+			occurred_at, created_at
+		) VALUES (
+			$1, $2, 7, 'containment', $3, 'Changed immutable title', 'in_progress',
+			$4, '{}', $4, 'direct-identity-change',
+			digest('direct-identity-change', 'sha256'), $5, $5
+		)
+	`, incident.ID, containmentAction.ActionID, *containmentAction.ContainmentArea,
+		platformAdminID, now); err == nil {
+		t.Fatal("INSERT changed breach action identity succeeded, want revision guard rejection")
 	}
 }
 
@@ -519,6 +867,232 @@ func TestMigration096RollsBackAndReappliesCleanly(t *testing.T) {
 			incident.AuthorityNotificationDeadlineAt, wantDeadline,
 		)
 	}
+}
+
+func TestMigration101BackfillsAndReappliesActionLedger(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(container); err != nil {
+			t.Errorf("terminate PostgreSQL container: %v", err)
+		}
+	})
+	databaseURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL URL: %v", err)
+	}
+	migrator, err := db.NewMigrator(databaseURL, migrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	if err := migrator.Migrate(100); err != nil {
+		t.Fatalf("migrate to pre-101 version: %v", err)
+	}
+
+	connection, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect PostgreSQL: %v", err)
+	}
+	t.Cleanup(connection.Close)
+
+	var platformAdminID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('legacy-actions@example.test', '{}') RETURNING id
+	`).Scan(&platformAdminID); err != nil {
+		t.Fatalf("create legacy platform admin fixture: %v", err)
+	}
+	createdAt := time.Date(2026, time.July, 20, 9, 30, 0, 0, time.UTC)
+	awarenessAt := createdAt.Add(-time.Hour)
+	var incidentID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO breach_incidents (
+			public_id, awareness_at, detection_source, controller_role,
+			affected_environments, affected_system_categories, affected_data_categories,
+			affected_subject_categories, confidentiality_impact, integrity_impact,
+			availability_impact, containment_summary, created_by_platform_admin_id,
+			idempotency_key, request_fingerprint, created_at,
+			authority_notification_deadline_at
+		) VALUES (
+			'BR-LEGACY101', $1, 'internal_monitoring', 'controller',
+			'{staging}', '{database}', '{contact_info}', '{tenant_members}',
+			true, false, false, 'Contained before migration 101.', $2,
+			'legacy-migration-101', decode(repeat('01', 32), 'hex'), $3,
+			$1::timestamptz + interval '72 hours'
+		) RETURNING id
+	`, awarenessAt, platformAdminID, createdAt).Scan(&incidentID); err != nil {
+		t.Fatalf("create pre-migration-101 breach incident: %v", err)
+	}
+
+	assertMigratedChecklist := func(stage string) {
+		t.Helper()
+		var count, distinctAreas, matchingActorAndTime int
+		if err := connection.QueryRow(ctx, `
+			SELECT count(*), count(DISTINCT containment_area),
+			       count(*) FILTER (
+			           WHERE actor_platform_admin_id = $2
+			             AND occurred_at = $3
+			             AND created_at = $3
+			             AND action_kind = 'containment'
+			             AND status = 'pending'
+			             AND revision = 1
+			             AND idempotency_key LIKE 'seed:containment:%'
+			             AND octet_length(request_fingerprint) = 32
+			       )
+			FROM breach_action_events
+			WHERE breach_incident_id = $1
+		`, incidentID, platformAdminID, createdAt).Scan(
+			&count, &distinctAreas, &matchingActorAndTime,
+		); err != nil {
+			t.Fatalf("%s: read migrated containment checklist: %v", stage, err)
+		}
+		if count != len(containmentControls) || distinctAreas != len(containmentControls) ||
+			matchingActorAndTime != len(containmentControls) {
+			t.Fatalf(
+				"%s: migrated checklist count/areas/provenance = %d/%d/%d, want %d",
+				stage, count, distinctAreas, matchingActorAndTime, len(containmentControls),
+			)
+		}
+		rows, err := connection.Query(ctx, `
+			SELECT containment_area::text, title
+			FROM breach_action_events
+			WHERE breach_incident_id = $1
+			ORDER BY containment_area
+		`, incidentID)
+		if err != nil {
+			t.Fatalf("%s: list migrated containment catalog: %v", stage, err)
+		}
+		defer rows.Close()
+		got := make(map[ContainmentArea]string, len(containmentControls))
+		for rows.Next() {
+			var area ContainmentArea
+			var title string
+			if err := rows.Scan(&area, &title); err != nil {
+				t.Fatalf("%s: scan migrated containment catalog: %v", stage, err)
+			}
+			got[area] = title
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("%s: iterate migrated containment catalog: %v", stage, err)
+		}
+		for _, control := range containmentControls {
+			if got[control.Area] != control.Title {
+				t.Errorf(
+					"%s: containment %q title = %q, want %q",
+					stage, control.Area, got[control.Area], control.Title,
+				)
+			}
+		}
+	}
+
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate legacy incident to 101: %v", err)
+	}
+	assertMigratedChecklist("first up")
+
+	var actionID, eventID, title, area string
+	if err := connection.QueryRow(ctx, `
+		SELECT action_id, id, title, containment_area
+		FROM breach_action_events
+		WHERE breach_incident_id = $1
+		ORDER BY sequence
+		LIMIT 1
+	`, incidentID).Scan(&actionID, &eventID, &title, &area); err != nil {
+		t.Fatalf("read backfilled action: %v", err)
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_action_events (
+			breach_incident_id, action_id, revision, action_kind, containment_area,
+			title, status, owner_platform_admin_id, evidence_references,
+			actor_platform_admin_id, idempotency_key, request_fingerprint,
+			occurred_at, created_at
+		) VALUES (
+			$1, $2, 2, 'containment', $3, $4, 'completed', $5, '{}', $5,
+			'migration-completed-without-evidence',
+			digest('migration-completed-without-evidence', 'sha256'), $6, $6
+		)
+	`, incidentID, actionID, area, title, platformAdminID, createdAt.Add(time.Hour)); err == nil {
+		t.Fatal("completed action without outcome/evidence succeeded")
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_action_events (
+			breach_incident_id, action_id, revision, action_kind, containment_area,
+			title, status, evidence_references, actor_platform_admin_id,
+			occurred_at, created_at
+		) VALUES (
+			$1, $2, 2, 'containment', $3, $4, 'pending', '{}', $5, $6, $6
+		)
+	`, incidentID, actionID, area, title, platformAdminID, createdAt.Add(time.Hour)); err == nil {
+		t.Fatal("non-seed action revision without idempotency evidence succeeded")
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_action_events (
+			breach_incident_id, action_id, revision, action_kind, containment_area,
+			title, status, owner_platform_admin_id, outcome_summary,
+			evidence_references, actor_platform_admin_id, idempotency_key,
+			request_fingerprint, occurred_at, created_at
+		) VALUES (
+			$1, $2, 2, 'containment', $3, $4, 'completed', $5,
+			'Purportedly completed.', ARRAY[NULL]::text[], $5,
+			'migration-null-evidence', digest('migration-null-evidence', 'sha256'), $6, $6
+		)
+	`, incidentID, actionID, area, title, platformAdminID, createdAt.Add(time.Hour)); err == nil {
+		t.Fatal("completed action with NULL evidence reference succeeded")
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_action_events (
+			breach_incident_id, action_id, revision, action_kind, title, status,
+			owner_platform_admin_id, due_at, evidence_references,
+			actor_platform_admin_id, idempotency_key, request_fingerprint,
+			occurred_at, created_at
+		) VALUES (
+			$1, gen_random_uuid(), 1, 'post_incident', 'Past-due corrective work',
+			'pending', $2, $3, '{}', $2, 'migration-past-due',
+			digest('migration-past-due', 'sha256'), $3, $3
+		)
+	`, incidentID, platformAdminID, createdAt); err == nil {
+		t.Fatal("post-incident action with non-future initial due date succeeded")
+	}
+	if _, err := connection.Exec(ctx,
+		`UPDATE breach_action_events SET title = 'rewritten' WHERE id = $1`, eventID,
+	); err == nil {
+		t.Fatal("UPDATE breach_action_events succeeded")
+	}
+
+	if err := migrator.Migrate(100); err != nil {
+		t.Fatalf("roll migration 101 back: %v", err)
+	}
+	var tableExists bool
+	if err := connection.QueryRow(ctx,
+		`SELECT to_regclass('public.breach_action_events') IS NOT NULL`,
+	).Scan(&tableExists); err != nil {
+		t.Fatalf("check rolled-back action table: %v", err)
+	}
+	if tableExists {
+		t.Fatal("breach_action_events still exists after rollback")
+	}
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("reapply migration 101: %v", err)
+	}
+	assertMigratedChecklist("second up")
 }
 
 func migrationsPath(t *testing.T) string {

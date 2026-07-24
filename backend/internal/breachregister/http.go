@@ -19,13 +19,21 @@ import (
 type BreachStore interface {
 	CreateIncident(context.Context, string, string, CreateIncidentInput) (Incident, error)
 	ListIncidents(context.Context, ListFilter) ([]Incident, error)
-	GetIncident(context.Context, string) (Incident, []ChronologyEntry, []Assessment, error)
+	GetIncident(
+		context.Context, string,
+	) (Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent, error)
 	AppendChronologyEntry(
 		context.Context, string, string, string, AppendChronologyEntryInput,
 	) (ChronologyEntry, error)
 	CreateAssessment(
 		context.Context, string, string, string, CreateAssessmentInput,
 	) (Assessment, error)
+	CreatePostIncidentAction(
+		context.Context, string, string, string, CreatePostIncidentActionInput,
+	) (ActionEvent, error)
+	AppendActionRevision(
+		context.Context, string, string, string, string, AppendActionRevisionInput,
+	) (ActionEvent, error)
 }
 
 type TokenVerifier interface {
@@ -59,6 +67,13 @@ func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 		Post("/admin/breach-incidents/{incidentID}/chronology", handler.appendChronologyEntry)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
 		Post("/admin/breach-incidents/{incidentID}/assessments", handler.createAssessment)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post("/admin/breach-incidents/{incidentID}/actions", handler.createPostIncidentAction)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post(
+			"/admin/breach-incidents/{incidentID}/actions/{actionID}/revisions",
+			handler.appendActionRevision,
+		)
 }
 
 type createIncidentRequest struct {
@@ -142,13 +157,15 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
 		return
 	}
-	incident, entries, assessments, err := h.options.Store.GetIncident(r.Context(), incidentID)
+	incident, entries, assessments, actions, actionEvents, err :=
+		h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"incident": incident, "chronology": entries, "assessments": assessments,
+		"actions": actions, "action_events": actionEvents,
 	})
 }
 
@@ -263,6 +280,93 @@ func (h *httpHandler) createAssessment(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"assessment": assessment})
 }
 
+type createPostIncidentActionRequest struct {
+	Title                string    `json:"title"`
+	OwnerPlatformAdminID string    `json:"owner_platform_admin_id"`
+	DueAt                time.Time `json:"due_at"`
+	CorrectiveReference  *string   `json:"corrective_reference"`
+}
+
+func (h *httpHandler) createPostIncidentAction(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "incidentID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	var request createPostIncidentActionRequest
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	action, err := h.options.Store.CreatePostIncidentAction(
+		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
+		CreatePostIncidentActionInput{
+			Title: request.Title, OwnerPlatformAdminID: request.OwnerPlatformAdminID,
+			DueAt: request.DueAt, CorrectiveReference: request.CorrectiveReference,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"action": action})
+}
+
+type appendActionRevisionRequest struct {
+	ExpectedRevision     int        `json:"expected_revision"`
+	Status               string     `json:"status"`
+	OwnerPlatformAdminID *string    `json:"owner_platform_admin_id"`
+	DueAt                *time.Time `json:"due_at"`
+	OutcomeSummary       *string    `json:"outcome_summary"`
+	CorrectiveReference  *string    `json:"corrective_reference"`
+	EvidenceReferences   []string   `json:"evidence_references"`
+}
+
+func (h *httpHandler) appendActionRevision(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "incidentID")
+	actionID := chi.URLParam(r, "actionID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	if _, err := uuid.Parse(actionID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	var request appendActionRevisionRequest
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	status, err := ParseActionStatus(request.Status)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	action, err := h.options.Store.AppendActionRevision(
+		r.Context(), incidentID, actionID, claims.Subject, r.Header.Get("Idempotency-Key"),
+		AppendActionRevisionInput{
+			ExpectedRevision: request.ExpectedRevision, Status: status,
+			OwnerPlatformAdminID: request.OwnerPlatformAdminID, DueAt: request.DueAt,
+			OutcomeSummary: request.OutcomeSummary, CorrectiveReference: request.CorrectiveReference,
+			EvidenceReferences: request.EvidenceReferences,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"action": action})
+}
+
 func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -273,6 +377,8 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "breach register request is invalid", nil)
 	case errors.Is(err, ErrIdempotencyConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "idempotency key was reused with different input", nil)
+	case errors.Is(err, ErrRevisionConflict):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "breach action revision is stale", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

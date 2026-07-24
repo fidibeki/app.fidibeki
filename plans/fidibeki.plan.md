@@ -651,7 +651,7 @@ was removed from the staging test tenant.
       - [x] Executable registry slice: `GET /v1/privacy/retention` now derives its backward-compatible
         response from a versioned, typed, code-owned registry with 26 lifecycle categories and
         explicit `enforced`, `configurable`, `decision_required`, and `external_control` states.
-        Migration-DDL tests prove that all 66 current PostgreSQL tables are assigned exactly once;
+        Migration-DDL tests prove that all 67 current PostgreSQL tables are assigned exactly once;
         object-prefix, queue, browser-key, and provider families are separately inventoried.
         Validation rejects duplicate ownership and unsupported enforcement claims. The bilingual
         Data & privacy surface exposes state counts, plan/rule duration, cadence, hold behavior,
@@ -728,13 +728,37 @@ was removed from the staging test tenant.
         the new table, and — new versus slice 1 — an explicit migration 96 up/down/up cycle that
         exercises the down migration directly (slice 1 never had one) plus a full-chain migration
         test update (`latestMigrationVersion` in `internal/db/migrations_test.go`) and a real
-        pre-existing incident backfill that proves the immutable trigger is restored. Still
-        remaining for a later slice: staged processor-to-controller notifications (delivery
-        evidence, retries, follow-up updates), notification/closure/post-incident templates,
+        pre-existing incident backfill that proves the immutable trigger is restored. At
+        completion of that slice, later work still included staged processor-to-controller
+        notifications (delivery evidence, retries, follow-up updates),
+        notification/closure/post-incident templates,
         contact/DPA wiring to #63's role matrix, subprocessor incident intake, containment
         checklists, post-incident actions/owners/corrective-issue links, and the tabletop
         exercises across attachment disclosure, replay access, database cross-tenant exposure,
         leaked integration secret, and subprocessor breach.
+      - [x] Slice 3 (containment and corrective-action ledger): migration `101` adds
+        `breach_action_events`, an append-only full-revision ledger outside the `fidibeki_app`
+        grant boundary. New incidents atomically receive nine code-owned pending controls covering
+        API keys, sessions, integrations, object storage, database access, email, AI, analytics,
+        and replay; existing incidents receive the same checklist with their original creator and
+        creation time, so migration does not imply later response work. Explicit post-incident
+        actions require an existing platform-admin owner and future due date. State revisions
+        require `expected_revision`; completion requires an owner, bounded outcome, and evidence
+        reference, while not-applicable requires an owner and reason. Terminal actions reopen only
+        through `in_progress`. Database constraints and an insert guard preserve immutable
+        action identity, monotonic revisions, state requirements, and append-only history;
+        transaction locks plus idempotency fingerprints make retries deterministic and allow only
+        one concurrent writer to advance a revision. Incident detail additively returns current
+        `actions` and complete `action_events`; `POST .../actions` and
+        `POST .../actions/{actionID}/revisions` reuse `platform:breach:append`. Migration
+        up/down/up, legacy backfill, grants, constraints, HTTP authorization, domain validation,
+        idempotency/conflict/concurrency, and repository-wide backend checks pass locally. The
+        executable retention registry covers the new table as `decision_required`; no cleaner,
+        deployment, notification, or operational containment action was added.
+      - Still remaining for later #64 slices: staged processor-to-controller notifications with
+        delivery evidence/retries/follow-up updates; notification and closure templates wired to
+        #63's governed contacts; subprocessor incident intake; staging-only tabletop scenarios;
+        and an internal platform-admin UI when that product surface exists.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

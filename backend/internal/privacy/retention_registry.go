@@ -335,7 +335,7 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Protected register period and legal holds require approval.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"breach_assessments", "breach_chronology_entries",
+				"breach_action_events", "breach_assessments", "breach_chronology_entries",
 				"breach_incident_tenants", "breach_incidents",
 			),
 		},

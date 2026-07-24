@@ -25,6 +25,8 @@ type fakeStore struct {
 	getIncident       Incident
 	getEntries        []ChronologyEntry
 	getAssessments    []Assessment
+	getActions        []ActionEvent
+	getActionEvents   []ActionEvent
 	getErr            error
 	appendedEntry     ChronologyEntry
 	appendErr         error
@@ -36,6 +38,17 @@ type fakeStore struct {
 	assessedActor     string
 	assessedKey       string
 	assessedInput     CreateAssessmentInput
+	createdAction     ActionEvent
+	createActionErr   error
+	createActionActor string
+	createActionKey   string
+	createActionInput CreatePostIncidentActionInput
+	revisedAction     ActionEvent
+	revisionErr       error
+	revisionActor     string
+	revisionKey       string
+	revisionActionID  string
+	revisionInput     AppendActionRevisionInput
 }
 
 func (f *fakeStore) CreateIncident(
@@ -51,8 +64,31 @@ func (f *fakeStore) ListIncidents(context.Context, ListFilter) ([]Incident, erro
 	return f.incidents, f.listErr
 }
 
-func (f *fakeStore) GetIncident(context.Context, string) (Incident, []ChronologyEntry, []Assessment, error) {
-	return f.getIncident, f.getEntries, f.getAssessments, f.getErr
+func (f *fakeStore) GetIncident(
+	context.Context, string,
+) (Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent, error) {
+	return f.getIncident, f.getEntries, f.getAssessments, f.getActions, f.getActionEvents, f.getErr
+}
+
+func (f *fakeStore) CreatePostIncidentAction(
+	_ context.Context, _ string, actorPlatformAdminID string, idempotencyKey string,
+	input CreatePostIncidentActionInput,
+) (ActionEvent, error) {
+	f.createActionActor = actorPlatformAdminID
+	f.createActionKey = idempotencyKey
+	f.createActionInput = input
+	return f.createdAction, f.createActionErr
+}
+
+func (f *fakeStore) AppendActionRevision(
+	_ context.Context, _ string, actionID string, actorPlatformAdminID string,
+	idempotencyKey string, input AppendActionRevisionInput,
+) (ActionEvent, error) {
+	f.revisionActionID = actionID
+	f.revisionActor = actorPlatformAdminID
+	f.revisionKey = idempotencyKey
+	f.revisionInput = input
+	return f.revisedAction, f.revisionErr
 }
 
 func (f *fakeStore) AppendChronologyEntry(
@@ -473,5 +509,166 @@ func TestGetIncidentIncludesAssessments(t *testing.T) {
 	assessments, ok := response["assessments"].([]any)
 	if !ok || len(assessments) != 1 {
 		t.Fatalf("response assessments = %#v", response["assessments"])
+	}
+}
+
+func TestBreachActionsRequireAppendPermissionAndExposeAdditiveDetail(t *testing.T) {
+	t.Parallel()
+
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	actionID := "22222222-2222-4222-8222-222222222222"
+	ownerID := "33333333-3333-4333-8333-333333333333"
+	store := &fakeStore{
+		createdAction: ActionEvent{ActionID: actionID, Revision: 1, Status: ActionPending},
+		revisedAction: ActionEvent{ActionID: actionID, Revision: 2, Status: ActionInProgress},
+		getIncident:   Incident{ID: incidentID, PublicID: "BR-ACTIONS1"},
+		getActions: []ActionEvent{{
+			ActionID: actionID, Revision: 2, Status: ActionInProgress,
+		}},
+		getActionEvents: []ActionEvent{
+			{ActionID: actionID, Revision: 1, Status: ActionPending},
+			{ActionID: actionID, Revision: 2, Status: ActionInProgress},
+		},
+	}
+	handler, jwtManager := newTestHandler(t, store)
+	createPath := "/admin/breach-incidents/" + incidentID + "/actions"
+
+	readToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachRead)},
+	)
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(
+		http.MethodPost, createPath, strings.NewReader(`{
+			"title":"Complete review",
+			"owner_platform_admin_id":"`+ownerID+`",
+			"due_at":"2026-07-30T10:00:00Z"
+		}`),
+	)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Errorf("read-only create action status = %d, want 403", forbidden.Code)
+	}
+
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+	created := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(
+		http.MethodPost, createPath, strings.NewReader(`{
+			"title":"Complete review",
+			"owner_platform_admin_id":"`+ownerID+`",
+			"due_at":"2026-07-30T10:00:00Z",
+			"corrective_reference":"issue:FID-42"
+		}`),
+	)
+	createRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	createRequest.Header.Set("Idempotency-Key", "action-create-key")
+	handler.ServeHTTP(created, createRequest)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create action status = %d, body = %s", created.Code, created.Body.String())
+	}
+	if store.createActionActor != "admin-id" || store.createActionKey != "action-create-key" ||
+		store.createActionInput.OwnerPlatformAdminID != ownerID {
+		t.Errorf(
+			"create action actor/key/input = %q/%q/%#v",
+			store.createActionActor, store.createActionKey, store.createActionInput,
+		)
+	}
+
+	revisionPath := createPath + "/" + actionID + "/revisions"
+	revised := httptest.NewRecorder()
+	revisionRequest := httptest.NewRequest(
+		http.MethodPost, revisionPath, strings.NewReader(`{
+			"expected_revision":1,
+			"status":"in_progress",
+			"owner_platform_admin_id":"`+ownerID+`",
+			"due_at":"2026-07-30T10:00:00Z"
+		}`),
+	)
+	revisionRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	revisionRequest.Header.Set("Idempotency-Key", "action-revision-key")
+	handler.ServeHTTP(revised, revisionRequest)
+	if revised.Code != http.StatusCreated {
+		t.Fatalf("revise action status = %d, body = %s", revised.Code, revised.Body.String())
+	}
+	if store.revisionActionID != actionID || store.revisionActor != "admin-id" ||
+		store.revisionKey != "action-revision-key" ||
+		store.revisionInput.Status != ActionInProgress {
+		t.Errorf(
+			"revision action/actor/key/input = %q/%q/%q/%#v",
+			store.revisionActionID, store.revisionActor, store.revisionKey, store.revisionInput,
+		)
+	}
+
+	get := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/admin/breach-incidents/"+incidentID, nil)
+	getRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(get, getRequest)
+	if get.Code != http.StatusOK {
+		t.Fatalf("get incident status = %d, body = %s", get.Code, get.Body.String())
+	}
+	var detail map[string]any
+	if err := json.NewDecoder(get.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode incident detail: %v", err)
+	}
+	if actions, ok := detail["actions"].([]any); !ok || len(actions) != 1 {
+		t.Errorf("detail actions = %#v", detail["actions"])
+	}
+	if events, ok := detail["action_events"].([]any); !ok || len(events) != 2 {
+		t.Errorf("detail action_events = %#v", detail["action_events"])
+	}
+}
+
+func TestBreachActionRoutesValidateIDsStatusAndRevisionConflict(t *testing.T) {
+	t.Parallel()
+
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	actionID := "22222222-2222-4222-8222-222222222222"
+	store := &fakeStore{}
+	handler, jwtManager := newTestHandler(t, store)
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+
+	for name, path := range map[string]string{
+		"invalid incident": "/admin/breach-incidents/not-a-uuid/actions",
+		"invalid action": "/admin/breach-incidents/" + incidentID +
+			"/actions/not-a-uuid/revisions",
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+			request.Header.Set("Authorization", "Bearer "+appendToken)
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusNotFound {
+				t.Errorf("status = %d, want 404", recorder.Code)
+			}
+		})
+	}
+
+	invalidStatus := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/breach-incidents/"+incidentID+"/actions/"+actionID+"/revisions",
+		strings.NewReader(`{"expected_revision":1,"status":"not_real"}`),
+	)
+	invalidRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	handler.ServeHTTP(invalidStatus, invalidRequest)
+	if invalidStatus.Code != http.StatusUnprocessableEntity {
+		t.Errorf("invalid status code = %d, want 422", invalidStatus.Code)
+	}
+
+	store.revisionErr = ErrRevisionConflict
+	stale := httptest.NewRecorder()
+	staleRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/breach-incidents/"+incidentID+"/actions/"+actionID+"/revisions",
+		strings.NewReader(`{"expected_revision":1,"status":"pending"}`),
+	)
+	staleRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	handler.ServeHTTP(stale, staleRequest)
+	if stale.Code != http.StatusConflict {
+		t.Errorf("stale revision code = %d, want 409", stale.Code)
 	}
 }

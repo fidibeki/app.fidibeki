@@ -5,10 +5,9 @@
 // the fidibeki_app role tenant credentials use (see migration 000092), so
 // denial holds even if application wiring is misconfigured.
 //
-// Facts that change after an incident is created (containment progress,
-// assessment, notifications) are recorded as new chronology entries rather
-// than by rewriting the incident row: both breach_incidents and
-// breach_chronology_entries reject UPDATE/DELETE at the database level.
+// Facts that change after an incident is created are recorded as append-only
+// chronology, assessment, or action revisions rather than by rewriting prior
+// evidence.
 package breachregister
 
 import (
@@ -111,6 +110,7 @@ var (
 	ErrInvalidRequest      = errors.New("breach register request is invalid")
 	ErrNotFound            = errors.New("breach incident not found")
 	ErrIdempotencyConflict = errors.New("idempotency key was reused with different input")
+	ErrRevisionConflict    = errors.New("breach action revision is stale")
 	ErrTenantNotFound      = errors.New("affected tenant reference is invalid")
 )
 
@@ -412,9 +412,17 @@ func normalizeEvidenceReferences(values []string) ([]string, error) {
 		return nil, ErrInvalidRequest
 	}
 	references := make([]string, 0, len(values))
+	combinedLength := 0
 	for _, reference := range values {
 		trimmed := strings.TrimSpace(reference)
 		if trimmed == "" || len(trimmed) > 300 || containsControlCharacter(trimmed) {
+			return nil, ErrInvalidRequest
+		}
+		if len(references) > 0 {
+			combinedLength++
+		}
+		combinedLength += len(trimmed)
+		if combinedLength > 4000 {
 			return nil, ErrInvalidRequest
 		}
 		references = append(references, trimmed)
