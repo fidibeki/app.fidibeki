@@ -199,7 +199,6 @@ export const features: FeatureEntry[] = [
       'Organization level two factor authentication policy, planned',
       'IdP managed multi factor authentication, planned',
       'Optional and required SSO modes per organization, planned',
-      'Link to issue #23 for SAML and #22 for MFA policy',
     ],
     sections: [
       {
