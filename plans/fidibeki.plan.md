@@ -863,10 +863,31 @@ was removed from the staging test tenant.
         failure/retry coverage, migration `104` down/up, retention-registry coverage across 71
         tables, and repository-wide backend gates pass locally. No notification was sent and no
         deployment was performed.
+      - [x] Slice 5 (restricted documentation exports): two read-only, platform-admin-only GET/HEAD
+        routes under the existing incident resource --
+        `.../controller-notifications/{notificationID}/export` and `.../post-incident-report` --
+        download either JSON or Markdown. Both reuse `platform:breach:read` (downloading an
+        already-recorded fact is the same trust level as reading it) and both call the existing
+        `Store.GetIncident` -- the same call `getIncident` already makes -- so no migration, new
+        query path, or N+1 access was added. The notification export serializes one frozen
+        `ControllerNotification` (any kind/sequence) and its append-only delivery attempts
+        unmodified; the post-incident report additively renders incident facts, full chronology,
+        the single most recent assessment (an explicit JSON `null` when none has been recorded,
+        never omitted or inferred), current action state plus a derived per-action revision-count/
+        timestamp history summary, and the full staged-notification/delivery ledger. Neither
+        document computes or asserts notifiability, high-risk status, closure, or compliance,
+        and both end with the same non-conclusory footer already used in the notification email.
+        Every response carries `schema_version`, `generated_at`, the incident public ID, and the
+        existing stable resource IDs, plus safe `Content-Type`/`Content-Disposition`/
+        `Cache-Control: private, no-store`/`X-Content-Type-Options`/`Referrer-Policy` headers;
+        `HEAD` mirrors `GET`'s headers with an empty body. Coverage adds deterministic-rendering,
+        pending-value, nil-slice-normalization, and forbidden-field shape-guard unit tests plus
+        HTTP tests for audience/permission denial, malformed/unknown/mismatched IDs, missing/
+        invalid `format`, exact frozen notification content, and both formats for both documents.
       - Still remaining for later #64 slices: staged processor-to-controller notifications with
-        an authenticated staging capture exercise; document exports for notification/closure
-        templates; subprocessor incident intake; staging-only tabletop scenarios; and an internal
-        platform-admin UI when that product surface exists.
+        an authenticated staging capture exercise; subprocessor incident intake; staging-only
+        tabletop scenarios; and an internal platform-admin UI (the first real consumer of the new
+        export routes) when that product surface exists.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

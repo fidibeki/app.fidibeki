@@ -55,6 +55,9 @@ type TokenVerifier interface {
 type HTTPOptions struct {
 	Store BreachStore
 	JWT   TokenVerifier
+	// Now supplies the export handlers' generated_at clock. Defaults to
+	// time.Now; every other route is unaffected.
+	Now func() time.Time
 }
 
 type httpHandler struct {
@@ -101,6 +104,23 @@ func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 			"/admin/breach-incidents/{incidentID}/controller-notifications/{notificationID}/retry",
 			handler.retryControllerNotification,
 		)
+	// Exports are a read of already-staged/recorded facts, not a new class of
+	// action, so they reuse PermissionPlatformBreachRead like list/get above
+	// (see exports_http.go).
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachRead)).
+		Get(
+			"/admin/breach-incidents/{incidentID}/controller-notifications/{notificationID}/export",
+			handler.exportControllerNotification,
+		)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachRead)).
+		Head(
+			"/admin/breach-incidents/{incidentID}/controller-notifications/{notificationID}/export",
+			handler.exportControllerNotification,
+		)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachRead)).
+		Get("/admin/breach-incidents/{incidentID}/post-incident-report", handler.exportPostIncidentReport)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachRead)).
+		Head("/admin/breach-incidents/{incidentID}/post-incident-report", handler.exportPostIncidentReport)
 }
 
 type createIncidentRequest struct {
