@@ -78,21 +78,18 @@ interface ReplayModule {
 	}): Promise<ReplayCapture | null>
 }
 
-interface ReplayConsentPromptModule {
-  mountReplayConsentPrompt(options: {
-    consent: WidgetRule['replay_consent']
-    locale: string
-    onAccept(): Promise<void>
-    onReject(): Promise<void>
-  }): WidgetUnmount
+interface ConsentPromptPurposeDescriptor {
+  purpose: 'widget_analytics' | 'session_replay'
+  consent: WidgetRule['analytics_consent'] | WidgetRule['replay_consent']
+  locale: string
+  onAccept(): Promise<void>
+  onReject(): Promise<void>
 }
 
-interface AnalyticsConsentPromptModule {
-  mountAnalyticsConsentPrompt(options: {
-    consent: WidgetRule['analytics_consent']
-    locale: string
-    onAccept(): Promise<void>
-    onReject(): Promise<void>
+interface ConsentPromptModule {
+  mountConsentPrompt(options: {
+    purposes: ConsentPromptPurposeDescriptor[]
+    runExclusive?<T>(action: () => Promise<T>): Promise<T>
   }): WidgetUnmount
 }
 
@@ -129,9 +126,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let replayConsent: ReplayConsentController | null = null
   let replayConsentProjectID = ''
   let currentReplayRule: WidgetRule | null = null
-  let replayConsentPromptUnmount: WidgetUnmount | null = null
-  let replayConsentPromptFingerprint = ''
-  let replayConsentPromptTransition = 0
+  let consentPromptUnmount: WidgetUnmount | null = null
+  let consentPromptFingerprint = ''
+  let consentPromptTransition = 0
+  let consentDecisionDepth = 0
   let replayFingerprint = ''
   let replayTransition = 0
   let replayRevokedThroughTransition = 0
@@ -153,9 +151,6 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let analyticsConsent: AnalyticsConsentController | null = null
   let analyticsConsentProjectID = ''
   let currentAnalyticsRule: WidgetRule | null = null
-  let analyticsConsentPromptUnmount: WidgetUnmount | null = null
-  let analyticsConsentPromptFingerprint = ''
-  let analyticsConsentPromptTransition = 0
   let analyticsFunnel: FunnelTracker | null = null
   let analyticsOutbox: AnalyticsOutbox | null = null
   let analyticsGrantedRuleID: string | null = null
@@ -583,8 +578,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     currentReplayRule = rule
     const consent = ensureReplayConsent(configuration)
     consent.setRule(rule)
-    await synchronizeReplayConsentPrompt(configuration, rule, consent)
+    // Read the grant synchronously after setRule: a concurrent evaluation for another rule (or
+    // no rule) may retarget the shared controller while the prompt synchronization awaits.
     const grant = consent.activeGrant()
+    await synchronizeConsentPrompt(configuration, rule)
 		const enabled = rule !== null && rule.replay_mode !== 'none' &&
       configuration.features.session_replay && grant !== null
 		const fingerprint = enabled ? JSON.stringify({
@@ -626,42 +623,84 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 		}
 	}
 
-  const synchronizeReplayConsentPrompt = async (
-    configuration: WidgetConfiguration,
-    rule: WidgetRule | null,
-    controller: ReplayConsentController,
-  ) => {
-    // Only the undecided state is prompted for. Once a decision exists the dialog leaves the host
-    // page entirely — withdrawal moves into the feedback widget's privacy column (privacyChoices).
-    const undecided = controller.status() === 'new'
-    const locale = rule ? replayConsentLocale(configuration, rule) : null
-    const fingerprint = rule?.replay_consent.mode === 'fidibeki_managed' && undecided && locale
-      ? `${rule.id}:${rule.replay_consent.notice_version}:${locale}`
-      : ''
-    if (fingerprint === replayConsentPromptFingerprint) return
-    const transition = ++replayConsentPromptTransition
-    replayConsentPromptFingerprint = fingerprint
-    replayConsentPromptUnmount?.()
-    replayConsentPromptUnmount = null
-    if (!fingerprint || !rule || !locale) return
+  // Runs a prompt decision while deferring prompt re-synchronization: onChanged handlers still
+  // update grant gating, replay capture, and the privacy surfaces immediately, but the dialog is
+  // only re-rendered once the whole batch (e.g. "accept all" spanning both purposes) has settled,
+  // so the user never sees an intermediate prompt for a purpose they are still deciding.
+  const runConsentDecision = async <T>(action: () => Promise<T>): Promise<T> => {
+    consentDecisionDepth++
     try {
-      const module = (await import(
-        new URL('replay-consent-prompt.js', assetBase).href
-      )) as ReplayConsentPromptModule
-      if (transition !== replayConsentPromptTransition) return
-      replayConsentPromptUnmount = module.mountReplayConsentPrompt({
-        consent: rule.replay_consent,
-        locale,
-        onAccept: () => controller.grant({
-          purpose: 'session_replay',
-          noticeVersion: rule.replay_consent.notice_version,
+      return await action()
+    } finally {
+      consentDecisionDepth--
+      if (consentDecisionDepth === 0 && cache) void synchronizeConsentPrompt(cache.value, currentAnalyticsRule)
+    }
+  }
+
+  // One prompt for every undecided Fidibeki-managed purpose on the current rule. Only the
+  // presentation is shared: each purpose keeps its own controller, storage, and evidence endpoint
+  // (issue #58). The dialog asks once and then leaves the host page for good — withdrawal lives in
+  // the feedback widget's privacy column and the standing control (privacyChoices).
+  const synchronizeConsentPrompt = async (configuration: WidgetConfiguration, rule: WidgetRule | null) => {
+    if (consentDecisionDepth > 0) return
+    const analyticsController = ensureAnalyticsConsent(configuration)
+    const replayController = ensureReplayConsent(configuration)
+    analyticsController.setRule(rule)
+    replayController.setRule(rule)
+    const purposes: ConsentPromptPurposeDescriptor[] = []
+    if (rule && rule.analytics_consent.mode === 'fidibeki_managed' && analyticsController.status() === 'new') {
+      const locale = analyticsConsentLocale(configuration, rule)
+      if (locale) {
+        purposes.push({
+          purpose: 'widget_analytics',
+          consent: rule.analytics_consent,
           locale,
-          source: 'fidibeki_managed',
-        }).then(() => {}),
-        onReject: () => controller.deny(locale),
+          onAccept: () => analyticsController.grant({
+            purpose: 'widget_analytics',
+            noticeVersion: rule.analytics_consent.notice_version,
+            locale,
+            source: 'fidibeki_managed',
+          }).then(() => {}),
+          onReject: () => analyticsController.deny(locale),
+        })
+      }
+    }
+    if (rule && rule.replay_consent.mode === 'fidibeki_managed' && replayController.status() === 'new') {
+      const locale = replayConsentLocale(configuration, rule)
+      if (locale) {
+        purposes.push({
+          purpose: 'session_replay',
+          consent: rule.replay_consent,
+          locale,
+          onAccept: () => replayController.grant({
+            purpose: 'session_replay',
+            noticeVersion: rule.replay_consent.notice_version,
+            locale,
+            source: 'fidibeki_managed',
+          }).then(() => {}),
+          onReject: () => replayController.deny(locale),
+        })
+      }
+    }
+    const fingerprint = rule && purposes.length > 0
+      ? [rule.id, ...purposes.map(descriptor =>
+          `${descriptor.purpose}:${descriptor.consent.notice_version}:${descriptor.locale}`)].join('|')
+      : ''
+    if (fingerprint === consentPromptFingerprint) return
+    const transition = ++consentPromptTransition
+    consentPromptFingerprint = fingerprint
+    consentPromptUnmount?.()
+    consentPromptUnmount = null
+    if (!fingerprint) return
+    try {
+      const module = (await import(new URL('consent-prompt.js', assetBase).href)) as ConsentPromptModule
+      if (transition !== consentPromptTransition) return
+      consentPromptUnmount = module.mountConsentPrompt({
+        purposes,
+        runExclusive: runConsentDecision,
       })
     } catch (error) {
-      void report(error, 'replay_consent_prompt')
+      void report(error, 'consent_prompt')
     }
   }
 
@@ -683,7 +722,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     currentAnalyticsRule = rule
     const consent = ensureAnalyticsConsent(configuration)
     consent.setRule(rule)
-    await synchronizeAnalyticsConsentPrompt(configuration, rule, consent)
+    // Read the grant synchronously after setRule: a concurrent evaluation for another rule (or
+    // no rule) may retarget the shared controller while the prompt synchronization awaits.
     const grant = rule !== null && rule.analytics_consent.mode !== 'none' ? consent.activeGrant() : null
     if (grant && rule) {
       analyticsGrantedRuleID = rule.id
@@ -692,44 +732,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       analyticsGrantedRuleID = null
       analyticsGrantToken = ''
     }
-  }
-
-  const synchronizeAnalyticsConsentPrompt = async (
-    configuration: WidgetConfiguration,
-    rule: WidgetRule | null,
-    controller: AnalyticsConsentController,
-  ) => {
-    // See synchronizeReplayConsentPrompt: prompted only while undecided, never after a grant.
-    const undecided = controller.status() === 'new'
-    const locale = rule ? analyticsConsentLocale(configuration, rule) : null
-    const fingerprint = rule?.analytics_consent.mode === 'fidibeki_managed' && undecided && locale
-      ? `${rule.id}:${rule.analytics_consent.notice_version}:${locale}`
-      : ''
-    if (fingerprint === analyticsConsentPromptFingerprint) return
-    const transition = ++analyticsConsentPromptTransition
-    analyticsConsentPromptFingerprint = fingerprint
-    analyticsConsentPromptUnmount?.()
-    analyticsConsentPromptUnmount = null
-    if (!fingerprint || !rule || !locale) return
-    try {
-      const module = (await import(
-        new URL('analytics-consent-prompt.js', assetBase).href
-      )) as AnalyticsConsentPromptModule
-      if (transition !== analyticsConsentPromptTransition) return
-      analyticsConsentPromptUnmount = module.mountAnalyticsConsentPrompt({
-        consent: rule.analytics_consent,
-        locale,
-        onAccept: () => controller.grant({
-          purpose: 'widget_analytics',
-          noticeVersion: rule.analytics_consent.notice_version,
-          locale,
-          source: 'fidibeki_managed',
-        }).then(() => {}),
-        onReject: () => controller.deny(locale),
-      })
-    } catch (error) {
-      void report(error, 'analytics_consent_prompt')
-    }
+    await synchronizeConsentPrompt(configuration, rule)
   }
 
   installAnalyticsConsentAPI(

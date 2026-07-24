@@ -15,7 +15,7 @@ export default defineConfig({
         'src/submission-errors.ts',
         'src/privacy-location.ts',
         'src/replay-consent.ts',
-        'src/replay-consent-prompt.ts',
+        'src/consent-prompt.ts',
         'contracts/widget-objective-policy.ts',
         'src/modules/replay.ts',
         'src/modules/privacy.ts',
