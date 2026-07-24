@@ -51,7 +51,7 @@ const firstName = computed(() =>
 )
 
 function feedbackCopy(item: FeedbackPage['feedbacks'][number]) {
-  return item.text_cleaned || item.text || t('dashboard.feedbackWithoutDetail')
+  return item.title || item.text_cleaned || item.text || t('dashboard.feedbackWithoutDetail')
 }
 
 function signedPercent(value?: number) {

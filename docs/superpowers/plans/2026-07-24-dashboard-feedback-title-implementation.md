@@ -18,7 +18,9 @@ row shows only the curated title while preserving its link and metadata.
 **Acceptance:** The focused desktop/mobile Playwright case fails against the current dashboard copy
 resolver because it renders cleaned reporter text.
 
-**Status:** Pending.
+**Status:** Complete. The responsive fixture now assigns distinct curated title, original
+description, cleaned text, and raw text values. The focused desktop/mobile case failed against the
+old resolver because neither viewport rendered the title.
 
 ## Task 2: Use The Curated Title With Compatibility Fallbacks
 
@@ -29,7 +31,9 @@ prefer cleaned text and do not require a backend or localization change.
 **Acceptance:** The focused responsive case passes for both the distinct-title and missing-title
 records without changing dashboard row geometry.
 
-**Status:** Pending.
+**Status:** Complete. `feedbackCopy()` now resolves `title`, `text_cleaned`, `text`, then the
+localized no-detail copy. The same responsive fixture proves a second record with an empty title
+uses cleaned text and never exposes its raw fallback.
 
 ## Task 3: Validate And Reconcile
 
@@ -40,4 +44,7 @@ slice, and comment on #73 with exact evidence.
 **Acceptance:** All local gates pass, the worktree is clean, and the issue record makes no
 deployment or staging claim.
 
-**Status:** Pending.
+**Status:** Complete. All 133 web unit tests, Nuxt typecheck, and the production build pass. The
+focused Playwright case passes in both desktop and mobile projects, no document overflow is present,
+and inspected screenshots show the curated title and legacy cleaned fallback without changing row
+geometry. No deployment or staging validation was performed.

@@ -2468,6 +2468,29 @@ test('dashboard distinguishes unrated feedback from a zero rating', async ({ pag
   await capture(page, testInfo, 'dispatch-dashboard-unrated')
 })
 
+test('dashboard attention rows use curated feedback titles with legacy fallbacks', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.feedback[0].title = 'Promotion code blocks checkout'
+  state.feedback[0].description = 'The original reporter description contains the complete reproduction steps.'
+  state.feedback[0].text_cleaned = 'Cleaned reporter description that is not the operational title.'
+  state.feedback[0].text = 'Raw reporter description that is not the operational title.'
+  state.feedback[1].title = ''
+  state.feedback[1].text_cleaned = 'Legacy cleaned feedback summary'
+  state.feedback[1].text = 'Legacy raw feedback summary'
+  await authenticate(page, state)
+
+  const titledRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1048' })
+  await expect(titledRow.getByText('Promotion code blocks checkout', { exact: true })).toBeVisible()
+  await expect(titledRow).not.toContainText('Cleaned reporter description')
+  await expect(titledRow).not.toContainText('Raw reporter description')
+
+  const legacyRow = page.locator('.dashboard-work-row').filter({ hasText: 'FB-1047' })
+  await expect(legacyRow.getByText('Legacy cleaned feedback summary', { exact: true })).toBeVisible()
+  await expect(legacyRow).not.toContainText('Legacy raw feedback summary')
+  await expectNoPageOverflow(page)
+  await capture(page, testInfo, `dashboard-curated-feedback-title-${testInfo.project.name}`)
+})
+
 test('analytics exposes the widget funnel across breakdowns and filters', async ({ page }, testInfo) => {
   const state = createMockState()
   state.analyticsDelayMs = 800
