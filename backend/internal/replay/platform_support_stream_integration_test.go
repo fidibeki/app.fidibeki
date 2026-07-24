@@ -246,6 +246,25 @@ func TestPlatformSupportReplayStream(t *testing.T) {
 		t.Fatalf("not-ready session status = %d, want 404 (unmerged replay must never stream)", notReady.Code)
 	}
 
+	delete(storageStub.objects, mergedKey)
+	storageUnavailable := performReplaySupportRequest(router,
+		path, supportToken, "investigating reported checkout replay", "CASE-1")
+	if storageUnavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("storage-unavailable status = %d, want 503", storageUnavailable.Code)
+	}
+	var prematureSuccessCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'replay_session.support_accessed'
+		  AND resource_id = $2 AND outcome = 'success'
+	`, tenantID, sessionID).Scan(&prematureSuccessCount); err != nil {
+		t.Fatalf("count premature support access successes: %v", err)
+	}
+	if prematureSuccessCount != 0 {
+		t.Fatalf("support access success count before storage opens = %d, want 0", prematureSuccessCount)
+	}
+	storageStub.objects[mergedKey] = []byte(`[{"type":2,"data":{}}]`)
+
 	success := performReplaySupportRequest(router,
 		path, supportToken, "investigating reported checkout replay", "CASE-1")
 	if success.Code != http.StatusOK || success.Body.String() != `[{"type":2,"data":{}}]` ||

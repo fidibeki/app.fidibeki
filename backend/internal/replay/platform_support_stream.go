@@ -153,6 +153,21 @@ func (h *platformSupportStreamHandler) serveHTTP(w http.ResponseWriter, r *http.
 		h.writeError(w, r, err)
 		return
 	}
+	if h.options.Storage == nil {
+		h.writeError(w, r, errors.New("replay storage is unavailable"))
+		return
+	}
+	object, err := h.options.Storage.OpenObject(r.Context(), *session.StorageKey)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	streamOwnsObject := false
+	defer func() {
+		if !streamOwnsObject {
+			closeReplayObject(r, object, session.ID, h.logger)
+		}
+	}()
 	if err := recordAccess(accessaudit.OutcomeSuccess, supportData); err != nil {
 		h.writeError(w, r, err)
 		return
@@ -162,13 +177,8 @@ func (h *platformSupportStreamHandler) serveHTTP(w http.ResponseWriter, r *http.
 		return
 	}
 	committed = true
-	if h.options.Storage == nil {
-		h.writeError(w, r, errors.New("replay storage is unavailable"))
-		return
-	}
-	writeReplayStreamContent(w, r, h.options.Storage, *session.StorageKey, session.ID, h.logger, func(err error) {
-		h.writeError(w, r, err)
-	})
+	streamOwnsObject = true
+	writeReplayStreamContent(w, r, object, session.ID, h.logger)
 }
 
 func (h *platformSupportStreamHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {

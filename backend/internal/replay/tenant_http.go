@@ -306,6 +306,21 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	if h.options.Storage == nil {
+		h.writeError(w, r, errors.New("replay storage is unavailable"))
+		return
+	}
+	object, err := h.options.Storage.OpenObject(r.Context(), *session.StorageKey)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	streamOwnsObject := false
+	defer func() {
+		if !streamOwnsObject {
+			closeReplayObject(r, object, session.ID, h.logger)
+		}
+	}()
 	if err := recordAccess(accessaudit.OutcomeSuccess); err != nil {
 		h.writeError(w, r, err)
 		return
@@ -315,41 +330,35 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
-	writeReplayStreamContent(w, r, h.options.Storage, *session.StorageKey, session.ID, h.logger, func(err error) {
-		h.writeError(w, r, err)
-	})
+	streamOwnsObject = true
+	writeReplayStreamContent(w, r, object, session.ID, h.logger)
 }
 
-// writeReplayStreamContent opens and streams an already-authorized merged
-// replay object. Shared by the tenant-facing stream above and the
+// writeReplayStreamContent streams an already-opened, authorized merged replay
+// object. Shared by the tenant-facing stream above and the
 // platform-admin/support stream (platform_support_stream.go) so the content
 // type, caching, and copy behavior stay identical regardless of which access
 // path authorized the read.
 func writeReplayStreamContent(
 	w http.ResponseWriter,
 	r *http.Request,
-	storage ReplayStorage,
-	storageKey string,
+	object io.ReadCloser,
 	sessionID string,
 	logger *slog.Logger,
-	writeError func(error),
 ) {
-	object, err := storage.OpenObject(r.Context(), storageKey)
-	if err != nil {
-		writeError(err)
-		return
-	}
-	defer func() {
-		if err := object.Close(); err != nil {
-			logger.WarnContext(r.Context(), "close replay object", "error", err, "session_id", sessionID)
-		}
-	}()
+	defer closeReplayObject(r, object, sessionID, logger)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, object); err != nil {
 		logger.WarnContext(r.Context(), "stream replay object", "error", err, "session_id", sessionID)
+	}
+}
+
+func closeReplayObject(r *http.Request, object io.Closer, sessionID string, logger *slog.Logger) {
+	if err := object.Close(); err != nil {
+		logger.WarnContext(r.Context(), "close replay object", "error", err, "session_id", sessionID)
 	}
 }
 
