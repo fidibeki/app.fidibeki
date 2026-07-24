@@ -16,8 +16,8 @@ const visible = computed(() => ready.value && choice.value === 'pending')
 <template>
   <aside v-if="visible" class="consent-banner" aria-label="Privacy choices">
     <p class="consent-text">
-      We use privacy-friendly analytics (Umami) to see what's working: no cookies, no personal
-      data, and only with your consent.
+      We use privacy-friendly analytics (Umami) and our own feedback widget to see what's working
+      and hear from you: no cookies from Umami, and both load only with your consent.
       <NuxtLink to="/privacy">Learn more</NuxtLink>
     </p>
     <div class="consent-actions">

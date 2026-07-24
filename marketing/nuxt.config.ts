@@ -51,6 +51,9 @@ export default defineNuxtConfig({
         process.env.NUXT_PUBLIC_UMAMI_SCRIPT_URL || 'https://cloud.umami.is/script.js',
       umamiWebsiteId:
         process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '1d518b00-2258-4884-bf69-63f789d6f11d',
+      widgetScriptUrl:
+        process.env.NUXT_PUBLIC_WIDGET_SCRIPT_URL || 'https://widget.fidibeki.com/v1/loader.js',
+      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || 'pk_live_GjFasO9215CNAax7LbWhiP',
     },
   },
   typescript: {

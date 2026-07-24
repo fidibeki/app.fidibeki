@@ -278,6 +278,12 @@ useSiteMeta({
             consent choice in your browser for this site.
           </p>
           <p>
+            This site also runs our own Fidibeki feedback widget, the same product we sell, so we can
+            collect feedback directly from visitors. Like analytics, it only loads after you accept in
+            the consent banner, and any feedback you submit through it is processed the same way as
+            feedback submitted through a customer's widget.
+          </p>
+          <p>
             The Fidibeki application may use essential session cookies and similar technologies to
             keep you signed in. Optional widget storage and analytics are gated behind
             purpose-specific consent where applicable.
