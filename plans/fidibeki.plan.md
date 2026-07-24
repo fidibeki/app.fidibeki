@@ -623,6 +623,44 @@ was removed from the staging test tenant.
       data quarantine, policy disablement, and external provider-assessment gates.
     - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,
       delivery, audit, and telemetry data.
+      - Audit result: existing retention only covers attachments/replay objects (#25), export
+        archives and reporter request expiry (#25), and widget analytics (#58), all via bounded
+        `MaintainOnce`/`Run(ctx, interval)` maintainers wired as worker goroutines. Every other
+        category in #62's scope — `tenant_member_sessions`/`platform_admin_sessions` (no
+        `expires_at` column at all; expiry is implicit app-side), `tenant_magic_links`/
+        `platform_admin_magic_links` (authoritative `expires_at`, but never swept after it
+        passes), `outbox_events`, `delivery_logs`, and `member_notifications` had no cleaner and
+        no maintainer wired in `main.go`. Legal holds (`privacy_case_legal_holds`) are scoped to
+        a specific erasure case's subject data, not general infrastructure retention, so they do
+        not gate this slice's cleanup.
+      - Tracer bullet: `tenant_magic_links` (login and invitation credentials) was the smallest
+        vertical whose expiry is already authoritative — `ConsumeMagicLink` already rejects
+        `expires_at <= now()`, so a swept row never had remaining function and deleting it removes
+        stored credential material rather than inventing a new legal retention period. Migration
+        `98` adds `idx_tenant_magic_links_expires_at`. A new `tenantmember.Maintainer` +
+        `tenantmember.MaintenanceStore` (mirroring `privacy.RetentionMaintainer`/
+        `widgetanalytics.Maintainer`'s batched-drain shape) hard-deletes expired rows —
+        consumed or not — in `LIMIT`/`FOR UPDATE SKIP LOCKED` batches and records a same-statement
+        `auth.magic_link_expired` audit event in `tenant_access_events` (link ID and whether it
+        was consumed only; no email, token, or permission content). Wired as an hourly worker
+        goroutine. `GET /v1/privacy/retention` now reports an `auth_magic_links` policy category;
+        `docs/privacy-data-map.md` and the bilingual Data & privacy settings copy were updated to
+        match. Boundary (exact-`expires_at` sweep), idempotent-rerun, cross-tenant-isolation,
+        audit-content, batch-limit, and concurrent-sweep (no double-delete/lost-row) coverage
+        passed against real PostgreSQL; migration replay picked up migration 98 automatically.
+      - Remaining for later slices: `tenant_member_sessions`/`platform_admin_sessions` retention
+        (blocked on a founder/legal decision for security-record retention, since these carry
+        IP/user-agent and are arguably security evidence — no `expires_at` exists yet either, so
+        this needs schema work, not just a sweep); `platform_admin_magic_links` (same shape as
+        this slice, but platform admin actions have no audit-event sink today, so it needs one
+        first or an explicit decision to log via `slog` only); `outbox_events`/`delivery_logs`/
+        `member_notifications` retention; workflow/feedback/issue/comment/AI-derived-text
+        retention; IP/user-agent minimization; Sentry/error telemetry retention and scrubbing;
+        consent-evidence-after-withdrawal retention; tenant-configurable shorter retention;
+        general legal-hold enforcement for the categories added here; overdue-cleanup
+        metrics/alerts; and the full executable registry the issue's acceptance criteria describe.
+        Published legal periods for security/audit/billing records still require founder/legal
+        review before any of those categories can be swept.
     - [ ] #63: establish layered notices, role matrix, DPA/subprocessor/transfer inventory,
       ROPA, and DPIA governance without publishing unverified claims.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,

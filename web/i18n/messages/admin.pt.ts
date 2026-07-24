@@ -730,6 +730,7 @@ export const adminMessages = {
       },
       category: {
         workflow_metadata: 'Metadados do fluxo de feedback e issues',
+        auth_magic_links: 'Links mágicos de login e convite',
         attachments: 'Anexos',
         session_replays: 'Objetos de replay de sessão',
         widget_events: 'Eventos brutos do funil do widget',
@@ -742,6 +743,7 @@ export const adminMessages = {
         workspaceLifetime: 'Vida útil do workspace',
         days: '1 dia | {count} dias',
         hours: '1 hora | {count} horas',
+        magicLinkExpiry: 'Expiração configurada do link, excluído em até 1 hora',
       },
       source: {
         workspaceLifecycle: 'Ciclo de vida do workspace',

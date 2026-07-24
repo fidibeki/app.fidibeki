@@ -41,6 +41,11 @@ func EffectiveRetentionForPlan(plan tenant.Plan) (EffectiveRetention, error) {
 				Duration: "Workspace lifetime", Source: "Workspace lifecycle",
 			},
 			{
+				Category: "auth_magic_links", Label: "Login and invitation magic links",
+				Duration: "Configured link expiry, deleted within 1 hour of expiring",
+				Source:   "Platform default",
+			},
+			{
 				Category: "attachments", Label: "Attachments", Duration: storageDuration,
 				DurationDays: storageDurationDays, Source: "Plan storage limit",
 			},

@@ -20,16 +20,19 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectiveRetentionForPlan(starter) error = %v", err)
 	}
-	if starter.Plan != tenant.PlanStarter || len(starter.Policies) != 8 {
+	if starter.Plan != tenant.PlanStarter || len(starter.Policies) != 9 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
-	if starter.Policies[1].Category != "attachments" ||
-		starter.Policies[1].DurationDays == nil || *starter.Policies[1].DurationDays != 30 {
-		t.Fatalf("starter attachment policy = %#v", starter.Policies[1])
+	if starter.Policies[1].Category != "auth_magic_links" || starter.Policies[1].DurationDays != nil {
+		t.Fatalf("starter auth magic link policy = %#v", starter.Policies[1])
+	}
+	if starter.Policies[2].Category != "attachments" ||
+		starter.Policies[2].DurationDays == nil || *starter.Policies[2].DurationDays != 30 {
+		t.Fatalf("starter attachment policy = %#v", starter.Policies[2])
 	}
 	enterprise, err := EffectiveRetentionForPlan(tenant.PlanEnterprise)
-	if err != nil || enterprise.Policies[1].Duration != "Custom" ||
-		enterprise.Policies[1].DurationDays != nil {
+	if err != nil || enterprise.Policies[2].Duration != "Custom" ||
+		enterprise.Policies[2].DurationDays != nil {
 		t.Fatalf("enterprise retention = %#v, error=%v", enterprise, err)
 	}
 	if _, err := EffectiveRetentionForPlan(tenant.Plan("unknown")); err == nil {

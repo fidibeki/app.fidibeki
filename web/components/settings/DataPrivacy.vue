@@ -792,6 +792,7 @@ function retentionLabel(policy: RetentionPolicy) {
 
 function retentionDuration(policy: RetentionPolicy) {
   if (policy.category === 'workflow_metadata') return t('admin.privacy.settings.duration.workspaceLifetime')
+  if (policy.category === 'auth_magic_links') return t('admin.privacy.settings.duration.magicLinkExpiry')
   if (policy.category === 'unverified_requests') {
     return plural('admin.privacy.settings.duration.hours', 48, { count: 48 })
   }
