@@ -21,6 +21,7 @@ const moduleEntries = {
   replay: 'src/modules/replay.ts',
   'replay-consent-prompt': 'src/replay-consent-prompt.ts',
   'analytics-consent-prompt': 'src/analytics-consent-prompt.ts',
+  'privacy-controls': 'src/privacy-controls.ts',
   screenshot: 'src/modules/screenshot.ts',
   'element-attachment': 'src/modules/element-attachment.ts',
   'error-reporting': 'src/modules/error-reporting.ts',
