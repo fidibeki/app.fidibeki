@@ -346,6 +346,63 @@ func (handler *HTTPHandler) applyCaseRectification(w http.ResponseWriter, r *htt
 	})
 }
 
+func (handler *HTTPHandler) listRectifiableFeedbacks(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, _, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	feedbacks, err := handler.options.Store.ListRectifiableFeedbacks(
+		r.Context(), query, resolved.ID, caseID,
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"feedbacks": feedbacks})
+}
+
+func (handler *HTTPHandler) applyFeedbackRectification(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
+	var body struct {
+		FeedbackID  string `json:"feedback_id"`
+		Description string `json:"description"`
+		Reason      string `json:"reason"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	rectification, created, err := handler.options.Store.ApplyFeedbackRectification(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), RecordFeedbackRectificationInput{
+			FeedbackID: body.FeedbackID, Description: body.Description,
+			Reason: body.Reason,
+		}, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"feedback_rectification": rectification, "created": created,
+	})
+}
+
 func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
 	caseID, ok := privacyCaseID(w, r)
 	if !ok {

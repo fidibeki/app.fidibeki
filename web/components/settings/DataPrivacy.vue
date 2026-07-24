@@ -25,10 +25,12 @@ import type {
   PrivacyCaseRectification,
   PrivacyControllerRole,
   PrivacyExport,
+  PrivacyFeedbackRectification,
   PrivacyPortabilityDataCategory,
   PrivacyPortabilityDecision,
   PrivacyRightType,
   PrivacySubjectType,
+  RectifiableFeedback,
   ReporterPrivacyAction,
   ReporterPrivacyRequest,
   RetentionPolicy,
@@ -106,6 +108,14 @@ type MemberRectificationDraft = {
 }
 const rectificationFields: MemberRectificationField[] = ['name', 'locale', 'timezone']
 const rectificationDrafts = ref<Record<string, MemberRectificationDraft>>({})
+type FeedbackRectificationDraft = {
+  feedbackID: string
+  description: string
+  reason: string
+}
+const rectifiableFeedbacks = ref<Record<string, RectifiableFeedback[]>>({})
+const feedbackRectificationDrafts = ref<Record<string, FeedbackRectificationDraft>>({})
+const rectifiableFeedbackLoading = ref<Record<string, boolean>>({})
 const portabilityCategoryOptions: PrivacyPortabilityDataCategory[] = [
   'feedback',
   'issues',
@@ -170,11 +180,13 @@ function caseCanExecute(item: PrivacyCase) {
     && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
 }
 
-function toggleCase(item: PrivacyCase) {
+async function toggleCase(item: PrivacyCase) {
+  const opening = !expandedCases.value[item.id]
   expandedCases.value = {
     ...expandedCases.value,
-    [item.id]: !expandedCases.value[item.id],
+    [item.id]: opening,
   }
+  if (!opening) return
   if (item.right_type === 'portability_assessment' && !portabilityDecisions.value[item.id]) {
     portabilityDecisions.value = { ...portabilityDecisions.value, [item.id]: 'approved' }
     portabilitySelections.value = {
@@ -184,6 +196,9 @@ function toggleCase(item: PrivacyCase) {
   }
   if (item.right_type === 'rectification' && item.subject_type === 'member') {
     ensureRectificationDraft(item)
+  }
+  if (caseCanRectifyReporter(item) && !rectifiableFeedbacks.value[item.id]) {
+    await loadRectifiableFeedbacks(item)
   }
 }
 
@@ -209,6 +224,63 @@ function caseCanRectify(item: PrivacyCase) {
     && item.right_type === 'rectification'
     && Boolean(item.verified_at)
     && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
+}
+
+function caseCanRectifyReporter(item: PrivacyCase) {
+  return item.subject_type === 'reporter'
+    && item.right_type === 'rectification'
+    && Boolean(item.verified_at)
+    && !['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
+}
+
+async function loadRectifiableFeedbacks(item: PrivacyCase) {
+  rectifiableFeedbackLoading.value = {
+    ...rectifiableFeedbackLoading.value,
+    [item.id]: true,
+  }
+  try {
+    const response = await $apiFetch<{ feedbacks: RectifiableFeedback[] }>(
+      `/v1/privacy/cases/${item.id}/rectifiable-feedbacks`,
+    )
+    rectifiableFeedbacks.value = {
+      ...rectifiableFeedbacks.value,
+      [item.id]: response.feedbacks,
+    }
+    const selected = response.feedbacks[0]
+    feedbackRectificationDrafts.value = {
+      ...feedbackRectificationDrafts.value,
+      [item.id]: {
+        feedbackID: selected?.id || '',
+        description: selected?.description || '',
+        reason: '',
+      },
+    }
+  } catch (operationError) {
+    actionError.value = localizedError.message(operationError, 'admin.privacy.settings.error')
+  } finally {
+    rectifiableFeedbackLoading.value = {
+      ...rectifiableFeedbackLoading.value,
+      [item.id]: false,
+    }
+  }
+}
+
+function selectRectifiableFeedback(item: PrivacyCase) {
+  const draft = feedbackRectificationDrafts.value[item.id]
+  const selected = (rectifiableFeedbacks.value[item.id] || [])
+    .find(feedback => feedback.id === draft?.feedbackID)
+  if (draft) draft.description = selected?.description || ''
+}
+
+function feedbackRectificationReady(item: PrivacyCase) {
+  const draft = feedbackRectificationDrafts.value[item.id]
+  const selected = (rectifiableFeedbacks.value[item.id] || [])
+    .find(feedback => feedback.id === draft?.feedbackID)
+  return caseCanRectifyReporter(item)
+    && Boolean(draft?.feedbackID)
+    && Boolean(draft?.reason.trim())
+    && Boolean(draft?.description.trim())
+    && draft?.description !== (selected?.description || '')
 }
 
 function rectificationReady(item: PrivacyCase) {
@@ -257,6 +329,26 @@ async function applyMemberRectification(item: PrivacyCase) {
     draft.reason = ''
     actionNotice.value = t('admin.privacy.settings.cases.rectificationApplied')
     await refresh()
+  })
+}
+
+async function applyFeedbackRectification(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !feedbackRectificationReady(item)) return
+  const draft = feedbackRectificationDrafts.value[item.id]
+  await runAction(`feedback-rectification:${item.id}`, async () => {
+    await $apiFetch<{ feedback_rectification: PrivacyFeedbackRectification }>(
+      `/v1/privacy/cases/${item.id}/feedback-rectifications`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: {
+          feedback_id: draft.feedbackID,
+          description: draft.description,
+          reason: draft.reason.trim(),
+        },
+      },
+    )
+    actionNotice.value = t('admin.privacy.settings.cases.feedbackRectificationApplied')
+    await Promise.all([refresh(), loadRectifiableFeedbacks(item)])
   })
 }
 
@@ -710,6 +802,55 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                     </article>
                   </section>
                 </div>
+                <div v-if="item.right_type === 'rectification' && item.subject_type === 'reporter'" class="privacy-case-rectification privacy-case-feedback-rectification">
+                  <header>
+                    <PencilLine :size="16" />
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.feedbackRectification') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.feedbackRectificationTitle') }}</b>
+                      <small>{{ t('admin.privacy.settings.cases.feedbackRectificationDescription') }}</small>
+                    </div>
+                  </header>
+                  <p v-if="!item.verified_at" class="privacy-rectification-note">{{ t('admin.privacy.settings.cases.feedbackRectificationVerification') }}</p>
+                  <p v-else-if="rectifiableFeedbackLoading[item.id]" class="privacy-rectification-note"><span class="app-spinner" />{{ t('admin.common.loading') }}</p>
+                  <form v-else-if="caseCanRectifyReporter(item) && feedbackRectificationDrafts[item.id] && (rectifiableFeedbacks[item.id] || []).length" class="privacy-feedback-rectification-form" @submit.prevent="applyFeedbackRectification(item)">
+                    <label>{{ t('admin.privacy.settings.cases.feedbackRectificationFeedback') }}
+                      <select v-model="feedbackRectificationDrafts[item.id].feedbackID" class="app-select" @change="selectRectifiableFeedback(item)">
+                        <option v-for="feedback in rectifiableFeedbacks[item.id] || []" :key="feedback.id" :value="feedback.id">{{ feedback.public_id }} · {{ feedback.title }}</option>
+                      </select>
+                    </label>
+                    <label class="privacy-feedback-description">{{ t('admin.privacy.settings.cases.feedbackRectificationContent') }}
+                      <textarea v-model="feedbackRectificationDrafts[item.id].description" class="app-textarea" maxlength="10000" required />
+                    </label>
+                    <label>{{ t('admin.privacy.settings.cases.rectificationReason') }}
+                      <textarea v-model.trim="feedbackRectificationDrafts[item.id].reason" class="app-textarea" maxlength="2000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !feedbackRectificationReady(item)">
+                      <PencilLine :size="14" />{{ actionPending === `feedback-rectification:${item.id}` ? t('admin.common.saving') : t('admin.privacy.settings.cases.applyFeedbackRectification') }}
+                    </button>
+                  </form>
+                  <p v-else-if="caseCanRectifyReporter(item)" class="privacy-rectification-note">{{ t('admin.privacy.settings.cases.noRectifiableFeedback') }}</p>
+                  <section class="privacy-rectification-history">
+                    <header><b>{{ t('admin.privacy.settings.cases.feedbackRectificationHistory') }}</b></header>
+                    <p v-if="!item.feedback_rectifications?.length">{{ t('admin.privacy.settings.cases.noFeedbackRectifications') }}</p>
+                    <article v-for="rectification in item.feedback_rectifications || []" :key="rectification.id" class="privacy-feedback-rectification-history">
+                      <div class="privacy-rectification-change">
+                        <b>{{ t('admin.privacy.settings.cases.feedbackRectificationPrevious') }}</b>
+                        <code>{{ rectificationValue(rectification.previous_description) }}</code>
+                      </div>
+                      <MoveRight :size="14" />
+                      <div class="privacy-rectification-change">
+                        <b>{{ t('admin.privacy.settings.cases.feedbackRectificationCorrected') }}</b>
+                        <code>{{ rectification.description }}</code>
+                      </div>
+                      <footer>
+                        <span>{{ dateTime(rectification.applied_at) }} · {{ memberLabel(rectification.applied_by_member_id) }}</span>
+                        <p>{{ rectification.reason }}</p>
+                        <small v-if="rectification.derived_data_invalidated">{{ t('admin.privacy.settings.cases.feedbackRectificationAIInvalidated') }}</small>
+                      </footer>
+                    </article>
+                  </section>
+                </div>
                 <div class="privacy-case-execution">
                   <div>
                     <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
@@ -965,6 +1106,14 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-rectification-history article footer { display: grid; grid-column: 1 / -1; gap: 3px; }
 .privacy-rectification-history article footer span { color: var(--muted); font-size: 8px; }
 .privacy-rectification-history article footer p { margin: 0; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+.privacy-rectification-note { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font-size: 9px; }
+.privacy-feedback-rectification-form { grid-template-columns: minmax(180px, .7fr) minmax(280px, 1.4fr) minmax(220px, .9fr) auto !important; }
+.privacy-feedback-rectification-form > label { display: grid; align-content: end; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-feedback-rectification-form .app-textarea { min-height: 92px !important; white-space: pre-wrap; }
+.privacy-feedback-rectification-history { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important; align-items: center; }
+.privacy-feedback-rectification-history > svg { color: var(--muted); }
+.privacy-feedback-rectification-history code { display: block; max-height: 150px; overflow: auto; white-space: pre-wrap; }
+.privacy-feedback-rectification-history footer small { color: var(--teal); font-size: 8px; }
 .privacy-case-execution, .privacy-case-holds { padding: 14px 15px; }
 .privacy-case-execution { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-right: 1px solid var(--line); }
 .privacy-case-execution > div { display: grid; gap: 6px; }
@@ -1025,6 +1174,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-portability form { grid-template-columns: 1fr 1fr; }
   .privacy-case-portability form .app-button { justify-self: end; }
   .privacy-case-rectification > form { grid-template-columns: 1fr; }
+  .privacy-feedback-rectification-form { grid-template-columns: 1fr 1fr !important; }
+  .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: 1 / -1; }
   .privacy-case-rectification > form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
   .privacy-case-hold-form { grid-template-columns: 1fr; }
@@ -1050,6 +1201,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-portability form { grid-template-columns: 1fr; }
   .privacy-case-portability form .app-button { width: 100%; }
   .privacy-case-rectification fieldset, .privacy-rectification-history article { grid-template-columns: 1fr; }
+  .privacy-feedback-rectification-form, .privacy-feedback-rectification-history { grid-template-columns: 1fr !important; }
+  .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: auto; }
+  .privacy-feedback-rectification-history > svg { transform: rotate(90deg); }
   .privacy-case-rectification > form .app-button { width: 100%; }
   .privacy-case-hold { grid-template-columns: 1fr; }
   .privacy-case-hold form { align-items: stretch; flex-direction: column; }

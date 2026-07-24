@@ -871,6 +871,29 @@ export interface PrivacyCaseRectification {
   created_at: string
 }
 
+export interface RectifiableFeedback {
+  id: string
+  public_id: string
+  title: string
+  description?: string
+  page_url: string
+  text_process_status: string
+  created_at: string
+}
+
+export interface PrivacyFeedbackRectification {
+  id: string
+  privacy_case_id: string
+  feedback_id: string
+  previous_description?: string
+  description: string
+  reason: string
+  derived_data_invalidated: boolean
+  applied_by_member_id: string
+  applied_at: string
+  created_at: string
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -899,6 +922,7 @@ export interface PrivacyCase {
   execution?: PrivacyCaseExecution
   portability_assessment?: PrivacyPortabilityAssessment
   rectifications?: PrivacyCaseRectification[]
+  feedback_rectifications?: PrivacyFeedbackRectification[]
   created_at: string
   updated_at: string
 }

@@ -108,7 +108,8 @@ func (s Store) MarkFailed(ctx context.Context, eventID string, message string) e
 type FeedbackResolver struct{}
 
 func (FeedbackResolver) Resolve(_ context.Context, event Event) ([]Destination, error) {
-	if event.Event != "feedback.created" || event.ResourceType != "feedback" {
+	if (event.Event != "feedback.created" && event.Event != "feedback.rectified") ||
+		event.ResourceType != "feedback" {
 		return nil, nil
 	}
 	return []Destination{{

@@ -465,6 +465,27 @@ function createMockState() {
       rectifications: [],
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
+    }, {
+      id: 'privacy-case-feedback-rectification',
+      public_id: 'PRV-FEEDBACK',
+      subject_type: 'reporter',
+      right_type: 'rectification',
+      controller_role: 'customer_controller_assistance',
+      status: 'in_progress',
+      subject_email: 'customer@example.test',
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1',
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verification_method: 'email_link',
+      verified_at: '2026-07-21T12:02:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      feedback_rectifications: [],
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:00:00.000Z',
     }] as PrivacyCase[],
     reviewItems: [] as Array<{
       id: string
@@ -1432,6 +1453,59 @@ async function installMockAPI(page: Page, state: MockState) {
       item.rectifications.unshift(rectification)
       item.updated_at = now
       return json(route, { rectification, created: true }, 201)
+    }
+    const rectifiableFeedbackMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/rectifiable-feedbacks$/,
+    )
+    if (rectifiableFeedbackMatch && method === 'GET') {
+      const item = state.privacyCases.find(candidate => candidate.id === rectifiableFeedbackMatch[1])
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const feedbacks = state.feedback
+        .filter(candidate => candidate.reporter_email === item.subject_email)
+        .map(candidate => ({
+          id: candidate.id,
+          public_id: candidate.public_id,
+          title: candidate.title,
+          description: candidate.description,
+          page_url: candidate.page_url,
+          text_process_status: candidate.ai_status,
+          created_at: candidate.created_at,
+        }))
+      return json(route, { feedbacks })
+    }
+    const feedbackRectificationMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/feedback-rectifications$/,
+    )
+    if (feedbackRectificationMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === feedbackRectificationMatch[1])
+      const input = body()
+      const feedbackItem = state.feedback.find(candidate => candidate.id === input.feedback_id)
+      if (!item || !feedbackItem || feedbackItem.reporter_email !== item.subject_email) {
+        return json(route, { error: { code: 'not_found', message: 'feedback not found' } }, 404)
+      }
+      const previousDescription = feedbackItem.description
+      feedbackItem.description = String(input.description)
+      feedbackItem.text = String(input.description)
+      feedbackItem.text_cleaned = ''
+      feedbackItem.ai_status = 'pending'
+      const rectification = {
+        id: `${item.id}-feedback-rectification-${(item.feedback_rectifications?.length || 0) + 1}`,
+        privacy_case_id: item.id,
+        feedback_id: feedbackItem.id,
+        previous_description: previousDescription,
+        description: feedbackItem.description,
+        reason: String(input.reason),
+        derived_data_invalidated: true,
+        applied_by_member_id: 'member-1',
+        applied_at: now,
+        created_at: now,
+      }
+      item.feedback_rectifications ||= []
+      item.feedback_rectifications.unshift(rectification)
+      item.updated_at = now
+      return json(route, { feedback_rectification: rectification, created: true }, 201)
     }
     const portabilityAssessmentMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/portability-assessments$/)
     if (portabilityAssessmentMatch && method === 'POST') {
@@ -4280,6 +4354,54 @@ test('member rectification applies selected profile changes and preserves eviden
   })
   await rectificationCase.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-member-rectification-${testInfo.project.name}`)
+})
+
+test('reporter feedback rectification corrects content without rewriting the linked issue', async ({ page }, testInfo) => {
+  const state = createMockState()
+  const originalTitle = state.feedback[0].title
+  const originalIssueDescription = state.issues[0].description
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+
+  const rectificationCase = page.locator('.privacy-case-entry', { hasText: 'PRV-FEEDBACK' })
+  await rectificationCase.getByTitle('Toggle case details').click()
+  await expect(rectificationCase.getByRole('combobox', { name: 'Feedback' })).toHaveValue('feedback-1')
+  await expect(rectificationCase.getByLabel('Corrected description')).toHaveValue(
+    'Checkout froze after I applied a promotion code.',
+  )
+
+  await rectificationCase.getByLabel('Corrected description').fill(
+    'Checkout became unresponsive after I applied the SUMMER promotion code.',
+  )
+  await rectificationCase.getByLabel('Decision reason').fill(
+    'The verified reporter clarified the original sequence of events.',
+  )
+  await rectificationCase.getByRole('button', { name: 'Apply content correction' }).click()
+
+  await expect(page.getByRole('status')).toContainText('Feedback content correction applied.')
+  await expect(rectificationCase).toContainText(
+    'Checkout froze after I applied a promotion code.',
+  )
+  await expect(rectificationCase).toContainText(
+    'Checkout became unresponsive after I applied the SUMMER promotion code.',
+  )
+  await expect(rectificationCase).toContainText(
+    'The verified reporter clarified the original sequence of events.',
+  )
+  await expect(rectificationCase).toContainText(
+    'Text-derived AI recommendations were invalidated.',
+  )
+  expect(state.feedback[0]).toMatchObject({
+    title: originalTitle,
+    description: 'Checkout became unresponsive after I applied the SUMMER promotion code.',
+    text: 'Checkout became unresponsive after I applied the SUMMER promotion code.',
+    text_cleaned: '',
+    ai_status: 'pending',
+  })
+  expect(state.issues[0].description).toBe(originalIssueDescription)
+  await rectificationCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-feedback-rectification-${testInfo.project.name}`)
 })
 
 test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {

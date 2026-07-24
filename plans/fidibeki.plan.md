@@ -575,8 +575,14 @@ was removed from the staging test tenant.
           case open while applying corrections, refreshes the visible member profile without
           remounting the workflow, and exposes the immutable correction history in desktop/mobile
           E2E.
-        - [ ] Implement reporter content rectification with derived-data invalidation, itemized
-          erasure exceptions, and explicit partial/refusal execution evidence.
+        - [x] Verified reporter rectification cases expose only subject-owned feedback within the
+          request cutoff and atomically correct canonical `description` plus legacy `text`.
+          Migration `93` preserves append-only before/after evidence, reason, actor, idempotency,
+          tenant isolation, safe access audit, and case history. Text-derived AI output is cleared
+          behind a generation fence and re-enters only the existing governed pipeline; stale
+          reporter exports expire, while the feedback title and linked Issue remain independent.
+          The bilingual backoffice provides selection, correction, and desktop/mobile history.
+        - [ ] Implement itemized erasure exceptions and explicit partial/refusal execution evidence.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive

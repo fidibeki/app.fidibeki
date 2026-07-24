@@ -481,6 +481,80 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 			invalidRectification.Code, invalidRectification.Body.String())
 	}
 
+	var reporterFeedbackID string
+	if err := database.QueryRow(ctx, `
+		UPDATE feedbacks
+		SET created_at = $2::timestamptz - interval '1 hour'
+		WHERE tenant_id = $1 AND reporter_email = 'reporter@example.test'
+		RETURNING id
+	`, tenantID, now).Scan(&reporterFeedbackID); err != nil {
+		t.Fatalf("prepare HTTP reporter rectification feedback: %v", err)
+	}
+	reporterRectificationCase, reporterRectificationToken, _, err := privacyStore.CreateCase(
+		ctx, database, tenantID, ownerID, "http-reporter-rectification",
+		CreateCaseInput{
+			SubjectType: SubjectReporter, RightType: RightRectification,
+			ControllerRole: RoleCustomerControllerAssistance,
+			SubjectEmail:   "reporter@example.test", OwnerMemberID: ownerID,
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("create HTTP reporter rectification case: %v", err)
+	}
+	reporterRectificationHash, ok := parseReporterRequestToken(reporterRectificationToken)
+	if !ok {
+		t.Fatalf("parse HTTP reporter rectification token: %q", reporterRectificationToken)
+	}
+	if _, err := privacyStore.VerifyCase(
+		ctx, database, reporterRectificationHash, now.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("verify HTTP reporter rectification case: %v", err)
+	}
+	reporterRectificationBase := "/v1/privacy/cases/" + reporterRectificationCase.ID
+	rectifiable := privacyHTTPRequest(
+		handler, ownerToken, http.MethodGet,
+		reporterRectificationBase+"/rectifiable-feedbacks",
+	)
+	if rectifiable.Code != http.StatusOK ||
+		!strings.Contains(rectifiable.Body.String(), reporterFeedbackID) {
+		t.Fatalf("rectifiable reporter feedback = %d body=%s",
+			rectifiable.Code, rectifiable.Body.String())
+	}
+	feedbackRectified := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost,
+		reporterRectificationBase+"/feedback-rectifications",
+		fmt.Sprintf(`{
+			"feedback_id":%q,
+			"description":"Corrected reporter feedback through the HTTP API.",
+			"reason":"Verified reporter clarification."
+		}`, reporterFeedbackID),
+		"http-reporter-rectification-apply",
+	)
+	if feedbackRectified.Code != http.StatusCreated ||
+		!strings.Contains(feedbackRectified.Body.String(), `"created":true`) ||
+		!strings.Contains(
+			feedbackRectified.Body.String(),
+			`"description":"Corrected reporter feedback through the HTTP API."`,
+		) {
+		t.Fatalf("reporter feedback rectification = %d body=%s",
+			feedbackRectified.Code, feedbackRectified.Body.String())
+	}
+	crossTenantRectification := privacyHTTPJSONIdempotentRequest(
+		handler, otherToken, http.MethodPost,
+		reporterRectificationBase+"/feedback-rectifications",
+		fmt.Sprintf(`{
+			"feedback_id":%q,
+			"description":"Cross-tenant correction must fail.",
+			"reason":"Invalid cross-tenant command."
+		}`, reporterFeedbackID),
+		"http-reporter-rectification-cross-tenant",
+	)
+	if crossTenantRectification.Code != http.StatusForbidden {
+		t.Fatalf("cross-tenant reporter rectification = %d body=%s",
+			crossTenantRectification.Code, crossTenantRectification.Body.String())
+	}
+
 	retryCreated := privacyHTTPRequest(handler, ownerToken, http.MethodPost, "/v1/privacy/exports")
 	var retryEnvelope struct {
 		Export Job `json:"export"`

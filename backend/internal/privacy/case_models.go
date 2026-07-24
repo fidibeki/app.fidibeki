@@ -90,37 +90,38 @@ var (
 )
 
 type PrivacyCase struct {
-	ID                      string                 `json:"id"`
-	TenantID                string                 `json:"-"`
-	PublicID                string                 `json:"public_id"`
-	SubjectType             SubjectType            `json:"subject_type"`
-	RightType               RightType              `json:"right_type"`
-	ControllerRole          ControllerRole         `json:"controller_role"`
-	Status                  CaseStatus             `json:"status"`
-	SubjectEmail            *string                `json:"subject_email,omitempty"`
-	SubjectMemberID         *string                `json:"subject_member_id,omitempty"`
-	RequestedByMemberID     string                 `json:"requested_by_member_id"`
-	OwnerMemberID           *string                `json:"owner_member_id,omitempty"`
-	VerificationExpiresAt   *time.Time             `json:"verification_expires_at,omitempty"`
-	VerificationMethod      *string                `json:"verification_method,omitempty"`
-	VerifiedAt              *time.Time             `json:"verified_at,omitempty"`
-	ReceivedAt              time.Time              `json:"received_at"`
-	DeadlineAt              time.Time              `json:"deadline_at"`
-	PauseStartedAt          *time.Time             `json:"pause_started_at,omitempty"`
-	PausedSeconds           int64                  `json:"paused_seconds"`
-	CompletedAt             *time.Time             `json:"completed_at,omitempty"`
-	Scope                   map[string]any         `json:"scope"`
-	DecisionSummary         *string                `json:"decision_summary,omitempty"`
-	LegalReviewNotes        *string                `json:"legal_review_notes,omitempty"`
-	ExceptionReason         *string                `json:"exception_reason,omitempty"`
-	LegacyReporterRequestID *string                `json:"legacy_reporter_request_id,omitempty"`
-	Restriction             *Restriction           `json:"restriction,omitempty"`
-	LegalHolds              []LegalHold            `json:"legal_holds"`
-	Execution               *CaseExecution         `json:"execution,omitempty"`
-	PortabilityAssessment   *PortabilityAssessment `json:"portability_assessment,omitempty"`
-	Rectifications          []CaseRectification    `json:"rectifications"`
-	CreatedAt               time.Time              `json:"created_at"`
-	UpdatedAt               time.Time              `json:"updated_at"`
+	ID                      string                  `json:"id"`
+	TenantID                string                  `json:"-"`
+	PublicID                string                  `json:"public_id"`
+	SubjectType             SubjectType             `json:"subject_type"`
+	RightType               RightType               `json:"right_type"`
+	ControllerRole          ControllerRole          `json:"controller_role"`
+	Status                  CaseStatus              `json:"status"`
+	SubjectEmail            *string                 `json:"subject_email,omitempty"`
+	SubjectMemberID         *string                 `json:"subject_member_id,omitempty"`
+	RequestedByMemberID     string                  `json:"requested_by_member_id"`
+	OwnerMemberID           *string                 `json:"owner_member_id,omitempty"`
+	VerificationExpiresAt   *time.Time              `json:"verification_expires_at,omitempty"`
+	VerificationMethod      *string                 `json:"verification_method,omitempty"`
+	VerifiedAt              *time.Time              `json:"verified_at,omitempty"`
+	ReceivedAt              time.Time               `json:"received_at"`
+	DeadlineAt              time.Time               `json:"deadline_at"`
+	PauseStartedAt          *time.Time              `json:"pause_started_at,omitempty"`
+	PausedSeconds           int64                   `json:"paused_seconds"`
+	CompletedAt             *time.Time              `json:"completed_at,omitempty"`
+	Scope                   map[string]any          `json:"scope"`
+	DecisionSummary         *string                 `json:"decision_summary,omitempty"`
+	LegalReviewNotes        *string                 `json:"legal_review_notes,omitempty"`
+	ExceptionReason         *string                 `json:"exception_reason,omitempty"`
+	LegacyReporterRequestID *string                 `json:"legacy_reporter_request_id,omitempty"`
+	Restriction             *Restriction            `json:"restriction,omitempty"`
+	LegalHolds              []LegalHold             `json:"legal_holds"`
+	Execution               *CaseExecution          `json:"execution,omitempty"`
+	PortabilityAssessment   *PortabilityAssessment  `json:"portability_assessment,omitempty"`
+	Rectifications          []CaseRectification     `json:"rectifications"`
+	FeedbackRectifications  []FeedbackRectification `json:"feedback_rectifications"`
+	CreatedAt               time.Time               `json:"created_at"`
+	UpdatedAt               time.Time               `json:"updated_at"`
 }
 
 type Restriction struct {
@@ -209,6 +210,35 @@ type CaseRectification struct {
 type RecordCaseRectificationInput struct {
 	Changes map[string]*string
 	Reason  string
+}
+
+type RectifiableFeedback struct {
+	ID                string    `json:"id"`
+	PublicID          string    `json:"public_id"`
+	Title             string    `json:"title"`
+	Description       *string   `json:"description,omitempty"`
+	PageURL           string    `json:"page_url"`
+	TextProcessStatus string    `json:"text_process_status"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type FeedbackRectification struct {
+	ID                     string    `json:"id"`
+	PrivacyCaseID          string    `json:"privacy_case_id"`
+	FeedbackID             string    `json:"feedback_id"`
+	PreviousDescription    *string   `json:"previous_description,omitempty"`
+	Description            string    `json:"description"`
+	Reason                 string    `json:"reason"`
+	DerivedDataInvalidated bool      `json:"derived_data_invalidated"`
+	AppliedByMemberID      string    `json:"applied_by_member_id"`
+	AppliedAt              time.Time `json:"applied_at"`
+	CreatedAt              time.Time `json:"created_at"`
+}
+
+type RecordFeedbackRectificationInput struct {
+	FeedbackID  string
+	Description string
+	Reason      string
 }
 
 type CreateCaseInput struct {

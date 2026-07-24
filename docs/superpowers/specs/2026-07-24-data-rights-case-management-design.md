@@ -159,7 +159,16 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   Each effective correction preserves append-only before/after values, reason, actor, case
   activity, subject-aware access audit, idempotency, tenant isolation, member-export evidence, and
   a bilingual desktop/mobile backoffice history.
-- Remaining slice 2 work includes reporter content rectification with derived-data invalidation,
-  itemized erasure exceptions, and first-class partial/refusal execution evidence.
+- Reporter content rectification is implemented through migration 93. A verified reporter
+  rectification case exposes only feedback owned by the verified subject and created within the
+  request cutoff, then atomically corrects the canonical `description` plus the legacy `text`
+  compatibility field. The feedback title and linked Issue remain independent. Each correction
+  preserves append-only before/after evidence and a safe audit trail, invalidates only text-derived
+  AI state using a generation fence, and queues the existing governed processing policy rather
+  than introducing a separate provider call. Prior reporter export archives expire so a later
+  download cannot serve stale content. Bilingual desktop/mobile backoffice coverage exercises the
+  complete selection, correction, and history flow.
+- Remaining slice 2 work includes itemized erasure exceptions and first-class partial/refusal
+  execution evidence.
 - Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
   workflow remain pending.

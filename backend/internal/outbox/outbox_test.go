@@ -124,10 +124,12 @@ func TestDispatcherRunStopsWithContext(t *testing.T) {
 
 func TestFeedbackResolverBuildsPipelineDestination(t *testing.T) {
 	t.Parallel()
-	event := Event{Event: "feedback.created", ResourceType: "feedback", ResourceID: "feedback-id"}
-	destinations, err := (FeedbackResolver{}).Resolve(context.Background(), event)
-	if err != nil || len(destinations) != 1 || destinations[0].TaskType != TaskFeedbackPipe {
-		t.Fatalf("destinations = %#v, error = %v", destinations, err)
+	for _, eventType := range []string{"feedback.created", "feedback.rectified"} {
+		event := Event{Event: eventType, ResourceType: "feedback", ResourceID: "feedback-id"}
+		destinations, err := (FeedbackResolver{}).Resolve(context.Background(), event)
+		if err != nil || len(destinations) != 1 || destinations[0].TaskType != TaskFeedbackPipe {
+			t.Fatalf("%s destinations = %#v, error = %v", eventType, destinations, err)
+		}
 	}
 	if got := TaskID(Event{ID: "event"}, Destination{Kind: "pipeline", ID: "feedback"}); got != "outbox:event:pipeline:feedback" {
 		t.Errorf("TaskID() = %q", got)

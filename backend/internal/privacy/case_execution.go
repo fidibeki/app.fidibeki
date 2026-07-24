@@ -415,6 +415,7 @@ func attachCaseOperationalState(
 		caseIndex[cases[index].ID] = index
 		cases[index].LegalHolds = []LegalHold{}
 		cases[index].Rectifications = []CaseRectification{}
+		cases[index].FeedbackRectifications = []FeedbackRectification{}
 	}
 	rows, err := query.Query(ctx, `
 		SELECT `+legalHoldSelectColumns("legal_hold")+`
@@ -439,6 +440,34 @@ func attachCaseOperationalState(
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, fmt.Errorf("iterate privacy case legal holds: %w", err)
+	}
+	rows.Close()
+
+	rows, err = query.Query(ctx, `
+		SELECT `+feedbackRectificationSelectColumns("rectification")+`
+		FROM privacy_case_feedback_rectifications AS rectification
+		WHERE rectification.tenant_id = $1
+		  AND rectification.privacy_case_id = ANY($2::uuid[])
+		ORDER BY rectification.applied_at DESC, rectification.id DESC
+	`, tenantID, caseIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list privacy case feedback rectifications: %w", err)
+	}
+	for rows.Next() {
+		rectification, _, scanErr := scanFeedbackRectification(rows, false)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		if index, exists := caseIndex[rectification.PrivacyCaseID]; exists {
+			cases[index].FeedbackRectifications = append(
+				cases[index].FeedbackRectifications, rectification,
+			)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate privacy case feedback rectifications: %w", err)
 	}
 	rows.Close()
 
