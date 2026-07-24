@@ -1107,7 +1107,8 @@ was removed from the staging test tenant.
       only the closed-state geometry differs — desktop `edge_tab` is flush to the configured side,
       vertically centered with a bounded height and vertical label; mobile becomes a compact
       horizontal edge-attached control so long localized labels wrap instead of clipping.
-      `floating_button` keeps its existing inset geometry unchanged. The project editor adds an
+      `floating_button` keeps its inset geometry and now honours the configured side on mobile.
+      The project editor adds an
       accessible two-option visual selector (native radios, Lucide icons, Edge tab marked
       Recommended) shown only for the launcher presentation, with a faithful closed-preview that
       reflects the selected variant and side; English and Portuguese copy is complete.
@@ -1116,9 +1117,10 @@ was removed from the staging test tenant.
         `edge_tab`, invalid/null value rejection, and a full down/up cycle.
       - Widget: unit tests (missing-field default, class/attribute selection, side, accent, label,
         focus, one interaction event) and coverage thresholds pass; typecheck and esbuild build pass;
-        13 new Playwright cases cover both variants, left/right placement, keyboard activation,
-        panel/submit/dismiss parity, long Portuguese wrapping, and no document overflow at desktop
-        and mobile widths, alongside the full existing 67-test browser suite.
+        15 new Playwright cases cover both variants, left/right placement on desktop and mobile,
+        visible keyboard focus and activation, panel/submit/dismiss parity, long Portuguese
+        wrapping without clipping, and no document overflow, alongside the full 69-test browser
+        suite.
       - Web: unit, typecheck, and Nuxt build pass; two new Playwright cases cover the accessible
         selector and a faithful desktop preview (side/variant attributes, exact save payload); the
         full 219-test responsive suite (desktop + mobile) passes.

@@ -77,8 +77,18 @@ describe('launcher variants', () => {
       const { destroy, shadow } = mount({ position })
       const styleText = shadow.querySelector('style')!.textContent!
       expect(styleText).toContain(`.launcher.edge-tab{top:50%;bottom:auto;${side}:0;`)
+      expect(styleText).toContain(`.launcher{bottom:12px;left:auto;right:auto;${side}:12px}`)
       destroy()
     }
+  })
+
+  it('provides a visible keyboard focus treatment', () => {
+    const { destroy, shadow } = mount()
+    const styleText = shadow.querySelector('style')!.textContent!
+    expect(styleText).toContain(
+      '.launcher:focus,.launcher:focus-visible{outline:3px solid var(--fb-on-accent)',
+    )
+    destroy()
   })
 
   it('reflects the accent color in the injected stylesheet for both variants', () => {

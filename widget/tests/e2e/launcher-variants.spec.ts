@@ -104,6 +104,8 @@ for (const variant of ['edge_tab', 'floating_button'] as const) {
       await mount(page, launcherRule({ launcher_variant: variant }))
       const launcher = page.getByRole('button', { name: 'Feedback', exact: true })
       await launcher.focus()
+      await expect(launcher).toHaveCSS('outline-style', 'solid')
+      await expect(launcher).toHaveCSS('outline-width', '3px')
       await page.keyboard.press('Enter')
       await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
       await expect(launcher).toBeHidden()
@@ -133,20 +135,47 @@ for (const variant of ['edge_tab', 'floating_button'] as const) {
       await expect(page.getByRole('heading', { name: 'How was checkout?' })).toHaveCount(0)
     })
 
-    test('wraps a long Portuguese label without clipping or page overflow on mobile', async ({ page }) => {
-      await page.setViewportSize({ width: 375, height: 667 })
-      await mount(page, launcherRule({ launcher_variant: variant }))
-      await page.evaluate(() => { document.documentElement.lang = 'pt' })
-      const launcher = page.locator('[data-launcher]')
-      await expect(launcher).toBeVisible()
-      const box = (await launcher.boundingBox())!
-      expect(box.height).toBeGreaterThanOrEqual(44)
-      expect(box.width).toBeGreaterThanOrEqual(44)
-      expect(await hasNoDocumentOverflow(page)).toBe(true)
-      if (process.env.FIDIBEKI_VISUAL === '1') {
-        await page.screenshot({ path: `/tmp/fidibeki-launcher-${variant}-pt-mobile.png`, fullPage: true })
-      }
-    })
+    for (const [position, side] of [['bottom-left', 'left'], ['bottom-right', 'right']] as const) {
+      test(`wraps a long Portuguese label without clipping on the mobile ${side} side`, async ({ page }) => {
+        await page.setViewportSize({ width: 375, height: 667 })
+        const rule = launcherRule({ launcher_variant: variant, position })
+        rule.localizations = { pt: rule.localizations!.pt! }
+        await mount(page, rule)
+        const launcher = page.locator('[data-launcher]')
+        await expect(launcher).toBeVisible()
+        await expect(launcher).toHaveText('Dê-nos o seu retorno detalhado sobre esta experiência de compra')
+        const box = (await launcher.boundingBox())!
+        const viewport = page.viewportSize()!
+        if (variant === 'edge_tab') {
+          if (side === 'left') {
+            expect(box.x).toBeLessThanOrEqual(1)
+          } else {
+            expect(box.x + box.width).toBeGreaterThanOrEqual(viewport.width - 1)
+          }
+        } else if (side === 'left') {
+          expect(Math.abs(box.x - 12)).toBeLessThanOrEqual(1)
+        } else {
+          expect(Math.abs(viewport.width - (box.x + box.width) - 12)).toBeLessThanOrEqual(1)
+        }
+        expect(box.height).toBeGreaterThanOrEqual(44)
+        expect(box.width).toBeGreaterThanOrEqual(44)
+        const dimensions = await launcher.evaluate(element => ({
+          clientHeight: element.clientHeight,
+          clientWidth: element.clientWidth,
+          scrollHeight: element.scrollHeight,
+          scrollWidth: element.scrollWidth,
+        }))
+        expect(dimensions.scrollHeight).toBeLessThanOrEqual(dimensions.clientHeight + 1)
+        expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1)
+        expect(await hasNoDocumentOverflow(page)).toBe(true)
+        if (process.env.FIDIBEKI_VISUAL === '1') {
+          await page.screenshot({
+            path: `/tmp/fidibeki-launcher-${variant}-${side}-pt-mobile.png`,
+            fullPage: true,
+          })
+        }
+      })
+    }
   })
 }
 

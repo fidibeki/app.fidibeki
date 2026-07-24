@@ -58,12 +58,14 @@ and submit/dismiss/recurrence behavior, with no document overflow at desktop or 
 `data-launcher-variant`) unchanged elsewhere. Desktop CSS flushes `edge_tab` to the configured
 side, vertically centers it with a bounded `max-height` and `writing-mode: vertical-rl` label with
 asymmetric rounded corners; a `max-width:480px` override switches it to a compact horizontal
-edge-attached control with wrapping text. `floating_button` CSS is unchanged. New unit tests
-(`launcher.test.ts`) cover the missing-field default, class/attribute selection, label, accent, and
-one deduplicated interaction; a new Playwright file (`launcher-variants.spec.ts`, 13 cases) covers
-both variants, left/right placement, keyboard activation, submit/dismiss parity, long Portuguese
-wrapping, and no document overflow at desktop/mobile widths. Widget unit/coverage, typecheck, build,
-and the full 67-test Playwright suite (chromium + firefox) pass locally.
+edge-attached control with wrapping text. `floating_button` retains its inset geometry and now
+honours the configured left/right side on mobile. New unit tests
+(`launcher.test.ts`) cover the missing-field default, class/attribute selection, label, accent,
+visible focus, mobile side preservation, and one deduplicated interaction; a new Playwright file
+(`launcher-variants.spec.ts`, 15 cases) covers both variants, left/right placement on desktop and
+mobile, visible keyboard focus and activation, submit/dismiss parity, long Portuguese wrapping
+without clipping, and no document overflow. Widget unit/coverage, typecheck, build, and the full
+69-test Playwright suite (chromium + firefox) pass locally.
 
 ## Task 4: Add The Editor Selector And Faithful Preview
 
@@ -102,7 +104,7 @@ commit hash. Do not push, open a PR, merge, or deploy.
 **Status:** Complete. `plans/fidibeki.plan.md` records `#71` under the post-roadmap issue sweep
 without claiming staging validation. Backend `go test ./...`/`go vet`/`go build` and the PostgreSQL
 migration integration test (backfill, default, invalid-value rejection, down/up) pass; widget
-unit/coverage/typecheck/build and the full 67-test Playwright suite pass; web unit/typecheck/build
+unit/coverage/typecheck/build and the full 69-test Playwright suite pass; web unit/typecheck/build
 and the full 219-test responsive Playwright suite pass. Desktop/mobile screenshots for both
 launcher variants and the editor preview were generated locally and visually inspected. No
 deployment or staging validation was performed.
