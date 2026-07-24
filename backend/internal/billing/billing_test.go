@@ -86,6 +86,22 @@ func TestTurnstileVerifier(t *testing.T) {
 	if err := verifier.Verify(context.Background(), "token", "", ""); !errors.Is(err, ErrTurnstile) {
 		t.Fatalf("Verify(wrong host) error = %v", err)
 	}
+	subdomainClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"success":true,"hostname":"app.fidibeki.com","action":"signup"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	verifier.ExpectedHost = "fidibeki.com"
+	verifier.HTTPClient = subdomainClient
+	if err := verifier.Verify(context.Background(), "token", "", ""); err != nil {
+		t.Fatalf("Verify(app subdomain) error = %v", err)
+	}
+	verifier.ExpectedHost = "idibeki.com"
+	if err := verifier.Verify(context.Background(), "token", "", ""); !errors.Is(err, ErrTurnstile) {
+		t.Fatalf("Verify(suffix without dot boundary) error = %v", err)
+	}
 	if err := verifier.Verify(context.Background(), "", "", ""); !errors.Is(err, ErrTurnstile) {
 		t.Fatalf("Verify(empty) error = %v", err)
 	}
