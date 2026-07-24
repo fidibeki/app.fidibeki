@@ -1220,7 +1220,7 @@ test('managed replay consent supports reject, accept, persistence, version chang
   // A granted purpose leaves nothing pinned over the customer's layout: the withdrawal path is
   // the feedback widget's privacy column, which appears without the panel being remounted.
   await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Privacy choices' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Privacy choices', exact: true })).toBeVisible()
 
   configuration = {
     ...configuration,
@@ -1244,7 +1244,7 @@ test('managed replay consent supports reject, accept, persistence, version chang
   await page.getByRole('button', { name: 'Accept', exact: true }).click()
   await expect.poll(() => sessionRequests.length).toBe(2)
 
-  await page.getByRole('button', { name: 'Privacy choices' }).click()
+  await page.getByRole('button', { name: 'Privacy choices', exact: true }).click()
   const column = page.locator('[data-privacy-column]')
   await expect(column).toBeVisible()
   await expect(page.locator('[data-panel]')).toHaveClass(/privacy-open/)
@@ -1256,8 +1256,64 @@ test('managed replay consent supports reject, accept, persistence, version chang
 
   await page.getByRole('button', { name: 'Withdraw consent' }).click()
   await expect.poll(() => revocations).toBe(1)
-  await expect(page.getByRole('button', { name: 'Privacy choices' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Privacy choices', exact: true })).toHaveCount(0)
   await expect(column).toContainText('Consent withdrawn.')
+})
+
+test('a standing privacy control takes over withdrawal whenever no feedback panel is on the page', async ({ page }) => {
+  const replayRule = managedReplayRule({ ...browserRule, replay_mode: 'full', replay_sampling_rate: 0 })
+  const baseConfiguration = browserConfiguration(replayRule)
+  let revocations = 0
+  await seedActiveReplayConsent(page, 'fidibeki_managed')
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ...baseConfiguration,
+      default_locale: 'en',
+      features: { ...baseConfiguration.features, session_replay: true },
+    }),
+  }))
+  await page.route('**/v1/replay/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    if (pathname.endsWith('/replay/consents/revoke')) {
+      revocations++
+      return route.fulfill({ status: 204 })
+    }
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'managed-session', rrweb_version: '2.1.1',
+        max_duration_seconds: 1800, max_events: 50000,
+      }),
+    })
+  })
+
+  await page.goto('/sample.html')
+  const control = page.locator('[data-fidibeki-privacy-controls]')
+  // While the feedback panel is up it owns the withdrawal path through its own column.
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect(control).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Close feedback' }).click()
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+  const launcher = control.locator('[data-privacy-launcher]')
+  await expect(launcher).toBeVisible()
+  // A prompt presentation has no launcher of its own, so the control falls back to the edge tab.
+  await expect(launcher).toHaveAttribute('data-launcher-variant', 'edge_tab')
+
+  await launcher.click()
+  const panel = control.locator('[data-privacy-panel]')
+  await expect(panel.locator('.privacy-choice')).toHaveCount(1)
+  await expect(panel.locator('[data-purpose="session_replay"]')).toBeVisible()
+  await page.getByRole('button', { name: 'Withdraw consent' }).click()
+  await expect.poll(() => revocations).toBe(1)
+  await expect(panel).toContainText('Consent withdrawn.')
+
+  // Nothing left to withdraw: the control leaves the page instead of lingering.
+  await page.getByRole('button', { name: 'Close privacy choices' }).click()
+  await expect(control).toHaveCount(0)
 })
 
 test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {

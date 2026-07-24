@@ -6,6 +6,7 @@ import {
   type WidgetSystemCopy,
 } from './localization'
 import { readPageLanguage, subscribeToPageLanguage } from './page-language'
+import { createPrivacyEntry } from './privacy-entries'
 import {
 	AttachmentPipelineError,
 	PublicAPIResponseError,
@@ -44,10 +45,13 @@ interface MountOptions {
   submissionAnalytics(): FunnelEvent | null
   onSubmitted(): void
   onDismissed(): void
-  // Withdrawal for every Fidibeki-managed grant that is currently active. Consent that has been
-  // given no longer keeps a standing control pinned over the host page: the only entry point is
-  // the privacy column inside this panel, opened on demand from the "Privacy choices" link.
+  // Withdrawal for every Fidibeki-managed grant that is currently active, surfaced through the
+  // privacy column this panel widens into. Once the panel is gone the loader takes the withdrawal
+  // path over with a standing control — see onClosed.
   privacy?: PrivacyChoices
+  // Fired when this widget removes itself from the page (dismissed, or a completed submission),
+  // so the loader can put the standing privacy control back.
+  onClosed?(): void
   target?: HTMLElement
   hostID?: string
 }
@@ -165,49 +169,16 @@ export function mountWidget(options: MountOptions): () => void {
     privacyStatus.textContent = ''
     if (returnFocus && privacyOpenButton.isConnected && !privacyLinks.hidden) privacyOpenButton.focus()
   }
-  const withdrawChoice = async (choice: PrivacyChoice, button: HTMLButtonElement) => {
-    privacyStatus.textContent = ''
-    button.disabled = true
-    try {
-      await choice.withdraw()
-      privacyStatus.textContent = localization.system.withdrawn
-    } catch {
-      // The controller marks the grant revoked locally before it calls the API, so collection has
-      // already stopped even when the receipt could not be recorded; the entry disappears either
-      // way and the status line reports the failure rather than pretending it succeeded.
-      privacyStatus.textContent = localization.system.withdrawError
-    }
-    renderPrivacyChoices({ keepStatus: true })
-  }
-  const privacyChoiceEntry = (choice: PrivacyChoice): HTMLElement => {
-    const entry = document.createElement('article')
-    entry.className = 'privacy-choice'
-    entry.dataset.purpose = choice.purpose
-    const title = document.createElement('h4')
-    title.textContent = choice.title
-    const description = document.createElement('p')
-    description.textContent = choice.description
-    const meta = document.createElement('p')
-    meta.className = 'privacy-meta'
-    meta.textContent = `${choice.controllerName} · ${localization.system.consentRetention.replace(
-      '{days}',
-      String(choice.retentionDays),
-    )}`
-    const policy = document.createElement('p')
-    const policyLink = document.createElement('a')
-    policyLink.href = choice.privacyPolicyURL
-    policyLink.target = '_blank'
-    policyLink.rel = 'noopener noreferrer'
-    policyLink.textContent = localization.system.privacyPolicy
-    policy.append(policyLink)
-    const withdraw = document.createElement('button')
-    withdraw.type = 'button'
-    withdraw.className = 'secondary'
-    withdraw.textContent = choice.withdrawLabel
-    withdraw.addEventListener('click', () => void withdrawChoice(choice, withdraw))
-    entry.append(title, description, meta, policy, withdraw)
-    return entry
-  }
+  let privacyWithdrawals = 0
+  const privacyChoiceEntry = (choice: PrivacyChoice): HTMLElement => createPrivacyEntry(
+    choice,
+    localization.system,
+    {
+      onStatus: (text) => { privacyStatus.textContent = text },
+      onBusyChanged: (busy) => { privacyWithdrawals += busy ? 1 : -1 },
+      onSettled: () => renderPrivacyChoices({ keepStatus: true }),
+    },
+  )
   const renderPrivacyChoices = (options_: { keepStatus?: boolean } = {}) => {
     const choices = options.privacy?.choices() ?? []
     privacyLinks.hidden = choices.length === 0
@@ -215,7 +186,9 @@ export function mountWidget(options: MountOptions): () => void {
     if (!options_.keepStatus) privacyStatus.textContent = ''
     // A column emptied by a withdrawal the visitor just made stays open so its outcome stays
     // readable; one emptied silently (expiry, another tab) has nothing left to say and closes.
-    if (choices.length === 0 && !privacyStatus.textContent) closePrivacyColumn(false)
+    if (choices.length === 0 && !privacyStatus.textContent && privacyWithdrawals === 0) {
+      closePrivacyColumn(false)
+    }
   }
   const applyLocalization = (next: ResolvedWidgetLocalization) => {
     localization = next
@@ -412,10 +385,18 @@ export function mountWidget(options: MountOptions): () => void {
 		})
 	}
 
+  let closed = false
   const destroy = () => {
 		if (retryTimer !== null) window.clearInterval(retryTimer)
     for (const cleanup of cleanups) cleanup()
     host.remove()
+    if (closed) return
+    closed = true
+    try {
+      options.onClosed?.()
+    } catch {
+      // The loader's bookkeeping must never keep the widget on the page.
+    }
   }
   closeButton.addEventListener('click', () => {
 		if (submitting || accepted) return

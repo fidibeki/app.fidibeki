@@ -151,6 +151,32 @@ describe('privacy column', () => {
     destroy()
   })
 
+  it('survives the controller dropping the grant before its withdrawal settles', async () => {
+    // createAnalyticsConsentController/createReplayConsentController mark the grant revoked and
+    // notify listeners before the revoke request settles, so the column must not read the emptied
+    // list as "nothing to show" and close over the outcome it is about to report.
+    let notify = () => {}
+    const withdrawing = choice({
+      withdraw: async () => {
+        notify()
+        await Promise.resolve()
+      },
+    })
+    const { destroy, shadow, set } = mount([withdrawing])
+    notify = () => set([])
+    shadow.querySelector<HTMLButtonElement>('[data-privacy-open]')!.click()
+    const column = shadow.querySelector<HTMLElement>('[data-privacy-column]')!
+    shadow.querySelector<HTMLElement>('.privacy-choice')!.querySelector('button')!.click()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(column.hidden).toBe(false)
+    expect(shadow.querySelector('[data-privacy-status]')?.textContent).toBe('Consent withdrawn.')
+    expect(column.querySelectorAll('.privacy-choice')).toHaveLength(0)
+    destroy()
+  })
+
   it('closes the column on Escape and when the last grant disappears on its own', () => {
     const { destroy, shadow, set } = mount([choice()])
     const column = shadow.querySelector<HTMLElement>('[data-privacy-column]')!

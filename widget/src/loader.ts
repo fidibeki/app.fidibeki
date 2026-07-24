@@ -50,6 +50,7 @@ interface WidgetModule {
     onSubmitted(): void
     onDismissed(): void
     privacy: PrivacyChoices
+    onClosed(): void
     target?: HTMLElement
     hostID?: string
   }): WidgetUnmount
@@ -92,6 +93,16 @@ interface AnalyticsConsentPromptModule {
     locale: string
     onAccept(): Promise<void>
     onReject(): Promise<void>
+  }): WidgetUnmount
+}
+
+interface PrivacyControlsModule {
+  mountPrivacyControls(options: {
+    rule: WidgetRule
+    configuration: WidgetConfiguration
+    choices(): PrivacyChoice[]
+    subscribe(listener: () => void): () => void
+    onRemoved(): void
   }): WidgetUnmount
 }
 
@@ -149,6 +160,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let analyticsOutbox: AnalyticsOutbox | null = null
   let analyticsGrantedRuleID: string | null = null
   let analyticsGrantToken = ''
+  let liveFeedbackWidgets = 0
+  let privacyControlUnmount: WidgetUnmount | null = null
+  let privacyControlFingerprint = ''
+  let privacyControlTransition = 0
 
   const ensureReplayConsent = (configuration: WidgetConfiguration) => {
     if (replayConsent && replayConsentProjectID === configuration.project_id) return replayConsent
@@ -236,6 +251,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const privacyListeners = new Set<() => void>()
   const notifyPrivacyChoices = () => {
     for (const listener of privacyListeners) listener()
+    void synchronizePrivacyControl()
   }
 
   // Only Fidibeki-managed grants are withdrawable from our own UI. When the customer runs their
@@ -300,6 +316,54 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         privacyListeners.delete(listener)
       }
     },
+  }
+
+  // Exactly one withdrawal path is on the page at a time. While a feedback panel is mounted it owns
+  // the path through its privacy column; the moment it is gone — never triggered, dismissed,
+  // submitted, or suppressed on this page view — the standing control takes over. Withdrawal must
+  // stay as easy as granting was, and a suppressed widget must not be able to strand it.
+  const synchronizePrivacyControl = async () => {
+    const configuration = cache?.value
+    const rule = currentAnalyticsRule ?? currentReplayRule
+    // A control that is already up stays up even once its list empties: it is showing the outcome
+    // of the withdrawal that emptied it, and removes itself when that outcome has been read.
+    const wanted = liveFeedbackWidgets === 0 && configuration && rule &&
+      (privacyControlUnmount !== null || privacyChoices().length > 0)
+    const fingerprint = wanted ? `${rule.id}:${configuration.project_id}` : ''
+    if (fingerprint === privacyControlFingerprint) return
+    const transition = ++privacyControlTransition
+    privacyControlFingerprint = fingerprint
+    privacyControlUnmount?.()
+    privacyControlUnmount = null
+    if (!fingerprint || !rule || !configuration) return
+    try {
+      const module = (await import(
+        new URL('privacy-controls.js', assetBase).href
+      )) as PrivacyControlsModule
+      if (transition !== privacyControlTransition) return
+      privacyControlUnmount = module.mountPrivacyControls({
+        rule,
+        configuration,
+        choices: privacyChoices,
+        subscribe: privacy.subscribe,
+        onRemoved: () => {
+          privacyControlUnmount = null
+          privacyControlFingerprint = ''
+        },
+      })
+    } catch (error) {
+      void report(error, 'privacy_controls')
+    }
+  }
+
+  const holdFeedbackWidget = () => {
+    liveFeedbackWidgets++
+    void synchronizePrivacyControl()
+  }
+
+  const releaseFeedbackWidget = () => {
+    liveFeedbackWidgets = Math.max(0, liveFeedbackWidgets - 1)
+    void synchronizePrivacyControl()
   }
 
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
@@ -384,6 +448,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           .then((module) => {
             if (currentEvaluation !== evaluation) return
             automaticRuleID = rule.id
+            holdFeedbackWidget()
             unmountWidget = (module as WidgetModule).mountWidget({
               configuration,
               rule,
@@ -396,6 +461,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               onInteraction: () => recordAnalytics('interaction', rule),
               submissionAnalytics: () => recordSubmissionAnalytics(rule),
               privacy,
+              onClosed: releaseFeedbackWidget,
               onSubmitted: () => persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => {
 					recordAnalytics('dismissed', rule)
@@ -421,6 +487,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       }
     } catch (error) {
       void report(error, 'configuration')
+    } finally {
+      // Covers every path that leaves no feedback panel behind — no rule, suppressed, or still
+      // waiting on a trigger that may never fire.
+      if (currentEvaluation === evaluation) void synchronizePrivacyControl()
     }
   }
 
@@ -474,11 +544,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const module = (await import(new URL('widget.js', assetBase).href)) as WidgetModule
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       const hostID = `fidibeki-widget-host-${randomID()}`
+      holdFeedbackWidget()
       const unmount = module.mountWidget({
         configuration, rule, publicKey: key, apiBase: assetBase, assetBase,
         pageURL: privacyLocation.target,
         replaySessionID: replayCapture?.sessionID ?? null,
         privacy,
+        onClosed: releaseFeedbackWidget,
         target, hostID,
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
@@ -494,6 +566,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     } catch (error) {
       void report(error, 'mount')
       return explicitResult(false, 'not_found')
+    } finally {
+      void synchronizePrivacyControl()
     }
   }
 
