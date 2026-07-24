@@ -164,13 +164,16 @@ func (s Store) AppendActionRevision(
 		return existing, nil
 	}
 
+	// No FOR UPDATE here: fidibeki_admin deliberately has no UPDATE grant on
+	// the append-only ledger, so a row lock is a permission error at runtime.
+	// lockIncident above already serializes every writer for this incident,
+	// which keeps the expected_revision check race-free.
 	current, err := scanActionEvent(tx.QueryRow(ctx, `
 		SELECT `+actionEventSelectColumns("event")+`
 		FROM breach_action_events AS event
 		WHERE event.breach_incident_id = $1 AND event.action_id = $2
 		ORDER BY event.revision DESC
 		LIMIT 1
-		FOR UPDATE
 	`, incidentID, actionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActionEvent{}, ErrNotFound
