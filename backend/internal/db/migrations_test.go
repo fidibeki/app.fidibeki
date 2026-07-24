@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 99
+	const latestMigrationVersion = 100
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2522,6 +2522,52 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			"recipient action privileges select=%t insert=%t delete=%t status_update=%t email_update=%t",
 			canSelectActions, canInsertActions, canDeleteActions,
 			canUpdateActionStatus, canUpdateRecipientEmail,
+		)
+	}
+	var integrationActionsProtected bool
+	if err := root.QueryRow(ctx, `
+		SELECT relrowsecurity AND relforcerowsecurity
+		FROM pg_class
+		WHERE oid = 'privacy_integration_actions'::regclass
+	`).Scan(&integrationActionsProtected); err != nil || !integrationActionsProtected {
+		t.Fatalf("integration action RLS protected = %t, error = %v",
+			integrationActionsProtected, err)
+	}
+	var canSelectIntegrationActions, canInsertIntegrationActions bool
+	var canDeleteIntegrationActions, canUpdateIntegrationStatus bool
+	var canUpdateIntegrationDestinationKey bool
+	if err := root.QueryRow(ctx, `
+		SELECT
+			has_table_privilege(
+				'fidibeki_app', 'privacy_integration_actions', 'SELECT'
+			),
+			has_table_privilege(
+				'fidibeki_app', 'privacy_integration_actions', 'INSERT'
+			),
+			has_table_privilege(
+				'fidibeki_app', 'privacy_integration_actions', 'DELETE'
+			),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_integration_actions', 'status', 'UPDATE'
+			),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_integration_actions', 'destination_key', 'UPDATE'
+			)
+	`).Scan(
+		&canSelectIntegrationActions, &canInsertIntegrationActions,
+		&canDeleteIntegrationActions, &canUpdateIntegrationStatus,
+		&canUpdateIntegrationDestinationKey,
+	); err != nil {
+		t.Fatalf("read integration action privileges: %v", err)
+	}
+	if !canSelectIntegrationActions || !canInsertIntegrationActions ||
+		canDeleteIntegrationActions || !canUpdateIntegrationStatus ||
+		canUpdateIntegrationDestinationKey {
+		t.Fatalf(
+			"integration action privileges select=%t insert=%t delete=%t status_update=%t destination_key_update=%t",
+			canSelectIntegrationActions, canInsertIntegrationActions,
+			canDeleteIntegrationActions, canUpdateIntegrationStatus,
+			canUpdateIntegrationDestinationKey,
 		)
 	}
 	var communicationTablesProtected bool

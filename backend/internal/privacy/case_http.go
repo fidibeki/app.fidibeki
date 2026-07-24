@@ -410,10 +410,11 @@ func (handler *HTTPHandler) createRecipientAction(w http.ResponseWriter, r *http
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	var body struct {
-		ActionKind         string `json:"action_kind"`
-		RecipientName      string `json:"recipient_name"`
-		RecipientEmail     string `json:"recipient_email"`
-		InstructionSummary string `json:"instruction_summary"`
+		ActionKind          string `json:"action_kind"`
+		RecipientName       string `json:"recipient_name"`
+		RecipientEmail      string `json:"recipient_email"`
+		InstructionSummary  string `json:"instruction_summary"`
+		IntegrationActionID string `json:"integration_action_id"`
 	}
 	if !decodeCaseJSON(w, r, &body) {
 		return
@@ -431,8 +432,9 @@ func (handler *HTTPHandler) createRecipientAction(w http.ResponseWriter, r *http
 		r.Context(), query, resolved.ID, caseID, claims.Subject,
 		r.Header.Get("Idempotency-Key"), CreateRecipientActionInput{
 			ActionKind: actionKind, RecipientName: body.RecipientName,
-			RecipientEmail:     body.RecipientEmail,
-			InstructionSummary: body.InstructionSummary,
+			RecipientEmail:      body.RecipientEmail,
+			InstructionSummary:  body.InstructionSummary,
+			IntegrationActionID: body.IntegrationActionID,
 		}, handler.now(),
 	)
 	if err != nil {
@@ -445,6 +447,64 @@ func (handler *HTTPHandler) createRecipientAction(w http.ResponseWriter, r *http
 	}
 	api.WriteJSON(w, status, map[string]any{
 		"recipient_action": action, "created": created,
+	})
+}
+
+func (handler *HTTPHandler) refreshIntegrationActions(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	actions, created, reopened, err := handler.options.Store.RefreshIntegrationActions(
+		r.Context(), query, resolved.ID, caseID, claims.Subject, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"integration_actions": actions,
+		"created":             created,
+		"reopened":            reopened,
+	})
+}
+
+func (handler *HTTPHandler) completeIntegrationAction(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	actionID, ok := privacyIntegrationActionID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var body struct {
+		CompletionNote string `json:"completion_note"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	action, completed, err := handler.options.Store.CompleteIntegrationAction(
+		r.Context(), query, resolved.ID, caseID, actionID, claims.Subject,
+		r.Header.Get("Idempotency-Key"),
+		CompleteIntegrationActionInput{CompletionNote: body.CompletionNote},
+		handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"integration_action": action, "completed": completed,
 	})
 }
 
@@ -681,6 +741,18 @@ func privacyRecipientActionID(w http.ResponseWriter, r *http.Request) (string, b
 		api.WriteError(
 			w, http.StatusNotFound, api.CodeNotFound,
 			"privacy recipient action not found", nil,
+		)
+		return "", false
+	}
+	return actionID, true
+}
+
+func privacyIntegrationActionID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	actionID := strings.TrimSpace(chi.URLParam(r, "integrationActionID"))
+	if _, err := uuid.Parse(actionID); err != nil {
+		api.WriteError(
+			w, http.StatusNotFound, api.CodeNotFound,
+			"privacy integration action not found", nil,
 		)
 		return "", false
 	}

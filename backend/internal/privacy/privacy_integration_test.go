@@ -572,13 +572,71 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		t.Fatalf("invalid member rectification = %d body=%s",
 			invalidRectification.Code, invalidRectification.Body.String())
 	}
+
+	var disclosureIssueID, disclosureIntegrationID, disclosureActivityID string
+	if err := database.QueryRow(ctx, `
+		SELECT id FROM issues WHERE tenant_id = $1 ORDER BY created_at, id LIMIT 1
+	`, tenantID).Scan(&disclosureIssueID); err != nil {
+		t.Fatalf("read HTTP integration-action issue: %v", err)
+	}
+	if err := database.QueryRow(ctx, `
+		SELECT id FROM integrations WHERE tenant_id = $1 ORDER BY created_at, id LIMIT 1
+	`, tenantID).Scan(&disclosureIntegrationID); err != nil {
+		t.Fatalf("read HTTP integration-action destination: %v", err)
+	}
+	if err := database.QueryRow(ctx, `
+		INSERT INTO issue_activities (tenant_id, issue_id, actor_member_id, kind, data)
+		VALUES (
+			$1, $2, $3, 'issue.status_changed',
+			'{"changes":{"status":{"from":"open","to":"in_progress"}}}'
+		)
+		RETURNING id
+	`, tenantID, disclosureIssueID, ownerID).Scan(&disclosureActivityID); err != nil {
+		t.Fatalf("create HTTP integration-action activity: %v", err)
+	}
+	seedIntegrationDisclosureWithEventKey(
+		t, ctx, database, tenantID, disclosureIntegrationID, disclosureIssueID,
+		"issue", "issue.updated", disclosureActivityID,
+		[]string{"resource_identity", "workflow_context"}, "sent", now.Add(time.Minute),
+	)
+	integrationActionBase := "/v1/privacy/cases/" + rectificationCase.ID +
+		"/integration-actions"
+	integrationRefreshed := privacyHTTPRequest(
+		handler, ownerToken, http.MethodPost, integrationActionBase+"/refresh",
+	)
+	var integrationRefreshEnvelope struct {
+		IntegrationActions []IntegrationAction `json:"integration_actions"`
+		Created            int                 `json:"created"`
+	}
+	if integrationRefreshed.Code != http.StatusOK ||
+		json.Unmarshal(integrationRefreshed.Body.Bytes(), &integrationRefreshEnvelope) != nil ||
+		integrationRefreshEnvelope.Created != 1 ||
+		len(integrationRefreshEnvelope.IntegrationActions) != 1 {
+		t.Fatalf("refresh integration actions = %d body=%s",
+			integrationRefreshed.Code, integrationRefreshed.Body.String())
+	}
+	integrationAction := integrationRefreshEnvelope.IntegrationActions[0]
+	integrationCompleted := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost,
+		integrationActionBase+"/"+integrationAction.ID+"/complete",
+		`{"completion_note":"Provider ticket HTTP-100 confirmed the correction."}`,
+		"http-integration-action-complete",
+	)
+	if integrationCompleted.Code != http.StatusOK ||
+		!strings.Contains(integrationCompleted.Body.String(), `"completed":true`) ||
+		!strings.Contains(integrationCompleted.Body.String(), `"status":"completed"`) {
+		t.Fatalf("complete integration action = %d body=%s",
+			integrationCompleted.Code, integrationCompleted.Body.String())
+	}
+
 	recipientActionPath := "/v1/privacy/cases/" + rectificationCase.ID + "/recipient-actions"
-	recipientActionBody := `{
+	recipientActionBody := fmt.Sprintf(`{
 		"action_kind":"rectification",
 		"recipient_name":"Payroll processor",
 		"recipient_email":"privacy@processor.example",
-		"instruction_summary":"Correct the approved profile fields in the downstream record."
-	}`
+		"instruction_summary":"Correct the approved profile fields in the downstream record.",
+		"integration_action_id":%q
+	}`, integrationAction.ID)
 	recipientCreated := privacyHTTPJSONIdempotentRequest(
 		handler, ownerToken, http.MethodPost, recipientActionPath,
 		recipientActionBody, "http-recipient-action-create",
@@ -589,7 +647,9 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	}
 	if recipientCreated.Code != http.StatusCreated ||
 		json.Unmarshal(recipientCreated.Body.Bytes(), &recipientEnvelope) != nil ||
-		!recipientEnvelope.Created || recipientEnvelope.RecipientAction.ID == "" {
+		!recipientEnvelope.Created || recipientEnvelope.RecipientAction.ID == "" ||
+		recipientEnvelope.RecipientAction.IntegrationActionID == nil ||
+		*recipientEnvelope.RecipientAction.IntegrationActionID != integrationAction.ID {
 		t.Fatalf("create recipient action = %d body=%s",
 			recipientCreated.Code, recipientCreated.Body.String())
 	}

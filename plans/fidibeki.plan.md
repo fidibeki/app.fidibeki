@@ -829,12 +829,27 @@ was removed from the staging test tenant.
         covers creation and profile update; backend coverage proves allowlist validation, tenant
         permissions, minimized sentinels, URL stripping, ledger categories, capability truth, and
         existing moderation/retry behavior.
-      - [ ] Add downstream rectification/erasure action records and operational follow-up for data
-        already delivered to third-party destinations. Do not imply that incoming webhooks can
-        mutate or recall provider-retained messages.
+      - [x] Migration `100` adds a tenant-isolated downstream-action checklist derived only from
+        successful disclosure-ledger rows in the verified privacy-case scope. It groups evidence by
+        stable destination, preserves deleted integrations, unions category names without payload
+        content, excludes failed/suppressed attempts, and reopens completed entries after a newer
+        disclosure. Reporter scope follows the case email digest and receipt cutoff; member scope
+        requires the matching subject-authored workflow activity.
+      - [x] Current incoming-webhook destinations are truthfully marked as manual: completion is
+        blocked until correction or settled-erasure evidence exists, requires idempotent operator
+        evidence, and cannot bypass future API-owned rows. Recipient instructions can be associated
+        with a checklist entry without treating email delivery as destination completion. Case
+        activity and privacy audit records contain identifiers/category metadata only.
+      - [x] The bilingual case detail exposes refresh, empty/manual/completed state, disclosure
+        evidence, capability limits, completion evidence, and linked recipient notices. PostgreSQL
+        lifecycle/isolation/API-boundary tests, recipient-worker regression, migration
+        up/down/up/RLS/grants, frontend unit/typecheck/build, the complete local browser suite
+        (212 passed; 54 configuration-gated skips), and focused desktop/mobile visual inspection
+        pass locally.
       - [ ] Run the authenticated staging E2E for profile configuration, minimized Slack/Teams/
-        webhook deliveries, restriction suppression, and disclosure-ledger evidence before closing
-        #66. No deployment is performed under the current staging-only/no-deployment constraint.
+        webhook deliveries, restriction suppression, disclosure-ledger evidence, and the downstream
+        checklist before closing #66. No deployment is performed under the current
+        staging-only/no-deployment constraint.
     - [x] #67: refine language and timezone preferences layout.
     - [x] #68: fix sidebar navigation label alignment and overflow.
     - [x] #69: make the attention queue note actionable.

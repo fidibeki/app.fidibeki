@@ -416,8 +416,19 @@ func attachCaseOperationalState(
 		cases[index].LegalHolds = []LegalHold{}
 		cases[index].Rectifications = []CaseRectification{}
 		cases[index].FeedbackRectifications = []FeedbackRectification{}
+		cases[index].IntegrationActions = []IntegrationAction{}
 		cases[index].RecipientActions = []RecipientAction{}
 		cases[index].Communications = []CaseCommunication{}
+	}
+	integrationActions, err := listIntegrationActions(ctx, query, tenantID, caseIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range cases {
+		cases[index].IntegrationActions = integrationActions[cases[index].ID]
+		if cases[index].IntegrationActions == nil {
+			cases[index].IntegrationActions = []IntegrationAction{}
+		}
 	}
 	recipientActions, err := listRecipientActions(ctx, query, tenantID, caseIDs)
 	if err != nil {

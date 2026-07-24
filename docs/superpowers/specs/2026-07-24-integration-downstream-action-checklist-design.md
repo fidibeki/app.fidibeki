@@ -6,6 +6,9 @@ This design completes the local product work remaining in GitHub issue #66. It e
 integration disclosure ledger introduced by migration 99 and reuses the privacy-case and recipient
 action workflows introduced for #60.
 
+Implemented locally on 2026-07-24. Authenticated staging validation remains pending and no
+deployment is part of this slice.
+
 The scope is staging-only product implementation. It does not deploy services, change production
 configuration, claim legal compliance, or pretend that incoming Slack, Teams, or generic webhooks
 can update, delete, or recall a delivered message.
@@ -80,12 +83,14 @@ Two writable tenant-admin endpoints are added:
 - `POST /v1/privacy/cases/{caseID}/integration-actions/{actionID}/complete`
 
 Both require an active human member, `tenant:update`, a writable workspace, tenant RLS, and a
-verified non-terminal rectification or erasure case.
+verified rectification or erasure case that has not been cancelled or refused. Refresh may happen
+while work is in progress or after fulfillment so late evidence remains discoverable.
 
-Completion is allowed only for `manual_required` rows and requires a concise evidence note plus an
-`Idempotency-Key`. Repeating the same completion returns the existing result; changing the payload
-under the same key returns the existing idempotency-conflict contract. API-mode rows cannot be
-manually completed through this endpoint.
+Completion is allowed only for `manual_required` rows after the existing privacy workflow proves
+that a correction was applied or an assessed erasure completed. It requires a concise evidence
+note plus an `Idempotency-Key`. Repeating the same completion returns the existing result; changing
+the payload under the same key returns the existing idempotency-conflict contract. API-mode rows
+cannot be manually completed through this endpoint.
 
 The existing recipient-action create endpoint accepts an optional checklist ID. It verifies that
 the row belongs to the same case and destination before linking the email instruction.

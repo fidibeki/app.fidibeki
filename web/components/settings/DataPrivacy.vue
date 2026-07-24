@@ -34,6 +34,7 @@ import type {
   PrivacyControllerRole,
   PrivacyExport,
   PrivacyFeedbackRectification,
+  PrivacyIntegrationAction,
   PrivacyPortabilityDataCategory,
   PrivacyPortabilityDecision,
   PrivacyRecipientAction,
@@ -129,8 +130,10 @@ type RecipientActionDraft = {
   recipientName: string
   recipientEmail: string
   instructionSummary: string
+  integrationActionID: string
 }
 const recipientActionDrafts = ref<Record<string, RecipientActionDraft>>({})
+const integrationActionNotes = ref<Record<string, string>>({})
 type CaseCommunicationDraft = {
   kind: PrivacyCaseCommunicationKind
   subjectLine: string
@@ -621,6 +624,7 @@ function ensureRecipientActionDraft(item: PrivacyCase) {
       recipientName: '',
       recipientEmail: '',
       instructionSummary: '',
+      integrationActionID: '',
     },
   }
 }
@@ -646,15 +650,89 @@ async function createRecipientAction(item: PrivacyCase) {
           recipient_name: draft.recipientName.trim(),
           recipient_email: draft.recipientEmail.trim(),
           instruction_summary: draft.instructionSummary.trim(),
+          integration_action_id: draft.integrationActionID || null,
         },
       },
     )
     recipientActionDrafts.value = {
       ...recipientActionDrafts.value,
-      [item.id]: { recipientName: '', recipientEmail: '', instructionSummary: '' },
+      [item.id]: {
+        recipientName: '',
+        recipientEmail: '',
+        instructionSummary: '',
+        integrationActionID: '',
+      },
     }
     actionNotice.value = t('admin.privacy.settings.cases.recipientQueued')
     await refresh()
+  })
+}
+
+function caseIntegrationActionsEligible(item: PrivacyCase) {
+  return Boolean(item.verified_at)
+    && ['rectification', 'erasure'].includes(item.right_type)
+    && !['pending_verification', 'cancelled', 'refused'].includes(item.status)
+}
+
+async function refreshIntegrationActions(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !caseIntegrationActionsEligible(item)) return
+  await runAction(`integration-actions-refresh:${item.id}`, async () => {
+    const response = await $apiFetch<{
+      integration_actions: PrivacyIntegrationAction[]
+      created: number
+      reopened: number
+    }>(`/v1/privacy/cases/${item.id}/integration-actions/refresh`, { method: 'POST' })
+    item.integration_actions = response.integration_actions
+    actionNotice.value = response.created || response.reopened
+      ? t('admin.privacy.settings.cases.integrationActionsUpdated', {
+          created: response.created,
+          reopened: response.reopened,
+        })
+      : t('admin.privacy.settings.cases.integrationActionsCurrent')
+  })
+}
+
+function prepareIntegrationRecipientAction(
+  item: PrivacyCase,
+  integrationAction: PrivacyIntegrationAction,
+) {
+  ensureRecipientActionDraft(item)
+  const draft = recipientActionDrafts.value[item.id]
+  if (!draft) return
+  recipientActionDrafts.value = {
+    ...recipientActionDrafts.value,
+    [item.id]: {
+      ...draft,
+      integrationActionID: integrationAction.id,
+      recipientName: integrationAction.destination_name,
+      instructionSummary: t('admin.privacy.settings.cases.integrationActionInstruction', {
+        action: t(`admin.privacy.settings.cases.recipientKinds.${integrationAction.action_kind}`),
+        destination: integrationAction.destination_name,
+      }),
+    },
+  }
+}
+
+async function completeIntegrationAction(
+  item: PrivacyCase,
+  integrationAction: PrivacyIntegrationAction,
+) {
+  const note = integrationActionNotes.value[integrationAction.id]?.trim()
+  if (!canWrite('tenant:update') || !caseRecipientActionEligible(item) || !note) return
+  await runAction(`integration-action-complete:${integrationAction.id}`, async () => {
+    const response = await $apiFetch<{ integration_action: PrivacyIntegrationAction }>(
+      `/v1/privacy/cases/${item.id}/integration-actions/${integrationAction.id}/complete`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: { completion_note: note },
+      },
+    )
+    const index = item.integration_actions?.findIndex(
+      candidate => candidate.id === integrationAction.id,
+    ) ?? -1
+    if (index >= 0) item.integration_actions?.splice(index, 1, response.integration_action)
+    integrationActionNotes.value = { ...integrationActionNotes.value, [integrationAction.id]: '' }
+    actionNotice.value = t('admin.privacy.settings.cases.integrationActionCompleted')
   })
 }
 
@@ -1241,6 +1319,51 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   </div>
                   <p v-else>{{ t('admin.privacy.settings.cases.erasureNoExceptions') }}</p>
                 </section>
+                <section v-if="item.right_type === 'rectification' || item.right_type === 'erasure'" class="privacy-integration-actions">
+                  <header>
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.integrationActionsEyebrow') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.integrationActionsTitle') }}</b>
+                      <small>{{ t('admin.privacy.settings.cases.integrationActionsDescription') }}</small>
+                    </div>
+                    <button class="app-button" type="button" :disabled="Boolean(actionPending) || !canWrite('tenant:update') || !caseIntegrationActionsEligible(item)" @click="refreshIntegrationActions(item)">
+                      <RefreshCw :size="14" />{{ actionPending === `integration-actions-refresh:${item.id}` ? t('admin.common.refreshing') : t('admin.privacy.settings.cases.refreshIntegrationActions') }}
+                    </button>
+                  </header>
+                  <p v-if="!item.integration_actions?.length" class="privacy-integration-actions-empty">{{ t('admin.privacy.settings.cases.noIntegrationActions') }}</p>
+                  <div v-else class="privacy-integration-action-list">
+                    <article v-for="integrationAction in item.integration_actions" :key="integrationAction.id">
+                      <div class="privacy-integration-action-summary">
+                        <span><b>{{ integrationAction.destination_name }}</b><small>{{ integrationAction.destination_kind || t('admin.privacy.settings.cases.removedIntegration') }}</small></span>
+                        <span class="privacy-status" :data-tone="integrationAction.status === 'completed' ? 'success' : 'pending'"><i />{{ t(`admin.privacy.settings.cases.integrationActionStatuses.${integrationAction.status}`) }}</span>
+                      </div>
+                      <p>{{ plural('admin.privacy.settings.cases.integrationDisclosureCount', integrationAction.disclosure_count, { count: integrationAction.disclosure_count }) }} · {{ t('admin.privacy.settings.cases.integrationLastDisclosure', { date: dateTime(integrationAction.last_disclosed_at) }) }}</p>
+                      <div class="privacy-integration-categories">
+                        <span v-for="category in integrationAction.data_categories" :key="category">{{ category.replaceAll('_', ' ') }}</span>
+                      </div>
+                      <p class="privacy-integration-capability">{{ t('admin.privacy.settings.cases.integrationManualBoundary') }}</p>
+                      <div v-if="integrationAction.status === 'completed'" class="privacy-integration-completion">
+                        <CheckCircle2 :size="15" />
+                        <span><b>{{ integrationAction.completion_note }}</b><small>{{ integrationAction.completed_at ? dateTime(integrationAction.completed_at) : '—' }} · {{ memberLabel(integrationAction.completed_by_member_id) }}</small></span>
+                      </div>
+                      <form v-else-if="caseRecipientActionEligible(item)" @submit.prevent="completeIntegrationAction(item, integrationAction)">
+                        <label>{{ t('admin.privacy.settings.cases.integrationCompletionNote') }}
+                          <input v-model.trim="integrationActionNotes[integrationAction.id]" class="app-input" maxlength="2000" required :placeholder="t('admin.privacy.settings.cases.integrationCompletionPlaceholder')" />
+                        </label>
+                        <button class="app-button app-button--primary" type="submit" :disabled="Boolean(actionPending) || !canWrite('tenant:update') || !integrationActionNotes[integrationAction.id]?.trim()">
+                          <CheckCircle2 :size="14" />{{ actionPending === `integration-action-complete:${integrationAction.id}` ? t('admin.common.saving') : t('admin.privacy.settings.cases.completeIntegrationAction') }}
+                        </button>
+                      </form>
+                      <p v-else class="privacy-integration-evidence-gate">{{ t('admin.privacy.settings.cases.integrationEvidenceRequired') }}</p>
+                      <footer>
+                        <button class="app-button" type="button" :disabled="!canWrite('tenant:update') || !caseRecipientActionEligible(item)" @click="prepareIntegrationRecipientAction(item, integrationAction)">
+                          <MailCheck :size="14" />{{ t('admin.privacy.settings.cases.prepareRecipientNotice') }}
+                        </button>
+                        <small v-if="integrationAction.linked_recipient_action_ids?.length">{{ plural('admin.privacy.settings.cases.linkedRecipientNotices', integrationAction.linked_recipient_action_ids.length, { count: integrationAction.linked_recipient_action_ids.length }) }}</small>
+                      </footer>
+                    </article>
+                  </div>
+                </section>
                 <section v-if="item.right_type === 'rectification' || item.right_type === 'erasure'" class="privacy-recipient-actions">
                   <header>
                     <div>
@@ -1252,6 +1375,12 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   </header>
                   <p v-if="!caseRecipientActionEligible(item)" class="privacy-recipient-gate">{{ t('admin.privacy.settings.cases.recipientEvidenceRequired') }}</p>
                   <form v-else-if="recipientActionDrafts[item.id]" @submit.prevent="createRecipientAction(item)">
+                    <label v-if="item.integration_actions?.length">{{ t('admin.privacy.settings.cases.recipientDestination') }}
+                      <select v-model="recipientActionDrafts[item.id].integrationActionID" class="app-select">
+                        <option value="">{{ t('admin.privacy.settings.cases.recipientDestinationUnlinked') }}</option>
+                        <option v-for="integrationAction in item.integration_actions" :key="integrationAction.id" :value="integrationAction.id">{{ integrationAction.destination_name }}</option>
+                      </select>
+                    </label>
                     <label>{{ t('admin.privacy.settings.cases.recipientName') }}
                       <input v-model.trim="recipientActionDrafts[item.id].recipientName" class="app-input" maxlength="200" required />
                     </label>
@@ -1261,7 +1390,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                     <label class="privacy-recipient-instruction">{{ t('admin.privacy.settings.cases.recipientInstruction') }}
                       <textarea v-model="recipientActionDrafts[item.id].instructionSummary" class="app-textarea" maxlength="2000" required />
                     </label>
-                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !recipientActionReady(item)">
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !canWrite('tenant:update') || !recipientActionReady(item)">
                       <Send :size="14" />{{ actionPending === `recipient-action:${item.id}` ? t('admin.common.queuing') : t('admin.privacy.settings.cases.sendRecipientAction') }}
                     </button>
                   </form>
@@ -1272,6 +1401,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                         <b>{{ action.recipient_name }}</b>
                         <span>{{ action.recipient_email }}</span>
                         <small>{{ t(`admin.privacy.settings.cases.recipientKinds.${action.action_kind}`) }} · {{ dateTime(action.created_at) }} · {{ memberLabel(action.created_by_member_id) }}</small>
+                        <small v-if="action.integration_action_id">{{ t('admin.privacy.settings.cases.recipientLinkedToChecklist') }}</small>
                       </div>
                       <p>{{ action.instruction_summary }}</p>
                       <div class="privacy-recipient-delivery">
@@ -1663,12 +1793,36 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-erasure-items code { overflow-wrap: anywhere; color: var(--muted); font-family: inherit; font-size: 8px; }
 .privacy-erasure-items small { color: var(--muted); font-size: 8px; }
 .privacy-erasure-items p { margin: 2px 0 0; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+.privacy-integration-actions { display: grid; grid-column: 1 / -1; gap: 11px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-integration-actions > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.privacy-integration-actions > header > div { display: grid; gap: 4px; }
+.privacy-integration-actions > header b { color: var(--ink); font-size: 11px; }
+.privacy-integration-actions > header small { max-width: 700px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-integration-actions-empty, .privacy-integration-evidence-gate { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-integration-action-list { display: grid; border-top: 1px solid var(--line); }
+.privacy-integration-action-list > article { display: grid; gap: 8px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.privacy-integration-action-list > article:last-child { border-bottom: 0; }
+.privacy-integration-action-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.privacy-integration-action-summary > span:first-child { display: grid; gap: 2px; }
+.privacy-integration-action-summary b { color: var(--ink-soft); font-size: 10px; }
+.privacy-integration-action-summary small, .privacy-integration-action-list article > p { margin: 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.privacy-integration-categories { display: flex; flex-wrap: wrap; gap: 5px; }
+.privacy-integration-categories span { padding: 3px 5px; background: var(--surface-soft); color: var(--muted); border: 1px solid var(--line); border-radius: 3px; font-size: 8px; }
+.privacy-integration-action-list .privacy-integration-capability { color: #795d1d; }
+.privacy-integration-completion { display: flex; align-items: flex-start; gap: 7px; color: var(--green); }
+.privacy-integration-completion > span { display: grid; gap: 3px; }
+.privacy-integration-completion b { color: var(--ink-soft); font-size: 9px; }
+.privacy-integration-completion small { color: var(--muted); font-size: 8px; }
+.privacy-integration-action-list form { display: grid; grid-template-columns: minmax(260px, 1fr) auto; align-items: end; gap: 9px; }
+.privacy-integration-action-list form label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-integration-action-list footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.privacy-integration-action-list footer small { color: var(--muted); font-size: 8px; }
 .privacy-recipient-actions { display: grid; grid-column: 1 / -1; gap: 11px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .privacy-recipient-actions > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; color: var(--teal); }
 .privacy-recipient-actions > header > div { display: grid; gap: 4px; }
 .privacy-recipient-actions > header b { color: var(--ink); font-size: 11px; }
 .privacy-recipient-actions > header small { max-width: 700px; color: var(--muted); font-size: 9px; line-height: 1.5; }
-.privacy-recipient-actions > form { display: grid; grid-template-columns: minmax(160px, .65fr) minmax(220px, .85fr) minmax(280px, 1.4fr) auto; align-items: end; gap: 10px; }
+.privacy-recipient-actions > form { display: grid; grid-template-columns: minmax(150px, .65fr) minmax(150px, .65fr) minmax(200px, .8fr) minmax(260px, 1.4fr) auto; align-items: end; gap: 10px; }
 .privacy-recipient-actions > form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
 .privacy-recipient-actions .app-textarea { min-height: 68px; resize: vertical; }
 .privacy-recipient-gate { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
@@ -1776,6 +1930,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: 1 / -1; }
   .privacy-case-rectification > form .app-button { justify-self: end; }
   .privacy-recipient-actions > form { grid-template-columns: 1fr 1fr; }
+  .privacy-integration-action-list form { grid-template-columns: 1fr auto; }
   .privacy-recipient-instruction { grid-column: 1 / -1; }
   .privacy-recipient-actions > form .app-button { justify-self: end; }
   .privacy-case-communications > form { grid-template-columns: 1fr 1fr; }
@@ -1818,6 +1973,13 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-case-rectification > form .app-button { width: 100%; }
   .privacy-case-erasure-review > header, .privacy-case-decision > header { flex-direction: column; }
   .privacy-recipient-actions > header { flex-direction: row; }
+  .privacy-integration-actions > header { align-items: stretch; flex-direction: column; }
+  .privacy-integration-actions > header .app-button { width: 100%; }
+  .privacy-integration-action-summary { align-items: flex-start; flex-direction: column; }
+  .privacy-integration-action-list form { grid-template-columns: 1fr; }
+  .privacy-integration-action-list form .app-button { width: 100%; }
+  .privacy-integration-action-list footer { align-items: stretch; flex-direction: column; }
+  .privacy-integration-action-list footer .app-button { width: 100%; }
   .privacy-recipient-actions > form, .privacy-recipient-history article { grid-template-columns: 1fr; }
   .privacy-recipient-instruction { grid-column: auto; }
   .privacy-recipient-actions > form .app-button { width: 100%; }

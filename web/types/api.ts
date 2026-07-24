@@ -931,9 +931,42 @@ export interface PrivacyRecipientAction {
   last_attempt_at?: string
   sent_at?: string
   created_by_member_id: string
+  integration_action_id?: string
   created_at: string
   updated_at: string
   delivery_attempts: PrivacyRecipientDelivery[]
+}
+
+export type PrivacyIntegrationActionHandlingMode = 'manual' | 'api'
+export type PrivacyIntegrationActionStatus = 'manual_required' | 'api_pending' | 'completed' | 'failed'
+
+export interface PrivacyIntegrationAction {
+  id: string
+  privacy_case_id: string
+  integration_id?: string
+  destination_key: string
+  destination_kind?: IntegrationKind
+  destination_name: string
+  action_kind: PrivacyRecipientActionKind
+  handling_mode: PrivacyIntegrationActionHandlingMode
+  status: PrivacyIntegrationActionStatus
+  capability_snapshot: {
+    message_update?: boolean
+    message_delete?: boolean
+    message_recall?: boolean
+    fidibeki_links_require_authentication?: boolean
+    fidibeki_links_access_controlled?: boolean
+  }
+  data_categories: string[]
+  disclosure_count: number
+  first_disclosed_at: string
+  last_disclosed_at: string
+  completed_by_member_id?: string
+  completed_at?: string
+  completion_note?: string
+  linked_recipient_action_ids: string[]
+  created_at: string
+  updated_at: string
 }
 
 export type PrivacyCaseCommunicationKind =
@@ -1011,6 +1044,7 @@ export interface PrivacyCase {
   portability_assessment?: PrivacyPortabilityAssessment
   rectifications?: PrivacyCaseRectification[]
   feedback_rectifications?: PrivacyFeedbackRectification[]
+  integration_actions?: PrivacyIntegrationAction[]
   recipient_actions?: PrivacyRecipientAction[]
   communications?: PrivacyCaseCommunication[]
   events?: PrivacyCaseEvent[]

@@ -1,6 +1,10 @@
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test'
 import { allTenantPermissions } from '../../data/permissions'
-import type { PrivacyCase, PrivacyCaseCommunication } from '../../types/api'
+import type {
+  PrivacyCase,
+  PrivacyCaseCommunication,
+  PrivacyIntegrationAction,
+} from '../../types/api'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
@@ -513,6 +517,7 @@ function createMockState() {
       scope: { intake_channel: 'backoffice' },
       legal_holds: [],
       rectifications: [],
+      integration_actions: [],
       recipient_actions: [],
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
@@ -1637,6 +1642,73 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       return json(route, { portability_assessment: item.portability_assessment, created: true }, 201)
     }
+    const integrationActionRefreshMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/integration-actions\/refresh$/,
+    )
+    if (integrationActionRefreshMatch && method === 'POST') {
+      const item = state.privacyCases.find(
+        candidate => candidate.id === integrationActionRefreshMatch[1],
+      )
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      let created = 0
+      if (!item.integration_actions?.length) {
+        const integrationAction: PrivacyIntegrationAction = {
+          id: `${item.id}-integration-action-1`,
+          privacy_case_id: item.id,
+          integration_id: 'integration-slack-1',
+          destination_key: 'slack:integration-slack-1',
+          destination_kind: 'slack',
+          destination_name: 'Slack · Product feedback',
+          action_kind: item.right_type as 'rectification' | 'erasure',
+          handling_mode: 'manual',
+          status: 'manual_required',
+          capability_snapshot: {
+            message_update: false,
+            message_delete: false,
+            message_recall: false,
+            fidibeki_links_require_authentication: true,
+            fidibeki_links_access_controlled: true,
+          },
+          data_categories: ['member_identity', 'workflow_context'],
+          disclosure_count: 2,
+          first_disclosed_at: '2026-07-20T10:00:00.000Z',
+          last_disclosed_at: '2026-07-21T10:00:00.000Z',
+          linked_recipient_action_ids: [],
+          created_at: now,
+          updated_at: now,
+        }
+        item.integration_actions = [integrationAction]
+        created = 1
+      }
+      return json(route, {
+        integration_actions: item.integration_actions,
+        created,
+        reopened: 0,
+      })
+    }
+    const integrationActionCompleteMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/integration-actions\/([^/]+)\/complete$/,
+    )
+    if (integrationActionCompleteMatch && method === 'POST') {
+      const item = state.privacyCases.find(
+        candidate => candidate.id === integrationActionCompleteMatch[1],
+      )
+      const integrationAction = item?.integration_actions?.find(
+        candidate => candidate.id === integrationActionCompleteMatch[2],
+      )
+      if (!item || !integrationAction) {
+        return json(route, { error: { code: 'not_found', message: 'integration action not found' } }, 404)
+      }
+      const input = body()
+      integrationAction.status = 'completed'
+      integrationAction.completed_by_member_id = 'member-1'
+      integrationAction.completed_at = now
+      integrationAction.completion_note = String(input.completion_note)
+      integrationAction.updated_at = now
+      return json(route, { integration_action: integrationAction, completed: true })
+    }
     const recipientActionMatch = path.match(
       /^\/v1\/privacy\/cases\/([^/]+)\/recipient-actions$/,
     )
@@ -1653,6 +1725,9 @@ async function installMockAPI(page: Page, state: MockState) {
         recipient_name: String(input.recipient_name),
         recipient_email: String(input.recipient_email),
         instruction_summary: String(input.instruction_summary),
+        integration_action_id: input.integration_action_id
+          ? String(input.integration_action_id)
+          : undefined,
         status: 'failed' as const,
         attempts: 1,
         last_error: 'email provider delivery failed',
@@ -1671,6 +1746,12 @@ async function installMockAPI(page: Page, state: MockState) {
       }
       item.recipient_actions ||= []
       item.recipient_actions.unshift(action)
+      if (action.integration_action_id) {
+        const integrationAction = item.integration_actions?.find(
+          candidate => candidate.id === action.integration_action_id,
+        )
+        integrationAction?.linked_recipient_action_ids.unshift(action.id)
+      }
       return json(route, { recipient_action: action, created: true }, 201)
     }
     const recipientActionRetryMatch = path.match(
@@ -4673,6 +4754,16 @@ test('member rectification applies selected profile changes and preserves eviden
   await rectificationCase.getByTitle('Toggle case details').click()
   await expect(rectificationCase).toContainText('No profile corrections have been applied.')
 
+  const integrationSection = rectificationCase.locator('.privacy-integration-actions')
+  await integrationSection.getByRole('button', { name: 'Refresh checklist' }).click()
+  await expect(page.getByRole('status')).toContainText('1 destinations added')
+  await expect(integrationSection).toContainText('Slack · Product feedback')
+  await expect(integrationSection).toContainText('Manual action required')
+  await expect(integrationSection).toContainText(
+    'Apply the verified correction or complete the assessed erasure',
+  )
+  await expect(integrationSection.getByRole('button', { name: 'Record completion' })).toHaveCount(0)
+
   await rectificationCase.getByRole('checkbox', { name: 'Name' }).check()
   await rectificationCase.getByRole('textbox', { name: 'Name' }).fill('Jamie Corrected')
   await rectificationCase.getByRole('checkbox', { name: 'Locale' }).check()
@@ -4695,7 +4786,28 @@ test('member rectification applies selected profile changes and preserves eviden
     locale: 'pt-PT',
     timezone: 'America/Toronto',
   })
+  await integrationSection.getByLabel('Completion evidence').fill(
+    'Slack retention owner confirmed ticket EXT-1842.',
+  )
+  await integrationSection.getByRole('button', { name: 'Record completion' }).click()
+  await expect(page.getByRole('status')).toContainText('Manual destination evidence recorded.')
+  await expect(integrationSection).toContainText('Completed')
+  expect(
+    state.privacyCases.find(item => item.id === 'privacy-case-member-rectification')
+      ?.integration_actions?.[0],
+  ).toMatchObject({
+    status: 'completed',
+    completion_note: 'Slack retention owner confirmed ticket EXT-1842.',
+  })
+
+  await integrationSection.getByRole('button', { name: 'Prepare recipient notice' }).click()
   const recipientSection = rectificationCase.locator('.privacy-recipient-actions')
+  await expect(recipientSection.getByLabel('Destination checklist')).toHaveValue(
+    'privacy-case-member-rectification-integration-action-1',
+  )
+  await expect(recipientSection.getByLabel('Recipient', { exact: true })).toHaveValue(
+    'Slack · Product feedback',
+  )
   await recipientSection.getByLabel('Recipient', { exact: true }).fill('Payroll processor')
   await recipientSection.getByLabel('Recipient email').fill('privacy@processor.example')
   await recipientSection.getByLabel('Approved instruction').fill(
@@ -4713,9 +4825,11 @@ test('member rectification applies selected profile changes and preserves eviden
       ?.recipient_actions?.[0],
   ).toMatchObject({
     recipient_email: 'privacy@processor.example',
+    integration_action_id: 'privacy-case-member-rectification-integration-action-1',
     status: 'pending',
     attempts: 1,
   })
+  await expect(integrationSection).toContainText('1 linked notice')
   await rectificationCase.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-member-rectification-${testInfo.project.name}`)
 })

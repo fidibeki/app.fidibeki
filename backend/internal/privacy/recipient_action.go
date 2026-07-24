@@ -79,6 +79,20 @@ func (Store) CreateRecipientAction(
 	if err := recipientActionEvidenceExists(ctx, query, privacyCase, normalized.ActionKind); err != nil {
 		return RecipientAction{}, false, err
 	}
+	if normalized.IntegrationActionID != "" {
+		var linkedKind RecipientActionKind
+		if err := query.QueryRow(ctx, `
+			SELECT action_kind
+			FROM privacy_integration_actions
+			WHERE tenant_id = $1 AND privacy_case_id = $2 AND id = $3
+		`, tenantID, caseID, normalized.IntegrationActionID).Scan(&linkedKind); errors.Is(err, pgx.ErrNoRows) {
+			return RecipientAction{}, false, ErrNotFound
+		} else if err != nil {
+			return RecipientAction{}, false, fmt.Errorf("load linked integration action: %w", err)
+		} else if linkedKind != normalized.ActionKind {
+			return RecipientAction{}, false, ErrInvalidRequest
+		}
+	}
 
 	actionID := uuid.NewString()
 	var storedFingerprint []byte
@@ -88,9 +102,11 @@ func (Store) CreateRecipientAction(
 			INSERT INTO privacy_recipient_actions (
 				id, tenant_id, privacy_case_id, action_kind, recipient_name,
 				recipient_email, instruction_summary, status, created_by_member_id,
-				idempotency_key, request_fingerprint, created_at, updated_at
+				privacy_integration_action_id, idempotency_key, request_fingerprint,
+				created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $11
+				$1, $2, $3, $4, $5, $6, $7, 'pending', $8,
+				NULLIF($9, '')::uuid, $10, $11, $12, $12
 			)
 			ON CONFLICT (tenant_id, privacy_case_id, idempotency_key) DO NOTHING
 			RETURNING *, true AS created
@@ -101,7 +117,7 @@ func (Store) CreateRecipientAction(
 			FROM privacy_recipient_actions AS existing
 			WHERE existing.tenant_id = $2
 			  AND existing.privacy_case_id = $3
-			  AND existing.idempotency_key = $9
+			  AND existing.idempotency_key = $10
 			  AND NOT EXISTS (SELECT 1 FROM inserted)
 		)
 		SELECT `+recipientActionSelectColumns("selected")+`,
@@ -109,7 +125,8 @@ func (Store) CreateRecipientAction(
 		FROM selected
 	`, actionID, tenantID, caseID, normalized.ActionKind, normalized.RecipientName,
 		normalized.RecipientEmail, normalized.InstructionSummary, actorMemberID,
-		idempotencyKey, fingerprint[:], now.UTC()), &storedFingerprint, &created)
+		normalized.IntegrationActionID, idempotencyKey, fingerprint[:], now.UTC()),
+		&storedFingerprint, &created)
 	if err != nil {
 		return RecipientAction{}, false, fmt.Errorf("create privacy recipient action: %w", err)
 	}
@@ -137,8 +154,9 @@ func (Store) CreateRecipientAction(
 		ctx, query, tenantID, caseID, "recipient-action:"+idempotencyKey,
 		"privacy_case.recipient_action_created", &actorMemberID, nil, nil,
 		map[string]any{
-			"recipient_action_id": action.ID,
-			"action_kind":         action.ActionKind,
+			"recipient_action_id":   action.ID,
+			"integration_action_id": action.IntegrationActionID,
+			"action_kind":           action.ActionKind,
 		}, now,
 	); err != nil {
 		return RecipientAction{}, false, err
@@ -146,8 +164,9 @@ func (Store) CreateRecipientAction(
 	if err := recordRecipientActionAudit(
 		ctx, query, tenantID, "privacy.recipient_action_created",
 		actorMemberID, caseID, map[string]any{
-			"recipient_action_id": action.ID,
-			"action_kind":         action.ActionKind,
+			"recipient_action_id":   action.ID,
+			"integration_action_id": action.IntegrationActionID,
+			"action_kind":           action.ActionKind,
 		},
 	); err != nil {
 		return RecipientAction{}, false, err
@@ -263,12 +282,18 @@ func normalizeRecipientActionInput(
 	input.RecipientName = strings.TrimSpace(input.RecipientName)
 	input.RecipientEmail = strings.TrimSpace(input.RecipientEmail)
 	input.InstructionSummary = strings.TrimSpace(input.InstructionSummary)
+	input.IntegrationActionID = strings.TrimSpace(input.IntegrationActionID)
 	if input.ActionKind != RecipientActionRectification &&
 		input.ActionKind != RecipientActionErasure ||
 		input.RecipientName == "" || len(input.RecipientName) > 200 ||
 		input.InstructionSummary == "" || len(input.InstructionSummary) > 2000 ||
 		len(input.RecipientEmail) > 320 {
 		return CreateRecipientActionInput{}, ErrInvalidRequest
+	}
+	if input.IntegrationActionID != "" {
+		if _, err := uuid.Parse(input.IntegrationActionID); err != nil {
+			return CreateRecipientActionInput{}, ErrInvalidRequest
+		}
 	}
 	address, err := mail.ParseAddress(input.RecipientEmail)
 	if err != nil || !strings.EqualFold(address.Address, input.RecipientEmail) {
@@ -481,7 +506,8 @@ func recipientActionSelectColumns(alias string) string {
 		alias + `.instruction_summary, ` + alias + `.status, ` + alias + `.attempts, ` +
 		alias + `.last_error, ` + alias + `.provider_message_id, ` +
 		alias + `.last_attempt_at, ` + alias + `.sent_at, ` +
-		alias + `.created_by_member_id, ` + alias + `.created_at, ` + alias + `.updated_at`
+		alias + `.created_by_member_id, ` + alias + `.privacy_integration_action_id, ` +
+		alias + `.created_at, ` + alias + `.updated_at`
 }
 
 func scanRecipientAction(row rowScanner, extra ...any) (RecipientAction, error) {
@@ -491,7 +517,8 @@ func scanRecipientAction(row rowScanner, extra ...any) (RecipientAction, error) 
 		&action.RecipientName, &action.RecipientEmail, &action.InstructionSummary,
 		&action.Status, &action.Attempts, &action.LastError,
 		&action.ProviderMessageID, &action.LastAttemptAt, &action.SentAt,
-		&action.CreatedByMemberID, &action.CreatedAt, &action.UpdatedAt,
+		&action.CreatedByMemberID, &action.IntegrationActionID,
+		&action.CreatedAt, &action.UpdatedAt,
 	}
 	destinations = append(destinations, extra...)
 	if err := row.Scan(destinations...); errors.Is(err, pgx.ErrNoRows) {
@@ -588,7 +615,8 @@ func (store Store) LoadRecipientNotification(
 		&action.RecipientName, &action.RecipientEmail, &action.InstructionSummary,
 		&action.Status, &action.Attempts, &action.LastError,
 		&action.ProviderMessageID, &action.LastAttemptAt, &action.SentAt,
-		&action.CreatedByMemberID, &action.CreatedAt, &action.UpdatedAt,
+		&action.CreatedByMemberID, &action.IntegrationActionID,
+		&action.CreatedAt, &action.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RecipientNotification{}, ErrNotFound

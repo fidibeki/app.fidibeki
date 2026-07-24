@@ -90,6 +90,7 @@ var (
 	ErrRecipientActionEvidence       = errors.New("privacy recipient action requires completed evidence")
 	ErrRecipientActionNotRetryable   = errors.New("privacy recipient action is not retryable")
 	ErrRecipientDeliveryInProgress   = errors.New("privacy recipient delivery is already in progress")
+	ErrIntegrationActionNotManual    = errors.New("privacy integration action is not manually completable")
 	ErrCaseCommunicationUnavailable  = errors.New("privacy case communication is unavailable")
 	ErrCaseCommunicationNotRetryable = errors.New("privacy case communication is not retryable")
 	ErrCaseCommunicationInProgress   = errors.New("privacy case communication delivery is already in progress")
@@ -126,6 +127,7 @@ type PrivacyCase struct {
 	PortabilityAssessment   *PortabilityAssessment  `json:"portability_assessment,omitempty"`
 	Rectifications          []CaseRectification     `json:"rectifications"`
 	FeedbackRectifications  []FeedbackRectification `json:"feedback_rectifications"`
+	IntegrationActions      []IntegrationAction     `json:"integration_actions"`
 	RecipientActions        []RecipientAction       `json:"recipient_actions"`
 	Communications          []CaseCommunication     `json:"communications"`
 	CreatedAt               time.Time               `json:"created_at"`
@@ -285,22 +287,23 @@ const (
 )
 
 type RecipientAction struct {
-	ID                 string                `json:"id"`
-	PrivacyCaseID      string                `json:"privacy_case_id"`
-	ActionKind         RecipientActionKind   `json:"action_kind"`
-	RecipientName      string                `json:"recipient_name"`
-	RecipientEmail     string                `json:"recipient_email"`
-	InstructionSummary string                `json:"instruction_summary"`
-	Status             RecipientActionStatus `json:"status"`
-	Attempts           int                   `json:"attempts"`
-	LastError          *string               `json:"last_error,omitempty"`
-	ProviderMessageID  *string               `json:"provider_message_id,omitempty"`
-	LastAttemptAt      *time.Time            `json:"last_attempt_at,omitempty"`
-	SentAt             *time.Time            `json:"sent_at,omitempty"`
-	CreatedByMemberID  string                `json:"created_by_member_id"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
-	DeliveryAttempts   []RecipientDelivery   `json:"delivery_attempts"`
+	ID                  string                `json:"id"`
+	PrivacyCaseID       string                `json:"privacy_case_id"`
+	ActionKind          RecipientActionKind   `json:"action_kind"`
+	RecipientName       string                `json:"recipient_name"`
+	RecipientEmail      string                `json:"recipient_email"`
+	InstructionSummary  string                `json:"instruction_summary"`
+	Status              RecipientActionStatus `json:"status"`
+	Attempts            int                   `json:"attempts"`
+	LastError           *string               `json:"last_error,omitempty"`
+	ProviderMessageID   *string               `json:"provider_message_id,omitempty"`
+	LastAttemptAt       *time.Time            `json:"last_attempt_at,omitempty"`
+	SentAt              *time.Time            `json:"sent_at,omitempty"`
+	CreatedByMemberID   string                `json:"created_by_member_id"`
+	IntegrationActionID *string               `json:"integration_action_id,omitempty"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
+	DeliveryAttempts    []RecipientDelivery   `json:"delivery_attempts"`
 }
 
 type RecipientDelivery struct {
@@ -314,10 +317,54 @@ type RecipientDelivery struct {
 }
 
 type CreateRecipientActionInput struct {
-	ActionKind         RecipientActionKind
-	RecipientName      string
-	RecipientEmail     string
-	InstructionSummary string
+	ActionKind          RecipientActionKind
+	RecipientName       string
+	RecipientEmail      string
+	InstructionSummary  string
+	IntegrationActionID string
+}
+
+type IntegrationActionHandlingMode string
+
+const (
+	IntegrationActionManual IntegrationActionHandlingMode = "manual"
+	IntegrationActionAPI    IntegrationActionHandlingMode = "api"
+)
+
+type IntegrationActionStatus string
+
+const (
+	IntegrationActionManualRequired IntegrationActionStatus = "manual_required"
+	IntegrationActionAPIPending     IntegrationActionStatus = "api_pending"
+	IntegrationActionCompleted      IntegrationActionStatus = "completed"
+	IntegrationActionFailed         IntegrationActionStatus = "failed"
+)
+
+type IntegrationAction struct {
+	ID                       string                        `json:"id"`
+	PrivacyCaseID            string                        `json:"privacy_case_id"`
+	IntegrationID            *string                       `json:"integration_id,omitempty"`
+	DestinationKey           string                        `json:"destination_key"`
+	DestinationKind          *string                       `json:"destination_kind,omitempty"`
+	DestinationName          string                        `json:"destination_name"`
+	ActionKind               RecipientActionKind           `json:"action_kind"`
+	HandlingMode             IntegrationActionHandlingMode `json:"handling_mode"`
+	Status                   IntegrationActionStatus       `json:"status"`
+	CapabilitySnapshot       map[string]any                `json:"capability_snapshot"`
+	DataCategories           []string                      `json:"data_categories"`
+	DisclosureCount          int                           `json:"disclosure_count"`
+	FirstDisclosedAt         time.Time                     `json:"first_disclosed_at"`
+	LastDisclosedAt          time.Time                     `json:"last_disclosed_at"`
+	CompletedByMemberID      *string                       `json:"completed_by_member_id,omitempty"`
+	CompletedAt              *time.Time                    `json:"completed_at,omitempty"`
+	CompletionNote           *string                       `json:"completion_note,omitempty"`
+	LinkedRecipientActionIDs []string                      `json:"linked_recipient_action_ids"`
+	CreatedAt                time.Time                     `json:"created_at"`
+	UpdatedAt                time.Time                     `json:"updated_at"`
+}
+
+type CompleteIntegrationActionInput struct {
+	CompletionNote string
 }
 
 func ParseRecipientActionKind(value string) (RecipientActionKind, error) {

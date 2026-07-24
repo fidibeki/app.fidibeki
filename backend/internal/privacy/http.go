@@ -45,6 +45,8 @@ type HTTPStore interface {
 	ApplyCaseRectification(context.Context, db.Querier, string, string, string, string, RecordCaseRectificationInput, time.Time) (CaseRectification, bool, error)
 	ListRectifiableFeedbacks(context.Context, db.Querier, string, string) ([]RectifiableFeedback, error)
 	ApplyFeedbackRectification(context.Context, db.Querier, string, string, string, string, RecordFeedbackRectificationInput, time.Time) (FeedbackRectification, bool, error)
+	RefreshIntegrationActions(context.Context, db.Querier, string, string, string, time.Time) ([]IntegrationAction, int, int, error)
+	CompleteIntegrationAction(context.Context, db.Querier, string, string, string, string, string, CompleteIntegrationActionInput, time.Time) (IntegrationAction, bool, error)
 	CreateRecipientAction(context.Context, db.Querier, string, string, string, string, CreateRecipientActionInput, time.Time) (RecipientAction, bool, error)
 	RetryRecipientAction(context.Context, db.Querier, string, string, string, string, string, time.Time) (RecipientAction, bool, error)
 	CreateCaseCommunication(context.Context, db.Querier, string, string, string, string, CreateCaseCommunicationInput, time.Time) (CaseCommunication, bool, error)
@@ -126,6 +128,10 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/privacy/cases/{caseID}/rectifiable-feedbacks", handler.listRectifiableFeedbacks)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/feedback-rectifications", handler.applyFeedbackRectification)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/integration-actions/refresh", handler.refreshIntegrationActions)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/integration-actions/{integrationActionID}/complete", handler.completeIntegrationAction)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/recipient-actions", handler.createRecipientAction)
 	router.With(append(read, appmiddleware.RequireWritable)...).
@@ -490,6 +496,8 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy recipient action is not retryable", nil)
 	case errors.Is(err, ErrRecipientActionEvidence):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy recipient action requires completed correction or erasure evidence", nil)
+	case errors.Is(err, ErrIntegrationActionNotManual):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy integration action is not manually completable", nil)
 	case errors.Is(err, ErrCaseCommunicationUnavailable):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy case communication is unavailable for the current case state", nil)
 	case errors.Is(err, ErrCaseCommunicationNotRetryable):
