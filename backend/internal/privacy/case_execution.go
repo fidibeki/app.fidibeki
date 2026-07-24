@@ -554,7 +554,7 @@ func loadCaseExecution(
 ) (CaseExecution, error) {
 	var execution CaseExecution
 	err := query.QueryRow(ctx, `
-		SELECT privacy_case.right_type, request.action, request.status,
+		SELECT privacy_case.right_type, request.action, request.id, request.status,
 		       job.id, job.status, job.expires_at,
 		       request.record_count, request.manual_review_count, request.error_message,
 		       request.created_at, request.completed_at
@@ -572,10 +572,10 @@ func loadCaseExecution(
 		) AS job ON true
 		WHERE privacy_case.tenant_id = $1 AND privacy_case.id = $2
 	`, tenantID, caseID).Scan(
-		&execution.RightType, &execution.Primitive, &execution.RequestStatus, &execution.JobID,
-		&execution.JobStatus, &execution.JobExpiresAt, &execution.RecordCount,
-		&execution.ManualReviewCount, &execution.ErrorMessage, &execution.StartedAt,
-		&execution.CompletedAt,
+		&execution.RightType, &execution.Primitive, &execution.RequestID,
+		&execution.RequestStatus, &execution.JobID, &execution.JobStatus,
+		&execution.JobExpiresAt, &execution.RecordCount, &execution.ManualReviewCount,
+		&execution.ErrorMessage, &execution.StartedAt, &execution.CompletedAt,
 	)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -603,7 +603,35 @@ func loadCaseExecution(
 			return CaseExecution{}, fmt.Errorf("load member case execution: %w", err)
 		}
 	}
+	if execution.RightType == RightErasure && execution.RequestID != nil {
+		items, reviewErr := (Store{}).ListReviewItems(
+			ctx, query, tenantID, *execution.RequestID,
+		)
+		if reviewErr != nil {
+			return CaseExecution{}, reviewErr
+		}
+		execution.ErasureReview = summarizeErasureReview(items)
+	}
 	return execution, nil
+}
+
+func summarizeErasureReview(items []ReviewItem) *ErasureReviewEvidence {
+	evidence := &ErasureReviewEvidence{Items: items}
+	for _, item := range items {
+		switch item.Status {
+		case ReviewPending:
+			evidence.Pending++
+		case ReviewRedacted:
+			evidence.Redacted++
+		case ReviewDeleted:
+			evidence.Deleted++
+		case ReviewNotPersonalData:
+			evidence.NotPersonalData++
+		case ReviewRetainedException:
+			evidence.RetainedException++
+		}
+	}
+	return evidence
 }
 
 func recordMemberCaseAudit(

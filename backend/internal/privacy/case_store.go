@@ -388,16 +388,35 @@ func (Store) TransitionCase(
 	if err != nil {
 		return PrivacyCase{}, err
 	}
+	decision := optionalTrimmed(input.DecisionSummary)
+	legalNotes := optionalTrimmed(input.LegalReviewNotes)
+	exception := optionalTrimmed(input.ExceptionReason)
 	var existingType string
 	var existingStatus *CaseStatus
+	var existingData []byte
 	err = query.QueryRow(ctx, `
-		SELECT event_type, new_status
+		SELECT event_type, new_status, data
 		FROM privacy_case_events
 		WHERE tenant_id = $1 AND privacy_case_id = $2 AND idempotency_key = $3
-	`, tenantID, caseID, "transition:"+idempotencyKey).Scan(&existingType, &existingStatus)
+	`, tenantID, caseID, "transition:"+idempotencyKey).Scan(
+		&existingType, &existingStatus, &existingData,
+	)
 	if err == nil {
+		var evidence struct {
+			DecisionSummary  *string `json:"decision_summary"`
+			LegalReviewNotes *string `json:"legal_review_notes"`
+			ExceptionReason  *string `json:"exception_reason"`
+		}
+		if unmarshalErr := json.Unmarshal(existingData, &evidence); unmarshalErr != nil {
+			return PrivacyCase{}, fmt.Errorf(
+				"decode privacy case transition evidence: %w", unmarshalErr,
+			)
+		}
 		if existingType != "privacy_case.transitioned" || existingStatus == nil ||
-			*existingStatus != input.Status {
+			*existingStatus != input.Status ||
+			!equalOptionalString(evidence.DecisionSummary, decision) ||
+			!equalOptionalString(evidence.LegalReviewNotes, legalNotes) ||
+			!equalOptionalString(evidence.ExceptionReason, exception) {
 			return PrivacyCase{}, ErrIdempotencyConflict
 		}
 		return current, nil
@@ -408,11 +427,18 @@ func (Store) TransitionCase(
 	if !validCaseTransition(current.Status, input.Status) {
 		return PrivacyCase{}, ErrCaseTransition
 	}
-	decision := optionalTrimmed(input.DecisionSummary)
-	legalNotes := optionalTrimmed(input.LegalReviewNotes)
-	exception := optionalTrimmed(input.ExceptionReason)
 	if (input.Status == CaseRefused || input.Status == CasePartiallyFulfilled) && decision == nil {
 		return PrivacyCase{}, ErrCaseReasonRequired
+	}
+	if current.RightType == RightErasure &&
+		(input.Status == CaseRefused || input.Status == CasePartiallyFulfilled) &&
+		(legalNotes == nil || exception == nil) {
+		return PrivacyCase{}, ErrCaseReasonRequired
+	}
+	if err := validateErasureTerminalTransition(
+		ctx, query, current, input.Status,
+	); err != nil {
+		return PrivacyCase{}, err
 	}
 	pausedSeconds := current.PausedSeconds
 	var pauseStarted *time.Time
@@ -450,6 +476,62 @@ func (Store) TransitionCase(
 		return PrivacyCase{}, err
 	}
 	return updated, nil
+}
+
+func equalOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func validateErasureTerminalTransition(
+	ctx context.Context,
+	query db.Querier,
+	privacyCase PrivacyCase,
+	target CaseStatus,
+) error {
+	if privacyCase.RightType != RightErasure ||
+		(target != CaseCompleted && target != CasePartiallyFulfilled &&
+			target != CaseRefused) {
+		return nil
+	}
+	if target == CaseRefused {
+		if privacyCase.LegacyReporterRequestID != nil {
+			return ErrCaseTransition
+		}
+		return nil
+	}
+	execution, err := loadCaseExecution(
+		ctx, query, privacyCase.TenantID, privacyCase.ID,
+	)
+	if errors.Is(err, ErrNotFound) {
+		return ErrCaseTransition
+	}
+	if err != nil {
+		return err
+	}
+	if execution.RequestStatus == nil || *execution.RequestStatus != ReporterCompleted ||
+		execution.JobStatus == nil || *execution.JobStatus != JobCompleted ||
+		execution.ErasureReview == nil || execution.ErasureReview.Pending > 0 {
+		return ErrCaseTransition
+	}
+	var activeHolds int
+	if err := query.QueryRow(ctx, `
+		SELECT count(*)
+		FROM privacy_case_legal_holds
+		WHERE tenant_id = $1 AND privacy_case_id = $2 AND active
+	`, privacyCase.TenantID, privacyCase.ID).Scan(&activeHolds); err != nil {
+		return fmt.Errorf("check terminal erasure legal holds: %w", err)
+	}
+	hasException := execution.ErasureReview.RetainedException > 0 || activeHolds > 0
+	if target == CaseCompleted && hasException {
+		return ErrCaseTransition
+	}
+	if target == CasePartiallyFulfilled && !hasException {
+		return ErrCaseTransition
+	}
+	return nil
 }
 
 func validCaseTransition(from, to CaseStatus) bool {

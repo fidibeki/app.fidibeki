@@ -830,6 +830,16 @@ export interface PrivacyCaseExecution {
   error_message?: string
   started_at: string
   completed_at?: string
+  erasure_review?: PrivacyErasureReviewEvidence
+}
+
+export interface PrivacyErasureReviewEvidence {
+  pending: number
+  redacted: number
+  deleted: number
+  not_personal_data: number
+  retained_exception: number
+  items: ReviewItem[]
 }
 
 export type PrivacyPortabilityDecision =

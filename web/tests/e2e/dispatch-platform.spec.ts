@@ -404,6 +404,56 @@ function createMockState() {
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
     }, {
+      id: 'privacy-case-erasure-decision',
+      public_id: 'PRV-ERASE2',
+      subject_type: 'reporter',
+      right_type: 'erasure',
+      controller_role: 'customer_controller_assistance',
+      status: 'in_progress',
+      subject_email: 'partial.erase@example.test',
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1',
+      verification_expires_at: '2026-07-23T12:00:00.000Z',
+      verification_method: 'email_link',
+      verified_at: '2026-07-21T12:02:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      execution: {
+        right_type: 'erasure',
+        request_status: 'completed',
+        job_id: 'privacy-job-erasure-decision',
+        job_status: 'completed',
+        record_count: 7,
+        manual_review_count: 0,
+        started_at: '2026-07-21T12:02:00.000Z',
+        completed_at: '2026-07-21T12:04:00.000Z',
+        erasure_review: {
+          pending: 0,
+          redacted: 2,
+          deleted: 4,
+          not_personal_data: 0,
+          retained_exception: 1,
+          items: [{
+            id: 'privacy-review-erasure-exception',
+            privacy_job_id: 'privacy-job-erasure-decision',
+            resource_type: 'feedback',
+            resource_id: 'feedback-contract-dispute',
+            fields: ['description'],
+            status: 'retained_exception',
+            decision_reason: 'Required for the documented contractual dispute.',
+            decided_by_member_id: 'member-1',
+            decided_at: '2026-07-21T12:04:00.000Z',
+            created_at: '2026-07-21T12:03:00.000Z',
+            updated_at: '2026-07-21T12:04:00.000Z',
+          }],
+        },
+      },
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:04:00.000Z',
+    }, {
       id: 'privacy-case-portability',
       public_id: 'PRV-PORT1',
       subject_type: 'reporter',
@@ -1420,6 +1470,23 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (path === '/v1/privacy/cases' && method === 'POST') {
       return json(route, { case: state.privacyCases[0], verification_email_queued: true }, 202)
+    }
+    const caseTransitionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/transition$/)
+    if (caseTransitionMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === caseTransitionMatch[1])
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const input = body()
+      item.status = String(input.status) as PrivacyCase['status']
+      item.decision_summary = String(input.decision_summary || '') || undefined
+      item.legal_review_notes = String(input.legal_review_notes || '') || undefined
+      item.exception_reason = String(input.exception_reason || '') || undefined
+      if (['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)) {
+        item.completed_at = now
+      }
+      item.updated_at = now
+      return json(route, { case: item })
     }
     const caseRectificationMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/rectifications$/)
     if (caseRectificationMatch && method === 'POST') {
@@ -4264,6 +4331,48 @@ test('data-rights cases execute access and erasure around legal holds', async ({
   await capture(page, testInfo, `settings-data-rights-cases-${testInfo.project.name}`)
 })
 
+test('erasure case records itemized exceptions and a reasoned partial outcome', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+
+  const erasureCase = page.locator('.privacy-case-entry', { hasText: 'PRV-ERASE2' })
+  await erasureCase.getByTitle('Toggle case details').click()
+  await expect(erasureCase).toContainText('Itemized outcome of the assessed data set')
+  await expect(erasureCase).toContainText('Required for the documented contractual dispute.')
+  await expect(erasureCase).toContainText('1Retained exceptions')
+
+  const status = erasureCase.getByLabel('Case status')
+  await expect(status.locator('option[value="completed"]')).toHaveCount(0)
+  await status.selectOption('partially_fulfilled')
+  await expect(erasureCase.getByRole('button', { name: 'Record decision' })).toBeDisabled()
+
+  await erasureCase.getByLabel('Decision summary').fill(
+    'The assessed erasure completed except for one documented record.',
+  )
+  await erasureCase.getByLabel('Legal review notes').fill(
+    'An operator reviewed the recorded exception; the product made no legal conclusion.',
+  )
+  await erasureCase.getByLabel('Exception or refusal basis').fill(
+    'The feedback description remains preserved for the contractual dispute.',
+  )
+  await erasureCase.getByRole('button', { name: 'Record decision' }).click()
+
+  await expect(page.getByRole('status')).toContainText('Case decision recorded.')
+  await expect(erasureCase).toContainText('Partially fulfilled')
+  await expect(erasureCase).toContainText(
+    'The assessed erasure completed except for one documented record.',
+  )
+  expect(state.privacyCases.find(item => item.id === 'privacy-case-erasure-decision')).toMatchObject({
+    status: 'partially_fulfilled',
+    legal_review_notes: 'An operator reviewed the recorded exception; the product made no legal conclusion.',
+    exception_reason: 'The feedback description remains preserved for the contractual dispute.',
+  })
+  await erasureCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-erasure-decision-${testInfo.project.name}`)
+})
+
 test('portability assessment gates the reporter archive', async ({ page }, testInfo) => {
   const state = createMockState()
   await authenticate(page, state)
@@ -4275,7 +4384,7 @@ test('portability assessment gates the reporter archive', async ({ page }, testI
   await expect(portabilityCase).toContainText('No portability decision has been recorded.')
   await expect(portabilityCase.getByRole('button', { name: 'Generate portable archive' })).toHaveCount(0)
 
-  await portabilityCase.getByLabel('Decision').selectOption('partially_approved')
+  await portabilityCase.locator('.privacy-case-portability select').first().selectOption('partially_approved')
   await portabilityCase.getByRole('checkbox', { name: 'Session replay manifests' }).uncheck()
   await portabilityCase.getByLabel('Assessment reason').fill(
     'Reporter-provided records and linked operational evidence are portable.',

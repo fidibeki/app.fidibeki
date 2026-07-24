@@ -165,6 +165,7 @@ type LegalHold struct {
 type CaseExecution struct {
 	RightType         RightType              `json:"right_type"`
 	Primitive         ReporterAction         `json:"-"`
+	RequestID         *string                `json:"-"`
 	RequestStatus     *ReporterRequestStatus `json:"request_status,omitempty"`
 	JobID             *string                `json:"job_id,omitempty"`
 	JobStatus         *JobStatus             `json:"job_status,omitempty"`
@@ -174,6 +175,16 @@ type CaseExecution struct {
 	ErrorMessage      *string                `json:"error_message,omitempty"`
 	StartedAt         time.Time              `json:"started_at"`
 	CompletedAt       *time.Time             `json:"completed_at,omitempty"`
+	ErasureReview     *ErasureReviewEvidence `json:"erasure_review,omitempty"`
+}
+
+type ErasureReviewEvidence struct {
+	Pending           int          `json:"pending"`
+	Redacted          int          `json:"redacted"`
+	Deleted           int          `json:"deleted"`
+	NotPersonalData   int          `json:"not_personal_data"`
+	RetainedException int          `json:"retained_exception"`
+	Items             []ReviewItem `json:"items"`
 }
 
 type PortabilityAssessment struct {

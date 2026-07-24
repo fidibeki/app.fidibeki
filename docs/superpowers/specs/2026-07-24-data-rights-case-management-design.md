@@ -168,7 +168,14 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   than introducing a separate provider call. Prior reporter export archives expire so a later
   download cannot serve stale content. Bilingual desktop/mobile backoffice coverage exercises the
   complete selection, correction, and history flow.
-- Remaining slice 2 work includes itemized erasure exceptions and first-class partial/refusal
-  execution evidence.
+- Itemized erasure outcomes and first-class terminal decision evidence complete slice 2b2 without
+  a new migration. Case execution summarizes the existing append-only review-item ledger and
+  exposes only resource identifiers, affected fields, dispositions, reasons, actors, timestamps,
+  and disclosed-destination counts, never the removed or retained raw content. Completion requires
+  settled execution without retained exceptions or active holds; partial fulfilment requires a
+  retained exception or active hold; refusal is limited to pre-execution cases. Partial/refused
+  erasure outcomes require a decision summary, legal-review notes, and exception basis, and
+  idempotency covers those values. The bilingual backoffice exposes both the itemized evidence and
+  decision workflow with PostgreSQL integration and desktop/mobile E2E coverage.
 - Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
   workflow remain pending.

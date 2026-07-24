@@ -558,7 +558,7 @@ was removed from the staging test tenant.
         idempotent, tenant-isolated, reasoned, and approve an explicit data-category set and
         `jsonl_zip` format before execution; partial approvals filter unapproved files from the
         generated archive. Bilingual desktop/mobile E2E covers assessment and execution gating.
-      - [ ] Slice 2b2: member access, rectification, erasure exceptions, and decision evidence.
+      - [x] Slice 2b2: member access, rectification, erasure exceptions, and decision evidence.
         - [x] Member access cases queue a case-linked `member_export` job and produce a
           repeatable-read, tenant-scoped allowlist archive with the member profile, session and
           magic-link metadata without hashes/tokens, subject-authored issue activity,
@@ -582,7 +582,15 @@ was removed from the staging test tenant.
           behind a generation fence and re-enters only the existing governed pipeline; stale
           reporter exports expire, while the feedback title and linked Issue remain independent.
           The bilingual backoffice provides selection, correction, and desktop/mobile history.
-        - [ ] Implement itemized erasure exceptions and explicit partial/refusal execution evidence.
+        - [x] Erasure case execution now reuses the append-only review-item evidence to expose
+          itemized redacted, deleted, non-personal, retained-exception, and pending counts without
+          returning raw content. Terminal decisions fail closed: completion requires settled
+          execution with no exception or active hold, partial fulfilment requires a recorded
+          exception or hold, and refusal is only available before execution. Partial/refused
+          erasure outcomes require a decision summary, legal-review notes, and exception basis.
+          Transition idempotency covers the complete evidence payload. The bilingual backoffice
+          renders the item ledger and reasoned decision workflow, with PostgreSQL integration and
+          desktop/mobile E2E coverage.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive

@@ -215,6 +215,27 @@ func TestPrivacyCaseVerificationRestrictionAndLifecycle(t *testing.T) {
 	if err != nil || refused.Status != CaseRefused || refused.CompletedAt == nil {
 		t.Fatalf("refuse case = %#v error=%v", refused, err)
 	}
+	if _, err := store.TransitionCase(
+		ctx, database, tenantID, created.ID, memberID, "refuse-2",
+		TransitionCaseInput{
+			Status:           CaseRefused,
+			DecisionSummary:  "Request refused after a different review.",
+			LegalReviewNotes: "Different evidence must not reuse the original key.",
+		}, now.Add(4*time.Hour),
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("transition idempotency evidence conflict error = %v", err)
+	}
+	replayed, err := store.TransitionCase(
+		ctx, database, tenantID, created.ID, memberID, "refuse-2",
+		TransitionCaseInput{
+			Status:           CaseRefused,
+			DecisionSummary:  "Request refused after documented legal review.",
+			LegalReviewNotes: "Operator-entered review outcome; not an automatic legal conclusion.",
+		}, now.Add(4*time.Hour),
+	)
+	if err != nil || replayed.Status != CaseRefused {
+		t.Fatalf("replay matching transition = %#v error=%v", replayed, err)
+	}
 	if _, err := database.Exec(ctx, `
 		UPDATE privacy_case_events SET event_type = 'tampered'
 		WHERE tenant_id = $1 AND privacy_case_id = $2

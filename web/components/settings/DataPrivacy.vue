@@ -23,6 +23,7 @@ import type {
   PrivacyCase,
   PrivacyCaseDashboard,
   PrivacyCaseRectification,
+  PrivacyCaseStatus,
   PrivacyControllerRole,
   PrivacyExport,
   PrivacyFeedbackRectification,
@@ -116,6 +117,13 @@ type FeedbackRectificationDraft = {
 const rectifiableFeedbacks = ref<Record<string, RectifiableFeedback[]>>({})
 const feedbackRectificationDrafts = ref<Record<string, FeedbackRectificationDraft>>({})
 const rectifiableFeedbackLoading = ref<Record<string, boolean>>({})
+type CaseDecisionDraft = {
+  status: PrivacyCaseStatus
+  decisionSummary: string
+  legalReviewNotes: string
+  exceptionReason: string
+}
+const caseDecisionDrafts = ref<Record<string, CaseDecisionDraft>>({})
 const portabilityCategoryOptions: PrivacyPortabilityDataCategory[] = [
   'feedback',
   'issues',
@@ -167,6 +175,98 @@ function activeCaseHolds(item: PrivacyCase) {
   return item.legal_holds.filter(hold => hold.active)
 }
 
+function caseIsTerminal(item: PrivacyCase) {
+  return ['partially_fulfilled', 'completed', 'refused', 'cancelled'].includes(item.status)
+}
+
+function erasureExecutionSettled(item: PrivacyCase) {
+  return item.execution?.request_status === 'completed'
+    && item.execution.job_status === 'completed'
+    && item.execution.erasure_review != null
+    && item.execution.erasure_review.pending === 0
+}
+
+function caseTransitionOptions(item: PrivacyCase): PrivacyCaseStatus[] {
+  if (caseIsTerminal(item) || item.status === 'pending_verification') return []
+  let options: PrivacyCaseStatus[]
+  if (item.status === 'received') {
+    options = ['in_progress']
+  } else if (item.status === 'in_progress') {
+    options = [
+      'awaiting_clarification',
+      'paused',
+      'awaiting_legal_review',
+      'completed',
+      'partially_fulfilled',
+      'refused',
+      'cancelled',
+    ]
+  } else {
+    options = ['in_progress', 'completed', 'partially_fulfilled', 'refused', 'cancelled']
+  }
+  if (item.right_type !== 'erasure') return options
+  const review = item.execution?.erasure_review
+  const settled = erasureExecutionSettled(item)
+  return options.filter((status) => {
+    if (status === 'refused') return !item.execution
+    if (status === 'completed') {
+      return settled && review?.retained_exception === 0 && activeCaseHolds(item).length === 0
+    }
+    if (status === 'partially_fulfilled') {
+      return settled && Boolean(review?.retained_exception || activeCaseHolds(item).length)
+    }
+    return true
+  })
+}
+
+function ensureCaseDecisionDraft(item: PrivacyCase) {
+  if (caseDecisionDrafts.value[item.id]) return
+  const options = caseTransitionOptions(item)
+  caseDecisionDrafts.value = {
+    ...caseDecisionDrafts.value,
+    [item.id]: {
+      status: options[0] || 'in_progress',
+      decisionSummary: item.decision_summary || '',
+      legalReviewNotes: item.legal_review_notes || '',
+      exceptionReason: item.exception_reason || '',
+    },
+  }
+}
+
+function caseDecisionNeedsReason(item: PrivacyCase) {
+  const status = caseDecisionDrafts.value[item.id]?.status
+  return status === 'partially_fulfilled' || status === 'refused'
+}
+
+function caseDecisionReady(item: PrivacyCase) {
+  const draft = caseDecisionDrafts.value[item.id]
+  if (!draft || !caseTransitionOptions(item).includes(draft.status)) return false
+  if (caseDecisionNeedsReason(item) && !draft.decisionSummary.trim()) return false
+  if (item.right_type === 'erasure' && caseDecisionNeedsReason(item)) {
+    return Boolean(draft.legalReviewNotes.trim() && draft.exceptionReason.trim())
+  }
+  return true
+}
+
+async function transitionCase(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !caseDecisionReady(item)) return
+  const draft = caseDecisionDrafts.value[item.id]
+  await runAction(`transition-case:${item.id}`, async () => {
+    await $apiFetch(`/v1/privacy/cases/${item.id}/transition`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: {
+        status: draft.status,
+        decision_summary: draft.decisionSummary.trim(),
+        legal_review_notes: draft.legalReviewNotes.trim(),
+        exception_reason: draft.exceptionReason.trim(),
+      },
+    })
+    actionNotice.value = t('admin.privacy.settings.cases.decisionRecorded')
+    await refresh()
+  })
+}
+
 function caseCanExecute(item: PrivacyCase) {
   const portabilityApproved = item.right_type !== 'portability_assessment'
     || ['approved', 'partially_approved'].includes(item.portability_assessment?.decision || '')
@@ -187,6 +287,7 @@ async function toggleCase(item: PrivacyCase) {
     [item.id]: opening,
   }
   if (!opening) return
+  ensureCaseDecisionDraft(item)
   if (item.right_type === 'portability_assessment' && !portabilityDecisions.value[item.id]) {
     portabilityDecisions.value = { ...portabilityDecisions.value, [item.id]: 'approved' }
     portabilitySelections.value = {
@@ -851,6 +952,67 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                     </article>
                   </section>
                 </div>
+                <section v-if="item.right_type === 'erasure' && item.execution?.erasure_review" class="privacy-case-erasure-review">
+                  <header>
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.erasureEvidence') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.erasureEvidenceTitle') }}</b>
+                    </div>
+                    <span v-if="item.execution.erasure_review.pending" class="privacy-status" data-tone="pending"><i />{{ t('admin.privacy.settings.cases.erasureReviewPending', { count: item.execution.erasure_review.pending }) }}</span>
+                    <span v-else class="privacy-status" data-tone="success"><i />{{ t('admin.privacy.settings.cases.erasureReviewSettled') }}</span>
+                  </header>
+                  <div class="privacy-erasure-totals">
+                    <span><b>{{ item.execution.erasure_review.redacted }}</b>{{ t('admin.privacy.settings.cases.erasureRedacted') }}</span>
+                    <span><b>{{ item.execution.erasure_review.deleted }}</b>{{ t('admin.privacy.settings.cases.erasureDeleted') }}</span>
+                    <span><b>{{ item.execution.erasure_review.not_personal_data }}</b>{{ t('admin.privacy.settings.cases.erasureNotPersonal') }}</span>
+                    <span :data-exception="item.execution.erasure_review.retained_exception > 0"><b>{{ item.execution.erasure_review.retained_exception }}</b>{{ t('admin.privacy.settings.cases.erasureRetained') }}</span>
+                  </div>
+                  <div v-if="item.execution.erasure_review.items.length" class="privacy-erasure-items">
+                    <article v-for="reviewItem in item.execution.erasure_review.items" :key="reviewItem.id">
+                      <div>
+                        <b>{{ resourceLabel(reviewItem) }}</b>
+                        <code>{{ reviewItem.resource_id }}</code>
+                        <small>{{ fieldsLabel(reviewItem) }}</small>
+                      </div>
+                      <div>
+                        <span class="privacy-status" :data-tone="reviewItem.status === 'retained_exception' ? 'pending' : reviewItem.status === 'pending' ? 'danger' : 'success'"><i />{{ reviewItem.status === 'pending' ? statusLabel('pending') : t(`admin.privacy.settings.review.decision.${reviewItem.status}`) }}</span>
+                        <small v-if="reviewItem.decided_at">{{ dateTime(reviewItem.decided_at) }} · {{ memberLabel(reviewItem.decided_by_member_id) }}</small>
+                        <p v-if="reviewItem.decision_reason">{{ reviewItem.decision_reason }}</p>
+                      </div>
+                    </article>
+                  </div>
+                  <p v-else>{{ t('admin.privacy.settings.cases.erasureNoExceptions') }}</p>
+                </section>
+                <section class="privacy-case-decision">
+                  <header>
+                    <div><p class="app-eyebrow">{{ t('admin.privacy.settings.cases.decision') }}</p><b>{{ t('admin.privacy.settings.cases.decisionTitle') }}</b></div>
+                    <span class="privacy-status" :data-tone="statusTone(item.status)"><i />{{ statusLabel(item.status) }}</span>
+                  </header>
+                  <div v-if="caseIsTerminal(item)" class="privacy-case-decision-record">
+                    <p v-if="item.decision_summary">{{ item.decision_summary }}</p>
+                    <small v-if="item.legal_review_notes">{{ t('admin.privacy.settings.cases.legalReviewNotes') }}: {{ item.legal_review_notes }}</small>
+                    <small v-if="item.exception_reason">{{ t('admin.privacy.settings.cases.exceptionReason') }}: {{ item.exception_reason }}</small>
+                  </div>
+                  <form v-else-if="caseDecisionDrafts[item.id] && caseTransitionOptions(item).length" :class="{ 'privacy-case-decision-form--evidence': item.right_type === 'erasure' && caseDecisionNeedsReason(item) }" @submit.prevent="transitionCase(item)">
+                    <label>{{ t('admin.privacy.settings.cases.caseStatus') }}
+                      <select v-model="caseDecisionDrafts[item.id].status" class="app-select">
+                        <option v-for="target in caseTransitionOptions(item)" :key="target" :value="target">{{ statusLabel(target) }}</option>
+                      </select>
+                    </label>
+                    <label>{{ t('admin.privacy.settings.cases.decisionSummary') }}
+                      <textarea v-model="caseDecisionDrafts[item.id].decisionSummary" class="app-textarea" maxlength="4000" :required="caseDecisionNeedsReason(item)" />
+                    </label>
+                    <label v-if="item.right_type === 'erasure' && caseDecisionNeedsReason(item)">{{ t('admin.privacy.settings.cases.legalReviewNotes') }}
+                      <textarea v-model="caseDecisionDrafts[item.id].legalReviewNotes" class="app-textarea" maxlength="4000" required />
+                    </label>
+                    <label v-if="item.right_type === 'erasure' && caseDecisionNeedsReason(item)">{{ t('admin.privacy.settings.cases.exceptionReason') }}
+                      <textarea v-model="caseDecisionDrafts[item.id].exceptionReason" class="app-textarea" maxlength="4000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !caseDecisionReady(item)">
+                      <ShieldCheck :size="14" />{{ actionPending === `transition-case:${item.id}` ? t('admin.common.saving') : t('admin.privacy.settings.cases.recordDecision') }}
+                    </button>
+                  </form>
+                </section>
                 <div class="privacy-case-execution">
                   <div>
                     <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
@@ -1114,6 +1276,30 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-feedback-rectification-history > svg { color: var(--muted); }
 .privacy-feedback-rectification-history code { display: block; max-height: 150px; overflow: auto; white-space: pre-wrap; }
 .privacy-feedback-rectification-history footer small { color: var(--teal); font-size: 8px; }
+.privacy-case-erasure-review, .privacy-case-decision { display: grid; grid-column: 1 / -1; gap: 10px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-erasure-review > header, .privacy-case-decision > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.privacy-case-erasure-review > header > div, .privacy-case-decision > header > div { display: grid; gap: 4px; }
+.privacy-case-erasure-review > header b, .privacy-case-decision > header b { color: var(--ink); font-size: 11px; }
+.privacy-case-erasure-review > p { margin: 0; color: var(--muted); font-size: 9px; }
+.privacy-erasure-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 4px; }
+.privacy-erasure-totals span { display: grid; gap: 2px; padding: 9px; color: var(--muted); border-right: 1px solid var(--line); font-size: 8px; }
+.privacy-erasure-totals span:last-child { border-right: 0; }
+.privacy-erasure-totals span[data-exception='true'] { background: #fff9e9; color: #765d1d; }
+.privacy-erasure-totals b { color: var(--ink-soft); font-size: 13px; }
+.privacy-erasure-items { display: grid; border-top: 1px solid var(--line); }
+.privacy-erasure-items article { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.privacy-erasure-items article > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
+.privacy-erasure-items b { color: var(--ink-soft); font-size: 10px; }
+.privacy-erasure-items code { overflow-wrap: anywhere; color: var(--muted); font-family: inherit; font-size: 8px; }
+.privacy-erasure-items small { color: var(--muted); font-size: 8px; }
+.privacy-erasure-items p { margin: 2px 0 0; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+.privacy-case-decision form { display: grid; grid-template-columns: minmax(150px, .5fr) minmax(240px, 1fr) auto; align-items: end; gap: 10px; }
+.privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: minmax(150px, .5fr) repeat(3, minmax(210px, 1fr)) auto; }
+.privacy-case-decision form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-case-decision .app-textarea { min-height: 66px; resize: vertical; }
+.privacy-case-decision-record { display: grid; gap: 5px; }
+.privacy-case-decision-record p { margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.privacy-case-decision-record small { color: var(--muted); font-size: 9px; line-height: 1.5; }
 .privacy-case-execution, .privacy-case-holds { padding: 14px 15px; }
 .privacy-case-execution { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-right: 1px solid var(--line); }
 .privacy-case-execution > div { display: grid; gap: 6px; }
@@ -1177,6 +1363,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-feedback-rectification-form { grid-template-columns: 1fr 1fr !important; }
   .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: 1 / -1; }
   .privacy-case-rectification > form .app-button { justify-self: end; }
+  .privacy-case-decision form, .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: 1fr 1fr; }
+  .privacy-case-decision form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
   .privacy-case-hold-form { grid-template-columns: 1fr; }
   .privacy-request-form .app-button { grid-column: 1 / -1; justify-self: end; }
@@ -1205,6 +1393,12 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: auto; }
   .privacy-feedback-rectification-history > svg { transform: rotate(90deg); }
   .privacy-case-rectification > form .app-button { width: 100%; }
+  .privacy-case-erasure-review > header, .privacy-case-decision > header { flex-direction: column; }
+  .privacy-erasure-totals { grid-template-columns: 1fr 1fr; }
+  .privacy-erasure-totals span:nth-child(2) { border-right: 0; }
+  .privacy-erasure-totals span:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .privacy-erasure-items article, .privacy-case-decision form, .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: 1fr; }
+  .privacy-case-decision form .app-button { width: 100%; }
   .privacy-case-hold { grid-template-columns: 1fr; }
   .privacy-case-hold form { align-items: stretch; flex-direction: column; }
   .privacy-case-hold form .app-input { width: 100%; }
