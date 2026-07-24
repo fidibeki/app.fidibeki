@@ -7,9 +7,27 @@ on:
         description: Type fidibeki.com to confirm the production promotion
         required: true
         type: string
+      ref:
+        description: Branch, tag, or commit SHA to promote (pin the exact commit staging validated)
+        required: true
+        default: main
+        type: string
+      services:
+        description: Which services to deploy
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - backend
+          - api
+          - worker
+          - web
+          - widget
 
 permissions:
   contents: read
+  deployments: write
 
 jobs:
   promote:
@@ -24,6 +42,7 @@ jobs:
       WEB_SERVICE: ${{ vars.RAILWAY_WEB_SERVICE }}
       WIDGET_SERVICE: ${{ vars.RAILWAY_WIDGET_SERVICE }}
       PRODUCTION_API_URL: ${{ vars.PRODUCTION_API_URL }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Confirm production target
         env:
@@ -31,18 +50,73 @@ jobs:
         run: test "$CONFIRM" = "fidibeki.com"
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Resolve targets
+        id: resolve
+        env:
+          SERVICES: ${{ inputs.services }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          case "$SERVICES" in
+            all) targets="api worker web widget" ;;
+            backend) targets="api worker" ;;
+            api|worker|web|widget) targets="$SERVICES" ;;
+            *) echo "Unknown services selection: $SERVICES" >&2; exit 1 ;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "Promoting $sha to production: $targets"
+      - name: Record deployment start
+        id: deployment
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          TARGETS: ${{ steps.resolve.outputs.targets }}
+          PROMOTED_REF: ${{ inputs.ref }}
+        run: |
+          deployment_id=$(gh api "repos/${GITHUB_REPOSITORY}/deployments" \
+            -f ref="$SHA" \
+            -f environment=production \
+            -f task="deploy:${TARGETS// /,}" \
+            -f description="Promote $PROMOTED_REF ($TARGETS)" \
+            -F auto_merge=false \
+            -f 'required_contexts[]' \
+            --jq '.id')
+          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+            -f state=in_progress \
+            -f log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --silent
       - uses: actions/setup-node@v6
         with:
           node-version: 24
       - run: npm install --global @railway/cli@5.27.2
-      - name: Deploy API and worker
+      - name: Deploy selected services
+        env:
+          TARGETS: ${{ steps.resolve.outputs.targets }}
         run: |
-          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$API_SERVICE"
-          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WORKER_SERVICE"
-      - name: Deploy web and widget edge
-        run: |
-          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WEB_SERVICE"
-          railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$WIDGET_SERVICE"
+          for target in $TARGETS; do
+            case "$target" in
+              api) service="$API_SERVICE" ;;
+              worker) service="$WORKER_SERVICE" ;;
+              web) service="$WEB_SERVICE" ;;
+              widget) service="$WIDGET_SERVICE" ;;
+            esac
+            echo "::group::Deploy $target"
+            railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$service"
+            echo "::endgroup::"
+          done
       - name: Verify production readiness
         run: curl --fail --show-error --retry 12 --retry-delay 10 "$PRODUCTION_API_URL/readyz"
+      - name: Record deployment result
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.id }}
+          RESULT: ${{ job.status }}
+        run: |
+          state=failure
+          if [ "$RESULT" = "success" ]; then state=success; fi
+          gh api "repos/${GITHUB_REPOSITORY}/deployments/${DEPLOYMENT_ID}/statuses" \
+            -f state="$state" \
+            -f log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --silent

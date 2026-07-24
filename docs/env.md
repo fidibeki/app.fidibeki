@@ -115,5 +115,9 @@ non-secret identifiers and URLs as GitHub environment or repository variables:
 Use `/railway.json` for the API service, `/railway.worker.json` for the worker,
 `/railway.web.json` for Nuxt, and `/railway.widget.json` for Caddy. Enable Railway GitHub
 autodeploy on `main` only in staging and enable **Wait for CI**. Production deployment is the
-manually dispatched GitHub `Promote Production` workflow and requires typing `fidibeki.com`.
+manually dispatched GitHub `Promote Production` workflow and requires typing `fidibeki.com`. The
+workflow takes a `ref` input (default `main`; pin the SHA or tag that staging validated) and a
+`services` input (`all`, `backend` = api+worker, or a single service) for partial promotions. Every
+promotion writes a GitHub Deployment record, so the deployed-version history lives in the
+repository's **Environments → production** tab.
 Add a required reviewer to the `production` GitHub environment when the repository plan supports it.
