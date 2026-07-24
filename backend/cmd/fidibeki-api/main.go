@@ -353,6 +353,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	breachregister.RegisterPlatformRoutes(platformRoutes, breachregister.HTTPOptions{
 		Store: breachregister.Store{Database: pools.Admin}, JWT: jwtManager,
 	})
+	feedback.RegisterPlatformSupportRoutes(platformRoutes, feedback.PlatformSupportAttachmentHTTPOptions{
+		Begin: db.BeginFromPool(pools.App), Store: feedback.Store{}, JWT: jwtManager,
+		Storage: objectStorage, Logger: logger,
+	})
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,

@@ -51,6 +51,13 @@ const (
 	PermissionPlatformBreachCreate  Permission = "platform:breach:create"
 	PermissionPlatformBreachRead    Permission = "platform:breach:read"
 	PermissionPlatformBreachAppend  Permission = "platform:breach:append"
+	// PermissionPlatformTenantSupportAccess gates platform-admin/support access
+	// to a tenant's sensitive data (attachments, replay, exports). Distinct
+	// from the tenant CRUD permissions above: it never grants tenant metadata
+	// management, only read access to sensitive resources, and every use must
+	// carry an explicit, validated support reason and case reference (see
+	// accessaudit.ValidateSupportRequest).
+	PermissionPlatformTenantSupportAccess Permission = "platform:tenant:support_access"
 )
 
 var AllPlatformPermissions = []Permission{
@@ -66,6 +73,7 @@ var AllPlatformPermissions = []Permission{
 	PermissionPlatformBreachCreate,
 	PermissionPlatformBreachRead,
 	PermissionPlatformBreachAppend,
+	PermissionPlatformTenantSupportAccess,
 }
 
 var AllTenantPermissions = []Permission{

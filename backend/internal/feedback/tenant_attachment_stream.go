@@ -178,14 +178,34 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.writeError(w, r, errors.New("attachment storage is unavailable"))
 		return
 	}
-	reader, err := h.options.Storage.OpenObject(r.Context(), object.StorageKey)
-	if err != nil {
+	writeAttachmentStreamContent(w, r, h.options.Storage, object, feedbackID, mode, h.logger, func(err error) {
 		h.writeError(w, r, err)
+	})
+}
+
+// writeAttachmentStreamContent opens and streams an already-authorized
+// attachment object. Shared by the tenant-facing stream above and the
+// platform-admin/support stream (platform_support_attachment.go) so the
+// disposition, caching, and range-request handling stay identical regardless
+// of which access path authorized the read.
+func writeAttachmentStreamContent(
+	w http.ResponseWriter,
+	r *http.Request,
+	storage AttachmentStreamStorage,
+	object AttachmentObject,
+	feedbackID string,
+	mode string,
+	logger *slog.Logger,
+	writeError func(error),
+) {
+	reader, err := storage.OpenObject(r.Context(), object.StorageKey)
+	if err != nil {
+		writeError(err)
 		return
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
-			h.logger.WarnContext(r.Context(), "close feedback attachment stream", "error", err, "attachment_id", object.ID)
+			logger.WarnContext(r.Context(), "close feedback attachment stream", "error", err, "attachment_id", object.ID)
 		}
 	}()
 
@@ -209,7 +229,7 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, reader); err != nil {
-		h.logger.WarnContext(r.Context(), "stream feedback attachment", "error", err, "attachment_id", object.ID)
+		logger.WarnContext(r.Context(), "stream feedback attachment", "error", err, "attachment_id", object.ID)
 	}
 }
 

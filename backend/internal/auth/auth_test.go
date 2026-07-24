@@ -141,8 +141,8 @@ func TestJWTManagerValidatesConstructionAndIssueInputs(t *testing.T) {
 func TestPlatformPermissionsAreExplicit(t *testing.T) {
 	t.Parallel()
 	permissions := PlatformPermissionStrings()
-	if len(permissions) != 12 {
-		t.Fatalf("platform permission count = %d, want 12", len(permissions))
+	if len(permissions) != 13 {
+		t.Fatalf("platform permission count = %d, want 13", len(permissions))
 	}
 	if HasPermission(permissions, Permission("platform:*")) {
 		t.Error("wildcard permission was accepted")

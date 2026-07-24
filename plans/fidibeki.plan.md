@@ -629,9 +629,24 @@ was removed from the staging test tenant.
       - [x] Bound CSV exports independently at 5,000 rows with an explicit UI limit, preserve the
         500-row JSON cap, exercise concurrent deduplication, and surface historical access by
         now-inactive members plus sensitive access by non-expiring API keys.
-      - [ ] Add supported platform-admin access paths with a mandatory support reason/case and
-        include the resulting access ledger explicitly in the relevant governed exports before
-        closing.
+      - [x] Add a reusable platform-admin/support access primitive
+        (`accessaudit.ValidateSupportRequest`, `PermissionPathSupportAccess`,
+        `auth.PermissionPlatformTenantSupportAccess`, migration `94`) and one representative
+        sensitive-resource path — `GET /admin/tenants/{tenantID}/feedbacks/{feedbackID}/attachments
+        /{attachmentID}/support-access` — that requires platform-admin auth plus explicit,
+        length-bounded support reason and case headers before any lookup, keeps justification out
+        of URLs, preserves the same
+        tenant/resource-scoped RLS authorization as the tenant-facing stream, records
+        `actor_type=platform_admin` with the reason/case as safe metadata (never content, storage
+        keys, or credentials), and audits denied/not_found/success outcomes fail-closed with the
+        same dedup-window flood protection. Confirmed by construction and integration test that
+        these events never carry a member identity, so they are excluded from the existing
+        member-export sanitized access-events allowlist rather than needing a new export path.
+      - [ ] Extend the same platform-admin/support access primitive to the replay-playback and
+        privacy-export access paths (currently only feedback attachments are covered), add a
+        tenant-visible indicator/filter for support access reason and case in the audit UI (the
+        `data` blob is API-visible but not yet rendered), and add anomaly signals specific to
+        platform-admin/support access volume before closing #65.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
     - [x] #67: refine language and timezone preferences layout.
@@ -1072,7 +1087,7 @@ Note: `email` was removed from `integration_kind` — reporter emails are not in
 ### `platform_admins` + `platform_admin_sessions` + `platform_admin_magic_links`
 
 Same shape as the tenant equivalents, with `admin_id` instead of `member_id` and no `tenant_id`.
-`platform_admins.email` is `UNIQUE`. `permissions` uses the `platform:*` namespace (9 permissions).
+`platform_admins.email` is `UNIQUE`. `permissions` uses the `platform:*` namespace (10 permissions).
 
 ### `projects`
 

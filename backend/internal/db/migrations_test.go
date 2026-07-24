@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 93
+	const latestMigrationVersion = 94
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2442,6 +2442,48 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatalf("roll back tenant B widget analytics consent visibility transaction: %v", err)
+	}
+
+	if err := migrateToVersion(migrator, 93); err != nil {
+		t.Fatalf("migrate before platform support permission backfill: %v", err)
+	}
+	var supportManagerID, limitedPlatformAdminID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('support-manager-migration@example.test', ARRAY['platform:admin:update'])
+		RETURNING id
+	`).Scan(&supportManagerID); err != nil {
+		t.Fatalf("insert support-manager migration fixture: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('limited-platform-migration@example.test', ARRAY['platform:tenant:read'])
+		RETURNING id
+	`).Scan(&limitedPlatformAdminID); err != nil {
+		t.Fatalf("insert limited platform-admin migration fixture: %v", err)
+	}
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
+		t.Fatalf("migrate platform support permission backfill: %v", err)
+	}
+	var supportManagerGranted, limitedAdminGranted bool
+	if err := root.QueryRow(ctx, `
+		SELECT 'platform:tenant:support_access' = ANY(permissions)
+		FROM platform_admins
+		WHERE id = $1
+	`, supportManagerID).Scan(&supportManagerGranted); err != nil || !supportManagerGranted {
+		t.Fatalf("support-manager permission granted = %t, error = %v", supportManagerGranted, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT 'platform:tenant:support_access' = ANY(permissions)
+		FROM platform_admins
+		WHERE id = $1
+	`, limitedPlatformAdminID).Scan(&limitedAdminGranted); err != nil || limitedAdminGranted {
+		t.Fatalf("limited platform-admin permission granted = %t, error = %v", limitedAdminGranted, err)
+	}
+	if _, err := root.Exec(ctx, `
+		DELETE FROM platform_admins WHERE id = ANY($1::uuid[])
+	`, []string{supportManagerID, limitedPlatformAdminID}); err != nil {
+		t.Fatalf("delete platform support permission fixtures: %v", err)
 	}
 
 	pools.Close()
