@@ -715,17 +715,25 @@ was removed from the staging test tenant.
         into 19 Article-30 processing activities covering each category exactly once. Role and
         recipient/provider references are derived from, and validated against, the retention and
         provider governance registries rather than hand-duplicated. Each activity carries
-        data-subject/data-category classifications, security-control references, a lawful-basis
-        status, and a DPIA screening snapshot (EDPB WP248 risk indicators, outcome, reason, and
-        owner/review/approval evidence). Every activity starts, and today remains,
-        `lawful_basis: pending` and `dpia.outcome: pending`; `PublicationReady` is computed from
-        completeness rules rather than a literal field, so it cannot be declared true without real
-        evidence. Validation rejects retention-category coverage drift (missing, duplicate, or
-        unknown categories), role inconsistency between an activity and its member categories,
-        unknown recipient providers, placeholder lawful-basis/DPIA evidence, stale reviews, and
-        approval-before-review timestamps, reusing the provider governance registry's staleness
-        window and placeholder detection. `make governance-check`'s pattern now covers `Governance`,
-        `ROPA`, and `DPIA` tests. No lawful basis, DPIA decision, or legal approval is recorded.
+        data-subject (including a closed `third_parties` class)/data-category classifications,
+        security-control references, a lawful-basis status with a named, non-placeholder reviewer
+        paired with its review timestamp, and a DPIA screening snapshot (EDPB WP248 risk indicators
+        — including the correctly-named ninth "prevents rights or service use" criterion, not a
+        transfer criterion — outcome, reason, and owner/review/approval evidence). Every activity
+        starts, and today remains, `lawful_basis: pending` and `dpia.outcome: pending`;
+        `PublicationReady` is computed from completeness rules rather than a literal field (a source
+        literal that presets it fails validation), and a `dpia.outcome: required` screening can
+        never satisfy that gate on its own — only a fully evidenced `not_required` outcome can,
+        because this slice has no model for evidencing that a required DPIA was actually completed.
+        Processor-role activities' lawful-basis reasoning is explicit that Article 28 is a
+        processing-instruction/safeguards framework, not itself an Article 6 lawful basis.
+        Validation rejects retention-category coverage drift (missing, duplicate, or unknown
+        categories), role inconsistency between an activity and its member categories, unknown
+        recipient providers, placeholder lawful-basis/DPIA evidence, stale reviews,
+        approval-before-review timestamps, a preset `PublicationReady`, and an inconsistently paired
+        reviewer/review-timestamp, reusing the provider governance registry's staleness window and
+        placeholder detection. `make governance-check`'s pattern now covers `Governance`, `ROPA`, and
+        `DPIA` tests. No lawful basis, DPIA decision, or legal approval is recorded.
       - Remaining #63 slices: founder/legal review of actual provider entities, regions, contracts,
         transfer mechanisms, roles, owners, and review dates; approved/published provider register
         and Article 28 DPA; provider change authorization/objection workflow; founder/legal lawful-

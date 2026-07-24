@@ -31,19 +31,28 @@ inventory remains an engineering review boundary rather than a claim about provi
 `backend/internal/privacy/ropa_registry.go` groups the retention registry's 27 categories into 19
 code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
 more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
-validated against, the retention registry rather than hand-duplicated), data-subject and
-data-category classifications, security-control references, a lawful-basis status, and a DPIA
-screening snapshot (technically-evidenced risk indicators drawn from the EDPB WP248 nine criteria,
-an outcome, a reason, and owner/review/approval evidence). Recipient/provider references are never
-hand-authored; they are derived from the `RetentionProvider` resources the retention registry already
-attaches to each activity's member categories.
+validated against, the retention registry rather than hand-duplicated), data-subject (including a
+closed `third_parties` class for content that can name or show someone other than the interacting
+subject) and data-category classifications, security-control references, a lawful-basis status with
+a named, non-placeholder reviewer, and a DPIA screening snapshot (technically-evidenced risk
+indicators drawn from the EDPB WP248 nine criteria, an outcome, a reason, and owner/review/approval
+evidence). Recipient/provider references are never hand-authored; they are derived from the
+`RetentionProvider` resources the retention registry already attaches to each activity's member
+categories.
 
 Every activity in this registry starts, and today remains, `lawful_basis: pending` and
 `dpia.outcome: pending`. `PublicationReady` is computed from completeness rules rather than a literal
-field, so it cannot be set to `true` by editing the registry — only by recording real founder/legal
-lawful-basis and DPIA evidence in the fields the validator already checks. This is an engineering
-foundation for the ROPA and DPIA screening #63 requires, not a published ROPA, an executed DPIA, or a
-legal conclusion. `make governance-check` validates it alongside the provider governance registry.
+field — a source literal that sets it directly fails validation — so it cannot be made `true` by
+editing the registry, only by recording real founder/legal lawful-basis and DPIA evidence in the
+fields the validator already checks. A `dpia.outcome: required` screening can never make an activity
+`PublicationReady`, however complete its evidence, because this registry has no model for evidencing
+that the required DPIA was actually completed; only a fully evidenced `not_required` screening can
+currently satisfy that gate. This is an engineering foundation for the ROPA and DPIA screening #63
+requires, not a published ROPA, an executed DPIA, or a legal conclusion. Processor-role activities'
+lawful-basis reasoning is explicit that Fidibeki processes only on the customer controller's
+documented instructions under the applicable Article 28 contract — Article 28 is a
+processing-instruction and safeguards framework, not itself an Article 6 lawful basis.
+`make governance-check` validates this registry alongside the provider governance registry.
 
 ## Data Categories And Purpose
 

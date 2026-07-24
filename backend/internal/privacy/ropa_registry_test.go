@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -195,6 +196,7 @@ func TestProcessingActivityRegistryInconsistentGroupedRoleFails(t *testing.T) {
 			LawfulBasis:         LawfulBasisPending,
 			LawfulBasisReason:   "Test-only pending reason.",
 			Owner:               governanceUnassigned,
+			ReviewedBy:          governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: "Test-only pending reason.", Owner: governanceUnassigned,
 			},
@@ -412,7 +414,7 @@ func TestProcessingActivityRegistryDPIAValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("fully evidenced required outcome and identified basis makes activity publication ready", func(t *testing.T) {
+	t.Run("fully evidenced not_required outcome and identified basis makes activity publication ready", func(t *testing.T) {
 		t.Parallel()
 		now := time.Now()
 		governance, err := LoadProviderGovernance(now)
@@ -426,6 +428,7 @@ func TestProcessingActivityRegistryDPIAValidation(t *testing.T) {
 		activities[0].LawfulBasisGrounds = []LawfulBasisGround{LawfulBasisGroundLegitimateInterest}
 		activities[0].LawfulBasisReason = "Recorded founder/legal determination."
 		activities[0].Owner = "privacy-owner"
+		activities[0].ReviewedBy = "founder"
 		activities[0].ReviewedAt = &reviewed
 		activities[0].DPIA.Outcome = DPIAOutcomeNotRequired
 		activities[0].DPIA.Owner = "privacy-owner"
@@ -441,6 +444,203 @@ func TestProcessingActivityRegistryDPIAValidation(t *testing.T) {
 			t.Fatalf("activity %q should be publication ready: %#v", activities[0].ActivityID, activities[0])
 		}
 	})
+
+	t.Run("required outcome never makes an activity publication ready even with full evidence", func(t *testing.T) {
+		t.Parallel()
+		now := time.Now()
+		governance, err := LoadProviderGovernance(now)
+		if err != nil {
+			t.Fatalf("LoadProviderGovernance error = %v", err)
+		}
+		activities := processingActivityRegistry()
+		reviewed := now.Add(-time.Hour)
+		approved := now.Add(-30 * time.Minute)
+		activities[0].LawfulBasis = LawfulBasisIdentified
+		activities[0].LawfulBasisGrounds = []LawfulBasisGround{LawfulBasisGroundLegitimateInterest}
+		activities[0].LawfulBasisReason = "Recorded founder/legal determination."
+		activities[0].Owner = "privacy-owner"
+		activities[0].ReviewedBy = "founder"
+		activities[0].ReviewedAt = &reviewed
+		// Outcome required is a screening conclusion, not evidence that the required DPIA was
+		// actually completed; every other field is deliberately as complete as the not_required
+		// case above.
+		activities[0].DPIA.Outcome = DPIAOutcomeRequired
+		activities[0].DPIA.Owner = "privacy-owner"
+		activities[0].DPIA.ApprovedBy = "founder"
+		activities[0].DPIA.Reason = "Recorded founder/legal determination."
+		activities[0].DPIA.ReviewedAt = &reviewed
+		activities[0].DPIA.ApprovedAt = &approved
+		hydrateRecipientProviders(activities, definitions)
+		if err := validateProcessingActivityRegistry(activities, definitions, governance.Providers, now); err != nil {
+			t.Fatalf("validateProcessingActivityRegistry error = %v", err)
+		}
+		if processingActivityPublicationReady(activities[0], now) {
+			t.Fatalf(
+				"activity %q with a required DPIA outcome must never be publication ready: %#v",
+				activities[0].ActivityID, activities[0],
+			)
+		}
+	})
+}
+
+func TestProcessingActivityRegistryPublicationReadyCannotBePreset(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	governance, err := LoadProviderGovernance(now)
+	if err != nil {
+		t.Fatalf("LoadProviderGovernance error = %v", err)
+	}
+	definitions := retentionRegistry()
+	activities := processingActivityRegistry()
+	activities[0].PublicationReady = true
+	hydrateRecipientProviders(activities, definitions)
+	err = validateProcessingActivityRegistry(activities, definitions, governance.Providers, now)
+	if err == nil || !strings.Contains(err.Error(), "asserts publication readiness in its source literal") {
+		t.Fatalf("error = %v, want preset-publication-ready error", err)
+	}
+}
+
+func TestProcessingActivityRegistryReviewerPairingValidation(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	definitions := retentionRegistry()
+
+	t.Run("named reviewer without reviewed-at fails", func(t *testing.T) {
+		t.Parallel()
+		governance, err := LoadProviderGovernance(now)
+		if err != nil {
+			t.Fatalf("LoadProviderGovernance error = %v", err)
+		}
+		activities := processingActivityRegistry()
+		activities[0].ReviewedBy = "founder"
+		hydrateRecipientProviders(activities, definitions)
+		err = validateProcessingActivityRegistry(activities, definitions, governance.Providers, now)
+		if err == nil || !strings.Contains(err.Error(), "names a reviewer without a reviewed-at timestamp") {
+			t.Fatalf("error = %v, want reviewer-without-timestamp error", err)
+		}
+	})
+
+	t.Run("reviewed-at without named reviewer fails", func(t *testing.T) {
+		t.Parallel()
+		governance, err := LoadProviderGovernance(now)
+		if err != nil {
+			t.Fatalf("LoadProviderGovernance error = %v", err)
+		}
+		activities := processingActivityRegistry()
+		reviewed := now.Add(-time.Hour)
+		activities[0].ReviewedAt = &reviewed
+		hydrateRecipientProviders(activities, definitions)
+		err = validateProcessingActivityRegistry(activities, definitions, governance.Providers, now)
+		if err == nil || !strings.Contains(err.Error(), "reviewed-at timestamp without a named reviewer") {
+			t.Fatalf("error = %v, want timestamp-without-reviewer error", err)
+		}
+	})
+
+	t.Run("blank reviewer fails field completeness", func(t *testing.T) {
+		t.Parallel()
+		governance, err := LoadProviderGovernance(now)
+		if err != nil {
+			t.Fatalf("LoadProviderGovernance error = %v", err)
+		}
+		activities := processingActivityRegistry()
+		activities[0].ReviewedBy = ""
+		hydrateRecipientProviders(activities, definitions)
+		err = validateProcessingActivityRegistry(activities, definitions, governance.Providers, now)
+		if err == nil || !strings.Contains(err.Error(), "is incomplete") {
+			t.Fatalf("error = %v, want incomplete error", err)
+		}
+	})
+
+	t.Run("identified lawful basis without a named reviewer is not publication ready", func(t *testing.T) {
+		t.Parallel()
+		governance, err := LoadProviderGovernance(now)
+		if err != nil {
+			t.Fatalf("LoadProviderGovernance error = %v", err)
+		}
+		activities := processingActivityRegistry()
+		reviewed := now.Add(-time.Hour)
+		approved := now.Add(-30 * time.Minute)
+		activities[0].LawfulBasis = LawfulBasisIdentified
+		activities[0].LawfulBasisGrounds = []LawfulBasisGround{LawfulBasisGroundLegitimateInterest}
+		activities[0].LawfulBasisReason = "Recorded founder/legal determination."
+		activities[0].Owner = "privacy-owner"
+		// ReviewedBy intentionally left at the unassigned sentinel with no ReviewedAt: this is a
+		// consistent (both absent) but incomplete review, so it must fail readiness, not validation.
+		activities[0].DPIA.Outcome = DPIAOutcomeNotRequired
+		activities[0].DPIA.Owner = "privacy-owner"
+		activities[0].DPIA.ApprovedBy = "founder"
+		activities[0].DPIA.Reason = "Recorded founder/legal determination."
+		activities[0].DPIA.ReviewedAt = &reviewed
+		activities[0].DPIA.ApprovedAt = &approved
+		hydrateRecipientProviders(activities, definitions)
+		if err := validateProcessingActivityRegistry(activities, definitions, governance.Providers, now); err != nil {
+			t.Fatalf("validateProcessingActivityRegistry error = %v", err)
+		}
+		if processingActivityPublicationReady(activities[0], now) {
+			t.Fatalf(
+				"activity %q without a named reviewer must not be publication ready: %#v",
+				activities[0].ActivityID, activities[0],
+			)
+		}
+	})
+}
+
+func TestProcessingActivityRegistryDataSubjectCoverage(t *testing.T) {
+	t.Parallel()
+	activities := processingActivityRegistry()
+	byID := make(map[string]ProcessingActivityRecord, len(activities))
+	for _, activity := range activities {
+		byID[activity.ActivityID] = activity
+	}
+	hasSubject := func(activityID string, subject ROPADataSubjectClass) bool {
+		activity, ok := byID[activityID]
+		if !ok {
+			t.Fatalf("activity %q not found", activityID)
+		}
+		return slices.Contains(activity.DataSubjects, subject)
+	}
+
+	tests := []struct {
+		activityID string
+		subject    ROPADataSubjectClass
+	}{
+		{"feedback_workflow_management", ROPADataSubjectThirdParties},
+		{"attachment_evidence_handling", ROPADataSubjectThirdParties},
+		{"ai_assisted_triage", ROPADataSubjectThirdParties},
+		{"integration_notification_delivery", ROPADataSubjectReporters},
+		{"privacy_rights_operations", ROPADataSubjectThirdParties},
+		{"breach_response_recordkeeping", ROPADataSubjectWebsiteVisitors},
+		{"breach_response_recordkeeping", ROPADataSubjectReporters},
+		{"breach_response_recordkeeping", ROPADataSubjectPlatformAdmins},
+		{"breach_response_recordkeeping", ROPADataSubjectThirdParties},
+		{"external_communications_delivery", ROPADataSubjectPlatformAdmins},
+		{"external_communications_delivery", ROPADataSubjectBillingContacts},
+		{"infrastructure_and_platform_operations", ROPADataSubjectBillingContacts},
+		{"infrastructure_and_platform_operations", ROPADataSubjectThirdParties},
+	}
+	for _, test := range tests {
+		if !hasSubject(test.activityID, test.subject) {
+			t.Fatalf("activity %q is missing data-subject class %q", test.activityID, test.subject)
+		}
+	}
+}
+
+func TestProcessingActivityRegistryAcceptsPreventsRightsOrServiceUseRiskIndicator(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	governance, err := LoadProviderGovernance(now)
+	if err != nil {
+		t.Fatalf("LoadProviderGovernance error = %v", err)
+	}
+	definitions := retentionRegistry()
+	activities := processingActivityRegistry()
+	activities[0].DPIA.RiskIndicators = append(
+		activities[0].DPIA.RiskIndicators, DPIARiskPreventsRightsOrServiceUse,
+	)
+	hydrateRecipientProviders(activities, definitions)
+	if err := validateProcessingActivityRegistry(activities, definitions, governance.Providers, now); err != nil {
+		t.Fatalf("validateProcessingActivityRegistry error = %v", err)
+	}
 }
 
 func TestLoadProcessingActivityRegistryGovernanceRejectsZeroValidationTime(t *testing.T) {

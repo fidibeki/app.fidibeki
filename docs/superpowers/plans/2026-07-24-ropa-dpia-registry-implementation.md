@@ -54,3 +54,17 @@
 - [x] `make governance-check` covers the new tests and passes.
 - [x] Backend tests, `go vet`, `make format-check`, and `git diff --check` pass locally.
 - [x] No HTTP surface, migration, or production/deployment change is introduced.
+
+## Post-Review Corrections (same day)
+
+Primary-agent review found and this slice fixed: the ninth EDPB risk criterion mislabeled as a
+transfer criterion (renamed to `DPIARiskPreventsRightsOrServiceUse`); "Article 28 basis" language
+wrongly implying Article 28 is a lawful basis (reworded); missing `third_parties` data-subject class
+and several under-covered activities (`feedback_workflow_management`, `attachment_evidence_handling`,
+`ai_assisted_triage`, `integration_notification_delivery`, `privacy_rights_operations`,
+`breach_response_recordkeeping`, `external_communications_delivery`,
+`infrastructure_and_platform_operations`); a `required` DPIA outcome that could satisfy
+`PublicationReady` despite no completion-evidence model (now only `not_required` can); a
+hand-authored literal that could preset `PublicationReady: true` (now rejected by validation); and
+lawful-basis review evidence with a timestamp but no named reviewer (added `ReviewedBy`, paired and
+validated with `ReviewedAt`). See the design doc's "Post-Review Corrections" section for detail.

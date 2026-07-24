@@ -27,6 +27,10 @@ const (
 	ROPADataSubjectWebsiteVisitors ROPADataSubjectClass = "website_visitors"
 	ROPADataSubjectPlatformAdmins  ROPADataSubjectClass = "platform_admins"
 	ROPADataSubjectBillingContacts ROPADataSubjectClass = "billing_contacts"
+	// ROPADataSubjectThirdParties covers a person named or shown within another data subject's
+	// content (free-text feedback, attachments, AI inputs, privacy-rights records, breach
+	// records) rather than a subject who directly interacts with Fidibeki.
+	ROPADataSubjectThirdParties ROPADataSubjectClass = "third_parties"
 )
 
 // ROPADataCategoryClass is a closed classification of what kind of personal data a processing
@@ -90,7 +94,10 @@ const (
 	DPIARiskMatchingOrCombiningDatasets  DPIARiskIndicator = "matching_or_combining_datasets"
 	DPIARiskVulnerableDataSubjects       DPIARiskIndicator = "vulnerable_data_subjects"
 	DPIARiskInnovativeOrNewTechnology    DPIARiskIndicator = "innovative_or_new_technology"
-	DPIARiskTransferOrPreventsRights     DPIARiskIndicator = "transfer_or_prevents_rights_exercise"
+	// DPIARiskPreventsRightsOrServiceUse is the ninth EDPB WP248 criterion: the processing, in
+	// itself, prevents a data subject from exercising a right or using a service or contract. It
+	// is not a transfer criterion; international transfer is not one of the nine WP248 criteria.
+	DPIARiskPreventsRightsOrServiceUse DPIARiskIndicator = "prevents_exercise_of_a_right_or_service_or_contract_use"
 )
 
 // DPIAScreening is the per-activity DPIA screening snapshot. Every field defaults to its explicit
@@ -126,9 +133,13 @@ type ProcessingActivityRecord struct {
 	LawfulBasisGrounds  []LawfulBasisGround
 	LawfulBasisReason   string
 	Owner               string
-	ReviewedAt          *time.Time
-	DPIA                DPIAScreening
-	PublicationReady    bool
+	// ReviewedBy is the named reviewer accountable for ReviewedAt. It must be paired
+	// consistently with ReviewedAt: neither may be set without the other, and both must be
+	// non-placeholder before an identified lawful basis can count toward PublicationReady.
+	ReviewedBy       string
+	ReviewedAt       *time.Time
+	DPIA             DPIAScreening
+	PublicationReady bool
 }
 
 type ROPASummary struct {
@@ -176,14 +187,17 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 	const (
 		lawfulBasisReasonController = "Fidibeki is the controller for this activity; the applicable " +
 			"GDPR Article 6 basis has not been reviewed or recorded by founder/legal."
-		lawfulBasisReasonProcessor = "Fidibeki processes this activity solely for a customer " +
-			"controller; the customer determines the Article 6 basis toward their own data subjects, " +
-			"and Fidibeki's own Article 28 processing basis depends on the executed DPA, which the " +
-			"provider governance registry still records as contract-status pending/unknown."
+		lawfulBasisReasonProcessor = "Fidibeki processes this activity solely on behalf of a " +
+			"customer controller; the customer determines the Article 6 lawful basis toward their " +
+			"own data subjects, and Fidibeki processes only on the customer's documented " +
+			"instructions under the applicable Article 28 processor contract, which the provider " +
+			"governance registry still records as contract-status pending/unknown. Article 28 is a " +
+			"processing-instruction and safeguards framework, not itself an Article 6 lawful basis."
 		lawfulBasisReasonControllerProcessor = "This activity spans both a controller and a " +
-			"processor role; the applicable Article 6 basis for the controller portion and the " +
-			"Article 28 basis for the processor portion have not been reviewed or recorded by " +
-			"founder/legal."
+			"processor role; the applicable Article 6 basis for the controller portion has not been " +
+			"reviewed or recorded by founder/legal, and for the processor portion Fidibeki processes " +
+			"only on the customer controller's documented instructions under the applicable " +
+			"Article 28 contract rather than under an independent Article 6 basis."
 		dpiaReasonNoIndicator = "No EDPB WP248 high-risk criterion is currently evidenced in code or " +
 			"docs for this activity; a privacy-owner DPIA screening decision has not been recorded."
 	)
@@ -205,7 +219,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Forced tenant PostgreSQL RLS and tenant-scoped foreign keys",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -216,7 +230,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Purpose: "Capture, triage, resolve, and communicate reporter-submitted product feedback and issues.",
 			Role:    RetentionRoleProcessor,
 			DataSubjects: []ROPADataSubjectClass{
-				ROPADataSubjectReporters, ROPADataSubjectTenantMembers,
+				ROPADataSubjectReporters, ROPADataSubjectTenantMembers, ROPADataSubjectThirdParties,
 			},
 			DataCategories: []ROPADataCategoryClass{
 				ROPADataCategoryContentCommunications, ROPADataCategoryIdentityContact,
@@ -227,7 +241,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"tenant:update required for privacy-relevant workflow mutation",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskSensitiveOrHighlyPersonal},
 				Outcome:        DPIAOutcomePending,
@@ -253,7 +267,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Hourly bounded magic-link expiry maintainers (tenantmember.Maintainer, platformadmin.Maintainer)",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -263,7 +277,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Label:               "Attachment evidence handling",
 			Purpose:             "Preserve reporter-provided attachment evidence for the feedback workflow.",
 			Role:                RetentionRoleProcessor,
-			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectReporters},
+			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectReporters, ROPADataSubjectThirdParties},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryMediaEvidence},
 			RetentionCategories: []string{"attachments"},
 			SecurityControls: []string{
@@ -271,7 +285,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Object deletion precedes manifest mutation",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskSensitiveOrHighlyPersonal},
 				Outcome:        DPIAOutcomePending,
@@ -294,7 +308,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Private S3-compatible object storage with tenant-prefixed keys",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -317,7 +331,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Consent-gated capture with independent backend enforcement",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskSystematicMonitoring},
 				Outcome:        DPIAOutcomePending,
@@ -341,7 +355,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Pseudonymous visitor identifier isolated from authenticated identity",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskSystematicMonitoring},
 				Outcome:        DPIAOutcomePending,
@@ -364,7 +378,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Browser-local storage only; never transmitted to the backend",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -381,7 +395,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Independent per-purpose consent ledgers, storage keys, and runtime gates",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -391,7 +405,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Label:               "AI-assisted feedback triage",
 			Purpose:             "Analyze explicitly authorized feedback text or media for AI-assisted triage suggestions.",
 			Role:                RetentionRoleProcessor,
-			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectReporters},
+			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectReporters, ROPADataSubjectThirdParties},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryContentCommunications, ROPADataCategoryMediaEvidence},
 			RetentionCategories: []string{"ai_provider_files", "ai_processing"},
 			SecurityControls: []string{
@@ -400,7 +414,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Per-rule opt-in with explicit input-category selection",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{
 					DPIARiskEvaluationOrScoring, DPIARiskSensitiveOrHighlyPersonal,
@@ -421,14 +435,14 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Label:               "Integration notification delivery",
 			Purpose:             "Deliver minimized operational notifications to customer-configured Slack, Teams, and webhook destinations, and track follow-up on already-disclosed copies.",
 			Role:                RetentionRoleProcessor,
-			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers},
+			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers, ROPADataSubjectReporters},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryContentCommunications, ROPADataCategoryTechnicalUsage},
 			RetentionCategories: []string{"integration_delivery"},
 			SecurityControls: []string{
 				"Versioned per-destination field allowlist; delivered payload is never logged",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -439,7 +453,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Purpose: "Verify, execute, review, and evidence data-subject and member privacy-rights operations, including temporary export archives and reporter request access.",
 			Role:    RetentionRoleControllerProcessor,
 			DataSubjects: []ROPADataSubjectClass{
-				ROPADataSubjectReporters, ROPADataSubjectTenantMembers,
+				ROPADataSubjectReporters, ROPADataSubjectTenantMembers, ROPADataSubjectThirdParties,
 			},
 			DataCategories: []ROPADataCategoryClass{
 				ROPADataCategoryIdentityContact, ROPADataCategoryContentCommunications,
@@ -452,7 +466,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Manual completion blocked until corresponding correction/erasure evidence exists",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -473,7 +487,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Append-only sensitive-access and security event evidence",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -490,24 +504,27 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Configured billing provider (Stripe) as an external processor boundary",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
 		},
 		{
 			ActivityID: "breach_response_recordkeeping", Version: 1,
-			Label:               "Breach response recordkeeping",
-			Purpose:             "Preserve restricted personal-data breach facts, assessments, chronology, and response evidence.",
-			Role:                RetentionRoleControllerProcessor,
-			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers},
+			Label:   "Breach response recordkeeping",
+			Purpose: "Preserve restricted personal-data breach facts, assessments, chronology, and response evidence.",
+			Role:    RetentionRoleControllerProcessor,
+			DataSubjects: []ROPADataSubjectClass{
+				ROPADataSubjectTenantMembers, ROPADataSubjectWebsiteVisitors, ROPADataSubjectReporters,
+				ROPADataSubjectPlatformAdmins, ROPADataSubjectThirdParties,
+			},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryIdentityContact, ROPADataCategoryTechnicalUsage},
 			RetentionCategories: []string{"breach_register"},
 			SecurityControls: []string{
 				"Platform-admin-only connection boundary; register is append-only and excluded from the tenant runtime role",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -524,24 +541,27 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Minimized hourly diagnostic buckets containing no content",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
 		},
 		{
 			ActivityID: "external_communications_delivery", Version: 1,
-			Label:               "External communications delivery",
-			Purpose:             "Deliver transactional and lifecycle email and configured operational notifications.",
-			Role:                RetentionRoleControllerProcessor,
-			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers, ROPADataSubjectReporters},
+			Label:   "External communications delivery",
+			Purpose: "Deliver transactional and lifecycle email and configured operational notifications.",
+			Role:    RetentionRoleControllerProcessor,
+			DataSubjects: []ROPADataSubjectClass{
+				ROPADataSubjectTenantMembers, ROPADataSubjectReporters, ROPADataSubjectPlatformAdmins,
+				ROPADataSubjectBillingContacts,
+			},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryIdentityContact, ROPADataCategoryContentCommunications},
 			RetentionCategories: []string{"external_communications"},
 			SecurityControls: []string{
 				"Configured email/webhook provider boundaries with minimized field allowlists",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -554,6 +574,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectTenantMembers, ROPADataSubjectReporters,
 				ROPADataSubjectWebsiteVisitors, ROPADataSubjectPlatformAdmins,
+				ROPADataSubjectBillingContacts, ROPADataSubjectThirdParties,
 			},
 			DataCategories: []ROPADataCategoryClass{
 				ROPADataCategoryTechnicalUsage, ROPADataCategoryIdentityContact,
@@ -565,7 +586,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				"Provider governance registry tracks legal entity, location, transfer, and contract evidence per boundary",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskLargeScaleProcessing},
 				Outcome:        DPIAOutcomePending,
@@ -590,7 +611,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 					"Turnstile; not separately stored by Fidibeki",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
-			Owner: governanceUnassigned,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
 			DPIA: DPIAScreening{
 				Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned,
 			},
@@ -711,9 +732,7 @@ func validateProcessingActivityRegistry(
 		if err := validateDPIAScreening(activity, now); err != nil {
 			return err
 		}
-		if err := validateReviewStamp(
-			fmt.Sprintf("processing activity %q", activity.ActivityID), activity.ReviewedAt, now,
-		); err != nil {
+		if err := validateActivityReview(activity, now); err != nil {
 			return err
 		}
 	}
@@ -733,9 +752,18 @@ func validateProcessingActivityFields(activity ProcessingActivityRecord) error {
 		strings.TrimSpace(activity.Label) == "" ||
 		strings.TrimSpace(activity.Purpose) == "" ||
 		strings.TrimSpace(activity.Owner) == "" ||
+		strings.TrimSpace(activity.ReviewedBy) == "" ||
 		strings.TrimSpace(activity.LawfulBasisReason) == "" ||
 		activity.Version <= 0 {
 		return fmt.Errorf("processing activity %q is incomplete", activity.ActivityID)
+	}
+	// PublicationReady is computed by LoadProcessingActivityRegistry after validation; a source
+	// literal must never assert it directly.
+	if activity.PublicationReady {
+		return fmt.Errorf(
+			"processing activity %q asserts publication readiness in its source literal; "+
+				"PublicationReady must only be computed", activity.ActivityID,
+		)
 	}
 	switch activity.Role {
 	case RetentionRoleController, RetentionRoleProcessor, RetentionRoleControllerProcessor:
@@ -767,7 +795,7 @@ func validateROPADataSubjects(activity ProcessingActivityRecord) error {
 	for _, subject := range activity.DataSubjects {
 		switch subject {
 		case ROPADataSubjectTenantMembers, ROPADataSubjectReporters, ROPADataSubjectWebsiteVisitors,
-			ROPADataSubjectPlatformAdmins, ROPADataSubjectBillingContacts:
+			ROPADataSubjectPlatformAdmins, ROPADataSubjectBillingContacts, ROPADataSubjectThirdParties:
 		default:
 			return fmt.Errorf(
 				"processing activity %q has unknown data-subject class %q", activity.ActivityID, subject,
@@ -904,7 +932,7 @@ func validateDPIAScreening(activity ProcessingActivityRecord, now time.Time) err
 		switch indicator {
 		case DPIARiskEvaluationOrScoring, DPIARiskAutomatedDecisionLegalEffect, DPIARiskSystematicMonitoring,
 			DPIARiskSensitiveOrHighlyPersonal, DPIARiskLargeScaleProcessing, DPIARiskMatchingOrCombiningDatasets,
-			DPIARiskVulnerableDataSubjects, DPIARiskInnovativeOrNewTechnology, DPIARiskTransferOrPreventsRights:
+			DPIARiskVulnerableDataSubjects, DPIARiskInnovativeOrNewTechnology, DPIARiskPreventsRightsOrServiceUse:
 		default:
 			return fmt.Errorf(
 				"processing activity %q has unknown DPIA risk indicator %q", activity.ActivityID, indicator,
@@ -985,19 +1013,44 @@ func validateReviewStamp(label string, reviewedAt *time.Time, now time.Time) err
 	return nil
 }
 
+// validateActivityReview requires ReviewedBy and ReviewedAt to be paired consistently: a named,
+// non-placeholder reviewer without a review date, or a review date without a named reviewer, both
+// describe a review that did not actually happen and are rejected.
+func validateActivityReview(activity ProcessingActivityRecord, now time.Time) error {
+	reviewerNamed := !governancePlaceholder(activity.ReviewedBy)
+	if reviewerNamed && activity.ReviewedAt == nil {
+		return fmt.Errorf(
+			"processing activity %q names a reviewer without a reviewed-at timestamp", activity.ActivityID,
+		)
+	}
+	if !reviewerNamed && activity.ReviewedAt != nil {
+		return fmt.Errorf(
+			"processing activity %q has a reviewed-at timestamp without a named reviewer", activity.ActivityID,
+		)
+	}
+	return validateReviewStamp(fmt.Sprintf("processing activity %q", activity.ActivityID), activity.ReviewedAt, now)
+}
+
 // processingActivityPublicationReady computes readiness rather than trusting a literal field, so
 // no activity can claim it by editing a boolean instead of recording real evidence.
+//
+// A DPIA outcome of "required" is a screening conclusion, not proof that the required DPIA was
+// actually carried out. This registry has no DPIA-completion evidence model (no field records that
+// a full DPIA document was produced, reviewed, and signed off), so an activity whose DPIA outcome
+// is "required" can never be publication ready here, no matter how complete its owner/reviewer/
+// approval fields are. Only a fully evidenced "not_required" screening can currently satisfy this
+// gate; adding a completion-evidenced path for "required" is out of scope for this slice.
 func processingActivityPublicationReady(activity ProcessingActivityRecord, now time.Time) bool {
 	if activity.LawfulBasis != LawfulBasisIdentified || len(activity.LawfulBasisGrounds) == 0 ||
 		governancePlaceholder(activity.LawfulBasisReason) {
 		return false
 	}
-	if governancePlaceholder(activity.Owner) || activity.ReviewedAt == nil ||
-		now.Sub(*activity.ReviewedAt) > governanceReviewStalenessWindow {
+	if governancePlaceholder(activity.Owner) || governancePlaceholder(activity.ReviewedBy) ||
+		activity.ReviewedAt == nil || now.Sub(*activity.ReviewedAt) > governanceReviewStalenessWindow {
 		return false
 	}
 	dpia := activity.DPIA
-	if dpia.Outcome == DPIAOutcomePending {
+	if dpia.Outcome != DPIAOutcomeNotRequired {
 		return false
 	}
 	if governancePlaceholder(dpia.Owner) || governancePlaceholder(dpia.ApprovedBy) ||
