@@ -1217,7 +1217,10 @@ test('managed replay consent supports reject, accept, persistence, version chang
   await expect(page.getByRole('heading', { name: 'Help us understand this experience' })).toBeVisible()
   await page.getByRole('button', { name: 'Accept', exact: true }).click()
   await expect.poll(() => sessionRequests.length).toBe(1)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
+  // A granted purpose leaves nothing pinned over the customer's layout: the withdrawal path is
+  // the feedback widget's privacy column, which appears without the panel being remounted.
+  await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Privacy choices', exact: true })).toBeVisible()
 
   configuration = {
     ...configuration,
@@ -1240,26 +1243,87 @@ test('managed replay consent supports reject, accept, persistence, version chang
   expect(sessionRequests).toHaveLength(1)
   await page.getByRole('button', { name: 'Accept', exact: true }).click()
   await expect.poll(() => sessionRequests.length).toBe(2)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Replay privacy' }).click()
+  await page.getByRole('button', { name: 'Privacy choices', exact: true }).click()
+  const column = page.locator('[data-privacy-column]')
+  await expect(column).toBeVisible()
+  await expect(page.locator('[data-panel]')).toHaveClass(/privacy-open/)
+  // Analytics on this rule is customer_cmp: that CMP owns the decision, so the column must offer
+  // the managed replay grant and nothing else.
+  await expect(column.locator('.privacy-choice')).toHaveCount(1)
+  await expect(column.locator('[data-purpose="session_replay"]')).toBeVisible()
+  await expect(column).toContainText('Acme Studio · Retained for up to 30 days.')
+
   await page.getByRole('button', { name: 'Withdraw consent' }).click()
   await expect.poll(() => revocations).toBe(1)
-  await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Privacy choices', exact: true })).toHaveCount(0)
+  await expect(column).toContainText('Consent withdrawn.')
+})
+
+test('a standing privacy control takes over withdrawal whenever no feedback panel is on the page', async ({ page }) => {
+  const replayRule = managedReplayRule({ ...browserRule, replay_mode: 'full', replay_sampling_rate: 0 })
+  const baseConfiguration = browserConfiguration(replayRule)
+  let revocations = 0
+  await seedActiveReplayConsent(page, 'fidibeki_managed')
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ...baseConfiguration,
+      default_locale: 'en',
+      features: { ...baseConfiguration.features, session_replay: true },
+    }),
+  }))
+  await page.route('**/v1/replay/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    if (pathname.endsWith('/replay/consents/revoke')) {
+      revocations++
+      return route.fulfill({ status: 204 })
+    }
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'managed-session', rrweb_version: '2.1.1',
+        max_duration_seconds: 1800, max_events: 50000,
+      }),
+    })
+  })
+
+  await page.goto('/sample.html')
+  const control = page.locator('[data-fidibeki-privacy-controls]')
+  // While the feedback panel is up it owns the withdrawal path through its own column.
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await expect(control).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Close feedback' }).click()
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toHaveCount(0)
+  const launcher = control.locator('[data-privacy-launcher]')
+  await expect(launcher).toBeVisible()
+  // A prompt presentation has no launcher of its own, so the control falls back to the edge tab.
+  await expect(launcher).toHaveAttribute('data-launcher-variant', 'edge_tab')
+
+  await launcher.click()
+  const panel = control.locator('[data-privacy-panel]')
+  await expect(panel.locator('.privacy-choice')).toHaveCount(1)
+  await expect(panel.locator('[data-purpose="session_replay"]')).toBeVisible()
+  await page.getByRole('button', { name: 'Withdraw consent' }).click()
+  await expect.poll(() => revocations).toBe(1)
+  await expect(panel).toContainText('Consent withdrawn.')
+
+  // Nothing left to withdraw: the control leaves the page instead of lingering.
+  await page.getByRole('button', { name: 'Close privacy choices' }).click()
+  await expect(control).toHaveCount(0)
 })
 
 test('managed analytics and replay purposes share one prompt with per-purpose choices', async ({ page }) => {
-  // Both purposes must start undecided, so drop the shared beforeEach analytics seed too.
-  await page.addInitScript(() => {
-    for (let index = localStorage.length - 1; index >= 0; index--) {
-      const key = localStorage.key(index)
-      if (key?.startsWith('fidibeki:analytics-consent:') || key?.startsWith('fidibeki:replay-consent:')) {
-        localStorage.removeItem(key)
-      }
-    }
-  })
+  // A distinct rule id keeps both purposes undecided: the shared beforeEach seed targets
+  // rule-browser only, and consent storage keys are scoped per rule. (Do not "clean up" with a
+  // storage-clearing addInitScript here — rrweb's utility iframe re-runs init scripts mid-test,
+  // which would wipe freshly granted consent the moment replay capture starts.)
   const rule: WidgetRule = {
     ...browserRule,
+    id: 'rule-both-purposes',
     replay_mode: 'full',
     replay_sampling_rate: 0,
     analytics_consent: {
@@ -1356,21 +1420,27 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
 
   await page.goto('/sample.html')
   // One combined dialog instead of two stacked popups.
-  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
-  await expect(page.getByText('Help us understand how this widget is used')).toBeVisible()
-  await expect(page.getByText('Help us improve this experience')).toBeVisible()
-  expect(await page.locator('[data-fidibeki-consent]').count()).toBe(1)
+  const dialog = page.locator('[data-fidibeki-consent]')
+  await expect(dialog.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
+  await expect(dialog.getByText('Help us understand how this widget is used')).toBeVisible()
+  await expect(dialog.getByText('Help us improve this experience')).toBeVisible()
+  expect(await dialog.count()).toBe(1)
 
   // Customize: allow analytics, leave replay unchecked, then save.
-  await page.getByRole('checkbox', { name: /Help us understand how this widget is used/ }).check()
-  await page.getByRole('button', { name: 'Save choices' }).click()
+  await dialog.getByRole('checkbox', { name: /Help us understand how this widget is used/ }).check()
+  await dialog.getByRole('button', { name: 'Save choices' }).click()
   await expect.poll(() => analyticsDecisions.length).toBe(1)
   expect(analyticsDecisions[0]).toMatchObject({ purpose: 'widget_analytics', state: 'granted' })
   await expect.poll(() => replayDecisions.length).toBe(1)
   expect(replayDecisions[0]).toMatchObject({ purpose: 'session_replay', state: 'denied' })
-  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toHaveCount(0)
-  // Only analytics is active now, so the launcher is purpose-specific.
-  await expect(page.getByRole('button', { name: 'Analytics privacy' })).toBeVisible()
+  // Decision-only: the dialog leaves the page for good, nothing stays pinned over the layout.
+  await expect(dialog).toHaveCount(0)
+  // Withdrawal lives in the feedback panel's privacy column: only the granted analytics purpose
+  // is listed there, the denied replay purpose is not.
+  await page.getByRole('button', { name: 'Privacy choices', exact: true }).click()
+  const column = page.locator('[data-privacy-column]')
+  await expect(column.locator('.privacy-choice')).toHaveCount(1)
+  await expect(column.locator('[data-purpose="widget_analytics"]')).toBeVisible()
 
   // Reset both purposes: accept all grants each purpose separately.
   await page.evaluate(() => {
@@ -1382,11 +1452,14 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
     }
     window.dispatchEvent(new Event('fidibeki:navigation'))
   })
-  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
-  await page.getByRole('button', { name: 'Accept all' }).click()
+  await expect(dialog.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Accept all' }).click()
   await expect.poll(() => analyticsDecisions.filter(decision => decision.state === 'granted').length).toBe(2)
   await expect.poll(() => replayDecisions.filter(decision => decision.state === 'granted').length).toBe(1)
-  await expect(page.getByRole('button', { name: 'Privacy choices' })).toBeVisible()
+  await expect(dialog).toHaveCount(0)
+  // Both purposes granted: the privacy column now offers both withdrawals.
+  await page.getByRole('button', { name: 'Privacy choices', exact: true }).click()
+  await expect(column.locator('.privacy-choice')).toHaveCount(2)
 })
 
 test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {

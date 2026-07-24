@@ -354,8 +354,9 @@ function confirm() {
 .replay-consent-anonymous { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; padding: 10px 0; color: var(--teal); border-bottom: 1px solid var(--line); }
 .replay-consent-anonymous p, .replay-consent-runtime p { display: grid; gap: 3px; margin: 0; }
 .replay-consent-anonymous b, .replay-consent-runtime b { color: var(--ink-soft); font-size: 11px; }
-.replay-consent-anonymous span, .replay-consent-runtime span { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.replay-consent-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+
+.replay-consent-anonymous span, .replay-consent-runtime > div:first-child span { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.replay-consent-modes { display: grid; min-height: fit-content; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
 .replay-consent-modes > button { display: grid; min-height: 76px; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 8px; padding: 12px; background: #fff; color: var(--muted); border: 0; text-align: left; }
 .replay-consent-modes > button + button { border-left: 1px solid var(--line-strong); }
 .replay-consent-modes > button[data-active='true'] { background: var(--teal-soft); color: var(--teal); }
@@ -375,7 +376,7 @@ function confirm() {
 .replay-consent-tabs button { min-height: 30px; padding: 0 10px; background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; }
 .replay-consent-tabs button[data-active='true'] { color: var(--teal); border-bottom-color: var(--teal); }
 .replay-consent-runtime { display: grid; gap: 10px; }
-.replay-consent-runtime > div { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; }
+.replay-consent-runtime > div:first-child { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; }
 .replay-consent-runtime pre { max-width: 100%; margin: 0; padding: 12px; overflow-x: auto; background: #f3f6f5; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 5px; font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .replay-consent-diagnostic { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 6px 5px 10px; background: #fff8e8; color: var(--amber); border: 1px solid #e9cc84; border-radius: 5px; font-size: 9px; font-weight: 700; }
 .replay-consent-diagnostic[data-ready='true'] { background: var(--teal-soft); color: var(--teal); border-color: #acd5ca; }

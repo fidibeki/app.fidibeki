@@ -20,6 +20,7 @@ const moduleEntries = {
   video: 'src/modules/video.ts',
   replay: 'src/modules/replay.ts',
   'consent-prompt': 'src/consent-prompt.ts',
+  'privacy-controls': 'src/privacy-controls.ts',
   screenshot: 'src/modules/screenshot.ts',
   'element-attachment': 'src/modules/element-attachment.ts',
   'error-reporting': 'src/modules/error-reporting.ts',

@@ -31,7 +31,7 @@ import {
 } from './replay-consent'
 import { storageOrMemory, type StorageLike } from './storage'
 import { armTrigger, type TriggerCleanup } from './triggers'
-import type { WidgetConfiguration, WidgetRule } from './types'
+import type { PrivacyChoice, PrivacyChoices, WidgetConfiguration, WidgetRule } from './types'
 
 type WidgetUnmount = () => void
 
@@ -49,6 +49,8 @@ interface WidgetModule {
     submissionAnalytics(): import('./analytics').FunnelEvent | null
     onSubmitted(): void
     onDismissed(): void
+    privacy: PrivacyChoices
+    onClosed(): void
     target?: HTMLElement
     hostID?: string
   }): WidgetUnmount
@@ -80,16 +82,24 @@ interface ConsentPromptPurposeDescriptor {
   purpose: 'widget_analytics' | 'session_replay'
   consent: WidgetRule['analytics_consent'] | WidgetRule['replay_consent']
   locale: string
-  state: 'new' | 'active'
   onAccept(): Promise<void>
   onReject(): Promise<void>
-  onWithdraw(): Promise<void>
 }
 
 interface ConsentPromptModule {
   mountConsentPrompt(options: {
     purposes: ConsentPromptPurposeDescriptor[]
     runExclusive?<T>(action: () => Promise<T>): Promise<T>
+  }): WidgetUnmount
+}
+
+interface PrivacyControlsModule {
+  mountPrivacyControls(options: {
+    rule: WidgetRule
+    configuration: WidgetConfiguration
+    choices(): PrivacyChoice[]
+    subscribe(listener: () => void): () => void
+    onRemoved(): void
   }): WidgetUnmount
 }
 
@@ -145,6 +155,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let analyticsOutbox: AnalyticsOutbox | null = null
   let analyticsGrantedRuleID: string | null = null
   let analyticsGrantToken = ''
+  let liveFeedbackWidgets = 0
+  let privacyControlUnmount: WidgetUnmount | null = null
+  let privacyControlFingerprint = ''
+  let privacyControlTransition = 0
 
   const ensureReplayConsent = (configuration: WidgetConfiguration) => {
     if (replayConsent && replayConsentProjectID === configuration.project_id) return replayConsent
@@ -163,6 +177,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           if (capture?.revoke) capture.revoke()
           else if (capture) void capture.stop()
         }
+        notifyPrivacyChoices()
         if (cache) void synchronizeReplay(cache.value, currentReplayRule)
       },
     })
@@ -190,6 +205,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       storage: durableStorage,
       onChanged: (state) => {
         if (state === 'revoked') wipeAnalyticsIdentity()
+        notifyPrivacyChoices()
         if (cache) void synchronizeAnalyticsConsent(cache.value, currentAnalyticsRule)
       },
     })
@@ -225,6 +241,124 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     analyticsOutbox = null
     outbox?.destroy()
     forgetVisitorID(durableStorage)
+  }
+
+  const privacyListeners = new Set<() => void>()
+  const notifyPrivacyChoices = () => {
+    for (const listener of privacyListeners) listener()
+    void synchronizePrivacyControl()
+  }
+
+  // Only Fidibeki-managed grants are withdrawable from our own UI. When the customer runs their
+  // own CMP ('customer_cmp') the decision and its withdrawal belong to that CMP, and the widget
+  // must not offer a second, competing control; 'none' has no consent to withdraw at all.
+  const privacyChoices = (): PrivacyChoice[] => {
+    const configuration = cache?.value
+    if (!configuration) return []
+    const choices: PrivacyChoice[] = []
+    const analyticsController = analyticsConsent
+    const analyticsRule = currentAnalyticsRule
+    if (
+      analyticsController && analyticsRule &&
+      analyticsRule.analytics_consent.mode === 'fidibeki_managed' &&
+      analyticsController.status() === 'active'
+    ) {
+      const locale = analyticsConsentLocale(configuration, analyticsRule)
+      const notice = locale ? analyticsRule.analytics_consent.notices[locale] : undefined
+      if (notice) {
+        choices.push({
+          purpose: 'widget_analytics',
+          title: notice.title,
+          description: notice.description,
+          controllerName: analyticsRule.analytics_consent.controller_name,
+          retentionDays: analyticsRule.analytics_consent.retention_days,
+          privacyPolicyURL: analyticsRule.analytics_consent.privacy_policy_url,
+          withdrawLabel: notice.withdraw_label,
+          withdraw: () => analyticsController.revoke(),
+        })
+      }
+    }
+    const replayController = replayConsent
+    const replayRule = currentReplayRule
+    if (
+      replayController && replayRule &&
+      replayRule.replay_consent.mode === 'fidibeki_managed' &&
+      replayController.status() === 'active'
+    ) {
+      const locale = replayConsentLocale(configuration, replayRule)
+      const notice = locale ? replayRule.replay_consent.notices[locale] : undefined
+      if (notice) {
+        choices.push({
+          purpose: 'session_replay',
+          title: notice.title,
+          description: notice.description,
+          controllerName: replayRule.replay_consent.controller_name,
+          retentionDays: replayRule.replay_consent.retention_days,
+          privacyPolicyURL: replayRule.replay_consent.privacy_policy_url,
+          withdrawLabel: notice.withdraw_label,
+          withdraw: () => replayController.revoke(),
+        })
+      }
+    }
+    return choices
+  }
+
+  const privacy: PrivacyChoices = {
+    choices: privacyChoices,
+    subscribe(listener) {
+      privacyListeners.add(listener)
+      return () => {
+        privacyListeners.delete(listener)
+      }
+    },
+  }
+
+  // Exactly one withdrawal path is on the page at a time. While a feedback panel is mounted it owns
+  // the path through its privacy column; the moment it is gone — never triggered, dismissed,
+  // submitted, or suppressed on this page view — the standing control takes over. Withdrawal must
+  // stay as easy as granting was, and a suppressed widget must not be able to strand it.
+  const synchronizePrivacyControl = async () => {
+    const configuration = cache?.value
+    const rule = currentAnalyticsRule ?? currentReplayRule
+    // A control that is already up stays up even once its list empties: it is showing the outcome
+    // of the withdrawal that emptied it, and removes itself when that outcome has been read.
+    const wanted = liveFeedbackWidgets === 0 && configuration && rule &&
+      (privacyControlUnmount !== null || privacyChoices().length > 0)
+    const fingerprint = wanted ? `${rule.id}:${configuration.project_id}` : ''
+    if (fingerprint === privacyControlFingerprint) return
+    const transition = ++privacyControlTransition
+    privacyControlFingerprint = fingerprint
+    privacyControlUnmount?.()
+    privacyControlUnmount = null
+    if (!fingerprint || !rule || !configuration) return
+    try {
+      const module = (await import(
+        new URL('privacy-controls.js', assetBase).href
+      )) as PrivacyControlsModule
+      if (transition !== privacyControlTransition) return
+      privacyControlUnmount = module.mountPrivacyControls({
+        rule,
+        configuration,
+        choices: privacyChoices,
+        subscribe: privacy.subscribe,
+        onRemoved: () => {
+          privacyControlUnmount = null
+          privacyControlFingerprint = ''
+        },
+      })
+    } catch (error) {
+      void report(error, 'privacy_controls')
+    }
+  }
+
+  const holdFeedbackWidget = () => {
+    liveFeedbackWidgets++
+    void synchronizePrivacyControl()
+  }
+
+  const releaseFeedbackWidget = () => {
+    liveFeedbackWidgets = Math.max(0, liveFeedbackWidgets - 1)
+    void synchronizePrivacyControl()
   }
 
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
@@ -309,6 +443,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           .then((module) => {
             if (currentEvaluation !== evaluation) return
             automaticRuleID = rule.id
+            holdFeedbackWidget()
             unmountWidget = (module as WidgetModule).mountWidget({
               configuration,
               rule,
@@ -320,6 +455,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               onVisible: () => recordAnalytics('impression', rule),
               onInteraction: () => recordAnalytics('interaction', rule),
               submissionAnalytics: () => recordSubmissionAnalytics(rule),
+              privacy,
+              onClosed: releaseFeedbackWidget,
               onSubmitted: () => persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => {
 					recordAnalytics('dismissed', rule)
@@ -345,6 +482,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       }
     } catch (error) {
       void report(error, 'configuration')
+    } finally {
+      // Covers every path that leaves no feedback panel behind — no rule, suppressed, or still
+      // waiting on a trigger that may never fire.
+      if (currentEvaluation === evaluation) void synchronizePrivacyControl()
     }
   }
 
@@ -398,10 +539,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const module = (await import(new URL('widget.js', assetBase).href)) as WidgetModule
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       const hostID = `fidibeki-widget-host-${randomID()}`
+      holdFeedbackWidget()
       const unmount = module.mountWidget({
         configuration, rule, publicKey: key, apiBase: assetBase, assetBase,
         pageURL: privacyLocation.target,
         replaySessionID: replayCapture?.sessionID ?? null,
+        privacy,
+        onClosed: releaseFeedbackWidget,
         target, hostID,
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
@@ -417,6 +561,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     } catch (error) {
       void report(error, 'mount')
       return explicitResult(false, 'not_found')
+    } finally {
+      void synchronizePrivacyControl()
     }
   }
 
@@ -478,9 +624,9 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 	}
 
   // Runs a prompt decision while deferring prompt re-synchronization: onChanged handlers still
-  // update grant gating and replay capture immediately, but the dialog is only re-rendered once
-  // the whole batch (e.g. "accept all" spanning both purposes) has settled, so the user never
-  // sees an intermediate prompt for a purpose they are still deciding.
+  // update grant gating, replay capture, and the privacy surfaces immediately, but the dialog is
+  // only re-rendered once the whole batch (e.g. "accept all" spanning both purposes) has settled,
+  // so the user never sees an intermediate prompt for a purpose they are still deciding.
   const runConsentDecision = async <T>(action: () => Promise<T>): Promise<T> => {
     consentDecisionDepth++
     try {
@@ -491,8 +637,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     }
   }
 
-  // One prompt for every Fidibeki-managed purpose on the current rule. Presentation is shared;
-  // each purpose keeps its own controller, storage, and evidence endpoint (issue #58).
+  // One prompt for every undecided Fidibeki-managed purpose on the current rule. Only the
+  // presentation is shared: each purpose keeps its own controller, storage, and evidence endpoint
+  // (issue #58). The dialog asks once and then leaves the host page for good — withdrawal lives in
+  // the feedback widget's privacy column and the standing control (privacyChoices).
   const synchronizeConsentPrompt = async (configuration: WidgetConfiguration, rule: WidgetRule | null) => {
     if (consentDecisionDepth > 0) return
     const analyticsController = ensureAnalyticsConsent(configuration)
@@ -500,16 +648,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     analyticsController.setRule(rule)
     replayController.setRule(rule)
     const purposes: ConsentPromptPurposeDescriptor[] = []
-    if (rule && rule.analytics_consent.mode === 'fidibeki_managed') {
-      const status = analyticsController.status()
-      const state = status === 'new' || status === 'active' ? status : null
+    if (rule && rule.analytics_consent.mode === 'fidibeki_managed' && analyticsController.status() === 'new') {
       const locale = analyticsConsentLocale(configuration, rule)
-      if (state && locale) {
+      if (locale) {
         purposes.push({
           purpose: 'widget_analytics',
           consent: rule.analytics_consent,
           locale,
-          state,
           onAccept: () => analyticsController.grant({
             purpose: 'widget_analytics',
             noticeVersion: rule.analytics_consent.notice_version,
@@ -517,20 +662,16 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
             source: 'fidibeki_managed',
           }).then(() => {}),
           onReject: () => analyticsController.deny(locale),
-          onWithdraw: () => analyticsController.revoke(),
         })
       }
     }
-    if (rule && rule.replay_consent.mode === 'fidibeki_managed') {
-      const status = replayController.status()
-      const state = status === 'new' || status === 'active' ? status : null
+    if (rule && rule.replay_consent.mode === 'fidibeki_managed' && replayController.status() === 'new') {
       const locale = replayConsentLocale(configuration, rule)
-      if (state && locale) {
+      if (locale) {
         purposes.push({
           purpose: 'session_replay',
           consent: rule.replay_consent,
           locale,
-          state,
           onAccept: () => replayController.grant({
             purpose: 'session_replay',
             noticeVersion: rule.replay_consent.notice_version,
@@ -538,13 +679,12 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
             source: 'fidibeki_managed',
           }).then(() => {}),
           onReject: () => replayController.deny(locale),
-          onWithdraw: () => replayController.revoke(),
         })
       }
     }
     const fingerprint = rule && purposes.length > 0
       ? [rule.id, ...purposes.map(descriptor =>
-          `${descriptor.purpose}:${descriptor.consent.notice_version}:${descriptor.locale}:${descriptor.state}`)].join('|')
+          `${descriptor.purpose}:${descriptor.consent.notice_version}:${descriptor.locale}`)].join('|')
       : ''
     if (fingerprint === consentPromptFingerprint) return
     const transition = ++consentPromptTransition

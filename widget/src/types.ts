@@ -79,6 +79,28 @@ export interface AnalyticsConsentConfig {
   notices: Record<string, AnalyticsConsentNotice>
 }
 
+export type PrivacyChoicePurpose = 'widget_analytics' | 'session_replay'
+
+// One withdrawable grant surfaced inside the feedback widget's privacy column. The widget never
+// reads consent storage itself: the loader owns every controller and hands over an already
+// locale-resolved notice plus the withdrawal action for that single purpose, so the two purposes
+// stay independent all the way to the UI (issue #58).
+export interface PrivacyChoice {
+  purpose: PrivacyChoicePurpose
+  title: string
+  description: string
+  controllerName: string
+  retentionDays: number
+  privacyPolicyURL: string
+  withdrawLabel: string
+  withdraw(): Promise<void>
+}
+
+export interface PrivacyChoices {
+  choices(): PrivacyChoice[]
+  subscribe(listener: () => void): () => void
+}
+
 export interface WidgetLocalization {
   launcher_label: string
   prompt: string

@@ -35,10 +35,8 @@ function analyticsPurpose(overrides: Partial<ConsentPromptPurpose> = {}): Consen
     purpose: 'widget_analytics',
     consent: analyticsConsent,
     locale: 'pt-pt',
-    state: 'new',
     onAccept: vi.fn(async () => {}),
     onReject: vi.fn(async () => {}),
-    onWithdraw: vi.fn(async () => {}),
     ...overrides,
   }
 }
@@ -48,10 +46,8 @@ function replayPurpose(overrides: Partial<ConsentPromptPurpose> = {}): ConsentPr
     purpose: 'session_replay',
     consent: replayConsent,
     locale: 'pt-pt',
-    state: 'new',
     onAccept: vi.fn(async () => {}),
     onReject: vi.fn(async () => {}),
-    onWithdraw: vi.fn(async () => {}),
     ...overrides,
   }
 }
@@ -73,6 +69,7 @@ describe('single-purpose consent prompt', () => {
     expect(root.textContent).toContain('As interações gravadas são conservadas até 30 dias.')
     expect(buttons.map(button => button.textContent)).toEqual(['Recusar', 'Aceitar'])
     expect(getComputedStyle(root.querySelector('.actions')!).gridTemplateColumns).toBe('1fr 1fr')
+    expect(root.querySelectorAll('.toggle')).toHaveLength(0)
 
     buttons[0]?.click()
     await Promise.resolve()
@@ -80,27 +77,6 @@ describe('single-purpose consent prompt', () => {
     expect(purpose.onAccept).not.toHaveBeenCalled()
     unmount()
     expect(document.querySelector('[data-fidibeki-consent]')).toBeNull()
-  })
-
-  it('keeps withdrawal one action away from the purpose-specific privacy control', async () => {
-    const purpose = analyticsPurpose({ state: 'active' })
-    const unmount = mountConsentPrompt({ purposes: [purpose] })
-    const root = shadowRoot()
-    const launcher = root.querySelector<HTMLButtonElement>('.privacy-launcher')!
-    expect(launcher.textContent).toContain('Privacidade de análise')
-
-    launcher.click()
-    const withdrawButton = root.querySelector<HTMLButtonElement>('.withdraw')!
-    expect(withdrawButton.textContent).toContain('Retirar consentimento')
-    withdrawButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true)
-    expect(root.activeElement).toBe(launcher)
-
-    launcher.click()
-    withdrawButton.click()
-    await Promise.resolve()
-    expect(purpose.onWithdraw).toHaveBeenCalledTimes(1)
-    unmount()
   })
 
   it('shows an error and re-enables actions when a decision fails', async () => {
@@ -117,7 +93,7 @@ describe('single-purpose consent prompt', () => {
 })
 
 describe('combined consent prompt', () => {
-  it('renders both purposes in one dialog with a shared header and one policy link', () => {
+  it('renders both purposes in one decision-only dialog with a shared header and one policy link', () => {
     const unmount = mountConsentPrompt({ purposes: [analyticsPurpose(), replayPurpose()] })
     expect(document.querySelectorAll('[data-fidibeki-consent]')).toHaveLength(1)
     const root = shadowRoot()
@@ -130,10 +106,12 @@ describe('combined consent prompt', () => {
     const toggles = [...root.querySelectorAll<HTMLInputElement>('.toggle')]
     expect(toggles).toHaveLength(2)
     expect(toggles.every(toggle => !toggle.checked)).toBe(true)
+    // Decision-only: withdrawal lives in the privacy column, never in this dialog.
+    expect(root.textContent).not.toContain('Retirar consentimento')
     unmount()
   })
 
-  it('accepts every pending purpose from "accept all"', async () => {
+  it('accepts every purpose from "accept all" regardless of the toggles', async () => {
     const analytics = analyticsPurpose()
     const replay = replayPurpose()
     const unmount = mountConsentPrompt({ purposes: [analytics, replay] })
@@ -147,7 +125,7 @@ describe('combined consent prompt', () => {
     unmount()
   })
 
-  it('rejects every pending purpose from "reject all"', async () => {
+  it('rejects every purpose from "reject all"', async () => {
     const analytics = analyticsPurpose()
     const replay = replayPurpose()
     const unmount = mountConsentPrompt({ purposes: [analytics, replay] })
@@ -189,39 +167,6 @@ describe('combined consent prompt', () => {
     shadowRoot().querySelector<HTMLButtonElement>('.accept-all')!.click()
     await vi.waitFor(() => expect(analytics.onAccept).toHaveBeenCalledTimes(1))
     expect(batches).toBe(1)
-    unmount()
-  })
-
-  it('lets an already-granted purpose be withdrawn while another is still pending', async () => {
-    const analytics = analyticsPurpose()
-    const replay = replayPurpose({ state: 'active' })
-    const unmount = mountConsentPrompt({ purposes: [analytics, replay] })
-    const root = shadowRoot()
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(false)
-    expect(root.querySelectorAll('.toggle')).toHaveLength(1)
-    root.querySelector<HTMLButtonElement>('.withdraw[data-purpose="session_replay"]')!.click()
-    await Promise.resolve()
-    expect(replay.onWithdraw).toHaveBeenCalledTimes(1)
-    unmount()
-  })
-
-  it('collapses to a shared privacy launcher when every purpose is already granted', async () => {
-    const analytics = analyticsPurpose({ state: 'active' })
-    const replay = replayPurpose({ state: 'active' })
-    const unmount = mountConsentPrompt({ purposes: [analytics, replay] })
-    const root = shadowRoot()
-    const launcher = root.querySelector<HTMLButtonElement>('.privacy-launcher')!
-    expect(launcher.textContent).toContain('Escolhas de privacidade')
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true)
-
-    launcher.click()
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(false)
-    const withdrawals = [...root.querySelectorAll<HTMLButtonElement>('.withdraw')]
-    expect(withdrawals).toHaveLength(2)
-    withdrawals[0]?.click()
-    await Promise.resolve()
-    expect(analytics.onWithdraw).toHaveBeenCalledTimes(1)
-    expect(replay.onWithdraw).not.toHaveBeenCalled()
     unmount()
   })
 })
