@@ -341,6 +341,7 @@ func retentionRegistry() []retentionDefinition {
 				"breach_controller_notification_attempts",
 				"breach_controller_notification_outbox", "breach_controller_notifications",
 				"breach_incident_tenants", "breach_incidents",
+				"breach_provider_incident_intakes", "breach_provider_incident_tenants",
 			),
 		},
 		{

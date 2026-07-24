@@ -28,7 +28,13 @@ type fakeStore struct {
 	getActions                 []ActionEvent
 	getActionEvents            []ActionEvent
 	getNotifications           []ControllerNotification
+	getProviderIntakes         []ProviderIncidentIntake
 	getErr                     error
+	createdProviderIntake      ProviderIncidentIntake
+	createProviderIntakeErr    error
+	providerIntakeActor        string
+	providerIntakeKey          string
+	providerIntakeInput        CreateProviderIncidentIntakeInput
 	appendedEntry              ChronologyEntry
 	appendErr                  error
 	appendedActor              string
@@ -78,10 +84,20 @@ func (f *fakeStore) GetIncident(
 	context.Context, string,
 ) (
 	Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent,
-	[]ControllerNotification, error,
+	[]ControllerNotification, []ProviderIncidentIntake, error,
 ) {
 	return f.getIncident, f.getEntries, f.getAssessments, f.getActions, f.getActionEvents,
-		f.getNotifications, f.getErr
+		f.getNotifications, f.getProviderIntakes, f.getErr
+}
+
+func (f *fakeStore) CreateProviderIncidentIntake(
+	_ context.Context, _ string, actorPlatformAdminID string, idempotencyKey string,
+	input CreateProviderIncidentIntakeInput,
+) (ProviderIncidentIntake, error) {
+	f.providerIntakeActor = actorPlatformAdminID
+	f.providerIntakeKey = idempotencyKey
+	f.providerIntakeInput = input
+	return f.createdProviderIntake, f.createProviderIntakeErr
 }
 
 func (f *fakeStore) StageControllerNotification(
@@ -412,6 +428,137 @@ func TestAppendChronologyEntryRequiresAppendPermissionAndValidatesKind(t *testin
 	}
 }
 
+func validProviderIncidentIntakeBody() string {
+	return `{
+		"provider_id":"resend_transactional_email",
+		"provider_notice_reference":"provider-case-123",
+		"provider_reported_at":"2026-07-24T10:00:00Z",
+		"summary":"Provider reported an incident affecting message delivery.",
+		"evidence_references":["case:123"],
+		"affected_data_flow_categories":["external_communications"],
+		"affected_tenant_ids":["22222222-2222-4222-8222-222222222222"]
+	}`
+}
+
+func TestCreateProviderIncidentIntakeRequiresAppendPermissionAndPassesInput(t *testing.T) {
+	t.Parallel()
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	store := &fakeStore{
+		createdProviderIntake: ProviderIncidentIntake{
+			ID: "33333333-3333-4333-8333-333333333333",
+		},
+	}
+	handler, jwtManager := newTestHandler(t, store)
+	path := "/admin/breach-incidents/" + incidentID + "/provider-intakes"
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(
+		http.MethodPost, path, strings.NewReader(validProviderIncidentIntakeBody()),
+	))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated provider intake status = %d, want 401", unauthenticated.Code)
+	}
+
+	tenantToken, _, _ := jwtManager.Issue(
+		"member-id", auth.AudienceTenant,
+		[]string{string(auth.PermissionPlatformBreachAppend)},
+	)
+	crossAudience := httptest.NewRecorder()
+	crossAudienceRequest := httptest.NewRequest(
+		http.MethodPost, path, strings.NewReader(validProviderIncidentIntakeBody()),
+	)
+	crossAudienceRequest.Header.Set("Authorization", "Bearer "+tenantToken)
+	handler.ServeHTTP(crossAudience, crossAudienceRequest)
+	if crossAudience.Code != http.StatusUnauthorized {
+		t.Fatalf("tenant-audience provider intake status = %d, want 401", crossAudience.Code)
+	}
+
+	readToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachRead)},
+	)
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(
+		http.MethodPost, path, strings.NewReader(validProviderIncidentIntakeBody()),
+	)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("read-only provider intake status = %d, want 403", forbidden.Code)
+	}
+
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+	created := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, path, strings.NewReader(validProviderIncidentIntakeBody()),
+	)
+	request.Header.Set("Authorization", "Bearer "+appendToken)
+	request.Header.Set("Idempotency-Key", "provider-intake-1")
+	handler.ServeHTTP(created, request)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("provider intake status = %d, body = %s", created.Code, created.Body.String())
+	}
+	if store.providerIntakeActor != "admin-id" ||
+		store.providerIntakeKey != "provider-intake-1" ||
+		store.providerIntakeInput.ProviderID != "resend_transactional_email" ||
+		len(store.providerIntakeInput.AffectedTenantIDs) != 1 {
+		t.Fatalf(
+			"provider intake actor/key/input = %q/%q/%#v",
+			store.providerIntakeActor, store.providerIntakeKey, store.providerIntakeInput,
+		)
+	}
+
+	invalidID := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(
+		http.MethodPost, "/admin/breach-incidents/not-a-uuid/provider-intakes",
+		strings.NewReader(validProviderIncidentIntakeBody()),
+	)
+	invalidRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	handler.ServeHTTP(invalidID, invalidRequest)
+	if invalidID.Code != http.StatusNotFound {
+		t.Fatalf("invalid incident ID status = %d, want 404", invalidID.Code)
+	}
+}
+
+func TestCreateProviderIncidentIntakeMapsStoreErrors(t *testing.T) {
+	t.Parallel()
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	tests := []struct {
+		err  error
+		want int
+	}{
+		{err: ErrInvalidRequest, want: http.StatusUnprocessableEntity},
+		{err: ErrTenantNotFound, want: http.StatusUnprocessableEntity},
+		{err: ErrNotFound, want: http.StatusNotFound},
+		{err: ErrIdempotencyConflict, want: http.StatusConflict},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.err.Error(), func(t *testing.T) {
+			t.Parallel()
+			store := &fakeStore{createProviderIntakeErr: test.err}
+			handler, jwtManager := newTestHandler(t, store)
+			token, _, _ := jwtManager.Issue(
+				"admin-id", auth.AudiencePlatform,
+				[]string{string(auth.PermissionPlatformBreachAppend)},
+			)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/admin/breach-incidents/"+incidentID+"/provider-intakes",
+				strings.NewReader(validProviderIncidentIntakeBody()),
+			)
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Idempotency-Key", "provider-intake-1")
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, test.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func validCreateAssessmentBody() string {
 	return `{
 		"authority_notification_decision": "assessment_pending",
@@ -525,6 +672,9 @@ func TestGetIncidentIncludesAssessments(t *testing.T) {
 			ID: "notification-id", NotificationKind: ControllerNotificationInitial,
 			Status: ControllerNotificationDraft,
 		}},
+		getProviderIntakes: []ProviderIncidentIntake{{
+			ID: "provider-intake-id", ProviderID: "resend_transactional_email",
+		}},
 	}
 	handler, jwtManager := newTestHandler(t, store)
 	readToken, _, _ := jwtManager.Issue(
@@ -549,6 +699,10 @@ func TestGetIncidentIncludesAssessments(t *testing.T) {
 	notifications, ok := response["controller_notifications"].([]any)
 	if !ok || len(notifications) != 1 {
 		t.Fatalf("response controller notifications = %#v", response["controller_notifications"])
+	}
+	providerIntakes, ok := response["provider_incident_intakes"].([]any)
+	if !ok || len(providerIntakes) != 1 {
+		t.Fatalf("response provider intakes = %#v", response["provider_incident_intakes"])
 	}
 }
 

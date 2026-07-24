@@ -63,6 +63,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	for _, table := range []string{
 		"breach_incidents", "breach_incident_tenants", "breach_chronology_entries",
 		"breach_assessments", "breach_action_events",
+		"breach_provider_incident_intakes", "breach_provider_incident_tenants",
 	} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 			var allowed bool
@@ -228,13 +229,15 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		)
 	}
 
-	fetched, entries, assessments, actions, actionEvents, notifications, err :=
+	fetched, entries, assessments, actions, actionEvents, notifications, providerIntakes, err :=
 		store.GetIncident(ctx, incident.ID)
 	if err != nil || fetched.ID != incident.ID || len(entries) != 0 || len(assessments) != 0 ||
-		len(actions) != 9 || len(actionEvents) != 9 || len(notifications) != 0 {
+		len(actions) != 9 || len(actionEvents) != 9 || len(notifications) != 0 ||
+		len(providerIntakes) != 0 {
 		t.Fatalf(
-			"GetIncident() = %#v/%#v/%#v/%#v/%#v/%#v, error = %v",
-			fetched, entries, assessments, actions, actionEvents, notifications, err,
+			"GetIncident() = %#v/%#v/%#v/%#v/%#v/%#v/%#v, error = %v",
+			fetched, entries, assessments, actions, actionEvents, notifications,
+			providerIntakes, err,
 		)
 	}
 	if !fetched.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
@@ -243,10 +246,100 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 			fetched.AuthorityNotificationDeadlineAt, wantDeadline,
 		)
 	}
-	if _, _, _, _, _, _, err := store.GetIncident(
+	if _, _, _, _, _, _, _, err := store.GetIncident(
 		ctx, "00000000-0000-4000-8000-000000000000",
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetIncident(missing) error = %v, want ErrNotFound", err)
+	}
+
+	// External provider notices freeze the current code-owned governance
+	// snapshot and can only map tenants already affected by the incident.
+	providerInput := CreateProviderIncidentIntakeInput{
+		ProviderID:                 "resend_transactional_email",
+		ProviderNoticeReference:    "provider-case-123",
+		ProviderReportedAt:         now.Add(-2 * time.Hour),
+		Summary:                    "Provider reported an incident affecting message delivery.",
+		EvidenceReferences:         []string{"provider-case:123"},
+		AffectedDataFlowCategories: []string{"external_communications"},
+		AffectedTenantIDs:          []string{tenantAID},
+	}
+	providerIntake, err := store.CreateProviderIncidentIntake(
+		ctx, incident.ID, platformAdminID, "provider-intake-key-1", providerInput,
+	)
+	if err != nil {
+		t.Fatalf("CreateProviderIncidentIntake() error = %v", err)
+	}
+	if providerIntake.ProviderID != providerInput.ProviderID ||
+		providerIntake.ProviderDisplayName != "Resend transactional email" ||
+		providerIntake.GovernanceRegistryVersion != 1 ||
+		providerIntake.PrimaryRetentionCategory != "external_communications" ||
+		!providerIntake.ReceivedAt.Equal(now) ||
+		!providerIntake.CreatedAt.Equal(now) ||
+		providerIntake.ActorPlatformAdminID != platformAdminID ||
+		len(providerIntake.AffectedTenantIDs) != 1 ||
+		providerIntake.AffectedTenantIDs[0] != tenantAID {
+		t.Fatalf("provider incident intake = %#v", providerIntake)
+	}
+	replayedProviderIntake, err := store.CreateProviderIncidentIntake(
+		ctx, incident.ID, platformAdminID, "provider-intake-key-1", providerInput,
+	)
+	if err != nil || replayedProviderIntake.ID != providerIntake.ID {
+		t.Fatalf(
+			"idempotent CreateProviderIncidentIntake() = %#v, error = %v",
+			replayedProviderIntake, err,
+		)
+	}
+	conflictingProviderInput := providerInput
+	conflictingProviderInput.Summary = "A different external-provider incident summary."
+	if _, err := store.CreateProviderIncidentIntake(
+		ctx, incident.ID, platformAdminID, "provider-intake-key-1",
+		conflictingProviderInput,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf(
+			"conflicting CreateProviderIncidentIntake() error = %v, want ErrIdempotencyConflict",
+			err,
+		)
+	}
+	unrelatedProviderInput := providerInput
+	unrelatedProviderInput.AffectedTenantIDs =
+		[]string{"00000000-0000-4000-8000-000000000000"}
+	if _, err := store.CreateProviderIncidentIntake(
+		ctx, incident.ID, platformAdminID, "provider-intake-unrelated",
+		unrelatedProviderInput,
+	); !errors.Is(err, ErrTenantNotFound) {
+		t.Fatalf(
+			"unrelated-tenant CreateProviderIncidentIntake() error = %v, want ErrTenantNotFound",
+			err,
+		)
+	}
+	internalProviderInput := providerInput
+	internalProviderInput.ProviderID = "email_capture_filesystem"
+	if _, err := store.CreateProviderIncidentIntake(
+		ctx, incident.ID, platformAdminID, "provider-intake-internal",
+		internalProviderInput,
+	); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf(
+			"internal-runtime CreateProviderIncidentIntake() error = %v, want ErrInvalidRequest",
+			err,
+		)
+	}
+	if _, err := store.CreateProviderIncidentIntake(
+		ctx, "00000000-0000-4000-8000-000000000000", platformAdminID,
+		"provider-intake-missing", providerInput,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf(
+			"missing-incident CreateProviderIncidentIntake() error = %v, want ErrNotFound",
+			err,
+		)
+	}
+	_, _, _, _, _, _, providerIntakesAfterCreate, err :=
+		store.GetIncident(ctx, incident.ID)
+	if err != nil || len(providerIntakesAfterCreate) != 1 ||
+		providerIntakesAfterCreate[0].ID != providerIntake.ID {
+		t.Fatalf(
+			"GetIncident() provider intakes = %#v, error = %v",
+			providerIntakesAfterCreate, err,
+		)
 	}
 
 	// Chronology append: server-authoritative timestamps, actor identity,
@@ -291,7 +384,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("AppendChronologyEntry(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, entriesAfterAppend, _, _, _, _, err := store.GetIncident(ctx, incident.ID)
+	_, entriesAfterAppend, _, _, _, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(entriesAfterAppend) != 1 || entriesAfterAppend[0].ID != entry.ID {
 		t.Fatalf("GetIncident() chronology = %#v, error = %v", entriesAfterAppend, err)
 	}
@@ -370,7 +463,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("CreateAssessment(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, _, assessmentsAfterCreate, _, _, _, err := store.GetIncident(ctx, incident.ID)
+	_, _, assessmentsAfterCreate, _, _, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(assessmentsAfterCreate) != 1 || assessmentsAfterCreate[0].ID != assessment.ID {
 		t.Fatalf("GetIncident() assessments = %#v, error = %v", assessmentsAfterCreate, err)
 	}
@@ -554,7 +647,8 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		)
 	}
 
-	_, _, _, actionsAfterUpdates, eventsAfterUpdates, _, err := store.GetIncident(ctx, incident.ID)
+	_, _, _, actionsAfterUpdates, eventsAfterUpdates, _, _, err :=
+		store.GetIncident(ctx, incident.ID)
 	if err != nil || len(actionsAfterUpdates) != 10 || len(eventsAfterUpdates) != 14 {
 		t.Fatalf(
 			"GetIncident() actions/events = %d/%d, error = %v, want 10/14",
@@ -588,7 +682,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	}
 	readResult := make(chan incidentReadResult, 1)
 	go func() {
-		_, _, _, readActions, readEvents, _, readErr := store.GetIncident(ctx, incident.ID)
+		_, _, _, readActions, readEvents, _, _, readErr := store.GetIncident(ctx, incident.ID)
 		readResult <- incidentReadResult{actions: readActions, events: readEvents, err: readErr}
 	}()
 	snapshotObserved := false
@@ -694,6 +788,56 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		`DELETE FROM breach_action_events WHERE id = $1`, containmentAction.ID,
 	); err == nil {
 		t.Fatal("DELETE breach_action_events succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		UPDATE breach_provider_incident_intakes
+		SET summary = 'rewritten'
+		WHERE id = $1
+	`, providerIntake.ID); err == nil {
+		t.Fatal("UPDATE breach_provider_incident_intakes succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		DELETE FROM breach_provider_incident_intakes WHERE id = $1
+	`, providerIntake.ID); err == nil {
+		t.Fatal("DELETE breach_provider_incident_intakes succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		UPDATE breach_provider_incident_tenants
+		SET created_at = created_at + interval '1 second'
+		WHERE provider_incident_intake_id = $1
+	`, providerIntake.ID); err == nil {
+		t.Fatal("UPDATE breach_provider_incident_tenants succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		DELETE FROM breach_provider_incident_tenants
+		WHERE provider_incident_intake_id = $1
+	`, providerIntake.ID); err == nil {
+		t.Fatal("DELETE breach_provider_incident_tenants succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx, `
+		INSERT INTO breach_provider_incident_intakes (
+			id, breach_incident_id, provider_id, governance_registry_version,
+			provider_display_name, boundary_kind, approval_status, contract_status,
+			primary_retention_category, provider_notice_reference, provider_reported_at,
+			received_at, summary, evidence_references, affected_data_flow_categories,
+			actor_platform_admin_id, idempotency_key, request_fingerprint, created_at
+		)
+		SELECT
+			gen_random_uuid(), intake.breach_incident_id, intake.provider_id,
+			intake.governance_registry_version, intake.provider_display_name,
+			intake.boundary_kind, intake.approval_status, intake.contract_status,
+			intake.primary_retention_category, 'direct-pre-awareness',
+			incident.awareness_at - interval '1 second',
+			incident.awareness_at - interval '1 second',
+			'Receipt must not predate incident awareness.', '{}',
+			intake.affected_data_flow_categories, intake.actor_platform_admin_id,
+			'direct-pre-awareness', digest('direct-pre-awareness', 'sha256'),
+			incident.awareness_at - interval '1 second'
+		FROM breach_provider_incident_intakes AS intake
+		JOIN breach_incidents AS incident ON incident.id = intake.breach_incident_id
+		WHERE intake.id = $1
+	`, providerIntake.ID); err == nil {
+		t.Fatal("provider intake receipt before incident awareness succeeded")
 	}
 	if _, err := connection.Exec(ctx, `
 		INSERT INTO breach_action_events (

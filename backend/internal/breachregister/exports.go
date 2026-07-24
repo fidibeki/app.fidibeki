@@ -117,6 +117,7 @@ type PostIncidentReport struct {
 	Actions                 []ActionEvent            `json:"actions"`
 	ActionHistorySummary    []ActionHistorySummary   `json:"action_history_summary"`
 	ControllerNotifications []ControllerNotification `json:"controller_notifications"`
+	ProviderIncidentIntakes []ProviderIncidentIntake `json:"provider_incident_intakes"`
 }
 
 func newPostIncidentReport(
@@ -127,6 +128,7 @@ func newPostIncidentReport(
 	actions []ActionEvent,
 	actionEvents []ActionEvent,
 	notifications []ControllerNotification,
+	providerIntakes []ProviderIncidentIntake,
 ) PostIncidentReport {
 	var latestAssessment *Assessment
 	if len(assessments) > 0 {
@@ -142,6 +144,9 @@ func newPostIncidentReport(
 	if notifications == nil {
 		notifications = []ControllerNotification{}
 	}
+	if providerIntakes == nil {
+		providerIntakes = []ProviderIncidentIntake{}
+	}
 	for index := range notifications {
 		if notifications[index].DeliveryAttempts == nil {
 			notifications[index].DeliveryAttempts = []ControllerNotificationAttempt{}
@@ -151,7 +156,8 @@ func newPostIncidentReport(
 		SchemaVersion: exportSchemaVersion, GeneratedAt: generatedAt.UTC(),
 		IncidentPublicID: incident.PublicID, Incident: incident, Chronology: chronology,
 		LatestAssessment: latestAssessment, Actions: actions,
-		ActionHistorySummary: actionHistorySummaries(actionEvents), ControllerNotifications: notifications,
+		ActionHistorySummary:    actionHistorySummaries(actionEvents),
+		ControllerNotifications: notifications, ProviderIncidentIntakes: providerIntakes,
 	}
 }
 
@@ -436,6 +442,64 @@ func renderPostIncidentReportMarkdown(report PostIncidentReport) string {
 	fmt.Fprintf(&builder, "- Subject categories: %s\n", joinOrNone(incident.AffectedSubjectCategories))
 	fmt.Fprintf(&builder, "- Impact dimensions: %s\n\n", joinOrNone(incidentImpactLabels(incident)))
 	writeMDBlock(&builder, "Containment summary:", incident.ContainmentSummary)
+
+	builder.WriteString("## External Provider Incident Intakes\n\n")
+	if len(report.ProviderIncidentIntakes) == 0 {
+		builder.WriteString("No external provider incident intakes recorded.\n\n")
+	} else {
+		for _, intake := range report.ProviderIncidentIntakes {
+			fmt.Fprintf(
+				&builder, "### Intake %s -- %s\n\n",
+				intake.ID, mdEscapeInline(intake.ProviderDisplayName),
+			)
+			fmt.Fprintf(&builder, "- Intake ID: %s\n", intake.ID)
+			fmt.Fprintf(&builder, "- Sequence: %d\n", intake.Sequence)
+			fmt.Fprintf(&builder, "- Breach incident ID: %s\n", intake.BreachIncidentID)
+			fmt.Fprintf(&builder, "- Provider ID: %s\n", mdEscapeInline(intake.ProviderID))
+			fmt.Fprintf(
+				&builder, "- Provider display name: %s\n",
+				mdEscapeInline(intake.ProviderDisplayName),
+			)
+			fmt.Fprintf(
+				&builder, "- Governance registry version: %d\n",
+				intake.GovernanceRegistryVersion,
+			)
+			fmt.Fprintf(&builder, "- Boundary kind: %s\n", intake.BoundaryKind)
+			fmt.Fprintf(&builder, "- Approval status: %s\n", intake.ApprovalStatus)
+			fmt.Fprintf(&builder, "- Contract status: %s\n", intake.ContractStatus)
+			fmt.Fprintf(
+				&builder, "- Primary retention category: %s\n",
+				mdEscapeInline(intake.PrimaryRetentionCategory),
+			)
+			fmt.Fprintf(
+				&builder, "- Provider notice reference: %s\n",
+				mdEscapeInline(intake.ProviderNoticeReference),
+			)
+			fmt.Fprintf(
+				&builder, "- Provider reported at: %s\n",
+				intake.ProviderReportedAt.Format(time.RFC3339),
+			)
+			fmt.Fprintf(&builder, "- Received at: %s\n", intake.ReceivedAt.Format(time.RFC3339))
+			fmt.Fprintf(&builder, "- Created at: %s\n", intake.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(
+				&builder, "- Actor (platform admin ID): %s\n",
+				intake.ActorPlatformAdminID,
+			)
+			fmt.Fprintf(
+				&builder, "- Affected tenant IDs: %s\n",
+				joinOrNone(intake.AffectedTenantIDs),
+			)
+			fmt.Fprintf(
+				&builder, "- Affected data-flow categories: %s\n",
+				joinOrNoneEscaped(intake.AffectedDataFlowCategories),
+			)
+			fmt.Fprintf(
+				&builder, "- Evidence references: %s\n\n",
+				joinOrNoneEscaped(intake.EvidenceReferences),
+			)
+			writeMDBlock(&builder, "Summary:", intake.Summary)
+		}
+	}
 
 	builder.WriteString("## Chronology\n\n")
 	if len(report.Chronology) == 0 {

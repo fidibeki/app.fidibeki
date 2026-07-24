@@ -37,7 +37,8 @@ func (h *httpHandler) exportControllerNotification(w http.ResponseWriter, r *htt
 		writeError(w, err)
 		return
 	}
-	incident, _, _, _, _, notifications, err := h.options.Store.GetIncident(r.Context(), incidentID)
+	incident, _, _, _, _, notifications, _, err :=
+		h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -70,7 +71,7 @@ func (h *httpHandler) exportPostIncidentReport(w http.ResponseWriter, r *http.Re
 		writeError(w, err)
 		return
 	}
-	incident, chronology, assessments, actions, actionEvents, notifications, err :=
+	incident, chronology, assessments, actions, actionEvents, notifications, providerIntakes, err :=
 		h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
@@ -78,6 +79,7 @@ func (h *httpHandler) exportPostIncidentReport(w http.ResponseWriter, r *http.Re
 	}
 	report := newPostIncidentReport(
 		h.now(), incident, chronology, assessments, actions, actionEvents, notifications,
+		providerIntakes,
 	)
 	filename := "breach-" + incident.PublicID + "-post-incident-report"
 	writeExport(w, r, format, filename, report, renderPostIncidentReportMarkdown)

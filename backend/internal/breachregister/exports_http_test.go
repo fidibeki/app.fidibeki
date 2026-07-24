@@ -23,6 +23,22 @@ func exportFixtureStore() *fakeStore {
 	return &fakeStore{
 		getIncident: Incident{ID: exportIncidentID, PublicID: "BR-ABCDEF12"},
 		getEntries:  []ChronologyEntry{{ID: "entry-1", EntryKind: EntryDetected, Summary: "Detected."}},
+		getProviderIntakes: []ProviderIncidentIntake{{
+			ID: "provider-intake-1", Sequence: 1, BreachIncidentID: exportIncidentID,
+			ProviderID: "resend_transactional_email", GovernanceRegistryVersion: 1,
+			ProviderDisplayName: "Resend transactional email", BoundaryKind: "service_provider",
+			ApprovalStatus: "pending", ContractStatus: "unknown",
+			PrimaryRetentionCategory:   "external_communications",
+			ProviderNoticeReference:    "provider-case-123",
+			ProviderReportedAt:         time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC),
+			ReceivedAt:                 time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC),
+			CreatedAt:                  time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC),
+			Summary:                    "Provider reported a delivery incident.",
+			EvidenceReferences:         []string{"case:123"},
+			AffectedDataFlowCategories: []string{"external_communications"},
+			AffectedTenantIDs:          []string{"tenant-1"},
+			ActorPlatformAdminID:       "admin-id",
+		}},
 		getNotifications: []ControllerNotification{
 			{
 				ID: exportNotificationID, BreachIncidentID: exportIncidentID,
@@ -399,6 +415,15 @@ func TestExportPostIncidentReportIncludesPendingValuesAndLedger(t *testing.T) {
 	if !ok || len(chronology) != 1 {
 		t.Fatalf("chronology = %#v", decoded["chronology"])
 	}
+	providerIntakes, ok := decoded["provider_incident_intakes"].([]any)
+	if !ok || len(providerIntakes) != 1 {
+		t.Fatalf("provider_incident_intakes = %#v", decoded["provider_incident_intakes"])
+	}
+	intake, ok := providerIntakes[0].(map[string]any)
+	if !ok || intake["provider_notice_reference"] != "provider-case-123" ||
+		intake["provider_id"] != "resend_transactional_email" {
+		t.Fatalf("provider incident intake = %#v", providerIntakes[0])
+	}
 }
 
 func TestExportPostIncidentReportMarkdownFormat(t *testing.T) {
@@ -419,6 +444,9 @@ func TestExportPostIncidentReportMarkdownFormat(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "assessment_pending") {
 		t.Errorf("markdown missing pending assessment marker: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "provider-case-123") {
+		t.Errorf("markdown missing provider intake: %s", recorder.Body.String())
 	}
 }
 

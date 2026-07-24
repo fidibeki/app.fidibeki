@@ -339,7 +339,7 @@ func TestControllerNotificationLifecycleIsRestrictedIdempotentAndRetryable(t *te
 	if strings.Contains(sendErr.Error(), "provider-secret-response") {
 		t.Fatalf("worker error leaked provider response: %v", sendErr)
 	}
-	_, _, _, _, _, notifications, err := store.GetIncident(ctx, incident.ID)
+	_, _, _, _, _, notifications, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil {
 		t.Fatalf("GetIncident() error = %v", err)
 	}

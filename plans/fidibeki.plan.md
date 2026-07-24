@@ -690,7 +690,7 @@ was removed from the staging test tenant.
         last success, next expected run, and last/total processed counts on desktop and mobile.
         Migration/grant/down-up, state-boundary, atomic-counter, stale-update, maintainer error,
         HTTP authorization, typecheck, and responsive Playwright coverage pass locally. The
-        executable registry now covers all 72 tables; no legal period, external monitoring
+        executable registry now covers all 74 tables; no legal period, external monitoring
         provider, production deployment, or uninstrumented cleaner was added.
       - Remaining cleanup-policy slices: `tenant_member_sessions`/`platform_admin_sessions` retention
         (blocked on a founder/legal decision for security-record retention, since these carry
@@ -898,10 +898,30 @@ was removed from the staging test tenant.
         unit tests plus HTTP tests for audience/permission denial, malformed/unknown/mismatched
         IDs, missing/invalid `format`, exact frozen notification content, matching
         `Content-Length` across `GET`/`HEAD`, and both formats for both documents.
+      - [x] Slice 6 (external-provider incident intake): migration `106` adds an append-only,
+        `fidibeki_admin`-only provider-notice ledger plus an incident-scoped tenant mapping. Each
+        intake resolves one stable provider ID from the code-owned governance registry and freezes
+        the registry version, display name, boundary kind, approval/contract status, and primary
+        retention category known at receipt time; pending/unknown legal fields remain pending/
+        unknown, and internal-runtime boundaries are rejected. The bounded record includes a
+        provider notice reference, provider-reported timestamp, server-authoritative receipt time,
+        factual summary, opaque evidence references, one or more governed data-flow categories
+        including the provider's primary category, platform-admin actor, and one or more tenant IDs
+        already affected by the parent incident. It stores no raw provider payload, credential,
+        signed URL, IP/user-agent, reporter content, or evidence body, performs no external call,
+        and does not label the provider a confirmed subprocessor. `POST
+        /admin/breach-incidents/{incidentID}/provider-intakes` reuses
+        `platform:breach:append`; incident detail and the JSON/Markdown post-incident report
+        additively expose the same frozen facts from the existing repeatable-read snapshot.
+        Idempotency fingerprints include both normalized operator input and the frozen governance
+        snapshot, preventing a retry from silently re-resolving against a changed registry.
+        Domain, HTTP, export-safety/parity, PostgreSQL scope/idempotency/grant/immutability,
+        retention-registry, and migration `106` up/down/up coverage pass locally across all 74
+        tables. No provider was contacted and no deployment or production work was performed.
       - Still remaining for later #64 slices: staged processor-to-controller notifications with
-        an authenticated staging capture exercise; subprocessor incident intake; staging-only
-        tabletop scenarios; and an internal platform-admin UI (the first real consumer of the new
-        export routes) when that product surface exists.
+        an authenticated staging capture exercise; staging-only tabletop scenarios; and an
+        internal platform-admin UI (the first real consumer of the new register and export routes)
+        when that product surface exists.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

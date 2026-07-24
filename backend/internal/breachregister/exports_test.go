@@ -62,7 +62,9 @@ func TestActionHistorySummariesEmpty(t *testing.T) {
 func TestNewPostIncidentReportPendingAssessmentIsExplicitNull(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	report := newPostIncidentReport(now, Incident{PublicID: "BR-AAAAAAAA"}, nil, nil, nil, nil, nil)
+	report := newPostIncidentReport(
+		now, Incident{PublicID: "BR-AAAAAAAA"}, nil, nil, nil, nil, nil, nil,
+	)
 	if report.LatestAssessment != nil {
 		t.Fatalf("LatestAssessment = %#v, want nil", report.LatestAssessment)
 	}
@@ -81,7 +83,10 @@ func TestNewPostIncidentReportPendingAssessmentIsExplicitNull(t *testing.T) {
 	if rawValue != nil {
 		t.Fatalf("latest_assessment = %#v, want explicit null", rawValue)
 	}
-	for _, key := range []string{"chronology", "actions", "action_history_summary", "controller_notifications"} {
+	for _, key := range []string{
+		"chronology", "actions", "action_history_summary", "controller_notifications",
+		"provider_incident_intakes",
+	} {
 		value, ok := decoded[key].([]any)
 		if !ok || value == nil {
 			t.Errorf("%s = %#v, want a present (possibly empty) array, not omitted/null", key, decoded[key])
@@ -97,7 +102,7 @@ func TestNewPostIncidentReportUsesMostRecentAssessment(t *testing.T) {
 		{ID: "assess-2", AuthorityNotificationDecision: AuthorityNotificationNotRequired},
 	}
 	report := newPostIncidentReport(
-		now, Incident{PublicID: "BR-AAAAAAAA"}, nil, assessments, nil, nil, nil,
+		now, Incident{PublicID: "BR-AAAAAAAA"}, nil, assessments, nil, nil, nil, nil,
 	)
 	if report.LatestAssessment == nil || report.LatestAssessment.ID != "assess-2" {
 		t.Fatalf("LatestAssessment = %#v, want assess-2", report.LatestAssessment)
@@ -218,7 +223,9 @@ func samplePostIncidentReport() PostIncidentReport {
 		{ID: "notification-1", NotificationKind: ControllerNotificationInitial, Sequence: 1,
 			RecipientEmail: "privacy@acme.example", Status: ControllerNotificationSent, Attempts: 1},
 	}
-	return newPostIncidentReport(now, incident, chronology, assessments, actions, actionEvents, notifications)
+	return newPostIncidentReport(
+		now, incident, chronology, assessments, actions, actionEvents, notifications, nil,
+	)
 }
 
 func TestRenderPostIncidentReportMarkdownIsDeterministicAndContainsFacts(t *testing.T) {
@@ -243,7 +250,7 @@ func TestRenderPostIncidentReportMarkdownIsDeterministicAndContainsFacts(t *test
 func TestRenderPostIncidentReportMarkdownHandlesEmptyState(t *testing.T) {
 	t.Parallel()
 	report := newPostIncidentReport(
-		time.Now(), Incident{PublicID: "BR-CCCCCCCC"}, nil, nil, nil, nil, nil,
+		time.Now(), Incident{PublicID: "BR-CCCCCCCC"}, nil, nil, nil, nil, nil, nil,
 	)
 	markdown := renderPostIncidentReportMarkdown(report)
 	for _, want := range []string{
@@ -252,6 +259,7 @@ func TestRenderPostIncidentReportMarkdownHandlesEmptyState(t *testing.T) {
 		"No actions recorded.",
 		"No action history recorded.",
 		"No controller notifications staged.",
+		"No external provider incident intakes recorded.",
 	} {
 		if !strings.Contains(markdown, want) {
 			t.Errorf("markdown missing %q:\n%s", want, markdown)
@@ -596,6 +604,61 @@ func TestRenderPostIncidentReportBlockFieldsAreFencedVerbatim(t *testing.T) {
 	}
 }
 
+func TestRenderPostIncidentReportIncludesProviderIntakeParityAndSafety(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	intake := ProviderIncidentIntake{
+		ID: "intake-1", Sequence: 3, BreachIncidentID: "incident-1",
+		ProviderID: "provider|id", GovernanceRegistryVersion: 2,
+		ProviderDisplayName: "Provider\n# Injected heading", BoundaryKind: "service_provider",
+		ApprovalStatus: "pending", ContractStatus: "unknown",
+		PrimaryRetentionCategory:   "external_communications",
+		ProviderNoticeReference:    "case|123",
+		ProviderReportedAt:         now.Add(-2 * time.Hour),
+		ReceivedAt:                 now.Add(-time.Hour),
+		CreatedAt:                  now.Add(-time.Hour),
+		Summary:                    "Provider summary.\n# Not a heading\n```\ncontent\n```",
+		EvidenceReferences:         []string{"evidence|123"},
+		AffectedDataFlowCategories: []string{"external_communications"},
+		AffectedTenantIDs:          []string{"tenant-1"},
+		ActorPlatformAdminID:       "admin-1",
+	}
+	report := newPostIncidentReport(
+		now, Incident{ID: "incident-1", PublicID: "BR-PROVIDER"}, nil, nil, nil, nil,
+		nil, []ProviderIncidentIntake{intake},
+	)
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	values, ok := decoded["provider_incident_intakes"].([]any)
+	if !ok || len(values) != 1 {
+		t.Fatalf("provider_incident_intakes = %#v", decoded["provider_incident_intakes"])
+	}
+
+	markdown := renderPostIncidentReportMarkdown(report)
+	for _, want := range []string{
+		"intake-1", "incident-1", "provider\\|id", "Provider\\n\\# Injected heading",
+		"case\\|123", "external\\_communications", "evidence\\|123", "tenant-1", "admin-1",
+		now.Add(-2 * time.Hour).Format(time.RFC3339),
+		now.Add(-time.Hour).Format(time.RFC3339),
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("provider intake markdown missing %q:\n%s", want, markdown)
+		}
+	}
+	if !strings.Contains(markdown, mdSafeBlock(intake.Summary)) {
+		t.Fatalf("provider intake summary was not rendered as a safe block:\n%s", markdown)
+	}
+	if strings.Contains(markdown, "\n# Injected heading") {
+		t.Fatalf("provider display name created a physical heading:\n%s", markdown)
+	}
+}
+
 func TestRenderPostIncidentReportIncludesFullFieldParityWithJSON(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
@@ -651,7 +714,9 @@ func TestRenderPostIncidentReportIncludesFullFieldParityWithJSON(t *testing.T) {
 	}
 	actionEvents := actions
 	notifications := []ControllerNotification{fullNotification()}
-	report := newPostIncidentReport(now, incident, chronology, assessments, actions, actionEvents, notifications)
+	report := newPostIncidentReport(
+		now, incident, chronology, assessments, actions, actionEvents, notifications, nil,
+	)
 	markdown := renderPostIncidentReportMarkdown(report)
 
 	for _, want := range []string{
@@ -716,7 +781,7 @@ func TestRenderPostIncidentReportRendersExplicitPendingValues(t *testing.T) {
 			CreatedAt: now},
 	}
 	report := newPostIncidentReport(
-		now, Incident{PublicID: "BR-MIN0002"}, nil, assessments, actions, actions, nil,
+		now, Incident{PublicID: "BR-MIN0002"}, nil, assessments, actions, actions, nil, nil,
 	)
 	markdown := renderPostIncidentReportMarkdown(report)
 	for _, want := range []string{

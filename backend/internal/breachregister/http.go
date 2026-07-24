@@ -23,8 +23,11 @@ type BreachStore interface {
 		context.Context, string,
 	) (
 		Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent,
-		[]ControllerNotification, error,
+		[]ControllerNotification, []ProviderIncidentIntake, error,
 	)
+	CreateProviderIncidentIntake(
+		context.Context, string, string, string, CreateProviderIncidentIntakeInput,
+	) (ProviderIncidentIntake, error)
 	AppendChronologyEntry(
 		context.Context, string, string, string, AppendChronologyEntryInput,
 	) (ChronologyEntry, error)
@@ -80,6 +83,11 @@ func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 		Get("/admin/breach-incidents/{incidentID}", handler.getIncident)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
 		Post("/admin/breach-incidents/{incidentID}/chronology", handler.appendChronologyEntry)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post(
+			"/admin/breach-incidents/{incidentID}/provider-intakes",
+			handler.createProviderIncidentIntake,
+		)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
 		Post("/admin/breach-incidents/{incidentID}/assessments", handler.createAssessment)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
@@ -204,7 +212,8 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
 		return
 	}
-	incident, entries, assessments, actions, actionEvents, controllerNotifications, err :=
+	incident, entries, assessments, actions, actionEvents, controllerNotifications,
+		providerIncidentIntakes, err :=
 		h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
@@ -213,7 +222,8 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"incident": incident, "chronology": entries, "assessments": assessments,
 		"actions": actions, "action_events": actionEvents,
-		"controller_notifications": controllerNotifications,
+		"controller_notifications":  controllerNotifications,
+		"provider_incident_intakes": providerIncidentIntakes,
 	})
 }
 
@@ -255,6 +265,48 @@ func (h *httpHandler) appendChronologyEntry(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"entry": entry})
+}
+
+type createProviderIncidentIntakeRequest struct {
+	ProviderID                 string    `json:"provider_id"`
+	ProviderNoticeReference    string    `json:"provider_notice_reference"`
+	ProviderReportedAt         time.Time `json:"provider_reported_at"`
+	Summary                    string    `json:"summary"`
+	EvidenceReferences         []string  `json:"evidence_references"`
+	AffectedDataFlowCategories []string  `json:"affected_data_flow_categories"`
+	AffectedTenantIDs          []string  `json:"affected_tenant_ids"`
+}
+
+func (h *httpHandler) createProviderIncidentIntake(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "incidentID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	var request createProviderIncidentIntakeRequest
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	intake, err := h.options.Store.CreateProviderIncidentIntake(
+		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
+		CreateProviderIncidentIntakeInput{
+			ProviderID: request.ProviderID, ProviderNoticeReference: request.ProviderNoticeReference,
+			ProviderReportedAt: request.ProviderReportedAt, Summary: request.Summary,
+			EvidenceReferences:         request.EvidenceReferences,
+			AffectedDataFlowCategories: request.AffectedDataFlowCategories,
+			AffectedTenantIDs:          request.AffectedTenantIDs,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"provider_incident_intake": intake})
 }
 
 type createAssessmentRequest struct {

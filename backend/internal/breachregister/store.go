@@ -200,15 +200,18 @@ func (s Store) GetIncident(
 	[]ActionEvent,
 	[]ActionEvent,
 	[]ControllerNotification,
+	[]ProviderIncidentIntake,
 	error,
 ) {
 	tx, err := s.Database.Begin(ctx)
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, fmt.Errorf("begin breach incident read: %w", err)
+		return Incident{}, nil, nil, nil, nil, nil, nil,
+			fmt.Errorf("begin breach incident read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`); err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, fmt.Errorf("configure breach incident read snapshot: %w", err)
+		return Incident{}, nil, nil, nil, nil, nil, nil,
+			fmt.Errorf("configure breach incident read snapshot: %w", err)
 	}
 
 	incident, err := scanIncidentWithTenants(tx.QueryRow(ctx, `
@@ -222,31 +225,38 @@ func (s Store) GetIncident(
 		WHERE incident.id = $1
 	`, incidentID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Incident{}, nil, nil, nil, nil, nil, ErrNotFound
+		return Incident{}, nil, nil, nil, nil, nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, fmt.Errorf("get breach incident: %w", err)
+		return Incident{}, nil, nil, nil, nil, nil, nil,
+			fmt.Errorf("get breach incident: %w", err)
 	}
 	entries, err := s.listChronologyEntries(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, nil, nil, err
 	}
 	assessments, err := s.listAssessments(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, nil, nil, err
 	}
 	actions, actionEvents, err := s.listActions(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, nil, nil, err
 	}
 	controllerNotifications, err := listControllerNotifications(ctx, tx, incidentID)
 	if err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, err
+		return Incident{}, nil, nil, nil, nil, nil, nil, err
+	}
+	providerIncidentIntakes, err := s.listProviderIncidentIntakes(ctx, tx, incidentID)
+	if err != nil {
+		return Incident{}, nil, nil, nil, nil, nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return Incident{}, nil, nil, nil, nil, nil, fmt.Errorf("commit breach incident read: %w", err)
+		return Incident{}, nil, nil, nil, nil, nil, nil,
+			fmt.Errorf("commit breach incident read: %w", err)
 	}
-	return incident, entries, assessments, actions, actionEvents, controllerNotifications, nil
+	return incident, entries, assessments, actions, actionEvents, controllerNotifications,
+		providerIncidentIntakes, nil
 }
 
 func (s Store) listChronologyEntries(
