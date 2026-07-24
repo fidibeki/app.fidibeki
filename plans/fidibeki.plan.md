@@ -700,12 +700,22 @@ was removed from the staging test tenant.
         `make governance-check` is the focused local gate. This is deliberately not a static
         outbound-call scanner, does not classify every service as a subprocessor, and publishes no
         unverified legal claim.
+      - [x] Contextual customer-controller notice and version evidence: migration `103` adds the
+        workspace privacy contact, rights contact, and notice version plus localized per-definition
+        purpose, lawful-basis summary, retention summary, and policy links. Public widget config v3
+        exposes the complete controller profile and resolved summaries without tenant-internal
+        fields; contact collection fails closed when the notice is incomplete. Feedback persists
+        the server-authoritative notice/consent snapshot, propagates that evidence into linked
+        Issues, and preserves legacy records. The widget renders the disclosure and links in the
+        actual form; the bilingual backoffice manages the profile, previews the resolved notice,
+        and warns on incomplete contact collection. Backend, web, widget, responsive E2E, migration,
+        vet, formatting, and repository-wide regression checks pass locally.
       - Remaining #63 slices: founder/legal review of actual provider entities, regions, contracts,
         transfer mechanisms, roles, owners, and review dates; approved/published provider register
-        and Article 28 DPA; contextual customer-controller notices and version evidence; provider
-        change authorization/objection workflow; maintained ROPA and DPIA screening/decision
-        workflow; staging reconciliation, link tests, localized E2E, and release gating for
-        providers newly introduced in code as well as those added to the retention inventory.
+        and Article 28 DPA; provider change authorization/objection workflow; maintained ROPA and
+        DPIA screening/decision workflow; staging reconciliation, link tests, localized E2E, and
+        release gating for providers newly introduced in code as well as those added to the
+        retention inventory.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,
       processor-to-controller notifications, decision evidence, and staging exercises.
       - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only
