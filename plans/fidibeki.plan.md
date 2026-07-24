@@ -21,6 +21,9 @@ Complete the operating loop:
 - Do not perform production, deployment, or infrastructure work unless it directly blocks use of
   the application in staging.
 - Production work resumes only with explicit founder authorization.
+- On 2026-07-24, the founder explicitly authorized deploying the already validated product work to
+  staging so its authenticated gates can run and completed issues can close. This authorization is
+  staging-only and does not authorize production promotion or new infrastructure.
 - Deliver product work as testable vertical slices. Each slice includes compatible migrations,
   backend, backoffice, and widget tests where applicable, plus staging E2E validation.
 
@@ -1186,9 +1189,10 @@ was removed from the staging test tenant.
       legal/factual decisions; #60, #62, #64, #65, #66, and #71 await deployment of the exact
       validated commits plus authenticated staging evidence. Each issue contains its current
       evidence and remains open rather than claiming an unperformed gate.
-    - [ ] Revisit these external gates only after the founder authorizes deployment or supplies the
-      outstanding legal decisions. Do not let this item redirect local product work into production
-      or infrastructure.
+    - [ ] Deploy the exact validated `main` revision to staging, run the authenticated gates for
+      #60, #62, #64, #65, #66, and #71, and close only the issues whose evidence passes. Staging
+      deployment was explicitly authorized on 2026-07-24; production remains prohibited. #58 and
+      #63 still require the outstanding legal/factual decisions and are not unlocked by deployment.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
