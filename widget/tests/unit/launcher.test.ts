@@ -136,4 +136,15 @@ describe('launcher variants', () => {
     expect(launcher.hidden).toBe(true)
     destroy()
   })
+
+  it('links back to fidibeki.com from the panel footer', () => {
+    const { destroy, shadow } = mount()
+    const badge = shadow.querySelector<HTMLElement>('.managed-by')!
+    expect(badge.textContent).toBe('Managed by fidibeki.com')
+    const link = badge.querySelector<HTMLAnchorElement>('a')!
+    expect(link.href).toBe('https://fidibeki.com/?ref=widget')
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noopener noreferrer')
+    destroy()
+  })
 })
