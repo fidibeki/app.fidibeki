@@ -799,10 +799,24 @@ was removed from the staging test tenant.
         idempotency/conflict/concurrency, and repository-wide backend checks pass locally. The
         executable retention registry covers the new table as `decision_required`; no cleaner,
         deployment, notification, or operational containment action was added.
+      - [x] Slice 4 (staged processor-to-controller notifications): migration `104` adds frozen,
+        versioned contact/content snapshots, append-only provider-attempt evidence, and a dedicated
+        `fidibeki_admin`-only outbox so even an opaque breach event never enters the tenant-visible
+        runtime role. Platform admins explicitly stage, queue, and retry initial, update, and
+        closure notices; staging resolves the affected workspace's governed privacy contact and
+        fails closed for non-processor incidents, unrelated tenants, or incomplete profiles.
+        The worker uses a five-minute lease and stable provider idempotency key, records only a
+        bounded generic failure, and sends minimized incident facts without evidence bodies,
+        credentials, reporter content, raw payloads, IP/user-agent data, query strings, or signed
+        storage URLs. Incident detail additively exposes the frozen snapshots and delivery ledger.
+        PostgreSQL lifecycle/grant/immutability tests, HTTP audience and permission tests, worker
+        failure/retry coverage, migration `104` down/up, retention-registry coverage across 71
+        tables, and repository-wide backend gates pass locally. No notification was sent and no
+        deployment was performed.
       - Still remaining for later #64 slices: staged processor-to-controller notifications with
-        delivery evidence/retries/follow-up updates; notification and closure templates wired to
-        #63's governed contacts; subprocessor incident intake; staging-only tabletop scenarios;
-        and an internal platform-admin UI when that product surface exists.
+        an authenticated staging capture exercise; document exports for notification/closure
+        templates; subprocessor incident intake; staging-only tabletop scenarios; and an internal
+        platform-admin UI when that product surface exists.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

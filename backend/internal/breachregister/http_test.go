@@ -15,40 +15,50 @@ import (
 )
 
 type fakeStore struct {
-	created           Incident
-	createErr         error
-	createdInput      CreateIncidentInput
-	createdActor      string
-	createdKey        string
-	incidents         []Incident
-	listErr           error
-	getIncident       Incident
-	getEntries        []ChronologyEntry
-	getAssessments    []Assessment
-	getActions        []ActionEvent
-	getActionEvents   []ActionEvent
-	getErr            error
-	appendedEntry     ChronologyEntry
-	appendErr         error
-	appendedActor     string
-	appendedKey       string
-	appendedInput     AppendChronologyEntryInput
-	createdAssessment Assessment
-	assessErr         error
-	assessedActor     string
-	assessedKey       string
-	assessedInput     CreateAssessmentInput
-	createdAction     ActionEvent
-	createActionErr   error
-	createActionActor string
-	createActionKey   string
-	createActionInput CreatePostIncidentActionInput
-	revisedAction     ActionEvent
-	revisionErr       error
-	revisionActor     string
-	revisionKey       string
-	revisionActionID  string
-	revisionInput     AppendActionRevisionInput
+	created                    Incident
+	createErr                  error
+	createdInput               CreateIncidentInput
+	createdActor               string
+	createdKey                 string
+	incidents                  []Incident
+	listErr                    error
+	getIncident                Incident
+	getEntries                 []ChronologyEntry
+	getAssessments             []Assessment
+	getActions                 []ActionEvent
+	getActionEvents            []ActionEvent
+	getNotifications           []ControllerNotification
+	getErr                     error
+	appendedEntry              ChronologyEntry
+	appendErr                  error
+	appendedActor              string
+	appendedKey                string
+	appendedInput              AppendChronologyEntryInput
+	createdAssessment          Assessment
+	assessErr                  error
+	assessedActor              string
+	assessedKey                string
+	assessedInput              CreateAssessmentInput
+	createdAction              ActionEvent
+	createActionErr            error
+	createActionActor          string
+	createActionKey            string
+	createActionInput          CreatePostIncidentActionInput
+	revisedAction              ActionEvent
+	revisionErr                error
+	revisionActor              string
+	revisionKey                string
+	revisionActionID           string
+	revisionInput              AppendActionRevisionInput
+	stagedNotification         ControllerNotification
+	stageNotificationErr       error
+	stagedNotificationCreated  bool
+	queuedNotification         ControllerNotification
+	queueNotificationErr       error
+	queuedNotificationChanged  bool
+	retriedNotification        ControllerNotification
+	retryNotificationErr       error
+	retriedNotificationChanged bool
 }
 
 func (f *fakeStore) CreateIncident(
@@ -66,8 +76,30 @@ func (f *fakeStore) ListIncidents(context.Context, ListFilter) ([]Incident, erro
 
 func (f *fakeStore) GetIncident(
 	context.Context, string,
-) (Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent, error) {
-	return f.getIncident, f.getEntries, f.getAssessments, f.getActions, f.getActionEvents, f.getErr
+) (
+	Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent,
+	[]ControllerNotification, error,
+) {
+	return f.getIncident, f.getEntries, f.getAssessments, f.getActions, f.getActionEvents,
+		f.getNotifications, f.getErr
+}
+
+func (f *fakeStore) StageControllerNotification(
+	_ context.Context, _ string, _ string, _ string, _ StageControllerNotificationInput,
+) (ControllerNotification, bool, error) {
+	return f.stagedNotification, f.stagedNotificationCreated, f.stageNotificationErr
+}
+
+func (f *fakeStore) QueueControllerNotification(
+	_ context.Context, _ string, _ string, _ string, _ string,
+) (ControllerNotification, bool, error) {
+	return f.queuedNotification, f.queuedNotificationChanged, f.queueNotificationErr
+}
+
+func (f *fakeStore) RetryControllerNotification(
+	_ context.Context, _ string, _ string, _ string, _ string,
+) (ControllerNotification, bool, error) {
+	return f.retriedNotification, f.retriedNotificationChanged, f.retryNotificationErr
 }
 
 func (f *fakeStore) CreatePostIncidentAction(
@@ -489,6 +521,10 @@ func TestGetIncidentIncludesAssessments(t *testing.T) {
 	store := &fakeStore{
 		getIncident:    Incident{ID: validID, PublicID: "BR-ABCDEF12"},
 		getAssessments: []Assessment{{ID: "assessment-id", AuthorityNotificationDecision: AuthorityNotificationRequired}},
+		getNotifications: []ControllerNotification{{
+			ID: "notification-id", NotificationKind: ControllerNotificationInitial,
+			Status: ControllerNotificationDraft,
+		}},
 	}
 	handler, jwtManager := newTestHandler(t, store)
 	readToken, _, _ := jwtManager.Issue(
@@ -509,6 +545,10 @@ func TestGetIncidentIncludesAssessments(t *testing.T) {
 	assessments, ok := response["assessments"].([]any)
 	if !ok || len(assessments) != 1 {
 		t.Fatalf("response assessments = %#v", response["assessments"])
+	}
+	notifications, ok := response["controller_notifications"].([]any)
+	if !ok || len(notifications) != 1 {
+		t.Fatalf("response controller notifications = %#v", response["controller_notifications"])
 	}
 }
 
@@ -670,5 +710,116 @@ func TestBreachActionRoutesValidateIDsStatusAndRevisionConflict(t *testing.T) {
 	handler.ServeHTTP(stale, staleRequest)
 	if stale.Code != http.StatusConflict {
 		t.Errorf("stale revision code = %d, want 409", stale.Code)
+	}
+}
+
+func TestControllerNotificationRoutesRequireAppendPermissionAndExposeState(t *testing.T) {
+	t.Parallel()
+
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	notificationID := "22222222-2222-4222-8222-222222222222"
+	tenantID := "33333333-3333-4333-8333-333333333333"
+	store := &fakeStore{
+		stagedNotification:         ControllerNotification{ID: notificationID, Status: ControllerNotificationDraft},
+		stagedNotificationCreated:  true,
+		queuedNotification:         ControllerNotification{ID: notificationID, Status: ControllerNotificationPending},
+		queuedNotificationChanged:  true,
+		retriedNotification:        ControllerNotification{ID: notificationID, Status: ControllerNotificationPending},
+		retriedNotificationChanged: true,
+	}
+	handler, jwtManager := newTestHandler(t, store)
+	readToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachRead)},
+	)
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+	stagePath := "/admin/breach-incidents/" + incidentID + "/controller-notifications"
+	stageBody := `{
+		"tenant_id":"` + tenantID + `",
+		"notification_kind":"initial",
+		"summary":"A bounded incident summary.",
+		"measures_taken":"The affected path was disabled."
+	}`
+
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodPost, stagePath, strings.NewReader(stageBody))
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("read-only stage status = %d", forbidden.Code)
+	}
+
+	staged := httptest.NewRecorder()
+	stageRequest := httptest.NewRequest(http.MethodPost, stagePath, strings.NewReader(stageBody))
+	stageRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	stageRequest.Header.Set("Idempotency-Key", "stage-notification")
+	handler.ServeHTTP(staged, stageRequest)
+	if staged.Code != http.StatusCreated {
+		t.Fatalf("stage status = %d, body = %s", staged.Code, staged.Body.String())
+	}
+
+	queuePath := stagePath + "/" + notificationID + "/queue"
+	queued := httptest.NewRecorder()
+	queueRequest := httptest.NewRequest(http.MethodPost, queuePath, nil)
+	queueRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	queueRequest.Header.Set("Idempotency-Key", "queue-notification")
+	handler.ServeHTTP(queued, queueRequest)
+	if queued.Code != http.StatusAccepted {
+		t.Fatalf("queue status = %d, body = %s", queued.Code, queued.Body.String())
+	}
+
+	retryPath := stagePath + "/" + notificationID + "/retry"
+	retried := httptest.NewRecorder()
+	retryRequest := httptest.NewRequest(http.MethodPost, retryPath, nil)
+	retryRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	retryRequest.Header.Set("Idempotency-Key", "retry-notification")
+	handler.ServeHTTP(retried, retryRequest)
+	if retried.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body = %s", retried.Code, retried.Body.String())
+	}
+}
+
+func TestControllerNotificationRoutesMapValidationAndStateErrors(t *testing.T) {
+	t.Parallel()
+
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	notificationID := "22222222-2222-4222-8222-222222222222"
+	tenantID := "33333333-3333-4333-8333-333333333333"
+	store := &fakeStore{stageNotificationErr: ErrControllerContactMissing}
+	handler, jwtManager := newTestHandler(t, store)
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+	stage := httptest.NewRecorder()
+	stageRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/breach-incidents/"+incidentID+"/controller-notifications",
+		strings.NewReader(`{
+			"tenant_id":"`+tenantID+`",
+			"notification_kind":"initial",
+			"summary":"Summary",
+			"measures_taken":"Measures"
+		}`),
+	)
+	stageRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	stageRequest.Header.Set("Idempotency-Key", "stage")
+	handler.ServeHTTP(stage, stageRequest)
+	if stage.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing contact status = %d, body = %s", stage.Code, stage.Body.String())
+	}
+
+	store.queueNotificationErr = ErrNotificationNotQueueable
+	queue := httptest.NewRecorder()
+	queueRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/breach-incidents/"+incidentID+"/controller-notifications/"+notificationID+"/queue",
+		nil,
+	)
+	queueRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	queueRequest.Header.Set("Idempotency-Key", "queue")
+	handler.ServeHTTP(queue, queueRequest)
+	if queue.Code != http.StatusConflict {
+		t.Fatalf("not queueable status = %d, body = %s", queue.Code, queue.Body.String())
 	}
 }

@@ -107,11 +107,14 @@ func ParseCommunicationDecision(value string) (CommunicationDecision, error) {
 }
 
 var (
-	ErrInvalidRequest      = errors.New("breach register request is invalid")
-	ErrNotFound            = errors.New("breach incident not found")
-	ErrIdempotencyConflict = errors.New("idempotency key was reused with different input")
-	ErrRevisionConflict    = errors.New("breach action revision is stale")
-	ErrTenantNotFound      = errors.New("affected tenant reference is invalid")
+	ErrInvalidRequest           = errors.New("breach register request is invalid")
+	ErrNotFound                 = errors.New("breach incident not found")
+	ErrIdempotencyConflict      = errors.New("idempotency key was reused with different input")
+	ErrRevisionConflict         = errors.New("breach action revision is stale")
+	ErrTenantNotFound           = errors.New("affected tenant reference is invalid")
+	ErrControllerContactMissing = errors.New("affected tenant privacy contact is incomplete")
+	ErrNotificationNotQueueable = errors.New("breach controller notification is not queueable")
+	ErrNotificationInProgress   = errors.New("breach controller notification delivery is in progress")
 )
 
 var affectedEnvironments = map[string]struct{}{

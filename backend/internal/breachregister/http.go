@@ -21,7 +21,10 @@ type BreachStore interface {
 	ListIncidents(context.Context, ListFilter) ([]Incident, error)
 	GetIncident(
 		context.Context, string,
-	) (Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent, error)
+	) (
+		Incident, []ChronologyEntry, []Assessment, []ActionEvent, []ActionEvent,
+		[]ControllerNotification, error,
+	)
 	AppendChronologyEntry(
 		context.Context, string, string, string, AppendChronologyEntryInput,
 	) (ChronologyEntry, error)
@@ -34,6 +37,15 @@ type BreachStore interface {
 	AppendActionRevision(
 		context.Context, string, string, string, string, AppendActionRevisionInput,
 	) (ActionEvent, error)
+	StageControllerNotification(
+		context.Context, string, string, string, StageControllerNotificationInput,
+	) (ControllerNotification, bool, error)
+	QueueControllerNotification(
+		context.Context, string, string, string, string,
+	) (ControllerNotification, bool, error)
+	RetryControllerNotification(
+		context.Context, string, string, string, string,
+	) (ControllerNotification, bool, error)
 }
 
 type TokenVerifier interface {
@@ -73,6 +85,21 @@ func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 		Post(
 			"/admin/breach-incidents/{incidentID}/actions/{actionID}/revisions",
 			handler.appendActionRevision,
+		)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post(
+			"/admin/breach-incidents/{incidentID}/controller-notifications",
+			handler.stageControllerNotification,
+		)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post(
+			"/admin/breach-incidents/{incidentID}/controller-notifications/{notificationID}/queue",
+			handler.queueControllerNotification,
+		)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post(
+			"/admin/breach-incidents/{incidentID}/controller-notifications/{notificationID}/retry",
+			handler.retryControllerNotification,
 		)
 }
 
@@ -157,7 +184,7 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
 		return
 	}
-	incident, entries, assessments, actions, actionEvents, err :=
+	incident, entries, assessments, actions, actionEvents, controllerNotifications, err :=
 		h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
@@ -166,6 +193,7 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"incident": incident, "chronology": entries, "assessments": assessments,
 		"actions": actions, "action_events": actionEvents,
+		"controller_notifications": controllerNotifications,
 	})
 }
 
@@ -367,18 +395,126 @@ func (h *httpHandler) appendActionRevision(w http.ResponseWriter, r *http.Reques
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"action": action})
 }
 
+type stageControllerNotificationRequest struct {
+	TenantID         string  `json:"tenant_id"`
+	NotificationKind string  `json:"notification_kind"`
+	Summary          string  `json:"summary"`
+	MeasuresTaken    string  `json:"measures_taken"`
+	NextUpdate       *string `json:"next_update"`
+}
+
+func (h *httpHandler) stageControllerNotification(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "incidentID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	var request stageControllerNotificationRequest
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	kind, err := ParseControllerNotificationKind(request.NotificationKind)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	notification, created, err := h.options.Store.StageControllerNotification(
+		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
+		StageControllerNotificationInput{
+			TenantID: request.TenantID, NotificationKind: kind,
+			Summary: request.Summary, MeasuresTaken: request.MeasuresTaken,
+			NextUpdate: request.NextUpdate,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	api.WriteJSON(w, status, map[string]any{"notification": notification})
+}
+
+func (h *httpHandler) queueControllerNotification(w http.ResponseWriter, r *http.Request) {
+	h.changeControllerNotificationQueueState(w, r, false)
+}
+
+func (h *httpHandler) retryControllerNotification(w http.ResponseWriter, r *http.Request) {
+	h.changeControllerNotificationQueueState(w, r, true)
+}
+
+func (h *httpHandler) changeControllerNotificationQueueState(
+	w http.ResponseWriter,
+	r *http.Request,
+	retry bool,
+) {
+	incidentID := chi.URLParam(r, "incidentID")
+	notificationID := chi.URLParam(r, "notificationID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	if _, err := uuid.Parse(notificationID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	var (
+		notification ControllerNotification
+		changed      bool
+		err          error
+	)
+	if retry {
+		notification, changed, err = h.options.Store.RetryControllerNotification(
+			r.Context(), incidentID, notificationID, claims.Subject,
+			r.Header.Get("Idempotency-Key"),
+		)
+	} else {
+		notification, changed, err = h.options.Store.QueueControllerNotification(
+			r.Context(), incidentID, notificationID, claims.Subject,
+			r.Header.Get("Idempotency-Key"),
+		)
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if changed {
+		status = http.StatusAccepted
+	}
+	api.WriteJSON(w, status, map[string]any{"notification": notification})
+}
+
 func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
 	case errors.Is(err, ErrTenantNotFound):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "affected tenant reference is invalid", nil)
+	case errors.Is(err, ErrControllerContactMissing):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "affected tenant privacy contact is incomplete", nil)
 	case errors.Is(err, ErrInvalidRequest):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "breach register request is invalid", nil)
 	case errors.Is(err, ErrIdempotencyConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "idempotency key was reused with different input", nil)
 	case errors.Is(err, ErrRevisionConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "breach action revision is stale", nil)
+	case errors.Is(err, ErrNotificationNotQueueable):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "breach controller notification is not queueable", nil)
+	case errors.Is(err, ErrNotificationInProgress):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "breach controller notification delivery is in progress", nil)
 	default:
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	}

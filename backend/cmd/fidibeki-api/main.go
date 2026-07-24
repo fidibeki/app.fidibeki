@@ -593,6 +593,11 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		},
 		Enqueuer: outboxQueue, Logger: logger,
 	}
+	breachNotificationDispatcher := outbox.Dispatcher{
+		Store:    breachregister.ControllerNotificationOutboxStore{Database: pools.Admin},
+		Resolver: breachregister.ControllerNotificationOutboxResolver{},
+		Enqueuer: outboxQueue, Logger: logger,
+	}
 	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL)
 	if err != nil {
 		return err
@@ -710,6 +715,11 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	controllerNotificationHandler := breachregister.ControllerNotificationHandler{
+		Store: breachregister.Store{Database: pools.Admin}, Sender: sender,
+		From: settings.ResendAuthFrom, PublicBaseURL: settings.PublicBaseURL,
+		BaseDomain: settings.BaseDomain,
+	}
 	lifecycleHandler := email.LifecycleHandler{
 		Database: pools.Admin, Sender: sender,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
@@ -763,6 +773,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		ReporterHandler:               reporterHandler.Handler(),
 		RecipientHandler:              recipientHandler.Handler(),
 		CaseCommunicationHandler:      caseCommunicationHandler.Handler(),
+		ControllerNotificationHandler: controllerNotificationHandler.Handler(),
 		LifecycleHandler:              lifecycleHandler.Handler(),
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
@@ -775,8 +786,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 15)
+	backgroundDone := make(chan error, 16)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
+	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
 	go func() { backgroundDone <- replayScheduler.RunReconciler(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- verificationScheduler.Run(workerCtx, time.Minute) }()
@@ -799,6 +811,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone,
 	)
 }
 

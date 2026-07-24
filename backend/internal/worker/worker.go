@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/ai"
+	"github.com/acidiney/app.fidibeki/backend/internal/breachregister"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
@@ -32,6 +33,7 @@ type Options struct {
 	ReporterHandler               asynq.HandlerFunc
 	RecipientHandler              asynq.HandlerFunc
 	CaseCommunicationHandler      asynq.HandlerFunc
+	ControllerNotificationHandler asynq.HandlerFunc
 	LifecycleHandler              asynq.HandlerFunc
 	ReplayMergeHandler            asynq.HandlerFunc
 	ReplayVerificationHandler     asynq.HandlerFunc
@@ -68,6 +70,7 @@ func New(options Options) (*Worker, error) {
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
 		options.AIErrorHandler == nil || options.ReporterHandler == nil ||
 		options.RecipientHandler == nil || options.CaseCommunicationHandler == nil ||
+		options.ControllerNotificationHandler == nil ||
 		options.LifecycleHandler == nil ||
 		options.ReplayMergeHandler == nil || options.ReplayVerificationHandler == nil ||
 		options.AttachmentVerificationHandler == nil ||
@@ -88,6 +91,10 @@ func New(options Options) (*Worker, error) {
 	emailMux.HandleFunc(issue.TaskReporterNotify, options.ReporterHandler)
 	emailMux.HandleFunc(privacy.TaskRecipientNotify, options.RecipientHandler)
 	emailMux.HandleFunc(privacy.TaskCaseCommunicationNotify, options.CaseCommunicationHandler)
+	emailMux.HandleFunc(
+		breachregister.TaskControllerNotification,
+		options.ControllerNotificationHandler,
+	)
 	emailMux.HandleFunc(email.TaskLifecycleEmail, options.LifecycleHandler)
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)

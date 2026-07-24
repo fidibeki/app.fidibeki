@@ -228,12 +228,13 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		)
 	}
 
-	fetched, entries, assessments, actions, actionEvents, err := store.GetIncident(ctx, incident.ID)
+	fetched, entries, assessments, actions, actionEvents, notifications, err :=
+		store.GetIncident(ctx, incident.ID)
 	if err != nil || fetched.ID != incident.ID || len(entries) != 0 || len(assessments) != 0 ||
-		len(actions) != 9 || len(actionEvents) != 9 {
+		len(actions) != 9 || len(actionEvents) != 9 || len(notifications) != 0 {
 		t.Fatalf(
-			"GetIncident() = %#v/%#v/%#v/%#v/%#v, error = %v",
-			fetched, entries, assessments, actions, actionEvents, err,
+			"GetIncident() = %#v/%#v/%#v/%#v/%#v/%#v, error = %v",
+			fetched, entries, assessments, actions, actionEvents, notifications, err,
 		)
 	}
 	if !fetched.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
@@ -242,7 +243,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 			fetched.AuthorityNotificationDeadlineAt, wantDeadline,
 		)
 	}
-	if _, _, _, _, _, err := store.GetIncident(
+	if _, _, _, _, _, _, err := store.GetIncident(
 		ctx, "00000000-0000-4000-8000-000000000000",
 	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetIncident(missing) error = %v, want ErrNotFound", err)
@@ -290,7 +291,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("AppendChronologyEntry(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, entriesAfterAppend, _, _, _, err := store.GetIncident(ctx, incident.ID)
+	_, entriesAfterAppend, _, _, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(entriesAfterAppend) != 1 || entriesAfterAppend[0].ID != entry.ID {
 		t.Fatalf("GetIncident() chronology = %#v, error = %v", entriesAfterAppend, err)
 	}
@@ -369,7 +370,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("CreateAssessment(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, _, assessmentsAfterCreate, _, _, err := store.GetIncident(ctx, incident.ID)
+	_, _, assessmentsAfterCreate, _, _, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(assessmentsAfterCreate) != 1 || assessmentsAfterCreate[0].ID != assessment.ID {
 		t.Fatalf("GetIncident() assessments = %#v, error = %v", assessmentsAfterCreate, err)
 	}
@@ -553,7 +554,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		)
 	}
 
-	_, _, _, actionsAfterUpdates, eventsAfterUpdates, err := store.GetIncident(ctx, incident.ID)
+	_, _, _, actionsAfterUpdates, eventsAfterUpdates, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(actionsAfterUpdates) != 10 || len(eventsAfterUpdates) != 14 {
 		t.Fatalf(
 			"GetIncident() actions/events = %d/%d, error = %v, want 10/14",
@@ -587,7 +588,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	}
 	readResult := make(chan incidentReadResult, 1)
 	go func() {
-		_, _, _, readActions, readEvents, readErr := store.GetIncident(ctx, incident.ID)
+		_, _, _, readActions, readEvents, _, readErr := store.GetIncident(ctx, incident.ID)
 		readResult <- incidentReadResult{actions: readActions, events: readEvents, err: readErr}
 	}()
 	snapshotObserved := false

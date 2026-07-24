@@ -336,6 +336,8 @@ func retentionRegistry() []retentionDefinition {
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
 				"breach_action_events", "breach_assessments", "breach_chronology_entries",
+				"breach_controller_notification_attempts",
+				"breach_controller_notification_outbox", "breach_controller_notifications",
 				"breach_incident_tenants", "breach_incidents",
 			),
 		},
