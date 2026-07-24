@@ -113,6 +113,7 @@ func writeExport[T any](
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filenameStem+extension+"\"")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")

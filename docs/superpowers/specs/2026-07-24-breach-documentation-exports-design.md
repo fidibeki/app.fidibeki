@@ -47,8 +47,10 @@ class of action, so no new permission is introduced):
   a derived history summary, and the full staged-notification/delivery ledger.
 
 Both accept `?format=json` or `?format=markdown` (required, validated, `422` otherwise) and both
-register a mirrored `HEAD` route against the same handler, which renders the body first and skips
-writing it for `HEAD` so `Content-Length`/`Content-Type` stay identical between `GET` and `HEAD`.
+register a mirrored `HEAD` route against the same handler, which renders the body first, sets an
+explicit `Content-Length` from the exact rendered byte length, and only then skips writing the body
+for `HEAD` -- so `Content-Type`, `Content-Disposition`, and `Content-Length` are byte-for-byte
+identical between `GET` and `HEAD`, and a `HEAD` caller learns the real download size without a body.
 
 This deviates from the single generic `/exports/{kind}` shape suggested as a starting point: the
 two documents take different path parameters (one is scoped to a specific notification, the other
@@ -101,13 +103,33 @@ etc.) are always rendered explicitly rather than omitted, so an empty report can
 
 ### Markdown rendering
 
-Both documents also render as Markdown: a heading, the same wrapper facts, then one section per
-JSON key above using bullet lists and small tables. Rendering is pure and deterministic -- it walks
-the same ordered slices/structs the JSON encoder walks, never a map, so byte-identical input always
-produces byte-identical output in either format. The Markdown report ends with the same
-non-conclusory footer line already used in the notification email ("does not determine whether an
-authority or affected-person notification is required") so the exported document cannot be read as
-a compliance determination on its own.
+Both documents also render as Markdown, at full field parity with the JSON above: every stable ID
+(incident, chronology entry, assessment, action-ledger event/action, notification, delivery
+attempt), every actor/owner/tenant ID, every lifecycle timestamp, and every optional field --
+rendered as an explicit `(pending)`/`(none)` marker rather than omitted when unset. Rendering is
+pure and deterministic -- it walks the same ordered slices/structs the JSON encoder walks, never a
+map, so byte-identical input always produces byte-identical output in either format. The report's
+per-notification section reuses the exact same renderer as the standalone notification export, so
+the two documents stay in parity by construction rather than by convention.
+
+Every value that did not come from this package's own fixed enum vocabulary (operator narrative
+text -- summaries, reasoning, outcomes -- and customer/operator-controlled short strings such as a
+workspace name, recipient email, title, provider message ID, or corrective reference) is
+Markdown-injection-safe by construction, via one of two primitives:
+
+- `mdEscapeInline` for short, single-line-context values (a bullet value or table cell): it doubles
+  literal backslashes, converts embedded newlines/control characters into visible `\n`/`\r`/`\xHH`
+  markers instead of real line breaks, and backslash-escapes remaining Markdown-significant
+  punctuation (`| \` * _ # [ ] < > ~ !`). A value can therefore never open a heading, list item,
+  table row, emphasis, link, or code span of its own -- the content survives, just inertly.
+- `mdSafeBlock` for long narrative free text: it renders the (CRLF-normalized) text inside a fenced
+  code block whose fence is chosen one backtick longer than the longest backtick run already present
+  in the text, so CommonMark can never parse a heading/list/table inside the block, and no line
+  inside the text can be mistaken for (and prematurely close) the fence.
+
+The Markdown report ends with the same non-conclusory footer line already used in the notification
+email ("does not determine whether an authority or affected-person notification is required") so
+the exported document cannot be read as a compliance determination on its own.
 
 ## HTTP Behavior
 
@@ -118,11 +140,11 @@ a compliance determination on its own.
   (matches `getIncident`'s existing behavior for a non-UUID path segment).
 - Headers: `Content-Type` (`application/json` or `text/markdown; charset=utf-8`),
   `Content-Disposition: attachment; filename="..."` (built only from the server-generated,
-  already-safe incident public ID, sequence, and kind -- never from user input),
-  `Cache-Control: private, no-store`, `X-Content-Type-Options: nosniff`, and
-  `Referrer-Policy: no-referrer` (matching `privacy`/`platformadmin`'s existing restricted-download
-  and platform-admin-surface headers).
-- `HEAD` mirrors `GET`'s status/headers with an empty body.
+  already-safe incident public ID, sequence, and kind -- never from user input), an explicit
+  `Content-Length` set from the exact rendered body byte length, `Cache-Control: private, no-store`,
+  `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer` (matching
+  `privacy`/`platformadmin`'s existing restricted-download and platform-admin-surface headers).
+- `HEAD` mirrors `GET`'s status and headers (including `Content-Length`) with an empty body.
 - Authorization: identical to every other route in this package --
   `RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachRead)`. A tenant-audience token is
   rejected before the permission check ever runs; a platform token missing `platform:breach:read`

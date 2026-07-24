@@ -309,3 +309,374 @@ func walkKeys(t *testing.T, value any, forbidden []string) {
 		}
 	}
 }
+
+// countHeadingLines is a crude ATX-heading detector (one or more '#'
+// followed by a space, at the start of a physical line). It operates on
+// literal text, not a Markdown parser, which is exactly the point: it lets
+// adversarial tests prove that injected "# heading" text never became a real
+// physical line in the rendered document.
+func countHeadingLines(markdown string) int {
+	count := 0
+	for _, line := range strings.Split(markdown, "\n") {
+		index := 0
+		for index < len(line) && line[index] == '#' {
+			index++
+		}
+		if index > 0 && index <= 6 && index < len(line) && line[index] == ' ' {
+			count++
+		}
+	}
+	return count
+}
+
+// countUnescapedPipes counts '|' characters not immediately preceded by a
+// backslash escape, i.e. the pipes that actually delimit a Markdown table
+// row. A raw pipe smuggled into a cell value is backslash-escaped by
+// mdEscapeInline, so it must NOT be counted here.
+func countUnescapedPipes(text string) int {
+	count := 0
+	runes := []rune(text)
+	for index, r := range runes {
+		if r == '|' && (index == 0 || runes[index-1] != '\\') {
+			count++
+		}
+	}
+	return count
+}
+
+func TestMdEscapeInlineNeutralizesDelimitersAndControlCharacters(t *testing.T) {
+	t.Parallel()
+	input := "line1\r\nline2\tindented\x01ctrl\\slash|pipe`tick*star_score#hash[br]<gt>tilde~bang!end"
+	escaped := mdEscapeInline(input)
+
+	for _, raw := range []string{"\r", "\n", "\t", "\x01"} {
+		if strings.Contains(escaped, raw) {
+			t.Fatalf("mdEscapeInline left a raw control character %q in output: %q", raw, escaped)
+		}
+	}
+	for _, marker := range []string{"\\r", "\\n", "\\t", "\\x01"} {
+		if !strings.Contains(escaped, marker) {
+			t.Errorf("mdEscapeInline output missing visible marker %q: %q", marker, escaped)
+		}
+	}
+	for _, char := range []string{"|", "`", "*", "_", "#", "[", "]", "<", ">", "~", "!"} {
+		if !strings.Contains(escaped, "\\"+char) {
+			t.Errorf("mdEscapeInline did not escape %q: %q", char, escaped)
+		}
+	}
+	if !strings.Contains(escaped, "\\\\") {
+		t.Errorf("mdEscapeInline did not double the literal backslash: %q", escaped)
+	}
+	if !strings.Contains(escaped, "slash") || !strings.Contains(escaped, "pipe") ||
+		!strings.Contains(escaped, "end") {
+		t.Errorf("mdEscapeInline dropped content instead of escaping it: %q", escaped)
+	}
+}
+
+func TestMdEscapeInlineIsIdempotentOnPlainText(t *testing.T) {
+	t.Parallel()
+	if got := mdEscapeInline("plain workspace name"); got != "plain workspace name" {
+		t.Errorf("mdEscapeInline(plain text) = %q, want unchanged", got)
+	}
+}
+
+func TestMdSafeBlockChoosesFenceLongerThanEmbeddedBackticksAndPreservesContent(t *testing.T) {
+	t.Parallel()
+	text := "# Fake Heading\n| a | b |\n```\nnested fence attempt\n```\nend"
+	block := mdSafeBlock(text)
+	lines := strings.Split(block, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("mdSafeBlock produced too few lines: %q", block)
+	}
+	openFence, closeFence := lines[0], lines[len(lines)-1]
+	if openFence != closeFence {
+		t.Fatalf("open fence %q != close fence %q", openFence, closeFence)
+	}
+	if openFence != strings.Repeat("`", 4) {
+		t.Fatalf("fence = %q, want exactly 4 backticks (one more than the embedded 3-backtick run)", openFence)
+	}
+	for _, want := range []string{"# Fake Heading", "| a | b |", "nested fence attempt"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("mdSafeBlock did not preserve verbatim content %q: %q", want, block)
+		}
+	}
+	for _, line := range lines[1 : len(lines)-1] {
+		if strings.Contains(line, strings.Repeat("`", len(openFence))) {
+			t.Errorf("interior line %q contains a run as long as the fence -- it could prematurely close the block", line)
+		}
+	}
+}
+
+func TestMdSafeBlockMinimumFenceIsThreeBackticks(t *testing.T) {
+	t.Parallel()
+	block := mdSafeBlock("plain text, no backticks at all")
+	lines := strings.Split(block, "\n")
+	if lines[0] != "```" || lines[len(lines)-1] != "```" {
+		t.Fatalf("mdSafeBlock fence = %q / %q, want ``` / ```", lines[0], lines[len(lines)-1])
+	}
+}
+
+func TestRenderNotificationMarkdownInlineFieldsResistHeadingInjectionButPreserveContent(t *testing.T) {
+	t.Parallel()
+	benign := sampleNotificationExport()
+	benignMarkdown := renderNotificationMarkdown(benign)
+	benignHeadings := countHeadingLines(benignMarkdown)
+
+	adversarial := benign
+	adversarial.Notification.WorkspaceName = "Acme\n# Injected Heading\n## Another\n| a | b |"
+	adversarialMarkdown := renderNotificationMarkdown(adversarial)
+	adversarialHeadings := countHeadingLines(adversarialMarkdown)
+
+	if adversarialHeadings != benignHeadings {
+		t.Fatalf("WorkspaceName injection changed heading structure: benign=%d adversarial=%d\n%s",
+			benignHeadings, adversarialHeadings, adversarialMarkdown)
+	}
+	if !strings.Contains(adversarialMarkdown, "Injected Heading") {
+		t.Fatalf("WorkspaceName content was dropped rather than escaped/preserved: %s", adversarialMarkdown)
+	}
+	if strings.Contains(adversarialMarkdown, "\n# Injected Heading") {
+		t.Fatalf("WorkspaceName injection produced a real physical heading line: %s", adversarialMarkdown)
+	}
+}
+
+func TestRenderNotificationMarkdownBlockFieldsAreFencedVerbatim(t *testing.T) {
+	t.Parallel()
+	benign := sampleNotificationExport()
+	adversarialSummary := "Legit summary\n# Fake Heading\n| a | b |\n```\nnested fence attempt\n```\nend"
+	adversarial := benign
+	adversarial.Notification.Summary = adversarialSummary
+	markdown := renderNotificationMarkdown(adversarial)
+	if !strings.Contains(markdown, mdSafeBlock(adversarialSummary)) {
+		t.Fatalf("Summary was not rendered as a matching safe fenced block:\n%s", markdown)
+	}
+}
+
+func TestRenderNotificationMarkdownTableCellsEscapePipesAndBackticksInDeliveryEvidence(t *testing.T) {
+	t.Parallel()
+	providerID := "abc|def`ghi"
+	export := newNotificationExport(time.Now(), "BR-X", ControllerNotification{
+		ID: "n1", NotificationKind: ControllerNotificationInitial, Sequence: 1,
+		RecipientEmail: "a@example.com", WorkspaceName: "W", Summary: "s", MeasuresTaken: "m",
+		Status: ControllerNotificationSent,
+		DeliveryAttempts: []ControllerNotificationAttempt{
+			{ID: "attempt-1", AttemptNumber: 1, Status: ControllerNotificationAttemptSent,
+				ProviderMessageID: &providerID, AttemptedAt: time.Now()},
+		},
+	})
+	markdown := renderNotificationMarkdown(export)
+	var row string
+	for _, line := range strings.Split(markdown, "\n") {
+		if strings.Contains(line, "attempt-1") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("delivery attempt table row not found:\n%s", markdown)
+	}
+	// Six columns (Attempt ID, Attempt, Status, Provider message ID, Error,
+	// Attempted at) means exactly 7 structural pipe delimiters, regardless of
+	// a raw pipe smuggled into a cell value.
+	if got := countUnescapedPipes(row); got != 7 {
+		t.Fatalf("delivery attempt row has %d unescaped pipes, want 7 (row: %q)", got, row)
+	}
+	if !strings.Contains(row, "abc\\|def\\`ghi") {
+		t.Fatalf("delivery attempt row did not preserve the embedded pipe/backtick in escaped form: %q", row)
+	}
+}
+
+// fullNotification returns a ControllerNotification with every optional
+// field populated, so field-parity tests can assert Markdown carries the
+// same facts as JSON.
+func fullNotification() ControllerNotification {
+	nextUpdate := "Next update text."
+	lastError := "email provider delivery failed"
+	providerMessageID := "provider-msg-9"
+	queuedBy := "admin-queuer"
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	queuedAt := now.Add(-2 * time.Hour)
+	sentAt := now.Add(-time.Hour)
+	lastAttemptAt := now.Add(-90 * time.Minute)
+	return ControllerNotification{
+		ID: "notification-full", BreachIncidentID: "incident-xyz", TenantID: "tenant-xyz",
+		NotificationKind: ControllerNotificationInitial, Sequence: 1, TemplateVersion: 1,
+		IncidentPublicID: "BR-FULL0001", WorkspaceName: "Acme Workspace",
+		RecipientEmail: "privacy@acme.example", PrivacyProfileVersion: 2,
+		AwarenessAt: now.Add(-3 * time.Hour), Summary: "Summary text.", MeasuresTaken: "Measures text.",
+		NextUpdate: &nextUpdate, Status: ControllerNotificationSent, Attempts: 1,
+		LastError: &lastError, ProviderMessageID: &providerMessageID, LastAttemptAt: &lastAttemptAt,
+		QueuedAt: &queuedAt, SentAt: &sentAt, CreatedByPlatformAdminID: "admin-creator",
+		QueuedByPlatformAdminID: &queuedBy, CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now,
+	}
+}
+
+func TestRenderNotificationMarkdownIncludesFullFieldParityWithJSON(t *testing.T) {
+	t.Parallel()
+	export := newNotificationExport(time.Now(), "BR-FULL0001", fullNotification())
+	markdown := renderNotificationMarkdown(export)
+	for _, want := range []string{
+		"incident-xyz", "tenant-xyz", "admin-creator", "admin-queuer",
+		"email provider delivery failed", "provider-msg-9",
+		export.Notification.QueuedAt.Format(time.RFC3339),
+		export.Notification.SentAt.Format(time.RFC3339),
+		export.Notification.LastAttemptAt.Format(time.RFC3339),
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
+func TestRenderNotificationMarkdownRendersExplicitPendingValues(t *testing.T) {
+	t.Parallel()
+	export := newNotificationExport(time.Now(), "BR-MIN0001", ControllerNotification{
+		ID: "notification-min", NotificationKind: ControllerNotificationInitial, Sequence: 1,
+		RecipientEmail: "privacy@acme.example", WorkspaceName: "Acme", Summary: "s", MeasuresTaken: "m",
+		Status: ControllerNotificationDraft, CreatedByPlatformAdminID: "admin-creator",
+	})
+	markdown := renderNotificationMarkdown(export)
+	for _, want := range []string{
+		"- Last attempt at: (pending)", "- Queued at: (pending)", "- Sent at: (pending)",
+		"- Last error: (none)", "- Provider message ID: (none)", "- Queued by (platform admin ID): (none)",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("markdown missing explicit pending/none line %q:\n%s", want, markdown)
+		}
+	}
+}
+
+func TestRenderPostIncidentReportInlineFieldsResistHeadingInjectionButPreserveContent(t *testing.T) {
+	t.Parallel()
+	benign := samplePostIncidentReport()
+	benignMarkdown := renderPostIncidentReportMarkdown(benign)
+	benignHeadings := countHeadingLines(benignMarkdown)
+
+	adversarial := benign
+	adversarial.Actions = append([]ActionEvent{}, benign.Actions...)
+	adversarial.Actions[0].Title = "Rotate\n# Injected\n## Nested\n| a | b |"
+	adversarialMarkdown := renderPostIncidentReportMarkdown(adversarial)
+	adversarialHeadings := countHeadingLines(adversarialMarkdown)
+
+	if adversarialHeadings != benignHeadings {
+		t.Fatalf("Action title injection changed heading structure: benign=%d adversarial=%d\n%s",
+			benignHeadings, adversarialHeadings, adversarialMarkdown)
+	}
+	if !strings.Contains(adversarialMarkdown, "Injected") {
+		t.Fatalf("Action title content was dropped rather than escaped/preserved: %s", adversarialMarkdown)
+	}
+	if strings.Contains(adversarialMarkdown, "\n# Injected") {
+		t.Fatalf("Action title injection produced a real physical heading line: %s", adversarialMarkdown)
+	}
+}
+
+func TestRenderPostIncidentReportBlockFieldsAreFencedVerbatim(t *testing.T) {
+	t.Parallel()
+	benign := samplePostIncidentReport()
+	adversarialSummary := "Legit chronology summary\n# Fake\n```\nnested\n```"
+	adversarial := benign
+	adversarial.Chronology = append([]ChronologyEntry{}, benign.Chronology...)
+	adversarial.Chronology[0].Summary = adversarialSummary
+	markdown := renderPostIncidentReportMarkdown(adversarial)
+	if !strings.Contains(markdown, mdSafeBlock(adversarialSummary)) {
+		t.Fatalf("chronology Summary was not rendered as a matching safe fenced block:\n%s", markdown)
+	}
+}
+
+func TestRenderPostIncidentReportIncludesFullFieldParityWithJSON(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	subjectsMin, subjectsMax := int64(10), int64(20)
+	recordsMin, recordsMax := int64(100), int64(200)
+	likely := "Likely consequences text."
+	recovery := "Recovery measures text."
+	incident := Incident{
+		ID: "incident-1", PublicID: "BR-BBBBBBBB", AwarenessAt: now.Add(-48 * time.Hour),
+		DetectionSource: DetectionInternalMonitoring, ControllerRole: RoleProcessor,
+		AffectedEnvironments: []string{"production"}, ContainmentSummary: "Contained the affected path.",
+		AffectedTenantIDs: []string{"tenant-1"}, ConfidentialityImpact: true,
+		CreatedByPlatformAdminID:        "admin-incident-creator",
+		CreatedAt:                       now.Add(-49 * time.Hour),
+		AuthorityNotificationDeadlineAt: now.Add(24 * time.Hour),
+	}
+	chronology := []ChronologyEntry{
+		{ID: "entry-full", BreachIncidentID: "incident-1", EntryKind: EntryDetected,
+			Summary: "Detected unusual access.", EvidenceReferences: []string{"log-ref-1"},
+			ActorPlatformAdminID: "admin-chronology-actor", OccurredAt: now.Add(-47 * time.Hour),
+			CreatedAt: now.Add(-47 * time.Hour)},
+	}
+	assessments := []Assessment{
+		{ID: "assessment-full", BreachIncidentID: "incident-1",
+			AuthorityNotificationDecision:  AuthorityNotificationNotRequired,
+			AuthorityNotificationReasoning: "Reasoning A.", HighRiskToIndividuals: RiskNotHigh,
+			HighRiskReasoning:                 "Reasoning B.",
+			DataSubjectCommunicationDecision:  CommunicationNotRequired,
+			DataSubjectCommunicationReasoning: "Reasoning C.",
+			EstimatedAffectedSubjectsMin:      &subjectsMin, EstimatedAffectedSubjectsMax: &subjectsMax,
+			EstimatedAffectedRecordsMin: &recordsMin, EstimatedAffectedRecordsMax: &recordsMax,
+			LikelyConsequences: &likely, RecoveryMeasures: &recovery,
+			EvidenceReferences: []string{"assessment-evidence-1"}, AssessedByPlatformAdminID: "admin-assessor",
+			AssessedAt: now.Add(-24 * time.Hour), CreatedAt: now.Add(-24 * time.Hour)},
+	}
+	owner := "admin-owner"
+	dueAt := now.Add(72 * time.Hour)
+	outcome := "Outcome text."
+	corrective := "corrective-ref-1"
+	actions := []ActionEvent{
+		{ID: "event-full", Sequence: 5, ActionID: "action-full", ActionKind: ActionPostIncident,
+			Title: "Owner review", Status: ActionCompleted, Revision: 2, OwnerPlatformAdminID: &owner,
+			DueAt: &dueAt, OutcomeSummary: &outcome, CorrectiveReference: &corrective,
+			EvidenceReferences: []string{"action-evidence-1"}, ActorPlatformAdminID: "admin-action-actor",
+			OccurredAt: now.Add(-10 * time.Hour), CreatedAt: now.Add(-10 * time.Hour)},
+	}
+	actionEvents := actions
+	notifications := []ControllerNotification{fullNotification()}
+	report := newPostIncidentReport(now, incident, chronology, assessments, actions, actionEvents, notifications)
+	markdown := renderPostIncidentReportMarkdown(report)
+
+	for _, want := range []string{
+		"admin-incident-creator", incident.CreatedAt.Format(time.RFC3339),
+		"entry-full", "incident-1", "admin-chronology-actor",
+		"assessment-full", "admin-assessor", "10 - 20", "100 - 200",
+		"Reasoning A.", "Reasoning B.", "Reasoning C.",
+		"Likely consequences text.", "Recovery measures text.", "assessment-evidence-1",
+		"event-full", "action-full", "admin-owner", dueAt.Format(time.RFC3339),
+		"Outcome text.", "corrective-ref-1", "action-evidence-1", "admin-action-actor",
+		"tenant-xyz", "admin-creator", // from the embedded notification ledger entry
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("report markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
+func TestRenderPostIncidentReportRendersExplicitPendingValues(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	assessments := []Assessment{
+		{ID: "assessment-min", AuthorityNotificationDecision: AuthorityNotificationAssessmentPending,
+			AuthorityNotificationReasoning: "Pending.", HighRiskToIndividuals: RiskAssessmentPending,
+			HighRiskReasoning:                 "Pending.",
+			DataSubjectCommunicationDecision:  CommunicationAssessmentPending,
+			DataSubjectCommunicationReasoning: "Pending.", AssessedByPlatformAdminID: "admin-assessor",
+			AssessedAt: now, CreatedAt: now},
+	}
+	actions := []ActionEvent{
+		{ID: "event-min", ActionID: "action-min", ActionKind: ActionContainment, Title: "Rotate keys",
+			Status: ActionPending, Revision: 1, ActorPlatformAdminID: "admin-actor", OccurredAt: now,
+			CreatedAt: now},
+	}
+	report := newPostIncidentReport(
+		now, Incident{PublicID: "BR-MIN0002"}, nil, assessments, actions, actions, nil,
+	)
+	markdown := renderPostIncidentReportMarkdown(report)
+	for _, want := range []string{
+		"- Estimated affected subjects: (pending)", "- Estimated affected records: (pending)",
+		"Likely consequences:\n\n(pending)", "Recovery measures:\n\n(pending)",
+		"- Owner (platform admin ID): (none)", "- Due at: (pending)",
+		"Outcome summary:\n\n(pending)", "- Corrective reference: (none)",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Errorf("report markdown missing explicit pending/none value %q:\n%s", want, markdown)
+		}
+	}
+}

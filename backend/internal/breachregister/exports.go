@@ -163,143 +163,109 @@ func renderJSON(value any) ([]byte, error) {
 	return encoded, nil
 }
 
-func renderNotificationMarkdown(export NotificationExport) string {
+// mdInlineSpecialChars are the Markdown-significant punctuation characters
+// mdEscapeInline neutralizes with a backslash escape (CommonMark treats a
+// backslash before any ASCII punctuation character as a literal escape).
+// Backslash itself is handled separately, first, in mdEscapeInline.
+const mdInlineSpecialChars = "|`*_#[]<>~!"
+
+// mdEscapeInline renders operator/customer-controlled text safely inside a
+// single Markdown line (a bullet value, heading fragment, or table cell).
+// Backslashes are doubled first so they render literally; embedded newlines
+// and other control characters become visible escape sequences instead of
+// starting a new physical line (which would otherwise let the value inject
+// its own heading, list item, table row, or fenced block); and remaining
+// Markdown-significant punctuation is individually backslash-escaped so the
+// value can never open emphasis, a link, a code span, or a heading.
+func mdEscapeInline(text string) string {
 	var builder strings.Builder
-	notification := export.Notification
-	fmt.Fprintf(&builder, "# Breach Controller Notification -- %s\n\n", export.IncidentPublicID)
-	fmt.Fprintf(&builder, "- Schema version: %d\n", export.SchemaVersion)
-	fmt.Fprintf(&builder, "- Generated at: %s\n", export.GeneratedAt.Format(time.RFC3339))
-	fmt.Fprintf(&builder, "- Notification ID: %s\n", notification.ID)
-	fmt.Fprintf(&builder, "- Kind: %s (sequence %d, template version %d)\n",
-		notification.NotificationKind, notification.Sequence, notification.TemplateVersion)
-	fmt.Fprintf(&builder, "- Status: %s\n", notification.Status)
-	fmt.Fprintf(&builder, "- Recipient: %s (%s)\n", notification.RecipientEmail, notification.WorkspaceName)
-	fmt.Fprintf(&builder, "- Privacy profile version: %d\n", notification.PrivacyProfileVersion)
-	fmt.Fprintf(&builder, "- Awareness time: %s\n\n", notification.AwarenessAt.Format(time.RFC3339))
-
-	builder.WriteString("## Content\n\n")
-	fmt.Fprintf(&builder, "- Affected environments: %s\n", joinOrNone(notification.AffectedEnvironments))
-	fmt.Fprintf(&builder, "- Affected systems: %s\n", joinOrNone(notification.AffectedSystemCategories))
-	fmt.Fprintf(&builder, "- Data categories: %s\n", joinOrNone(notification.AffectedDataCategories))
-	fmt.Fprintf(&builder, "- Subject categories: %s\n", joinOrNone(notification.AffectedSubjectCategories))
-	fmt.Fprintf(&builder, "- Impact: %s\n\n", joinOrNone(impactLabels(notification)))
-	fmt.Fprintf(&builder, "**Summary:** %s\n\n", notification.Summary)
-	fmt.Fprintf(&builder, "**Measures taken:** %s\n\n", notification.MeasuresTaken)
-	if notification.NextUpdate != nil {
-		fmt.Fprintf(&builder, "**Next update:** %s\n\n", *notification.NextUpdate)
-	} else {
-		builder.WriteString("**Next update:** (none provided)\n\n")
-	}
-
-	builder.WriteString("## Delivery Evidence\n\n")
-	if len(notification.DeliveryAttempts) == 0 {
-		builder.WriteString("No delivery attempts recorded yet.\n\n")
-	} else {
-		builder.WriteString("| Attempt | Status | Provider message ID | Error | Attempted at |\n")
-		builder.WriteString("| --- | --- | --- | --- | --- |\n")
-		for _, attempt := range notification.DeliveryAttempts {
-			fmt.Fprintf(&builder, "| %d | %s | %s | %s | %s |\n",
-				attempt.AttemptNumber, attempt.Status, optionalOrNone(attempt.ProviderMessageID),
-				optionalOrNone(attempt.ErrorMessage), attempt.AttemptedAt.Format(time.RFC3339))
+	for _, r := range text {
+		switch {
+		case r == '\\':
+			builder.WriteString(`\\`)
+		case r == '\r':
+			builder.WriteString(`\r`)
+		case r == '\n':
+			builder.WriteString(`\n`)
+		case r == '\t':
+			builder.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&builder, `\x%02X`, r)
+		case strings.ContainsRune(mdInlineSpecialChars, r):
+			builder.WriteRune('\\')
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune(r)
 		}
-		builder.WriteString("\n")
 	}
-
-	builder.WriteString(nonConclusoryFooter + "\n")
 	return builder.String()
 }
 
-func renderPostIncidentReportMarkdown(report PostIncidentReport) string {
-	var builder strings.Builder
-	incident := report.Incident
-	fmt.Fprintf(&builder, "# Post-Incident Report -- %s\n\n", report.IncidentPublicID)
-	fmt.Fprintf(&builder, "- Schema version: %d\n", report.SchemaVersion)
-	fmt.Fprintf(&builder, "- Generated at: %s\n", report.GeneratedAt.Format(time.RFC3339))
-	fmt.Fprintf(&builder, "- Incident ID: %s\n", incident.ID)
-	fmt.Fprintf(&builder, "- Awareness time: %s\n", incident.AwarenessAt.Format(time.RFC3339))
-	fmt.Fprintf(&builder, "- Authority notification deadline: %s\n",
-		incident.AuthorityNotificationDeadlineAt.Format(time.RFC3339))
-	fmt.Fprintf(&builder, "- Detection source: %s\n", incident.DetectionSource)
-	fmt.Fprintf(&builder, "- Controller role: %s\n", incident.ControllerRole)
-	fmt.Fprintf(&builder, "- Affected tenants: %d\n\n", len(incident.AffectedTenantIDs))
+// mdSafeBlock renders long operator/customer-controlled free text (a
+// summary, reasoning, or outcome field) as an opaque fenced code block.
+// CommonMark parses fenced-block content as literal text -- no heading,
+// list, table, emphasis, or link syntax is recognized inside it -- so
+// heading-like or delimiter-heavy input can never restructure the document.
+// The fence is chosen one backtick longer than the longest run of backticks
+// already present in the text, so no line inside the text can ever be
+// mistaken for (and prematurely close) the block.
+func mdSafeBlock(text string) string {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	fenceLength := max(longestBacktickRun(normalized)+1, 3)
+	fence := strings.Repeat("`", fenceLength)
+	return fence + "\n" + normalized + "\n" + fence
+}
 
-	builder.WriteString("## Impact\n\n")
-	fmt.Fprintf(&builder, "- Affected environments: %s\n", joinOrNone(incident.AffectedEnvironments))
-	fmt.Fprintf(&builder, "- Affected systems: %s\n", joinOrNone(incident.AffectedSystemCategories))
-	fmt.Fprintf(&builder, "- Data categories: %s\n", joinOrNone(incident.AffectedDataCategories))
-	fmt.Fprintf(&builder, "- Subject categories: %s\n", joinOrNone(incident.AffectedSubjectCategories))
-	fmt.Fprintf(&builder, "- Impact dimensions: %s\n\n", joinOrNone(incidentImpactLabels(incident)))
-	fmt.Fprintf(&builder, "**Containment summary:** %s\n\n", incident.ContainmentSummary)
+// writeMDBlock writes a label followed by text rendered as a safe fenced
+// block (see mdSafeBlock).
+func writeMDBlock(builder *strings.Builder, label, text string) {
+	fmt.Fprintf(builder, "%s\n\n%s\n\n", label, mdSafeBlock(text))
+}
 
-	builder.WriteString("## Chronology\n\n")
-	if len(report.Chronology) == 0 {
-		builder.WriteString("No chronology entries recorded yet.\n\n")
-	} else {
-		for _, entry := range report.Chronology {
-			fmt.Fprintf(&builder, "- %s -- %s: %s (evidence: %s)\n",
-				entry.OccurredAt.Format(time.RFC3339), entry.EntryKind, entry.Summary,
-				joinOrNone(entry.EvidenceReferences))
+// writeMDBlockOrPending writes a label followed by an optional free-text
+// field rendered as a safe fenced block, or an explicit "(pending)" marker
+// when the field has not been recorded yet.
+func writeMDBlockOrPending(builder *strings.Builder, label string, text *string) {
+	if text == nil {
+		fmt.Fprintf(builder, "%s\n\n(pending)\n\n", label)
+		return
+	}
+	writeMDBlock(builder, label, *text)
+}
+
+func longestBacktickRun(text string) int {
+	longest, current := 0, 0
+	for _, r := range text {
+		if r == '`' {
+			current++
+			if current > longest {
+				longest = current
+			}
+		} else {
+			current = 0
 		}
-		builder.WriteString("\n")
 	}
+	return longest
+}
 
-	builder.WriteString("## Latest Assessment\n\n")
-	if report.LatestAssessment == nil {
-		builder.WriteString("No assessment recorded yet (assessment_pending).\n\n")
-	} else {
-		assessment := *report.LatestAssessment
-		fmt.Fprintf(&builder, "- Authority notification decision: %s -- %s\n",
-			assessment.AuthorityNotificationDecision, assessment.AuthorityNotificationReasoning)
-		fmt.Fprintf(&builder, "- High risk to individuals: %s -- %s\n",
-			assessment.HighRiskToIndividuals, assessment.HighRiskReasoning)
-		fmt.Fprintf(&builder, "- Data subject communication decision: %s -- %s\n",
-			assessment.DataSubjectCommunicationDecision, assessment.DataSubjectCommunicationReasoning)
-		fmt.Fprintf(&builder, "- Assessed at: %s\n\n", assessment.AssessedAt.Format(time.RFC3339))
+// optionalTimeOrPending renders a not-yet-occurred lifecycle timestamp (a
+// delivery attempt, queue, send, or due time that may not have happened yet)
+// as an explicit "(pending)" marker rather than an empty/omitted value.
+func optionalTimeOrPending(value *time.Time) string {
+	if value == nil {
+		return "(pending)"
 	}
+	return value.UTC().Format(time.RFC3339)
+}
 
-	builder.WriteString("## Current Actions\n\n")
-	if len(report.Actions) == 0 {
-		builder.WriteString("No actions recorded.\n\n")
-	} else {
-		builder.WriteString("| Kind | Title | Status | Revision |\n")
-		builder.WriteString("| --- | --- | --- | --- |\n")
-		for _, action := range report.Actions {
-			fmt.Fprintf(&builder, "| %s | %s | %s | %d |\n",
-				action.ActionKind, action.Title, action.Status, action.Revision)
-		}
-		builder.WriteString("\n")
+// optionalRangeOrPending renders a paired minimum/maximum estimate as an
+// explicit "(pending)" marker when neither bound has been recorded yet
+// (normalizeEstimateRange guarantees the pair is never partially set).
+func optionalRangeOrPending(min, max *int64) string {
+	if min == nil || max == nil {
+		return "(pending)"
 	}
-
-	builder.WriteString("## Action History Summary\n\n")
-	if len(report.ActionHistorySummary) == 0 {
-		builder.WriteString("No action history recorded.\n\n")
-	} else {
-		builder.WriteString("| Title | Current status | Revisions | First occurred | Last occurred |\n")
-		builder.WriteString("| --- | --- | --- | --- | --- |\n")
-		for _, summary := range report.ActionHistorySummary {
-			fmt.Fprintf(&builder, "| %s | %s | %d | %s | %s |\n",
-				summary.Title, summary.CurrentStatus, summary.RevisionCount,
-				summary.FirstOccurredAt.Format(time.RFC3339), summary.LastOccurredAt.Format(time.RFC3339))
-		}
-		builder.WriteString("\n")
-	}
-
-	builder.WriteString("## Staged Controller Notifications\n\n")
-	if len(report.ControllerNotifications) == 0 {
-		builder.WriteString("No controller notifications staged.\n\n")
-	} else {
-		builder.WriteString("| Kind | Sequence | Status | Recipient | Attempts |\n")
-		builder.WriteString("| --- | --- | --- | --- | --- |\n")
-		for _, notification := range report.ControllerNotifications {
-			fmt.Fprintf(&builder, "| %s | %d | %s | %s | %d |\n",
-				notification.NotificationKind, notification.Sequence, notification.Status,
-				notification.RecipientEmail, notification.Attempts)
-		}
-		builder.WriteString("\n")
-	}
-
-	builder.WriteString(nonConclusoryFooter + "\n")
-	return builder.String()
+	return fmt.Sprintf("%d - %d", *min, *max)
 }
 
 func joinOrNone(values []string) string {
@@ -309,11 +275,32 @@ func joinOrNone(values []string) string {
 	return strings.Join(values, ", ")
 }
 
+// joinOrNoneEscaped is joinOrNone for free-text values (evidence references,
+// corrective references) that -- unlike a fixed enum set -- may contain
+// Markdown-significant punctuation and must be escaped per element.
+func joinOrNoneEscaped(values []string) string {
+	if len(values) == 0 {
+		return "(none)"
+	}
+	escaped := make([]string, len(values))
+	for index, value := range values {
+		escaped[index] = mdEscapeInline(value)
+	}
+	return strings.Join(escaped, ", ")
+}
+
 func optionalOrNone(value *string) string {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return "(none)"
 	}
 	return *value
+}
+
+// optionalOrNoneEscaped composes optionalOrNone with mdEscapeInline for
+// optional free-text fields (provider message ID, last error, corrective
+// reference) that may contain Markdown-significant punctuation.
+func optionalOrNoneEscaped(value *string) string {
+	return mdEscapeInline(optionalOrNone(value))
 }
 
 func impactLabels(notification ControllerNotification) []string {
@@ -342,4 +329,202 @@ func incidentImpactLabels(incident Incident) []string {
 		labels = append(labels, "availability")
 	}
 	return labels
+}
+
+// renderNotificationDetail writes the full field set of one frozen
+// ControllerNotification snapshot -- every stable ID, lifecycle timestamp,
+// version/contact/content field, and its complete delivery-attempt ledger --
+// at the given heading level. It backs both the single-notification export
+// and each entry in the post-incident report's notification ledger, so both
+// documents stay in parity by construction.
+func renderNotificationDetail(builder *strings.Builder, notification ControllerNotification, headingLevel string) {
+	fmt.Fprintf(builder, "%s Notification %s -- %s (sequence %d)\n\n",
+		headingLevel, notification.ID, notification.NotificationKind, notification.Sequence)
+	fmt.Fprintf(builder, "- Notification ID: %s\n", notification.ID)
+	fmt.Fprintf(builder, "- Breach incident ID: %s\n", notification.BreachIncidentID)
+	fmt.Fprintf(builder, "- Tenant ID: %s\n", notification.TenantID)
+	fmt.Fprintf(builder, "- Incident public ID: %s\n", notification.IncidentPublicID)
+	fmt.Fprintf(builder, "- Kind: %s (sequence %d, template version %d)\n",
+		notification.NotificationKind, notification.Sequence, notification.TemplateVersion)
+	fmt.Fprintf(builder, "- Status: %s\n", notification.Status)
+	fmt.Fprintf(builder, "- Workspace: %s\n", mdEscapeInline(notification.WorkspaceName))
+	fmt.Fprintf(builder, "- Recipient email: %s\n", mdEscapeInline(notification.RecipientEmail))
+	fmt.Fprintf(builder, "- Privacy profile version: %d\n", notification.PrivacyProfileVersion)
+	fmt.Fprintf(builder, "- Awareness time: %s\n", notification.AwarenessAt.Format(time.RFC3339))
+	fmt.Fprintf(builder, "- Affected environments: %s\n", joinOrNone(notification.AffectedEnvironments))
+	fmt.Fprintf(builder, "- Affected systems: %s\n", joinOrNone(notification.AffectedSystemCategories))
+	fmt.Fprintf(builder, "- Data categories: %s\n", joinOrNone(notification.AffectedDataCategories))
+	fmt.Fprintf(builder, "- Subject categories: %s\n", joinOrNone(notification.AffectedSubjectCategories))
+	fmt.Fprintf(builder, "- Impact: %s\n", joinOrNone(impactLabels(notification)))
+	fmt.Fprintf(builder, "- Attempts: %d\n", notification.Attempts)
+	fmt.Fprintf(builder, "- Last error: %s\n", optionalOrNoneEscaped(notification.LastError))
+	fmt.Fprintf(builder, "- Provider message ID: %s\n", optionalOrNoneEscaped(notification.ProviderMessageID))
+	fmt.Fprintf(builder, "- Last attempt at: %s\n", optionalTimeOrPending(notification.LastAttemptAt))
+	fmt.Fprintf(builder, "- Queued at: %s\n", optionalTimeOrPending(notification.QueuedAt))
+	fmt.Fprintf(builder, "- Sent at: %s\n", optionalTimeOrPending(notification.SentAt))
+	fmt.Fprintf(builder, "- Created by (platform admin ID): %s\n", notification.CreatedByPlatformAdminID)
+	fmt.Fprintf(builder, "- Queued by (platform admin ID): %s\n", optionalOrNone(notification.QueuedByPlatformAdminID))
+	fmt.Fprintf(builder, "- Created at: %s\n", notification.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(builder, "- Updated at: %s\n\n", notification.UpdatedAt.Format(time.RFC3339))
+
+	writeMDBlock(builder, "Summary:", notification.Summary)
+	writeMDBlock(builder, "Measures taken:", notification.MeasuresTaken)
+	if notification.NextUpdate != nil {
+		writeMDBlock(builder, "Next update:", *notification.NextUpdate)
+	} else {
+		builder.WriteString("Next update:\n\n(none provided)\n\n")
+	}
+
+	builder.WriteString("Delivery attempts:\n\n")
+	if len(notification.DeliveryAttempts) == 0 {
+		builder.WriteString("No delivery attempts recorded yet.\n\n")
+	} else {
+		builder.WriteString("| Attempt ID | Attempt | Status | Provider message ID | Error | Attempted at |\n")
+		builder.WriteString("| --- | --- | --- | --- | --- | --- |\n")
+		for _, attempt := range notification.DeliveryAttempts {
+			fmt.Fprintf(builder, "| %s | %d | %s | %s | %s | %s |\n",
+				attempt.ID, attempt.AttemptNumber, attempt.Status,
+				optionalOrNoneEscaped(attempt.ProviderMessageID), optionalOrNoneEscaped(attempt.ErrorMessage),
+				attempt.AttemptedAt.Format(time.RFC3339))
+		}
+		builder.WriteString("\n")
+	}
+}
+
+func renderNotificationMarkdown(export NotificationExport) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "# Breach Controller Notification -- %s\n\n", export.IncidentPublicID)
+	fmt.Fprintf(&builder, "- Schema version: %d\n", export.SchemaVersion)
+	fmt.Fprintf(&builder, "- Generated at: %s\n", export.GeneratedAt.Format(time.RFC3339))
+	fmt.Fprintf(&builder, "- Incident public ID: %s\n\n", export.IncidentPublicID)
+	renderNotificationDetail(&builder, export.Notification, "##")
+	builder.WriteString(nonConclusoryFooter + "\n")
+	return builder.String()
+}
+
+func renderPostIncidentReportMarkdown(report PostIncidentReport) string {
+	var builder strings.Builder
+	incident := report.Incident
+	fmt.Fprintf(&builder, "# Post-Incident Report -- %s\n\n", report.IncidentPublicID)
+	fmt.Fprintf(&builder, "- Schema version: %d\n", report.SchemaVersion)
+	fmt.Fprintf(&builder, "- Generated at: %s\n", report.GeneratedAt.Format(time.RFC3339))
+	fmt.Fprintf(&builder, "- Incident ID: %s\n", incident.ID)
+	fmt.Fprintf(&builder, "- Incident public ID: %s\n", incident.PublicID)
+	fmt.Fprintf(&builder, "- Created by (platform admin ID): %s\n", incident.CreatedByPlatformAdminID)
+	fmt.Fprintf(&builder, "- Created at: %s\n", incident.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(&builder, "- Awareness time: %s\n", incident.AwarenessAt.Format(time.RFC3339))
+	fmt.Fprintf(&builder, "- Authority notification deadline: %s\n",
+		incident.AuthorityNotificationDeadlineAt.Format(time.RFC3339))
+	fmt.Fprintf(&builder, "- Detection source: %s\n", incident.DetectionSource)
+	fmt.Fprintf(&builder, "- Controller role: %s\n", incident.ControllerRole)
+	fmt.Fprintf(&builder, "- Affected tenant IDs: %s\n\n", joinOrNone(incident.AffectedTenantIDs))
+
+	builder.WriteString("## Impact\n\n")
+	fmt.Fprintf(&builder, "- Affected environments: %s\n", joinOrNone(incident.AffectedEnvironments))
+	fmt.Fprintf(&builder, "- Affected systems: %s\n", joinOrNone(incident.AffectedSystemCategories))
+	fmt.Fprintf(&builder, "- Data categories: %s\n", joinOrNone(incident.AffectedDataCategories))
+	fmt.Fprintf(&builder, "- Subject categories: %s\n", joinOrNone(incident.AffectedSubjectCategories))
+	fmt.Fprintf(&builder, "- Impact dimensions: %s\n\n", joinOrNone(incidentImpactLabels(incident)))
+	writeMDBlock(&builder, "Containment summary:", incident.ContainmentSummary)
+
+	builder.WriteString("## Chronology\n\n")
+	if len(report.Chronology) == 0 {
+		builder.WriteString("No chronology entries recorded yet.\n\n")
+	} else {
+		for _, entry := range report.Chronology {
+			fmt.Fprintf(&builder, "### Entry %s -- %s\n\n", entry.ID, entry.EntryKind)
+			fmt.Fprintf(&builder, "- Entry ID: %s\n", entry.ID)
+			fmt.Fprintf(&builder, "- Breach incident ID: %s\n", entry.BreachIncidentID)
+			fmt.Fprintf(&builder, "- Entry kind: %s\n", entry.EntryKind)
+			fmt.Fprintf(&builder, "- Actor (platform admin ID): %s\n", entry.ActorPlatformAdminID)
+			fmt.Fprintf(&builder, "- Occurred at: %s\n", entry.OccurredAt.Format(time.RFC3339))
+			fmt.Fprintf(&builder, "- Created at: %s\n", entry.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(&builder, "- Evidence references: %s\n\n", joinOrNoneEscaped(entry.EvidenceReferences))
+			writeMDBlock(&builder, "Summary:", entry.Summary)
+		}
+	}
+
+	builder.WriteString("## Latest Assessment\n\n")
+	if report.LatestAssessment == nil {
+		builder.WriteString("No assessment recorded yet (assessment_pending).\n\n")
+	} else {
+		assessment := *report.LatestAssessment
+		fmt.Fprintf(&builder, "- Assessment ID: %s\n", assessment.ID)
+		fmt.Fprintf(&builder, "- Breach incident ID: %s\n", assessment.BreachIncidentID)
+		fmt.Fprintf(&builder, "- Assessed by (platform admin ID): %s\n", assessment.AssessedByPlatformAdminID)
+		fmt.Fprintf(&builder, "- Assessed at: %s\n", assessment.AssessedAt.Format(time.RFC3339))
+		fmt.Fprintf(&builder, "- Created at: %s\n", assessment.CreatedAt.Format(time.RFC3339))
+		fmt.Fprintf(&builder, "- Estimated affected subjects: %s\n",
+			optionalRangeOrPending(assessment.EstimatedAffectedSubjectsMin, assessment.EstimatedAffectedSubjectsMax))
+		fmt.Fprintf(&builder, "- Estimated affected records: %s\n\n",
+			optionalRangeOrPending(assessment.EstimatedAffectedRecordsMin, assessment.EstimatedAffectedRecordsMax))
+
+		fmt.Fprintf(&builder, "- Authority notification decision: %s\n\n", assessment.AuthorityNotificationDecision)
+		writeMDBlock(&builder, "Authority notification reasoning:", assessment.AuthorityNotificationReasoning)
+		fmt.Fprintf(&builder, "- High risk to individuals: %s\n\n", assessment.HighRiskToIndividuals)
+		writeMDBlock(&builder, "High risk reasoning:", assessment.HighRiskReasoning)
+		fmt.Fprintf(&builder, "- Data subject communication decision: %s\n\n",
+			assessment.DataSubjectCommunicationDecision)
+		writeMDBlock(&builder, "Data subject communication reasoning:", assessment.DataSubjectCommunicationReasoning)
+
+		writeMDBlockOrPending(&builder, "Likely consequences:", assessment.LikelyConsequences)
+		writeMDBlockOrPending(&builder, "Recovery measures:", assessment.RecoveryMeasures)
+		fmt.Fprintf(&builder, "- Evidence references: %s\n\n", joinOrNoneEscaped(assessment.EvidenceReferences))
+	}
+
+	builder.WriteString("## Current Actions\n\n")
+	if len(report.Actions) == 0 {
+		builder.WriteString("No actions recorded.\n\n")
+	} else {
+		for _, action := range report.Actions {
+			fmt.Fprintf(&builder, "### Action %s -- %s\n\n", action.ActionID, mdEscapeInline(action.Title))
+			fmt.Fprintf(&builder, "- Ledger event ID: %s\n", action.ID)
+			fmt.Fprintf(&builder, "- Ledger sequence: %d\n", action.Sequence)
+			fmt.Fprintf(&builder, "- Action ID: %s\n", action.ActionID)
+			fmt.Fprintf(&builder, "- Revision: %d\n", action.Revision)
+			fmt.Fprintf(&builder, "- Action kind: %s\n", action.ActionKind)
+			if action.ContainmentArea != nil {
+				fmt.Fprintf(&builder, "- Containment area: %s\n", *action.ContainmentArea)
+			} else {
+				builder.WriteString("- Containment area: (not applicable)\n")
+			}
+			fmt.Fprintf(&builder, "- Title: %s\n", mdEscapeInline(action.Title))
+			fmt.Fprintf(&builder, "- Status: %s\n", action.Status)
+			fmt.Fprintf(&builder, "- Owner (platform admin ID): %s\n", optionalOrNone(action.OwnerPlatformAdminID))
+			fmt.Fprintf(&builder, "- Due at: %s\n", optionalTimeOrPending(action.DueAt))
+			fmt.Fprintf(&builder, "- Corrective reference: %s\n", optionalOrNoneEscaped(action.CorrectiveReference))
+			fmt.Fprintf(&builder, "- Evidence references: %s\n", joinOrNoneEscaped(action.EvidenceReferences))
+			fmt.Fprintf(&builder, "- Actor (platform admin ID): %s\n", action.ActorPlatformAdminID)
+			fmt.Fprintf(&builder, "- Occurred at: %s\n", action.OccurredAt.Format(time.RFC3339))
+			fmt.Fprintf(&builder, "- Created at: %s\n\n", action.CreatedAt.Format(time.RFC3339))
+			writeMDBlockOrPending(&builder, "Outcome summary:", action.OutcomeSummary)
+		}
+	}
+
+	builder.WriteString("## Action History Summary\n\n")
+	if len(report.ActionHistorySummary) == 0 {
+		builder.WriteString("No action history recorded.\n\n")
+	} else {
+		builder.WriteString("| Action ID | Title | Current status | Current revision | Revisions | First occurred | Last occurred |\n")
+		builder.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+		for _, summary := range report.ActionHistorySummary {
+			fmt.Fprintf(&builder, "| %s | %s | %s | %d | %d | %s | %s |\n",
+				summary.ActionID, mdEscapeInline(summary.Title), summary.CurrentStatus,
+				summary.CurrentRevision, summary.RevisionCount,
+				summary.FirstOccurredAt.Format(time.RFC3339), summary.LastOccurredAt.Format(time.RFC3339))
+		}
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("## Staged Controller Notifications\n\n")
+	if len(report.ControllerNotifications) == 0 {
+		builder.WriteString("No controller notifications staged.\n\n")
+	} else {
+		for _, notification := range report.ControllerNotifications {
+			renderNotificationDetail(&builder, notification, "###")
+		}
+	}
+
+	builder.WriteString(nonConclusoryFooter + "\n")
+	return builder.String()
 }

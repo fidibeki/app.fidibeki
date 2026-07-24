@@ -878,12 +878,26 @@ was removed from the staging test tenant.
         document computes or asserts notifiability, high-risk status, closure, or compliance,
         and both end with the same non-conclusory footer already used in the notification email.
         Every response carries `schema_version`, `generated_at`, the incident public ID, and the
-        existing stable resource IDs, plus safe `Content-Type`/`Content-Disposition`/
-        `Cache-Control: private, no-store`/`X-Content-Type-Options`/`Referrer-Policy` headers;
-        `HEAD` mirrors `GET`'s headers with an empty body. Coverage adds deterministic-rendering,
-        pending-value, nil-slice-normalization, and forbidden-field shape-guard unit tests plus
-        HTTP tests for audience/permission denial, malformed/unknown/mismatched IDs, missing/
-        invalid `format`, exact frozen notification content, and both formats for both documents.
+        existing stable resource IDs, plus safe `Content-Type`/`Content-Disposition`/an explicit
+        `Content-Length` (the exact rendered byte length)/`Cache-Control: private,
+        no-store`/`X-Content-Type-Options`/`Referrer-Policy` headers; `HEAD` mirrors `GET`'s status
+        and headers, including `Content-Length`, with an empty body. Markdown rendering is at full
+        field parity with JSON -- every stable ID, actor/owner/tenant ID, and lifecycle timestamp,
+        with explicit `(pending)`/`(none)` markers for unset optional fields -- and is
+        injection-safe by construction: short operator/customer-controlled values (workspace name,
+        recipient email, title, provider message ID, corrective reference) are backslash-escaped
+        and have embedded newlines/control characters turned into visible markers via
+        `mdEscapeInline`, while long narrative free text (summaries, reasoning, outcomes,
+        containment/measures text) is wrapped in a fenced code block via `mdSafeBlock`, whose fence
+        is chosen one backtick longer than any backtick run already in the text so heading-like,
+        table-like, or fence-breaking input can never restructure the document. The post-incident
+        report's per-notification section reuses the exact same renderer as the standalone
+        notification export, so the two documents stay in parity by construction. Coverage adds
+        deterministic-rendering, pending-value, nil-slice-normalization, forbidden-field
+        shape-guard, Markdown-escaping/safe-block, and adversarial heading/table/fence-injection
+        unit tests plus HTTP tests for audience/permission denial, malformed/unknown/mismatched
+        IDs, missing/invalid `format`, exact frozen notification content, matching
+        `Content-Length` across `GET`/`HEAD`, and both formats for both documents.
       - Still remaining for later #64 slices: staged processor-to-controller notifications with
         an authenticated staging capture exercise; subprocessor incident intake; staging-only
         tabletop scenarios; and an internal platform-admin UI (the first real consumer of the new

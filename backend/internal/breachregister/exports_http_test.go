@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -34,6 +37,29 @@ func exportFixtureStore() *fakeStore {
 			},
 		},
 	}
+}
+
+// newExportTestHandlerWithClock is newTestHandler (http_test.go) plus a fixed
+// HTTPOptions.Now. GET and HEAD requests to the same export route must
+// render byte-identical bodies (so Content-Length matches between them), but
+// generated_at is a live clock read on every request and Go's
+// time.Time.MarshalJSON keeps a variable-precision fractional-second
+// component -- two real-clock renders taken at different instants can
+// legitimately differ in byte length. Freezing the clock removes that
+// confound so a Content-Length mismatch in these tests reflects a real bug.
+func newExportTestHandlerWithClock(
+	t *testing.T, store *fakeStore, now time.Time,
+) (http.Handler, *auth.JWTManager) {
+	t.Helper()
+	jwtManager, err := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("NewJWTManager() error = %v", err)
+	}
+	router := chi.NewRouter()
+	RegisterPlatformRoutes(router, HTTPOptions{
+		Store: store, JWT: jwtManager, Now: func() time.Time { return now },
+	})
+	return router, jwtManager
 }
 
 func readTokenFor(t *testing.T, jwtManager *auth.JWTManager) string {
@@ -129,6 +155,10 @@ func TestExportControllerNotificationReturnsExactFrozenContentAndSafeHeaders(t *
 	}
 	if got := recorder.Header().Get("Referrer-Policy"); got != "no-referrer" {
 		t.Errorf("Referrer-Policy = %q", got)
+	}
+	wantLength := strconv.Itoa(recorder.Body.Len())
+	if got := recorder.Header().Get("Content-Length"); got != wantLength {
+		t.Errorf("Content-Length = %q, want %q (actual body length)", got, wantLength)
 	}
 	disposition := recorder.Header().Get("Content-Disposition")
 	if !strings.HasPrefix(disposition, "attachment;") || !strings.Contains(disposition, "BR-ABCDEF12") ||
@@ -262,7 +292,9 @@ func TestExportControllerNotificationUnknownIncidentMapsStoreError(t *testing.T)
 func TestExportControllerNotificationHeadMatchesGetHeadersWithEmptyBody(t *testing.T) {
 	t.Parallel()
 	store := exportFixtureStore()
-	handler, jwtManager := newTestHandler(t, store)
+	handler, jwtManager := newExportTestHandlerWithClock(
+		t, store, time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+	)
 	readToken := readTokenFor(t, jwtManager)
 	path := "/admin/breach-incidents/" + exportIncidentID +
 		"/controller-notifications/" + exportNotificationID + "/export?format=json"
@@ -280,7 +312,10 @@ func TestExportControllerNotificationHeadMatchesGetHeadersWithEmptyBody(t *testi
 	if headRecorder.Code != getRecorder.Code {
 		t.Fatalf("HEAD status = %d, GET status = %d", headRecorder.Code, getRecorder.Code)
 	}
-	for _, header := range []string{"Content-Type", "Content-Disposition", "Cache-Control", "X-Content-Type-Options", "Referrer-Policy"} {
+	for _, header := range []string{
+		"Content-Type", "Content-Disposition", "Content-Length", "Cache-Control",
+		"X-Content-Type-Options", "Referrer-Policy",
+	} {
 		if headRecorder.Header().Get(header) != getRecorder.Header().Get(header) {
 			t.Errorf("HEAD %s = %q, GET %s = %q", header, headRecorder.Header().Get(header), header, getRecorder.Header().Get(header))
 		}
@@ -290,6 +325,15 @@ func TestExportControllerNotificationHeadMatchesGetHeadersWithEmptyBody(t *testi
 	}
 	if getRecorder.Body.Len() == 0 {
 		t.Fatalf("GET body unexpectedly empty")
+	}
+	wantLength := strconv.Itoa(getRecorder.Body.Len())
+	if getRecorder.Header().Get("Content-Length") != wantLength {
+		t.Errorf("GET Content-Length = %q, want %q (actual body length)",
+			getRecorder.Header().Get("Content-Length"), wantLength)
+	}
+	if headRecorder.Header().Get("Content-Length") != wantLength {
+		t.Errorf("HEAD Content-Length = %q, want %q (matching GET's body length even though HEAD sends no body)",
+			headRecorder.Header().Get("Content-Length"), wantLength)
 	}
 }
 
@@ -415,7 +459,9 @@ func TestExportPostIncidentReportValidatesFormatAndIncidentID(t *testing.T) {
 func TestExportPostIncidentReportHeadMatchesGetHeadersWithEmptyBody(t *testing.T) {
 	t.Parallel()
 	store := exportFixtureStore()
-	handler, jwtManager := newTestHandler(t, store)
+	handler, jwtManager := newExportTestHandlerWithClock(
+		t, store, time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+	)
 	readToken := readTokenFor(t, jwtManager)
 	path := "/admin/breach-incidents/" + exportIncidentID + "/post-incident-report?format=json"
 
@@ -432,10 +478,20 @@ func TestExportPostIncidentReportHeadMatchesGetHeadersWithEmptyBody(t *testing.T
 	if headRecorder.Code != getRecorder.Code {
 		t.Fatalf("HEAD status = %d, GET status = %d", headRecorder.Code, getRecorder.Code)
 	}
-	if headRecorder.Header().Get("Content-Disposition") != getRecorder.Header().Get("Content-Disposition") {
-		t.Errorf("Content-Disposition mismatch between HEAD and GET")
+	for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+		if headRecorder.Header().Get(header) != getRecorder.Header().Get(header) {
+			t.Errorf("HEAD %s = %q, GET %s = %q", header, headRecorder.Header().Get(header), header, getRecorder.Header().Get(header))
+		}
 	}
 	if headRecorder.Body.Len() != 0 {
 		t.Errorf("HEAD body = %q, want empty", headRecorder.Body.String())
+	}
+	if getRecorder.Body.Len() == 0 {
+		t.Fatalf("GET body unexpectedly empty")
+	}
+	wantLength := strconv.Itoa(getRecorder.Body.Len())
+	if getRecorder.Header().Get("Content-Length") != wantLength {
+		t.Errorf("GET Content-Length = %q, want %q (actual body length)",
+			getRecorder.Header().Get("Content-Length"), wantLength)
 	}
 }
