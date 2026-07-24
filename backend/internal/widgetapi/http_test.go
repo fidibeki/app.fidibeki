@@ -80,8 +80,9 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 			RecurrenceMode: project.RecurrenceCooldown, RecurrenceDays: &recurrenceDays,
 			DefinitionKey: "checkout-feedback", DefinitionVersion: 3,
 			DefinitionStatus: project.DefinitionActive, Presentation: project.PresentationLauncher,
-			Objective:      project.ObjectiveContinuousFeedback,
-			ResponseBlocks: []project.WidgetResponseBlock{{Key: "rating", Type: project.ResponseRating}},
+			LauncherVariant: project.LauncherVariantEdgeTab,
+			Objective:       project.ObjectiveContinuousFeedback,
+			ResponseBlocks:  []project.WidgetResponseBlock{{Key: "rating", Type: project.ResponseRating}},
 			Localizations: map[string]project.WidgetLocalization{
 				"pt-ao": {
 					LauncherLabel: "Opinião", Prompt: "Como correu?",
@@ -132,7 +133,7 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		`"audio":true`, `"video":false`,
 		`"id":"rule-id"`, `"trigger_delay_seconds":3`, `"refresh_after_seconds":300`,
 		`"definition_key":"checkout-feedback"`, `"definition_version":3`,
-		`"presentation":"launcher"`, `"objective":"continuous_feedback"`,
+		`"presentation":"launcher"`, `"launcher_variant":"edge_tab"`, `"objective":"continuous_feedback"`,
 		`"response_blocks":[{"key":"rating"`, `"collect_contact":true`,
 		`"definitions":[{"id":"rule-id"`, `"id":"paused-rule-id"`,
 		`"recurrence_mode":"cooldown"`, `"recurrence_days":30`,

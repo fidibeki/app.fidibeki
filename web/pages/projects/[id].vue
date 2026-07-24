@@ -9,6 +9,8 @@ import {
   Clipboard,
   Code2,
   Globe2,
+  MessageCircle,
+  PanelRightOpen,
   Plus,
   Radio,
   RefreshCw,
@@ -149,6 +151,7 @@ const effectiveAppearance = computed(() => resolveWidgetAppearance(
   ruleAppearance.value,
 ))
 const positionKeys: Record<string, string> = { 'bottom-left': 'bottomLeft', 'bottom-right': 'bottomRight' }
+const previewSide = computed(() => effectiveAppearance.value.position === 'bottom-left' ? 'left' : 'right')
 const previewAppearanceSummary = computed(() => t('projects.preview.appearance', {
   theme: t(`projects.appearance.themes.${effectiveAppearance.value.theme}`),
   position: t(`projects.appearance.positions.${positionKeys[effectiveAppearance.value.position || ''] || ''}`),
@@ -339,7 +342,9 @@ function selectRule(rule: WidgetRule) {
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
     definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
     definition_status: rule.definition_status || (rule.enabled ? 'active' : 'paused'),
-    presentation: rule.presentation || 'prompt', objective: rule.objective || 'continuous_feedback',
+    presentation: rule.presentation || 'prompt',
+    launcher_variant: rule.launcher_variant || 'edge_tab',
+    objective: rule.objective || 'continuous_feedback',
     response_blocks: rule.response_blocks || legacyResponseBlocks(rule), localizations,
     allow_comment: rule.allow_comment || false, collect_contact: rule.collect_contact || false,
     ai_processing: cloneReactive(rule.ai_processing || defaultWidgetRule().ai_processing),
@@ -827,6 +832,33 @@ useHead(() => ({
                   </select>
                   <small v-if="ruleFieldError('presentation')" :id="ruleErrorID('presentation')" class="rule-field-error">{{ ruleFieldError('presentation') }}</small>
                 </label>
+                <fieldset v-if="ruleForm.presentation === 'launcher'" class="launcher-variant-fieldset">
+                  <legend>{{ t('projects.editor.identity.launcherVariant') }}</legend>
+                  <div class="launcher-variant-options">
+                    <label class="launcher-variant-option" :data-selected="ruleForm.launcher_variant === 'edge_tab'">
+                      <input
+                        type="radio" name="launcher_variant" value="edge_tab"
+                        v-model="ruleForm.launcher_variant"
+                        v-bind="ruleFieldAttributes('launcher_variant')"
+                      />
+                      <PanelRightOpen :size="18" aria-hidden="true" />
+                      <span>
+                        {{ t('projects.enums.launcherVariant.edge_tab') }}
+                        <small class="launcher-variant-recommended">{{ t('projects.editor.identity.launcherVariantRecommended') }}</small>
+                      </span>
+                    </label>
+                    <label class="launcher-variant-option" :data-selected="ruleForm.launcher_variant === 'floating_button'">
+                      <input
+                        type="radio" name="launcher_variant" value="floating_button"
+                        v-model="ruleForm.launcher_variant"
+                        v-bind="ruleFieldAttributes('launcher_variant')"
+                      />
+                      <MessageCircle :size="18" aria-hidden="true" />
+                      <span>{{ t('projects.enums.launcherVariant.floating_button') }}</span>
+                    </label>
+                  </div>
+                  <small v-if="ruleFieldError('launcher_variant')" :id="ruleErrorID('launcher_variant')" class="rule-field-error">{{ ruleFieldError('launcher_variant') }}</small>
+                </fieldset>
                 <label>
                   {{ t('projects.editor.identity.objective') }}
                   <select v-model="ruleForm.objective" class="app-select" v-bind="ruleFieldAttributes('objective')">
@@ -1149,6 +1181,8 @@ useHead(() => ({
             <button
               v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen"
               class="widget-preview-trigger"
+              :data-launcher-variant="ruleForm.launcher_variant"
+              :data-side="previewSide"
               :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }"
             >
               {{ previewLocalization.launcher_label }}
@@ -1316,6 +1350,15 @@ useHead(() => ({
 .project-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .project-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .project-form-grid > .wide { width: 100%; min-width: 0; grid-column: 1 / -1; }
+.launcher-variant-fieldset { display: grid; min-width: 0; grid-column: 1 / -1; gap: 6px; margin: 0; padding: 0; border: 0; }
+.launcher-variant-fieldset legend { padding: 0; color: var(--muted); font-size: 9px; font-weight: 700; }
+.launcher-variant-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.launcher-variant-option { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+.launcher-variant-option[data-selected='true'] { border-color: var(--teal); background: var(--teal-soft); }
+.launcher-variant-option input[type='radio'] { margin: 0; }
+.launcher-variant-option input[type='radio']:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.launcher-variant-option span { display: flex; flex-direction: column; gap: 2px; font-size: 10px; font-weight: 650; color: var(--ink-soft); }
+.launcher-variant-recommended { color: var(--teal); font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
 .project-rule-editor :is(input, select, textarea, [tabindex])[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
 .rule-field-error { grid-column: 1 / -1; color: var(--red) !important; font-size: 8px !important; font-weight: 650 !important; line-height: 1.4; }
 .project-toggle { align-items: center; justify-content: flex-start; flex-direction: row !important; gap: 8px !important; min-height: 38px; padding-top: 17px; color: var(--ink-soft) !important; }
@@ -1379,7 +1422,12 @@ useHead(() => ({
 .widget-preview-copy b { font-size: 16px; }
 .widget-preview-copy > span { color: var(--muted); font-size: 9px; }
 .widget-preview-copy div { height: 170px; margin-top: 10px; background: #edf2f0; border-radius: 5px; }
-.widget-preview-trigger { position: absolute; right: 18px; bottom: 18px; min-height: 38px; padding: 0 13px; border: 0; border-radius: 5px; font-size: 10px; font-weight: 750; }
+.widget-preview-trigger { position: absolute; bottom: 18px; min-height: 38px; padding: 0 13px; border: 0; border-radius: 5px; font-size: 10px; font-weight: 750; }
+.widget-preview-trigger[data-side='right'] { right: 18px; }
+.widget-preview-trigger[data-side='left'] { left: 18px; }
+.widget-preview-trigger[data-launcher-variant='edge_tab'] { top: 50%; bottom: auto; min-height: 64px; max-height: 70%; padding: 12px 8px; transform: translateY(-50%); writing-mode: vertical-rl; text-orientation: mixed; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; }
+.widget-preview-trigger[data-launcher-variant='edge_tab'][data-side='right'] { right: 0; border-radius: 10px 0 0 10px; }
+.widget-preview-trigger[data-launcher-variant='edge_tab'][data-side='left'] { left: 0; border-radius: 0 10px 10px 0; }
 .widget-preview-modal { position: absolute; right: 18px; bottom: 66px; left: 18px; padding: 14px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-top-width: 4px; border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .widget-preview-modal[data-presentation='inline'] { position: relative; inset: auto; margin-top: 18px; box-shadow: none; }
 .widget-preview-modal[data-presentation='reaction'] { left: auto; width: min(360px, calc(100% - 36px)); }

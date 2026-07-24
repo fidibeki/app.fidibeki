@@ -24,6 +24,7 @@ describe('widget setup helpers', () => {
       recurrence_days: 30,
       definition_status: 'draft',
       presentation: 'launcher',
+      launcher_variant: 'edge_tab',
       objective: 'continuous_feedback',
       response_blocks: [
         { key: 'rating', type: 'rating', required: false },

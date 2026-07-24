@@ -134,6 +134,7 @@ export type AnalyticsConsentMode = 'none' | 'fidibeki_managed' | 'customer_cmp'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
 export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
+export type WidgetLauncherVariant = 'edge_tab' | 'floating_button'
 export type WidgetObjective = 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
 export type WidgetResponseBlockType = 'free_text' | 'rating' | 'reaction' | 'single_choice'
 
@@ -312,6 +313,7 @@ export interface WidgetRule {
   definition_version: number
   definition_status: WidgetDefinitionStatus
   presentation: WidgetPresentation
+  launcher_variant: WidgetLauncherVariant
   objective: WidgetObjective
   response_blocks: WidgetResponseBlock[]
   localizations: Record<string, WidgetLocalization>

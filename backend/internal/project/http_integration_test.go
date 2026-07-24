@@ -282,6 +282,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	if createdRule.WidgetRule.DefinitionKey == "" || createdRule.WidgetRule.DefinitionVersion != 1 ||
 		createdRule.WidgetRule.DefinitionStatus != DefinitionActive ||
 		createdRule.WidgetRule.Presentation != PresentationPrompt ||
+		createdRule.WidgetRule.LauncherVariant != LauncherVariantEdgeTab ||
 		createdRule.WidgetRule.Objective != ObjectiveContinuousFeedback ||
 		len(createdRule.WidgetRule.ResponseBlocks) != 2 ||
 		createdRule.WidgetRule.Localizations["en"].Prompt != "How was your experience?" {
@@ -310,6 +311,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		*publicConfiguration.Rules[0].RecurrenceDays != 30 ||
 		len(publicConfiguration.Rules[0].IncludeConditions) != 1 ||
 		len(publicConfiguration.Rules[0].ExcludeConditions) != 0 ||
+		publicConfiguration.Rules[0].LauncherVariant != LauncherVariantEdgeTab ||
 		publicConfiguration.Rules[0].Appearance.LogoURL == nil ||
 		*publicConfiguration.Rules[0].Appearance.LogoURL !=
 			"https://api.staging.fidibeki.com/v1/public/workspace-logo/"+
@@ -357,7 +359,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"supported_locales":["en"],"expiry_days":30},`+
 			`"replay_record_canvas":true,"replay_canvas_fps":3,`+
 			`"definition_key":"checkout-reaction","definition_status":"active",`+
-			`"presentation":"reaction","objective":"after_engagement",`+
+			`"presentation":"reaction","launcher_variant":"floating_button","objective":"after_engagement",`+
 			`"response_blocks":[{"key":"reaction","type":"reaction","required":true,`+
 			`"options":[{"value":"helpful"},{"value":"unclear"}]}],`+
 			`"localizations":{"en":{"launcher_label":"Feedback","prompt":"Was this useful?",`+
@@ -381,6 +383,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		!strings.Contains(updatedRule.Body.String(), `"exclude_conditions":[{"id":`) ||
 		!strings.Contains(updatedRule.Body.String(), `"definition_version":2`) ||
 		!strings.Contains(updatedRule.Body.String(), `"presentation":"reaction"`) ||
+		!strings.Contains(updatedRule.Body.String(), `"launcher_variant":"floating_button"`) ||
 		!strings.Contains(updatedRule.Body.String(), `"collect_contact":true`) ||
 		!strings.Contains(updatedRule.Body.String(), `"ai_processing":{"enabled":true`) ||
 		!strings.Contains(updatedRule.Body.String(), `"acknowledged_by_member_id":"`+ownerID+`"`) ||

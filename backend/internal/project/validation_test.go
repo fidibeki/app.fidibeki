@@ -97,6 +97,40 @@ func TestValidateWidgetRuleNormalizesDefaults(t *testing.T) {
 		values.Localizations["en"].Prompt != "How was your experience?" {
 		t.Errorf("definition compatibility defaults = %#v", values)
 	}
+	if values.LauncherVariant != LauncherVariantEdgeTab {
+		t.Errorf("launcher variant default = %#v, want %q", values.LauncherVariant, LauncherVariantEdgeTab)
+	}
+}
+
+func TestValidateWidgetRuleAcceptsBothLauncherVariants(t *testing.T) {
+	t.Parallel()
+	for _, variant := range []WidgetLauncherVariant{LauncherVariantEdgeTab, LauncherVariantFloatingButton} {
+		delay := 2
+		values, fields := ValidateWidgetRule(WidgetRuleInput{
+			Name: "Checkout", MatcherType: MatcherAllPages,
+			TriggerType: TriggerDelay, TriggerDelaySeconds: &delay,
+			Presentation: PresentationLauncher, LauncherVariant: variant,
+		}, tenant.Tenant{Plan: tenant.PlanStarter})
+		if len(fields) != 0 {
+			t.Fatalf("variant %q fields = %#v", variant, fields)
+		}
+		if values.LauncherVariant != variant {
+			t.Errorf("variant %q normalized = %q", variant, values.LauncherVariant)
+		}
+	}
+}
+
+func TestValidateWidgetRuleRejectsUnknownLauncherVariant(t *testing.T) {
+	t.Parallel()
+	delay := 2
+	_, fields := ValidateWidgetRule(WidgetRuleInput{
+		Name: "Checkout", MatcherType: MatcherAllPages,
+		TriggerType: TriggerDelay, TriggerDelaySeconds: &delay,
+		Presentation: PresentationLauncher, LauncherVariant: "sidebar_drawer",
+	}, tenant.Tenant{Plan: tenant.PlanStarter})
+	if fields["launcher_variant"] == "" {
+		t.Fatalf("fields = %#v, want launcher_variant error", fields)
+	}
 }
 
 func TestValidateWidgetRuleForcesAnonymousReplayCanvasOff(t *testing.T) {
@@ -265,7 +299,8 @@ func TestValidateWidgetDefinitionRejectsInvalidContract(t *testing.T) {
 	t.Parallel()
 	input := WidgetRuleInput{
 		Name: "Invalid", DefinitionKey: "Bad key", DefinitionStatus: "deleted",
-		Presentation: "modal", Objective: "sell_more", MatcherType: MatcherAllPages,
+		Presentation: "modal", LauncherVariant: "sidebar_drawer", Objective: "sell_more",
+		MatcherType: MatcherAllPages,
 		TriggerType: TriggerExitIntent,
 		ResponseBlocks: []WidgetResponseBlock{
 			{Key: "Choice!", Type: ResponseSingleChoice, Options: []WidgetResponseOption{{Value: "one"}}},
@@ -275,7 +310,7 @@ func TestValidateWidgetDefinitionRejectsInvalidContract(t *testing.T) {
 	}
 	_, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
 	for _, field := range []string{
-		"definition_key", "definition_status", "presentation", "objective",
+		"definition_key", "definition_status", "presentation", "launcher_variant", "objective",
 		"response_blocks[0].key", "response_blocks[0].options", "response_blocks[1].type",
 		"localizations.invalid_locale", "localizations.invalid_locale.prompt",
 	} {

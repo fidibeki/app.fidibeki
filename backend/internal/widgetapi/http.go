@@ -88,6 +88,7 @@ type PublicWidgetRule struct {
 	DefinitionVersion        int                                   `json:"definition_version"`
 	DefinitionStatus         project.WidgetDefinitionStatus        `json:"definition_status"`
 	Presentation             project.WidgetPresentation            `json:"presentation"`
+	LauncherVariant          project.WidgetLauncherVariant         `json:"launcher_variant"`
 	Objective                project.WidgetObjective               `json:"objective"`
 	ResponseBlocks           []project.WidgetResponseBlock         `json:"response_blocks"`
 	Localizations            map[string]project.WidgetLocalization `json:"localizations"`
@@ -328,7 +329,8 @@ func publicWidgetRule(rule project.WidgetRule, controllerProfileComplete bool) P
 		RecurrenceMode:   rule.RecurrenceMode, RecurrenceDays: rule.RecurrenceDays,
 		DefinitionKey: rule.DefinitionKey, DefinitionVersion: rule.DefinitionVersion,
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
-		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,
+		LauncherVariant: rule.LauncherVariant,
+		Objective:       rule.Objective, ResponseBlocks: rule.ResponseBlocks,
 		Localizations: rule.Localizations, AllowComment: rule.AllowComment,
 		CollectContact: rule.CollectContact && controllerProfileComplete &&
 			project.HasCompleteContactNotices(rule.Localizations),

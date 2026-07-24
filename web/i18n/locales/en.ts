@@ -743,6 +743,8 @@ export const englishMessages = {
         definitionKey: 'Definition key',
         lifecycleStatus: 'Lifecycle status',
         presentation: 'Presentation',
+        launcherVariant: 'Launcher style',
+        launcherVariantRecommended: 'Recommended',
         objective: 'Objective',
         priority: 'Priority',
       },
@@ -1130,6 +1132,10 @@ export const englishMessages = {
         inline: 'Inline',
         reaction: 'Reaction',
         prompt: 'Prompt',
+      },
+      launcherVariant: {
+        edge_tab: 'Edge tab',
+        floating_button: 'Floating button',
       },
       objective: {
         continuous_feedback: 'Continuous feedback',

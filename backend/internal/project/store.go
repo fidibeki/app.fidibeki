@@ -189,14 +189,14 @@ func (Store) CreateWidgetRule(
 			replay_record_canvas, replay_canvas_fps, replay_consent,
 			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
 			response_blocks, localizations, allow_comment, collect_contact, ai_processing,
-			widget_appearance_overrides, analytics_consent
+			widget_appearance_overrides, analytics_consent, launcher_variant
 		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
 			       $27, $28, $29::jsonb, $30, $31,
 			       COALESCE(NULLIF($32, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
 			       $33, $34, $35, $36::jsonb, $37::jsonb, $38, $39, $40::jsonb,
-			       $41::jsonb, $42::jsonb
+			       $41::jsonb, $42::jsonb, $43
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -352,10 +352,10 @@ func (Store) UpdateWidgetRule(
 				allow_comment = $39, collect_contact = $40,
 				ai_processing = $41::jsonb,
 				widget_appearance_overrides = CASE
-					WHEN $44 THEN $42::jsonb
+					WHEN $45 THEN $42::jsonb
 					ELSE rule.widget_appearance_overrides || $42::jsonb
 				END,
-				analytics_consent = $43::jsonb
+				analytics_consent = $43::jsonb, launcher_variant = $44
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
 		  AND project.id = rule.project_id AND project.tenant_id = $1
@@ -858,7 +858,7 @@ const widgetRuleColumns = `
 		recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
 		response_blocks, localizations, allow_comment, collect_contact, ai_processing,
-		widget_appearance_overrides, analytics_consent,
+		widget_appearance_overrides, analytics_consent, launcher_variant,
 		created_at, updated_at`
 
 func prefixedWidgetRuleColumns(alias string) string {
@@ -873,7 +873,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
 		"response_blocks", "localizations", "allow_comment", "collect_contact", "ai_processing",
-		"widget_appearance_overrides", "analytics_consent",
+		"widget_appearance_overrides", "analytics_consent", "launcher_variant",
 		"created_at", "updated_at",
 	}
 	for index := range columns {
@@ -941,6 +941,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		string(aiProcessing),
 		string(appearance),
 		string(analyticsConsent),
+		values.LauncherVariant,
 	}, nil
 }
 
@@ -979,7 +980,7 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
 		&rule.AllowComment, &rule.CollectContact,
 		&rule.AIProcessing,
-		&rule.AppearanceOverrides, &rule.AnalyticsConsent,
+		&rule.AppearanceOverrides, &rule.AnalyticsConsent, &rule.LauncherVariant,
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	return rule, err

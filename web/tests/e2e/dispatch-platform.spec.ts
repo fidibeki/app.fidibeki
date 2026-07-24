@@ -3506,6 +3506,56 @@ test('widget preview mirrors launcher and inline presentation states', async ({ 
   await capture(page, testInfo, 'widget-presentation-preview')
 })
 
+test('launcher variant selector is accessible and defaults to edge tab recommended', async ({ page }) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Presentation').selectOption('launcher')
+  const edgeTab = page.getByRole('radio', { name: 'Edge tab' })
+  const floatingButton = page.getByRole('radio', { name: 'Floating button' })
+  await expect(edgeTab).toBeVisible()
+  await expect(floatingButton).toBeVisible()
+  await expect(edgeTab).toBeChecked()
+  await expect(page.getByText('Recommended')).toBeVisible()
+
+  await floatingButton.check()
+  await expect(floatingButton).toBeChecked()
+  await expect(edgeTab).not.toBeChecked()
+
+  await page.getByLabel('Presentation').selectOption('inline')
+  await expect(edgeTab).toHaveCount(0)
+  await expect(floatingButton).toHaveCount(0)
+})
+
+test('launcher variant preview reflects the selected style and side, and saves the exact payload', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The live preview is hidden on smaller viewports')
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.getByLabel('Presentation').selectOption('launcher')
+  const trigger = page.locator('.widget-preview-trigger')
+  await expect(trigger).toHaveAttribute('data-launcher-variant', 'edge_tab')
+  await expect(trigger).toHaveAttribute('data-side', 'right')
+
+  await page.getByRole('radio', { name: 'Floating button' }).check()
+  await expect(trigger).toHaveAttribute('data-launcher-variant', 'floating_button')
+
+  await page.getByRole('radio', { name: 'Edge tab' }).check()
+  await expect(trigger).toHaveAttribute('data-launcher-variant', 'edge_tab')
+  await page.locator('.project-widget-preview').screenshot({
+    path: testInfo.outputPath('widget-launcher-variant-preview-panel.png'), animations: 'disabled',
+  })
+  await capture(page, testInfo, 'widget-launcher-variant-preview')
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0]).toMatchObject({ presentation: 'launcher', launcher_variant: 'edge_tab' })
+})
+
 test('new widget rules require an explicit targeting choice', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Creation behavior is viewport independent')
   const state = createMockState()

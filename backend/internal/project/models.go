@@ -134,6 +134,13 @@ const (
 	PresentationPrompt   WidgetPresentation = "prompt"
 )
 
+type WidgetLauncherVariant string
+
+const (
+	LauncherVariantEdgeTab        WidgetLauncherVariant = "edge_tab"
+	LauncherVariantFloatingButton WidgetLauncherVariant = "floating_button"
+)
+
 type WidgetObjective string
 
 const (
@@ -283,6 +290,7 @@ type WidgetRule struct {
 	DefinitionVersion        int                              `json:"definition_version"`
 	DefinitionStatus         WidgetDefinitionStatus           `json:"definition_status"`
 	Presentation             WidgetPresentation               `json:"presentation"`
+	LauncherVariant          WidgetLauncherVariant            `json:"launcher_variant"`
 	Objective                WidgetObjective                  `json:"objective"`
 	ResponseBlocks           []WidgetResponseBlock            `json:"response_blocks"`
 	Localizations            map[string]WidgetLocalization    `json:"localizations"`
@@ -331,6 +339,7 @@ type WidgetRuleInput struct {
 	DefinitionKey            string                            `json:"definition_key"`
 	DefinitionStatus         WidgetDefinitionStatus            `json:"definition_status"`
 	Presentation             WidgetPresentation                `json:"presentation"`
+	LauncherVariant          WidgetLauncherVariant             `json:"launcher_variant"`
 	Objective                WidgetObjective                   `json:"objective"`
 	ResponseBlocks           []WidgetResponseBlock             `json:"response_blocks"`
 	Localizations            map[string]WidgetLocalization     `json:"localizations"`
@@ -377,6 +386,7 @@ type WidgetRuleValues struct {
 	DefinitionKey            string
 	DefinitionStatus         WidgetDefinitionStatus
 	Presentation             WidgetPresentation
+	LauncherVariant          WidgetLauncherVariant
 	Objective                WidgetObjective
 	ResponseBlocks           []WidgetResponseBlock
 	Localizations            map[string]WidgetLocalization

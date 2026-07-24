@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 106
+	const latestMigrationVersion = 107
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -740,7 +740,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if recurrenceMode != "cooldown" || recurrenceDays == nil || *recurrenceDays != 30 {
 		t.Fatalf("widget recurrence defaults = %q/%v, want cooldown/30", recurrenceMode, recurrenceDays)
 	}
-	var definitionKey, definitionStatus, presentation, objective, defaultLocale string
+	var definitionKey, definitionStatus, presentation, launcherVariant, objective, defaultLocale string
 	var definitionVersion, responseBlockCount, localizationCount int
 	if err := root.QueryRow(ctx, `
 		SELECT rule.definition_key, rule.definition_version, rule.definition_status,
@@ -1704,23 +1704,25 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var localizedPrompt, appearancePosition, appearanceTheme string
 	if err := root.QueryRow(ctx, `
 		SELECT definition_key, definition_version, definition_status, presentation,
+		       launcher_variant,
 		       localizations->'en'->>'prompt',
 		       widget_appearance_overrides->>'position',
 		       widget_appearance_overrides->>'theme'
 		FROM widget_rules WHERE id = $1
 	`, widgetRuleA).Scan(
-		&definitionKey, &definitionVersion, &definitionStatus, &presentation, &localizedPrompt,
-		&appearancePosition, &appearanceTheme,
+		&definitionKey, &definitionVersion, &definitionStatus, &presentation, &launcherVariant,
+		&localizedPrompt, &appearancePosition, &appearanceTheme,
 	); err != nil {
 		t.Fatalf("read backfilled widget definition: %v", err)
 	}
 	if definitionKey == "" || definitionVersion != 1 || definitionStatus != "paused" ||
-		presentation != "prompt" || localizedPrompt != "Legacy localized prompt" ||
+		presentation != "prompt" || launcherVariant != "floating_button" ||
+		localizedPrompt != "Legacy localized prompt" ||
 		appearancePosition == "" || appearanceTheme == "" {
 		t.Fatalf(
-			"backfilled widget definition = %q/%d/%q/%q/%q appearance %q/%q",
-			definitionKey, definitionVersion, definitionStatus, presentation, localizedPrompt,
-			appearancePosition, appearanceTheme,
+			"backfilled widget definition = %q/%d/%q/%q/%q/%q appearance %q/%q",
+			definitionKey, definitionVersion, definitionStatus, presentation, launcherVariant,
+			localizedPrompt, appearancePosition, appearanceTheme,
 		)
 	}
 	var responseRating *int
@@ -1733,6 +1735,37 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if responseRating == nil || *responseRating != 4 || responseText == nil || *responseText != "Legacy structured response" {
 		t.Fatalf("structured feedback response backfill = rating %v text %v", responseRating, responseText)
+	}
+
+	var newWidgetRule string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds
+		) VALUES ($1, 'Edge tab default', 'all_pages', 'delay', 0)
+		RETURNING id
+	`, projectA).Scan(&newWidgetRule); err != nil {
+		t.Fatalf("create widget rule after launcher variant migration: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT launcher_variant FROM widget_rules WHERE id = $1
+	`, newWidgetRule).Scan(&launcherVariant); err != nil {
+		t.Fatalf("read new widget rule launcher variant: %v", err)
+	}
+	if launcherVariant != "edge_tab" {
+		t.Fatalf("new widget rule launcher variant = %q, want edge_tab", launcherVariant)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET launcher_variant = 'sidebar_drawer' WHERE id = $1
+	`, newWidgetRule); err == nil {
+		t.Fatal("invalid widget launcher variant succeeded")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET launcher_variant = NULL WHERE id = $1
+	`, newWidgetRule); err == nil {
+		t.Fatal("null widget launcher variant succeeded")
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM widget_rules WHERE id = $1`, newWidgetRule); err != nil {
+		t.Fatalf("delete disposable launcher variant rule: %v", err)
 	}
 
 	if err := migrateToVersion(migrator, 48); err != nil {

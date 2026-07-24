@@ -157,6 +157,7 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		DefinitionKey:      strings.ToLower(strings.TrimSpace(input.DefinitionKey)),
 		DefinitionStatus:   input.DefinitionStatus,
 		Presentation:       input.Presentation,
+		LauncherVariant:    input.LauncherVariant,
 		Objective:          input.Objective,
 		ResponseBlocks:     normalizeResponseBlocks(input.ResponseBlocks),
 		Localizations:      normalizeLocalizations(input.Localizations),
@@ -213,6 +214,9 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 	values.Enabled = values.DefinitionStatus == DefinitionActive
 	if values.Presentation == "" {
 		values.Presentation = PresentationPrompt
+	}
+	if values.LauncherVariant == "" {
+		values.LauncherVariant = LauncherVariantEdgeTab
 	}
 	if values.Objective == "" {
 		values.Objective = ObjectiveContinuousFeedback
@@ -819,6 +823,11 @@ func validateDefinition(values WidgetRuleValues, fields FieldErrors) {
 	case PresentationLauncher, PresentationInline, PresentationReaction, PresentationPrompt:
 	default:
 		fields["presentation"] = "must be launcher, inline, reaction, or prompt"
+	}
+	switch values.LauncherVariant {
+	case LauncherVariantEdgeTab, LauncherVariantFloatingButton:
+	default:
+		fields["launcher_variant"] = "must be edge_tab or floating_button"
 	}
 	switch values.Objective {
 	case ObjectiveContinuousFeedback, ObjectiveAfterEngagement, ObjectiveValidateContent, ObjectiveDetectFriction:

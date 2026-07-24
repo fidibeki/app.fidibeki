@@ -743,6 +743,8 @@ export const portugueseMessages = {
         definitionKey: 'Chave da definição',
         lifecycleStatus: 'Estado do ciclo de vida',
         presentation: 'Apresentação',
+        launcherVariant: 'Estilo do lançador',
+        launcherVariantRecommended: 'Recomendado',
         objective: 'Objetivo',
         priority: 'Prioridade',
       },
@@ -1130,6 +1132,10 @@ export const portugueseMessages = {
         inline: 'Inline',
         reaction: 'Reação',
         prompt: 'Pergunta',
+      },
+      launcherVariant: {
+        edge_tab: 'Aba lateral',
+        floating_button: 'Botão flutuante',
       },
       objective: {
         continuous_feedback: 'Feedback contínuo',

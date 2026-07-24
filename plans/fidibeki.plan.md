@@ -1098,6 +1098,33 @@ was removed from the staging test tenant.
       editor width. Long Portuguese copy now grows within the available row without colliding with
       the action; narrow viewports stack a full-width action below the copy. Focused desktop/mobile
       geometry assertions, overflow checks, and inspected screenshots cover both panels.
+    - [x] #71: add an `edge_tab` launcher variant alongside the existing `floating_button`. Migration
+      `107` adds a constrained, non-null `launcher_variant` column: existing rows backfill to
+      `floating_button`, new/omitted rows default to `edge_tab`, and a check constraint rejects
+      unknown values. The typed field flows through the domain model, input normalization/validation,
+      the widget-rule store, and the public widget configuration. The widget renders one semantic
+      launcher button, activation handler, panel, and analytics/lifecycle path for both variants;
+      only the closed-state geometry differs — desktop `edge_tab` is flush to the configured side,
+      vertically centered with a bounded height and vertical label; mobile becomes a compact
+      horizontal edge-attached control so long localized labels wrap instead of clipping.
+      `floating_button` keeps its existing inset geometry unchanged. The project editor adds an
+      accessible two-option visual selector (native radios, Lucide icons, Edge tab marked
+      Recommended) shown only for the launcher presentation, with a faithful closed-preview that
+      reflects the selected variant and side; English and Portuguese copy is complete.
+      - Backend: full `go test ./...`, `go vet`, and build pass; the PostgreSQL migration
+        integration test proves existing-row backfill to `floating_button`, new-row default to
+        `edge_tab`, invalid/null value rejection, and a full down/up cycle.
+      - Widget: unit tests (missing-field default, class/attribute selection, side, accent, label,
+        focus, one interaction event) and coverage thresholds pass; typecheck and esbuild build pass;
+        13 new Playwright cases cover both variants, left/right placement, keyboard activation,
+        panel/submit/dismiss parity, long Portuguese wrapping, and no document overflow at desktop
+        and mobile widths, alongside the full existing 67-test browser suite.
+      - Web: unit, typecheck, and Nuxt build pass; two new Playwright cases cover the accessible
+        selector and a faithful desktop preview (side/variant attributes, exact save payload); the
+        full 219-test responsive suite (desktop + mobile) passes.
+      - Desktop/mobile screenshots for both variants (including the long Portuguese wrap) and the
+        editor's live preview were generated and visually inspected locally. Staging validation was
+        not performed under the current no-deployment constraint.
     - The #53-#55 privacy foundation is integrated on `main` through `81de75c`. Backend tests and 80.1%
       coverage, widget unit/typecheck/build and 40 browser journeys, web
       unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.
