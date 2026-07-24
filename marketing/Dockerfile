@@ -1,5 +1,7 @@
 FROM node:24-alpine AS build
 
+ARG NUXT_PUBLIC_APP_URL
+
 WORKDIR /src
 RUN npm install --global pnpm@11.15.1
 

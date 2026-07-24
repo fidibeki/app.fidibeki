@@ -1,6 +1,7 @@
 const developmentBaseDomain = process.env.NODE_ENV === 'development' ? 'localhost' : ''
 const baseDomain = process.env.NUXT_BASE_DOMAIN || developmentBaseDomain
 const publicBaseDomain = process.env.NUXT_PUBLIC_BASE_DOMAIN || developmentBaseDomain
+const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL || ''
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-21',
@@ -60,6 +61,7 @@ export default defineNuxtConfig({
       (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8088' : ''),
     baseDomain,
     public: {
+      appUrl: publicAppUrl,
       baseDomain: publicBaseDomain,
       turnstileSiteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
     },

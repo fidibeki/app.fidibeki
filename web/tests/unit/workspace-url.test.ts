@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applicationURL,
   baseDomainURL,
+  isApplicationHost,
   isBaseDomainHost,
   normalizeWorkspaceSlug,
   workspaceLoginURL,
@@ -32,6 +34,19 @@ describe('workspace URL helpers', () => {
   it('distinguishes the environment root from tenant hosts', () => {
     expect(isBaseDomainHost('staging.fidibeki.com', 'staging.fidibeki.com')).toBe(true)
     expect(isBaseDomainHost('acme.staging.fidibeki.com', 'staging.fidibeki.com')).toBe(false)
+  })
+
+  it('supports an application entry origin separate from the tenant base domain', () => {
+    const tenantURL = new URL('https://acme.fidibeki.com/login')
+
+    expect(applicationURL('https://app.fidibeki.com', 'fidibeki.com', '/signup', tenantURL))
+      .toBe('https://app.fidibeki.com/signup')
+    expect(isApplicationHost('app.fidibeki.com', 'fidibeki.com', 'https://app.fidibeki.com'))
+      .toBe(true)
+    expect(isApplicationHost('fidibeki.com', 'fidibeki.com', 'https://app.fidibeki.com'))
+      .toBe(true)
+    expect(isApplicationHost('acme.fidibeki.com', 'fidibeki.com', 'https://app.fidibeki.com'))
+      .toBe(false)
   })
 
   it('suggests a slug only for a valid direct subdomain of the configured base domain', () => {

@@ -23,6 +23,13 @@ function environmentOrigin(baseDomain: string, currentURL: URL) {
   return `${protocol}//${baseDomain}${port ? `:${port}` : ''}`
 }
 
+export function applicationURL(appURL: string, baseDomain: string, path: string, currentURL: URL) {
+  const origin = appURL.trim()
+    ? new URL(appURL).origin
+    : environmentOrigin(baseDomain, currentURL)
+  return new URL(path, `${origin}/`).href
+}
+
 export function baseDomainURL(baseDomain: string, path: string, currentURL: URL) {
   return new URL(path, `${environmentOrigin(baseDomain, currentURL)}/`).href
 }
@@ -37,6 +44,12 @@ export function workspaceLoginURL(slug: string, baseDomain: string, currentURL: 
 
 export function isBaseDomainHost(hostname: string, baseDomain: string) {
   return hostname.toLowerCase().replace(/\.$/, '') === baseDomain.toLowerCase().replace(/\.$/, '')
+}
+
+export function isApplicationHost(hostname: string, baseDomain: string, appURL: string) {
+  if (isBaseDomainHost(hostname, baseDomain)) return true
+  if (!appURL.trim()) return false
+  return hostname.toLowerCase().replace(/\.$/, '') === new URL(appURL).hostname.toLowerCase().replace(/\.$/, '')
 }
 
 export function workspaceSlugFromStandardHost(hostname: string, baseDomain: string) {

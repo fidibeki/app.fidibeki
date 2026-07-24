@@ -3,6 +3,7 @@ import { marketingRoutes } from '../../data/site'
 
 
 const siteUrl = 'https://fidibeki.com'
+const appUrl = process.env.NUXT_PUBLIC_APP_URL || siteUrl
 
 test('no internal link is broken', async ({ request }) => {
   const internalLinks = new Map<string, string>()
@@ -52,8 +53,8 @@ test('robots.txt allows crawling and names the sitemap', async ({ request }) => 
 
 test('external app links point at the application', async ({ request }) => {
   const html = await (await request.get('/')).text()
-  expect(html).toContain(`href="${siteUrl}/login"`)
-  expect(html).toContain(`href="${siteUrl}/signup"`)
+  expect(html).toContain(`href="${appUrl}/login"`)
+  expect(html).toContain(`href="${appUrl}/signup"`)
 })
 
 test('support email is reachable from every page footer', async ({ request }) => {

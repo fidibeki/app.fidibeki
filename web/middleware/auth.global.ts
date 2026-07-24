@@ -1,7 +1,11 @@
 export default defineNuxtRouteMiddleware(async (to) => {
   const config = useRuntimeConfig()
   if ((to.path === '/' || to.path === '/login') &&
-    isBaseDomainHost(useRequestURL().hostname, String(config.public.baseDomain || ''))) {
+    isApplicationHost(
+      useRequestURL().hostname,
+      String(config.public.baseDomain || ''),
+      String(config.public.appUrl || ''),
+    )) {
     return navigateTo('/signup')
   }
   const regional = useRegionalContext()

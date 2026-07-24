@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight, Building2, CheckCircle2, RefreshCw } from '@lucide/vue'
 import type { TenantConfiguration } from '~/types/api'
-import { baseDomainURL, workspaceSlugFromStandardHost } from '~/utils/workspace-url'
+import { applicationURL, workspaceSlugFromStandardHost } from '~/utils/workspace-url'
 
 definePageMeta({ layout: false })
 
@@ -18,10 +18,11 @@ const requestURL = useRequestURL()
 const requestEvent = import.meta.server ? useRequestEvent() : undefined
 const config = useRuntimeConfig()
 const baseDomain = String(config.public.baseDomain || requestURL.hostname)
-const signupURL = baseDomainURL(baseDomain, '/signup', requestURL)
+const appURL = String(config.public.appUrl || '')
+const signupURL = applicationURL(appURL, baseDomain, '/signup', requestURL)
 const suggestedSlug = workspaceSlugFromStandardHost(requestURL.hostname, baseDomain)
 const suggestedSignupURL = suggestedSlug
-  ? baseDomainURL(baseDomain, `/signup?slug=${encodeURIComponent(suggestedSlug)}`, requestURL)
+  ? applicationURL(appURL, baseDomain, `/signup?slug=${encodeURIComponent(suggestedSlug)}`, requestURL)
   : ''
 const workspaceState = useState<'checking' | 'available' | 'unavailable' | 'error'>(
   `workspace:availability:${requestURL.host}`,

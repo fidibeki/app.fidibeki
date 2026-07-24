@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, RefreshCw } from
 import type { PlanCatalogResponse, SignupResponse, TenantPlan } from '~/types/api'
 import { extractAPIError } from '~/utils/safe-api-error'
 import {
-  baseDomainURL,
+  applicationURL,
   normalizeWorkspaceSlug,
   workspaceLoginURL,
   workspaceSlugError,
@@ -19,6 +19,7 @@ const { t } = useI18n()
 const regionalFormat = useRegionalFormat()
 const localizedError = useLocalizedAPIError()
 const baseDomain = String(config.public.baseDomain || requestURL.hostname)
+const appURL = String(config.public.appUrl || '')
 const siteKey = String(config.public.turnstileSiteKey || '')
 const name = ref('')
 const requestedSlug = typeof route.query.slug === 'string' ? normalizeWorkspaceSlug(route.query.slug) : ''
@@ -160,7 +161,7 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 <template>
   <main class="signup-page">
     <section class="signup-context">
-      <NuxtLink :to="baseDomainURL(baseDomain, '/signup', requestURL)" class="signup-brand" aria-label="Fidibeki">
+      <NuxtLink :to="applicationURL(appURL, baseDomain, '/signup', requestURL)" class="signup-brand" aria-label="Fidibeki">
         <img src="/brand/fidibeki-white.png" alt="Fidibeki" />
       </NuxtLink>
       <div class="signup-context-copy">
