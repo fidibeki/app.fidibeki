@@ -438,7 +438,7 @@ func TestWidgetAnalyticsConsentDiagnosticAggregatesSafelyAndEnforcesTenantScope(
 	insertConsent(ruleID, "2026-07", "denied", "", nil,
 		at(-5*24*time.Hour), nil, nil, at(25*24*time.Hour), at(-5*24*time.Hour))
 	insertConsent(ruleID, "2026-07", "withdrawn", strings.Repeat("5", 64), ref("cmp-ref-withdrawn"),
-		at(-50*24*time.Hour), at(-50*24*time.Hour), at(-45*24*time.Hour), at(10*24*time.Hour), at(-45*24*time.Hour))
+		at(-50*24*time.Hour), at(-50*24*time.Hour), at(-2*24*time.Hour), at(10*24*time.Hour), at(-2*24*time.Hour))
 	insertConsent(ruleID, "2026-07", "expired", strings.Repeat("6", 64), ref("cmp-ref-expired"),
 		at(-90*24*time.Hour), at(-90*24*time.Hour), nil, at(-60*24*time.Hour), at(-90*24*time.Hour))
 	// Stale-notice evidence: an earlier contract version must never bleed into the current
@@ -517,7 +517,7 @@ func TestWidgetAnalyticsConsentDiagnosticAggregatesSafelyAndEnforcesTenantScope(
 		`"denied_count":1`,
 		`"withdrawn_count":1`,
 		`"expired_count":2`,
-		`"recent_count":3`,
+		`"recent_count":4`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("diagnostic body missing %q: %s", want, body)

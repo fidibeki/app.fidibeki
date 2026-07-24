@@ -10,12 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The widget_analytics consent diagnostic mirrors internal/replay's ConsentDiagnostic in spirit
-// (tenant-safe backoffice visibility into the current consent contract) but stays aggregate:
-// analytics has no per-visitor session to link back to, so the safe signal is state/count/expiry
-// health for the rule's current consent configuration rather than a single evidence record.
-// Consent tokens, consent references, and visitor/page-view identifiers are never selected or
-// returned (issue #58).
 const (
 	analyticsConsentExpiringSoonWindow   = 7 * 24 * time.Hour
 	analyticsConsentRecentActivityWindow = 30 * 24 * time.Hour
@@ -73,7 +67,7 @@ func (Store) GetConsentDiagnostic(
 			count(*) FILTER (WHERE state = 'denied'),
 			count(*) FILTER (WHERE state = 'withdrawn'),
 			count(*) FILTER (WHERE state = 'expired' OR (state = 'active' AND expires_at <= $5)),
-			count(*) FILTER (WHERE created_at >= $7),
+			count(*) FILTER (WHERE updated_at >= $7),
 			min(expires_at) FILTER (WHERE state = 'active' AND expires_at > $5),
 			max(updated_at)
 		FROM widget_analytics_consents

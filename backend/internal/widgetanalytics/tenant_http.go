@@ -120,12 +120,21 @@ func (h *TenantHTTPHandler) getConsentDiagnostic(w http.ResponseWriter, r *http.
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
+	if !h.concurrency.acquire(resolved.ID) {
+		w.Header().Set("Retry-After", analyticsConcurrencyRetryAfter)
+		api.WriteError(w, http.StatusTooManyRequests, api.CodeRateLimitExceeded,
+			"too many concurrent analytics queries", nil)
+		return
+	}
+	defer h.concurrency.release(resolved.ID)
 	now := time.Now().UTC()
 	if h.options.Now != nil {
 		now = h.options.Now().UTC()
 	}
+	queryContext, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
+	defer cancel()
 	diagnostic, err := h.options.Store.GetConsentDiagnostic(
-		r.Context(), query, resolved.ID, projectID, ruleID, now,
+		queryContext, query, resolved.ID, projectID, ruleID, now,
 	)
 	if errors.Is(err, ErrNotFound) {
 		writeAnalyticsConsentDiagnosticNotFound(w)

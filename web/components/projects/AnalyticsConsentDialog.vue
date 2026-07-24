@@ -134,7 +134,6 @@ function normalizedDefaultLocale() {
 function selectMode(mode: Exclude<AnalyticsConsentMode, 'none'>) {
   draft.value.mode = mode
   if (draft.value.supported_locales.length === 0) toggleLocale(normalizedDefaultLocale(), true)
-  void loadDiagnostic()
 }
 
 function toggleLocale(locale: string, checked: boolean) {

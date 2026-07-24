@@ -950,7 +950,6 @@ export const portugueseMessages = {
             fidibeki_managed: 'A Fidibeki apresenta o aviso aprovado antes de iniciar a análise do widget.',
             customer_cmp: 'A análise do widget aguarda uma autorização estruturada do gestor de consentimento do cliente.',
           },
-          diagnosticTitle: 'Diagnóstico de consentimento',
           diagnosticSaveFirst: 'Guarde esta regra antes de verificar as autorizações.',
           diagnosticChecking: 'A verificar as autorizações mais recentes…',
           diagnosticUnavailable: 'O diagnóstico de consentimento está temporariamente indisponível.',

@@ -950,7 +950,6 @@ export const englishMessages = {
             fidibeki_managed: 'Fidibeki will show the approved notice before widget analytics starts.',
             customer_cmp: 'Widget analytics waits for a structured grant from the customer consent manager.',
           },
-          diagnosticTitle: 'Consent diagnostic',
           diagnosticSaveFirst: 'Save this rule before checking consent evidence.',
           diagnosticChecking: 'Checking the latest consent evidence…',
           diagnosticUnavailable: 'The consent diagnostic is temporarily unavailable.',

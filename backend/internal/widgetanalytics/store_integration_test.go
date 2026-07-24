@@ -91,7 +91,8 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	var readerID, deniedID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)
-		VALUES ($1, 'analytics-reader@acme.test', ARRAY['project:read']) RETURNING id
+		VALUES ($1, 'analytics-reader@acme.test', ARRAY['project:read', 'widget_rule:read'])
+		RETURNING id
 	`, tenantID).Scan(&readerID); err != nil {
 		t.Fatalf("create analytics reader: %v", err)
 	}
@@ -161,7 +162,9 @@ func TestStorePersistsMatchedEventIdempotentlyAndSummarizesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create JWT manager: %v", err)
 	}
-	readToken, _, err := jwtManager.IssueTenant(readerID, tenantID, []string{string(auth.PermissionProjectRead)})
+	readToken, _, err := jwtManager.IssueTenant(readerID, tenantID, []string{
+		string(auth.PermissionProjectRead), string(auth.PermissionWidgetRuleRead),
+	})
 	if err != nil {
 		t.Fatalf("issue analytics token: %v", err)
 	}
@@ -253,6 +256,21 @@ func assertAnalyticsQueryTimeout(
 		if !strings.Contains(logs.String(), field) {
 			t.Fatalf("timed-out analytics log = %s, missing %s", logs.String(), field)
 		}
+	}
+
+	logs.Reset()
+	diagnostic := tenantAnalyticsRequest(
+		handler,
+		"/v1/projects/00000000-0000-4000-8000-000000000001/widget-rules/"+
+			"00000000-0000-4000-8000-000000000002/analytics-consent-diagnostic",
+		readToken,
+	)
+	if diagnostic.Code != http.StatusServiceUnavailable {
+		t.Fatalf("timed-out consent diagnostic status = %d body %s",
+			diagnostic.Code, diagnostic.Body.String())
+	}
+	if !strings.Contains(logs.String(), `"msg":"widget analytics consent diagnostic query failed"`) {
+		t.Fatalf("timed-out consent diagnostic log = %s", logs.String())
 	}
 }
 
