@@ -294,13 +294,7 @@ func (h *httpHandler) createProviderIncidentIntake(w http.ResponseWriter, r *htt
 	}
 	intake, err := h.options.Store.CreateProviderIncidentIntake(
 		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
-		CreateProviderIncidentIntakeInput{
-			ProviderID: request.ProviderID, ProviderNoticeReference: request.ProviderNoticeReference,
-			ProviderReportedAt: request.ProviderReportedAt, Summary: request.Summary,
-			EvidenceReferences:         request.EvidenceReferences,
-			AffectedDataFlowCategories: request.AffectedDataFlowCategories,
-			AffectedTenantIDs:          request.AffectedTenantIDs,
-		},
+		CreateProviderIncidentIntakeInput(request),
 	)
 	if err != nil {
 		writeError(w, err)
@@ -404,10 +398,7 @@ func (h *httpHandler) createPostIncidentAction(w http.ResponseWriter, r *http.Re
 	}
 	action, err := h.options.Store.CreatePostIncidentAction(
 		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
-		CreatePostIncidentActionInput{
-			Title: request.Title, OwnerPlatformAdminID: request.OwnerPlatformAdminID,
-			DueAt: request.DueAt, CorrectiveReference: request.CorrectiveReference,
-		},
+		CreatePostIncidentActionInput(request),
 	)
 	if err != nil {
 		writeError(w, err)

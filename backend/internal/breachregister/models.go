@@ -287,7 +287,7 @@ func normalizeCreateIncidentInput(input CreateIncidentInput) (CreateIncidentInpu
 	if input.AwarenessAt.IsZero() {
 		return CreateIncidentInput{}, ErrInvalidRequest
 	}
-	if !(input.ConfidentialityImpact || input.IntegrityImpact || input.AvailabilityImpact) {
+	if !input.ConfidentialityImpact && !input.IntegrityImpact && !input.AvailabilityImpact {
 		return CreateIncidentInput{}, ErrInvalidRequest
 	}
 	environments, err := validateBoundedSet(input.AffectedEnvironments, affectedEnvironments, 10)

@@ -250,7 +250,9 @@ func readDirectGoDependencies(path string) (map[string]struct{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open Go module: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	dependencies := make(map[string]struct{})
 	inRequireBlock := false
