@@ -18,11 +18,14 @@ lint:
 
 # Local release gate for issue #63: fails if the provider governance registry is incomplete,
 # diverges from the retention registry's evidenced provider set, falsely marks an entry approved,
-# carries a stale review, or omits a personal-data category from the role matrix. This only detects
-# drift BETWEEN the two hand-maintained registries; it cannot discover a wholly new external adapter
-# that was never added to either one. Enables no provider and changes no runtime behavior.
+# carries a stale review, or omits a personal-data category from the role matrix; and fails if the
+# ROPA/DPIA processing-activity registry diverges from the retention/provider registries, drops or
+# duplicates retention-category coverage, or claims a lawful-basis/DPIA decision without complete,
+# current, non-placeholder evidence. This only detects drift BETWEEN these hand-maintained
+# registries; it cannot discover a wholly new external adapter or processing purpose that was never
+# added to any of them. Enables no provider and changes no runtime behavior.
 governance-check:
-	cd backend && go test ./internal/privacy/... -run 'Governance' -v
+	cd backend && go test ./internal/privacy/... -run 'Governance|ROPA|DPIA' -v
 
 vulncheck:
 	cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...

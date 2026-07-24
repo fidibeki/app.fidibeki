@@ -26,6 +26,25 @@ The registry is descriptive and read-only. It does not add cleaners, change exis
 or authorize deletion. Resource coverage is tested against migration DDL; the non-database
 inventory remains an engineering review boundary rather than a claim about provider enablement.
 
+## Records Of Processing Activities (ROPA) And DPIA Screening
+
+`backend/internal/privacy/ropa_registry.go` groups the retention registry's 27 categories into 19
+code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
+more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
+validated against, the retention registry rather than hand-duplicated), data-subject and
+data-category classifications, security-control references, a lawful-basis status, and a DPIA
+screening snapshot (technically-evidenced risk indicators drawn from the EDPB WP248 nine criteria,
+an outcome, a reason, and owner/review/approval evidence). Recipient/provider references are never
+hand-authored; they are derived from the `RetentionProvider` resources the retention registry already
+attaches to each activity's member categories.
+
+Every activity in this registry starts, and today remains, `lawful_basis: pending` and
+`dpia.outcome: pending`. `PublicationReady` is computed from completeness rules rather than a literal
+field, so it cannot be set to `true` by editing the registry — only by recording real founder/legal
+lawful-basis and DPIA evidence in the fields the validator already checks. This is an engineering
+foundation for the ROPA and DPIA screening #63 requires, not a published ROPA, an executed DPIA, or a
+legal conclusion. `make governance-check` validates it alongside the provider governance registry.
+
 ## Data Categories And Purpose
 
 | Category | Examples | Technical purpose | Primary store | Effective technical retention |
@@ -206,6 +225,9 @@ copy/version, locales, and privacy-policy URL for the analytics notice specifica
 
 ## Review Gaps
 
+- Founder/legal must record a lawful basis and a DPIA screening outcome (required or not required,
+  with mitigations, owner, and approval evidence) for each of the 19 processing activities in
+  `backend/internal/privacy/ropa_registry.go`; every activity is currently `pending` on both.
 - Legal must define published retention and deletion commitments from these technical defaults.
 - Provider contracts, current subprocessors, residency, cross-border transfers, and breach terms
   require separate review.

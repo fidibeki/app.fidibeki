@@ -710,12 +710,29 @@ was removed from the staging test tenant.
         actual form; the bilingual backoffice manages the profile, previews the resolved notice,
         and warns on incomplete contact collection. Backend, web, widget, responsive E2E, migration,
         vet, formatting, and repository-wide regression checks pass locally.
+      - [x] ROPA/DPIA screening foundation: a typed code-owned registry
+        (`backend/internal/privacy/ropa_registry.go`) groups the retention registry's 27 categories
+        into 19 Article-30 processing activities covering each category exactly once. Role and
+        recipient/provider references are derived from, and validated against, the retention and
+        provider governance registries rather than hand-duplicated. Each activity carries
+        data-subject/data-category classifications, security-control references, a lawful-basis
+        status, and a DPIA screening snapshot (EDPB WP248 risk indicators, outcome, reason, and
+        owner/review/approval evidence). Every activity starts, and today remains,
+        `lawful_basis: pending` and `dpia.outcome: pending`; `PublicationReady` is computed from
+        completeness rules rather than a literal field, so it cannot be declared true without real
+        evidence. Validation rejects retention-category coverage drift (missing, duplicate, or
+        unknown categories), role inconsistency between an activity and its member categories,
+        unknown recipient providers, placeholder lawful-basis/DPIA evidence, stale reviews, and
+        approval-before-review timestamps, reusing the provider governance registry's staleness
+        window and placeholder detection. `make governance-check`'s pattern now covers `Governance`,
+        `ROPA`, and `DPIA` tests. No lawful basis, DPIA decision, or legal approval is recorded.
       - Remaining #63 slices: founder/legal review of actual provider entities, regions, contracts,
         transfer mechanisms, roles, owners, and review dates; approved/published provider register
-        and Article 28 DPA; provider change authorization/objection workflow; maintained ROPA and
-        DPIA screening/decision workflow; staging reconciliation, link tests, localized E2E, and
-        release gating for providers newly introduced in code as well as those added to the
-        retention inventory.
+        and Article 28 DPA; provider change authorization/objection workflow; founder/legal lawful-
+        basis identification and DPIA screening decisions (required/not-required) for each of the 19
+        processing activities, with mitigations, owners, and approval evidence; staging
+        reconciliation, link tests, localized E2E, and release gating for providers newly introduced
+        in code as well as those added to the retention inventory.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,
       processor-to-controller notifications, decision evidence, and staging exercises.
       - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only
