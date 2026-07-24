@@ -459,7 +459,7 @@ func TestRenderNotificationMarkdownTableCellsEscapePipesAndBackticksInDeliveryEv
 		RecipientEmail: "a@example.com", WorkspaceName: "W", Summary: "s", MeasuresTaken: "m",
 		Status: ControllerNotificationSent,
 		DeliveryAttempts: []ControllerNotificationAttempt{
-			{ID: "attempt-1", AttemptNumber: 1, Status: ControllerNotificationAttemptSent,
+			{ID: "attempt-1", NotificationID: "n1", AttemptNumber: 1, Status: ControllerNotificationAttemptSent,
 				ProviderMessageID: &providerID, AttemptedAt: time.Now()},
 		},
 	})
@@ -474,14 +474,17 @@ func TestRenderNotificationMarkdownTableCellsEscapePipesAndBackticksInDeliveryEv
 	if row == "" {
 		t.Fatalf("delivery attempt table row not found:\n%s", markdown)
 	}
-	// Six columns (Attempt ID, Attempt, Status, Provider message ID, Error,
-	// Attempted at) means exactly 7 structural pipe delimiters, regardless of
-	// a raw pipe smuggled into a cell value.
-	if got := countUnescapedPipes(row); got != 7 {
-		t.Fatalf("delivery attempt row has %d unescaped pipes, want 7 (row: %q)", got, row)
+	// Seven columns (Attempt ID, Notification ID, Attempt, Status, Provider
+	// message ID, Error, Attempted at) means exactly 8 structural pipe
+	// delimiters, regardless of a raw pipe smuggled into a cell value.
+	if got := countUnescapedPipes(row); got != 8 {
+		t.Fatalf("delivery attempt row has %d unescaped pipes, want 8 (row: %q)", got, row)
 	}
 	if !strings.Contains(row, "abc\\|def\\`ghi") {
 		t.Fatalf("delivery attempt row did not preserve the embedded pipe/backtick in escaped form: %q", row)
+	}
+	if !strings.Contains(row, "| n1 |") {
+		t.Fatalf("delivery attempt row missing its own NotificationID column: %q", row)
 	}
 }
 
@@ -507,6 +510,11 @@ func fullNotification() ControllerNotification {
 		LastError: &lastError, ProviderMessageID: &providerMessageID, LastAttemptAt: &lastAttemptAt,
 		QueuedAt: &queuedAt, SentAt: &sentAt, CreatedByPlatformAdminID: "admin-creator",
 		QueuedByPlatformAdminID: &queuedBy, CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now,
+		DeliveryAttempts: []ControllerNotificationAttempt{
+			{ID: "attempt-full", NotificationID: "notification-full", AttemptNumber: 1,
+				Status: ControllerNotificationAttemptSent, ProviderMessageID: &providerMessageID,
+				AttemptedAt: lastAttemptAt},
+		},
 	}
 }
 
@@ -524,6 +532,12 @@ func TestRenderNotificationMarkdownIncludesFullFieldParityWithJSON(t *testing.T)
 		if !strings.Contains(markdown, want) {
 			t.Errorf("markdown missing %q:\n%s", want, markdown)
 		}
+	}
+	// The delivery-attempt table row must carry its own NotificationID
+	// column, even though the whole table is already nested under this
+	// notification's section.
+	if !strings.Contains(markdown, "| attempt-full | notification-full |") {
+		t.Errorf("delivery attempt row missing its own NotificationID column:\n%s", markdown)
 	}
 }
 
@@ -621,12 +635,19 @@ func TestRenderPostIncidentReportIncludesFullFieldParityWithJSON(t *testing.T) {
 	dueAt := now.Add(72 * time.Hour)
 	outcome := "Outcome text."
 	corrective := "corrective-ref-1"
+	containmentArea := ContainmentAPIKeys
 	actions := []ActionEvent{
-		{ID: "event-full", Sequence: 5, ActionID: "action-full", ActionKind: ActionPostIncident,
-			Title: "Owner review", Status: ActionCompleted, Revision: 2, OwnerPlatformAdminID: &owner,
-			DueAt: &dueAt, OutcomeSummary: &outcome, CorrectiveReference: &corrective,
-			EvidenceReferences: []string{"action-evidence-1"}, ActorPlatformAdminID: "admin-action-actor",
-			OccurredAt: now.Add(-10 * time.Hour), CreatedAt: now.Add(-10 * time.Hour)},
+		{ID: "event-full", BreachIncidentID: "incident-1", Sequence: 5, ActionID: "action-full",
+			ActionKind: ActionPostIncident, Title: "Owner review", Status: ActionCompleted, Revision: 2,
+			OwnerPlatformAdminID: &owner, DueAt: &dueAt, OutcomeSummary: &outcome,
+			CorrectiveReference: &corrective, EvidenceReferences: []string{"action-evidence-1"},
+			ActorPlatformAdminID: "admin-action-actor",
+			OccurredAt:           now.Add(-10 * time.Hour), CreatedAt: now.Add(-10 * time.Hour)},
+		{ID: "event-containment", BreachIncidentID: "incident-1", Sequence: 6,
+			ActionID: "action-containment", ActionKind: ActionContainment, ContainmentArea: &containmentArea,
+			Title: "Rotate keys", Status: ActionInProgress, Revision: 1,
+			ActorPlatformAdminID: "admin-containment-actor",
+			OccurredAt:           now.Add(-11 * time.Hour), CreatedAt: now.Add(-11 * time.Hour)},
 	}
 	actionEvents := actions
 	notifications := []ControllerNotification{fullNotification()}
@@ -641,11 +662,40 @@ func TestRenderPostIncidentReportIncludesFullFieldParityWithJSON(t *testing.T) {
 		"Likely consequences text.", "Recovery measures text.", "assessment-evidence-1",
 		"event-full", "action-full", "admin-owner", dueAt.Format(time.RFC3339),
 		"Outcome text.", "corrective-ref-1", "action-evidence-1", "admin-action-actor",
+		"event-containment", "action-containment", "admin-containment-actor",
 		"tenant-xyz", "admin-creator", // from the embedded notification ledger entry
 	} {
 		if !strings.Contains(markdown, want) {
 			t.Errorf("report markdown missing %q:\n%s", want, markdown)
 		}
+	}
+
+	// Each Current Actions entry must carry its own BreachIncidentID,
+	// alongside the chronology entry's and assessment's own copies of the
+	// same field.
+	if got := strings.Count(markdown, "- Breach incident ID: incident-1"); got != 4 {
+		t.Errorf("markdown has %d \"Breach incident ID\" lines, want 4 (1 chronology entry + 1 assessment + 2 actions):\n%s",
+			got, markdown)
+	}
+
+	// The Action History Summary table must carry ActionKind and
+	// ContainmentArea per row, with an explicit "(not applicable)" for the
+	// post-incident action (which has no containment area) and the real
+	// value for the containment action.
+	if !strings.Contains(markdown, "| action-full | post_incident | (not applicable) | Owner review |") {
+		t.Errorf("Action History Summary missing the post-incident action's \"(not applicable)\" containment area:\n%s",
+			markdown)
+	}
+	if !strings.Contains(markdown, "| action-containment | containment | api_keys | Rotate keys |") {
+		t.Errorf("Action History Summary missing the containment action's ActionKind/ContainmentArea:\n%s",
+			markdown)
+	}
+
+	// The embedded notification's delivery-attempt row must carry its own
+	// NotificationID column even though it's nested under the notification
+	// ledger section.
+	if !strings.Contains(markdown, "| attempt-full | notification-full |") {
+		t.Errorf("embedded notification's delivery attempt row missing its own NotificationID column:\n%s", markdown)
 	}
 }
 

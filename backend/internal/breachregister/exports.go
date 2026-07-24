@@ -258,6 +258,16 @@ func optionalTimeOrPending(value *time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
+// containmentAreaOrNotApplicable renders an action's containment area, or an
+// explicit "(not applicable)" marker for a post-incident action (which has
+// no containment area by definition -- see CreatePostIncidentAction).
+func containmentAreaOrNotApplicable(area *ContainmentArea) string {
+	if area == nil {
+		return "(not applicable)"
+	}
+	return string(*area)
+}
+
 // optionalRangeOrPending renders a paired minimum/maximum estimate as an
 // explicit "(pending)" marker when neither bound has been recorded yet
 // (normalizeEstimateRange guarantees the pair is never partially set).
@@ -379,11 +389,11 @@ func renderNotificationDetail(builder *strings.Builder, notification ControllerN
 	if len(notification.DeliveryAttempts) == 0 {
 		builder.WriteString("No delivery attempts recorded yet.\n\n")
 	} else {
-		builder.WriteString("| Attempt ID | Attempt | Status | Provider message ID | Error | Attempted at |\n")
-		builder.WriteString("| --- | --- | --- | --- | --- | --- |\n")
+		builder.WriteString("| Attempt ID | Notification ID | Attempt | Status | Provider message ID | Error | Attempted at |\n")
+		builder.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 		for _, attempt := range notification.DeliveryAttempts {
-			fmt.Fprintf(builder, "| %s | %d | %s | %s | %s | %s |\n",
-				attempt.ID, attempt.AttemptNumber, attempt.Status,
+			fmt.Fprintf(builder, "| %s | %s | %d | %s | %s | %s | %s |\n",
+				attempt.ID, attempt.NotificationID, attempt.AttemptNumber, attempt.Status,
 				optionalOrNoneEscaped(attempt.ProviderMessageID), optionalOrNoneEscaped(attempt.ErrorMessage),
 				attempt.AttemptedAt.Format(time.RFC3339))
 		}
@@ -479,15 +489,12 @@ func renderPostIncidentReportMarkdown(report PostIncidentReport) string {
 		for _, action := range report.Actions {
 			fmt.Fprintf(&builder, "### Action %s -- %s\n\n", action.ActionID, mdEscapeInline(action.Title))
 			fmt.Fprintf(&builder, "- Ledger event ID: %s\n", action.ID)
+			fmt.Fprintf(&builder, "- Breach incident ID: %s\n", action.BreachIncidentID)
 			fmt.Fprintf(&builder, "- Ledger sequence: %d\n", action.Sequence)
 			fmt.Fprintf(&builder, "- Action ID: %s\n", action.ActionID)
 			fmt.Fprintf(&builder, "- Revision: %d\n", action.Revision)
 			fmt.Fprintf(&builder, "- Action kind: %s\n", action.ActionKind)
-			if action.ContainmentArea != nil {
-				fmt.Fprintf(&builder, "- Containment area: %s\n", *action.ContainmentArea)
-			} else {
-				builder.WriteString("- Containment area: (not applicable)\n")
-			}
+			fmt.Fprintf(&builder, "- Containment area: %s\n", containmentAreaOrNotApplicable(action.ContainmentArea))
 			fmt.Fprintf(&builder, "- Title: %s\n", mdEscapeInline(action.Title))
 			fmt.Fprintf(&builder, "- Status: %s\n", action.Status)
 			fmt.Fprintf(&builder, "- Owner (platform admin ID): %s\n", optionalOrNone(action.OwnerPlatformAdminID))
@@ -505,11 +512,12 @@ func renderPostIncidentReportMarkdown(report PostIncidentReport) string {
 	if len(report.ActionHistorySummary) == 0 {
 		builder.WriteString("No action history recorded.\n\n")
 	} else {
-		builder.WriteString("| Action ID | Title | Current status | Current revision | Revisions | First occurred | Last occurred |\n")
-		builder.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+		builder.WriteString("| Action ID | Action kind | Containment area | Title | Current status | Current revision | Revisions | First occurred | Last occurred |\n")
+		builder.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 		for _, summary := range report.ActionHistorySummary {
-			fmt.Fprintf(&builder, "| %s | %s | %s | %d | %d | %s | %s |\n",
-				summary.ActionID, mdEscapeInline(summary.Title), summary.CurrentStatus,
+			fmt.Fprintf(&builder, "| %s | %s | %s | %s | %s | %d | %d | %s | %s |\n",
+				summary.ActionID, summary.ActionKind, containmentAreaOrNotApplicable(summary.ContainmentArea),
+				mdEscapeInline(summary.Title), summary.CurrentStatus,
 				summary.CurrentRevision, summary.RevisionCount,
 				summary.FirstOccurredAt.Format(time.RFC3339), summary.LastOccurredAt.Format(time.RFC3339))
 		}
