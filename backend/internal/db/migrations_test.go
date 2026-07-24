@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 101
+	const latestMigrationVersion = 103
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2608,6 +2608,71 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			canSelectCommunications, canInsertCommunications, canDeleteCommunications,
 			canUpdateCommunicationStatus, canUpdateCommunicationBody,
 		)
+	}
+
+	var privacyContact, privacyRights *string
+	var privacyProfileVersion int
+	if err := root.QueryRow(ctx, `
+		SELECT privacy_contact_email::text, privacy_rights_email::text, privacy_profile_version
+		FROM tenants WHERE id = $1
+	`, tenantA).Scan(&privacyContact, &privacyRights, &privacyProfileVersion); err != nil {
+		t.Fatalf("read contextual controller profile defaults: %v", err)
+	}
+	if privacyContact != nil || privacyRights != nil || privacyProfileVersion != 0 {
+		t.Fatalf(
+			"contextual controller profile defaults = %v/%v/%d, want nil/nil/0",
+			privacyContact, privacyRights, privacyProfileVersion,
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET privacy_contact_email = 'not-an-email' WHERE id = $1
+	`, tenantA); err == nil {
+		t.Fatal("invalid privacy contact email was accepted")
+	}
+	const controllerNoticeSnapshot = `{
+		"schema_version":1,
+		"notice_version":"2026-07-controller-v1",
+		"controller_profile_version":1,
+		"widget_definition_version":2,
+		"locale":"en",
+		"controller_name":"Migration Tenant",
+		"privacy_contact_email":"privacy@example.test",
+		"privacy_rights_email":"rights@example.test",
+		"privacy_policy_url":"https://example.test/privacy",
+		"purpose_summary":"Send updates about this feedback.",
+		"lawful_basis_summary":"Consent for optional status updates.",
+		"retention_summary":"Retained until withdrawal or the approved case period."
+	}`
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks
+		SET reporter_consent_notice_version = '2026-07-controller-v1',
+		    reporter_consent_notice_snapshot = $2::jsonb
+		WHERE id = $1
+	`, feedbackA, controllerNoticeSnapshot); err != nil {
+		t.Fatalf("apply contextual controller notice evidence: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issues
+		SET reporter_consent_notice_version = '2026-07-controller-v1'
+		WHERE id = $1
+	`, issueA); err == nil {
+		t.Fatal("contextual controller notice without snapshot was accepted")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks
+		SET reporter_consent_notice_snapshot =
+		    reporter_consent_notice_snapshot || '{"unexpected":"content"}'::jsonb
+		WHERE id = $1
+	`, feedbackA); err == nil {
+		t.Fatal("contextual controller notice with an extra snapshot field was accepted")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE feedbacks
+		SET reporter_consent_notice_version = '2026-07',
+		    reporter_consent_notice_snapshot = NULL
+		WHERE id = $1
+	`, feedbackA); err != nil {
+		t.Fatalf("restore legacy consent evidence before rollback replay: %v", err)
 	}
 
 	pools.Close()

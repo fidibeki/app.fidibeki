@@ -343,6 +343,10 @@ export const adminMessages = {
     brandAccent: 'Brand accent',
     brandAccentSwatch: 'Brand accent swatch',
     privacyPolicy: 'Privacy policy',
+    privacyContact: 'Privacy contact email',
+    privacyContactPlaceholder: "privacy{'@'}example.com",
+    rightsContact: 'Rights request email',
+    rightsContactPlaceholder: "rights{'@'}example.com",
     terms: 'Terms of use',
     readOnly: 'Organization profile is read-only for this account.',
     notices: {

@@ -137,15 +137,17 @@ func ValidateOrganizationProfile(
 ) (tenant.OrganizationProfile, map[string]string) {
 	fields := map[string]string{}
 	profile := tenant.OrganizationProfile{
-		Name:             strings.TrimSpace(input.Name),
-		ShortName:        optionalTrim(input.ShortName),
-		WebsiteURL:       optionalTrim(input.WebsiteURL),
-		SupportEmail:     optionalLower(input.SupportEmail),
-		AccentColor:      optionalLower(input.AccentColor),
-		DefaultLocale:    optionalTrim(input.DefaultLocale),
-		DefaultTimezone:  optionalTrim(input.DefaultTimezone),
-		PrivacyPolicyURL: optionalTrim(input.PrivacyPolicyURL),
-		TermsURL:         optionalTrim(input.TermsURL),
+		Name:                strings.TrimSpace(input.Name),
+		ShortName:           optionalTrim(input.ShortName),
+		WebsiteURL:          optionalTrim(input.WebsiteURL),
+		SupportEmail:        optionalLower(input.SupportEmail),
+		AccentColor:         optionalLower(input.AccentColor),
+		DefaultLocale:       optionalTrim(input.DefaultLocale),
+		DefaultTimezone:     optionalTrim(input.DefaultTimezone),
+		PrivacyPolicyURL:    optionalTrim(input.PrivacyPolicyURL),
+		PrivacyContactEmail: optionalLower(input.PrivacyContactEmail),
+		PrivacyRightsEmail:  optionalLower(input.PrivacyRightsEmail),
+		TermsURL:            optionalTrim(input.TermsURL),
 	}
 	if count := utf8.RuneCountInString(profile.Name); count < 1 || count > 120 {
 		fields["name"] = "must be between 1 and 120 characters"
@@ -154,15 +156,23 @@ func ValidateOrganizationProfile(
 		fields["short_name"] = "must be at most 32 characters"
 	}
 	for name, value := range map[string]*string{
-		"website_url": profile.WebsiteURL, "privacy_policy_url": profile.PrivacyPolicyURL,
-		"terms_url": profile.TermsURL,
+		"website_url": profile.WebsiteURL, "terms_url": profile.TermsURL,
 	} {
 		if value != nil && !validOrganizationURL(*value) {
 			fields[name] = "must be an absolute HTTP or HTTPS URL"
 		}
 	}
-	if profile.SupportEmail != nil && !validOrganizationEmail(*profile.SupportEmail) {
-		fields["support_email"] = "must be a valid email address"
+	if profile.PrivacyPolicyURL != nil && !validPrivacyPolicyURL(*profile.PrivacyPolicyURL) {
+		fields["privacy_policy_url"] = "must be an absolute HTTPS URL without credentials, query parameters, or a fragment"
+	}
+	for name, value := range map[string]*string{
+		"support_email":         profile.SupportEmail,
+		"privacy_contact_email": profile.PrivacyContactEmail,
+		"privacy_rights_email":  profile.PrivacyRightsEmail,
+	} {
+		if value != nil && !validOrganizationEmail(*value) {
+			fields[name] = "must be a valid email address"
+		}
 	}
 	if profile.DefaultLocale != nil {
 		normalized, ok := normalizeOrganizationLocale(*profile.DefaultLocale)
@@ -213,6 +223,15 @@ func validOrganizationURL(candidate string) bool {
 	parsed, err := url.ParseRequestURI(candidate)
 	return err == nil && parsed.IsAbs() && parsed.Host != "" && parsed.User == nil &&
 		(parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func validPrivacyPolicyURL(candidate string) bool {
+	if utf8.RuneCountInString(candidate) > 2048 {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(candidate)
+	return err == nil && parsed.IsAbs() && parsed.Host != "" && parsed.User == nil &&
+		parsed.Scheme == "https" && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 func validOrganizationEmail(candidate string) bool {
@@ -276,19 +295,30 @@ func (s Store) UpdateOrganizationProfile(
 		    default_locale = $6,
 		    default_timezone = $7,
 		    privacy_policy_url = $8,
-		    terms_url = $9,
+		    privacy_contact_email = $9::citext,
+		    privacy_rights_email = $10::citext,
+		    privacy_profile_version = privacy_profile_version + CASE
+		        WHEN ROW(
+		            name, privacy_policy_url, privacy_contact_email,
+		            privacy_rights_email
+		        ) IS DISTINCT FROM ROW($2::text, $8::text, $9::citext, $10::citext)
+		        THEN 1 ELSE 0
+		    END,
+		    terms_url = $11,
 		    widget_appearance_defaults = CASE
-		        WHEN $10::text IS NULL THEN widget_appearance_defaults - 'accent_color'
+		        WHEN $12::text IS NULL THEN widget_appearance_defaults - 'accent_color'
 		        ELSE jsonb_set(
-		            widget_appearance_defaults, '{accent_color}', to_jsonb($10::text), true
+		            widget_appearance_defaults, '{accent_color}', to_jsonb($12::text), true
 		        )
 		    END
 		WHERE id = $1
-		RETURNING name, short_name, website_url, support_email::text,
+	RETURNING name, short_name, website_url, support_email::text,
 		          widget_appearance_defaults->>'accent_color', default_locale, default_timezone,
-		          privacy_policy_url, terms_url, logo_version::text
+		          privacy_policy_url, privacy_contact_email::text, privacy_rights_email::text,
+		          privacy_profile_version, terms_url, logo_version::text
 	`, tenantID, input.Name, input.ShortName, input.WebsiteURL, input.SupportEmail,
-		input.DefaultLocale, input.DefaultTimezone, input.PrivacyPolicyURL, input.TermsURL,
+		input.DefaultLocale, input.DefaultTimezone, input.PrivacyPolicyURL,
+		input.PrivacyContactEmail, input.PrivacyRightsEmail, input.TermsURL,
 		input.AccentColor))
 	if err != nil {
 		return tenant.OrganizationProfile{}, fmt.Errorf("update organization profile: %w", err)
@@ -310,9 +340,11 @@ func (s Store) UpdateOrganizationProfile(
 
 const organizationProfileSelect = `
 	SELECT tenant.name, tenant.short_name, tenant.website_url, tenant.support_email::text,
-	       tenant.widget_appearance_defaults->>'accent_color', tenant.default_locale,
-	       tenant.default_timezone, tenant.privacy_policy_url, tenant.terms_url,
-	       tenant.logo_version::text
+		       tenant.widget_appearance_defaults->>'accent_color', tenant.default_locale,
+		       tenant.default_timezone, tenant.privacy_policy_url,
+		       tenant.privacy_contact_email::text, tenant.privacy_rights_email::text,
+		       tenant.privacy_profile_version, tenant.terms_url,
+		       tenant.logo_version::text
 	FROM tenants AS tenant
 `
 
@@ -321,7 +353,8 @@ func scanOrganizationProfile(row rowScanner) (tenant.OrganizationProfile, error)
 	err := row.Scan(
 		&profile.Name, &profile.ShortName, &profile.WebsiteURL, &profile.SupportEmail,
 		&profile.AccentColor, &profile.DefaultLocale, &profile.DefaultTimezone,
-		&profile.PrivacyPolicyURL, &profile.TermsURL, &profile.LogoVersion,
+		&profile.PrivacyPolicyURL, &profile.PrivacyContactEmail, &profile.PrivacyRightsEmail,
+		&profile.PrivacyProfileVersion, &profile.TermsURL, &profile.LogoVersion,
 	)
 	return profile, err
 }
@@ -335,6 +368,9 @@ func organizationProfilesEqual(left, right tenant.OrganizationProfile) bool {
 		optionalStringsEqual(left.DefaultLocale, right.DefaultLocale) &&
 		optionalStringsEqual(left.DefaultTimezone, right.DefaultTimezone) &&
 		optionalStringsEqual(left.PrivacyPolicyURL, right.PrivacyPolicyURL) &&
+		optionalStringsEqual(left.PrivacyContactEmail, right.PrivacyContactEmail) &&
+		optionalStringsEqual(left.PrivacyRightsEmail, right.PrivacyRightsEmail) &&
+		left.PrivacyProfileVersion == right.PrivacyProfileVersion &&
 		optionalStringsEqual(left.TermsURL, right.TermsURL)
 }
 
@@ -350,6 +386,10 @@ func organizationProfileAuditData(profile tenant.OrganizationProfile) map[string
 		"name": profile.Name, "short_name": profile.ShortName, "website_url": profile.WebsiteURL,
 		"support_email": profile.SupportEmail, "accent_color": profile.AccentColor,
 		"default_locale": profile.DefaultLocale, "default_timezone": profile.DefaultTimezone,
-		"privacy_policy_url": profile.PrivacyPolicyURL, "terms_url": profile.TermsURL,
+		"privacy_policy_url":      profile.PrivacyPolicyURL,
+		"privacy_contact_email":   profile.PrivacyContactEmail,
+		"privacy_rights_email":    profile.PrivacyRightsEmail,
+		"privacy_profile_version": profile.PrivacyProfileVersion,
+		"terms_url":               profile.TermsURL,
 	}
 }

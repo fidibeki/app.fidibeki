@@ -635,6 +635,9 @@ function applyOrganizationProfile(profile: OrganizationProfile) {
     default_locale: profile.default_locale,
     default_timezone: profile.default_timezone,
     privacy_policy_url: profile.privacy_policy_url,
+    privacy_contact_email: profile.privacy_contact_email,
+    privacy_rights_email: profile.privacy_rights_email,
+    privacy_profile_version: profile.privacy_profile_version,
     terms_url: profile.terms_url,
     logo_version: profile.logo_version,
   })

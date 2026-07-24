@@ -81,11 +81,15 @@ func TestValidateOrganizationProfileNormalizesSupportedValues(t *testing.T) {
 	locale := " pt-ao "
 	timezone := " Africa/Luanda "
 	privacy := " https://acme.test/privacy "
+	privacyContact := " PRIVACY@ACME.TEST "
+	privacyRights := " RIGHTS@ACME.TEST "
 	terms := " https://acme.test/terms "
 	profile, fields := ValidateOrganizationProfile(tenant.OrganizationProfile{
 		Name: "  Acme Studio  ", ShortName: &shortName, WebsiteURL: &website,
 		SupportEmail: &email, AccentColor: &accent, DefaultLocale: &locale,
-		DefaultTimezone: &timezone, PrivacyPolicyURL: &privacy, TermsURL: &terms,
+		DefaultTimezone: &timezone, PrivacyPolicyURL: &privacy,
+		PrivacyContactEmail: &privacyContact, PrivacyRightsEmail: &privacyRights,
+		TermsURL: &terms,
 	})
 	if len(fields) > 0 {
 		t.Fatalf("fields = %#v", fields)
@@ -97,6 +101,8 @@ func TestValidateOrganizationProfileNormalizesSupportedValues(t *testing.T) {
 		profile.DefaultLocale == nil || *profile.DefaultLocale != "pt-AO" ||
 		profile.DefaultTimezone == nil || *profile.DefaultTimezone != "Africa/Luanda" ||
 		profile.PrivacyPolicyURL == nil || *profile.PrivacyPolicyURL != "https://acme.test/privacy" ||
+		profile.PrivacyContactEmail == nil || *profile.PrivacyContactEmail != "privacy@acme.test" ||
+		profile.PrivacyRightsEmail == nil || *profile.PrivacyRightsEmail != "rights@acme.test" ||
 		profile.TermsURL == nil || *profile.TermsURL != "https://acme.test/terms" {
 		t.Fatalf("profile = %#v", profile)
 	}
@@ -113,7 +119,8 @@ func TestValidateOrganizationProfileClearsEmptyOptionalValues(t *testing.T) {
 	profile, fields := ValidateOrganizationProfile(tenant.OrganizationProfile{
 		Name: "Acme", ShortName: &empty, WebsiteURL: &empty, SupportEmail: &empty,
 		AccentColor: &empty, DefaultLocale: &empty, DefaultTimezone: &empty,
-		PrivacyPolicyURL: &empty, TermsURL: &empty,
+		PrivacyPolicyURL: &empty, PrivacyContactEmail: &empty,
+		PrivacyRightsEmail: &empty, TermsURL: &empty,
 	})
 	if len(fields) > 0 {
 		t.Fatalf("fields = %#v", fields)
@@ -121,6 +128,7 @@ func TestValidateOrganizationProfileClearsEmptyOptionalValues(t *testing.T) {
 	if profile.ShortName != nil || profile.WebsiteURL != nil || profile.SupportEmail != nil ||
 		profile.AccentColor != nil || profile.DefaultLocale != nil ||
 		profile.DefaultTimezone != nil || profile.PrivacyPolicyURL != nil ||
+		profile.PrivacyContactEmail != nil || profile.PrivacyRightsEmail != nil ||
 		profile.TermsURL != nil {
 		t.Fatalf("optional profile values = %#v, want nil", profile)
 	}
@@ -141,10 +149,12 @@ func TestValidateOrganizationProfileRejectsUnsafeOrUnsupportedValues(t *testing.
 		SupportEmail: &invalidEmail, AccentColor: &invalidAccent,
 		DefaultLocale: &unsupportedLocale, DefaultTimezone: &invalidTimezone,
 		PrivacyPolicyURL: &credentialURL, TermsURL: &javascriptURL,
+		PrivacyContactEmail: &invalidEmail, PrivacyRightsEmail: &invalidEmail,
 	})
 	for _, field := range []string{
 		"name", "short_name", "website_url", "support_email", "accent_color",
 		"default_locale", "default_timezone", "privacy_policy_url", "terms_url",
+		"privacy_contact_email", "privacy_rights_email",
 	} {
 		if fields[field] == "" {
 			t.Errorf("missing validation error for %s in %#v", field, fields)

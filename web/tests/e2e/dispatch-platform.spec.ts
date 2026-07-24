@@ -79,6 +79,9 @@ function createMockState() {
     default_locale: 'en' as string | null,
     default_timezone: 'UTC' as string | null,
     privacy_policy_url: null as string | null,
+    privacy_contact_email: null as string | null,
+    privacy_rights_email: null as string | null,
+    privacy_profile_version: 0,
     terms_url: null as string | null,
     logo_version: null as string | null,
   }
@@ -163,6 +166,24 @@ function createMockState() {
     can_attach_element: true,
     can_attach_screenshot: true,
     greeting: 'How was checkout?',
+    allow_comment: false,
+    collect_contact: false,
+    localizations: {
+      en: {
+        launcher_label: 'Feedback',
+        prompt: 'How was checkout?',
+        comment_placeholder: 'Tell us more',
+        contact_label: 'Email address',
+        consent_label: 'Email me updates about this feedback',
+        submit_label: 'Send feedback',
+        success_message: 'Your feedback was sent.',
+        privacy_purpose_summary: '',
+        privacy_lawful_basis_summary: '',
+        privacy_retention_summary: '',
+        block_labels: {},
+        option_labels: {},
+      },
+    },
     position: 'bottom-right',
     theme: 'light',
     accent_color: '#087f73',
@@ -933,12 +954,20 @@ async function installMockAPI(page: Page, state: MockState) {
         default_locale: state.tenant.default_locale,
         default_timezone: state.tenant.default_timezone,
         privacy_policy_url: state.tenant.privacy_policy_url,
+        privacy_contact_email: state.tenant.privacy_contact_email,
+        privacy_rights_email: state.tenant.privacy_rights_email,
+        privacy_profile_version: state.tenant.privacy_profile_version,
         terms_url: state.tenant.terms_url,
         logo_version: state.tenant.logo_version,
       } })
     }
     if (path === '/v1/organization-profile' && method === 'PATCH') {
       const input = body()
+      const controllerChanged =
+        state.tenant.name !== String(input.name || '') ||
+        state.tenant.privacy_policy_url !== (input.privacy_policy_url as string | null) ||
+        state.tenant.privacy_contact_email !== (input.privacy_contact_email as string | null) ||
+        state.tenant.privacy_rights_email !== (input.privacy_rights_email as string | null)
       Object.assign(state.tenant, {
         name: String(input.name || ''),
         short_name: input.short_name as string | null,
@@ -947,6 +976,9 @@ async function installMockAPI(page: Page, state: MockState) {
         default_locale: input.default_locale as string | null,
         default_timezone: input.default_timezone as string | null,
         privacy_policy_url: input.privacy_policy_url as string | null,
+        privacy_contact_email: input.privacy_contact_email as string | null,
+        privacy_rights_email: input.privacy_rights_email as string | null,
+        privacy_profile_version: state.tenant.privacy_profile_version + (controllerChanged ? 1 : 0),
         terms_url: input.terms_url as string | null,
       })
       if (input.accent_color) state.tenant.widget_appearance_defaults.accent_color = String(input.accent_color)
@@ -2531,6 +2563,14 @@ test('widget rule save enforces browser validation before sending an update', as
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
 
+  const contactCollection = page.locator('.project-capability-grid label')
+    .filter({ hasText: 'Optional email address' }).locator('input')
+  await contactCollection.check()
+  await expect(page.locator('.contact-controller-warning')).toContainText('Controller profile required')
+  await expect(page.locator('.contact-controller-warning a'))
+    .toHaveAttribute('href', '/settings#organization-profile')
+  await contactCollection.uncheck()
+
   const name = page.getByLabel('Name', { exact: true })
   await name.fill('')
   await page.getByRole('button', { name: 'Save rule' }).click()
@@ -2575,6 +2615,43 @@ test('widget rule save submits a valid update', async ({ page }, testInfo) => {
 
   await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
   expect(state.widgetRules[0].name).toBe('Checkout follow-up')
+})
+
+test('widget rule contact collection previews and saves the contextual controller notice', async ({ page }, testInfo) => {
+  const state = createMockState()
+  Object.assign(state.tenant, {
+    privacy_policy_url: 'https://acme.test/privacy',
+    privacy_contact_email: 'privacy@acme.test',
+    privacy_rights_email: 'rights@acme.test',
+    privacy_profile_version: 1,
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Projects')
+  await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
+
+  await page.locator('.project-capability-grid label')
+    .filter({ hasText: 'Optional email address' }).locator('input').check()
+  await page.getByLabel('Purpose of contact').fill('Send updates about this feedback.')
+  await page.getByLabel('Lawful basis').fill('Consent for optional status updates.')
+  await page.getByLabel('Retention period').fill('Retained until withdrawal or the approved case period.')
+
+  const notice = page.locator('.widget-preview-privacy')
+  await expect(notice).toContainText('How Acme Studio uses your data')
+  await expect(notice).toContainText('Consent for optional status updates.')
+  await expect(notice.locator('a[href="https://acme.test/privacy"]')).toHaveText('Privacy policy')
+  await expect(page.locator('.contact-controller-warning')).toHaveCount(0)
+  if (testInfo.project.name === 'mobile') await expect(notice).toBeHidden()
+  else await expect(notice).toBeVisible()
+  await capture(page, testInfo, `widget-controller-notice-${testInfo.project.name}`)
+
+  await page.getByRole('button', { name: 'Save rule' }).click()
+  await expect(page.getByRole('status')).toHaveText('Widget rule saved.')
+  expect(state.widgetRules[0].collect_contact).toBe(true)
+  expect(state.widgetRules[0].localizations.en).toMatchObject({
+    privacy_purpose_summary: 'Send updates about this feedback.',
+    privacy_lawful_basis_summary: 'Consent for optional status updates.',
+    privacy_retention_summary: 'Retained until withdrawal or the approved case period.',
+  })
 })
 
 test('widget rule validation maps nested fields, switches locale, and clears edited errors', async ({ page }, testInfo) => {
@@ -2780,6 +2857,9 @@ test('organization profile validates identity assets and updates the workspace i
   await organization.getByLabel('Public name').fill('Acme Operations')
   await organization.getByLabel('Default language').selectOption('pt-AO')
   await organization.getByLabel('Default timezone').fill('Africa/Luanda')
+  await organization.getByLabel('Privacy policy').fill('https://acme.test/privacy')
+  await organization.getByLabel('Privacy contact email').fill('privacy@acme.test')
+  await organization.getByLabel('Rights request email').fill('rights@acme.test')
   await organization.getByRole('button', { name: 'Save profile' }).click()
   await expect(organization.getByRole('status')).toHaveText('Organization profile saved.')
   await expect(page.locator('.app-tenant-switcher b')).toHaveText('Acme Operations')
@@ -2787,6 +2867,10 @@ test('organization profile validates identity assets and updates the workspace i
     name: 'Acme Operations',
     default_locale: 'pt-AO',
     default_timezone: 'Africa/Luanda',
+    privacy_policy_url: 'https://acme.test/privacy',
+    privacy_contact_email: 'privacy@acme.test',
+    privacy_rights_email: 'rights@acme.test',
+    privacy_profile_version: 1,
   })
   await capture(page, testInfo, `organization-profile-${testInfo.project.name}`)
 

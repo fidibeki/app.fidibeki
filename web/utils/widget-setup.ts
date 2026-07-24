@@ -31,6 +31,8 @@ export function defaultWidgetRule(): WidgetRuleInput {
         comment_placeholder: 'Tell us more', contact_label: 'Email address',
         consent_label: 'Email me about this feedback', submit_label: 'Send feedback',
         success_message: 'Your feedback was sent.',
+        privacy_purpose_summary: '', privacy_lawful_basis_summary: '',
+        privacy_retention_summary: '',
       },
     },
     allow_comment: false, collect_contact: false,

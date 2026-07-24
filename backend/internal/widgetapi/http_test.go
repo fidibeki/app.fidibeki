@@ -53,6 +53,10 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 	store := &configurationStoreStub{configuration: project.PublicConfiguration{
 		ProjectID: "project-id", DefaultLocale: "pt-ao", AllowedDomains: []string{"example.com"},
 		Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
+		ControllerProfile: &project.ControllerProfile{
+			Version: 2, Name: "Acme", PrivacyContactEmail: "privacy@acme.test",
+			PrivacyRightsEmail: "rights@acme.test", PrivacyPolicyURL: "https://acme.test/privacy",
+		},
 		Rules: []project.WidgetRule{{
 			ID: "rule-id", Name: "All pages", Priority: 5, MatcherType: project.MatcherAllPages,
 			Enabled: true,
@@ -79,7 +83,12 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 			Objective:      project.ObjectiveContinuousFeedback,
 			ResponseBlocks: []project.WidgetResponseBlock{{Key: "rating", Type: project.ResponseRating}},
 			Localizations: map[string]project.WidgetLocalization{
-				"pt-ao": {LauncherLabel: "Opinião", Prompt: "Como correu?"},
+				"pt-ao": {
+					LauncherLabel: "Opinião", Prompt: "Como correu?",
+					PrivacyPurposeSummary:     "Enviar atualizações sobre este feedback.",
+					PrivacyLawfulBasisSummary: "Consentimento para atualizações opcionais.",
+					PrivacyRetentionSummary:   "Mantido até retirar o consentimento ou terminar o caso.",
+				},
 			},
 			AllowComment: true, CollectContact: true,
 			AIProcessing: project.AIProcessingConfig{
@@ -118,7 +127,8 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 		t.Errorf("Access-Control-Allow-Credentials = %q", got)
 	}
 	for _, fragment := range []string{
-		`"schema_version":2`, `"project_id":"project-id"`, `"default_locale":"pt-ao"`,
+		`"schema_version":3`, `"project_id":"project-id"`, `"default_locale":"pt-ao"`,
+		`"controller_profile":{"version":2,"name":"Acme","privacy_contact_email":"privacy@acme.test","privacy_rights_email":"rights@acme.test","privacy_policy_url":"https://acme.test/privacy"}`,
 		`"audio":true`, `"video":false`,
 		`"id":"rule-id"`, `"trigger_delay_seconds":3`, `"refresh_after_seconds":300`,
 		`"definition_key":"checkout-feedback"`, `"definition_version":3`,
@@ -153,6 +163,55 @@ func TestConfigurationReturnsActiveRulesAndAllDefinitions(t *testing.T) {
 	}
 	if store.markedProjectID != "" {
 		t.Errorf("configuration fetch marked widget activity for %q", store.markedProjectID)
+	}
+}
+
+func TestConfigurationSuppressesContactCollectionWithoutCompleteNotice(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		controller    *project.ControllerProfile
+		localizations map[string]project.WidgetLocalization
+	}{
+		{
+			name: "missing controller",
+			localizations: map[string]project.WidgetLocalization{
+				"en": {
+					PrivacyPurposeSummary: "Purpose", PrivacyLawfulBasisSummary: "Consent",
+					PrivacyRetentionSummary: "Retention",
+				},
+			},
+		},
+		{
+			name: "missing localized notice",
+			controller: &project.ControllerProfile{
+				Version: 1, Name: "Acme", PrivacyContactEmail: "privacy@acme.test",
+				PrivacyRightsEmail: "rights@acme.test", PrivacyPolicyURL: "https://acme.test/privacy",
+			},
+			localizations: map[string]project.WidgetLocalization{"en": {}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := &configurationStoreStub{configuration: project.PublicConfiguration{
+				ProjectID: "project-id", DefaultLocale: "en", AllowedDomains: []string{"example.com"},
+				Plan: tenant.PlanStarter, Status: tenant.StatusActive, ControllerProfile: tt.controller,
+				Rules: []project.WidgetRule{{
+					ID: "rule-id", Enabled: true, DefinitionStatus: project.DefinitionActive,
+					MatcherType: project.MatcherAllPages, CollectContact: true,
+					Localizations: tt.localizations,
+				}},
+			}}
+			recorder := performWidgetRequest(
+				NewHTTPHandler(HTTPOptions{Store: store}), http.MethodGet,
+				"/v1/widget/config?key=pk_live_key", "pk_live_key", "https://example.com",
+			)
+			if recorder.Code != http.StatusOK ||
+				!strings.Contains(recorder.Body.String(), `"collect_contact":false`) {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 

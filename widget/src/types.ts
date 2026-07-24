@@ -86,6 +86,9 @@ export interface WidgetLocalization {
   consent_label: string
   submit_label: string
   success_message: string
+  privacy_purpose_summary?: string
+  privacy_lawful_basis_summary?: string
+  privacy_retention_summary?: string
   block_labels?: Record<string, string>
   option_labels?: Record<string, Record<string, string>>
 }
@@ -153,10 +156,19 @@ export interface WidgetRule {
   appearance?: WidgetAppearance
 }
 
+export interface ControllerProfile {
+  version: number
+  name: string
+  privacy_contact_email: string
+  privacy_rights_email: string
+  privacy_policy_url: string
+}
+
 export interface WidgetConfiguration {
   schema_version?: number
   project_id: string
   default_locale?: string
+  controller_profile?: ControllerProfile | null
   features: PlanFeatures
   rules: WidgetRule[]
   definitions?: WidgetRule[]

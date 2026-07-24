@@ -1636,6 +1636,16 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 	`).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET privacy_contact_email = 'privacy@acme.test',
+		    privacy_rights_email = 'rights@acme.test',
+		    privacy_policy_url = 'https://acme.test/privacy',
+		    privacy_profile_version = 1
+		WHERE id = $1
+	`, tenantID); err != nil {
+		t.Fatalf("configure contextual controller profile: %v", err)
+	}
 	publicKey := "pk_live_CONSENTCONTRACTTEST001"
 	if err := root.QueryRow(ctx, `
 		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
@@ -1646,8 +1656,17 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 	if err := root.QueryRow(ctx, `
 		INSERT INTO widget_rules (
 			project_id, name, matcher_type, trigger_type, trigger_delay_seconds,
-			can_write_text, collect_contact
-		) VALUES ($1, 'All pages', 'all_pages', 'delay', 0, true, true)
+			can_write_text, collect_contact, localizations
+		) VALUES (
+			$1, 'All pages', 'all_pages', 'delay', 0, true, true,
+			'{"en":{"launcher_label":"Feedback","prompt":"How was your experience?",
+			"comment_placeholder":"Tell us more","contact_label":"Email address",
+			"consent_label":"Email me updates about this feedback",
+			"submit_label":"Send feedback","success_message":"Your feedback was sent.",
+			"privacy_purpose_summary":"Send feedback updates.",
+			"privacy_lawful_basis_summary":"Consent for optional updates.",
+			"privacy_retention_summary":"Retained until consent is withdrawn or the case period ends."}}'::jsonb
+		)
 		RETURNING id
 	`, projectID).Scan(&ruleID); err != nil {
 		t.Fatalf("create widget rule: %v", err)
@@ -1660,9 +1679,11 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 	t.Cleanup(pools.Close)
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	authorizer := widgetapi.Authorizer{Store: project.Store{}, Database: pools.Admin, Now: func() time.Time { return now }}
+	var requestLogs bytes.Buffer
 	handler := feedbackHandler(HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
-		Now: func() time.Time { return now },
+		Logger: slog.New(slog.NewJSONHandler(&requestLogs, nil)),
+		Now:    func() time.Time { return now },
 	})
 	metadata := `"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720}`
 	testStart := time.Now().Add(-time.Second)
@@ -1677,10 +1698,12 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 
 	optedIn := submit("00000000-0000-4000-8000-000000000001",
 		`,"text":"Great!","reporter_email":"Reporter@Example.com","notify_reporter":true,`+
-			`"consent":{"purpose":"feedback_updates","notice_version":"2026-07","locale":"en-US","granted":true}`,
+			`"consent":{"purpose":"feedback_updates","notice_version":"2026-07-controller-v1",`+
+			`"controller_profile_version":1,"widget_definition_version":1,"locale":"en","granted":true}`,
 	)
 	if optedIn.Code != http.StatusCreated {
-		t.Fatalf("opted-in submission status = %d, body = %s", optedIn.Code, optedIn.Body.String())
+		t.Fatalf("opted-in submission status = %d, body = %s, logs = %s",
+			optedIn.Code, optedIn.Body.String(), requestLogs.String())
 	}
 	var optedInResponse SubmissionResponse
 	decodeFeedbackResponse(t, optedIn, &optedInResponse)
@@ -1688,29 +1711,32 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 		t.Fatalf("opted-in response notify_reporter = %#v", optedInResponse)
 	}
 
-	var reporterEmail, purpose, noticeVersion, locale, source *string
+	var reporterEmail, purpose, noticeVersion, locale, source, noticeSnapshot *string
 	var notifyReporter bool
 	var grantedAt, withdrawnAt *time.Time
 	if err := root.QueryRow(ctx, `
 		SELECT reporter_email, notify_reporter, reporter_consent_granted_at, reporter_consent_withdrawn_at,
-		       reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
-		       reporter_consent_source
+	       reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
+		       reporter_consent_source, reporter_consent_notice_snapshot::text
 		FROM feedbacks WHERE id = $1
 	`, optedInResponse.FeedbackID).Scan(
 		&reporterEmail, &notifyReporter, &grantedAt, &withdrawnAt,
-		&purpose, &noticeVersion, &locale, &source,
+		&purpose, &noticeVersion, &locale, &source, &noticeSnapshot,
 	); err != nil {
 		t.Fatalf("read opted-in feedback row: %v", err)
 	}
 	if reporterEmail == nil || *reporterEmail != "reporter@example.com" || !notifyReporter ||
 		grantedAt == nil || withdrawnAt != nil ||
 		purpose == nil || *purpose != "feedback_updates" ||
-		noticeVersion == nil || *noticeVersion != "2026-07" ||
-		locale == nil || *locale != "en-US" ||
-		source == nil || *source != "widget_submission" {
+		noticeVersion == nil || *noticeVersion != "2026-07-controller-v1" ||
+		locale == nil || *locale != "en" ||
+		source == nil || *source != "widget_submission" ||
+		noticeSnapshot == nil || !strings.Contains(*noticeSnapshot, `"controller_profile_version": 1`) ||
+		!strings.Contains(*noticeSnapshot, `"widget_definition_version": 1`) {
 		t.Fatalf("opted-in consent evidence = email %v notify %t granted %v withdrawn %v "+
-			"purpose %v version %v locale %v source %v",
-			reporterEmail, notifyReporter, grantedAt, withdrawnAt, purpose, noticeVersion, locale, source)
+			"purpose %v version %v locale %v source %v snapshot %v",
+			reporterEmail, notifyReporter, grantedAt, withdrawnAt, purpose, noticeVersion, locale, source,
+			noticeSnapshot)
 	}
 	// The client never sends a timestamp (ReporterConsentInput has no time field at all); the
 	// database trigger stamps reporter_consent_granted_at from its own clock at INSERT time, so
@@ -1749,8 +1775,9 @@ func TestFeedbackConsentContractPersistsExactEvidenceAndFailsClosedOnContradicti
 			field: "reporter_email",
 		},
 		{
-			name:  "consent without notify_reporter",
-			extra: `,"consent":{"purpose":"feedback_updates","notice_version":"2026-07","locale":"en","granted":true}`,
+			name: "consent without notify_reporter",
+			extra: `,"consent":{"purpose":"feedback_updates","notice_version":"2026-07-controller-v1",` +
+				`"controller_profile_version":1,"widget_definition_version":1,"locale":"en","granted":true}`,
 			field: "consent",
 		},
 		{

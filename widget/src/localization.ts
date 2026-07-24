@@ -16,6 +16,11 @@ export interface WidgetSystemCopy {
   invalidEmail: string
   emailRequired: string
   consentNotice: string
+  controllerNotice: string
+  lawfulBasis: string
+  retention: string
+  privacyContact: string
+  rightsContact: string
   privacyPolicy: string
   aiDisclosure: string
   aiScope: string
@@ -53,6 +58,9 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailPlaceholder: 'you@example.com', invalidEmail: 'Enter a valid email address.',
     emailRequired: 'Enter an email address to receive updates.',
     consentNotice: "We'll only use your email for updates about this feedback. Unsubscribe anytime.",
+    controllerNotice: 'How {controller} uses your data',
+    lawfulBasis: 'Legal basis', retention: 'Retention',
+    privacyContact: 'Privacy contact', rightsContact: 'Rights contact',
     privacyPolicy: 'Privacy policy',
     aiDisclosure: 'Selected feedback content may be processed by Google Gemini for advisory analysis.',
     aiScope: 'Content types: {categories}.',
@@ -85,6 +93,9 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     emailPlaceholder: 'voce@exemplo.com', invalidEmail: 'Introduz um endereço de email válido.',
     emailRequired: 'Introduz um endereço de email para receber atualizações.',
     consentNotice: 'Utilizamos o teu email apenas para atualizações sobre este feedback. Cancela quando quiseres.',
+    controllerNotice: 'Como {controller} utiliza os teus dados',
+    lawfulBasis: 'Base legal', retention: 'Retenção',
+    privacyContact: 'Contacto de privacidade', rightsContact: 'Direitos e pedidos',
     privacyPolicy: 'Política de privacidade',
     aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo Google Gemini para análise consultiva.',
     aiScope: 'Tipos de conteúdo: {categories}.',

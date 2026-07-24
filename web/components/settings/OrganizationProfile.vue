@@ -39,6 +39,8 @@ const form = reactive({
   default_locale: '',
   default_timezone: '',
   privacy_policy_url: '',
+  privacy_contact_email: '',
+  privacy_rights_email: '',
   terms_url: '',
 })
 
@@ -67,6 +69,8 @@ function setForm(value: OrganizationProfile) {
   form.default_locale = value.default_locale || ''
   form.default_timezone = value.default_timezone || ''
   form.privacy_policy_url = value.privacy_policy_url || ''
+  form.privacy_contact_email = value.privacy_contact_email || ''
+  form.privacy_rights_email = value.privacy_rights_email || ''
   form.terms_url = value.terms_url || ''
 }
 
@@ -80,6 +84,9 @@ function syncSession(value: OrganizationProfile) {
     default_locale: value.default_locale,
     default_timezone: value.default_timezone,
     privacy_policy_url: value.privacy_policy_url,
+    privacy_contact_email: value.privacy_contact_email,
+    privacy_rights_email: value.privacy_rights_email,
+    privacy_profile_version: value.privacy_profile_version,
     terms_url: value.terms_url,
     logo_version: value.logo_version,
   })
@@ -121,6 +128,8 @@ async function save() {
           default_locale: optional(form.default_locale),
           default_timezone: optional(form.default_timezone),
           privacy_policy_url: optional(form.privacy_policy_url),
+          privacy_contact_email: optional(form.privacy_contact_email),
+          privacy_rights_email: optional(form.privacy_rights_email),
           terms_url: optional(form.terms_url),
         },
       },
@@ -197,7 +206,7 @@ async function removeLogo() {
 </script>
 
 <template>
-  <section class="app-surface organization-profile">
+  <section id="organization-profile" class="app-surface organization-profile">
     <header>
       <div>
         <p class="app-eyebrow">{{ t('admin.organization.eyebrow') }}</p>
@@ -338,6 +347,16 @@ async function removeLogo() {
             {{ t('admin.organization.privacyPolicy') }}
             <input v-model.trim="form.privacy_policy_url" class="app-input" type="url" maxlength="2048" placeholder="https://example.com/privacy" />
             <small v-if="fields.privacy_policy_url" class="organization-field-error">{{ fields.privacy_policy_url }}</small>
+          </label>
+          <label>
+            {{ t('admin.organization.privacyContact') }}
+            <input v-model.trim="form.privacy_contact_email" class="app-input" type="email" maxlength="320" :placeholder="t('admin.organization.privacyContactPlaceholder')" />
+            <small v-if="fields.privacy_contact_email" class="organization-field-error">{{ fields.privacy_contact_email }}</small>
+          </label>
+          <label>
+            {{ t('admin.organization.rightsContact') }}
+            <input v-model.trim="form.privacy_rights_email" class="app-input" type="email" maxlength="320" :placeholder="t('admin.organization.rightsContactPlaceholder')" />
+            <small v-if="fields.privacy_rights_email" class="organization-field-error">{{ fields.privacy_rights_email }}</small>
           </label>
           <label class="wide">
             {{ t('admin.organization.terms') }}

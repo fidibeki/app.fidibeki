@@ -11,7 +11,6 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -65,13 +64,7 @@ func (s Store) RotateReporterAccess(
 		JOIN projects AS project
 		  ON project.tenant_id = issue.tenant_id AND project.id = issue.project_id
 		WHERE issue.tenant_id = $1 AND issue.id = $2
-		  AND issue.notify_reporter = true AND issue.reporter_email IS NOT NULL
-		  AND issue.reporter_consent_granted_at IS NOT NULL
-		  AND issue.reporter_consent_withdrawn_at IS NULL
-		  AND issue.reporter_consent_purpose = '`+feedback.ReporterConsentPurposeFeedbackUpdates+`'
-		  AND issue.reporter_consent_notice_version = '`+feedback.ReporterConsentNoticeVersion+`'
-		  AND issue.reporter_consent_source = '`+feedback.ReporterConsentSourceWidget+`'
-		  AND lower(split_part(issue.reporter_consent_locale, '-', 1)) IN ('en', 'pt')
+		  AND `+reporterConsentActiveExpression("issue")+`
 		  AND issue.reporter_access_revoked_at IS NULL
 		  AND tenant.status IN ('active', 'trial')
 		  AND tenant.reporter_access_enabled = true

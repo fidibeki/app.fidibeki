@@ -50,7 +50,7 @@ func TestConsensusFeedbackReporterRequiresMatchingCompleteActiveEvidence(t *test
 	t.Parallel()
 	emailAddress := "reporter@example.com"
 	purpose := feedback.ReporterConsentPurposeFeedbackUpdates
-	version := feedback.ReporterConsentNoticeVersion
+	version := feedback.LegacyReporterConsentNoticeVersion
 	locale := "pt-PT"
 	source := feedback.ReporterConsentSourceWidget
 	grantedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
@@ -75,6 +75,27 @@ func TestConsensusFeedbackReporterRequiresMatchingCompleteActiveEvidence(t *test
 	mismatched.ConsentLocale = &otherLocale
 	if got := consensusFeedbackReporter([]feedbackIssueState{active(), mismatched}); got.NotifyReporter {
 		t.Fatalf("mismatched consent produced a reporter: %#v", got)
+	}
+
+	contextualVersion := feedback.ReporterConsentNoticeVersion
+	contextualLocale := "fr"
+	contextualSnapshot := `{"schema_version":1,"notice_version":"2026-07-controller-v1","locale":"fr"}`
+	contextual := active()
+	contextual.ConsentNoticeVersion = &contextualVersion
+	contextual.ConsentLocale = &contextualLocale
+	contextual.ConsentNoticeSnapshot = &contextualSnapshot
+	got := consensusFeedbackReporter([]feedbackIssueState{contextual, contextual})
+	if !got.NotifyReporter || got.ConsentNoticeSnapshot == nil ||
+		*got.ConsentNoticeSnapshot != contextualSnapshot {
+		t.Fatalf("matching contextual consent did not preserve the snapshot: %#v", got)
+	}
+	otherSnapshot := `{"schema_version":1,"notice_version":"2026-07-controller-v1","locale":"fr","changed":true}`
+	contextualMismatch := contextual
+	contextualMismatch.ConsentNoticeSnapshot = &otherSnapshot
+	if got := consensusFeedbackReporter(
+		[]feedbackIssueState{contextual, contextualMismatch},
+	); got.NotifyReporter {
+		t.Fatalf("mismatched contextual snapshots produced a reporter: %#v", got)
 	}
 }
 

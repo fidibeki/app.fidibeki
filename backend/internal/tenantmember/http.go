@@ -118,6 +118,10 @@ func (h *HTTPHandler) updateOrganizationProfile(w http.ResponseWriter, r *http.R
 		r.Context(), query, resolved.ID, claims.Subject, profile,
 	)
 	if err != nil {
+		h.options.Logger.ErrorContext(
+			r.Context(), "organization profile update failed",
+			"error", err, "tenant_id", resolved.ID, "actor_member_id", claims.Subject,
+		)
 		writeError(w, err)
 		return
 	}
@@ -597,15 +601,18 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 		"tenant": map[string]any{
 			"id": resolved.ID, "name": resolved.Name, "slug": resolved.Slug,
 			"plan": resolved.Plan, "status": resolved.Status, "trial_ends_at": resolved.TrialEndsAt,
-			"deletion_requested_at": resolved.DeletionRequestedAt,
-			"short_name":            resolved.ShortName,
-			"website_url":           resolved.WebsiteURL,
-			"support_email":         resolved.SupportEmail,
-			"default_locale":        resolved.DefaultLocale,
-			"default_timezone":      resolved.DefaultTimezone,
-			"privacy_policy_url":    resolved.PrivacyPolicyURL,
-			"terms_url":             resolved.TermsURL,
-			"logo_version":          resolved.LogoVersion,
+			"deletion_requested_at":   resolved.DeletionRequestedAt,
+			"short_name":              resolved.ShortName,
+			"website_url":             resolved.WebsiteURL,
+			"support_email":           resolved.SupportEmail,
+			"default_locale":          resolved.DefaultLocale,
+			"default_timezone":        resolved.DefaultTimezone,
+			"privacy_policy_url":      resolved.PrivacyPolicyURL,
+			"privacy_contact_email":   resolved.PrivacyContactEmail,
+			"privacy_rights_email":    resolved.PrivacyRightsEmail,
+			"privacy_profile_version": resolved.PrivacyProfileVersion,
+			"terms_url":               resolved.TermsURL,
+			"logo_version":            resolved.LogoVersion,
 		},
 	})
 }

@@ -133,14 +133,15 @@ func (Store) CreateSubmission(
 				client_feedback_id, rating, title, description, text, responses, comment,
 				reporter_email, notify_reporter,
 				reporter_consent_purpose, reporter_consent_notice_version,
-				reporter_consent_locale, reporter_consent_source,
+				reporter_consent_locale, reporter_consent_source, reporter_consent_notice_snapshot,
 				page_url, referrer, user_agent, os, browser, device,
 				viewport_width, viewport_height, language, dom_snapshot_html, dom_snapshot_styles,
 				text_process_status, session_id
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14,
 				$15, $16, $17, $18,
-				$19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+				$19,
+				$20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
 			)
 			ON CONFLICT (tenant_id, public_id) DO NOTHING
 			RETURNING public_id
@@ -149,6 +150,7 @@ func (Store) CreateSubmission(
 			values.Responses, values.Comment, values.ReporterEmail, values.NotifyReporter,
 			values.ReporterConsentPurpose, values.ReporterConsentNoticeVersion,
 			values.ReporterConsentLocale, values.ReporterConsentSource,
+			values.ReporterConsentNoticeSnapshot,
 			values.PageURL, values.Referrer,
 			values.UserAgent, values.OS, values.Browser, values.Device, values.ViewportWidth,
 			values.ViewportHeight, values.Language, values.DOMSnapshotHTML, values.DOMSnapshotStyles,

@@ -343,6 +343,10 @@ export const adminMessages = {
     brandAccent: 'Cor da marca',
     brandAccentSwatch: 'Amostra da cor da marca',
     privacyPolicy: 'Política de privacidade',
+    privacyContact: 'Email de contacto de privacidade',
+    privacyContactPlaceholder: "privacidade{'@'}exemplo.com",
+    rightsContact: 'Email para pedidos de direitos',
+    rightsContactPlaceholder: "direitos{'@'}exemplo.com",
     terms: 'Termos de utilização',
     readOnly: 'O perfil da organização é só de leitura para esta conta.',
     notices: {

@@ -252,20 +252,34 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("seed issue counter: %v", err)
 	}
 	var unlinkedFeedbackID string
+	const contextualNoticeSnapshot = `{
+		"schema_version":1,
+		"notice_version":"2026-07-controller-v1",
+		"controller_profile_version":1,
+		"widget_definition_version":2,
+		"locale":"en",
+		"controller_name":"Acme",
+		"privacy_contact_email":"privacy@acme.test",
+		"privacy_rights_email":"rights@acme.test",
+		"privacy_policy_url":"https://acme.test/privacy",
+		"purpose_summary":"Send feedback updates.",
+		"lawful_basis_summary":"Consent for optional updates.",
+		"retention_summary":"Retained until withdrawal or the approved case period."
+	}`
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, public_id, client_feedback_id, title, description, text,
 			reporter_email, notify_reporter, page_url, text_process_status,
 			reporter_consent_purpose, reporter_consent_notice_version, reporter_consent_locale,
-			reporter_consent_source
+			reporter_consent_source, reporter_consent_notice_snapshot
 		) VALUES (
 			$1, $2, 'fb_Unlinked', gen_random_uuid(), 'Checkout freezes after promotion',
 			'The checkout freezes after I apply a promotion code.',
 			'The checkout freezes after I apply a promotion code.',
 			'reporter2@example.com', true, 'https://example.com/checkout', 'completed',
-			'feedback_updates', '2026-07', 'en', 'widget_submission'
+			'feedback_updates', '2026-07-controller-v1', 'en', 'widget_submission', $3::jsonb
 		) RETURNING id
-	`, tenantID, projectID).Scan(&unlinkedFeedbackID); err != nil {
+	`, tenantID, projectID, contextualNoticeSnapshot).Scan(&unlinkedFeedbackID); err != nil {
 		t.Fatalf("create unlinked feedback: %v", err)
 	}
 	createdFromFeedback := issueRequest(
@@ -279,13 +293,15 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("create issue from feedback = %d, body = %s", createdFromFeedback.Code, createdFromFeedback.Body.String())
 	}
 	var createdIssueID, createdTitle, createdDescription, linkedIssueID, createdPriority string
-	var createdAssigneeID *string
+	var createdAssigneeID, createdNoticeSnapshot *string
 	var createdNotify bool
 	if err := root.QueryRow(ctx, `
-		SELECT id, title, description, priority, assignee_id, notify_reporter
+		SELECT id, title, description, priority, assignee_id, notify_reporter,
+		       reporter_consent_notice_snapshot::text
 		FROM issues WHERE tenant_id = $1 AND public_id = 'ACME-2026-0003'
 	`, tenantID).Scan(
-		&createdIssueID, &createdTitle, &createdDescription, &createdPriority, &createdAssigneeID, &createdNotify,
+		&createdIssueID, &createdTitle, &createdDescription, &createdPriority, &createdAssigneeID,
+		&createdNotify, &createdNoticeSnapshot,
 	); err != nil {
 		t.Fatalf("read issue created from feedback: %v", err)
 	}
@@ -296,10 +312,12 @@ func TestIssueStatusNotificationAndDeliveryLifecycle(t *testing.T) {
 	if createdTitle != "Promotion code freezes checkout" ||
 		createdDescription != "Applying a valid promotion code freezes checkout before payment." ||
 		createdPriority != "high" || createdAssigneeID == nil || *createdAssigneeID != memberID ||
-		!createdNotify || linkedIssueID != createdIssueID {
-		t.Errorf("created issue/link = %q/%q priority=%q assignee=%v notify=%t linked=%q issue=%q",
+		!createdNotify || createdNoticeSnapshot == nil ||
+		!strings.Contains(*createdNoticeSnapshot, `"notice_version": "2026-07-controller-v1"`) ||
+		linkedIssueID != createdIssueID {
+		t.Errorf("created issue/link = %q/%q priority=%q assignee=%v notify=%t snapshot=%v linked=%q issue=%q",
 			createdTitle, createdDescription, createdPriority, createdAssigneeID,
-			createdNotify, linkedIssueID, createdIssueID)
+			createdNotify, createdNoticeSnapshot, linkedIssueID, createdIssueID)
 	}
 	var createdTagCount int
 	if err := root.QueryRow(ctx, `

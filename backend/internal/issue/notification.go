@@ -98,16 +98,26 @@ type ReporterNotification struct {
 
 // reporterConsentActiveExpression evaluates to true only when notify_reporter is set AND the
 // grant/withdrawal timestamps and every structured evidence field agree consent is currently in
-// force. A legacy or partially corrupted row never satisfies this expression, so delivery fails
-// closed until the reporter re-confirms through a fresh opt-in submission.
+// force. Both the preserved legacy revision and contextual snapshots are accepted; partially
+// corrupted rows never satisfy this expression.
 func reporterConsentActiveExpression(alias string) string {
 	return `COALESCE(` + alias + `.notify_reporter AND ` + alias + `.reporter_email IS NOT NULL
 		AND ` + alias + `.reporter_consent_granted_at IS NOT NULL
 		AND ` + alias + `.reporter_consent_withdrawn_at IS NULL
 		AND ` + alias + `.reporter_consent_purpose = '` + feedback.ReporterConsentPurposeFeedbackUpdates + `'
-		AND ` + alias + `.reporter_consent_notice_version = '` + feedback.ReporterConsentNoticeVersion + `'
 		AND ` + alias + `.reporter_consent_source = '` + feedback.ReporterConsentSourceWidget + `'
-		AND lower(split_part(` + alias + `.reporter_consent_locale, '-', 1)) IN ('en', 'pt'), false)`
+		AND (
+			(` + alias + `.reporter_consent_notice_version = '` + feedback.LegacyReporterConsentNoticeVersion + `'
+			 AND ` + alias + `.reporter_consent_notice_snapshot IS NULL
+			 AND lower(split_part(` + alias + `.reporter_consent_locale, '-', 1)) IN ('en', 'pt'))
+			OR
+			(` + alias + `.reporter_consent_notice_version = '` + feedback.ReporterConsentNoticeVersion + `'
+			 AND ` + alias + `.reporter_consent_notice_snapshot IS NOT NULL
+			 AND ` + alias + `.reporter_consent_notice_snapshot->>'notice_version' =
+			     ` + alias + `.reporter_consent_notice_version
+			 AND lower(` + alias + `.reporter_consent_notice_snapshot->>'locale') =
+			     lower(` + alias + `.reporter_consent_locale))
+		), false)`
 }
 
 type DeliveryAttempt struct {

@@ -144,6 +144,39 @@ describe('configuration fetch and cache', () => {
     expect(result.definitions?.[0]?.ai_processing).toEqual({ enabled: false })
   })
 
+  it('fails contact collection closed without a complete versioned controller notice', async () => {
+    const candidate = rule({
+      definition_version: 2,
+      collect_contact: true,
+      localizations: {
+        en: {
+          launcher_label: 'Feedback', prompt: 'How was it?', comment_placeholder: 'Details',
+          contact_label: 'Email', consent_label: 'Send updates', submit_label: 'Send',
+          success_message: 'Sent',
+          privacy_purpose_summary: 'Send feedback updates.',
+          privacy_lawful_basis_summary: 'Consent.',
+          privacy_retention_summary: '',
+        },
+      },
+    })
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      ...configuration,
+      controller_profile: {
+        version: 2, name: 'Acme', privacy_contact_email: 'privacy@acme.test',
+        privacy_rights_email: 'rights@acme.test', privacy_policy_url: 'https://acme.test/privacy',
+      },
+      rules: [candidate],
+    }), { status: 200 }))
+
+    const result = await fetchConfiguration({
+      endpoint: new URL('https://widget.test/v1/widget/config'),
+      publicKey: 'pk_live_test',
+      fetchImpl,
+    })
+
+    expect(result.rules[0]?.collect_contact).toBe(false)
+  })
+
   it('reports only the selected rule without page data', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 204 }))
     await expect(reportConnection({

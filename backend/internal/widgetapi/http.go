@@ -40,14 +40,15 @@ type HTTPHandler struct {
 }
 
 type ConfigurationResponse struct {
-	SchemaVersion       int                 `json:"schema_version"`
-	ProjectID           string              `json:"project_id"`
-	DefaultLocale       string              `json:"default_locale"`
-	Features            config.PlanFeatures `json:"features"`
-	Rules               []PublicWidgetRule  `json:"rules"`
-	Definitions         []PublicWidgetRule  `json:"definitions"`
-	RefreshAfterSeconds int                 `json:"refresh_after_seconds"`
-	ErrorReportingDSN   string              `json:"error_reporting_dsn,omitempty"`
+	SchemaVersion       int                        `json:"schema_version"`
+	ProjectID           string                     `json:"project_id"`
+	DefaultLocale       string                     `json:"default_locale"`
+	ControllerProfile   *project.ControllerProfile `json:"controller_profile"`
+	Features            config.PlanFeatures        `json:"features"`
+	Rules               []PublicWidgetRule         `json:"rules"`
+	Definitions         []PublicWidgetRule         `json:"definitions"`
+	RefreshAfterSeconds int                        `json:"refresh_after_seconds"`
+	ErrorReportingDSN   string                     `json:"error_reporting_dsn,omitempty"`
 }
 
 type PublicWidgetRule struct {
@@ -163,7 +164,7 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 	definitions := make([]PublicWidgetRule, 0, len(configuration.Rules))
 	rules := make([]PublicWidgetRule, 0, len(configuration.Rules))
 	for _, rule := range configuration.Rules {
-		publicRule := publicWidgetRule(rule)
+		publicRule := publicWidgetRule(rule, configuration.ControllerProfile != nil)
 		definitions = append(definitions, publicRule)
 		if definitionIsActive(rule) {
 			rules = append(rules, publicRule)
@@ -172,8 +173,9 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 	SetCORSHeaders(w, origin)
 	w.Header().Set("Cache-Control", "no-store")
 	api.WriteJSON(w, http.StatusOK, ConfigurationResponse{
-		SchemaVersion: 2, ProjectID: configuration.ProjectID,
-		DefaultLocale: configuration.DefaultLocale, Features: definition.Features,
+		SchemaVersion: 3, ProjectID: configuration.ProjectID,
+		DefaultLocale:     configuration.DefaultLocale,
+		ControllerProfile: configuration.ControllerProfile, Features: definition.Features,
 		Rules: rules, Definitions: definitions, RefreshAfterSeconds: 300,
 		ErrorReportingDSN: h.options.SentryDSN,
 	})
@@ -306,7 +308,7 @@ func writeAccessDenied(w http.ResponseWriter) {
 	api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "widget access denied", nil)
 }
 
-func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
+func publicWidgetRule(rule project.WidgetRule, controllerProfileComplete bool) PublicWidgetRule {
 	return PublicWidgetRule{
 		ID: rule.ID, Name: rule.Name, Priority: rule.Priority,
 		MatcherType: rule.MatcherType, MatcherValue: rule.MatcherValue,
@@ -328,7 +330,8 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
 		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,
 		Localizations: rule.Localizations, AllowComment: rule.AllowComment,
-		CollectContact: rule.CollectContact,
+		CollectContact: rule.CollectContact && controllerProfileComplete &&
+			project.HasCompleteContactNotices(rule.Localizations),
 		AIProcessing: PublicAIProcessing{
 			Enabled: rule.AIProcessing.Enabled, Provider: rule.AIProcessing.Provider,
 			InputCategories:  rule.AIProcessing.InputCategories,

@@ -164,15 +164,18 @@ type WidgetResponseBlock struct {
 }
 
 type WidgetLocalization struct {
-	LauncherLabel      string                       `json:"launcher_label"`
-	Prompt             string                       `json:"prompt"`
-	CommentPlaceholder string                       `json:"comment_placeholder"`
-	ContactLabel       string                       `json:"contact_label"`
-	ConsentLabel       string                       `json:"consent_label"`
-	SubmitLabel        string                       `json:"submit_label"`
-	SuccessMessage     string                       `json:"success_message"`
-	BlockLabels        map[string]string            `json:"block_labels,omitempty"`
-	OptionLabels       map[string]map[string]string `json:"option_labels,omitempty"`
+	LauncherLabel             string                       `json:"launcher_label"`
+	Prompt                    string                       `json:"prompt"`
+	CommentPlaceholder        string                       `json:"comment_placeholder"`
+	ContactLabel              string                       `json:"contact_label"`
+	ConsentLabel              string                       `json:"consent_label"`
+	SubmitLabel               string                       `json:"submit_label"`
+	SuccessMessage            string                       `json:"success_message"`
+	PrivacyPurposeSummary     string                       `json:"privacy_purpose_summary,omitempty"`
+	PrivacyLawfulBasisSummary string                       `json:"privacy_lawful_basis_summary,omitempty"`
+	PrivacyRetentionSummary   string                       `json:"privacy_retention_summary,omitempty"`
+	BlockLabels               map[string]string            `json:"block_labels,omitempty"`
+	OptionLabels              map[string]map[string]string `json:"option_labels,omitempty"`
 }
 
 const (
@@ -389,6 +392,7 @@ type PublicConfiguration struct {
 	TenantSlug                 string
 	ProjectID                  string
 	DefaultLocale              string
+	ControllerProfile          *ControllerProfile
 	AllowedDomains             []string
 	Plan                       tenant.Plan
 	Status                     tenant.Status
@@ -397,4 +401,12 @@ type PublicConfiguration struct {
 	TenantAppearanceDefaults   widgetconfig.AppearanceOverrides
 	ProjectAppearanceOverrides widgetconfig.AppearanceOverrides
 	Rules                      []WidgetRule
+}
+
+type ControllerProfile struct {
+	Version             int    `json:"version"`
+	Name                string `json:"name"`
+	PrivacyContactEmail string `json:"privacy_contact_email"`
+	PrivacyRightsEmail  string `json:"privacy_rights_email"`
+	PrivacyPolicyURL    string `json:"privacy_policy_url"`
 }

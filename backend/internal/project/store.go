@@ -645,11 +645,18 @@ func (store Store) LoadPublicConfiguration(
 	var trialEndsAt pgtype.Timestamptz
 	var deletionRequestedAt pgtype.Timestamptz
 	var logoVersion *string
+	var controllerName string
+	var privacyContactEmail *string
+	var privacyRightsEmail *string
+	var privacyPolicyURL *string
+	var privacyProfileVersion int
 	err := query.QueryRow(ctx, `
 		SELECT tenant.id, tenant.slug, project.id, project.default_locale, project.allowed_domains,
 		       tenant.widget_appearance_defaults, project.widget_appearance_overrides,
 		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at,
-		       tenant.logo_version::text
+		       tenant.logo_version::text, tenant.name, tenant.privacy_contact_email::text,
+		       tenant.privacy_rights_email::text, tenant.privacy_policy_url,
+		       tenant.privacy_profile_version
 		FROM projects AS project
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
 		WHERE project.public_key = $1
@@ -659,6 +666,8 @@ func (store Store) LoadPublicConfiguration(
 		&configuration.TenantAppearanceDefaults, &configuration.ProjectAppearanceOverrides,
 		&plan, &status, &trialEndsAt,
 		&deletionRequestedAt, &logoVersion,
+		&controllerName, &privacyContactEmail, &privacyRightsEmail, &privacyPolicyURL,
+		&privacyProfileVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicConfiguration{}, ErrNotFound
@@ -673,6 +682,16 @@ func (store Store) LoadPublicConfiguration(
 	}
 	if deletionRequestedAt.Valid {
 		configuration.DeletionRequestedAt = &deletionRequestedAt.Time
+	}
+	if privacyContactEmail != nil && privacyRightsEmail != nil && privacyPolicyURL != nil {
+		controllerProfile := ControllerProfile{
+			Version: privacyProfileVersion, Name: controllerName,
+			PrivacyContactEmail: *privacyContactEmail, PrivacyRightsEmail: *privacyRightsEmail,
+			PrivacyPolicyURL: *privacyPolicyURL,
+		}
+		if controllerProfile.Complete() {
+			configuration.ControllerProfile = &controllerProfile
+		}
 	}
 	var organizationLogo widgetconfig.AppearanceOverrides
 	if logoVersion != nil {

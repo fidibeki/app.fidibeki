@@ -1,5 +1,5 @@
 import { canonicalPage as parseCanonicalPage } from './targeting'
-import type { TargetCondition, WidgetConfiguration, WidgetRule } from './types'
+import type { ControllerProfile, TargetCondition, WidgetConfiguration, WidgetRule } from './types'
 
 export { canonicalPage } from './targeting'
 
@@ -32,6 +32,10 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
     throw new Error(`Fidibeki configuration failed with status ${response.status}`)
   }
   const configuration = await response.json() as WidgetConfiguration
+  const controllerProfileComplete = validControllerProfile(configuration.controller_profile)
+  if (configuration.controller_profile !== undefined && !controllerProfileComplete) {
+    configuration.controller_profile = null
+  }
   for (const rule of [...(configuration.rules ?? []), ...(configuration.definitions ?? [])]) {
     if (!rule.replay_consent) {
       rule.replay_consent = {
@@ -58,8 +62,46 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
         notices: {},
       }
     }
+    if (rule.collect_contact && (
+      !controllerProfileComplete ||
+      !Number.isInteger(rule.definition_version) ||
+      (rule.definition_version ?? 0) < 1 ||
+      !completeContactNotices(rule)
+    )) {
+      rule.collect_contact = false
+    }
   }
   return configuration
+}
+
+function validControllerProfile(profile: ControllerProfile | null | undefined): profile is ControllerProfile {
+  if (!profile || !Number.isInteger(profile.version) || profile.version < 1 ||
+    !profile.name.trim() || !validEmail(profile.privacy_contact_email) ||
+    !validEmail(profile.privacy_rights_email)) {
+    return false
+  }
+  try {
+    const policy = new URL(profile.privacy_policy_url)
+    return policy.protocol === 'https:' && !policy.username && !policy.password &&
+      !policy.search && !policy.hash
+  } catch {
+    return false
+  }
+}
+
+function validEmail(value: string): boolean {
+  return value.length <= 320 && !/[\r\n]/.test(value) && /^[^\s@]+@[^\s@]+$/.test(value)
+}
+
+function completeContactNotices(rule: WidgetRule): boolean {
+  const localizations = Object.values(rule.localizations ?? {})
+  return localizations.length > 0 && localizations.every(localization =>
+    Boolean(
+      localization.privacy_purpose_summary?.trim() &&
+      localization.privacy_lawful_basis_summary?.trim() &&
+      localization.privacy_retention_summary?.trim(),
+    ),
+  )
 }
 
 export interface ConnectionRequest {

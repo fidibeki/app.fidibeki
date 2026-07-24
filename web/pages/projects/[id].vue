@@ -178,6 +178,9 @@ const localizationFields = [
   'consent_label',
   'submit_label',
   'success_message',
+  'privacy_purpose_summary',
+  'privacy_lawful_basis_summary',
+  'privacy_retention_summary',
 ] as const
 type LocalizationField = typeof localizationFields[number]
 const localizationLabelKeys: Record<LocalizationField, string> = {
@@ -188,6 +191,9 @@ const localizationLabelKeys: Record<LocalizationField, string> = {
   consent_label: 'consentLabel',
   submit_label: 'submitLabel',
   success_message: 'successMessage',
+  privacy_purpose_summary: 'privacyPurpose',
+  privacy_lawful_basis_summary: 'privacyLawfulBasis',
+  privacy_retention_summary: 'privacyRetention',
 }
 const ruleAppearanceErrors = computed(() => Object.fromEntries(
   Object.entries(ruleFieldErrors.value).flatMap(([path, message]) => {
@@ -207,9 +213,14 @@ function localizationLabel(field: LocalizationField) {
 }
 
 function localizationMaximum(field: LocalizationField) {
+  if (field.startsWith('privacy_')) return 1000
   if (field === 'prompt') return 500
   if (field === 'comment_placeholder' || field === 'consent_label') return 240
   return 120
+}
+
+function localizationRequired(field: LocalizationField) {
+  return !field.startsWith('privacy_') || ruleForm.collect_contact
 }
 
 function ruleFieldError(path: string) {
@@ -439,6 +450,8 @@ function fallbackLocalization(prompt: string): WidgetLocalization {
     launcher_label: 'Feedback', prompt, comment_placeholder: 'Tell us more',
     contact_label: 'Email address', consent_label: 'Email me about this feedback',
     submit_label: 'Send feedback', success_message: 'Your feedback was sent.',
+    privacy_purpose_summary: '', privacy_lawful_basis_summary: '',
+    privacy_retention_summary: '',
     block_labels: {}, option_labels: {},
   }
 }
@@ -474,6 +487,19 @@ const editingLocalization = computed(() => {
 })
 const previewLocalization = computed(() => ruleForm.localizations[projectDefaultLocale.value]
   || editingLocalization.value)
+const controllerProfileReady = computed(() => Boolean(
+  tenant.value?.name &&
+  tenant.value.privacy_profile_version &&
+  tenant.value.privacy_contact_email &&
+  tenant.value.privacy_rights_email &&
+  tenant.value.privacy_policy_url,
+))
+const previewControllerNoticeReady = computed(() => Boolean(
+  controllerProfileReady.value &&
+  previewLocalization.value.privacy_purpose_summary?.trim() &&
+  previewLocalization.value.privacy_lawful_basis_summary?.trim() &&
+  previewLocalization.value.privacy_retention_summary?.trim(),
+))
 
 function hasResponseType(type: WidgetResponseBlock['type']) {
   return ruleForm.response_blocks.some(block => block.type === type)
@@ -894,6 +920,16 @@ useHead(() => ({
                   <span><b>{{ t('projects.editor.methods.screenshot') }}</b><small :id="ruleFieldError('can_attach_screenshot') ? ruleErrorID('can_attach_screenshot') : undefined" :class="{ 'rule-field-error': ruleFieldError('can_attach_screenshot') }">{{ ruleFieldError('can_attach_screenshot') || (supportsDOM ? t('projects.editor.methods.screenshotHint') : t('projects.editor.methods.upgradeRequired')) }}</small></span>
                 </label>
               </div>
+              <div v-if="ruleForm.collect_contact && !controllerProfileReady" class="contact-controller-warning" role="note">
+                <AlertTriangle :size="16" aria-hidden="true" />
+                <p>
+                  <b>{{ t('projects.editor.methods.controllerMissingTitle') }}</b>
+                  <span>{{ t('projects.editor.methods.controllerMissingDescription') }}</span>
+                </p>
+                <NuxtLink class="app-button" to="/settings#organization-profile">
+                  {{ t('projects.editor.methods.configureController') }}
+                </NuxtLink>
+              </div>
             </section>
             <section>
               <h3>{{ t('projects.editor.ai.title') }}</h3>
@@ -996,12 +1032,12 @@ useHead(() => ({
                 <button v-if="editingLocale !== projectDefaultLocale" type="button" class="app-icon-button" :title="t('projects.editor.content.removeLanguage')" :aria-label="t('projects.editor.content.removeLanguage')" @click="removeLocalization"><Trash2 :size="13" /></button>
               </div>
               <div class="project-form-grid localization-fields">
-                <label v-for="field in localizationFields" :key="field" :class="{ wide: field === 'prompt' || field === 'consent_label' }">
+                <label v-for="field in localizationFields" :key="field" :class="{ wide: field === 'prompt' || field === 'consent_label' || field.startsWith('privacy_') }">
                   {{ localizationLabel(field) }}
                   <input
                     v-model="editingLocalization[field]"
                     class="app-input"
-                    required
+                    :required="localizationRequired(field)"
                     :maxlength="localizationMaximum(field)"
                     v-bind="ruleFieldAttributes(`localizations.${editingLocale}.${field}`)"
                   />
@@ -1103,7 +1139,64 @@ useHead(() => ({
 
         <aside class="project-widget-preview">
           <header><span>{{ t('projects.preview.title') }}</span><div v-if="ruleForm.presentation === 'launcher'" class="widget-preview-modes" role="group" :aria-label="t('projects.preview.launcherState')"><button type="button" :data-active="!previewLauncherOpen" @click="previewLauncherOpen = false">{{ t('projects.preview.launcher') }}</button><button type="button" :data-active="previewLauncherOpen" @click="previewLauncherOpen = true">{{ t('projects.preview.open') }}</button></div><small v-else>{{ previewAppearanceSummary }}</small></header>
-          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true"><div class="widget-preview-site"><span /><span /><span /></div><div class="widget-preview-copy"><b>{{ t('projects.preview.pageTitle') }}</b><span>{{ t('projects.preview.pageDescription') }}</span><div /></div><button v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen" class="widget-preview-trigger" :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }">{{ previewLocalization.launcher_label }}</button><section v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen" class="widget-preview-modal" :data-presentation="ruleForm.presentation" :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"><img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" /><p>{{ previewLocalization.prompt }}</p><div v-if="ruleForm.can_rate" class="widget-preview-ratings"><button v-for="value in 5" :key="value">{{ value }}</button></div><div v-if="hasResponseType('reaction')" class="widget-preview-ratings"><button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">{{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}</button></div><textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || t('projects.preview.tellUsMore')" /><div v-if="ruleForm.collect_contact" class="widget-preview-contact"><label><span>{{ previewLocalization.contact_label }}</span><input type="email" :placeholder="previewLocalization.contact_label" /></label><label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label></div><div class="widget-preview-actions"><span v-if="ruleForm.can_attach_screenshot">{{ t('projects.preview.screenshot') }}</span><span v-if="ruleForm.can_record_audio">{{ t('projects.preview.audio') }}</span><button :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }">{{ previewLocalization.submit_label }}</button></div></section></div>
+          <div class="widget-preview-page" :data-theme="effectiveAppearance.theme" inert aria-hidden="true">
+            <div class="widget-preview-site"><span /><span /><span /></div>
+            <div class="widget-preview-copy">
+              <b>{{ t('projects.preview.pageTitle') }}</b>
+              <span>{{ t('projects.preview.pageDescription') }}</span>
+              <div />
+            </div>
+            <button
+              v-if="ruleForm.presentation === 'launcher' && !previewLauncherOpen"
+              class="widget-preview-trigger"
+              :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }"
+            >
+              {{ previewLocalization.launcher_label }}
+            </button>
+            <section
+              v-show="ruleForm.presentation !== 'launcher' || previewLauncherOpen"
+              class="widget-preview-modal"
+              :data-presentation="ruleForm.presentation"
+              :style="{ background: effectiveAppearance.surface_color, color: effectiveAppearance.text_color, borderTopColor: effectiveAppearance.accent_color }"
+            >
+              <img v-if="effectiveAppearance.logo_url" class="widget-preview-logo" :src="effectiveAppearance.logo_url" alt="" referrerpolicy="no-referrer" />
+              <p>{{ previewLocalization.prompt }}</p>
+              <div v-if="ruleForm.can_rate" class="widget-preview-ratings">
+                <button v-for="value in 5" :key="value">{{ value }}</button>
+              </div>
+              <div v-if="hasResponseType('reaction')" class="widget-preview-ratings">
+                <button v-for="option in ruleForm.response_blocks.find(block => block.type === 'reaction')?.options" :key="option.value">
+                  {{ previewLocalization.option_labels?.reaction?.[option.value] || option.value.replaceAll('_', ' ') }}
+                </button>
+              </div>
+              <textarea v-if="ruleForm.can_write_text" :placeholder="previewLocalization.block_labels?.feedback || t('projects.preview.tellUsMore')" />
+              <details v-if="previewControllerNoticeReady" class="widget-preview-privacy" open>
+                <summary>{{ t('projects.preview.privacyNotice', { name: tenant?.name }) }}</summary>
+                <span>{{ previewLocalization.privacy_purpose_summary }}</span>
+                <span>{{ t('projects.preview.lawfulBasis') }}: {{ previewLocalization.privacy_lawful_basis_summary }}</span>
+                <span>{{ t('projects.preview.retention') }}: {{ previewLocalization.privacy_retention_summary }}</span>
+                <p class="widget-preview-controller-links">
+                  <a :href="`mailto:${tenant?.privacy_contact_email}`">{{ t('projects.preview.privacyContact') }}</a>
+                  <a :href="`mailto:${tenant?.privacy_rights_email}`">{{ t('projects.preview.rightsContact') }}</a>
+                  <a :href="tenant?.privacy_policy_url || '#'">{{ t('projects.preview.privacyPolicy') }}</a>
+                </p>
+              </details>
+              <div v-if="ruleForm.collect_contact" class="widget-preview-contact">
+                <label>
+                  <span>{{ previewLocalization.contact_label }}</span>
+                  <input type="email" :placeholder="previewLocalization.contact_label" />
+                </label>
+                <label><input type="checkbox" /><span>{{ previewLocalization.consent_label }}</span></label>
+              </div>
+              <div class="widget-preview-actions">
+                <span v-if="ruleForm.can_attach_screenshot">{{ t('projects.preview.screenshot') }}</span>
+                <span v-if="ruleForm.can_record_audio">{{ t('projects.preview.audio') }}</span>
+                <button :style="{ background: effectiveAppearance.accent_color, color: effectiveAppearance.accent_foreground }">
+                  {{ previewLocalization.submit_label }}
+                </button>
+              </div>
+            </section>
+          </div>
         </aside>
       </div>
 
@@ -1248,6 +1341,10 @@ useHead(() => ({
 .project-capability-grid label span { display: flex; flex-direction: column; gap: 3px; }
 .project-capability-grid b { font-size: 10px; }
 .project-capability-grid small { color: var(--muted); font-size: 8px; }
+.contact-controller-warning { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 8px; padding: 10px; background: var(--amber-soft); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--line)); border-radius: 5px; }
+.contact-controller-warning p { display: grid; gap: 2px; margin: 0; }
+.contact-controller-warning b { font-size: 10px; }
+.contact-controller-warning span { font-size: 8px; line-height: 1.4; }
 .ai-processing-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; }
 .ai-processing-setting[data-enabled='true'] { border-color: color-mix(in srgb, var(--green) 45%, var(--line)); background: color-mix(in srgb, var(--green) 5%, #fff); }
 .ai-processing-setting > label { display: flex; min-width: 0; align-items: center; gap: 9px; }
@@ -1291,6 +1388,11 @@ useHead(() => ({
 .widget-preview-ratings { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px; }
 .widget-preview-ratings button { height: 30px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
 .widget-preview-modal textarea { width: 100%; height: 62px; padding: 7px; border: 1px solid var(--line); border-radius: 4px; resize: none; font: inherit; font-size: 9px; }
+.widget-preview-privacy { display: grid; gap: 4px; margin-top: 8px; padding: 7px 0; color: var(--muted); border-block: 1px solid var(--line); font-size: 8px; }
+.widget-preview-privacy summary { color: inherit; font-weight: 750; }
+.widget-preview-privacy span { display: block; margin-top: 3px; }
+.widget-preview-controller-links { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 5px 0 0; }
+.widget-preview-controller-links a { color: var(--green); }
 .widget-preview-contact { display: grid; gap: 6px; margin-top: 8px; }
 .widget-preview-contact label:first-child { display: grid; gap: 4px; color: var(--muted); font-size: 8px; font-weight: 700; }
 .widget-preview-contact input[type='email'] { width: 100%; height: 30px; padding: 0 7px; background: transparent; color: inherit; border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 9px; }
@@ -1318,5 +1420,5 @@ useHead(() => ({
 .project-toast { position: fixed; right: 20px; bottom: 20px; z-index: 90; margin: 0; padding: 10px 13px; background: #17342f; color: #fff; border-radius: 5px; box-shadow: var(--shadow-overlay); font-size: 10px; }
 @media (max-width: 1180px) { .project-config-grid { grid-template-columns: 190px minmax(480px, 1fr); } .project-widget-preview { display: none; } }
 @media (max-width: 800px) { .project-config-band { align-items: stretch; flex-direction: column; } .project-embed { width: 100%; } .project-install-diagnostics { grid-template-columns: 1fr; } .project-install-diagnostics > header { min-height: 42px; border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } .project-install-diagnostics dl > div:nth-child(2) { border-right: 0; } .project-install-diagnostics dl > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); } .project-config-grid { display: block; } .project-rule-list { display: flex; overflow-x: auto; border: 0; border-bottom: 1px solid var(--line); } .project-rule-list > header { min-width: 130px; } .project-rule-list > button { min-width: 180px; border-right: 1px solid var(--line); } .project-rule-list nav { display: none; } .project-rule-editor { border: 0; } .project-settings > form > fieldset { grid-template-columns: 1fr; } }
-@media (max-width: 600px) { .project-install-diagnostics dl { grid-template-columns: 1fr; } .project-install-diagnostics dl > div { border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl > div:last-child { border-bottom: 0; } .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } .replay-consent-status { align-items: stretch; flex-direction: column; } .replay-consent-status .app-button { width: 100%; } }
+@media (max-width: 600px) { .project-install-diagnostics dl { grid-template-columns: 1fr; } .project-install-diagnostics dl > div { border-right: 0; border-bottom: 1px solid var(--line); } .project-install-diagnostics dl > div:last-child { border-bottom: 0; } .project-form-grid, .project-capability-grid { grid-template-columns: 1fr; } .project-form-grid label.wide { grid-column: auto; } .project-rule-editor > header { align-items: flex-start; flex-direction: column; } .project-settings { margin: 12px; } .project-settings > footer { align-items: stretch; flex-direction: column; } .replay-consent-status, .contact-controller-warning { align-items: stretch; grid-template-columns: auto minmax(0, 1fr); } .replay-consent-status .app-button, .contact-controller-warning .app-button { grid-column: 1 / -1; width: 100%; } }
 </style>

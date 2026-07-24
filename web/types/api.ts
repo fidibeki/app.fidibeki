@@ -60,6 +60,9 @@ export interface TenantSummary {
   default_locale?: string | null
   default_timezone?: string | null
   privacy_policy_url?: string | null
+  privacy_contact_email?: string | null
+  privacy_rights_email?: string | null
+  privacy_profile_version?: number
   terms_url?: string | null
   logo_version?: string | null
 }
@@ -73,6 +76,9 @@ export interface OrganizationProfile {
   default_locale?: string | null
   default_timezone?: string | null
   privacy_policy_url?: string | null
+  privacy_contact_email?: string | null
+  privacy_rights_email?: string | null
+  privacy_profile_version: number
   terms_url?: string | null
   logo_version?: string | null
 }
@@ -169,6 +175,9 @@ export interface WidgetLocalization {
   consent_label: string
   submit_label: string
   success_message: string
+  privacy_purpose_summary?: string
+  privacy_lawful_basis_summary?: string
+  privacy_retention_summary?: string
   block_labels?: Record<string, string>
   option_labels?: Record<string, Record<string, string>>
 }

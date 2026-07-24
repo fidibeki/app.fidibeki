@@ -363,7 +363,10 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 			`"localizations":{"en":{"launcher_label":"Feedback","prompt":"Was this useful?",`+
 			`"comment_placeholder":"Tell us more","contact_label":"Email",`+
 			`"consent_label":"Email me about this feedback","submit_label":"Send",`+
-			`"success_message":"Feedback received."}},`+
+			`"success_message":"Feedback received.",`+
+			`"privacy_purpose_summary":"Send updates about this feedback.",`+
+			`"privacy_lawful_basis_summary":"Consent for optional status updates.",`+
+			`"privacy_retention_summary":"Retained until withdrawal or the approved case period."}},`+
 			`"allow_comment":true,"collect_contact":true,`+
 			`"ai_processing":{"enabled":true,"acknowledged":true,`+
 			`"input_categories":["feedback_text","audio"],`+

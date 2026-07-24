@@ -22,25 +22,26 @@ type Store struct {
 }
 
 type feedbackIssueState struct {
-	ID                   string
-	ProjectID            string
-	IssueID              *string
-	ReporterEmail        *string
-	NotifyReporter       bool
-	ConsentGrantedAt     *time.Time
-	ConsentWithdrawnAt   *time.Time
-	ConsentPurpose       *string
-	ConsentNoticeVersion *string
-	ConsentLocale        *string
-	ConsentSource        *string
-	Priority             *triage.Priority
-	AIPriority           *triage.Priority
-	AssigneeID           *string
-	Description          *string
-	Text                 *string
-	TextCleaned          *string
-	AISuggestedTitle     *string
-	Moderated            bool
+	ID                    string
+	ProjectID             string
+	IssueID               *string
+	ReporterEmail         *string
+	NotifyReporter        bool
+	ConsentGrantedAt      *time.Time
+	ConsentWithdrawnAt    *time.Time
+	ConsentPurpose        *string
+	ConsentNoticeVersion  *string
+	ConsentLocale         *string
+	ConsentSource         *string
+	ConsentNoticeSnapshot *string
+	Priority              *triage.Priority
+	AIPriority            *triage.Priority
+	AssigneeID            *string
+	Description           *string
+	Text                  *string
+	TextCleaned           *string
+	AISuggestedTitle      *string
+	Moderated             bool
 }
 
 func (Store) List(ctx context.Context, query db.Querier, tenantID string) ([]Issue, error) {
@@ -362,6 +363,7 @@ func (store Store) CreateFromFeedback(
 		       reporter_consent_granted_at, reporter_consent_withdrawn_at,
 		       reporter_consent_purpose, reporter_consent_notice_version,
 		       reporter_consent_locale, reporter_consent_source,
+		       reporter_consent_notice_snapshot::text,
 		       priority, ai_priority, assignee_id, description, text, text_cleaned,
 		       ai_suggested_title,
 		       status = 'spam' OR cardinality(text_moderation_flags) > 0 OR text_process_status = 'failed'
@@ -380,7 +382,7 @@ func (store Store) CreateFromFeedback(
 			&state.ID, &state.ProjectID, &state.IssueID, &state.ReporterEmail,
 			&state.NotifyReporter, &state.ConsentGrantedAt, &state.ConsentWithdrawnAt,
 			&state.ConsentPurpose, &state.ConsentNoticeVersion,
-			&state.ConsentLocale, &state.ConsentSource,
+			&state.ConsentLocale, &state.ConsentSource, &state.ConsentNoticeSnapshot,
 			&state.Priority, &state.AIPriority, &state.AssigneeID,
 			&state.Description, &state.Text, &state.TextCleaned, &state.AISuggestedTitle,
 			&state.Moderated,
@@ -459,12 +461,15 @@ func (store Store) CreateFromFeedback(
 			id, tenant_id, project_id, public_id, title, description,
 			priority, assignee_id, reporter_email, notify_reporter,
 			reporter_consent_granted_at, reporter_consent_purpose,
-			reporter_consent_notice_version, reporter_consent_locale, reporter_consent_source
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			reporter_consent_notice_version, reporter_consent_locale, reporter_consent_source,
+			reporter_consent_notice_snapshot
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb
+		)
 	`, createdID, tenantID, projectID, publicID, input.Title, input.Description,
 		priority, assigneeID, reporter.Email, reporter.NotifyReporter, reporter.ConsentGrantedAt,
 		reporter.ConsentPurpose, reporter.ConsentNoticeVersion, reporter.ConsentLocale,
-		reporter.ConsentSource); err != nil {
+		reporter.ConsentSource, reporter.ConsentNoticeSnapshot); err != nil {
 		return Issue{}, fmt.Errorf("create issue from feedback: %w", err)
 	}
 	if len(tagIDs) > 0 {
@@ -599,13 +604,14 @@ func consensusFeedbackAssignee(states []feedbackIssueState) *string {
 // reporter; any dissent (a different email, or any feedback lacking active consent) drops the
 // issue back to anonymous so the issue never attributes consent evidence to a mismatched reporter.
 type consensusReporter struct {
-	Email                *string
-	NotifyReporter       bool
-	ConsentGrantedAt     *time.Time
-	ConsentPurpose       *string
-	ConsentNoticeVersion *string
-	ConsentLocale        *string
-	ConsentSource        *string
+	Email                 *string
+	NotifyReporter        bool
+	ConsentGrantedAt      *time.Time
+	ConsentPurpose        *string
+	ConsentNoticeVersion  *string
+	ConsentLocale         *string
+	ConsentSource         *string
+	ConsentNoticeSnapshot *string
 }
 
 func consensusFeedbackReporter(states []feedbackIssueState) consensusReporter {
@@ -621,7 +627,8 @@ func consensusFeedbackReporter(states []feedbackIssueState) consensusReporter {
 			*state.ConsentPurpose != *first.ConsentPurpose ||
 			*state.ConsentNoticeVersion != *first.ConsentNoticeVersion ||
 			!strings.EqualFold(*state.ConsentLocale, *first.ConsentLocale) ||
-			*state.ConsentSource != *first.ConsentSource {
+			*state.ConsentSource != *first.ConsentSource ||
+			!optionalStringValuesEqual(state.ConsentNoticeSnapshot, first.ConsentNoticeSnapshot) {
 			return consensusReporter{}
 		}
 		if state.ConsentGrantedAt.Before(*grantedAt) {
@@ -632,6 +639,7 @@ func consensusFeedbackReporter(states []feedbackIssueState) consensusReporter {
 		Email: &candidate, NotifyReporter: true, ConsentGrantedAt: grantedAt,
 		ConsentPurpose: first.ConsentPurpose, ConsentNoticeVersion: first.ConsentNoticeVersion,
 		ConsentLocale: first.ConsentLocale, ConsentSource: first.ConsentSource,
+		ConsentNoticeSnapshot: first.ConsentNoticeSnapshot,
 	}
 }
 
@@ -643,11 +651,19 @@ func activeFeedbackReporterConsent(state feedbackIssueState) bool {
 		state.ConsentPurpose != nil &&
 		*state.ConsentPurpose == feedback.ReporterConsentPurposeFeedbackUpdates &&
 		state.ConsentNoticeVersion != nil &&
-		*state.ConsentNoticeVersion == feedback.ReporterConsentNoticeVersion &&
 		state.ConsentLocale != nil &&
-		feedback.SupportedReporterConsentLocale(*state.ConsentLocale) &&
+		feedback.StoredReporterConsentEvidenceSupported(
+			*state.ConsentNoticeVersion,
+			*state.ConsentLocale,
+			state.ConsentNoticeSnapshot != nil,
+		) &&
 		state.ConsentSource != nil &&
 		*state.ConsentSource == feedback.ReporterConsentSourceWidget
+}
+
+func optionalStringValuesEqual(left, right *string) bool {
+	return (left == nil && right == nil) ||
+		(left != nil && right != nil && *left == *right)
 }
 
 func feedbackTagUnion(

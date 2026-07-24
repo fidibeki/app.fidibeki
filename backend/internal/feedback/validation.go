@@ -27,17 +27,15 @@ const (
 // Any other purpose value is an unknown/contradictory payload and is rejected.
 const ReporterConsentPurposeFeedbackUpdates = "feedback_updates"
 
-// ReporterConsentNoticeVersion is the consent notice revision currently accepted by the API.
-const ReporterConsentNoticeVersion = "2026-07"
+// ReporterConsentNoticeVersion is the contextual controller notice revision accepted for new
+// submissions. Existing evidence under the legacy revision remains valid in storage.
+const ReporterConsentNoticeVersion = "2026-07-controller-v1"
+
+const LegacyReporterConsentNoticeVersion = "2026-07"
 
 // ReporterConsentSourceWidget identifies the widget submission flow as the origin of a consent
 // grant. It is assigned by the server, never accepted from the client.
 const ReporterConsentSourceWidget = "widget_submission"
-
-// reporterConsentNoticeVersions are the notice/copy revisions the backend currently recognizes.
-// Submissions asserting any other version are rejected as unknown so a future notice-copy change
-// can be rolled out without silently accepting evidence for a notice the reporter never saw.
-var reporterConsentNoticeVersions = set(ReporterConsentNoticeVersion)
 
 var localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
@@ -100,8 +98,8 @@ func validateSubmissionAt(
 	if values.Text != nil && len(*values.Text) > maxTextLength {
 		fields = append(fields, field("text", fmt.Sprintf("must not exceed %d characters", maxTextLength)))
 	}
-	fields = append(fields, validateReporterConsent(input, &values)...)
 	selectedRule := submissionRule(configuration, values.WidgetRuleID)
+	fields = append(fields, validateReporterConsent(input, &values, configuration, selectedRule)...)
 	if !validHTTPURL(values.PageURL, 4096) {
 		fields = append(fields, field("metadata.url", "must be an absolute HTTP or HTTPS URL"))
 	} else if selectedRule != nil {
@@ -150,7 +148,12 @@ func validateSubmissionAt(
 // complete, recognized consent evidence. Contradictory or unknown payloads are rejected outright
 // rather than silently normalized, so the backend never has to guess reporter intent. Evidence
 // fields on values are only populated once the payload is fully valid.
-func validateReporterConsent(input SubmissionRequest, values *SubmissionValues) []FieldError {
+func validateReporterConsent(
+	input SubmissionRequest,
+	values *SubmissionValues,
+	configuration project.PublicConfiguration,
+	selectedRule *project.WidgetRule,
+) []FieldError {
 	fields := make([]FieldError, 0)
 	if values.ReporterEmail != nil && !validEmail(*values.ReporterEmail) {
 		fields = append(fields, field("reporter_email", "must be a valid email address"))
@@ -178,24 +181,61 @@ func validateReporterConsent(input SubmissionRequest, values *SubmissionValues) 
 		fields = append(fields, field("consent.purpose", "must be feedback_updates"))
 	}
 	noticeVersion := strings.TrimSpace(input.Consent.NoticeVersion)
-	if _, supported := reporterConsentNoticeVersions[noticeVersion]; !supported {
+	if noticeVersion != ReporterConsentNoticeVersion {
 		fields = append(fields, field("consent.notice_version", "is not a supported notice version"))
 	}
-	locale := strings.TrimSpace(input.Consent.Locale)
-	if !SupportedReporterConsentLocale(locale) {
-		fields = append(fields, field("consent.locale", "must identify a supported locale"))
+	locale := strings.ToLower(strings.TrimSpace(input.Consent.Locale))
+	if !validReporterConsentLocale(locale) {
+		fields = append(fields, field("consent.locale", "must identify a valid published locale"))
+	}
+	if configuration.ControllerProfile == nil || !configuration.ControllerProfile.Complete() {
+		fields = append(fields, field("consent.controller_profile_version", "controller profile is not available"))
+	} else if input.Consent.ControllerProfileVersion != configuration.ControllerProfile.Version {
+		fields = append(fields, field("consent.controller_profile_version", "must match the published controller profile"))
+	}
+	var localization project.WidgetLocalization
+	if selectedRule == nil || !selectedRule.CollectContact {
+		fields = append(fields, field("consent.widget_definition_version", "contact collection is not enabled"))
+	} else {
+		if input.Consent.WidgetDefinitionVersion != selectedRule.DefinitionVersion {
+			fields = append(fields, field("consent.widget_definition_version", "must match the published widget definition"))
+		}
+		var exists bool
+		localization, exists = selectedRule.Localizations[locale]
+		if !exists || !project.HasCompleteContactNotices(map[string]project.WidgetLocalization{locale: localization}) {
+			fields = append(fields, field("consent.locale", "must identify a locale with a complete privacy notice"))
+		}
 	}
 	if len(fields) == 0 {
 		source := ReporterConsentSourceWidget
+		snapshot, err := json.Marshal(ReporterConsentNoticeSnapshot{
+			SchemaVersion: 1, NoticeVersion: noticeVersion,
+			ControllerProfileVersion: configuration.ControllerProfile.Version,
+			WidgetDefinitionVersion:  selectedRule.DefinitionVersion,
+			Locale:                   locale,
+			ControllerName:           configuration.ControllerProfile.Name,
+			PrivacyContactEmail:      configuration.ControllerProfile.PrivacyContactEmail,
+			PrivacyRightsEmail:       configuration.ControllerProfile.PrivacyRightsEmail,
+			PrivacyPolicyURL:         configuration.ControllerProfile.PrivacyPolicyURL,
+			PurposeSummary:           localization.PrivacyPurposeSummary,
+			LawfulBasisSummary:       localization.PrivacyLawfulBasisSummary,
+			RetentionSummary:         localization.PrivacyRetentionSummary,
+		})
+		if err != nil {
+			return append(fields, field("consent", "could not preserve the published notice"))
+		}
+		encodedSnapshot := string(snapshot)
 		values.ReporterConsentPurpose = &purpose
 		values.ReporterConsentNoticeVersion = &noticeVersion
 		values.ReporterConsentLocale = &locale
 		values.ReporterConsentSource = &source
+		values.ReporterConsentNoticeSnapshot = &encodedSnapshot
 	}
 	return fields
 }
 
-// SupportedReporterConsentLocale reports whether the consent notice exists for this locale.
+// SupportedReporterConsentLocale reports whether legacy stored consent evidence used a locale
+// supported by the original Fidibeki-managed notice.
 func SupportedReporterConsentLocale(locale string) bool {
 	locale = strings.TrimSpace(locale)
 	if locale == "" || len(locale) > maxLocaleLength || !localePattern.MatchString(locale) {
@@ -207,6 +247,21 @@ func SupportedReporterConsentLocale(locale string) bool {
 	default:
 		return false
 	}
+}
+
+func StoredReporterConsentEvidenceSupported(version string, locale string, hasSnapshot bool) bool {
+	switch version {
+	case LegacyReporterConsentNoticeVersion:
+		return !hasSnapshot && SupportedReporterConsentLocale(locale)
+	case ReporterConsentNoticeVersion:
+		return hasSnapshot && validReporterConsentLocale(locale)
+	default:
+		return false
+	}
+}
+
+func validReporterConsentLocale(locale string) bool {
+	return locale != "" && len(locale) <= maxLocaleLength && localePattern.MatchString(locale)
 }
 
 func submissionRule(configuration project.PublicConfiguration, ruleID string) *project.WidgetRule {

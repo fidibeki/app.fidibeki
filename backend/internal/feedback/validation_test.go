@@ -86,7 +86,8 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 		},
 		Comment: &comment, ReporterEmail: &email, NotifyReporter: true,
 		Consent: &ReporterConsentInput{
-			Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: "2026-07",
+			Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: ReporterConsentNoticeVersion,
+			ControllerProfileVersion: 7, WidgetDefinitionVersion: 3,
 			Locale: "en", Granted: true,
 		},
 		Metadata: MetadataInput{
@@ -94,10 +95,11 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 		},
 	}
 	configuration := project.PublicConfiguration{
-		Plan: tenant.PlanGrowth,
+		Plan: tenant.PlanGrowth, ControllerProfile: testControllerProfile(),
 		Rules: []project.WidgetRule{{
 			ID: request.WidgetRuleID, DefinitionVersion: 3, AllowComment: true, CollectContact: true,
 			CanRate: true, CanWriteText: true,
+			Localizations: testContactLocalizations(),
 			ResponseBlocks: []project.WidgetResponseBlock{
 				{Key: "score", Type: project.ResponseRating, Required: true},
 				{Key: "reaction", Type: project.ResponseReaction, Required: true, Options: []project.WidgetResponseOption{{Value: "helpful"}, {Value: "not_helpful"}}},
@@ -120,12 +122,20 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 		t.Errorf("reporter email = %v", values.ReporterEmail)
 	}
 	if values.ReporterConsentPurpose == nil || *values.ReporterConsentPurpose != ReporterConsentPurposeFeedbackUpdates ||
-		values.ReporterConsentNoticeVersion == nil || *values.ReporterConsentNoticeVersion != "2026-07" ||
+		values.ReporterConsentNoticeVersion == nil || *values.ReporterConsentNoticeVersion != ReporterConsentNoticeVersion ||
 		values.ReporterConsentLocale == nil || *values.ReporterConsentLocale != "en" ||
-		values.ReporterConsentSource == nil || *values.ReporterConsentSource != ReporterConsentSourceWidget {
+		values.ReporterConsentSource == nil || *values.ReporterConsentSource != ReporterConsentSourceWidget ||
+		values.ReporterConsentNoticeSnapshot == nil {
 		t.Errorf("consent evidence = purpose %v version %v locale %v source %v",
 			values.ReporterConsentPurpose, values.ReporterConsentNoticeVersion,
 			values.ReporterConsentLocale, values.ReporterConsentSource)
+	}
+	var snapshot ReporterConsentNoticeSnapshot
+	if values.ReporterConsentNoticeSnapshot == nil ||
+		json.Unmarshal([]byte(*values.ReporterConsentNoticeSnapshot), &snapshot) != nil ||
+		snapshot.ControllerProfileVersion != 7 || snapshot.WidgetDefinitionVersion != 3 ||
+		snapshot.ControllerName != "Acme" || snapshot.PurposeSummary != "Send feedback updates." {
+		t.Errorf("consent notice snapshot = %v", values.ReporterConsentNoticeSnapshot)
 	}
 	var responses map[string]any
 	if err := json.Unmarshal([]byte(values.Responses), &responses); err != nil {
@@ -139,13 +149,15 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 func TestValidateReporterConsentRejectsContradictoryAndUnknownPayloads(t *testing.T) {
 	t.Parallel()
 	baseConfiguration := project.PublicConfiguration{
-		Plan: tenant.PlanGrowth,
+		Plan: tenant.PlanGrowth, ControllerProfile: testControllerProfile(),
 		Rules: []project.WidgetRule{{
-			ID: "1341b36b-d02c-4398-ab29-ca935e73539a", CollectContact: true,
+			ID: "1341b36b-d02c-4398-ab29-ca935e73539a", DefinitionVersion: 3,
+			CollectContact: true, Localizations: testContactLocalizations(),
 		}},
 	}
 	validConsent := ReporterConsentInput{
-		Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: "2026-07",
+		Purpose: ReporterConsentPurposeFeedbackUpdates, NoticeVersion: ReporterConsentNoticeVersion,
+		ControllerProfileVersion: 7, WidgetDefinitionVersion: 3,
 		Locale: "en", Granted: true,
 	}
 	email := "customer@example.com"
@@ -264,7 +276,8 @@ func TestValidateReporterConsentRejectsContradictoryAndUnknownPayloads(t *testin
 				}
 			}
 			if values.ReporterConsentPurpose != nil || values.ReporterConsentNoticeVersion != nil ||
-				values.ReporterConsentLocale != nil || values.ReporterConsentSource != nil {
+				values.ReporterConsentLocale != nil || values.ReporterConsentSource != nil ||
+				values.ReporterConsentNoticeSnapshot != nil {
 				t.Errorf("rejected payload must not populate consent evidence, got %#v", values)
 			}
 		})
@@ -478,6 +491,23 @@ func hasField(fields []FieldError, name string) bool {
 
 func intPointer(value int) *int {
 	return &value
+}
+
+func testControllerProfile() *project.ControllerProfile {
+	return &project.ControllerProfile{
+		Version: 7, Name: "Acme", PrivacyContactEmail: "privacy@acme.test",
+		PrivacyRightsEmail: "rights@acme.test", PrivacyPolicyURL: "https://acme.test/privacy",
+	}
+}
+
+func testContactLocalizations() map[string]project.WidgetLocalization {
+	return map[string]project.WidgetLocalization{
+		"en": {
+			PrivacyPurposeSummary:     "Send feedback updates.",
+			PrivacyLawfulBasisSummary: "Consent for optional updates.",
+			PrivacyRetentionSummary:   "Retained until consent is withdrawn or the case period ends.",
+		},
+	}
 }
 
 type authorizerFunc func(context.Context, string, string) (project.PublicConfiguration, error)

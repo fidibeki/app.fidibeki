@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"sort"
@@ -349,6 +350,9 @@ func normalizeLocalizations(localizations map[string]WidgetLocalization) map[str
 		content.ConsentLabel = strings.TrimSpace(content.ConsentLabel)
 		content.SubmitLabel = strings.TrimSpace(content.SubmitLabel)
 		content.SuccessMessage = strings.TrimSpace(content.SuccessMessage)
+		content.PrivacyPurposeSummary = strings.TrimSpace(content.PrivacyPurposeSummary)
+		content.PrivacyLawfulBasisSummary = strings.TrimSpace(content.PrivacyLawfulBasisSummary)
+		content.PrivacyRetentionSummary = strings.TrimSpace(content.PrivacyRetentionSummary)
 		content.BlockLabels = normalizeLabels(content.BlockLabels)
 		content.OptionLabels = normalizeOptionLabels(content.OptionLabels)
 		normalized[strings.ToLower(strings.TrimSpace(locale))] = content
@@ -822,7 +826,7 @@ func validateDefinition(values WidgetRuleValues, fields FieldErrors) {
 		fields["objective"] = "must be continuous_feedback, after_engagement, validate_content, or detect_friction"
 	}
 	validateResponseBlocks(values.ResponseBlocks, fields)
-	validateLocalizations(values.Localizations, fields)
+	validateLocalizations(values.Localizations, values.CollectContact, fields)
 }
 
 func validateResponseBlocks(blocks []WidgetResponseBlock, fields FieldErrors) {
@@ -880,7 +884,11 @@ func validateResponseOptions(
 	}
 }
 
-func validateLocalizations(localizations map[string]WidgetLocalization, fields FieldErrors) {
+func validateLocalizations(
+	localizations map[string]WidgetLocalization,
+	collectContact bool,
+	fields FieldErrors,
+) {
 	if len(localizations) < 1 || len(localizations) > 20 {
 		fields["localizations"] = "must contain between 1 and 20 locales"
 	}
@@ -896,6 +904,19 @@ func validateLocalizations(localizations map[string]WidgetLocalization, fields F
 		validateLocalizedText(prefix+".consent_label", content.ConsentLabel, 240, fields)
 		validateLocalizedText(prefix+".submit_label", content.SubmitLabel, 120, fields)
 		validateLocalizedText(prefix+".success_message", content.SuccessMessage, 500, fields)
+		validateOptionalLocalizedText(
+			prefix+".privacy_purpose_summary", content.PrivacyPurposeSummary, 1000, collectContact, fields,
+		)
+		validateOptionalLocalizedText(
+			prefix+".privacy_lawful_basis_summary",
+			content.PrivacyLawfulBasisSummary,
+			1000,
+			collectContact,
+			fields,
+		)
+		validateOptionalLocalizedText(
+			prefix+".privacy_retention_summary", content.PrivacyRetentionSummary, 1000, collectContact, fields,
+		)
 		for key, label := range content.BlockLabels {
 			if !responseKeyPattern.MatchString(key) || len(label) < 1 || len(label) > 240 {
 				fields[prefix+".block_labels."+key] = "must identify a block and contain 1-240 characters"
@@ -915,9 +936,55 @@ func validateLocalizations(localizations map[string]WidgetLocalization, fields F
 	}
 }
 
+func HasCompleteContactNotices(localizations map[string]WidgetLocalization) bool {
+	if len(localizations) == 0 {
+		return false
+	}
+	for _, content := range localizations {
+		if content.PrivacyPurposeSummary == "" ||
+			content.PrivacyLawfulBasisSummary == "" ||
+			content.PrivacyRetentionSummary == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (profile ControllerProfile) Complete() bool {
+	if profile.Version < 1 || len(profile.Name) < 1 || len(profile.Name) > 120 ||
+		!validControllerEmail(profile.PrivacyContactEmail) ||
+		!validControllerEmail(profile.PrivacyRightsEmail) {
+		return false
+	}
+	privacyURL, err := url.ParseRequestURI(profile.PrivacyPolicyURL)
+	return err == nil && privacyURL.IsAbs() && privacyURL.Host != "" &&
+		privacyURL.User == nil && privacyURL.Scheme == "https" &&
+		privacyURL.RawQuery == "" && privacyURL.Fragment == ""
+}
+
+func validControllerEmail(value string) bool {
+	if value == "" || len(value) > 320 || strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	address, err := mail.ParseAddress(value)
+	return err == nil && address.Address == value
+}
+
 func validateLocalizedText(field string, value string, maximum int, fields FieldErrors) {
 	if len(value) < 1 || len(value) > maximum {
 		fields[field] = fmt.Sprintf("must contain between 1 and %d characters", maximum)
+	}
+}
+
+func validateOptionalLocalizedText(
+	field string,
+	value string,
+	maximum int,
+	required bool,
+	fields FieldErrors,
+) {
+	if len(value) > maximum || (required && value == "") {
+		fields[field] = fmt.Sprintf("must contain between 1 and %d characters when contact collection is enabled", maximum)
 	}
 }
 

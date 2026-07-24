@@ -9,6 +9,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,7 +20,7 @@ func TestPostgresResolverResolve(t *testing.T) {
 	deletionRequestedAt := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	querier := &resolverQuerier{
 		row: resolverRow{scan: func(destinations ...any) error {
-			if len(destinations) != 17 {
+			if len(destinations) != 20 {
 				return errors.New("unexpected destination count")
 			}
 			*destinations[0].(*string) = "0762af3d-01b4-452f-81ad-dabf7652395f"
@@ -30,6 +31,8 @@ func TestPostgresResolverResolve(t *testing.T) {
 			defaultLocale := "pt-AO"
 			defaultTimezone := "Africa/Luanda"
 			privacyURL := "https://acme.test/privacy"
+			privacyContact := "privacy@acme.test"
+			privacyRights := "rights@acme.test"
 			termsURL := "https://acme.test/terms"
 			logoVersion := "b6988409-e11f-4330-808f-e79e05fb160d"
 			*destinations[2].(**string) = &shortName
@@ -46,8 +49,11 @@ func TestPostgresResolverResolve(t *testing.T) {
 			*destinations[12].(**string) = &defaultLocale
 			*destinations[13].(**string) = &defaultTimezone
 			*destinations[14].(**string) = &privacyURL
-			*destinations[15].(**string) = &termsURL
-			*destinations[16].(**string) = &logoVersion
+			*destinations[15].(**string) = &privacyContact
+			*destinations[16].(**string) = &privacyRights
+			*destinations[17].(*int) = 3
+			*destinations[18].(**string) = &termsURL
+			*destinations[19].(**string) = &logoVersion
 			return nil
 		}},
 	}
@@ -83,6 +89,9 @@ func TestPostgresResolverResolve(t *testing.T) {
 		resolved.DefaultLocale == nil || *resolved.DefaultLocale != "pt-AO" ||
 		resolved.DefaultTimezone == nil || *resolved.DefaultTimezone != "Africa/Luanda" ||
 		resolved.PrivacyPolicyURL == nil || *resolved.PrivacyPolicyURL != "https://acme.test/privacy" ||
+		resolved.PrivacyContactEmail == nil || *resolved.PrivacyContactEmail != "privacy@acme.test" ||
+		resolved.PrivacyRightsEmail == nil || *resolved.PrivacyRightsEmail != "rights@acme.test" ||
+		resolved.PrivacyProfileVersion != 3 ||
 		resolved.TermsURL == nil || *resolved.TermsURL != "https://acme.test/terms" ||
 		resolved.LogoVersion == nil || *resolved.LogoVersion != "b6988409-e11f-4330-808f-e79e05fb160d" {
 		t.Errorf("resolved tenant profile = %#v", resolved)
@@ -103,7 +112,11 @@ func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
 		*destinations[7].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
 		*destinations[8].(*bool) = true
 		*destinations[9].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{}
-		for index := 10; index < 17; index++ {
+		for index := 10; index <= 16; index++ {
+			*destinations[index].(**string) = nil
+		}
+		*destinations[17].(*int) = 0
+		for index := 18; index < 20; index++ {
 			*destinations[index].(**string) = nil
 		}
 		return nil
@@ -118,6 +131,58 @@ func TestPostgresResolverLeavesMissingTrialEndNil(t *testing.T) {
 	}
 	if resolved.DeletionRequestedAt != nil {
 		t.Errorf("DeletionRequestedAt = %v, want nil", resolved.DeletionRequestedAt)
+	}
+}
+
+func TestPostgresResolverSupportsSchemaBeforeContextualPrivacyProfile(t *testing.T) {
+	t.Parallel()
+
+	querier := &resolverSequenceQuerier{rows: []pgx.Row{
+		resolverRow{scan: func(...any) error {
+			return &pgconn.PgError{
+				Code:    "42703",
+				Message: `column "privacy_contact_email" does not exist`,
+			}
+		}},
+		resolverRow{scan: func(destinations ...any) error {
+			if len(destinations) != 17 {
+				return errors.New("unexpected legacy destination count")
+			}
+			*destinations[0].(*string) = "tenant-id"
+			*destinations[1].(*string) = "Acme"
+			*destinations[2].(**string) = nil
+			*destinations[3].(*string) = "acme"
+			*destinations[4].(*string) = string(PlanStarter)
+			*destinations[5].(*string) = string(StatusActive)
+			*destinations[6].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+			*destinations[7].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+			*destinations[8].(*bool) = true
+			*destinations[9].(*widgetconfig.AppearanceOverrides) = widgetconfig.AppearanceOverrides{}
+			for index := 10; index < 17; index++ {
+				*destinations[index].(**string) = nil
+			}
+			return nil
+		}},
+	}}
+
+	resolved, err := (PostgresResolver{Admin: querier}).Resolve(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(querier.queries) != 2 {
+		t.Fatalf("query count = %d, want 2", len(querier.queries))
+	}
+	if !strings.Contains(querier.queries[0], "privacy_contact_email") ||
+		strings.Contains(querier.queries[1], "privacy_contact_email") {
+		t.Errorf("queries = %#v, want current schema followed by legacy schema", querier.queries)
+	}
+	if resolved.ID != "tenant-id" || resolved.Slug != "acme" || resolved.Plan != PlanStarter ||
+		resolved.Status != StatusActive {
+		t.Errorf("resolved tenant = %#v", resolved)
+	}
+	if resolved.PrivacyContactEmail != nil || resolved.PrivacyRightsEmail != nil ||
+		resolved.PrivacyProfileVersion != 0 {
+		t.Errorf("legacy contextual privacy profile = %#v, want empty", resolved)
 	}
 }
 
@@ -164,6 +229,18 @@ func (q *resolverQuerier) QueryRow(_ context.Context, query string, arguments ..
 		q.slug, _ = arguments[0].(string)
 	}
 	return q.row
+}
+
+type resolverSequenceQuerier struct {
+	queries []string
+	rows    []pgx.Row
+}
+
+func (q *resolverSequenceQuerier) QueryRow(_ context.Context, query string, _ ...any) pgx.Row {
+	q.queries = append(q.queries, query)
+	row := q.rows[0]
+	q.rows = q.rows[1:]
+	return row
 }
 
 type resolverRow struct {

@@ -137,8 +137,15 @@ async function seedActiveAnalyticsConsent(
 function definitionConfiguration(presentation: WidgetPresentation, key = 'inline-checkout'): WidgetConfiguration {
   return {
     ...browserConfiguration(),
-    schema_version: 2,
+    schema_version: 3,
     default_locale: 'en',
+    controller_profile: {
+      version: 4,
+      name: 'Acme',
+      privacy_contact_email: 'privacy@acme.test',
+      privacy_rights_email: 'rights@acme.test',
+      privacy_policy_url: 'https://acme.test/privacy',
+    },
     rules: [],
     definitions: [{
       ...browserRule,
@@ -160,6 +167,9 @@ function definitionConfiguration(presentation: WidgetPresentation, key = 'inline
           comment_placeholder: 'Add context', contact_label: 'Email address',
           consent_label: 'Email me updates about this feedback', submit_label: 'Send response',
           success_message: 'Response received.',
+          privacy_purpose_summary: 'Send updates about this feedback.',
+          privacy_lawful_basis_summary: 'Consent for optional feedback updates.',
+          privacy_retention_summary: 'Retained until consent is withdrawn or the case period ends.',
           block_labels: { score: 'Score', reaction: 'Was this helpful?', reason: 'Reason', details: 'Details' },
           option_labels: {
             reaction: { helpful: 'Helpful', not_helpful: 'Not helpful' },
@@ -171,6 +181,9 @@ function definitionConfiguration(presentation: WidgetPresentation, key = 'inline
           comment_placeholder: 'Adicionar contexto', contact_label: 'Endereço de email',
           consent_label: 'Enviem-me atualizações sobre este feedback', submit_label: 'Enviar resposta',
           success_message: 'Resposta recebida.',
+          privacy_purpose_summary: 'Enviar atualizações sobre este feedback.',
+          privacy_lawful_basis_summary: 'Consentimento para atualizações opcionais.',
+          privacy_retention_summary: 'Mantido até retirar o consentimento ou terminar o caso.',
           block_labels: { score: 'Pontuação', reaction: 'Foi útil?', reason: 'Motivo', details: 'Detalhes' },
           option_labels: {
             reaction: { helpful: 'Útil', not_helpful: 'Não foi útil' },
@@ -457,8 +470,15 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
       await page.getByRole('button', { name: 'Share feedback' }).click()
     }
     await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
+    await expect(page.getByText('How Acme uses your data')).toBeVisible()
+    await page.getByText('How Acme uses your data').click()
+    await expect(page.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute(
+      'href',
+      'https://acme.test/privacy',
+    )
     await page.evaluate(() => { document.documentElement.lang = 'pt-AO' })
     await expect(page.getByRole('heading', { name: 'Como foi o checkout?' })).toBeVisible()
+    await expect(page.getByText('Como Acme utiliza os teus dados')).toBeVisible()
     await page.evaluate(() => { document.documentElement.lang = 'en' })
     await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
     if (presentation === 'inline') {
@@ -488,7 +508,9 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
       notify_reporter: true,
       consent: {
         purpose: 'feedback_updates',
-        notice_version: expect.any(String),
+        notice_version: '2026-07-controller-v1',
+        controller_profile_version: 4,
+        widget_definition_version: 2,
         locale: expect.any(String),
         granted: true,
       },
@@ -654,7 +676,8 @@ for (const contactCase of contactSubmissionCases) {
       reporter_email: expectGranted ? contactCase.email : null,
       notify_reporter: expectGranted,
       consent: expectGranted ? {
-        purpose: 'feedback_updates', notice_version: expect.any(String),
+        purpose: 'feedback_updates', notice_version: '2026-07-controller-v1',
+        controller_profile_version: 4, widget_definition_version: 2,
         locale: expect.any(String), granted: true,
       } : null,
     })

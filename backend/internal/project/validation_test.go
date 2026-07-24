@@ -201,7 +201,11 @@ func TestValidateWidgetDefinitionAcceptsTypedLocalizedContract(t *testing.T) {
 			"pt-AO": {
 				LauncherLabel: "Opinião", Prompt: "Isto foi útil?", CommentPlaceholder: "Conta-nos mais",
 				ContactLabel: "Email", ConsentLabel: "Contactem-me", SubmitLabel: "Enviar",
-				SuccessMessage: "Recebido.", BlockLabels: map[string]string{"reaction": "Escolhe uma opção"},
+				SuccessMessage:            "Recebido.",
+				PrivacyPurposeSummary:     "Enviar atualizações sobre este feedback.",
+				PrivacyLawfulBasisSummary: "Consentimento para atualizações opcionais.",
+				PrivacyRetentionSummary:   "Mantido até retirar o consentimento ou terminar o caso.",
+				BlockLabels:               map[string]string{"reaction": "Escolhe uma opção"},
 				OptionLabels: map[string]map[string]string{
 					"reaction": {"helpful": "Útil", "unclear": "Pouco claro"},
 				},
@@ -217,6 +221,43 @@ func TestValidateWidgetDefinitionAcceptsTypedLocalizedContract(t *testing.T) {
 		values.CanRate || values.CanWriteText || !values.AllowComment || !values.CollectContact ||
 		values.Localizations["pt-ao"].Prompt != "Isto foi útil?" {
 		t.Fatalf("values = %#v", values)
+	}
+}
+
+func TestValidateWidgetDefinitionRequiresContextualNoticesForContactCollection(t *testing.T) {
+	t.Parallel()
+	input := WidgetRuleInput{
+		Name: "Contact follow-up", MatcherType: MatcherAllPages, TriggerType: TriggerExitIntent,
+		ResponseBlocks: []WidgetResponseBlock{{Key: "feedback", Type: ResponseFreeText}},
+		Localizations: map[string]WidgetLocalization{
+			"en": defaultLocalization("Tell us what happened"),
+		},
+		CollectContact: true,
+	}
+	_, fields := ValidateWidgetRule(input, tenant.Tenant{Plan: tenant.PlanStarter})
+	for _, field := range []string{
+		"localizations.en.privacy_purpose_summary",
+		"localizations.en.privacy_lawful_basis_summary",
+		"localizations.en.privacy_retention_summary",
+	} {
+		if fields[field] == "" {
+			t.Errorf("fields[%q] missing from %#v", field, fields)
+		}
+	}
+}
+
+func TestControllerProfileCompleteness(t *testing.T) {
+	t.Parallel()
+	valid := ControllerProfile{
+		Version: 1, Name: "Acme", PrivacyContactEmail: "privacy@acme.test",
+		PrivacyRightsEmail: "rights@acme.test", PrivacyPolicyURL: "https://acme.test/privacy",
+	}
+	if !valid.Complete() {
+		t.Fatal("valid controller profile reported incomplete")
+	}
+	valid.PrivacyPolicyURL = "https://acme.test/privacy?source=widget"
+	if valid.Complete() {
+		t.Fatal("controller profile with query-bearing privacy URL reported complete")
 	}
 }
 

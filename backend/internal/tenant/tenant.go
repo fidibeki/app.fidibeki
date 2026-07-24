@@ -44,21 +44,27 @@ type Tenant struct {
 	DefaultLocale            *string
 	DefaultTimezone          *string
 	PrivacyPolicyURL         *string
+	PrivacyContactEmail      *string
+	PrivacyRightsEmail       *string
+	PrivacyProfileVersion    int
 	TermsURL                 *string
 	LogoVersion              *string
 }
 
 type OrganizationProfile struct {
-	Name             string  `json:"name"`
-	ShortName        *string `json:"short_name"`
-	WebsiteURL       *string `json:"website_url"`
-	SupportEmail     *string `json:"support_email"`
-	AccentColor      *string `json:"accent_color"`
-	DefaultLocale    *string `json:"default_locale"`
-	DefaultTimezone  *string `json:"default_timezone"`
-	PrivacyPolicyURL *string `json:"privacy_policy_url"`
-	TermsURL         *string `json:"terms_url"`
-	LogoVersion      *string `json:"logo_version"`
+	Name                  string  `json:"name"`
+	ShortName             *string `json:"short_name"`
+	WebsiteURL            *string `json:"website_url"`
+	SupportEmail          *string `json:"support_email"`
+	AccentColor           *string `json:"accent_color"`
+	DefaultLocale         *string `json:"default_locale"`
+	DefaultTimezone       *string `json:"default_timezone"`
+	PrivacyPolicyURL      *string `json:"privacy_policy_url"`
+	PrivacyContactEmail   *string `json:"privacy_contact_email"`
+	PrivacyRightsEmail    *string `json:"privacy_rights_email"`
+	PrivacyProfileVersion int     `json:"privacy_profile_version"`
+	TermsURL              *string `json:"terms_url"`
+	LogoVersion           *string `json:"logo_version"`
 }
 
 func (t Tenant) OrganizationProfile() OrganizationProfile {
@@ -66,7 +72,10 @@ func (t Tenant) OrganizationProfile() OrganizationProfile {
 		Name: t.Name, ShortName: t.ShortName, WebsiteURL: t.WebsiteURL,
 		SupportEmail: t.SupportEmail, AccentColor: t.WidgetAppearanceDefaults.AccentColor,
 		DefaultLocale: t.DefaultLocale, DefaultTimezone: t.DefaultTimezone,
-		PrivacyPolicyURL: t.PrivacyPolicyURL, TermsURL: t.TermsURL, LogoVersion: t.LogoVersion,
+		PrivacyPolicyURL:    t.PrivacyPolicyURL,
+		PrivacyContactEmail: t.PrivacyContactEmail, PrivacyRightsEmail: t.PrivacyRightsEmail,
+		PrivacyProfileVersion: t.PrivacyProfileVersion,
+		TermsURL:              t.TermsURL, LogoVersion: t.LogoVersion,
 	}
 }
 
