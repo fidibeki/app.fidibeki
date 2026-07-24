@@ -321,6 +321,14 @@ export function mountWidget(options: MountOptions): () => void {
   }
   closeButton.addEventListener('click', () => {
 		if (submitting || accepted) return
+		if (launcher) {
+			// Launcher presentations stay available until feedback is submitted: closing the
+			// panel minimizes back to the launcher instead of dismissing the widget.
+			panel.hidden = true
+			launcher.hidden = false
+			launcher.focus()
+			return
+		}
 		options.onDismissed()
     destroy()
   })
