@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Check, Code2, ShieldCheck, X } from '@lucide/vue'
+import { Check, Code2, RefreshCw, ShieldCheck, X } from '@lucide/vue'
 import type {
   AnalyticsConsentConfig,
+  AnalyticsConsentDiagnostic,
   AnalyticsConsentMode,
   AnalyticsConsentNotice,
 } from '~/types/api'
@@ -11,22 +12,60 @@ const props = defineProps<{
   initial: AnalyticsConsentConfig
   projectName: string
   defaultLocale: string
+  projectId: string
+  ruleId: string
 }>()
 const emit = defineEmits<{
   cancel: []
   confirm: [configuration: AnalyticsConsentConfig]
 }>()
 const { t } = useI18n()
+const { $apiFetch } = useNuxtApp()
+const { dateTime } = useRegionalFormat()
 const identifier = useId()
 const localeOptions = ['en', 'pt', 'pt-ao', 'pt-pt']
 const draft = ref<AnalyticsConsentConfig>(emptyConsent())
 const selectedLocale = ref('en')
+const diagnostic = ref<AnalyticsConsentDiagnostic | null>(null)
+const diagnosticPending = ref(false)
+const diagnosticError = ref(false)
 
 watch(() => props.open, (open) => {
   if (!open) return
   draft.value = normalizeInitial(props.initial)
   selectedLocale.value = draft.value.supported_locales[0] || normalizedDefaultLocale()
 }, { immediate: true })
+
+watch(
+  () => [props.open, props.projectId, props.ruleId] as const,
+  ([open]) => {
+    if (open) void loadDiagnostic()
+  },
+  { immediate: true },
+)
+
+const diagnosticReady = computed(() =>
+  Boolean(
+    diagnostic.value &&
+    diagnostic.value.consent_mode === draft.value.mode &&
+    diagnostic.value.notice_version === draft.value.notice_version,
+  ),
+)
+
+const diagnosticMessage = computed(() => {
+  if (!props.ruleId) return t('projects.editor.analytics.consent.diagnosticSaveFirst')
+  if (diagnosticPending.value) return t('projects.editor.analytics.consent.diagnosticChecking')
+  if (diagnosticError.value) return t('projects.editor.analytics.consent.diagnosticUnavailable')
+  if (!diagnosticReady.value) return t('projects.editor.analytics.consent.diagnosticUnsaved')
+  const value = diagnostic.value!
+  if (value.active_count === 0 && value.recent_count === 0) {
+    return t('projects.editor.analytics.consent.diagnosticNone')
+  }
+  return t('projects.editor.analytics.consent.diagnosticSummary', {
+    active: value.active_count,
+    expiringSoon: value.expiring_soon_count,
+  })
+})
 
 const selectedNotice = computed({
   get: () => draft.value.notices[selectedLocale.value] || defaultNotice(selectedLocale.value),
@@ -95,6 +134,7 @@ function normalizedDefaultLocale() {
 function selectMode(mode: Exclude<AnalyticsConsentMode, 'none'>) {
   draft.value.mode = mode
   if (draft.value.supported_locales.length === 0) toggleLocale(normalizedDefaultLocale(), true)
+  void loadDiagnostic()
 }
 
 function toggleLocale(locale: string, checked: boolean) {
@@ -133,6 +173,23 @@ function validPrivacyURL(value: string) {
     return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
   } catch {
     return false
+  }
+}
+
+async function loadDiagnostic() {
+  diagnostic.value = null
+  diagnosticError.value = false
+  if (!props.open || !props.projectId || !props.ruleId) return
+  diagnosticPending.value = true
+  try {
+    const response = await $apiFetch<{ diagnostic: AnalyticsConsentDiagnostic }>(
+      `/v1/projects/${props.projectId}/widget-rules/${props.ruleId}/analytics-consent-diagnostic`,
+    )
+    diagnostic.value = response.diagnostic
+  } catch {
+    diagnosticError.value = true
+  } finally {
+    diagnosticPending.value = false
   }
 }
 
@@ -263,6 +320,33 @@ function confirm() {
   source: "customer_cmp"
 })</pre>
           </div>
+
+          <div class="analytics-consent-diagnostic-panel">
+            <div class="analytics-consent-diagnostic" :data-ready="diagnosticReady" data-consent-diagnostic>
+              <span>{{ diagnosticMessage }}</span>
+              <button
+                class="app-icon-button"
+                type="button"
+                :title="t('projects.editor.analytics.consent.diagnosticRefresh')"
+                :aria-label="t('projects.editor.analytics.consent.diagnosticRefresh')"
+                :disabled="diagnosticPending || !ruleId"
+                @click="loadDiagnostic"
+              >
+                <RefreshCw :size="14" :class="{ spinning: diagnosticPending }" />
+              </button>
+            </div>
+            <dl v-if="diagnosticReady && diagnostic" class="analytics-consent-diagnostic-stats" data-diagnostic-stats>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticActive') }}</dt><dd>{{ diagnostic.active_count }}</dd></div>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticExpiringSoon') }}</dt><dd>{{ diagnostic.expiring_soon_count }}</dd></div>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticRecent') }}</dt><dd>{{ diagnostic.recent_count }}</dd></div>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticDenied') }}</dt><dd>{{ diagnostic.denied_count }}</dd></div>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticWithdrawn') }}</dt><dd>{{ diagnostic.withdrawn_count }}</dd></div>
+              <div><dt>{{ t('projects.editor.analytics.consent.diagnosticExpired') }}</dt><dd>{{ diagnostic.expired_count }}</dd></div>
+            </dl>
+            <p v-if="diagnosticReady && diagnostic?.last_activity_at" class="analytics-consent-diagnostic-activity">
+              {{ t('projects.editor.analytics.consent.diagnosticLastActivity', { date: dateTime(diagnostic.last_activity_at) }) }}
+            </p>
+          </div>
         </template>
       </div>
 
@@ -304,6 +388,17 @@ function confirm() {
 .analytics-consent-runtime { display: grid; gap: 10px; }
 .analytics-consent-runtime > div { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; }
 .analytics-consent-runtime pre { max-width: 100%; margin: 0; padding: 12px; overflow-x: auto; background: #f3f6f5; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 5px; font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.analytics-consent-diagnostic-panel { display: grid; gap: 8px; }
+.analytics-consent-diagnostic { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 6px 5px 10px; background: #fff8e8; color: var(--amber); border: 1px solid #e9cc84; border-radius: 5px; font-size: 9px; font-weight: 700; }
+.analytics-consent-diagnostic[data-ready='true'] { background: var(--teal-soft); color: var(--teal); border-color: #acd5ca; }
+.analytics-consent-diagnostic .app-icon-button { width: 28px; height: 28px; flex: 0 0 auto; }
+.analytics-consent-diagnostic .spinning { animation: analytics-consent-spin .8s linear infinite; }
+@keyframes analytics-consent-spin { to { transform: rotate(360deg); } }
+.analytics-consent-diagnostic-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.analytics-consent-diagnostic-stats > div { display: grid; gap: 3px; padding: 8px; background: #f3f6f5; border: 1px solid var(--line); border-radius: 5px; text-align: center; }
+.analytics-consent-diagnostic-stats dt { color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
+.analytics-consent-diagnostic-stats dd { margin: 0; color: var(--ink-soft); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.analytics-consent-diagnostic-activity { margin: 0; color: var(--muted); font-size: 9px; }
 
 @media (max-width: 600px) {
   .analytics-consent-dialog { width: 100%; }
@@ -311,5 +406,6 @@ function confirm() {
   .analytics-consent-modes > button + button { border-top: 1px solid var(--line-strong); border-left: 0; }
   .analytics-consent-grid .wide { grid-column: auto; }
   .analytics-consent-dialog > footer { align-items: stretch; flex-direction: column-reverse; }
+  .analytics-consent-diagnostic-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 </style>

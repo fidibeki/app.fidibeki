@@ -12,8 +12,10 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -309,4 +311,270 @@ type noopAnalyticsLimiter struct{}
 
 func (noopAnalyticsLimiter) Allow(context.Context, string, ratelimit.Window) (ratelimit.Decision, error) {
 	return ratelimit.Decision{Allowed: true, Limit: 300, Remaining: 300}, nil
+}
+
+// TestWidgetAnalyticsConsentDiagnosticAggregatesSafelyAndEnforcesTenantScope proves the tenant-safe
+// backoffice diagnostic for issue #58: it reports the rule's current consent configuration plus
+// aggregate active/recent/expiry-health counts scoped to the current notice contract, excludes
+// stale-notice and other-rule evidence, never leaks a token/consent reference, enforces
+// widget_rule:read RBAC, and stays tenant-isolated.
+func TestWidgetAnalyticsConsentDiagnosticAggregatesSafelyAndEnforcesTenantScope(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	directURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL connection string: %v", err)
+	}
+	migrator, err := db.NewMigrator(directURL, analyticsMigrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	root, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect as root: %v", err)
+	}
+	t.Cleanup(func() { _ = root.Close(ctx) })
+	if _, err := root.Exec(ctx, `ALTER ROLE fidibeki_app LOGIN PASSWORD 'app-password'`); err != nil {
+		t.Fatalf("enable app login: %v", err)
+	}
+
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	var tenantID, projectID, ruleID, otherRuleID, otherTenantID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Acme', 'acme', 'growth', 'active') RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Beta', 'beta', 'growth', 'active') RETURNING id
+	`).Scan(&otherTenantID); err != nil {
+		t.Fatalf("create other tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Acme Web', 'pk_live_DIAGNOSTICABCDEFGHIJKL', '{example.com}') RETURNING id
+	`, tenantID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds, analytics_consent
+		) VALUES (
+			$1, 'Checkout', 'all_pages', 'delay', 0,
+			'{"mode":"customer_cmp","notice_version":"2026-07","supported_locales":["en"],"expiry_days":30}'::jsonb
+		)
+		RETURNING id
+	`, projectID).Scan(&ruleID); err != nil {
+		t.Fatalf("create analytics-enabled widget rule: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (
+			project_id, name, matcher_type, trigger_type, trigger_delay_seconds, analytics_consent
+		) VALUES (
+			$1, 'Pricing', 'all_pages', 'delay', 0,
+			'{"mode":"customer_cmp","notice_version":"2026-07","supported_locales":["en"],"expiry_days":30}'::jsonb
+		)
+		RETURNING id
+	`, projectID).Scan(&otherRuleID); err != nil {
+		t.Fatalf("create second analytics-enabled widget rule: %v", err)
+	}
+	var dormantRuleID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_rules (project_id, name, matcher_type, trigger_type, trigger_delay_seconds)
+		VALUES ($1, 'Dormant', 'all_pages', 'delay', 0) RETURNING id
+	`, projectID).Scan(&dormantRuleID); err != nil {
+		t.Fatalf("create dormant widget rule: %v", err)
+	}
+
+	insertConsent := func(widgetRuleID, noticeVersion, state, tokenHash string, customerReference *string,
+		createdAt, acceptedAt, withdrawnAt, expiresAt, updatedAt *time.Time,
+	) {
+		t.Helper()
+		if _, err := root.Exec(ctx, `
+			INSERT INTO widget_analytics_consents (
+				tenant_id, project_id, widget_rule_id, purpose, notice_version, locale, source,
+				customer_consent_reference, token_hash, state, accepted_at, withdrawn_at, expires_at,
+				created_at, updated_at
+			) VALUES (
+				$1, $2, $3, 'widget_analytics', $4, 'en', 'customer_cmp', $5, $6, $7, $8, $9, $10, $11, $12
+			)
+		`, tenantID, projectID, widgetRuleID, noticeVersion, customerReference, nullableConsentString(tokenHash),
+			state, acceptedAt, withdrawnAt, expiresAt, createdAt, updatedAt); err != nil {
+			t.Fatalf("seed widget analytics consent (state=%s): %v", state, err)
+		}
+	}
+	ref := func(value string) *string { return &value }
+	at := func(offset time.Duration) *time.Time { d := now.Add(offset); return &d }
+
+	// Current-cohort evidence for ruleID (notice_version=2026-07, source=customer_cmp): two live
+	// active grants (one expiring soon), one technically-expired active row, one denied, one
+	// withdrawn, and one explicitly expired row.
+	insertConsent(ruleID, "2026-07", "active", strings.Repeat("1", 64), ref("cmp-ref-active-fresh"),
+		at(-2*24*time.Hour), at(-2*24*time.Hour), nil, at(40*24*time.Hour), at(-24*time.Hour))
+	insertConsent(ruleID, "2026-07", "active", strings.Repeat("2", 64), ref("cmp-ref-active-soon"),
+		at(-20*24*time.Hour), at(-20*24*time.Hour), nil, at(3*24*time.Hour), at(-20*24*time.Hour))
+	insertConsent(ruleID, "2026-07", "active", strings.Repeat("3", 64), ref("cmp-ref-active-stale"),
+		at(-100*24*time.Hour), at(-100*24*time.Hour), nil, at(-1*24*time.Hour), at(-100*24*time.Hour))
+	insertConsent(ruleID, "2026-07", "denied", "", nil,
+		at(-5*24*time.Hour), nil, nil, at(25*24*time.Hour), at(-5*24*time.Hour))
+	insertConsent(ruleID, "2026-07", "withdrawn", strings.Repeat("5", 64), ref("cmp-ref-withdrawn"),
+		at(-50*24*time.Hour), at(-50*24*time.Hour), at(-45*24*time.Hour), at(10*24*time.Hour), at(-45*24*time.Hour))
+	insertConsent(ruleID, "2026-07", "expired", strings.Repeat("6", 64), ref("cmp-ref-expired"),
+		at(-90*24*time.Hour), at(-90*24*time.Hour), nil, at(-60*24*time.Hour), at(-90*24*time.Hour))
+	// Stale-notice evidence: an earlier contract version must never bleed into the current
+	// cohort's aggregate, even though it targets the same rule.
+	insertConsent(ruleID, "2026-06", "active", strings.Repeat("7", 64), ref("cmp-ref-stale-notice"),
+		at(-1*24*time.Hour), at(-1*24*time.Hour), nil, at(29*24*time.Hour), at(-1*24*time.Hour))
+	// A different rule's evidence, same tenant/project/notice/source, must not be counted either.
+	insertConsent(otherRuleID, "2026-07", "active", strings.Repeat("8", 64), ref("cmp-ref-other-rule"),
+		at(-1*24*time.Hour), at(-1*24*time.Hour), nil, at(29*24*time.Hour), at(-1*24*time.Hour))
+
+	var readerID, deniedID, otherTenantMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'diagnostic-reader@acme.test', ARRAY['widget_rule:read']) RETURNING id
+	`, tenantID).Scan(&readerID); err != nil {
+		t.Fatalf("create diagnostic reader: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'diagnostic-denied@acme.test', '{}') RETURNING id
+	`, tenantID).Scan(&deniedID); err != nil {
+		t.Fatalf("create diagnostic-denied member: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'diagnostic-other@beta.test', ARRAY['widget_rule:read']) RETURNING id
+	`, otherTenantID).Scan(&otherTenantMemberID); err != nil {
+		t.Fatalf("create other-tenant member: %v", err)
+	}
+
+	pools, err := db.OpenPools(ctx, analyticsRoleURL(t, directURL), directURL, 4, 2)
+	if err != nil {
+		t.Fatalf("open database pools: %v", err)
+	}
+	t.Cleanup(pools.Close)
+	jwtManager, err := auth.NewJWTManager(strings.Repeat("d", 32), "fidibeki", time.Hour)
+	if err != nil {
+		t.Fatalf("create JWT manager: %v", err)
+	}
+	readToken, _, err := jwtManager.IssueTenant(readerID, tenantID, []string{string(auth.PermissionWidgetRuleRead)})
+	if err != nil {
+		t.Fatalf("issue reader token: %v", err)
+	}
+	deniedToken, _, err := jwtManager.IssueTenant(deniedID, tenantID, nil)
+	if err != nil {
+		t.Fatalf("issue denied token: %v", err)
+	}
+	otherTenantToken, _, err := jwtManager.IssueTenant(
+		otherTenantMemberID, otherTenantID, []string{string(auth.PermissionWidgetRuleRead)},
+	)
+	if err != nil {
+		t.Fatalf("issue other-tenant token: %v", err)
+	}
+
+	routes := chi.NewRouter()
+	RegisterTenantRoutes(routes, TenantHTTPOptions{
+		Store: Store{}, JWT: jwtManager, Now: func() time.Time { return now },
+	})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
+		Begin: db.BeginFromPool(pools.App),
+	})(routes)
+
+	diagnosticPath := "/v1/projects/" + projectID + "/widget-rules/" + ruleID + "/analytics-consent-diagnostic"
+	response := analyticsDiagnosticRequest(handler, "acme.localhost", diagnosticPath, readToken)
+	if response.Code != http.StatusOK {
+		t.Fatalf("diagnostic status = %d, body = %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, want := range []string{
+		`"widget_rule_id":"` + ruleID + `"`,
+		`"consent_mode":"customer_cmp"`,
+		`"notice_version":"2026-07"`,
+		`"active_count":2`,
+		`"expiring_soon_count":1`,
+		`"denied_count":1`,
+		`"withdrawn_count":1`,
+		`"expired_count":2`,
+		`"recent_count":3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("diagnostic body missing %q: %s", want, body)
+		}
+	}
+	for _, forbidden := range []string{
+		"token", "cmp-ref", "customer_consent_reference", "locale", "source",
+		strings.Repeat("1", 64), strings.Repeat("2", 64),
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("diagnostic leaked %q: %s", forbidden, body)
+		}
+	}
+
+	if denied := analyticsDiagnosticRequest(handler, "acme.localhost", diagnosticPath, deniedToken); denied.Code != http.StatusForbidden {
+		t.Fatalf("permission-denied diagnostic status = %d, body = %s", denied.Code, denied.Body.String())
+	}
+	if crossTenant := analyticsDiagnosticRequest(
+		handler, "beta.localhost", diagnosticPath, otherTenantToken,
+	); crossTenant.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant diagnostic status = %d, body = %s", crossTenant.Code, crossTenant.Body.String())
+	}
+
+	dormantPath := "/v1/projects/" + projectID + "/widget-rules/" + dormantRuleID + "/analytics-consent-diagnostic"
+	dormant := analyticsDiagnosticRequest(handler, "acme.localhost", dormantPath, readToken)
+	if dormant.Code != http.StatusOK ||
+		!strings.Contains(dormant.Body.String(), `"consent_mode":"none"`) ||
+		!strings.Contains(dormant.Body.String(), `"active_count":0`) ||
+		strings.Contains(dormant.Body.String(), `"next_expires_at"`) {
+		t.Fatalf("dormant rule diagnostic = %d/%s", dormant.Code, dormant.Body.String())
+	}
+
+	invalidRulePath := "/v1/projects/" + projectID + "/widget-rules/not-a-uuid/analytics-consent-diagnostic"
+	if invalid := analyticsDiagnosticRequest(handler, "acme.localhost", invalidRulePath, readToken); invalid.Code != http.StatusNotFound {
+		t.Fatalf("invalid rule id diagnostic status = %d", invalid.Code)
+	}
+	missingPath := "/v1/projects/" + projectID +
+		"/widget-rules/00000000-0000-4000-8000-000000000099/analytics-consent-diagnostic"
+	if missing := analyticsDiagnosticRequest(handler, "acme.localhost", missingPath, readToken); missing.Code != http.StatusNotFound {
+		t.Fatalf("missing rule diagnostic status = %d", missing.Code)
+	}
+}
+
+func nullableConsentString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func analyticsDiagnosticRequest(handler http.Handler, host, path, token string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
+	request.Host = host
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	handler.ServeHTTP(response, request)
+	return response
 }

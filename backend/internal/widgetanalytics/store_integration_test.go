@@ -217,6 +217,13 @@ func (blockingAnalyticsStore) Workspace(ctx context.Context, _ db.Querier, _ str
 	return Workspace{}, ctx.Err()
 }
 
+func (blockingAnalyticsStore) GetConsentDiagnostic(
+	ctx context.Context, _ db.Querier, _ string, _ string, _ string, _ time.Time,
+) (ConsentDiagnostic, error) {
+	<-ctx.Done()
+	return ConsentDiagnostic{}, ctx.Err()
+}
+
 func assertAnalyticsQueryTimeout(
 	t *testing.T,
 	pools *db.Pools,

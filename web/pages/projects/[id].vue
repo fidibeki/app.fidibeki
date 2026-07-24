@@ -1146,6 +1146,8 @@ useHead(() => ({
       :initial="ruleForm.analytics_consent"
       :project-name="projectName"
       :default-locale="projectDefaultLocale"
+      :project-id="projectID"
+      :rule-id="selectedRuleID"
       @cancel="cancelAnalyticsConsent"
       @confirm="confirmAnalyticsConsent"
     />

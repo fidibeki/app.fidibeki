@@ -13,6 +13,7 @@ const ConsentPurpose = "widget_analytics"
 var (
 	ErrConsentRequired = errors.New("active widget analytics consent is required")
 	ErrConsentExpired  = errors.New("widget analytics consent expired")
+	ErrNotFound        = errors.New("widget rule not found")
 )
 
 type ConsentState string

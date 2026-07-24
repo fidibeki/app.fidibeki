@@ -23,6 +23,7 @@ import (
 
 type AnalyticsStore interface {
 	Workspace(context.Context, db.Querier, string, AnalyticsQuery) (Workspace, error)
+	GetConsentDiagnostic(context.Context, db.Querier, string, string, string, time.Time) (ConsentDiagnostic, error)
 }
 
 type TenantHTTPOptions struct {
@@ -92,6 +93,55 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionProjectRead),
 	).Get("/v1/analytics/widget", handler.summary)
+	router.With(
+		appmiddleware.RequireActive,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionWidgetRuleRead),
+	).Get(
+		"/v1/projects/{projectID}/widget-rules/{ruleID}/analytics-consent-diagnostic",
+		handler.getConsentDiagnostic,
+	)
+}
+
+func (h *TenantHTTPHandler) getConsentDiagnostic(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "projectID")
+	ruleID := chi.URLParam(r, "ruleID")
+	if _, err := uuid.Parse(projectID); err != nil {
+		writeAnalyticsConsentDiagnosticNotFound(w)
+		return
+	}
+	if _, err := uuid.Parse(ruleID); err != nil {
+		writeAnalyticsConsentDiagnosticNotFound(w)
+		return
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	now := time.Now().UTC()
+	if h.options.Now != nil {
+		now = h.options.Now().UTC()
+	}
+	diagnostic, err := h.options.Store.GetConsentDiagnostic(
+		r.Context(), query, resolved.ID, projectID, ruleID, now,
+	)
+	if errors.Is(err, ErrNotFound) {
+		writeAnalyticsConsentDiagnosticNotFound(w)
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "widget analytics consent diagnostic query failed",
+			"error", err, "tenant_id", resolved.ID)
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"diagnostic": diagnostic})
+}
+
+func writeAnalyticsConsentDiagnosticNotFound(w http.ResponseWriter) {
+	api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "widget rule not found", nil)
 }
 
 func (h *TenantHTTPHandler) summary(w http.ResponseWriter, r *http.Request) {

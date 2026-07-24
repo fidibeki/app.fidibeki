@@ -534,8 +534,13 @@ was removed from the staging test tenant.
       - [x] Disposable staging validation proved `422` before grant, `201` grant, `202` after
         grant, feedback remains usable with stale evidence, only valid evidence produces
         `submitted`, no Issue is auto-created, and all synthetic data was removed.
-      - [ ] Add tenant diagnostics for current analytics consent/configuration and close the
-        documented legal decision on targeting/functional storage before broad enablement.
+      - [x] Add tenant diagnostics for current analytics consent/configuration: a tenant-scoped,
+        `widget_rule:read`-gated endpoint and rule-editor panel report per-rule consent
+        mode/notice/active/expiring/denied/withdrawn/expired/recent counts and last-activity
+        timestamp, scoped to the rule's current notice cohort, without exposing tokens, consent
+        references, locale, or source.
+      - [ ] Close the documented legal decision on targeting/functional storage before broad
+        enablement.
     - [ ] #60: complete data-rights case management and execution.
       - [x] Slice 1: canonical reporter/member cases, verification, deadlines, ownership,
         idempotent lifecycle/events, explicit processing restrictions, fail-closed AI,

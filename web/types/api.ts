@@ -238,6 +238,20 @@ export interface AnalyticsConsentConfig {
   notices: Record<string, AnalyticsConsentNotice>
 }
 
+export interface AnalyticsConsentDiagnostic {
+  widget_rule_id: string
+  consent_mode: AnalyticsConsentMode
+  notice_version: string
+  active_count: number
+  expiring_soon_count: number
+  denied_count: number
+  withdrawn_count: number
+  expired_count: number
+  recent_count: number
+  next_expires_at?: string
+  last_activity_at?: string
+}
+
 export interface WidgetTargetCondition {
   id: string
   matcher_type: MatcherType
