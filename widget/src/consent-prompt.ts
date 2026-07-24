@@ -175,7 +175,7 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
       .more-options {
         display: block;
         min-height: auto;
-        margin-top: 12px;
+        margin: 12px auto 0;
         padding: 0;
         border: 0;
         background: none;
