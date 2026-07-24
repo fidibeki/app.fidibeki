@@ -42,6 +42,7 @@ type HTTPStore interface {
 	PlaceLegalHold(context.Context, db.Querier, string, string, string, string, string, string, time.Time) (LegalHold, error)
 	ReleaseLegalHold(context.Context, db.Querier, string, string, string, string, string, string, time.Time) (LegalHold, error)
 	RecordPortabilityAssessment(context.Context, db.Querier, string, string, string, string, RecordPortabilityAssessmentInput, time.Time) (PortabilityAssessment, bool, error)
+	ApplyCaseRectification(context.Context, db.Querier, string, string, string, string, RecordCaseRectificationInput, time.Time) (CaseRectification, bool, error)
 	StartCaseExecution(context.Context, db.Querier, string, string, string, string, time.Time) (CaseExecution, bool, error)
 }
 
@@ -113,6 +114,8 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/privacy/cases/{caseID}/legal-holds/{holdID}/release", handler.releaseCaseLegalHold)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/portability-assessments", handler.recordCasePortabilityAssessment)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/rectifications", handler.applyCaseRectification)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/execute", handler.startCaseExecution)
 	router.With(read...).

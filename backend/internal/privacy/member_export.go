@@ -163,6 +163,22 @@ var memberExportFiles = []exportFile{
 		  AND case_event.occurred_at <= $3
 		ORDER BY case_event.sequence, case_event.id
 	`},
+	{Name: "privacy-rectifications.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', rectification.id,
+			'privacy_case_id', rectification.privacy_case_id,
+			'changes', rectification.changes,
+			'previous_values', rectification.previous_values,
+			'reason', rectification.reason,
+			'applied_at', rectification.applied_at,
+			'created_at', rectification.created_at
+		)
+		FROM privacy_case_rectifications AS rectification
+		WHERE rectification.tenant_id = $1
+		  AND rectification.subject_member_id = $2
+		  AND rectification.created_at <= $3
+		ORDER BY rectification.created_at, rectification.id
+	`},
 }
 
 func (exporter Exporter) buildMemberArchive(

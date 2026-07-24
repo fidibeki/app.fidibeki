@@ -310,6 +310,42 @@ func (handler *HTTPHandler) recordCasePortabilityAssessment(w http.ResponseWrite
 	})
 }
 
+func (handler *HTTPHandler) applyCaseRectification(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Changes map[string]*string `json:"changes"`
+		Reason  string             `json:"reason"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	rectification, created, err := handler.options.Store.ApplyCaseRectification(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), RecordCaseRectificationInput{
+			Changes: body.Changes,
+			Reason:  body.Reason,
+		}, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"rectification": rectification, "created": created,
+	})
+}
+
 func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
 	caseID, ok := privacyCaseID(w, r)
 	if !ok {

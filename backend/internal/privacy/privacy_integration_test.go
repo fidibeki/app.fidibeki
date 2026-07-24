@@ -433,6 +433,54 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 			crossTenantMemberDownload.Code, crossTenantMemberDownload.Body.String())
 	}
 
+	rectificationCase, _, _, err := privacyStore.CreateCase(
+		ctx, database, tenantID, ownerID, "http-member-rectification",
+		CreateCaseInput{
+			SubjectType:     SubjectMember,
+			RightType:       RightRectification,
+			ControllerRole:  RoleController,
+			SubjectMemberID: ownerID,
+			OwnerMemberID:   ownerID,
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("create HTTP member rectification case: %v", err)
+	}
+	rectificationPath := "/v1/privacy/cases/" + rectificationCase.ID + "/rectifications"
+	rectificationBody := `{
+		"changes":{"name":"Corrected owner","locale":"pt_pt","timezone":null},
+		"reason":"Apply verified profile corrections."
+	}`
+	rectified := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, rectificationPath,
+		rectificationBody, "http-member-rectification-apply",
+	)
+	if rectified.Code != http.StatusCreated ||
+		!strings.Contains(rectified.Body.String(), `"created":true`) ||
+		!strings.Contains(rectified.Body.String(), `"name":"Corrected owner"`) ||
+		!strings.Contains(rectified.Body.String(), `"locale":"pt-PT"`) {
+		t.Fatalf("member rectification = %d body=%s", rectified.Code, rectified.Body.String())
+	}
+	rectifiedAgain := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, rectificationPath,
+		rectificationBody, "http-member-rectification-apply",
+	)
+	if rectifiedAgain.Code != http.StatusOK ||
+		!strings.Contains(rectifiedAgain.Body.String(), `"created":false`) {
+		t.Fatalf("idempotent member rectification = %d body=%s",
+			rectifiedAgain.Code, rectifiedAgain.Body.String())
+	}
+	invalidRectification := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, rectificationPath,
+		`{"changes":{"email":"other@example.test"},"reason":"Unsupported identity change."}`,
+		"http-member-rectification-invalid",
+	)
+	if invalidRectification.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid member rectification = %d body=%s",
+			invalidRectification.Code, invalidRectification.Body.String())
+	}
+
 	retryCreated := privacyHTTPRequest(handler, ownerToken, http.MethodPost, "/v1/privacy/exports")
 	var retryEnvelope struct {
 		Export Job `json:"export"`
@@ -1310,6 +1358,26 @@ func privacyHTTPJSONRequest(
 	request.Host = "http-privacy.localhost"
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func privacyHTTPJSONIdempotentRequest(
+	handler http.Handler,
+	token string,
+	method string,
+	path string,
+	body string,
+	idempotencyKey string,
+) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(
+		method, "http://http-privacy.localhost"+path, strings.NewReader(body),
+	)
+	request.Host = "http-privacy.localhost"
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", idempotencyKey)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder

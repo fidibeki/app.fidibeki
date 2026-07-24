@@ -118,6 +118,7 @@ type PrivacyCase struct {
 	LegalHolds              []LegalHold            `json:"legal_holds"`
 	Execution               *CaseExecution         `json:"execution,omitempty"`
 	PortabilityAssessment   *PortabilityAssessment `json:"portability_assessment,omitempty"`
+	Rectifications          []CaseRectification    `json:"rectifications"`
 	CreatedAt               time.Time              `json:"created_at"`
 	UpdatedAt               time.Time              `json:"updated_at"`
 }
@@ -191,6 +192,23 @@ type RecordPortabilityAssessmentInput struct {
 	DataCategories []PortabilityDataCategory
 	ExportFormat   string
 	Reason         string
+}
+
+type CaseRectification struct {
+	ID                string             `json:"id"`
+	PrivacyCaseID     string             `json:"privacy_case_id"`
+	SubjectMemberID   string             `json:"subject_member_id"`
+	Changes           map[string]*string `json:"changes"`
+	PreviousValues    map[string]*string `json:"previous_values"`
+	Reason            string             `json:"reason"`
+	AppliedByMemberID string             `json:"applied_by_member_id"`
+	AppliedAt         time.Time          `json:"applied_at"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
+type RecordCaseRectificationInput struct {
+	Changes map[string]*string
+	Reason  string
 }
 
 type CreateCaseInput struct {

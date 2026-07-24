@@ -146,6 +146,31 @@ func TestMemberAccessExportTracer(t *testing.T) {
 	}
 
 	store := Store{Database: database}
+	rectificationCase, _, _, err := store.CreateCase(
+		ctx, database, tenantID, memberID, "member-export-rectification-case",
+		CreateCaseInput{
+			SubjectType:     SubjectMember,
+			RightType:       RightRectification,
+			ControllerRole:  RoleController,
+			SubjectMemberID: memberID,
+			OwnerMemberID:   memberID,
+		},
+		now.Add(-2*time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("create export-subject rectification case: %v", err)
+	}
+	if _, created, err := store.ApplyCaseRectification(
+		ctx, database, tenantID, rectificationCase.ID, memberID,
+		"member-export-rectification",
+		RecordCaseRectificationInput{
+			Changes: map[string]*string{"name": pointerTo("Corrected Export Subject")},
+			Reason:  "Correct the member name before the access export.",
+		},
+		now.Add(-time.Minute),
+	); err != nil || !created {
+		t.Fatalf("apply export-subject rectification created=%t error=%v", created, err)
+	}
 	privacyCase, token, shouldEmail, err := store.CreateCase(
 		ctx, database, tenantID, memberID, "member-access-case",
 		CreateCaseInput{
@@ -211,7 +236,8 @@ func TestMemberAccessExportTracer(t *testing.T) {
 		"member.json", "sessions.jsonl", "magic-links.jsonl",
 		"issue-updates.jsonl", "issue-comments.jsonl", "issue-activity.jsonl",
 		"mentions.jsonl", "notifications.jsonl", "access-events.jsonl",
-		"privacy-cases.jsonl", "privacy-case-events.jsonl", "manifest.json",
+		"privacy-cases.jsonl", "privacy-case-events.jsonl",
+		"privacy-rectifications.jsonl", "manifest.json",
 	} {
 		if _, exists := files[filename]; !exists {
 			t.Errorf("member archive is missing %q", filename)
@@ -219,11 +245,12 @@ func TestMemberAccessExportTracer(t *testing.T) {
 	}
 	archiveText := string(bytes.Join(mapValues(files), nil))
 	for _, required := range []string{
-		"fidibeki.member-export.v1", "Export Subject",
+		"fidibeki.member-export.v1", "Corrected Export Subject", "Export Subject",
 		"owner@member-access.test", `"role": "owner"`, "Member browser marker",
 		"Member-owned status explanation", "Member-authored privacy note",
 		subjectActivityID, colleagueCommentID, colleagueActivityID,
 		"privacy.subject_accessed", privacyCase.PublicID,
+		"Correct the member name before the access export.",
 	} {
 		if !strings.Contains(archiveText, required) {
 			t.Errorf("member archive does not contain %q", required)
