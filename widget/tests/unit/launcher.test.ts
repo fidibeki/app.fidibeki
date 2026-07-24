@@ -22,6 +22,7 @@ function mount(overrides: Partial<WidgetRule> = {}) {
   const candidate = rule({ presentation: 'launcher', can_rate: false, ...overrides })
   const onInteraction = vi.fn()
   const onVisible = vi.fn()
+  const onDismissed = vi.fn()
   const destroy = mountWidget({
     configuration,
     rule: candidate,
@@ -34,10 +35,10 @@ function mount(overrides: Partial<WidgetRule> = {}) {
     onInteraction,
     submissionAnalytics: () => null,
     onSubmitted: vi.fn(),
-    onDismissed: vi.fn(),
+    onDismissed,
   })
   const shadow = document.querySelector<HTMLElement>('#fidibeki-widget-host')!.shadowRoot!
-  return { destroy, shadow, onInteraction, onVisible }
+  return { destroy, shadow, onInteraction, onVisible, onDismissed }
 }
 
 describe('launcher variants', () => {
@@ -116,5 +117,34 @@ describe('launcher variants', () => {
       expect(onInteraction).toHaveBeenCalledTimes(1)
       destroy()
     }
+  })
+
+  it('minimizes back to the launcher on close instead of dismissing before submission', () => {
+    const { destroy, shadow, onDismissed } = mount()
+    const launcher = shadow.querySelector<HTMLButtonElement>('[data-launcher]')!
+    const panel = shadow.querySelector<HTMLElement>('[data-panel]')!
+    launcher.click()
+    expect(panel.hidden).toBe(false)
+    shadow.querySelector<HTMLButtonElement>('[data-close]')!.click()
+    expect(panel.hidden).toBe(true)
+    expect(launcher.hidden).toBe(false)
+    expect(shadow.activeElement).toBe(launcher)
+    expect(onDismissed).not.toHaveBeenCalled()
+    expect(document.querySelector('#fidibeki-widget-host')).not.toBeNull()
+    launcher.click()
+    expect(panel.hidden).toBe(false)
+    expect(launcher.hidden).toBe(true)
+    destroy()
+  })
+
+  it('links back to fidibeki.com from the panel footer', () => {
+    const { destroy, shadow } = mount()
+    const badge = shadow.querySelector<HTMLElement>('.managed-by')!
+    expect(badge.textContent).toBe('Managed by fidibeki.com')
+    const link = badge.querySelector<HTMLAnchorElement>('a')!
+    expect(link.href).toBe('https://fidibeki.com/?ref=widget')
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noopener noreferrer')
+    destroy()
   })
 })

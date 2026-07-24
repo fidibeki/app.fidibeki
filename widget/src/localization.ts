@@ -22,6 +22,7 @@ export interface WidgetSystemCopy {
   privacyContact: string
   rightsContact: string
   privacyPolicy: string
+  managedBy: string
   aiDisclosure: string
   aiScope: string
   aiInputNames: Record<AIInputCategory, string>
@@ -62,6 +63,7 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     lawfulBasis: 'Legal basis', retention: 'Retention',
     privacyContact: 'Privacy contact', rightsContact: 'Rights contact',
     privacyPolicy: 'Privacy policy',
+    managedBy: 'Managed by',
     aiDisclosure: 'Selected feedback content may be processed by Google Gemini for advisory analysis.',
     aiScope: 'Content types: {categories}.',
     aiInputNames: {
@@ -97,6 +99,7 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     lawfulBasis: 'Base legal', retention: 'Retenção',
     privacyContact: 'Contacto de privacidade', rightsContact: 'Direitos e pedidos',
     privacyPolicy: 'Política de privacidade',
+    managedBy: 'Gerido por',
     aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo Google Gemini para análise consultiva.',
     aiScope: 'Tipos de conteúdo: {categories}.',
     aiInputNames: {

@@ -127,12 +127,16 @@ for (const variant of ['edge_tab', 'floating_button'] as const) {
       expect(submissions).toHaveLength(1)
     })
 
-    test('dismisses without submitting through the shared close control', async ({ page }) => {
+    test('minimizes back to the launcher through the shared close control before submission', async ({ page }) => {
       await mount(page, launcherRule({ launcher_variant: variant }))
-      await page.getByRole('button', { name: 'Feedback', exact: true }).click()
+      const launcher = page.getByRole('button', { name: 'Feedback', exact: true })
+      await launcher.click()
       await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
       await page.getByRole('button', { name: 'Close feedback' }).click()
-      await expect(page.getByRole('heading', { name: 'How was checkout?' })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeHidden()
+      await expect(launcher).toBeVisible()
+      await launcher.click()
+      await expect(page.getByRole('heading', { name: 'How was checkout?' })).toBeVisible()
     })
 
     for (const [position, side] of [['bottom-left', 'left'], ['bottom-right', 'right']] as const) {
