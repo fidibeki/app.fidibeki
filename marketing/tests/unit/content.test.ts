@@ -121,10 +121,18 @@ describe('content integrity', () => {
     }
   })
 
-  it('never claims unavailable integrations exist', () => {
+  it('only claims available integrations that ship today', () => {
     const forbidden = /\b(github|jira|linear|intercom|zapier|discord)\b/i
     for (const integration of integrations) {
-      expect(integration.name).not.toMatch(forbidden)
+      if (integration.status === 'available') {
+        expect(integration.name).not.toMatch(forbidden)
+      }
+    }
+    const allowedPlanned = new Set(['jira', 'linear'])
+    for (const integration of integrations) {
+      if (integration.status === 'planned') {
+        expect(['jira', 'linear', 'slack-actions']).toContain(integration.slug)
+      }
     }
   })
 

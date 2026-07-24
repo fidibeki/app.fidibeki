@@ -21,7 +21,7 @@ export const integrations: IntegrationEntry[] = [
     sections: [
       {
         heading: 'Rich messages, deliberate volume',
-        body: 'Each Slack destination chooses exactly which events it cares about — new feedback, new issues, updates, or resolutions. Messages use Slack Block Kit so activity is scannable at a glance, and every delivery attempt is retried automatically and recorded in delivery logs.',
+        body: 'Each Slack destination chooses exactly which events it cares about: new feedback, new issues, updates, or resolutions. Messages use Slack Block Kit so activity is scannable at a glance, and every delivery attempt is retried automatically and recorded in delivery logs.',
       },
       {
         heading: 'Set up in minutes',
@@ -35,13 +35,13 @@ export const integrations: IntegrationEntry[] = [
     status: 'available',
     tagline: 'Keep Teams channels current on what customers are telling you.',
     summary:
-      'Teams destinations deliver MessageCard payloads for the feedback and issue events you subscribe to, with the same retry and delivery-log guarantees as every destination.',
+      'Teams destinations deliver MessageCard payloads for the feedback and issue events you subscribe to, with the same retry and delivery log guarantees as every destination.',
     icon: 'users',
     availability: 'Scale & Enterprise',
     events: destinationEvents,
     sections: [
       {
-        heading: 'Native-feeling cards',
+        heading: 'Native feeling cards',
         body: 'Notifications arrive as MessageCard payloads that render cleanly in Teams channels. Subscriptions are per destination, so a support channel can watch new feedback while an engineering channel only hears about resolved issues.',
       },
       {
@@ -77,18 +77,50 @@ export const integrations: IntegrationEntry[] = [
     ],
   },
   {
+    slug: 'jira',
+    name: 'Jira',
+    status: 'planned',
+    tagline: 'Create Jira issues from Fidibeki feedback. Planned, not yet available.',
+    summary:
+      'When enabled, Fidibeki will create Jira issues from selected feedback or linked issues, keeping the original reporter context and a link back to Fidibeki.',
+    icon: 'hash',
+    availability: 'Planned',
+    sections: [
+      {
+        heading: 'What we are considering',
+        body: 'Jira issue creation is on the roadmap. The goal is to let your team push a Fidibeki issue into a Jira project with the right reporter context, labels, and a two way link, without leaving the Fidibeki workflow.',
+      },
+    ],
+  },
+  {
+    slug: 'linear',
+    name: 'Linear',
+    status: 'planned',
+    tagline: 'Create Linear issues from Fidibeki feedback. Planned, not yet available.',
+    summary:
+      'When enabled, Fidibeki will create Linear issues from selected feedback or linked issues, preserving context and linking back to the original report.',
+    icon: 'hash',
+    availability: 'Planned',
+    sections: [
+      {
+        heading: 'What we are considering',
+        body: 'Linear issue creation is on the roadmap. The goal is to turn a Fidibeki issue into a Linear issue with the original reporter context, priority, and a link back to Fidibeki.',
+      },
+    ],
+  },
+  {
     slug: 'slack-actions',
     name: 'Interactive Slack & Teams actions',
     status: 'planned',
-    tagline: 'Triage from the channel — planned, not yet available.',
+    tagline: 'Triage from the channel. Planned, not yet available.',
     summary:
-      'Acting on feedback directly from Slack or Teams messages — changing status or claiming an issue without opening Fidibeki — is on the roadmap but not shipped yet.',
+      'Acting on feedback directly from Slack or Teams messages, changing status or claiming an issue without opening Fidibeki, is on the roadmap but not shipped yet.',
     icon: 'wand-sparkles',
     availability: 'Planned',
     sections: [
       {
         heading: 'What we are considering',
-        body: 'Today’s integrations are notification destinations. Interactive actions inside chat messages are a documented later extension — we would rather ship them properly than half-way. If this matters to your team, tell us when you book a demo.',
+        body: 'Today’s integrations are notification destinations. Interactive actions inside chat messages are a documented later extension, because we would rather ship them properly than half-way. If this matters to your team, tell us when you book a demo.',
       },
     ],
   },

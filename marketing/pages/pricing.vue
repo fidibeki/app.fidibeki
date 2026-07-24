@@ -69,22 +69,22 @@ function comparisonValue(plan: (typeof plans)[number], key: (typeof planComparis
 const faq = [
   {
     question: 'How does the free trial work?',
-    answer: `Every new workspace starts with a ${trialDays}-day free trial. No credit card is required to sign up — you pick a plan when the trial ends.`,
+    answer: `Every new workspace starts with a ${trialDays}-day free trial. No credit card is required to sign up. You pick a plan when the trial ends.`,
   },
   {
     question: 'What happens to replays and attachments over time?',
     answer:
-      'Each plan includes a retention window for session replays and attachments — 30, 90, or 365 days. A daily cleanup removes data past your plan’s window.',
+      'Each plan includes a retention window for session replays and attachments: 30, 90, or 365 days. A daily cleanup removes data past your plan’s window.',
   },
   {
     question: 'Is yearly billing available?',
     answer:
-      'Yes. Yearly billing discounts the monthly price — 7% on Starter and 14% on Growth and Scale.',
+      'Yes. Yearly billing discounts the monthly price: 7% on Starter and 14% on Growth and Scale.',
   },
   {
     question: 'How do I get Enterprise?',
     answer:
-      'Enterprise is not self-serve — book a demo and we will scope unlimited projects, feedback, members, retention, and a custom domain together.',
+      'Enterprise is not self-serve. Book a demo and we will scope unlimited projects, feedback, members, retention, and a custom domain together.',
   },
 ]
 </script>
@@ -94,7 +94,7 @@ const faq = [
     <PageHero
       eyebrow="Pricing"
       :title="`Simple plans, ${trialDays}-day free trial`"
-      lede="Start free, no credit card. Upgrade when the loop proves itself. Prices shown are monthly; yearly billing is discounted."
+      lede="Start free, no credit card. Upgrade once the workflow proves its value. Prices shown are monthly; yearly billing is discounted."
     >
       <template #breadcrumbs>
         <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Pricing', path: '/pricing' }]" />
@@ -149,8 +149,7 @@ const faq = [
           </div>
         </div>
         <p class="plans-note">
-          All prices in USD. Plan limits and feature availability are enforced by the product —
-          what you see here is exactly what the billing system uses.
+          All prices in USD. Plan limits and feature availability are enforced by the product. What you see here is exactly what the billing system uses.
         </p>
       </div>
     </section>

@@ -19,7 +19,7 @@ useSiteMeta({
     <PageHero
       eyebrow="Integrations"
       title="Your feedback, in your tools"
-      lede="Destinations subscribe to exactly the events they need — feedback created, issues created, updated, or resolved — with retries and delivery logs on every message."
+      lede="Destinations subscribe to exactly the events they need: feedback created, issues created, updated, or resolved. They retry and log every message."
     >
       <template #breadcrumbs>
         <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Integrations', path: '/integrations' }]" />
@@ -53,7 +53,7 @@ useSiteMeta({
       <div class="container">
         <div class="section-head">
           <h2>Planned</h2>
-          <p class="lede">On the roadmap, not shipped yet — we say so honestly.</p>
+          <p class="lede">On the roadmap, not shipped yet. We say so honestly.</p>
         </div>
         <div class="integration-grid">
           <NuxtLink
@@ -72,7 +72,7 @@ useSiteMeta({
 
     <CtaSection
       title="Need an integration we haven’t built?"
-      body="Webhooks give you a signed event stream today — and telling us what you need shapes what we build next."
+      body="Webhooks give you a signed event stream today. Telling us what you need shapes what we build next."
     />
   </div>
 </template>

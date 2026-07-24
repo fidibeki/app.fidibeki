@@ -5,8 +5,8 @@ withDefaults(
     body?: string
   }>(),
   {
-    title: 'Close the loop on your product feedback',
-    body: 'Start a 14-day free trial — no credit card required — or book a demo and we will walk you through the whole loop.',
+    title: 'Turn feedback into action',
+    body: 'Start a 14-day free trial, no credit card required, or book a demo and we will walk you through the workflow.',
   },
 )
 
@@ -31,7 +31,6 @@ const links = useAppLinks()
 <style scoped>
 /* Minimal close, consistent with the rest of the page: a hairline and type. */
 .cta-final {
-  margin-top: clamp(2.5rem, 2rem + 2vw, 4rem);
   padding-block: clamp(3rem, 2.5rem + 2vw, 4.5rem);
   border-top: 1px solid var(--line);
 }

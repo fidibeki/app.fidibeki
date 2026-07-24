@@ -11,7 +11,7 @@ const config = useRuntimeConfig()
 const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 
 useSiteMeta({
-  title: 'Product feedback, closed-loop',
+  title: 'Product feedback that finishes the job',
   description: siteDescription,
   path: '/',
   structuredData: [
@@ -37,16 +37,16 @@ useSiteMeta({
 
 const trustPoints = [
   {
-    title: 'Privacy-first capture',
+    title: 'Privacy first capture',
     body: 'The widget never reads input values, page text, or network payloads, and never builds a visitor fingerprint.',
   },
   {
     title: 'Passwordless by default',
-    body: 'Magic-link sign-in with short-lived, audience-bound tokens and rotating refresh cookies with reuse detection.',
+    body: 'Magic link sign in with brief tokens scoped to the audience and rotating refresh cookies with reuse detection.',
   },
   {
     title: 'Uploads in quarantine',
-    body: 'Attachments are verified for size and type, and only signature-checked files ever become visible or AI-eligible.',
+    body: 'Attachments are verified for size and type, and only files verified by signature ever become visible or eligible for AI.',
   },
 ]
 </script>
@@ -56,11 +56,11 @@ const trustPoints = [
     <section class="hero">
       <div class="container hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow">Capture → Analyze → Decide → Track → Communicate</p>
-          <h1>Product feedback that <span class="hero-accent">closes the loop</span></h1>
+          <p class="eyebrow">From report to resolution</p>
+          <h1>Product feedback that <span class="hero-accent">finishes the job</span></h1>
           <p class="lede">
-            Fidibeki captures feedback in your product with screenshots, session replay, and AI
-            analysis — then tracks every report to a decision and tells the reporter how it ended.
+            Bug reports arrive with context already attached. Reporters add screenshots, audio, or
+            replay when they want. Your team triages, tracks, and updates them from one inbox.
           </p>
           <div class="hero-actions">
             <a :href="links.signUp" class="btn btn-primary btn-large">Start free trial</a>
@@ -100,10 +100,10 @@ const trustPoints = [
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">The loop</p>
-          <h2 id="loop-heading">Most tools stop at the inbox. Fidibeki finishes the job.</h2>
+          <h2 id="loop-heading">Most tools stop at the inbox. Fidibeki helps you finish the job.</h2>
           <p class="lede">
-            Feedback is only valuable if something happens to it — and the person who spoke up
-            deserves to know what did.
+            Reports come in, decisions get made, and the person who spoke up hears the outcome.
+            Every stage leaves an audit trail.
           </p>
         </div>
         <LoopDiagram />
@@ -114,7 +114,7 @@ const trustPoints = [
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">Features</p>
-          <h2 id="features-heading">Everything between “a user typed something” and “we told them it shipped”</h2>
+          <h2 id="features-heading">Everything between a raw report and your team’s resolution</h2>
         </div>
         <div class="feature-grid">
           <NuxtLink
@@ -138,8 +138,8 @@ const trustPoints = [
           <p class="eyebrow">Integrations</p>
           <h2 id="integrations-heading">Signed events into the tools you already run</h2>
           <p class="lede">
-            Slack, Microsoft Teams, and HMAC-signed webhooks — every delivery retried, logged, and
-            verifiable.
+            Send feedback and issue events to Slack, Microsoft Teams, or your own systems. Every
+            delivery is signed, retried, and logged.
           </p>
         </div>
         <div class="integration-row">
@@ -188,7 +188,7 @@ const trustPoints = [
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">Use cases</p>
-          <h2 id="usecases-heading">One loop, many teams</h2>
+          <h2 id="usecases-heading">One workflow, many teams</h2>
         </div>
         <div class="usecase-grid">
           <NuxtLink

@@ -5,7 +5,7 @@ import { useCases } from '~/data/use-cases'
 useSiteMeta({
   title: 'Use cases',
   description:
-    'How engineering, product, support, and research teams run the feedback loop with Fidibeki — bug reports, feature requests, support triage, and in-product research.',
+    'How engineering, product, support, and research teams run the feedback workflow with Fidibeki: bug reports, feature requests, support triage, and in-product research.',
   path: '/use-cases',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -18,8 +18,8 @@ useSiteMeta({
   <div>
     <PageHero
       eyebrow="Use cases"
-      title="One loop, different jobs"
-      lede="The same capture-to-communicate loop serves very different teams. Pick the shape that matches yours."
+      title="One workflow, different jobs"
+      lede="The same capture-to-resolution workflow serves very different teams. Pick the shape that matches yours."
     >
       <template #breadcrumbs>
         <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Use cases', path: '/use-cases' }]" />

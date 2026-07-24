@@ -10,14 +10,14 @@ export const docs: DocEntry[] = [
     sections: [
       {
         heading: '1. Create a project',
-        body: 'Sign in to your workspace and create a project. Each project owns its allowed domains and a public widget key starting with pk_live_. The key is safe to expose in your HTML — the API additionally checks the browser Origin against your allowed domains.',
+        body: 'Sign in to your workspace and create a project. Each project owns its allowed domains and a public widget key starting with pk_live_. The key is safe to expose in your HTML. The API additionally checks the browser Origin against your allowed domains.',
       },
       {
         heading: '2. Allow your domains',
         body: 'Add the exact hosts your product runs on. Leading wildcards are supported for preview environments.',
         bullets: [
-          'app.example.com — exact host',
-          '*.preview.example.com — any preview subdomain',
+          'app.example.com, exact host',
+          '*.preview.example.com, any preview subdomain',
           'Requests from origins outside this list are rejected',
         ],
       },
@@ -32,7 +32,7 @@ export const docs: DocEntry[] = [
       },
       {
         heading: '4. Verify the connection',
-        body: 'Open your site and the getting-started page in your workspace. Fidibeki detects the first live widget connection automatically and confirms the installation, so you know the loader is talking to your project before you configure anything else.',
+        body: 'Open your site and the getting started page in your workspace. Fidibeki detects the first live widget connection automatically and confirms the installation, so you know the loader is talking to your project before you configure anything else.',
       },
     ],
   },
@@ -40,7 +40,7 @@ export const docs: DocEntry[] = [
     slug: 'widget-rules',
     title: 'Configure widget rules',
     description:
-      'Presentations, targeting, objectives, appearance, and replay settings — everything a widget rule controls.',
+      'Presentations, targeting, objectives, response blocks, attachments, replay, and appearance. Everything a widget rule controls.',
     minutes: 8,
     sections: [
       {
@@ -51,10 +51,10 @@ export const docs: DocEntry[] = [
         heading: 'Presentations',
         body: 'Choose how the widget appears for each rule.',
         bullets: [
-          'Launcher — a floating button that opens the feedback panel',
-          'Inline — embedded directly inside your page content',
-          'Reaction — a lightweight reaction bar for quick signals',
-          'Prompt — a proactive ask, shown only with enough engagement evidence',
+          'Launcher, a floating button that opens the feedback panel',
+          'Inline, embedded directly inside your page content',
+          'Reaction, a lightweight reaction bar for quick signals',
+          'Prompt, a proactive ask, shown only with enough engagement evidence',
         ],
       },
       {
@@ -63,7 +63,7 @@ export const docs: DocEntry[] = [
       },
       {
         heading: 'Replay settings',
-        body: 'On plans with session replay, a rule can enable recording with a session-level sampling rate and masking policy. Inputs are masked by default, recording stops at strict limits, and playback is only available to authenticated teammates with the session permission.',
+        body: 'On plans with session replay, a rule can offer recording, but the reporter’s browser must support rrweb and the reporter must be in the sampled session. Inputs are masked by default, recording stops at strict limits, and playback is only available to authenticated teammates with the session permission.',
       },
     ],
   },
@@ -71,7 +71,7 @@ export const docs: DocEntry[] = [
     slug: 'webhooks',
     title: 'Verify webhook deliveries',
     description:
-      'Subscribe destinations to events and verify the HMAC-SHA256 signature on every delivery.',
+      'Subscribe destinations to events and verify the HMAC SHA256 signature on every delivery.',
     minutes: 6,
     sections: [
       {
@@ -81,7 +81,7 @@ export const docs: DocEntry[] = [
       },
       {
         heading: 'Verify the signature',
-        body: 'Every generic webhook body includes a stable delivery ID and is signed with your destination secret. Compute an HMAC-SHA256 of the raw request body and compare it, constant-time, to the header value.',
+        body: 'Every generic webhook body includes a stable delivery ID and is signed with your destination secret. Compute an HMAC SHA256 of the raw request body and compare it in constant time to the header value.',
         code: {
           language: 'js',
           snippet:

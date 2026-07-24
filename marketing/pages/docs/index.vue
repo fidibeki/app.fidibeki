@@ -5,7 +5,7 @@ import { docs } from '~/data/docs'
 useSiteMeta({
   title: 'Documentation',
   description:
-    'Install the Fidibeki widget, configure widget rules and targeting, and verify signed webhook deliveries — everything you need to get running.',
+    'Install the Fidibeki widget, configure widget rules and targeting, and verify signed webhook deliveries. Everything you need to get running.',
   path: '/docs',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -53,7 +53,7 @@ useSiteMeta({
 
     <CtaSection
       title="Stuck on setup?"
-      body="Book a demo and we will install it with you — or start a free trial and follow the in-app getting-started checklist."
+      body="Book a demo and we will install it with you. Or start a free trial and follow the in-app getting started checklist."
     />
   </div>
 </template>
