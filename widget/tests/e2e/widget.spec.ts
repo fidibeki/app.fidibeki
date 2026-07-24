@@ -1248,6 +1248,147 @@ test('managed replay consent supports reject, accept, persistence, version chang
   await expect(page.getByRole('button', { name: 'Replay privacy' })).toHaveCount(0)
 })
 
+test('managed analytics and replay purposes share one prompt with per-purpose choices', async ({ page }) => {
+  // Both purposes must start undecided, so drop the shared beforeEach analytics seed too.
+  await page.addInitScript(() => {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('fidibeki:analytics-consent:') || key?.startsWith('fidibeki:replay-consent:')) {
+        localStorage.removeItem(key)
+      }
+    }
+  })
+  const rule: WidgetRule = {
+    ...browserRule,
+    replay_mode: 'full',
+    replay_sampling_rate: 0,
+    analytics_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Help us understand how this widget is used',
+          description: 'Allow pseudonymous collection of analytics about your interactions with this widget.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw consent',
+        },
+      },
+    },
+    replay_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Help us improve this experience',
+          description: 'Allow anonymous recording of your interactions on this page.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw consent',
+        },
+      },
+    },
+  }
+  const baseConfiguration = browserConfiguration(rule)
+  const configuration: WidgetConfiguration = {
+    ...baseConfiguration,
+    default_locale: 'en',
+    features: { ...baseConfiguration.features, session_replay: true },
+  }
+  const analyticsDecisions: Array<Record<string, unknown>> = []
+  const replayDecisions: Array<Record<string, unknown>> = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+  }))
+  await page.route('**/v1/widget/analytics-consents?*', async (route) => {
+    const body = route.request().postDataJSON() as { state: string, grant_token: string }
+    analyticsDecisions.push(body)
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        state: body.state === 'denied' ? 'denied' : 'active',
+        ...(body.state === 'granted' ? { token: body.grant_token } : {}),
+        expires_at: '2026-08-23T12:00:00Z',
+      }),
+    })
+  })
+  await page.route('**/v1/replay/**', async (route) => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (pathname.endsWith('/replay/consents')) {
+      const body = request.postDataJSON() as { state: string, grant_token: string }
+      replayDecisions.push(body)
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          state: body.state === 'denied' ? 'denied' : 'active',
+          ...(body.state === 'granted' ? { token: body.grant_token } : {}),
+          expires_at: '2026-08-23T12:00:00Z',
+        }),
+      })
+    }
+    if (pathname.endsWith('/replay/sessions')) {
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'combined-session',
+          rrweb_version: '2.1.1',
+          max_duration_seconds: 1800,
+          max_events: 50000,
+        }),
+      })
+    }
+    return route.abort()
+  })
+
+  await page.goto('/sample.html')
+  // One combined dialog instead of two stacked popups.
+  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
+  await expect(page.getByText('Help us understand how this widget is used')).toBeVisible()
+  await expect(page.getByText('Help us improve this experience')).toBeVisible()
+  expect(await page.locator('[data-fidibeki-consent]').count()).toBe(1)
+
+  // Customize: allow analytics, leave replay unchecked, then save.
+  await page.getByRole('checkbox', { name: /Help us understand how this widget is used/ }).check()
+  await page.getByRole('button', { name: 'Save choices' }).click()
+  await expect.poll(() => analyticsDecisions.length).toBe(1)
+  expect(analyticsDecisions[0]).toMatchObject({ purpose: 'widget_analytics', state: 'granted' })
+  await expect.poll(() => replayDecisions.length).toBe(1)
+  expect(replayDecisions[0]).toMatchObject({ purpose: 'session_replay', state: 'denied' })
+  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toHaveCount(0)
+  // Only analytics is active now, so the launcher is purpose-specific.
+  await expect(page.getByRole('button', { name: 'Analytics privacy' })).toBeVisible()
+
+  // Reset both purposes: accept all grants each purpose separately.
+  await page.evaluate(() => {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('fidibeki:analytics-consent:') || key?.startsWith('fidibeki:replay-consent:')) {
+        localStorage.removeItem(key)
+      }
+    }
+    window.dispatchEvent(new Event('fidibeki:navigation'))
+  })
+  await expect(page.getByRole('heading', { name: 'Privacy choices' })).toBeVisible()
+  await page.getByRole('button', { name: 'Accept all' }).click()
+  await expect.poll(() => analyticsDecisions.filter(decision => decision.state === 'granted').length).toBe(2)
+  await expect.poll(() => replayDecisions.filter(decision => decision.state === 'granted').length).toBe(1)
+  await expect(page.getByRole('button', { name: 'Privacy choices' })).toBeVisible()
+})
+
 test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {
   const replayRule: WidgetRule = {
     ...browserRule,
