@@ -84,7 +84,9 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Hard-delete credential row and retain a non-content audit event.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "tenantmember.Maintainer, platformadmin.Maintainer",
-			Resources:      tables("platform_admin_magic_links", "tenant_magic_links"),
+			Resources: tables(
+				"platform_admin_magic_links", "retention_maintenance_status", "tenant_magic_links",
+			),
 		},
 		{
 			Category: "authentication_security", Label: "Authentication and security records",

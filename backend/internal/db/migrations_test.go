@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 104
+	const latestMigrationVersion = 105
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2675,6 +2675,83 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("restore legacy consent evidence before rollback replay: %v", err)
 	}
 
+	var retentionHealthRows int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM retention_maintenance_status
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 2 {
+		t.Fatalf(
+			"retention health row count = %d, error = %v, want 2",
+			retentionHealthRows, err,
+		)
+	}
+	var appRetentionSelect, appRetentionUpdate, appRetentionDelete bool
+	var adminRetentionSelect, adminRetentionResultUpdate, adminRetentionKeyUpdate bool
+	var adminRetentionInsert, adminRetentionDelete bool
+	if err := root.QueryRow(ctx, `
+		SELECT
+			has_table_privilege(
+				'fidibeki_app', 'retention_maintenance_status', 'SELECT'
+			),
+			has_table_privilege(
+				'fidibeki_app', 'retention_maintenance_status', 'UPDATE'
+			),
+			has_table_privilege(
+				'fidibeki_app', 'retention_maintenance_status', 'DELETE'
+			),
+			has_table_privilege(
+				'fidibeki_admin', 'retention_maintenance_status', 'SELECT'
+			),
+			has_column_privilege(
+				'fidibeki_admin', 'retention_maintenance_status', 'last_result', 'UPDATE'
+			),
+			has_column_privilege(
+				'fidibeki_admin', 'retention_maintenance_status', 'operation_key', 'UPDATE'
+			),
+			has_table_privilege(
+				'fidibeki_admin', 'retention_maintenance_status', 'INSERT'
+			),
+			has_table_privilege(
+				'fidibeki_admin', 'retention_maintenance_status', 'DELETE'
+			)
+	`).Scan(
+		&appRetentionSelect, &appRetentionUpdate, &appRetentionDelete,
+		&adminRetentionSelect, &adminRetentionResultUpdate, &adminRetentionKeyUpdate,
+		&adminRetentionInsert, &adminRetentionDelete,
+	); err != nil {
+		t.Fatalf("read retention health privileges: %v", err)
+	}
+	if !appRetentionSelect || appRetentionUpdate || appRetentionDelete ||
+		!adminRetentionSelect || !adminRetentionResultUpdate || adminRetentionKeyUpdate ||
+		adminRetentionInsert || adminRetentionDelete {
+		t.Fatalf(
+			"retention health privileges app select/update/delete=%t/%t/%t "+
+				"admin select/result-update/key-update/insert/delete=%t/%t/%t/%t/%t",
+			appRetentionSelect, appRetentionUpdate, appRetentionDelete,
+			adminRetentionSelect, adminRetentionResultUpdate, adminRetentionKeyUpdate,
+			adminRetentionInsert, adminRetentionDelete,
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO retention_maintenance_status (
+			operation_key, category, expected_interval_seconds, alert_grace_seconds
+		) VALUES ('arbitrary_cleaner', 'auth_magic_links', 3600, 900)
+	`); err == nil {
+		t.Fatal("arbitrary retention health operation was accepted")
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE retention_maintenance_status
+		SET last_attempt_at = now(),
+		    last_result = 'failed',
+		    consecutive_failures = 1,
+		    total_runs = 1,
+		    total_failures = 1,
+		    failure_code = 'database unavailable',
+		    updated_at = now()
+		WHERE operation_key = 'tenant_magic_links'
+	`); err == nil {
+		t.Fatal("raw retention health failure text was accepted")
+	}
+
 	pools.Close()
 	if err := migrator.Down(); err != nil {
 		t.Fatalf("migrate down: %v", err)
@@ -2688,6 +2765,14 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if version != latestMigrationVersion || dirty {
 		t.Fatalf("migration state = version %d dirty %t, want version %d clean", version, dirty, latestMigrationVersion)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM retention_maintenance_status
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 2 {
+		t.Fatalf(
+			"retention health rows after down/up = %d, error = %v, want 2",
+			retentionHealthRows, err,
+		)
 	}
 	var analyticsIndexCount int
 	if err := root.QueryRow(ctx, `

@@ -43,6 +43,8 @@ import type {
   RectifiableFeedback,
   ReporterPrivacyAction,
   ReporterPrivacyRequest,
+  RetentionHealth,
+  RetentionOperationHealth,
   RetentionPolicy,
   ReviewDecisionStatus,
   ReviewItem,
@@ -61,8 +63,8 @@ const canManagePrivacy = computed(() => can('tenant:update'))
 
 const { data, status, error, refresh: refreshData } = await useAsyncData('privacy-settings-data', async () => {
   const retention = canReadRetention.value
-    ? $apiFetch<{ retention: EffectiveRetention }>('/v1/privacy/retention')
-    : Promise.resolve<{ retention?: EffectiveRetention }>({})
+    ? $apiFetch<{ retention: EffectiveRetention, health: RetentionHealth }>('/v1/privacy/retention')
+    : Promise.resolve<{ retention?: EffectiveRetention, health?: RetentionHealth }>({})
   const exports = canManagePrivacy.value
     ? $apiFetch<{ exports: PrivacyExport[] }>('/v1/privacy/exports')
     : Promise.resolve({ exports: [] as PrivacyExport[] })
@@ -83,6 +85,7 @@ const { data, status, error, refresh: refreshData } = await useAsyncData('privac
   ])
   return {
     retention: retentionResult.retention,
+    retentionHealth: retentionResult.health,
     exports: exportsResult.exports,
     requests: requestsResult.requests,
     cases: casesResult.cases,
@@ -866,7 +869,11 @@ function formatBytes(value?: number) {
 }
 
 function retentionLabel(policy: RetentionPolicy) {
-  return t(`admin.privacy.settings.category.${policy.category}`)
+  return retentionCategoryLabel(policy.category)
+}
+
+function retentionCategoryLabel(category: string) {
+  return t(`admin.privacy.settings.category.${category}`)
 }
 
 function retentionDuration(policy: RetentionPolicy) {
@@ -928,6 +935,24 @@ function retentionResources(policy: RetentionPolicy) {
       { count: resource.count },
     )
   }).join(' · ')
+}
+
+function retentionHealthTone(state: RetentionOperationHealth['state']) {
+  if (state === 'healthy') return 'success'
+  if (state === 'failed' || state === 'overdue') return 'danger'
+  return 'pending'
+}
+
+function retentionHealthLabel(state: RetentionOperationHealth['state']) {
+  return t(`admin.privacy.settings.health.status.${state}`)
+}
+
+function retentionHealthAlert(alert: RetentionOperationHealth['alert_reason']) {
+  return t(`admin.privacy.settings.health.alert.${alert}`)
+}
+
+function retentionOperationLabel(operation: RetentionOperationHealth['operation']) {
+  return t(`admin.privacy.settings.health.operation.${operation}`)
 }
 
 function toggleRetentionDetails(category: string) {
@@ -1607,6 +1632,47 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
             <div><b>{{ data.retention.summary.decision_required }}</b><span>{{ retentionStatusLabel('decision_required') }}</span></div>
             <div><b>{{ data.retention.summary.external_control }}</b><span>{{ retentionStatusLabel('external_control') }}</span></div>
           </div>
+          <div v-if="data.retentionHealth" class="privacy-retention-health">
+            <div class="privacy-retention-health-heading">
+              <span><ShieldCheck :size="17" /><b>{{ t('admin.privacy.settings.health.title') }}</b></span>
+              <small>{{ t('admin.privacy.settings.health.tracked', { count: data.retentionHealth.summary.tracked }) }}</small>
+            </div>
+            <div class="privacy-retention-health-summary" :aria-label="t('admin.privacy.settings.health.summaryLabel')">
+              <span><b>{{ data.retentionHealth.summary.healthy }}</b>{{ t('admin.privacy.settings.health.status.healthy') }}</span>
+              <span><b>{{ data.retentionHealth.summary.attention }}</b>{{ t('admin.privacy.settings.health.status.attention') }}</span>
+              <span><b>{{ data.retentionHealth.summary.failed + data.retentionHealth.summary.overdue }}</b>{{ t('admin.privacy.settings.health.needsAction') }}</span>
+              <span><b>{{ data.retentionHealth.summary.not_observed }}</b>{{ t('admin.privacy.settings.health.status.not_observed') }}</span>
+            </div>
+            <div class="privacy-retention-health-table">
+              <div
+                v-for="operation in data.retentionHealth.operations"
+                :key="operation.operation"
+                class="privacy-retention-health-row"
+              >
+                <span>
+                  <b>{{ retentionOperationLabel(operation.operation) }}</b>
+                  <small>{{ retentionCategoryLabel(operation.category) }}</small>
+                </span>
+                <span>
+                  <span class="privacy-status" :data-tone="retentionHealthTone(operation.state)"><i />{{ retentionHealthLabel(operation.state) }}</span>
+                  <small>{{ retentionHealthAlert(operation.alert_reason) }}</small>
+                </span>
+                <span>
+                  <b>{{ operation.last_success_at ? dateTime(operation.last_success_at) : t('admin.common.never') }}</b>
+                  <small>{{ t('admin.privacy.settings.health.nextExpected', { date: dateTime(operation.next_expected_at) }) }}</small>
+                </span>
+                <span>
+                  <b>{{ decimal(operation.last_processed) }} / {{ decimal(operation.total_processed) }}</b>
+                  <small>
+                    {{ t('admin.privacy.settings.health.processed') }}
+                    <template v-if="operation.consecutive_failures">
+                      · {{ plural('admin.privacy.settings.health.consecutiveFailures', operation.consecutive_failures, { count: operation.consecutive_failures }) }}
+                    </template>
+                  </small>
+                </span>
+              </div>
+            </div>
+          </div>
           <div class="privacy-table privacy-retention-table">
             <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.category') }}</span><span>{{ t('admin.privacy.settings.columns.retention') }}</span><span>{{ t('admin.privacy.settings.columns.lifecycle') }}</span><span>{{ t('admin.privacy.settings.columns.operation') }}</span></div>
             <template v-for="policy in data.retention?.policies || []" :key="policy.category">
@@ -1785,6 +1851,20 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-retention-summary div:last-child { border-right: 0; }
 .privacy-retention-summary b { color: var(--ink); font-size: 16px; }
 .privacy-retention-summary span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.privacy-retention-health { border-bottom: 1px solid var(--line); }
+.privacy-retention-health-heading { display: flex; min-height: 45px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 15px; }
+.privacy-retention-health-heading > span { display: flex; align-items: center; gap: 7px; }
+.privacy-retention-health-heading b { font-size: 11px; }
+.privacy-retention-health-heading small { color: var(--muted); font-size: 9px; }
+.privacy-retention-health-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--surface-soft); border-block: 1px solid var(--line); }
+.privacy-retention-health-summary > span { display: flex; min-height: 38px; align-items: baseline; gap: 6px; padding: 9px 15px; border-right: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 700; }
+.privacy-retention-health-summary > span:last-child { border-right: 0; }
+.privacy-retention-health-summary b { color: var(--ink); font-size: 14px; }
+.privacy-retention-health-row { display: grid; min-height: 58px; grid-template-columns: minmax(180px, 1.1fr) minmax(150px, .8fr) minmax(210px, 1fr) minmax(130px, .6fr); align-items: center; border-top: 1px solid var(--line); }
+.privacy-retention-health-row:first-child { border-top: 0; }
+.privacy-retention-health-row > span { display: grid; min-width: 0; gap: 3px; padding: 9px 15px; }
+.privacy-retention-health-row b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.privacy-retention-health-row small { overflow: hidden; color: var(--muted); font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .privacy-retention-table .privacy-row { grid-template-columns: minmax(190px, 1.15fr) minmax(135px, .7fr) minmax(170px, .9fr) minmax(180px, 1fr); }
 .privacy-retention-lifecycle { display: grid; align-content: center; }
 .privacy-retention-operation { text-align: right; }
@@ -2020,6 +2100,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 @media (max-width: 900px) {
   .privacy-row--head { display: none; }
   .privacy-retention-table .privacy-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .privacy-retention-health-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .privacy-retention-lifecycle { grid-column: 1; }
   .privacy-retention-operation { grid-column: 2; }
   .privacy-retention-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2064,6 +2145,13 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-retention-summary div:nth-child(2) { border-right: 0; }
   .privacy-retention-summary div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
   .privacy-retention-detail { grid-template-columns: 1fr; }
+  .privacy-retention-health-heading { align-items: flex-start; flex-direction: column; justify-content: center; padding-block: 9px; }
+  .privacy-retention-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .privacy-retention-health-summary > span:nth-child(2) { border-right: 0; }
+  .privacy-retention-health-summary > span:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
+  .privacy-retention-health-row { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-block: 4px; }
+  .privacy-retention-health-row b,
+  .privacy-retention-health-row small { overflow: visible; text-overflow: clip; white-space: normal; }
   .privacy-retention-detail > div { border-right: 0; border-bottom: 1px solid var(--line); }
   .privacy-retention-detail > div:last-child { border-bottom: 0; }
   .privacy-export-table .privacy-row, .privacy-request-table .privacy-row { grid-template-columns: minmax(0, 1fr) 38px; }

@@ -15,6 +15,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -152,12 +153,25 @@ func (handler *HTTPHandler) retention(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
+	query, ok := appmiddleware.QuerierFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
 	effective, err := EffectiveRetentionForPlan(resolved.Plan)
 	if err != nil {
 		handler.writeError(w, r, err)
 		return
 	}
-	api.WriteJSON(w, http.StatusOK, map[string]any{"retention": effective})
+	health, err := retentionhealth.Read(r.Context(), query, handler.now())
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"retention": effective,
+		"health":    health,
+	})
 }
 
 func (handler *HTTPHandler) requireHuman(next http.Handler) http.Handler {

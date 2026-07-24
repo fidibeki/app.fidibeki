@@ -677,6 +677,21 @@ was removed from the staging test tenant.
         consumed-unconsumed/minimization/batch-limit/concurrent-sweep/atomic-rollback coverage
         passed against real PostgreSQL; the registry now covers 68 tables across the same 27
         categories; migration replay picked up migration 102 automatically.
+      - [x] Magic-link cleanup health vertical: migration `105` adds one constrained, current-state
+        row for each of the tenant and platform-admin magic-link cleaners. The ledger stores only
+        schedule metadata, last attempt/success, bounded aggregate counters, budget exhaustion, and
+        the generic `cleanup_failed` code; it contains no tenant/person/credential identifiers, raw
+        errors, or append-only run history. Both hourly maintainers must record every successful,
+        failed, or budget-exhausted sweep through a shared `retentionhealth` recorder; recorder
+        failure is surfaced without rolling back already-completed idempotent cleanup. Read-time
+        derivation classifies each operation as `healthy`, `attention`, `failed`, `overdue`, or
+        `not_observed`, with a 15-minute grace window. `GET /v1/privacy/retention` additively returns
+        the health report and the bilingual Data & privacy surface shows summary, alert reason,
+        last success, next expected run, and last/total processed counts on desktop and mobile.
+        Migration/grant/down-up, state-boundary, atomic-counter, stale-update, maintainer error,
+        HTTP authorization, typecheck, and responsive Playwright coverage pass locally. The
+        executable registry now covers all 72 tables; no legal period, external monitoring
+        provider, production deployment, or uninstrumented cleaner was added.
       - Remaining cleanup-policy slices: `tenant_member_sessions`/`platform_admin_sessions` retention
         (blocked on a founder/legal decision for security-record retention, since these carry
         IP/user-agent and are arguably security evidence — no `expires_at` exists yet either, so
@@ -685,8 +700,9 @@ was removed from the staging test tenant.
         retention; IP/user-agent minimization; Sentry/error telemetry retention and scrubbing;
         consent-evidence-after-withdrawal retention; tenant-configurable shorter retention;
         general legal-hold enforcement for the categories added here; overdue-cleanup
-        metrics/alerts. Published legal periods for security/audit/billing records still require
-        founder/legal review before any of those categories can be swept.
+        metrics/alerts for the remaining enforced cleaners. Published legal periods for
+        security/audit/billing records still require founder/legal review before any of those
+        categories can be swept.
     - [ ] #63: establish layered notices, role matrix, DPA/subprocessor/transfer inventory,
       ROPA, and DPIA governance without publishing unverified claims.
       - [x] Provider-governance foundation: a typed code-owned registry covers the 12 external,

@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -24,6 +26,7 @@ type MaintenanceOperations interface {
 // the same batched-drain, ticker-driven shape as tenantmember.Maintainer.
 type Maintainer struct {
 	Store        MaintenanceOperations
+	Health       retentionhealth.Recorder
 	Logger       *slog.Logger
 	Now          func() time.Time
 	BatchSize    int
@@ -34,6 +37,9 @@ type Maintainer struct {
 func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
 	if maintainer.Store == nil {
 		return errors.New("platform admin retention store is unavailable")
+	}
+	if maintainer.Health == nil {
+		return errors.New("platform admin retention health recorder is unavailable")
 	}
 	now := maintainer.now()
 	batchSize := maintainer.BatchSize
@@ -59,10 +65,22 @@ func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
 		log.WarnContext(ctx, "platform admin magic link retention budget exhausted",
 			"maximum_batches", maxBatches)
 	}
+	result := retentionhealth.ResultSucceeded
 	if err != nil {
-		return fmt.Errorf("expire platform admin magic links: %w", err)
+		result = retentionhealth.ResultFailed
 	}
-	return nil
+	recordErr := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationPlatformAdminMagicLinks,
+		AttemptedAt: now, Result: result, Processed: deleted,
+		BudgetExhausted: budgetExhausted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record platform admin magic link retention health: %w", recordErr)
+	}
+	if err != nil {
+		return errors.Join(fmt.Errorf("expire platform admin magic links: %w", err), recordErr)
+	}
+	return recordErr
 }
 
 func (maintainer Maintainer) Run(ctx context.Context, interval time.Duration) error {

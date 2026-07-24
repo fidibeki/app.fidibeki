@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -25,6 +27,7 @@ type MaintenanceOperations interface {
 // this codebase (see privacy.RetentionMaintainer, widgetanalytics.Maintainer).
 type Maintainer struct {
 	Store        MaintenanceOperations
+	Health       retentionhealth.Recorder
 	Logger       *slog.Logger
 	Now          func() time.Time
 	BatchSize    int
@@ -35,6 +38,9 @@ type Maintainer struct {
 func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
 	if maintainer.Store == nil {
 		return errors.New("tenant member retention store is unavailable")
+	}
+	if maintainer.Health == nil {
+		return errors.New("tenant member retention health recorder is unavailable")
 	}
 	now := maintainer.now()
 	batchSize := maintainer.BatchSize
@@ -60,10 +66,22 @@ func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
 		log.WarnContext(ctx, "tenant magic link retention budget exhausted",
 			"maximum_batches", maxBatches)
 	}
+	result := retentionhealth.ResultSucceeded
 	if err != nil {
-		return fmt.Errorf("expire tenant magic links: %w", err)
+		result = retentionhealth.ResultFailed
 	}
-	return nil
+	recordErr := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationTenantMagicLinks,
+		AttemptedAt: now, Result: result, Processed: deleted,
+		BudgetExhausted: budgetExhausted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record tenant magic link retention health: %w", recordErr)
+	}
+	if err != nil {
+		return errors.Join(fmt.Errorf("expire tenant magic links: %w", err), recordErr)
+	}
+	return recordErr
 }
 
 func (maintainer Maintainer) Run(ctx context.Context, interval time.Duration) error {

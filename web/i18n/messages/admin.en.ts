@@ -845,6 +845,33 @@ export const adminMessages = {
         externalConfiguration: 'External configuration',
       },
       lifecycleSummary: 'Retention lifecycle summary',
+      health: {
+        title: 'Cleanup health',
+        tracked: '{count} tracked operations',
+        summaryLabel: 'Cleanup operation health summary',
+        needsAction: 'Needs action',
+        nextExpected: 'Next expected {date}',
+        processed: 'Last / total processed',
+        consecutiveFailures: '{count} consecutive failure | {count} consecutive failures',
+        operation: {
+          tenant_magic_links: 'Workspace magic links',
+          platform_admin_magic_links: 'Platform admin magic links',
+        },
+        status: {
+          healthy: 'Healthy',
+          attention: 'Attention',
+          failed: 'Failed',
+          overdue: 'Overdue',
+          not_observed: 'Not observed',
+        },
+        alert: {
+          none: 'Within the expected cleanup window',
+          budget_exhausted: 'The latest run reached its bounded work budget',
+          last_run_failed: 'The latest run failed',
+          cleanup_overdue: 'No successful run within the expected window',
+          not_observed: 'The first scheduled run is not due yet',
+        },
+      },
       retentionDetails: 'View retention details',
       detail: {
         purpose: 'Purpose',

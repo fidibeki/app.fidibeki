@@ -845,6 +845,33 @@ export const adminMessages = {
         externalConfiguration: 'Configuração externa',
       },
       lifecycleSummary: 'Resumo do ciclo de vida de retenção',
+      health: {
+        title: 'Saúde da limpeza',
+        tracked: '{count} operações monitorizadas',
+        summaryLabel: 'Resumo da saúde das operações de limpeza',
+        needsAction: 'Requer ação',
+        nextExpected: 'Próxima execução esperada {date}',
+        processed: 'Processados na última / no total',
+        consecutiveFailures: '{count} falha consecutiva | {count} falhas consecutivas',
+        operation: {
+          tenant_magic_links: 'Magic links do workspace',
+          platform_admin_magic_links: 'Magic links de administradores da plataforma',
+        },
+        status: {
+          healthy: 'Saudável',
+          attention: 'Atenção',
+          failed: 'Falhou',
+          overdue: 'Em atraso',
+          not_observed: 'Ainda não observada',
+        },
+        alert: {
+          none: 'Dentro da janela de limpeza esperada',
+          budget_exhausted: 'A última execução atingiu o limite de trabalho',
+          last_run_failed: 'A última execução falhou',
+          cleanup_overdue: 'Sem execução bem-sucedida dentro da janela esperada',
+          not_observed: 'A primeira execução agendada ainda não venceu',
+        },
+      },
       retentionDetails: 'Ver detalhes de retenção',
       detail: {
         purpose: 'Finalidade',

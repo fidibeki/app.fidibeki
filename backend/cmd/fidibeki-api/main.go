@@ -37,6 +37,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/server"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -681,11 +682,14 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	identityMaintainer := identity.CleanupMaintainer{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
 	}
+	retentionHealth := retentionhealth.Store{Database: pools.Admin}
 	tenantAuthRetention := tenantmember.Maintainer{
-		Store: tenantmember.MaintenanceStore{Database: pools.Admin}, Logger: logger,
+		Store:  tenantmember.MaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
 	}
 	platformAuthRetention := platformadmin.Maintainer{
-		Store: platformadmin.MaintenanceStore{Database: pools.Admin}, Logger: logger,
+		Store:  platformadmin.MaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
 	}
 
 	var sender email.Sender

@@ -1102,6 +1102,48 @@ export interface EffectiveRetention {
   policies: RetentionPolicy[]
 }
 
+export type RetentionHealthState = 'healthy' | 'attention' | 'failed' | 'overdue' | 'not_observed'
+export type RetentionHealthAlert =
+  | 'none'
+  | 'budget_exhausted'
+  | 'last_run_failed'
+  | 'cleanup_overdue'
+  | 'not_observed'
+
+export interface RetentionOperationHealth {
+  operation: 'tenant_magic_links' | 'platform_admin_magic_links'
+  category: string
+  state: RetentionHealthState
+  alert_reason: RetentionHealthAlert
+  registered_at: string
+  expected_interval_seconds: number
+  alert_grace_seconds: number
+  last_attempt_at?: string
+  last_success_at?: string
+  next_expected_at: string
+  last_result?: 'succeeded' | 'failed'
+  last_processed: number
+  total_processed: number
+  total_runs: number
+  total_failures: number
+  consecutive_failures: number
+  budget_exhausted: boolean
+  failure_code?: string
+}
+
+export interface RetentionHealth {
+  generated_at: string
+  summary: {
+    tracked: number
+    healthy: number
+    attention: number
+    failed: number
+    overdue: number
+    not_observed: number
+  }
+  operations: RetentionOperationHealth[]
+}
+
 export type AccessEventActorType = 'human' | 'api_key' | 'platform_admin' | 'system'
 export type AccessEventOutcome = 'success' | 'denied' | 'not_found'
 

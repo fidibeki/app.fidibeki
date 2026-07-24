@@ -1531,16 +1531,17 @@ async function installMockAPI(page: Page, state: MockState) {
       return json(route, { widget_appearance_defaults: state.tenant.widget_appearance_defaults })
     }
     if (path === '/v1/privacy/retention' && method === 'GET') {
-      return json(route, { retention: {
-        plan: state.tenant.plan,
-        registry_version: 1,
-        summary: {
-          enforced: 5,
-          configurable: 2,
-          decision_required: 1,
-          external_control: 1,
-        },
-        policies: [
+      return json(route, {
+        retention: {
+          plan: state.tenant.plan,
+          registry_version: 1,
+          summary: {
+            enforced: 5,
+            configurable: 2,
+            decision_required: 1,
+            external_control: 1,
+          },
+          policies: [
           mockRetentionPolicy(
             'workflow_metadata', 'Feedback and issue workflow content',
             'Decision required', 'decision_required', 'Policy decision required',
@@ -1578,8 +1579,60 @@ async function installMockAPI(page: Page, state: MockState) {
             'External configuration', 'external_control', 'External configuration',
             { role: 'controller_and_processor', resource_counts: [{ kind: 'provider', count: 4 }] },
           ),
-        ],
-      } })
+          ],
+        },
+        health: {
+          generated_at: '2026-07-24T10:05:00Z',
+          summary: {
+            tracked: 2,
+            healthy: 1,
+            attention: 1,
+            failed: 0,
+            overdue: 0,
+            not_observed: 0,
+          },
+          operations: [
+            {
+              operation: 'tenant_magic_links',
+              category: 'auth_magic_links',
+              state: 'healthy',
+              alert_reason: 'none',
+              registered_at: '2026-07-24T08:00:00Z',
+              expected_interval_seconds: 3600,
+              alert_grace_seconds: 900,
+              last_attempt_at: '2026-07-24T10:00:00Z',
+              last_success_at: '2026-07-24T10:00:00Z',
+              next_expected_at: '2026-07-24T11:00:00Z',
+              last_result: 'succeeded',
+              last_processed: 3,
+              total_processed: 9,
+              total_runs: 3,
+              total_failures: 0,
+              consecutive_failures: 0,
+              budget_exhausted: false,
+            },
+            {
+              operation: 'platform_admin_magic_links',
+              category: 'auth_magic_links',
+              state: 'attention',
+              alert_reason: 'budget_exhausted',
+              registered_at: '2026-07-24T08:00:00Z',
+              expected_interval_seconds: 3600,
+              alert_grace_seconds: 900,
+              last_attempt_at: '2026-07-24T10:00:00Z',
+              last_success_at: '2026-07-24T10:00:00Z',
+              next_expected_at: '2026-07-24T11:00:00Z',
+              last_result: 'succeeded',
+              last_processed: 4000,
+              total_processed: 8000,
+              total_runs: 2,
+              total_failures: 0,
+              consecutive_failures: 0,
+              budget_exhausted: true,
+            },
+          ],
+        },
+      })
     }
     if (path === '/v1/privacy/exports' && method === 'GET') return json(route, { exports: state.privacyExports })
     if (path === '/v1/privacy/cases/dashboard' && method === 'GET') {
@@ -4679,6 +4732,12 @@ test('data privacy controls cover retention, exports, reporter verification, and
   await expect(page.locator('.privacy-retention-table')).toContainText('90 days')
   await expect(page.locator('.privacy-retention-summary')).toContainText('Enforced')
   await expect(page.locator('.privacy-retention-summary')).toContainText('Decision required')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Cleanup health')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Workspace magic links')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Healthy')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Platform admin magic links')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Attention')
+  await expect(page.locator('.privacy-retention-health')).toContainText('4,000 / 8,000')
   await expect(page.locator('.privacy-retention-table')).toContainText('External control')
   await expect(page.locator('.privacy-retention-table')).not.toContainText('Workspace lifetime')
   await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Feedback and issue workflow content' })
@@ -5255,6 +5314,11 @@ test('Portuguese administration preserves permissions and operational mutations'
   await expect(page.getByRole('heading', { name: 'Calendário de retenção' })).toBeVisible()
   await expect(page.locator('.privacy-retention-table')).toContainText('90 dias')
   await expect(page.locator('.privacy-retention-summary')).toContainText('Decisão necessária')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Saúde da limpeza')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Magic links do workspace')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Saudável')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Magic links de administradores da plataforma')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Atenção')
   await expect(page.locator('.privacy-retention-table')).toContainText('Controlo externo')
   await expect(page.locator('.privacy-retention-table')).not.toContainText('Vida útil do workspace')
   await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Conteúdo do fluxo de feedback e issues' })
