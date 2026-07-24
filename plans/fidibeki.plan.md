@@ -726,7 +726,7 @@ was removed from the staging test tenant.
         checklists, post-incident actions/owners/corrective-issue links, and the tabletop
         exercises across attachment disclosure, replay access, database cross-tenant exposure,
         leaked integration secret, and subprocessor breach.
-    - [x] #65: complete sensitive-access governance.
+    - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
         deduplicates range traffic, and has backend/web coverage.
@@ -800,6 +800,9 @@ was removed from the staging test tenant.
         to stream an already-opened reader instead of opening it after commit, and added integration
         coverage proving a storage-open failure returns 503 without a false `success` audit row on
         both paths.
+      - [ ] Run the authenticated staging E2E for the completed support-access paths and tenant
+        audit workflow before closing #65. No deployment is performed while the current
+        staging-only/no-deployment product constraint remains active.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
     - [x] #67: refine language and timezone preferences layout.
