@@ -80,6 +80,7 @@ type PublicWidgetRule struct {
 	ReplayRecordCanvas       bool                                  `json:"replay_record_canvas"`
 	ReplayCanvasFPS          int                                   `json:"replay_canvas_fps"`
 	ReplayConsent            project.ReplayConsentConfig           `json:"replay_consent"`
+	AnalyticsConsent         project.AnalyticsConsentConfig        `json:"analytics_consent"`
 	RecurrenceMode           project.RecurrenceMode                `json:"recurrence_mode"`
 	RecurrenceDays           *int                                  `json:"recurrence_days"`
 	DefinitionKey            string                                `json:"definition_key"`
@@ -320,8 +321,9 @@ func publicWidgetRule(rule project.WidgetRule) PublicWidgetRule {
 		ReplayMaxDurationSeconds: rule.ReplayMaxDurationSeconds, ReplayMaxEvents: rule.ReplayMaxEvents,
 		ReplayMaskAllInputs: rule.ReplayMaskAllInputs, ReplayMaskTextSelector: rule.ReplayMaskTextSelector,
 		ReplayRecordCanvas: false, ReplayCanvasFPS: 2,
-		ReplayConsent:  rule.ReplayConsent,
-		RecurrenceMode: rule.RecurrenceMode, RecurrenceDays: rule.RecurrenceDays,
+		ReplayConsent:    rule.ReplayConsent,
+		AnalyticsConsent: rule.AnalyticsConsent,
+		RecurrenceMode:   rule.RecurrenceMode, RecurrenceDays: rule.RecurrenceDays,
 		DefinitionKey: rule.DefinitionKey, DefinitionVersion: rule.DefinitionVersion,
 		DefinitionStatus: rule.DefinitionStatus, Presentation: rule.Presentation,
 		Objective: rule.Objective, ResponseBlocks: rule.ResponseBlocks,

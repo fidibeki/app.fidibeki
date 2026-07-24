@@ -7,10 +7,20 @@ import {
   type TargetingRegexModule,
 } from './config'
 import {
-  createAnalyticsTracker,
+  createFunnelTracker,
+  createPageViewTracker,
+  forgetVisitorID,
+  resolveVisitorID,
   type FunnelEventType,
+  type FunnelTracker,
+  type PageViewIdentity,
 } from './analytics'
-import { createAnalyticsOutbox } from './analytics-outbox'
+import { createAnalyticsOutbox, type AnalyticsOutbox } from './analytics-outbox'
+import {
+  createAnalyticsConsentController,
+  type AnalyticsConsentAssertion,
+  type AnalyticsConsentController,
+} from './analytics-consent'
 import { getSessionID, isSuppressed, presentationRecurrencePolicy, recordWidgetState } from './suppression'
 import { armObjectivePolicy, recordObjectiveVisit } from './policy'
 import { privacySafeLocation } from './privacy-location'
@@ -61,7 +71,6 @@ interface ReplayModule {
 		rule: WidgetRule
 			publicKey: string
 			apiBase: URL
-			visitorID: string
 			consentToken: string
 			onError(error: unknown): void
 	}): Promise<ReplayCapture | null>
@@ -70,6 +79,17 @@ interface ReplayModule {
 interface ReplayConsentPromptModule {
   mountReplayConsentPrompt(options: {
     consent: WidgetRule['replay_consent']
+    locale: string
+    state: 'new' | 'active'
+    onAccept(): Promise<void>
+    onReject(): Promise<void>
+    onWithdraw(): Promise<void>
+  }): WidgetUnmount
+}
+
+interface AnalyticsConsentPromptModule {
+  mountAnalyticsConsentPrompt(options: {
+    consent: WidgetRule['analytics_consent']
     locale: string
     state: 'new' | 'active'
     onAccept(): Promise<void>
@@ -116,7 +136,22 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const durableStorage = storageOrMemory(() => window.localStorage)
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
   const widgetSessionID = getSessionID(sessionStorage)
-  const analytics = createAnalyticsTracker({ storage: durableStorage })
+  // The page-view identity is in-memory only (no storage, no network) and is always safe to
+  // track. The persistent visitor identifier and funnel outbox are created lazily, strictly after
+  // an active widget_analytics grant is confirmed for the current rule — see
+  // ensureAnalyticsFunnel/synchronizeAnalyticsConsent below (issue #58).
+  const pageViews = createPageViewTracker()
+  let currentPageView: PageViewIdentity | null = null
+  let analyticsConsent: AnalyticsConsentController | null = null
+  let analyticsConsentProjectID = ''
+  let currentAnalyticsRule: WidgetRule | null = null
+  let analyticsConsentPromptUnmount: WidgetUnmount | null = null
+  let analyticsConsentPromptFingerprint = ''
+  let analyticsConsentPromptTransition = 0
+  let analyticsFunnel: FunnelTracker | null = null
+  let analyticsOutbox: AnalyticsOutbox | null = null
+  let analyticsGrantedRuleID: string | null = null
+  let analyticsGrantToken = ''
 
   const ensureReplayConsent = (configuration: WidgetConfiguration) => {
     if (replayConsent && replayConsentProjectID === configuration.project_id) return replayConsent
@@ -152,14 +187,52 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     }
   }
 
-  const analyticsOutbox = createAnalyticsOutbox({
-    endpoint: analyticsEndpoint,
-    publicKey: key,
-    ownerID: widgetSessionID,
-    storage: durableStorage,
-    sendBeacon: typeof navigator.sendBeacon === 'function' ? navigator.sendBeacon.bind(navigator) : undefined,
-    onError: (error) => void report(error, 'analytics'),
-  })
+  const ensureAnalyticsConsent = (configuration: WidgetConfiguration) => {
+    if (analyticsConsent && analyticsConsentProjectID === configuration.project_id) return analyticsConsent
+    analyticsConsentProjectID = configuration.project_id
+    analyticsConsent = createAnalyticsConsentController({
+      endpoint: new URL('widget/analytics-consents', assetBase),
+      publicKey: key,
+      projectID: configuration.project_id,
+      storage: durableStorage,
+      onChanged: (state) => {
+        if (state === 'revoked') wipeAnalyticsIdentity()
+        if (cache) void synchronizeAnalyticsConsent(cache.value, currentAnalyticsRule)
+      },
+    })
+    return analyticsConsent
+  }
+
+  // The persistent visitor identifier and outbox are created the first time any rule has an
+  // active widget_analytics grant, and never before. Once created they are reused across rule
+  // changes on the same project (the identifier is inherently browser/project scoped, not
+  // rule scoped), until an explicit withdrawal wipes them via wipeAnalyticsIdentity.
+  const ensureAnalyticsFunnel = (): FunnelTracker => {
+    if (!analyticsFunnel) {
+      analyticsFunnel = createFunnelTracker(resolveVisitorID(durableStorage))
+    }
+    if (!analyticsOutbox) {
+      analyticsOutbox = createAnalyticsOutbox({
+        endpoint: analyticsEndpoint,
+        publicKey: key,
+        ownerID: widgetSessionID,
+        storage: durableStorage,
+        sendBeacon: typeof navigator.sendBeacon === 'function' ? navigator.sendBeacon.bind(navigator) : undefined,
+        onError: (error) => void report(error, 'analytics'),
+      })
+    }
+    return analyticsFunnel
+  }
+
+  const wipeAnalyticsIdentity = () => {
+    analyticsGrantedRuleID = null
+    analyticsGrantToken = ''
+    analyticsFunnel = null
+    const outbox = analyticsOutbox
+    analyticsOutbox = null
+    outbox?.destroy()
+    forgetVisitorID(durableStorage)
+  }
 
   const loadConfiguration = async (force: boolean): Promise<WidgetConfiguration> => {
     const now = Date.now()
@@ -177,15 +250,25 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   }
 
   const recordAnalytics = (eventType: FunnelEventType, rule: WidgetRule) => {
-    const event = analytics.record(eventType, rule)
+    if (rule.id !== analyticsGrantedRuleID || !currentPageView) return
+    const event = ensureAnalyticsFunnel().record(eventType, rule, currentPageView, analyticsGrantToken)
     if (!event) return
-    analyticsOutbox.enqueue(event)
+    analyticsOutbox?.enqueue(event)
+  }
+
+  // The "submitted" conversion event is optionally embedded directly in the feedback submission
+  // request rather than the outbox (see widget.ts). It uses the same gate as every other funnel
+  // event: without an active grant for the current rule it returns null and feedback submission
+  // proceeds without any analytics attachment (issue #58).
+  const recordSubmissionAnalytics = (rule: WidgetRule) => {
+    if (rule.id !== analyticsGrantedRuleID || !currentPageView) return null
+    return ensureAnalyticsFunnel().record('submitted', rule, currentPageView, analyticsGrantToken)
   }
 
   const evaluate = async (forceRefresh = false) => {
     const currentEvaluation = ++evaluation
     const evaluationURL = window.location.href
-    analytics.visit(evaluationURL)
+    currentPageView = pageViews.visit(evaluationURL)
     cleanupTrigger?.()
     cleanupTrigger = null
     unmountWidget?.()
@@ -205,6 +288,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
         onError: (error) => void report(error, 'targeting'),
       })
+			if (currentEvaluation !== evaluation) return
+			await synchronizeAnalyticsConsent(configuration, rule)
 			if (currentEvaluation !== evaluation) return
 			if (rule) {
 				recordAnalytics('matched', rule)
@@ -241,7 +326,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 					replaySessionID: replayCapture?.sessionID ?? null,
               onVisible: () => recordAnalytics('impression', rule),
               onInteraction: () => recordAnalytics('interaction', rule),
-              submissionAnalytics: () => analytics.record('submitted', rule),
+              submissionAnalytics: () => recordSubmissionAnalytics(rule),
               onSubmitted: () => persistState(durableStorage, configuration, rule, evaluationURL, widgetSessionID, 'submitted'),
               onDismissed: () => {
 					recordAnalytics('dismissed', rule)
@@ -294,7 +379,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         automaticRuleID = null
       }
       const currentURL = window.location.href
-      analytics.visit(currentURL)
+      currentPageView = pageViews.visit(currentURL)
       const targeted = await matchRule([rule], currentURL, {
         loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
         onError: (error) => void report(error, 'targeting'),
@@ -303,6 +388,8 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       if (!targeted) return explicitResult(false, 'not_targeted')
       const privacyLocation = privacySafeLocation(currentURL, rule)
       if (!privacyLocation) return explicitResult(false, 'not_targeted')
+      await synchronizeAnalyticsConsent(configuration, rule)
+      if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       await synchronizeReplay(configuration, rule)
       if (explicitGenerations.get(target) !== generation) return explicitResult(false, 'not_found')
       recordAnalytics('matched', rule)
@@ -325,7 +412,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         target, hostID,
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
-        submissionAnalytics: () => analytics.record('submitted', rule),
+        submissionAnalytics: () => recordSubmissionAnalytics(rule),
         onSubmitted: () => persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'submitted'),
         onDismissed: () => {
           recordAnalytics('dismissed', rule)
@@ -381,7 +468,6 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 				rule,
 					publicKey: key,
 					apiBase: assetBase,
-					visitorID: analytics.visitorID,
           consentToken: grant.token,
 					onError: (error) => void report(error, 'replay'),
 				})
@@ -450,6 +536,80 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     },
   )
 
+  const synchronizeAnalyticsConsent = async (configuration: WidgetConfiguration, rule: WidgetRule | null) => {
+    currentAnalyticsRule = rule
+    const consent = ensureAnalyticsConsent(configuration)
+    consent.setRule(rule)
+    await synchronizeAnalyticsConsentPrompt(configuration, rule, consent)
+    const grant = rule !== null && rule.analytics_consent.mode !== 'none' ? consent.activeGrant() : null
+    if (grant && rule) {
+      analyticsGrantedRuleID = rule.id
+      analyticsGrantToken = grant.token
+    } else {
+      analyticsGrantedRuleID = null
+      analyticsGrantToken = ''
+    }
+  }
+
+  const synchronizeAnalyticsConsentPrompt = async (
+    configuration: WidgetConfiguration,
+    rule: WidgetRule | null,
+    controller: AnalyticsConsentController,
+  ) => {
+    const status = controller.status()
+    const visibleState = status === 'new' ? 'new' : status === 'active' ? 'active' : null
+    const locale = rule ? analyticsConsentLocale(configuration, rule) : null
+    const fingerprint = rule?.analytics_consent.mode === 'fidibeki_managed' && visibleState && locale
+      ? `${rule.id}:${rule.analytics_consent.notice_version}:${locale}:${visibleState}`
+      : ''
+    if (fingerprint === analyticsConsentPromptFingerprint) return
+    const transition = ++analyticsConsentPromptTransition
+    analyticsConsentPromptFingerprint = fingerprint
+    analyticsConsentPromptUnmount?.()
+    analyticsConsentPromptUnmount = null
+    if (!fingerprint || !rule || !locale || !visibleState) return
+    try {
+      const module = (await import(
+        new URL('analytics-consent-prompt.js', assetBase).href
+      )) as AnalyticsConsentPromptModule
+      if (transition !== analyticsConsentPromptTransition) return
+      analyticsConsentPromptUnmount = module.mountAnalyticsConsentPrompt({
+        consent: rule.analytics_consent,
+        locale,
+        state: visibleState,
+        onAccept: () => controller.grant({
+          purpose: 'widget_analytics',
+          noticeVersion: rule.analytics_consent.notice_version,
+          locale,
+          source: 'fidibeki_managed',
+        }).then(() => {}),
+        onReject: () => controller.deny(locale),
+        onWithdraw: () => controller.revoke(),
+      })
+    } catch (error) {
+      void report(error, 'analytics_consent_prompt')
+    }
+  }
+
+  installAnalyticsConsentAPI(
+    async (assertion) => {
+      const configuration = await loadConfiguration(false)
+      const controller = ensureAnalyticsConsent(configuration)
+      if (!currentAnalyticsRule) throw new Error('no analytics-enabled rule is active on this page')
+      controller.setRule(currentAnalyticsRule)
+      const grant = await controller.grant(assertion)
+      if (currentAnalyticsRule) {
+        analyticsGrantedRuleID = currentAnalyticsRule.id
+        analyticsGrantToken = grant.token
+      }
+      return grant
+    },
+    async () => {
+      if (!analyticsConsent) return
+      await analyticsConsent.revoke()
+    },
+  )
+
   installNavigationEvents()
   window.addEventListener('fidibeki:navigation', () => {
     void evaluate()
@@ -460,13 +620,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   })
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      analyticsOutbox.flushOnHide()
+      analyticsOutbox?.flushOnHide()
       return
     }
-    void analyticsOutbox.flush()
+    void analyticsOutbox?.flush()
     void evaluate(true)
   })
-  window.addEventListener('pagehide', () => analyticsOutbox.flushOnHide())
+  window.addEventListener('pagehide', () => analyticsOutbox?.flushOnHide())
   window.setInterval(() => void evaluate(true), 5 * 60 * 1000)
   await evaluate()
 }
@@ -485,6 +645,15 @@ function installReplayConsentAPI(
 ): void {
   const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
   namespace.replay = { grantConsent, revokeConsent }
+  ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
+}
+
+function installAnalyticsConsentAPI(
+  grantConsent: (assertion: AnalyticsConsentAssertion) => Promise<unknown>,
+  revokeConsent: () => Promise<void>,
+): void {
+  const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
+  namespace.analytics = { grantConsent, revokeConsent }
   ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
 }
 
@@ -523,6 +692,24 @@ function replayConsentLocale(configuration: WidgetConfiguration, rule: WidgetRul
   const supported = rule.replay_consent.supported_locales
     .map(locale => locale.trim().toLowerCase())
     .filter(locale => rule.replay_consent.notices[locale] !== undefined)
+  const candidates = [
+    document.documentElement.lang,
+    ...navigator.languages,
+    configuration.default_locale ?? '',
+  ].map(locale => locale.trim().replace(/_/g, '-').toLowerCase()).filter(Boolean)
+  for (const candidate of candidates) {
+    if (supported.includes(candidate)) return candidate
+    const primary = candidate.split('-', 1)[0]
+    const compatible = supported.find(locale => locale === primary || locale.split('-', 1)[0] === primary)
+    if (compatible) return compatible
+  }
+  return supported[0] ?? null
+}
+
+function analyticsConsentLocale(configuration: WidgetConfiguration, rule: WidgetRule): string | null {
+  const supported = rule.analytics_consent.supported_locales
+    .map(locale => locale.trim().toLowerCase())
+    .filter(locale => rule.analytics_consent.notices[locale] !== undefined)
   const candidates = [
     document.documentElement.lang,
     ...navigator.languages,

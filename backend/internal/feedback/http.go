@@ -46,7 +46,13 @@ type AttachmentVerificationScheduler interface {
 }
 
 type SubmissionAnalyticsStore interface {
-	InsertSubmittedEvent(context.Context, db.Querier, widgetanalytics.EventValues) (bool, error)
+	InsertSubmittedEvent(
+		context.Context,
+		db.Querier,
+		project.PublicConfiguration,
+		widgetanalytics.EventValues,
+		time.Time,
+	) (bool, error)
 }
 
 type AbuseEvaluator interface {
@@ -258,7 +264,9 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 			}
 			analytics := *values.Analytics
 			analytics.FeedbackID = &feedbackID
-			if _, err := h.options.Analytics.InsertSubmittedEvent(r.Context(), tx, analytics); err != nil {
+			if _, err := h.options.Analytics.InsertSubmittedEvent(
+				r.Context(), tx, configuration, analytics, h.now().UTC(),
+			); err != nil {
 				h.writeStoreError(w, r, fmt.Errorf("create submitted widget funnel event: %w", err))
 				return
 			}

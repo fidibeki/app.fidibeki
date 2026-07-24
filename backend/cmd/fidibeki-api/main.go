@@ -444,7 +444,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})
 	widgetanalytics.RegisterPublicRoutes(widgetRoutes, widgetanalytics.PublicHTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App),
-		Store: widgetanalytics.Store{}, Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
+		Store: widgetanalytics.Store{}, Consent: widgetanalytics.ConsentStore{},
+		Limiter:           ratelimit.NewRedisLimiter(redisClient.Client()),
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
 	})
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{

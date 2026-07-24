@@ -2384,6 +2384,66 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("roll back tenant B replay consent visibility transaction: %v", err)
 	}
 
+	var legacyAnalyticsConsentMode string
+	if err := root.QueryRow(ctx, `
+		SELECT analytics_consent->>'mode' FROM widget_rules WHERE id = $1
+	`, widgetRuleA).Scan(&legacyAnalyticsConsentMode); err != nil || legacyAnalyticsConsentMode != "none" {
+		t.Fatalf(
+			"legacy widget analytics consent mode = %q, error = %v, want none",
+			legacyAnalyticsConsentMode, err,
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules SET analytics_consent = '{"mode":"implicit"}'::jsonb WHERE id = $1
+	`, widgetRuleA); err == nil {
+		t.Fatal("widget analytics consent configuration accepted an implicit mode")
+	}
+	var analyticsConsentRLS, analyticsConsentForceRLS bool
+	if err := root.QueryRow(ctx, `
+		SELECT relrowsecurity, relforcerowsecurity
+		FROM pg_class
+		WHERE oid = 'widget_analytics_consents'::regclass
+	`).Scan(&analyticsConsentRLS, &analyticsConsentForceRLS); err != nil ||
+		!analyticsConsentRLS || !analyticsConsentForceRLS {
+		t.Fatalf(
+			"widget analytics consent RLS = enabled %t forced %t, error = %v",
+			analyticsConsentRLS, analyticsConsentForceRLS, err,
+		)
+	}
+	var analyticsConsentID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO widget_analytics_consents (
+			tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, token_hash, state, accepted_at, expires_at
+		) VALUES (
+			$1, $2, $3, 'widget_analytics', '2026-07', 'en', 'customer_cmp',
+			encode(digest('analytics-consent-migration', 'sha256'), 'hex'),
+			'active', now(), now() + interval '30 days'
+		)
+		RETURNING id
+	`, tenantA, projectA, widgetRuleA).Scan(&analyticsConsentID); err != nil {
+		t.Fatalf("insert widget analytics consent migration fixture: %v", err)
+	}
+	tx, err = appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tenant B widget analytics consent visibility transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB); err != nil {
+		t.Fatalf("set tenant B widget analytics consent scope: %v", err)
+	}
+	var analyticsConsentVisible int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM widget_analytics_consents WHERE id = $1
+	`, analyticsConsentID).Scan(&analyticsConsentVisible); err != nil || analyticsConsentVisible != 0 {
+		t.Fatalf(
+			"tenant B widget analytics consent visibility = %d, error = %v",
+			analyticsConsentVisible, err,
+		)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("roll back tenant B widget analytics consent visibility transaction: %v", err)
+	}
+
 	pools.Close()
 	if err := migrator.Down(); err != nil {
 		t.Fatalf("migrate down: %v", err)
@@ -2415,14 +2475,14 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 }
 
 func migrateToVersion(migrator *db.Migrator, target uint) error {
-	version, dirty, err := migrator.Version()
+	_, dirty, err := migrator.Version()
 	if err != nil {
 		return err
 	}
 	if dirty {
 		return errors.New("cannot migrate a dirty database")
 	}
-	return migrator.Steps(int(target) - int(version))
+	return migrator.Migrate(target)
 }
 
 func migrationsPath(t *testing.T) string {

@@ -18,29 +18,31 @@ func (eventType EventType) ClientWritable() bool {
 }
 
 type EventInput struct {
-	EventID    string    `json:"event_id"`
-	EventType  EventType `json:"event_type"`
-	VisitorID  string    `json:"visitor_id"`
-	PageViewID string    `json:"page_view_id"`
-	RuleID     string    `json:"rule_id"`
-	PageURL    string    `json:"page_url"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID      string    `json:"event_id"`
+	EventType    EventType `json:"event_type"`
+	VisitorID    string    `json:"visitor_id"`
+	PageViewID   string    `json:"page_view_id"`
+	RuleID       string    `json:"rule_id"`
+	PageURL      string    `json:"page_url"`
+	OccurredAt   time.Time `json:"occurred_at"`
+	ConsentToken string    `json:"consent_token"`
 }
 
 type EventValues struct {
-	EventID    string
-	TenantID   string
-	ProjectID  string
-	RuleID     string
-	RuleName   string
-	EventType  EventType
-	VisitorID  string
-	PageViewID string
-	PageURL    string
-	PageKey    []byte
-	FeedbackID *string
-	OccurredAt time.Time
-	ReceivedAt time.Time
+	EventID      string
+	TenantID     string
+	ProjectID    string
+	RuleID       string
+	RuleName     string
+	EventType    EventType
+	VisitorID    string
+	PageViewID   string
+	PageURL      string
+	PageKey      []byte
+	FeedbackID   *string
+	OccurredAt   time.Time
+	ReceivedAt   time.Time
+	ConsentToken string
 }
 
 type FieldErrors map[string]string

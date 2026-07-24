@@ -7,6 +7,10 @@ This document describes the implemented product and processor behavior. It is no
 published notice, or approval to enable replay broadly. Privacy/legal review is required before
 broad staging enablement. Production remains out of scope until explicitly authorized.
 
+The `widget_analytics` purpose (`docs/widget-analytics-consent.md`) mirrors this same
+grant/deny/revoke architecture but is a fully independent purpose, evidence ledger, and gate. A
+session replay grant never authorizes analytics collection, and vice versa.
+
 ## Roles And Boundaries
 
 - The customer determines the purpose and configuration of session replay and remains the factual

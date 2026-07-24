@@ -46,6 +46,18 @@ export async function fetchConfiguration(request: ConfigRequest): Promise<Widget
       }
     }
     if (!rule.ai_processing) rule.ai_processing = { enabled: false }
+    if (!rule.analytics_consent) {
+      rule.analytics_consent = {
+        mode: 'none',
+        notice_version: '',
+        controller_name: '',
+        privacy_policy_url: '',
+        supported_locales: [],
+        retention_days: 0,
+        expiry_days: 0,
+        notices: {},
+      }
+    }
   }
   return configuration
 }

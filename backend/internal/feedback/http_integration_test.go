@@ -118,14 +118,44 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	}
 	t.Cleanup(pools.Close)
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	analyticsConsentToken := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	analyticsConsent := project.AnalyticsConsentConfig{
+		Mode: project.AnalyticsConsentCustomerManaged, NoticeVersion: "2026-07",
+		SupportedLocales: []string{"en"}, ExpiryDays: 30,
+	}
+	analyticsConsentJSON, err := json.Marshal(analyticsConsent)
+	if err != nil {
+		t.Fatalf("encode analytics consent fixture: %v", err)
+	}
+	if _, err := root.Exec(ctx,
+		`UPDATE widget_rules SET analytics_consent = $2::jsonb WHERE id = $1`,
+		ruleID, string(analyticsConsentJSON),
+	); err != nil {
+		t.Fatalf("configure feedback analytics rule: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO widget_analytics_consents (
+			tenant_id, project_id, widget_rule_id, purpose, notice_version, locale,
+			source, customer_consent_reference, token_hash, state, accepted_at, expires_at
+		) VALUES (
+			$1, $2, $3, 'widget_analytics', '2026-07', 'en', 'customer_cmp',
+			'feedback-http-fixture', $4, 'active', $5::timestamptz,
+			$5::timestamptz + interval '30 days'
+		)
+	`, tenantID, projectID, ruleID, auth.HashToken(analyticsConsentToken), now); err != nil {
+		t.Fatalf("configure feedback analytics consent: %v", err)
+	}
 	analyticsConfiguration := project.PublicConfiguration{
 		TenantID: tenantID, ProjectID: projectID, Plan: tenant.PlanGrowth, Status: tenant.StatusActive,
-		Rules: []project.WidgetRule{{ID: ruleID, Name: "All pages", Enabled: true}},
+		Rules: []project.WidgetRule{{
+			ID: ruleID, Name: "All pages", Enabled: true, AnalyticsConsent: analyticsConsent,
+		}},
 	}
 	matchedValues, analyticsFields := widgetanalytics.ValidateEvents([]widgetanalytics.EventInput{{
 		EventID: "00000000-0000-4000-8000-000000000101", EventType: widgetanalytics.EventMatched,
 		VisitorID: "00000000-0000-4000-8000-000000000102", PageViewID: "00000000-0000-4000-8000-000000000103",
 		RuleID: ruleID, PageURL: "https://example.com/checkout", OccurredAt: now,
+		ConsentToken: analyticsConsentToken,
 	}}, analyticsConfiguration, "https://example.com", now)
 	if len(analyticsFields) > 0 {
 		t.Fatalf("validate feedback matched analytics: %#v", analyticsFields)
@@ -169,8 +199,8 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		"responses":{"rating":5,"feedback":"Checkout was clear"},
 		"attachments":[{"client_attachment_id":%q,"kind":"audio","content_type":"audio/webm","size_bytes":2048}],
 		"metadata":{"url":"https://example.com/checkout","referrer":"https://example.com/","user_agent":"browser","os":"Linux","browser":"Firefox","device":"desktop","viewport_width":1280,"viewport_height":720,"language":"en"},
-		"analytics":{"event_id":"00000000-0000-4000-8000-000000000104","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout?step=payment#card","occurred_at":"2026-07-21T12:00:00Z"}
-	}`, clientFeedbackID, ruleID, replaySessionID, clientAttachmentID, ruleID)
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000104","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout?step=payment#card","occurred_at":"2026-07-21T12:00:00Z","consent_token":%q}
+	}`, clientFeedbackID, ruleID, replaySessionID, clientAttachmentID, ruleID, analyticsConsentToken)
 
 	created := performFeedbackRequest(handler, http.MethodPost, "/v1/feedback?key="+publicKey, body, publicKey, "https://example.com")
 	if created.Code != http.StatusCreated {
@@ -304,6 +334,29 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		t.Fatalf("submitted analytics after retry = %d, error %v, want 1", submittedCount, err)
 	}
 
+	staleConsentBody := fmt.Sprintf(`{
+		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286355","widget_rule_id":%q,
+		"rating":4,"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720},
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000155","visitor_id":"00000000-0000-4000-8000-000000000156","page_view_id":"00000000-0000-4000-8000-000000000157","rule_id":%q,"page_url":"https://example.com/checkout","occurred_at":"2026-07-21T12:00:00Z","consent_token":"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"}
+	}`, ruleID, ruleID)
+	staleConsent := performFeedbackRequest(handler, http.MethodPost,
+		"/v1/feedback?key="+publicKey, staleConsentBody, publicKey, "https://example.com")
+	if staleConsent.Code != http.StatusCreated {
+		t.Fatalf("feedback with stale analytics consent = %d, body = %s",
+			staleConsent.Code, staleConsent.Body.String())
+	}
+	var staleSubmission SubmissionResponse
+	decodeFeedbackResponse(t, staleConsent, &staleSubmission)
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM widget_funnel_events
+		WHERE project_id = $1 AND event_type = 'submitted'
+	`, projectID).Scan(&submittedCount); err != nil || submittedCount != 1 {
+		t.Fatalf("stale consent submitted analytics = %d, error %v, want 1", submittedCount, err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM feedbacks WHERE id = $1`, staleSubmission.FeedbackID); err != nil {
+		t.Fatalf("clean stale-consent feedback fixture: %v", err)
+	}
+
 	rollbackBody := fmt.Sprintf(`{
 		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286399","widget_rule_id":%q,
 		"rating":4,"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720},
@@ -330,8 +383,8 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 	eventIDCollisionBody := fmt.Sprintf(`{
 		"client_feedback_id":"57e3ee52-4ebf-43ce-9e31-9f9096286377","widget_rule_id":%q,
 		"rating":3,"metadata":{"url":"https://example.com/checkout","viewport_width":1280,"viewport_height":720},
-		"analytics":{"event_id":"00000000-0000-4000-8000-000000000101","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout","occurred_at":"2026-07-21T12:00:00Z"}
-	}`, ruleID, ruleID)
+		"analytics":{"event_id":"00000000-0000-4000-8000-000000000101","visitor_id":"00000000-0000-4000-8000-000000000102","page_view_id":"00000000-0000-4000-8000-000000000103","rule_id":%q,"page_url":"https://example.com/checkout","occurred_at":"2026-07-21T12:00:00Z","consent_token":%q}
+	}`, ruleID, ruleID, analyticsConsentToken)
 	collision := performFeedbackRequest(handler, http.MethodPost,
 		"/v1/feedback?key="+publicKey, eventIDCollisionBody, publicKey, "https://example.com")
 	if collision.Code != http.StatusServiceUnavailable {
@@ -1393,7 +1446,9 @@ type submissionAnalyticsStoreStub struct {
 func (s submissionAnalyticsStoreStub) InsertSubmittedEvent(
 	context.Context,
 	db.Querier,
+	project.PublicConfiguration,
 	widgetanalytics.EventValues,
+	time.Time,
 ) (bool, error) {
 	return false, s.err
 }

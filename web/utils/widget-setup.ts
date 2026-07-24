@@ -14,6 +14,10 @@ export function defaultWidgetRule(): WidgetRuleInput {
       mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
       supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
     },
+    analytics_consent: {
+      mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
+      supported_locales: [], retention_days: 0, expiry_days: 30, notices: {},
+    },
     recurrence_mode: 'cooldown', recurrence_days: 30,
     definition_key: 'all-pages-feedback', definition_status: 'draft', presentation: 'launcher',
     objective: 'continuous_feedback',

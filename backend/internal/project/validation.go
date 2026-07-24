@@ -113,6 +113,7 @@ func ValidateWidgetRule(input WidgetRuleInput, resolved tenant.Tenant) (WidgetRu
 	validateTrigger(values, fields)
 	validateAppearance(values, fields)
 	validateReplay(values, fields)
+	validateAnalyticsConsent(values.AnalyticsConsent, "analytics_consent", fields)
 	validateRecurrence(values, fields)
 	validateDefinition(values, fields)
 	validateAIProcessing(values, resolved, fields)
@@ -146,6 +147,7 @@ func normalizeWidgetRule(input WidgetRuleInput) WidgetRuleValues {
 		ReplayRecordCanvas: false,
 		ReplayCanvasFPS:    2,
 		ReplayConsent:      normalizeReplayConsent(input.ReplayConsent),
+		AnalyticsConsent:   normalizeAnalyticsConsent(input.AnalyticsConsent),
 		RecurrenceMode:     input.RecurrenceMode,
 		RecurrenceDays:     input.RecurrenceDays,
 		IncludeConditions:  normalizeTargetConditions(input.IncludeConditions),
@@ -674,6 +676,103 @@ func validateReplayConsent(consent ReplayConsentConfig, fields FieldErrors) {
 	for _, locale := range consent.SupportedLocales {
 		notice, exists := consent.Notices[locale]
 		field := "replay_consent.notices." + locale
+		if !exists {
+			fields[field] = "is required for every supported locale"
+			continue
+		}
+		if len(notice.Title) < 1 || len(notice.Title) > 160 ||
+			len(notice.Description) < 1 || len(notice.Description) > 1000 ||
+			len(notice.AcceptLabel) < 1 || len(notice.AcceptLabel) > 80 ||
+			len(notice.RejectLabel) < 1 || len(notice.RejectLabel) > 80 ||
+			len(notice.WithdrawLabel) < 1 || len(notice.WithdrawLabel) > 80 {
+			fields[field] = "must include bounded title, description, accept, reject, and withdraw copy"
+		}
+	}
+}
+
+func normalizeAnalyticsConsent(input AnalyticsConsentConfig) AnalyticsConsentConfig {
+	input.Mode = AnalyticsConsentMode(strings.TrimSpace(string(input.Mode)))
+	if input.Mode == "" {
+		input.Mode = AnalyticsConsentNone
+	}
+	input.NoticeVersion = strings.TrimSpace(input.NoticeVersion)
+	input.ControllerName = strings.TrimSpace(input.ControllerName)
+	input.PrivacyPolicyURL = strings.TrimSpace(input.PrivacyPolicyURL)
+	locales := make([]string, 0, len(input.SupportedLocales))
+	seen := map[string]struct{}{}
+	for _, value := range input.SupportedLocales {
+		locale := strings.ToLower(strings.TrimSpace(value))
+		if locale == "" {
+			continue
+		}
+		if _, exists := seen[locale]; exists {
+			continue
+		}
+		seen[locale] = struct{}{}
+		locales = append(locales, locale)
+	}
+	input.SupportedLocales = locales
+	notices := make(map[string]AnalyticsConsentNotice, len(input.Notices))
+	for value, notice := range input.Notices {
+		locale := strings.ToLower(strings.TrimSpace(value))
+		if locale == "" {
+			continue
+		}
+		notice.Title = strings.TrimSpace(notice.Title)
+		notice.Description = strings.TrimSpace(notice.Description)
+		notice.AcceptLabel = strings.TrimSpace(notice.AcceptLabel)
+		notice.RejectLabel = strings.TrimSpace(notice.RejectLabel)
+		notice.WithdrawLabel = strings.TrimSpace(notice.WithdrawLabel)
+		notices[locale] = notice
+	}
+	input.Notices = notices
+	return input
+}
+
+// validateAnalyticsConsent has no "must be selected before enabled" precondition unlike replay:
+// funnel analytics collection is entirely opt-in per rule via this consent mode, so `none` simply
+// means analytics stays dormant for the rule rather than an inconsistent configuration.
+func validateAnalyticsConsent(consent AnalyticsConsentConfig, prefix string, fields FieldErrors) {
+	switch consent.Mode {
+	case AnalyticsConsentNone:
+		return
+	case AnalyticsConsentFidibekiManaged, AnalyticsConsentCustomerManaged:
+	default:
+		fields[prefix+".mode"] = "must be none, fidibeki_managed, or customer_cmp"
+		return
+	}
+	if !noticeVersionPattern.MatchString(consent.NoticeVersion) {
+		fields[prefix+".notice_version"] = "must contain 1-64 letters, numbers, dots, hyphens, or underscores"
+	}
+	if len(consent.SupportedLocales) < 1 || len(consent.SupportedLocales) > 10 {
+		fields[prefix+".supported_locales"] = "must contain between 1 and 10 locales"
+	} else {
+		for index, locale := range consent.SupportedLocales {
+			if !localePattern.MatchString(locale) {
+				fields[fmt.Sprintf("%s.supported_locales.%d", prefix, index)] = "must be a valid locale"
+			}
+		}
+	}
+	if consent.ExpiryDays < 1 || consent.ExpiryDays > 365 {
+		fields[prefix+".expiry_days"] = "must be between 1 and 365"
+	}
+	if consent.Mode != AnalyticsConsentFidibekiManaged {
+		return
+	}
+	if len(consent.ControllerName) < 1 || len(consent.ControllerName) > 160 {
+		fields[prefix+".controller_name"] = "must be between 1 and 160 characters"
+	}
+	privacyURL, err := url.Parse(consent.PrivacyPolicyURL)
+	if err != nil || privacyURL.Scheme != "https" || privacyURL.Host == "" ||
+		privacyURL.User != nil || privacyURL.RawQuery != "" || privacyURL.Fragment != "" {
+		fields[prefix+".privacy_policy_url"] = "must be an HTTPS URL without credentials, query parameters, or a fragment"
+	}
+	if consent.RetentionDays < 1 || consent.RetentionDays > 3650 {
+		fields[prefix+".retention_days"] = "must be between 1 and 3650"
+	}
+	for _, locale := range consent.SupportedLocales {
+		notice, exists := consent.Notices[locale]
+		field := prefix + ".notices." + locale
 		if !exists {
 			fields[field] = "is required for every supported locale"
 			continue

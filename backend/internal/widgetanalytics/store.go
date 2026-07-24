@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
+	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -78,10 +80,28 @@ func (Store) InsertEvents(
 func (Store) InsertSubmittedEvent(
 	ctx context.Context,
 	query db.Querier,
+	configuration project.PublicConfiguration,
 	event EventValues,
+	now time.Time,
 ) (bool, error) {
 	if event.EventType != EventSubmitted || event.FeedbackID == nil {
 		return false, errors.New("submitted widget funnel event requires feedback context")
+	}
+	rule := analyticsRule(configuration.Rules, event.RuleID)
+	if rule == nil || !rule.Enabled || rule.AnalyticsConsent.Mode == project.AnalyticsConsentNone ||
+		!validConsentTokenFormat(event.ConsentToken) {
+		return false, nil
+	}
+	if _, err := (ConsentStore{}).AuthorizeConsent(
+		ctx, query, configuration.TenantID, configuration.ProjectID, event.RuleID,
+		rule.AnalyticsConsent.NoticeVersion, string(rule.AnalyticsConsent.Mode),
+		auth.HashToken(event.ConsentToken), now.UTC(),
+	); errors.Is(err, ErrConsentRequired) {
+		// Analytics is optional. Missing, stale, revoked, or expired evidence suppresses only
+		// the conversion event and never rolls back the feedback submission.
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("authorize submitted widget analytics event: %w", err)
 	}
 	if err := privacy.EnsureFeedbackProcessingAllowed(
 		ctx, query, event.TenantID, *event.FeedbackID, privacy.PurposeAnalytics,

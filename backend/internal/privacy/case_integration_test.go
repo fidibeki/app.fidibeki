@@ -168,6 +168,21 @@ func TestPrivacyCaseVerificationRestrictionAndLifecycle(t *testing.T) {
 	if err != nil || !reactivated.Active || reactivated.DeactivatedAt != nil {
 		t.Fatalf("reactivate restriction = %#v error=%v", reactivated, err)
 	}
+	listed, err := store.ListCases(ctx, database, tenantID, 100)
+	if err != nil {
+		t.Fatalf("list privacy cases with restrictions: %v", err)
+	}
+	var listedCase *PrivacyCase
+	for index := range listed {
+		if listed[index].ID == created.ID {
+			listedCase = &listed[index]
+			break
+		}
+	}
+	if listedCase == nil || listedCase.Restriction == nil ||
+		!listedCase.Restriction.Active || len(listedCase.Restriction.Purposes) == 0 {
+		t.Fatalf("listed privacy case restriction = %#v", listedCase)
+	}
 
 	paused, err := store.TransitionCase(
 		ctx, database, tenantID, created.ID, memberID, "pause-1",

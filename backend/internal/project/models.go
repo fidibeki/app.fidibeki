@@ -77,6 +77,37 @@ type ReplayConsentConfig struct {
 	Notices          map[string]ReplayConsentNotice `json:"notices"`
 }
 
+// AnalyticsConsentMode, AnalyticsConsentNotice, and AnalyticsConsentConfig intentionally mirror
+// the shape of their replay-consent counterparts above but stay separate types: the
+// `widget_analytics` purpose has its own evidence ledger (widget_analytics_consents) and must
+// never be inferred from, or coupled to, session_replay or reporter-contact consent (issue #58).
+type AnalyticsConsentMode string
+
+const (
+	AnalyticsConsentNone            AnalyticsConsentMode = "none"
+	AnalyticsConsentFidibekiManaged AnalyticsConsentMode = "fidibeki_managed"
+	AnalyticsConsentCustomerManaged AnalyticsConsentMode = "customer_cmp"
+)
+
+type AnalyticsConsentNotice struct {
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	AcceptLabel   string `json:"accept_label"`
+	RejectLabel   string `json:"reject_label"`
+	WithdrawLabel string `json:"withdraw_label"`
+}
+
+type AnalyticsConsentConfig struct {
+	Mode             AnalyticsConsentMode              `json:"mode"`
+	NoticeVersion    string                            `json:"notice_version"`
+	ControllerName   string                            `json:"controller_name"`
+	PrivacyPolicyURL string                            `json:"privacy_policy_url"`
+	SupportedLocales []string                          `json:"supported_locales"`
+	RetentionDays    int                               `json:"retention_days"`
+	ExpiryDays       int                               `json:"expiry_days"`
+	Notices          map[string]AnalyticsConsentNotice `json:"notices"`
+}
+
 type RecurrenceMode string
 
 const (
@@ -242,6 +273,7 @@ type WidgetRule struct {
 	ReplayRecordCanvas       bool                             `json:"replay_record_canvas"`
 	ReplayCanvasFPS          int                              `json:"replay_canvas_fps"`
 	ReplayConsent            ReplayConsentConfig              `json:"replay_consent"`
+	AnalyticsConsent         AnalyticsConsentConfig           `json:"analytics_consent"`
 	RecurrenceMode           RecurrenceMode                   `json:"recurrence_mode"`
 	RecurrenceDays           *int                             `json:"recurrence_days"`
 	DefinitionKey            string                           `json:"definition_key"`
@@ -290,6 +322,7 @@ type WidgetRuleInput struct {
 	ReplayRecordCanvas       bool                              `json:"replay_record_canvas"`
 	ReplayCanvasFPS          int                               `json:"replay_canvas_fps"`
 	ReplayConsent            ReplayConsentConfig               `json:"replay_consent"`
+	AnalyticsConsent         AnalyticsConsentConfig            `json:"analytics_consent"`
 	RecurrenceMode           RecurrenceMode                    `json:"recurrence_mode"`
 	RecurrenceDays           *int                              `json:"recurrence_days"`
 	DefinitionKey            string                            `json:"definition_key"`
@@ -335,6 +368,7 @@ type WidgetRuleValues struct {
 	ReplayRecordCanvas       bool
 	ReplayCanvasFPS          int
 	ReplayConsent            ReplayConsentConfig
+	AnalyticsConsent         AnalyticsConsentConfig
 	RecurrenceMode           RecurrenceMode
 	RecurrenceDays           *int
 	DefinitionKey            string

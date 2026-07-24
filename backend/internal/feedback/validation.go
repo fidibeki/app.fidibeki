@@ -131,6 +131,7 @@ func validateSubmissionAt(
 				EventID: input.Analytics.EventID, VisitorID: input.Analytics.VisitorID,
 				PageViewID: input.Analytics.PageViewID, RuleID: input.Analytics.RuleID,
 				PageURL: input.Analytics.PageURL, OccurredAt: input.Analytics.OccurredAt,
+				ConsentToken: input.Analytics.ConsentToken,
 			},
 			configuration, values.WidgetRuleID, values.PageURL, now,
 		)

@@ -108,12 +108,13 @@ type ReporterConsentInput struct {
 }
 
 type SubmissionAnalyticsInput struct {
-	EventID    string    `json:"event_id"`
-	VisitorID  string    `json:"visitor_id"`
-	PageViewID string    `json:"page_view_id"`
-	RuleID     string    `json:"rule_id"`
-	PageURL    string    `json:"page_url"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID      string    `json:"event_id"`
+	VisitorID    string    `json:"visitor_id"`
+	PageViewID   string    `json:"page_view_id"`
+	RuleID       string    `json:"rule_id"`
+	PageURL      string    `json:"page_url"`
+	OccurredAt   time.Time `json:"occurred_at"`
+	ConsentToken string    `json:"consent_token"`
 }
 
 type SubmissionValues struct {

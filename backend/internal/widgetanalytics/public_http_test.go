@@ -29,7 +29,7 @@ func TestPublicHTTPIngestsValidatedEventsInTenantTransaction(t *testing.T) {
 	handler := publicAnalyticsHandler(PublicHTTPOptions{
 		Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
 		Begin:      func(context.Context) (db.Transaction, error) { return tx, nil },
-		Store:      store, Now: func() time.Time { return now },
+		Store:      store, Consent: &consentAuthorizerStub{allow: true}, Now: func() time.Time { return now },
 	})
 
 	response := performAnalyticsRequest(handler, http.MethodPost, "/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
@@ -150,7 +150,8 @@ func TestPublicHTTPEnforcesBodyAndEventRateLimitsBeforeTransaction(t *testing.T)
 		handler := publicAnalyticsHandler(PublicHTTPOptions{
 			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
 			Begin:      func(context.Context) (db.Transaction, error) { return &analyticsTransaction{}, nil },
-			Store:      &eventStoreStub{}, Limiter: limiter, Now: func() time.Time { return now },
+			Store:      &eventStoreStub{}, Consent: &consentAuthorizerStub{allow: true},
+			Limiter: limiter, Now: func() time.Time { return now },
 		})
 		response := performAnalyticsRequest(handler, http.MethodPost,
 			"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
@@ -193,7 +194,8 @@ func validIngestBody(now time.Time) string {
 		`"page_view_id":"00000000-0000-4000-8000-000000000003",` +
 		`"rule_id":"00000000-0000-4000-8000-000000000004",` +
 		`"page_url":"https://example.com/chart/?asset=BAI#price",` +
-		`"occurred_at":"` + now.Format(time.RFC3339) + `"}]}`
+		`"occurred_at":"` + now.Format(time.RFC3339) + `",` +
+		`"consent_token":"` + testAnalyticsConsentToken + `"}]}`
 }
 
 func performAnalyticsRequest(handler http.Handler, method, path, body, publicKey, origin string) *httptest.ResponseRecorder {
@@ -222,7 +224,43 @@ func analyticsHTTPConfiguration() project.PublicConfiguration {
 	configuration.AllowedDomains = []string{"example.com"}
 	configuration.Plan = tenant.PlanGrowth
 	configuration.Status = tenant.StatusActive
+	configuration.Rules[0].AnalyticsConsent = project.AnalyticsConsentConfig{
+		Mode: project.AnalyticsConsentCustomerManaged, NoticeVersion: "2026-07",
+		SupportedLocales: []string{"en"}, ExpiryDays: 30,
+	}
 	return configuration
+}
+
+const testAnalyticsConsentToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+type consentAuthorizerStub struct {
+	allow bool
+	err   error
+}
+
+func (s *consentAuthorizerStub) RecordConsent(
+	context.Context, db.Querier, string, string, string, string, string, string, *string, *string,
+	ConsentState, time.Time, *time.Time,
+) (Consent, error) {
+	return Consent{}, errors.New("unexpected RecordConsent call")
+}
+
+func (s *consentAuthorizerStub) AuthorizeConsent(
+	context.Context, db.Querier, string, string, string, string, string, string, time.Time,
+) (Consent, error) {
+	if s.err != nil {
+		return Consent{}, s.err
+	}
+	if !s.allow {
+		return Consent{}, ErrConsentRequired
+	}
+	return Consent{State: ConsentActive}, nil
+}
+
+func (s *consentAuthorizerStub) RevokeConsent(
+	context.Context, db.Querier, string, string, string, time.Time,
+) (Consent, error) {
+	return Consent{}, errors.New("unexpected RevokeConsent call")
 }
 
 type eventStoreStub struct {

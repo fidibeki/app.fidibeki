@@ -188,15 +188,15 @@ func (Store) CreateWidgetRule(
 			replay_max_events, replay_mask_all_inputs, replay_mask_text_selector,
 			replay_record_canvas, replay_canvas_fps, replay_consent,
 			recurrence_mode, recurrence_days, definition_key, definition_status, presentation, objective,
-				response_blocks, localizations, allow_comment, collect_contact, ai_processing,
-				widget_appearance_overrides
+			response_blocks, localizations, allow_comment, collect_contact, ai_processing,
+			widget_appearance_overrides, analytics_consent
 		)
 			SELECT id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
 			       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
 			       $27, $28, $29::jsonb, $30, $31,
 			       COALESCE(NULLIF($32, ''), 'widget-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
 			       $33, $34, $35, $36::jsonb, $37::jsonb, $38, $39, $40::jsonb,
-			       $41::jsonb
+			       $41::jsonb, $42::jsonb
 		FROM projects WHERE tenant_id = $1 AND id = $2
 		RETURNING `+widgetRuleColumns+`
 	`, arguments...))
@@ -219,6 +219,13 @@ func (Store) CreateWidgetRule(
 	if rule.AIProcessing.Enabled {
 		if err := recordAIProcessingConfigurationAudit(
 			ctx, query, tenantID, projectID, rule, actorMemberID, nil,
+		); err != nil {
+			return WidgetRule{}, err
+		}
+	}
+	if values.AnalyticsConsent.Mode != AnalyticsConsentNone {
+		if err := recordAnalyticsConsentConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID, nil, 0,
 		); err != nil {
 			return WidgetRule{}, err
 		}
@@ -300,15 +307,18 @@ func (Store) UpdateWidgetRule(
 	var previousReplayMode ReplayMode
 	var previousReplayConsent ReplayConsentConfig
 	var previousAIProcessing AIProcessingConfig
+	var previousAnalyticsConsent AnalyticsConsentConfig
 	var previousDefinitionVersion int
 	if err := query.QueryRow(ctx, `
-			SELECT rule.replay_mode, rule.replay_consent, rule.ai_processing, rule.definition_version
+		SELECT rule.replay_mode, rule.replay_consent, rule.ai_processing,
+		       rule.analytics_consent, rule.definition_version
 		FROM widget_rules AS rule
 		JOIN projects AS project ON project.id = rule.project_id
 		WHERE project.tenant_id = $1 AND project.id = $2 AND rule.id = $3
 		FOR UPDATE OF rule
 	`, tenantID, projectID, ruleID).Scan(
-		&previousReplayMode, &previousReplayConsent, &previousAIProcessing, &previousDefinitionVersion,
+		&previousReplayMode, &previousReplayConsent, &previousAIProcessing,
+		&previousAnalyticsConsent, &previousDefinitionVersion,
 	); errors.Is(err, pgx.ErrNoRows) {
 		return WidgetRule{}, ErrNotFound
 	} else if err != nil {
@@ -339,12 +349,13 @@ func (Store) UpdateWidgetRule(
 				definition_version = rule.definition_version + 1,
 				definition_status = $34, presentation = $35, objective = $36,
 				response_blocks = $37::jsonb, localizations = $38::jsonb,
-					allow_comment = $39, collect_contact = $40,
-					ai_processing = $41::jsonb,
-					widget_appearance_overrides = CASE
-						WHEN $43 THEN $42::jsonb
-						ELSE rule.widget_appearance_overrides || $42::jsonb
-				END
+				allow_comment = $39, collect_contact = $40,
+				ai_processing = $41::jsonb,
+				widget_appearance_overrides = CASE
+					WHEN $44 THEN $42::jsonb
+					ELSE rule.widget_appearance_overrides || $42::jsonb
+				END,
+				analytics_consent = $43::jsonb
 		FROM projects AS project
 		WHERE rule.id = $3 AND rule.project_id = $2
 		  AND project.id = rule.project_id AND project.tenant_id = $1
@@ -371,6 +382,14 @@ func (Store) UpdateWidgetRule(
 	if !reflect.DeepEqual(previousAIProcessing, rule.AIProcessing) {
 		if err := recordAIProcessingConfigurationAudit(
 			ctx, query, tenantID, projectID, rule, actorMemberID, &previousAIProcessing,
+		); err != nil {
+			return WidgetRule{}, err
+		}
+	}
+	if !reflect.DeepEqual(previousAnalyticsConsent, values.AnalyticsConsent) {
+		if err := recordAnalyticsConsentConfigurationAudit(
+			ctx, query, tenantID, projectID, rule, actorMemberID,
+			&previousAnalyticsConsent, previousDefinitionVersion,
 		); err != nil {
 			return WidgetRule{}, err
 		}
@@ -506,6 +525,40 @@ func disableWidgetRuleAI(
 		  AND status = 'processing'
 	`, tenantID, projectID, ruleID, now); err != nil {
 		return fmt.Errorf("discard disabled widget rule AI evidence: %w", err)
+	}
+	return nil
+}
+
+func recordAnalyticsConsentConfigurationAudit(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	projectID string,
+	rule WidgetRule,
+	actorMemberID string,
+	previousConsent *AnalyticsConsentConfig,
+	previousDefinitionVersion int,
+) error {
+	data := map[string]any{
+		"project_id":         projectID,
+		"widget_rule_id":     rule.ID,
+		"definition_version": rule.DefinitionVersion,
+		"analytics_consent":  rule.AnalyticsConsent,
+	}
+	if previousConsent != nil {
+		data["previous_definition_version"] = previousDefinitionVersion
+		data["previous_analytics_consent"] = *previousConsent
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode widget analytics consent configuration audit: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, data
+		) VALUES ($1, 'widget_rule.analytics_consent_updated', $2, $3::jsonb)
+	`, tenantID, actorMemberID, string(encoded)); err != nil {
+		return fmt.Errorf("record widget analytics consent configuration audit: %w", err)
 	}
 	return nil
 }
@@ -786,7 +839,7 @@ const widgetRuleColumns = `
 		recurrence_mode, recurrence_days,
 		definition_key, definition_version, definition_status, presentation, objective,
 		response_blocks, localizations, allow_comment, collect_contact, ai_processing,
-		widget_appearance_overrides,
+		widget_appearance_overrides, analytics_consent,
 		created_at, updated_at`
 
 func prefixedWidgetRuleColumns(alias string) string {
@@ -801,7 +854,7 @@ func prefixedWidgetRuleColumns(alias string) string {
 		"recurrence_mode", "recurrence_days",
 		"definition_key", "definition_version", "definition_status", "presentation", "objective",
 		"response_blocks", "localizations", "allow_comment", "collect_contact", "ai_processing",
-		"widget_appearance_overrides",
+		"widget_appearance_overrides", "analytics_consent",
 		"created_at", "updated_at",
 	}
 	for index := range columns {
@@ -850,6 +903,10 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode AI processing configuration: %w", err)
 	}
+	analyticsConsent, err := json.Marshal(values.AnalyticsConsent)
+	if err != nil {
+		return nil, fmt.Errorf("encode analytics consent: %w", err)
+	}
 	return []any{
 		values.Name, values.Priority, values.Enabled, values.MatcherType, values.MatcherValue,
 		values.TriggerType, values.TriggerDelaySeconds, values.TriggerScrollPercent,
@@ -864,6 +921,7 @@ func widgetRuleValueArguments(values WidgetRuleValues) ([]any, error) {
 		string(responseBlocks), string(localizations), values.AllowComment, values.CollectContact,
 		string(aiProcessing),
 		string(appearance),
+		string(analyticsConsent),
 	}, nil
 }
 
@@ -902,7 +960,7 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 		&rule.Presentation, &rule.Objective, &rule.ResponseBlocks, &rule.Localizations,
 		&rule.AllowComment, &rule.CollectContact,
 		&rule.AIProcessing,
-		&rule.AppearanceOverrides,
+		&rule.AppearanceOverrides, &rule.AnalyticsConsent,
 		&rule.CreatedAt, &rule.UpdatedAt,
 	)
 	return rule, err

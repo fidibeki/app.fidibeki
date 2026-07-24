@@ -2,6 +2,7 @@ package widgetanalytics
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
@@ -69,6 +70,7 @@ func ValidateEvents(
 			RuleID: input.RuleID, RuleName: rule.Name, EventType: input.EventType,
 			VisitorID: input.VisitorID, PageViewID: input.PageViewID,
 			PageURL: page.Target, PageKey: pageKey[:], OccurredAt: occurredAt, ReceivedAt: now,
+			ConsentToken: strings.TrimSpace(input.ConsentToken),
 		}
 	}
 	if len(fields) > 0 {
@@ -116,6 +118,11 @@ func ValidateSubmissionEvent(
 	value := values[0]
 	value.EventType = EventSubmitted
 	return value, nil
+}
+
+func validConsentTokenFormat(value string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	return err == nil && len(decoded) == 32
 }
 
 func targetsShareOrigin(left, right string) bool {

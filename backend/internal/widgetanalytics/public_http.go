@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
@@ -31,6 +32,7 @@ type PublicHTTPOptions struct {
 	Authorizer        widgetapi.ProjectAuthorizer
 	Begin             db.BeginFunc
 	Store             EventStore
+	Consent           ConsentAuthorizer
 	Limiter           ratelimit.Limiter
 	TrustedProxyCIDRs []netip.Prefix
 	Logger            *slog.Logger
@@ -54,6 +56,10 @@ func RegisterPublicRoutes(router chi.Router, options PublicHTTPOptions) {
 	handler := &PublicHTTPHandler{options: options, logger: logger}
 	router.Post("/v1/widget/events", handler.ingest)
 	router.Options("/v1/widget/events", handler.preflight)
+	router.Post("/v1/widget/analytics-consents", handler.recordConsent)
+	router.Options("/v1/widget/analytics-consents", handler.preflight)
+	router.Post("/v1/widget/analytics-consents/revoke", handler.revokeConsent)
+	router.Options("/v1/widget/analytics-consents/revoke", handler.preflight)
 }
 
 func (h *PublicHTTPHandler) preflight(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +115,17 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		h.writeStoreError(w, r, errors.New("configure widget analytics tenant context"))
 		return
 	}
+	ok, shouldCommit := h.authorizeEventConsent(w, r, tx, configuration, values)
+	if !ok {
+		if shouldCommit {
+			if err := tx.Commit(r.Context()); err != nil {
+				h.writeStoreError(w, r, fmt.Errorf("commit widget analytics consent expiry: %w", err))
+				return
+			}
+			committed = true
+		}
+		return
+	}
 	result, err := h.options.Store.InsertEvents(r.Context(), tx, values)
 	if err != nil {
 		h.writeStoreError(w, r, err)
@@ -130,6 +147,79 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 	committed = true
 	w.Header().Set("Cache-Control", "no-store")
 	api.WriteJSON(w, http.StatusAccepted, result)
+}
+
+// authorizeEventConsent fail-closes the dedicated funnel-event endpoint: every event must
+// identify an analytics-enabled rule and carry a valid, current, non-expired widget_analytics
+// grant token scoped to that rule. The embedded "submitted" event is authorized separately by
+// Store.InsertSubmittedEvent so missing or stale analytics evidence suppresses only measurement
+// and never blocks the strictly necessary feedback submission flow.
+// authorizeEventConsent returns (ok, shouldCommit). shouldCommit is true when a rejection was
+// caused by AuthorizeConsent transitioning an expired grant to the "expired" state: that write
+// must still be committed even though the ingest request itself is rejected, exactly like the
+// equivalent session_replay expiry path in internal/replay.
+func (h *PublicHTTPHandler) authorizeEventConsent(
+	w http.ResponseWriter,
+	r *http.Request,
+	tx db.Transaction,
+	configuration project.PublicConfiguration,
+	values []EventValues,
+) (bool, bool) {
+	if h.options.Consent == nil {
+		h.writeStoreError(w, r, errors.New("widget analytics consent store is not configured"))
+		return false, false
+	}
+	rules := make(map[string]project.WidgetRule, len(configuration.Rules))
+	for _, rule := range configuration.Rules {
+		rules[rule.ID] = rule
+	}
+	now := h.now()
+	authorized := make(map[string]struct{}, len(values))
+	fields := make([]map[string]string, 0)
+	shouldCommit := false
+	for index, value := range values {
+		rule, ruleExists := rules[value.RuleID]
+		if !ruleExists || rule.AnalyticsConsent.Mode == project.AnalyticsConsentNone {
+			fields = append(fields, map[string]string{
+				"field":   fmt.Sprintf("events[%d].rule_id", index),
+				"message": "must identify an analytics-enabled widget rule",
+			})
+			continue
+		}
+		if !validConsentTokenFormat(value.ConsentToken) {
+			fields = append(fields, map[string]string{
+				"field":   fmt.Sprintf("events[%d].consent_token", index),
+				"message": "must be a 32-byte opaque token",
+			})
+			continue
+		}
+		cacheKey := value.RuleID + ":" + value.ConsentToken
+		if _, ok := authorized[cacheKey]; ok {
+			continue
+		}
+		_, err := h.options.Consent.AuthorizeConsent(
+			r.Context(), tx, configuration.TenantID, configuration.ProjectID, value.RuleID,
+			rule.AnalyticsConsent.NoticeVersion, string(rule.AnalyticsConsent.Mode),
+			auth.HashToken(value.ConsentToken), now,
+		)
+		if err != nil {
+			if errors.Is(err, ErrConsentExpired) {
+				shouldCommit = true
+			}
+			fields = append(fields, map[string]string{
+				"field":   fmt.Sprintf("events[%d].consent_token", index),
+				"message": "must identify an active widget analytics consent grant",
+			})
+			continue
+		}
+		authorized[cacheKey] = struct{}{}
+	}
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"widget analytics events are invalid", fields)
+		return false, shouldCommit
+	}
+	return true, false
 }
 
 func (h *PublicHTTPHandler) authorize(

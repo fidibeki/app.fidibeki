@@ -27,6 +27,7 @@ function event(
     rule_id: '30000000-0000-4000-8000-000000000001',
     page_url: pageURL,
     occurred_at: occurredAt,
+    consent_token: 'consent-token',
   }
 }
 

@@ -17,6 +17,10 @@ const attachmentRule: WidgetRule = {
     mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
     supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
   },
+  analytics_consent: {
+    mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
+    supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
+  },
   recurrence_mode: 'cooldown', recurrence_days: 30,
   localizations: {
     en: {

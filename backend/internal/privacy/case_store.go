@@ -229,7 +229,6 @@ func (Store) ListCases(
 	if err != nil {
 		return nil, fmt.Errorf("list privacy cases: %w", err)
 	}
-	defer rows.Close()
 	cases := make([]PrivacyCase, 0)
 	for rows.Next() {
 		privacyCase, scanErr := scanPrivacyCase(rows)
@@ -239,7 +238,55 @@ func (Store) ListCases(
 		cases = append(cases, privacyCase)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("iterate privacy cases: %w", err)
+	}
+	rows.Close()
+	return attachCaseRestrictions(ctx, query, tenantID, cases)
+}
+
+func attachCaseRestrictions(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	cases []PrivacyCase,
+) ([]PrivacyCase, error) {
+	if len(cases) == 0 {
+		return cases, nil
+	}
+	caseIDs := make([]string, len(cases))
+	caseIndex := make(map[string]int, len(cases))
+	for index := range cases {
+		caseIDs[index] = cases[index].ID
+		caseIndex[cases[index].ID] = index
+	}
+	rows, err := query.Query(ctx, `
+		SELECT id, privacy_case_id, purposes, active, reason, activated_at,
+		       deactivated_at, deactivated_by_member_id
+		FROM privacy_processing_restrictions
+		WHERE tenant_id = $1 AND privacy_case_id = ANY($2::uuid[])
+	`, tenantID, caseIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list privacy case restrictions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var restriction Restriction
+		var storedPurposes []string
+		if err := rows.Scan(
+			&restriction.ID, &restriction.PrivacyCaseID, &storedPurposes,
+			&restriction.Active, &restriction.Reason, &restriction.ActivatedAt,
+			&restriction.DeactivatedAt, &restriction.DeactivatedByMemberID,
+		); err != nil {
+			return nil, fmt.Errorf("scan privacy case restriction: %w", err)
+		}
+		restriction.Purposes = processingPurposes(storedPurposes)
+		if index, exists := caseIndex[restriction.PrivacyCaseID]; exists {
+			cases[index].Restriction = &restriction
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate privacy case restrictions: %w", err)
 	}
 	return cases, nil
 }

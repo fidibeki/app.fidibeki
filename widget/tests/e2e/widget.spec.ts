@@ -17,6 +17,10 @@ const browserRule: WidgetRule = {
     mode: 'none', notice_version: '', controller_name: '', privacy_policy_url: '',
     supported_locales: [], retention_days: 0, expiry_days: 0, notices: {},
   },
+  analytics_consent: {
+    mode: 'customer_cmp', notice_version: '2026-07', controller_name: '', privacy_policy_url: '',
+    supported_locales: ['en'], retention_days: 0, expiry_days: 30, notices: {},
+  },
   recurrence_mode: 'cooldown', recurrence_days: 30,
   localizations: {
     en: {
@@ -108,6 +112,28 @@ async function seedActiveReplayConsent(
   }, source)
 }
 
+async function seedActiveAnalyticsConsent(
+  page: Page,
+  source: 'customer_cmp' | 'fidibeki_managed' = 'customer_cmp',
+  ruleID = 'rule-browser',
+) {
+  await page.addInitScript(({ configuredSource, configuredRuleID }) => {
+    localStorage.setItem(
+      `fidibeki:analytics-consent:v1:project-browser:${configuredRuleID}:2026-07`,
+      JSON.stringify({
+        version: 1,
+        state: 'active',
+        token: 'existing-analytics-consent-token',
+        locale: 'en',
+        noticeVersion: '2026-07',
+        source: configuredSource,
+        ...(configuredSource === 'customer_cmp' ? { consentId: 'existing-cmp-reference' } : {}),
+        expiresAt: '2099-01-01T00:00:00Z',
+      }),
+    )
+  }, { configuredSource: source, configuredRuleID: ruleID })
+}
+
 function definitionConfiguration(presentation: WidgetPresentation, key = 'inline-checkout'): WidgetConfiguration {
   return {
     ...browserConfiguration(),
@@ -164,6 +190,11 @@ test.beforeEach(async ({ page }) => {
     window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
       nativeSetTimeout(handler, timeout === 5_000 ? 0 : timeout, ...args)) as typeof window.setTimeout
   })
+  // The default fixture rule configures a customer-managed widget_analytics purpose (see
+  // browserRule above); most funnel/UI specs are not about consent itself, so they get a
+  // pre-granted consent here exactly like production would after a real CMP integration call.
+  // Consent-specific specs override this by clearing storage or using a dormant rule.
+  await seedActiveAnalyticsConsent(page)
   await page.route('**/v1/widget/events*', (route) => {
     const payload = route.request().postDataJSON() as { events: Array<{ event_id: string }> }
     return route.fulfill({
@@ -504,6 +535,7 @@ test('uses Portuguese page language before English browser preferences', async (
 })
 
 test('reactive page language preserves an in-progress response and funnel state', async ({ page }) => {
+  await seedActiveAnalyticsConsent(page, 'customer_cmp', 'definition-inline')
   const events = await captureAnalytics(page, definitionConfiguration('inline'))
   const submissions: Array<Record<string, unknown>> = []
   await page.route('**/v1/feedback?*', route => {
@@ -1257,6 +1289,156 @@ test('managed replay consent renders the supported Portuguese notice', async ({ 
   await page.getByRole('button', { name: 'Recusar' }).click()
   await expect.poll(() => decisions.length).toBe(1)
   expect(decisions[0]).toMatchObject({ locale: 'pt-pt', state: 'denied' })
+})
+
+test('customer-managed analytics stays dormant until a structured grant, then withdraws independently of replay consent', async ({ page }) => {
+  // Override the shared beforeEach seed: this test specifically proves the pre-grant dormant
+  // state, so it must start with no analytics storage at all (issue #58).
+  await page.addInitScript(() => {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('fidibeki:analytics-consent:')) localStorage.removeItem(key)
+    }
+  })
+  const analyticsRequests: Array<Record<string, unknown>> = []
+  const consentDecisions: Array<Record<string, unknown>> = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(browserConfiguration()),
+  }))
+  await page.unroute('**/v1/widget/events*')
+  await page.route('**/v1/widget/events*', async (route) => {
+    const payload = route.request().postDataJSON() as { events: Array<Record<string, unknown>> }
+    analyticsRequests.push(...payload.events)
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ accepted_event_ids: payload.events.map(event => event.event_id), duplicate_event_ids: [] }),
+    })
+  })
+  let revocations = 0
+  await page.route('**/v1/widget/analytics-consents/revoke*', route => {
+    revocations++
+    return route.fulfill({ status: 204 })
+  })
+  await page.route('**/v1/widget/analytics-consents?*', async (route) => {
+    const body = route.request().postDataJSON() as { grant_token: string }
+    consentDecisions.push(body)
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ token: body.grant_token, state: 'active', expires_at: '2026-08-23T12:00:00Z' }),
+    })
+  })
+
+  const storageKeys = () => page.evaluate(() => {
+    const keys: string[] = []
+    for (let index = 0; index < localStorage.length; index++) keys.push(localStorage.key(index)!)
+    return keys
+  })
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  await page.waitForTimeout(150)
+
+  const beforeGrant = await storageKeys()
+  expect(beforeGrant.some(key => key.startsWith('fidibeki:visitor:'))).toBe(false)
+  expect(beforeGrant.some(key => key.startsWith('fidibeki:analytics-outbox:'))).toBe(false)
+  expect(beforeGrant.some(key => key.startsWith('fidibeki:replay-consent:'))).toBe(false)
+  expect(analyticsRequests).toHaveLength(0)
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: {
+        analytics: {
+          grantConsent(assertion: {
+            consentId: string
+            purpose: 'widget_analytics'
+            noticeVersion: string
+            locale: string
+            source: 'customer_cmp'
+          }): Promise<unknown>
+        }
+      }
+    }).Fidibeki
+    await api.analytics.grantConsent({
+      consentId: 'cmp-reference',
+      purpose: 'widget_analytics',
+      noticeVersion: '2026-07',
+      locale: 'en',
+      source: 'customer_cmp',
+    })
+  })
+  expect(consentDecisions).toHaveLength(1)
+  await page.evaluate(() => window.dispatchEvent(new Event('fidibeki:navigation')))
+  await expect.poll(async () => (await storageKeys()).some(key => key.startsWith('fidibeki:visitor:'))).toBe(true)
+  await expect.poll(() => analyticsRequests.map(event => event.event_type)).toContain('matched')
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: { analytics: { revokeConsent(): Promise<void> } }
+    }).Fidibeki
+    await api.analytics.revokeConsent()
+  })
+  await expect.poll(async () => {
+    const keys = await storageKeys()
+    return keys.some(key => key.startsWith('fidibeki:visitor:') || key.startsWith('fidibeki:analytics-outbox:'))
+  }).toBe(false)
+  expect((await storageKeys()).some(key => key.startsWith('fidibeki:replay-consent:'))).toBe(false)
+
+  const requestsAfterRevoke = analyticsRequests.length
+  await page.evaluate(() => window.dispatchEvent(new Event('fidibeki:navigation')))
+  await page.waitForTimeout(150)
+  expect(analyticsRequests).toHaveLength(requestsAfterRevoke)
+})
+
+test('withdrawal clears queued analytics events and blocks a pending sendBeacon retry', async ({ page }) => {
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(browserConfiguration()),
+  }))
+  // Analytics consent was already granted by the shared beforeEach seed for rule-browser.
+  // Hang the ingest endpoint so an enqueued event stays queued (never acknowledged) while we
+  // withdraw, proving the withdrawal itself — not a successful flush — is what clears it.
+  await page.unroute('**/v1/widget/events*')
+  await page.route('**/v1/widget/events*', () => new Promise(() => {}))
+  await page.route('**/v1/widget/analytics-consents/revoke*', route => route.fulfill({ status: 204 }))
+  await page.addInitScript(() => {
+    const calls: string[] = []
+    ;(window as typeof window & { __sendBeaconCalls: string[] }).__sendBeaconCalls = calls
+    navigator.sendBeacon = ((url: string) => {
+      calls.push(url)
+      return true
+    }) as typeof navigator.sendBeacon
+  })
+
+  await page.goto('/sample.html')
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+
+  const outboxKeys = () => page.evaluate(() => {
+    const keys: string[] = []
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index)!
+      if (key.startsWith('fidibeki:analytics-outbox:')) keys.push(key)
+    }
+    return keys
+  })
+  await expect.poll(async () => (await outboxKeys()).length).toBeGreaterThan(0)
+
+  await page.evaluate(async () => {
+    const api = (window as typeof window & {
+      Fidibeki: { analytics: { revokeConsent(): Promise<void> } }
+    }).Fidibeki
+    await api.analytics.revokeConsent()
+  })
+  expect(await outboxKeys()).toHaveLength(0)
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.waitForTimeout(100)
+  const sendBeaconCalls = await page.evaluate(() =>
+    (window as typeof window & { __sendBeaconCalls: string[] }).__sendBeaconCalls)
+  expect(sendBeaconCalls).toHaveLength(0)
 })
 
 test('anonymous replay suppresses canvas pixels even when a legacy rule requests capture', async ({ page }) => {

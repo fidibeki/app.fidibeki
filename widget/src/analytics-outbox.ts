@@ -60,6 +60,11 @@ export interface AnalyticsOutbox {
   enqueue(event: FunnelEvent): void
   flush(): Promise<void>
   flushOnHide(): void
+  /**
+   * Aborts any in-flight delivery, discards the in-memory queue, and removes every persisted
+   * event for this outbox owner, then permanently stops the outbox. Used for consent withdrawal,
+   * where queued analytics and any in-flight request must never reach the backend (issue #58).
+   */
   destroy(): void
 }
 
@@ -87,6 +92,7 @@ export function createAnalyticsOutbox(options: AnalyticsOutboxOptions): Analytic
   let timer: unknown | null = null
   let flushing: Promise<void> | null = null
   let destroyed = false
+  let inFlight: AbortController | null = null
 
   const reportError = (error: unknown) => {
     try {
@@ -159,24 +165,30 @@ export function createAnalyticsOutbox(options: AnalyticsOutboxOptions): Analytic
         if (oversized) removeStored(oversized.storageKey)
         continue
       }
+      const controller = new AbortController()
+      inFlight = controller
       try {
         const result = await deliverBatch(
           options.endpoint,
           options.publicKey,
           batch,
           options.fetchImpl ?? fetch,
+          controller.signal,
         )
         const acknowledged = new Set([...result.accepted_event_ids, ...result.duplicate_event_ids])
         const before = events.length
         removeEventIDs(acknowledged)
         if (events.length === before) break
       } catch (error) {
+        if (destroyed) break
         reportError(error)
         if (error instanceof FunnelDeliveryError && !error.retryable) {
           removeEventIDs(new Set(batch.events.map(event => event.event_id)))
           continue
         }
         break
+      } finally {
+        if (inFlight === controller) inFlight = null
       }
     }
   }
@@ -241,8 +253,16 @@ export function createAnalyticsOutbox(options: AnalyticsOutboxOptions): Analytic
       }
     },
     destroy() {
+      if (destroyed) return
       destroyed = true
       cancelTimer()
+      inFlight?.abort()
+      inFlight = null
+      for (const queued of events) removeStored(queued.storageKey)
+      events = []
+      for (const queued of loadEvents(options.storage, ownerPrefix, removeStored)) {
+        removeStored(queued.storageKey)
+      }
     },
   }
 }
@@ -270,9 +290,11 @@ async function deliverBatch(
   publicKey: string,
   batch: FunnelBatch,
   fetchImpl: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<FunnelDeliveryResult> {
   const response = await fetchImpl(analyticsURL(endpoint, publicKey), {
     method: 'POST', mode: 'cors', credentials: 'omit', keepalive: true,
+    ...(signal ? { signal } : {}),
     headers: {
       'Content-Type': 'application/json',
       'X-Fidibeki-Public-Key': publicKey,
@@ -339,7 +361,12 @@ function isFunnelEvent(value: unknown): value is FunnelEvent {
     ['matched', 'impression', 'interaction', 'dismissed'].includes(String(event.event_type)) &&
     isUUID(event.visitor_id) && isUUID(event.page_view_id) && isUUID(event.rule_id) &&
     typeof event.page_url === 'string' && event.page_url.length <= 4096 &&
-    typeof event.occurred_at === 'string'
+    typeof event.occurred_at === 'string' &&
+    isOpaqueToken(event.consent_token)
+}
+
+function isOpaqueToken(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value)
 }
 
 function isDeliveryResult(value: unknown): value is FunnelDeliveryResult {

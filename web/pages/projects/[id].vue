@@ -20,6 +20,7 @@ import {
 import WidgetTargetingEditor from '~/components/projects/WidgetTargetingEditor.vue'
 import type {
   AIProcessingConfig,
+  AnalyticsConsentConfig,
   Project,
   ReplayConsentConfig,
   ReplayMode,
@@ -78,6 +79,7 @@ const diagnosticsRefreshing = ref(false)
 const previewLauncherOpen = ref(false)
 const replayConsentDialogOpen = ref(false)
 const aiProcessingDialogOpen = ref(false)
+const analyticsConsentDialogOpen = ref(false)
 type ProjectDestructiveAction =
   | { kind: 'rule', id: string, name: string }
   | { kind: 'project', id: string, name: string }
@@ -321,6 +323,7 @@ function selectRule(rule: WidgetRule) {
     replay_record_canvas: false,
     replay_canvas_fps: 2,
     replay_consent: cloneReactive(rule.replay_consent || defaultWidgetRule().replay_consent),
+    analytics_consent: cloneReactive(rule.analytics_consent || defaultWidgetRule().analytics_consent),
     recurrence_mode: rule.recurrence_mode || 'cooldown',
     recurrence_days: (rule.recurrence_mode || 'cooldown') === 'cooldown' ? rule.recurrence_days ?? 30 : null,
     definition_key: rule.definition_key || `widget-${rule.id.replaceAll('-', '').slice(0, 12)}`,
@@ -420,6 +423,15 @@ function cancelAIProcessing() {
 function confirmAIProcessing(configuration: AIProcessingConfig) {
   ruleForm.ai_processing = cloneReactive(configuration)
   aiProcessingDialogOpen.value = false
+}
+
+function cancelAnalyticsConsent() {
+  analyticsConsentDialogOpen.value = false
+}
+
+function confirmAnalyticsConsent(configuration: AnalyticsConsentConfig) {
+  ruleForm.analytics_consent = cloneReactive(configuration)
+  analyticsConsentDialogOpen.value = false
 }
 
 function fallbackLocalization(prompt: string): WidgetLocalization {
@@ -1068,6 +1080,23 @@ useHead(() => ({
                 </div>
               </div>
             </section>
+            <section>
+              <h3>{{ t('projects.editor.analytics.title') }}</h3>
+              <div class="project-form-grid">
+                <div class="replay-consent-status wide" :data-configured="ruleForm.analytics_consent.mode !== 'none'">
+                  <div>
+                    <ShieldCheck :size="16" aria-hidden="true" />
+                    <p>
+                      <b>{{ ruleForm.analytics_consent.mode === 'none' ? t('projects.editor.analytics.consent.requiredTitle') : t('projects.editor.analytics.consent.configuredTitle') }}</b>
+                      <span>{{ ruleForm.analytics_consent.mode === 'none' ? t('projects.editor.analytics.consent.requiredDescription') : t(`projects.editor.analytics.consent.configuredDescription.${ruleForm.analytics_consent.mode}`) }}</span>
+                    </p>
+                  </div>
+                  <button class="app-button" type="button" @click="analyticsConsentDialogOpen = true">
+                    <Settings2 :size="14" /> {{ t('projects.editor.analytics.consent.configure') }}
+                  </button>
+                </div>
+              </div>
+            </section>
             </fieldset>
           </form>
         </main>
@@ -1111,6 +1140,14 @@ useHead(() => ({
       :video="ruleForm.can_record_video"
       @cancel="cancelAIProcessing"
       @confirm="confirmAIProcessing"
+    />
+    <AnalyticsConsentDialog
+      :open="analyticsConsentDialogOpen"
+      :initial="ruleForm.analytics_consent"
+      :project-name="projectName"
+      :default-locale="projectDefaultLocale"
+      @cancel="cancelAnalyticsConsent"
+      @confirm="confirmAnalyticsConsent"
     />
     <p v-if="notice" class="project-toast" role="status">{{ notice }}</p>
   </div>

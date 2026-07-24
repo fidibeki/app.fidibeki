@@ -58,6 +58,13 @@ func (m *Migrator) Steps(count int) error {
 	return nil
 }
 
+func (m *Migrator) Migrate(version uint) error {
+	if err := m.migrate.Migrate(version); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("migrate to version %d: %w", version, err)
+	}
+	return nil
+}
+
 func (m *Migrator) Version() (uint, bool, error) {
 	version, dirty, err := m.migrate.Version()
 	if err != nil {

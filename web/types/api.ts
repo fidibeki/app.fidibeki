@@ -124,6 +124,7 @@ export type WidgetTheme = 'light' | 'dark' | 'auto'
 export type ReplayMode = 'none' | 'full' | 'sampling'
 export type ReplayConsentMode = 'none' | 'fidibeki_managed' | 'customer_cmp'
 export type AIInputCategory = 'feedback_text' | 'screenshot' | 'audio' | 'video'
+export type AnalyticsConsentMode = 'none' | 'fidibeki_managed' | 'customer_cmp'
 export type RecurrenceMode = 'cooldown' | 'session' | 'never'
 export type WidgetDefinitionStatus = 'draft' | 'active' | 'paused' | 'archived'
 export type WidgetPresentation = 'launcher' | 'inline' | 'reaction' | 'prompt'
@@ -218,6 +219,25 @@ export interface ReplayConsentDiagnostic {
   latest_session_started_at?: string
 }
 
+export interface AnalyticsConsentNotice {
+  title: string
+  description: string
+  accept_label: string
+  reject_label: string
+  withdraw_label: string
+}
+
+export interface AnalyticsConsentConfig {
+  mode: AnalyticsConsentMode
+  notice_version: string
+  controller_name: string
+  privacy_policy_url: string
+  supported_locales: string[]
+  retention_days: number
+  expiry_days: number
+  notices: Record<string, AnalyticsConsentNotice>
+}
+
 export interface WidgetTargetCondition {
   id: string
   matcher_type: MatcherType
@@ -262,6 +282,7 @@ export interface WidgetRule {
   replay_record_canvas: boolean
   replay_canvas_fps: number
   replay_consent: ReplayConsentConfig
+  analytics_consent: AnalyticsConsentConfig
   recurrence_mode: RecurrenceMode
   recurrence_days?: number | null
   definition_key: string
