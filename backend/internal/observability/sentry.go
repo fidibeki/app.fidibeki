@@ -26,6 +26,7 @@ func InitSentry(config SentryConfig) error {
 		Debug:            config.Debug,
 		AttachStacktrace: true,
 		SendDefaultPII:   false,
+		BeforeSend:       ScrubEvent,
 	}); err != nil {
 		return fmt.Errorf("initialize Sentry: %w", err)
 	}

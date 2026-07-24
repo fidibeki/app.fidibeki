@@ -692,13 +692,38 @@ was removed from the staging test tenant.
         HTTP authorization, typecheck, and responsive Playwright coverage pass locally. The
         executable registry now covers all 74 tables; no legal period, external monitoring
         provider, production deployment, or uninstrumented cleaner was added.
+      - [x] Sentry error telemetry scrubbing: the backend registered no `BeforeSend` hook at all
+        (only `SendDefaultPII: false`), so a recovered panic's raw `Error()`/`fmt.Sprintf` text
+        reached `Exception.Value`/`Message` verbatim; the widget scrubbed by deleting known-bad
+        keys from a regex over field names, which kept a query-stripped `request.url` and never
+        touched a thrown error's own `message`/`stack` text. `backend/internal/observability/scrub.go`
+        (`ScrubEvent`, wired as `InitSentry`'s `BeforeSend`) and the rewritten
+        `widget/src/modules/error-reporting.ts` (`scrubEvent`) now both reconstruct the outgoing
+        event from an explicit allowlist instead: exception type/stacktrace/timestamp/release/
+        environment (plus the widget's existing bounded `phase`/`project_id`/`widget_rule_id`
+        context) survive; request (URL/method/data/query/cookies/headers), user/IP, breadcrumbs,
+        arbitrary contexts/tags, and the free-text exception/message value are always dropped or
+        replaced with a fixed placeholder. A field neither function names — including one a future
+        `sentry-go`/`@sentry/browser` upgrade might add — is absent by construction. The `#63`
+        provider governance row's `PersonalDataCategories` text and `docs/privacy-data-map.md`'s
+        Audit and observability row were tightened to describe the actual allowlist. Sentinel tests
+        on both sides cover email/token/raw-URL-with-query-and-fragment/headers/cookies/body/
+        user/IP/breadcrumb-data/arbitrary-nested-context-and-tag/thrown-string-and-`Error`-message
+        removal while proving type/stacktrace/timestamp/release/environment evidence survives; one
+        backend test exercises the real `sentry.Init`-with-`BeforeSend` → `RecoverWithContext` →
+        transport path, not just the pure function. See
+        `docs/superpowers/specs/2026-07-24-sentry-telemetry-scrubbing-design.md`. This slice adds no
+        migration and does not touch the provider's retention period, region, legal entity, or
+        contract status, which remain `external_control`/`decision_required`.
       - Remaining cleanup-policy slices: `tenant_member_sessions`/`platform_admin_sessions` retention
         (blocked on a founder/legal decision for security-record retention, since these carry
         IP/user-agent and are arguably security evidence — no `expires_at` exists yet either, so
         this needs schema work, not just a sweep); `outbox_events`/`delivery_logs`/
         `member_notifications` retention; workflow/feedback/issue/comment/AI-derived-text
-        retention; IP/user-agent minimization; Sentry/error telemetry retention and scrubbing;
-        consent-evidence-after-withdrawal retention; tenant-configurable shorter retention;
+        retention; IP/user-agent minimization; Sentry/error telemetry retention (the provider's
+        retention period, region, legal entity, and contract status remain unverified — scrubbing
+        itself is now enforced, see above); consent-evidence-after-withdrawal retention;
+        tenant-configurable shorter retention;
         general legal-hold enforcement for the categories added here; overdue-cleanup
         metrics/alerts for the remaining enforced cleaners. Published legal periods for
         security/audit/billing records still require founder/legal review before any of those
