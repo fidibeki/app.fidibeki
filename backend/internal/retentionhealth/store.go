@@ -78,7 +78,7 @@ func Read(ctx context.Context, query db.Querier, now time.Time) (Report, error) 
 	}
 	defer rows.Close()
 
-	records := make([]operationRecord, 0, 2)
+	records := make([]operationRecord, 0, len(operationCategories))
 	for rows.Next() {
 		var record operationRecord
 		if err := rows.Scan(
@@ -96,9 +96,10 @@ func Read(ctx context.Context, query db.Querier, now time.Time) (Report, error) 
 	if err := rows.Err(); err != nil {
 		return Report{}, fmt.Errorf("iterate retention operation health: %w", err)
 	}
-	if len(records) != 2 {
+	if len(records) != len(operationCategories) {
 		return Report{}, fmt.Errorf(
-			"retention operation health registry has %d rows, want 2", len(records),
+			"retention operation health registry has %d rows, want %d",
+			len(records), len(operationCategories),
 		)
 	}
 	report, err := buildReport(records, now)

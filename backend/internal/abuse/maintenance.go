@@ -2,10 +2,13 @@ package abuse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -32,33 +35,59 @@ func (store MaintenanceStore) DeleteExpired(
 
 type Maintainer struct {
 	Store  CleanupStore
+	Health retentionhealth.Recorder
 	Now    func() time.Time
 	Logger *slog.Logger
 }
 
 func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
+	if maintainer.Health == nil {
+		return errors.New("abuse diagnostics retention health recorder is unavailable")
+	}
 	now := time.Now().UTC()
 	if maintainer.Now != nil {
 		now = maintainer.Now().UTC()
 	}
 	var total int64
+	var sweepErr error
+	budgetExhausted := true
 	for batch := 0; batch < diagnosticCleanupLimit; batch++ {
 		deleted, err := maintainer.Store.DeleteExpired(
 			ctx, now.AddDate(0, 0, -diagnosticRetentionDays), diagnosticCleanupBatch,
 		)
 		total += deleted
 		if err != nil {
-			return fmt.Errorf("clean abuse diagnostics: %w", err)
+			budgetExhausted = false
+			sweepErr = fmt.Errorf("clean abuse diagnostics: %w", err)
+			break
 		}
 		if deleted < diagnosticCleanupBatch {
-			maintainer.logger().InfoContext(ctx, "abuse diagnostics maintenance completed",
-				"deleted", total)
-			return nil
+			budgetExhausted = false
+			break
 		}
 	}
-	maintainer.logger().WarnContext(ctx, "abuse diagnostics cleanup budget exhausted",
-		"deleted", total, "backlog_possible", true)
-	return nil
+	switch {
+	case sweepErr != nil:
+	case budgetExhausted:
+		maintainer.logger().WarnContext(ctx, "abuse diagnostics cleanup budget exhausted",
+			"deleted", total, "backlog_possible", true)
+	default:
+		maintainer.logger().InfoContext(ctx, "abuse diagnostics maintenance completed",
+			"deleted", total)
+	}
+	result := retentionhealth.ResultSucceeded
+	if sweepErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	recordErr := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationAbuseDiagnostics,
+		AttemptedAt: now, Result: result, Processed: total,
+		BudgetExhausted: budgetExhausted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record abuse diagnostics retention health: %w", recordErr)
+	}
+	return errors.Join(sweepErr, recordErr)
 }
 
 func (maintainer Maintainer) Run(ctx context.Context, interval time.Duration) error {

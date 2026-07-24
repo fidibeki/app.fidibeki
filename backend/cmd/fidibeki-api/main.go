@@ -656,7 +656,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
 		Logger:      logger,
 	}
-	replayCleaner := replay.Cleaner{Store: replayStore, Storage: objectStorage, Logger: logger}
+	retentionHealth := retentionhealth.Store{Database: pools.Admin}
+	replayCleaner := replay.Cleaner{
+		Store: replayStore, Storage: objectStorage, Health: retentionHealth, Logger: logger,
+	}
 	privacyQueue, err := privacy.OpenQueue(settings.RedisURL)
 	if err != nil {
 		return err
@@ -672,24 +675,26 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Database: pools.Admin, Store: privacyStore, Storage: objectStorage, Logger: logger,
 	}
 	privacyRetention := privacy.RetentionMaintainer{
-		Store: privacyStore, Storage: objectStorage, Logger: logger,
+		Store: privacyStore, Storage: objectStorage, Health: retentionHealth, Logger: logger,
 	}
 	analyticsMaintainer := widgetanalytics.Maintainer{
-		Store: widgetanalytics.MaintenanceStore{Database: pools.Admin}, Logger: logger,
+		Store:  widgetanalytics.MaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
 	}
 	abuseMaintainer := abuse.Maintainer{
 		Store: abuse.MaintenanceStore{Recorder: abuse.Recorder{
 			Database: pools.Admin, Store: abuse.Store{},
 		}},
-		Logger: logger,
+		Health: retentionHealth, Logger: logger,
 	}
 	aiBudgetMaintainer := aiprocessing.BudgetMaintainer{
-		Store: aiprocessing.BudgetMaintenanceStore{Database: pools.Admin}, Logger: logger,
+		Store:  aiprocessing.BudgetMaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
 	}
 	identityMaintainer := identity.CleanupMaintainer{
-		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
+		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage,
+		Health: retentionHealth, Logger: logger,
 	}
-	retentionHealth := retentionhealth.Store{Database: pools.Admin}
 	tenantAuthRetention := tenantmember.Maintainer{
 		Store:  tenantmember.MaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,

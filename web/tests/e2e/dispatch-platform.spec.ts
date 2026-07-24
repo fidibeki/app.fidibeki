@@ -1584,12 +1584,12 @@ async function installMockAPI(page: Page, state: MockState) {
         health: {
           generated_at: '2026-07-24T10:05:00Z',
           summary: {
-            tracked: 2,
+            tracked: 3,
             healthy: 1,
             attention: 1,
             failed: 0,
             overdue: 0,
-            not_observed: 0,
+            not_observed: 1,
           },
           operations: [
             {
@@ -1629,6 +1629,22 @@ async function installMockAPI(page: Page, state: MockState) {
               total_failures: 0,
               consecutive_failures: 0,
               budget_exhausted: true,
+            },
+            {
+              operation: 'replay_sessions',
+              category: 'session_replays',
+              state: 'not_observed',
+              alert_reason: 'not_observed',
+              registered_at: '2026-07-24T08:00:00Z',
+              expected_interval_seconds: 86400,
+              alert_grace_seconds: 900,
+              next_expected_at: '2026-07-25T08:00:00Z',
+              last_processed: 0,
+              total_processed: 0,
+              total_runs: 0,
+              total_failures: 0,
+              consecutive_failures: 0,
+              budget_exhausted: false,
             },
           ],
         },
@@ -5047,6 +5063,8 @@ test('data privacy controls cover retention, exports, reporter verification, and
   await expect(page.locator('.privacy-retention-health')).toContainText('Platform admin magic links')
   await expect(page.locator('.privacy-retention-health')).toContainText('Attention')
   await expect(page.locator('.privacy-retention-health')).toContainText('4,000 / 8,000')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Session replays')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Not observed')
   await expect(page.locator('.privacy-retention-table')).toContainText('External control')
   await expect(page.locator('.privacy-retention-table')).not.toContainText('Workspace lifetime')
   await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Feedback and issue workflow content' })
@@ -5628,6 +5646,8 @@ test('Portuguese administration preserves permissions and operational mutations'
   await expect(page.locator('.privacy-retention-health')).toContainText('Saudável')
   await expect(page.locator('.privacy-retention-health')).toContainText('Magic links de administradores da plataforma')
   await expect(page.locator('.privacy-retention-health')).toContainText('Atenção')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Replays de sessão')
+  await expect(page.locator('.privacy-retention-health')).toContainText('Ainda não observada')
   await expect(page.locator('.privacy-retention-table')).toContainText('Controlo externo')
   await expect(page.locator('.privacy-retention-table')).not.toContainText('Vida útil do workspace')
   await page.locator('.privacy-retention-table .privacy-row', { hasText: 'Conteúdo do fluxo de feedback e issues' })

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
@@ -332,15 +333,29 @@ func TestRetentionMaintainerKeepsFailedObjectsRetryableAndContinues(t *testing.T
 	storage := &retentionStorageStub{
 		failures: map[string]error{"attachment-two": errors.New("storage unavailable")},
 	}
+	health := &retentionHealthRecorderStub{}
 	var logs bytes.Buffer
 	maintainer := RetentionMaintainer{
-		Store: store, Storage: storage,
+		Store: store, Storage: storage, Health: health,
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 		Now:    func() time.Time { return now }, BatchSize: 10,
 	}
 	err := maintainer.MaintainOnce(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
 		t.Fatalf("MaintainOnce() error = %v", err)
+	}
+	if len(health.runs) != 3 ||
+		health.runs[0].Operation != retentionhealth.OperationAttachments ||
+		health.runs[0].Result != retentionhealth.ResultFailed ||
+		health.runs[0].Processed != 1 ||
+		health.runs[1].Operation != retentionhealth.OperationPrivacyExportArchives ||
+		health.runs[1].Result != retentionhealth.ResultSucceeded ||
+		health.runs[1].Processed != 1 ||
+		health.runs[2].Operation != retentionhealth.OperationReporterPrivacyRequests ||
+		health.runs[2].Result != retentionhealth.ResultSucceeded ||
+		health.runs[2].Processed != 2 ||
+		!health.runs[0].AttemptedAt.Equal(now) {
+		t.Fatalf("health runs = %#v", health.runs)
 	}
 	if !reflect.DeepEqual(storage.removed, []string{
 		"attachment-one", "attachment-two", "archive-one",
@@ -374,9 +389,10 @@ func TestRetentionMaintainerBoundsWorkAndSupportsShutdown(t *testing.T) {
 		},
 		requestResults: []int64{1, 1},
 	}
+	health := &retentionHealthRecorderStub{}
 	var logs bytes.Buffer
 	maintainer := RetentionMaintainer{
-		Store: store, Storage: &retentionStorageStub{},
+		Store: store, Storage: &retentionStorageStub{}, Health: health,
 		Logger:    slog.New(slog.NewJSONHandler(&logs, nil)),
 		BatchSize: 1, MaxBatches: 2,
 	}
@@ -386,6 +402,10 @@ func TestRetentionMaintainerBoundsWorkAndSupportsShutdown(t *testing.T) {
 	if !strings.Contains(logs.String(), `"msg":"privacy retention budget exhausted"`) ||
 		!strings.Contains(logs.String(), `"request_budget_exhausted":true`) {
 		t.Fatalf("budget logs = %s", logs.String())
+	}
+	if len(health.runs) != 3 || !health.runs[0].BudgetExhausted ||
+		!health.runs[1].BudgetExhausted || !health.runs[2].BudgetExhausted {
+		t.Fatalf("health runs = %#v", health.runs)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -403,19 +423,57 @@ func TestRetentionMaintainerValidationAndPhaseErrors(t *testing.T) {
 		MaintainOnce(context.Background()); err == nil {
 		t.Fatal("MaintainOnce(no storage) error = nil")
 	}
+	if err := (RetentionMaintainer{
+		Store: &retentionOperationsStub{}, Storage: &retentionStorageStub{},
+	}).MaintainOnce(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "health recorder is unavailable") {
+		t.Fatalf("MaintainOnce(no health recorder) error = %v", err)
+	}
 	want := errors.New("database unavailable")
 	store := &retentionOperationsStub{
 		attachmentErr: want, archiveErr: want, requestErr: want,
 	}
-	err := (RetentionMaintainer{Store: store, Storage: &retentionStorageStub{}}).
-		MaintainOnce(context.Background())
+	health := &retentionHealthRecorderStub{}
+	err := (RetentionMaintainer{
+		Store: store, Storage: &retentionStorageStub{}, Health: health,
+	}).MaintainOnce(context.Background())
 	if !errors.Is(err, want) || store.archiveCalls != 1 || store.requestCalls != 1 {
 		t.Fatalf("MaintainOnce(independent failures) error=%v calls=%d/%d",
 			err, store.archiveCalls, store.requestCalls)
 	}
+	if len(health.runs) != 3 ||
+		health.runs[0].Result != retentionhealth.ResultFailed ||
+		health.runs[1].Result != retentionhealth.ResultFailed ||
+		health.runs[2].Result != retentionhealth.ResultFailed {
+		t.Fatalf("failed health runs = %#v", health.runs)
+	}
+	recordFailure := errors.New("health database unavailable")
+	err = (RetentionMaintainer{
+		Store: &retentionOperationsStub{}, Storage: &retentionStorageStub{},
+		Health: &retentionHealthRecorderStub{err: recordFailure},
+	}).MaintainOnce(context.Background())
+	if !errors.Is(err, recordFailure) {
+		t.Fatalf("MaintainOnce(record failure) error = %v", err)
+	}
 	if (RetentionMaintainer{}).now().Location() != time.UTC {
 		t.Fatal("default retention clock is not UTC")
 	}
+}
+
+type retentionHealthRecorderStub struct {
+	mu   sync.Mutex
+	runs []retentionhealth.Run
+	err  error
+}
+
+func (recorder *retentionHealthRecorderStub) RecordRun(
+	_ context.Context,
+	run retentionhealth.Run,
+) error {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.runs = append(recorder.runs, run)
+	return recorder.err
 }
 
 type retentionOperationsStub struct {

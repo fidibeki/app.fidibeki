@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -36,6 +38,7 @@ type RetentionObjectRemover interface {
 type RetentionMaintainer struct {
 	Store        RetentionOperations
 	Storage      RetentionObjectRemover
+	Health       retentionhealth.Recorder
 	Logger       *slog.Logger
 	Now          func() time.Time
 	BatchSize    int
@@ -232,6 +235,9 @@ func (maintainer RetentionMaintainer) MaintainOnce(ctx context.Context) error {
 	if maintainer.Storage == nil {
 		return errors.New("privacy retention storage is unavailable")
 	}
+	if maintainer.Health == nil {
+		return errors.New("privacy retention health recorder is unavailable")
+	}
 	now := maintainer.now()
 	batchSize := maintainer.BatchSize
 	if batchSize <= 0 {
@@ -288,7 +294,36 @@ func (maintainer RetentionMaintainer) MaintainOnce(ctx context.Context) error {
 			"maximum_batches", maxBatches,
 		)
 	}
-	return errors.Join(attachmentErr, archiveErr, requestErr)
+	recordErr := errors.Join(
+		maintainer.recordPhase(ctx, retentionhealth.OperationAttachments,
+			now, attachments, attachmentBudget, attachmentErr),
+		maintainer.recordPhase(ctx, retentionhealth.OperationPrivacyExportArchives,
+			now, archives, archiveBudget, archiveErr),
+		maintainer.recordPhase(ctx, retentionhealth.OperationReporterPrivacyRequests,
+			now, requests, requestBudget, requestErr),
+	)
+	return errors.Join(attachmentErr, archiveErr, requestErr, recordErr)
+}
+
+func (maintainer RetentionMaintainer) recordPhase(
+	ctx context.Context,
+	operation retentionhealth.Operation,
+	attemptedAt time.Time,
+	processed int64,
+	budgetExhausted bool,
+	phaseErr error,
+) error {
+	result := retentionhealth.ResultSucceeded
+	if phaseErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	if err := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation: operation, AttemptedAt: attemptedAt, Result: result,
+		Processed: processed, BudgetExhausted: budgetExhausted,
+	}); err != nil {
+		return fmt.Errorf("record %s retention health: %w", operation, err)
+	}
+	return nil
 }
 
 func drainObjectRetention(

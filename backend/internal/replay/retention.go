@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 type RetentionCandidate struct {
@@ -101,16 +103,37 @@ type ObjectRemover interface {
 type Cleaner struct {
 	Store   RetentionStore
 	Storage ObjectRemover
+	Health  retentionhealth.Recorder
 	Logger  *slog.Logger
 	Now     func() time.Time
 }
 
 func (c Cleaner) CleanupOnce(ctx context.Context) error {
+	if c.Health == nil {
+		return errors.New("replay retention health recorder is unavailable")
+	}
 	now := c.now()
+	deleted, err := c.cleanupExpired(ctx, now)
+	result := retentionhealth.ResultSucceeded
+	if err != nil {
+		result = retentionhealth.ResultFailed
+	}
+	recordErr := c.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationReplaySessions,
+		AttemptedAt: now, Result: result, Processed: deleted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record replay retention health: %w", recordErr)
+	}
+	return errors.Join(err, recordErr)
+}
+
+func (c Cleaner) cleanupExpired(ctx context.Context, now time.Time) (int64, error) {
 	candidates, err := c.Store.ExpiredSessions(ctx, now, 100)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	var deleted int64
 	var result error
 	for _, candidate := range candidates {
 		removeFailed := false
@@ -127,9 +150,11 @@ func (c Cleaner) CleanupOnce(ctx context.Context) error {
 			ctx, candidate.TenantID, candidate.ID, now,
 		); err != nil {
 			result = errors.Join(result, err)
+			continue
 		}
+		deleted++
 	}
-	return result
+	return deleted, result
 }
 
 func (c Cleaner) Run(ctx context.Context, interval time.Duration) error {

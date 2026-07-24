@@ -1112,8 +1112,21 @@ export type RetentionHealthAlert =
   | 'cleanup_overdue'
   | 'not_observed'
 
+export type RetentionHealthOperation =
+  | 'tenant_magic_links'
+  | 'platform_admin_magic_links'
+  | 'attachments'
+  | 'privacy_export_archives'
+  | 'reporter_privacy_requests'
+  | 'replay_sessions'
+  | 'widget_funnel_events'
+  | 'widget_funnel_daily'
+  | 'abuse_diagnostics'
+  | 'ai_budget_ledgers'
+  | 'identity_asset_deletions'
+
 export interface RetentionOperationHealth {
-  operation: 'tenant_magic_links' | 'platform_admin_magic_links'
+  operation: RetentionHealthOperation
   category: string
   state: RetentionHealthState
   alert_reason: RetentionHealthAlert

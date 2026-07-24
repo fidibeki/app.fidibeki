@@ -1304,7 +1304,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 			retainedBatchKey, batchRetentionDeletedAt)
 	}
 	if err := (Cleaner{
-		Store: retentionStore, Storage: storageClient, Now: func() time.Time { return now },
+		Store: retentionStore, Storage: storageClient, Health: &replayHealthRecorderStub{},
+		Now: func() time.Time { return now },
 	}).CleanupOnce(ctx); err != nil {
 		t.Fatalf("remove legacy-privacy replay objects: %v", err)
 	}

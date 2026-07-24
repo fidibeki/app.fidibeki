@@ -856,6 +856,15 @@ export const adminMessages = {
         operation: {
           tenant_magic_links: 'Workspace magic links',
           platform_admin_magic_links: 'Platform admin magic links',
+          attachments: 'Attachments',
+          privacy_export_archives: 'Export archives',
+          reporter_privacy_requests: 'Reporter privacy requests',
+          replay_sessions: 'Session replays',
+          widget_funnel_events: 'Raw widget funnel events',
+          widget_funnel_daily: 'Daily widget funnel aggregates',
+          abuse_diagnostics: 'Abuse diagnostics',
+          ai_budget_ledgers: 'AI budget ledgers',
+          identity_asset_deletions: 'Identity asset deletions',
         },
         status: {
           healthy: 'Healthy',

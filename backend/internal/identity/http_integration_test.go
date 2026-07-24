@@ -245,7 +245,7 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 
 	now = now.Add(20 * time.Minute)
 	objects.failRemove = errors.New("storage cleanup unavailable")
-	if err := (CleanupMaintainer{Store: store, Storage: objects}).Maintain(ctx); err == nil {
+	if err := (CleanupMaintainer{Store: store, Storage: objects, Health: &identityHealthRecorderStub{}}).Maintain(ctx); err == nil {
 		t.Fatal("cleanup storage failure returned no error")
 	}
 	var cleanupAttempts int
@@ -262,7 +262,7 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 	}
 	objects.failRemove = nil
 	now = now.Add(3 * time.Minute)
-	if err := (CleanupMaintainer{Store: store, Storage: objects}).Maintain(ctx); err != nil {
+	if err := (CleanupMaintainer{Store: store, Storage: objects, Health: &identityHealthRecorderStub{}}).Maintain(ctx); err != nil {
 		t.Fatalf("maintain identity cleanup: %v", err)
 	}
 	for _, size := range []int{64, 256} {
@@ -298,7 +298,7 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 	`, tenantID, ownerID).Scan(&logoRemovalAudit); err != nil || logoRemovalAudit != 1 {
 		t.Fatalf("logo removal audit count = %d, error = %v", logoRemovalAudit, err)
 	}
-	if err := (CleanupMaintainer{Store: store, Storage: objects}).Maintain(ctx); err != nil {
+	if err := (CleanupMaintainer{Store: store, Storage: objects, Health: &identityHealthRecorderStub{}}).Maintain(ctx); err != nil {
 		t.Fatalf("clean removed logo: %v", err)
 	}
 	deletedLogoRead := httptest.NewRecorder()
@@ -327,7 +327,7 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 		t.Fatalf("delete avatar status = %d, body = %s", deletedAvatar.Code,
 			deletedAvatar.Body.String())
 	}
-	if err := (CleanupMaintainer{Store: store, Storage: objects}).Maintain(ctx); err != nil {
+	if err := (CleanupMaintainer{Store: store, Storage: objects, Health: &identityHealthRecorderStub{}}).Maintain(ctx); err != nil {
 		t.Fatalf("clean removed avatar: %v", err)
 	}
 	deletedAvatarRead := performIdentityRequest(

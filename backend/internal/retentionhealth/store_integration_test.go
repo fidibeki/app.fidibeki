@@ -64,6 +64,12 @@ func TestStoreRecordsAndReadsBoundedRetentionHealth(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordRun(budget exhausted) error = %v", err)
 	}
+	if err := store.RecordRun(ctx, Run{
+		Operation: OperationAttachments, AttemptedAt: failedAt,
+		Result: ResultSucceeded, Processed: 12,
+	}); err != nil {
+		t.Fatalf("RecordRun(attachments) error = %v", err)
+	}
 	report, err = Read(ctx, database, failedAt.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("Read(after failure) error = %v", err)
@@ -80,7 +86,18 @@ func TestStoreRecordsAndReadsBoundedRetentionHealth(t *testing.T) {
 		!platform.BudgetExhausted || platform.TotalProcessed != 4000 {
 		t.Fatalf("platform health after budget exhaustion = %#v", platform)
 	}
-	if report.Summary != (Summary{Tracked: 2, Attention: 1, Failed: 1}) {
+	attachment := healthByOperation(t, report, OperationAttachments)
+	if attachment.State != StateHealthy || attachment.Category != "attachments" ||
+		attachment.LastProcessed != 12 {
+		t.Fatalf("attachment health after success = %#v", attachment)
+	}
+	identity := healthByOperation(t, report, OperationIdentityAssetDeletions)
+	if identity.State != StateOverdue || identity.AlertReason != AlertCleanupOverdue {
+		t.Fatalf("identity health past its minute schedule = %#v", identity)
+	}
+	if report.Summary != (Summary{
+		Tracked: 11, Healthy: 1, Attention: 1, Failed: 1, Overdue: 1, NotObserved: 7,
+	}) {
 		t.Fatalf("health summary = %#v", report.Summary)
 	}
 

@@ -10,10 +10,12 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
@@ -110,10 +112,20 @@ func TestCleanerRemovesObjectsBeforePreservingManifests(t *testing.T) {
 	}}
 	storage := &objectRemoverStub{fail: map[string]error{"two-final": errors.New("storage unavailable")}}
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	cleaner := Cleaner{Store: store, Storage: storage, Now: func() time.Time { return now }}
+	health := &replayHealthRecorderStub{}
+	cleaner := Cleaner{
+		Store: store, Storage: storage, Health: health,
+		Now: func() time.Time { return now },
+	}
 	err := cleaner.CleanupOnce(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
 		t.Fatalf("CleanupOnce() error = %v", err)
+	}
+	if len(health.runs) != 1 ||
+		health.runs[0].Operation != retentionhealth.OperationReplaySessions ||
+		health.runs[0].Result != retentionhealth.ResultFailed ||
+		health.runs[0].Processed != 1 || !health.runs[0].AttemptedAt.Equal(now) {
+		t.Fatalf("health runs = %#v", health.runs)
 	}
 	if !reflect.DeepEqual(storage.removed, []string{"one-final", "one-batch", "two-final"}) {
 		t.Errorf("removed objects = %#v", storage.removed)
@@ -294,7 +306,9 @@ func TestDefaultClocksAndTrailingJSON(t *testing.T) {
 
 func TestCleanerRunStopsWithContext(t *testing.T) {
 	store := &retentionStoreStub{}
-	cleaner := Cleaner{Store: store, Storage: &objectRemoverStub{}}
+	cleaner := Cleaner{
+		Store: store, Storage: &objectRemoverStub{}, Health: &replayHealthRecorderStub{},
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := cleaner.Run(ctx, time.Hour); err != nil {
@@ -468,6 +482,22 @@ func (s *memoryReplayStorage) RemoveObject(_ context.Context, key string) error 
 	s.removed = append(s.removed, key)
 	delete(s.objects, key)
 	return nil
+}
+
+type replayHealthRecorderStub struct {
+	mu   sync.Mutex
+	runs []retentionhealth.Run
+	err  error
+}
+
+func (recorder *replayHealthRecorderStub) RecordRun(
+	_ context.Context,
+	run retentionhealth.Run,
+) error {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.runs = append(recorder.runs, run)
+	return recorder.err
 }
 
 type retentionStoreStub struct {

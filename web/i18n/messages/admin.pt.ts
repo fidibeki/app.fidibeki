@@ -856,6 +856,15 @@ export const adminMessages = {
         operation: {
           tenant_magic_links: 'Magic links do workspace',
           platform_admin_magic_links: 'Magic links de administradores da plataforma',
+          attachments: 'Anexos',
+          privacy_export_archives: 'Arquivos de exportação',
+          reporter_privacy_requests: 'Pedidos de privacidade do reporter',
+          replay_sessions: 'Replays de sessão',
+          widget_funnel_events: 'Eventos brutos do funil do widget',
+          widget_funnel_daily: 'Agregados diários do funil do widget',
+          abuse_diagnostics: 'Diagnósticos de abuso',
+          ai_budget_ledgers: 'Registos de orçamento de IA',
+          identity_asset_deletions: 'Eliminações de ativos de identidade',
         },
         status: {
           healthy: 'Saudável',

@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 108
+	const latestMigrationVersion = 109
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2711,12 +2711,58 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var retentionHealthRows int
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 2 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
 		t.Fatalf(
-			"retention health row count = %d, error = %v, want 2",
+			"retention health row count = %d, error = %v, want 11",
 			retentionHealthRows, err,
 		)
 	}
+	retentionHealthSeeds := map[string]struct {
+		category string
+		interval int
+	}{
+		"tenant_magic_links":         {category: "auth_magic_links", interval: 3600},
+		"platform_admin_magic_links": {category: "auth_magic_links", interval: 3600},
+		"attachments":                {category: "attachments", interval: 86400},
+		"privacy_export_archives":    {category: "export_archives", interval: 86400},
+		"reporter_privacy_requests":  {category: "privacy_rights", interval: 86400},
+		"replay_sessions":            {category: "session_replays", interval: 86400},
+		"widget_funnel_events":       {category: "widget_events", interval: 3600},
+		"widget_funnel_daily":        {category: "widget_daily", interval: 3600},
+		"abuse_diagnostics":          {category: "abuse_diagnostics", interval: 3600},
+		"ai_budget_ledgers":          {category: "ai_processing", interval: 86400},
+		"identity_asset_deletions":   {category: "identity_assets", interval: 60},
+	}
+	retentionSeedRows, err := root.Query(ctx, `
+		SELECT operation_key, category, expected_interval_seconds,
+		       alert_grace_seconds, last_result IS NULL
+		FROM retention_maintenance_status
+	`)
+	if err != nil {
+		t.Fatalf("list retention health seeds: %v", err)
+	}
+	for retentionSeedRows.Next() {
+		var operationKey, category string
+		var interval, grace int
+		var unobserved bool
+		if err := retentionSeedRows.Scan(
+			&operationKey, &category, &interval, &grace, &unobserved,
+		); err != nil {
+			t.Fatalf("scan retention health seed: %v", err)
+		}
+		want, known := retentionHealthSeeds[operationKey]
+		if !known || category != want.category || interval != want.interval ||
+			grace != 900 || !unobserved {
+			t.Fatalf(
+				"retention health seed %s = category %s interval %d grace %d unobserved %t",
+				operationKey, category, interval, grace, unobserved,
+			)
+		}
+	}
+	if err := retentionSeedRows.Err(); err != nil {
+		t.Fatalf("iterate retention health seeds: %v", err)
+	}
+	retentionSeedRows.Close()
 	var appRetentionSelect, appRetentionUpdate, appRetentionDelete bool
 	var adminRetentionSelect, adminRetentionResultUpdate, adminRetentionKeyUpdate bool
 	var adminRetentionInsert, adminRetentionDelete bool
@@ -2785,6 +2831,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatal("raw retention health failure text was accepted")
 	}
 
+	if err := migrateToVersion(migrator, 108); err != nil {
+		t.Fatalf("migrate down to 108: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM retention_maintenance_status
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 2 {
+		t.Fatalf(
+			"retention health rows at version 108 = %d, error = %v, want 2",
+			retentionHealthRows, err,
+		)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO retention_maintenance_status (
+			operation_key, category, expected_interval_seconds, alert_grace_seconds
+		) VALUES ('attachments', 'attachments', 86400, 900)
+	`); err == nil {
+		t.Fatal("109 operation was accepted after rolling back to 108")
+	}
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
+		t.Fatalf("migrate back to latest: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM retention_maintenance_status
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
+		t.Fatalf(
+			"retention health rows after 108 replay = %d, error = %v, want 11",
+			retentionHealthRows, err,
+		)
+	}
+
 	pools.Close()
 	if err := migrator.Down(); err != nil {
 		t.Fatalf("migrate down: %v", err)
@@ -2801,9 +2877,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 2 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
 		t.Fatalf(
-			"retention health rows after down/up = %d, error = %v, want 2",
+			"retention health rows after down/up = %d, error = %v, want 11",
 			retentionHealthRows, err,
 		)
 	}

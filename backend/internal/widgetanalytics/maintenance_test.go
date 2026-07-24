@@ -11,13 +11,18 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 func TestMaintainerReconcilesBeforeBoundedRetention(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 22, 14, 30, 0, 0, time.UTC)
 	store := &maintenanceStoreStub{}
-	maintainer := Maintainer{Store: store, Now: func() time.Time { return now }, BatchSize: 37}
+	health := &analyticsHealthRecorderStub{}
+	maintainer := Maintainer{
+		Store: store, Health: health, Now: func() time.Time { return now }, BatchSize: 37,
+	}
 
 	if err := maintainer.MaintainOnce(context.Background()); err != nil {
 		t.Fatalf("MaintainOnce() error = %v", err)
@@ -30,14 +35,28 @@ func TestMaintainerReconcilesBeforeBoundedRetention(t *testing.T) {
 	if !reflect.DeepEqual(store.calls, wantCalls) {
 		t.Fatalf("maintenance calls = %#v, want %#v", store.calls, wantCalls)
 	}
+	if len(health.runs) != 2 ||
+		health.runs[0].Operation != retentionhealth.OperationWidgetFunnelEvents ||
+		health.runs[0].Result != retentionhealth.ResultSucceeded ||
+		health.runs[1].Operation != retentionhealth.OperationWidgetFunnelDaily ||
+		health.runs[1].Result != retentionhealth.ResultSucceeded ||
+		!health.runs[0].AttemptedAt.Equal(now) {
+		t.Fatalf("health runs = %#v", health.runs)
+	}
 
 	store.calls = nil
+	health.runs = nil
 	store.reconcileErr = errors.New("database unavailable")
 	if err := maintainer.MaintainOnce(context.Background()); !errors.Is(err, store.reconcileErr) {
 		t.Fatalf("MaintainOnce(reconcile failure) error = %v", err)
 	}
 	if len(store.calls) != 1 || store.calls[0] != "reconcile:2026-07-22T14:30:00Z:3" {
 		t.Fatalf("calls after reconcile failure = %#v", store.calls)
+	}
+	if len(health.runs) != 2 ||
+		health.runs[0].Result != retentionhealth.ResultFailed ||
+		health.runs[1].Result != retentionhealth.ResultFailed {
+		t.Fatalf("health runs after reconcile failure = %#v", health.runs)
 	}
 }
 
@@ -46,8 +65,9 @@ func TestMaintainerLogsFailureAndContinuesUntilShutdown(t *testing.T) {
 	store := &maintenanceLoopStore{called: make(chan int, 3)}
 	var logs bytes.Buffer
 	maintainer := Maintainer{
-		Store: store, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
-		Now: func() time.Time { return time.Date(2026, 7, 22, 14, 30, 0, 0, time.UTC) },
+		Store: store, Health: &analyticsHealthRecorderStub{},
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+		Now:    func() time.Time { return time.Date(2026, 7, 22, 14, 30, 0, 0, time.UTC) },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -74,7 +94,10 @@ func TestMaintainerResumesAfterPartialCleanup(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 22, 14, 30, 0, 0, time.UTC)
 	store := &maintenanceStoreStub{dailyErr: errors.New("daily cleanup unavailable")}
-	maintainer := Maintainer{Store: store, Now: func() time.Time { return now }}
+	maintainer := Maintainer{
+		Store: store, Health: &analyticsHealthRecorderStub{},
+		Now: func() time.Time { return now },
+	}
 
 	if err := maintainer.MaintainOnce(context.Background()); !errors.Is(err, store.dailyErr) {
 		t.Fatalf("MaintainOnce(partial cleanup) error = %v", err)
@@ -100,8 +123,9 @@ func TestMaintainerDrainsBatchesAndKeepsCleanupStagesIndependent(t *testing.T) {
 		eventsResults: []int64{10, 10, 3},
 		dailyResults:  []int64{10, 2},
 	}
+	health := &analyticsHealthRecorderStub{}
 	maintainer := Maintainer{
-		Store: store, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+		Store: store, Health: health, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 		Now: func() time.Time { return now }, BatchSize: 10, MaxBatches: 5,
 	}
 	if err := maintainer.MaintainOnce(context.Background()); err != nil {
@@ -115,21 +139,32 @@ func TestMaintainerDrainsBatchesAndKeepsCleanupStagesIndependent(t *testing.T) {
 		!strings.Contains(logs.String(), `"daily_aggregates_deleted":12`) {
 		t.Fatalf("multiple-batch logs = %s", logs.String())
 	}
+	if len(health.runs) != 2 || health.runs[0].Processed != 23 ||
+		health.runs[1].Processed != 12 {
+		t.Fatalf("health runs = %#v", health.runs)
+	}
 
 	store = &maintenanceStoreStub{eventsErr: errors.New("raw cleanup unavailable")}
 	maintainer.Store = store
+	health.runs = nil
 	if err := maintainer.MaintainOnce(context.Background()); !errors.Is(err, store.eventsErr) {
 		t.Fatalf("MaintainOnce(raw failure) error = %v", err)
 	}
 	if len(store.calls) != 3 || !strings.HasPrefix(store.calls[2], "daily:") {
 		t.Fatalf("calls after raw cleanup failure = %#v", store.calls)
 	}
+	if len(health.runs) != 2 ||
+		health.runs[0].Result != retentionhealth.ResultFailed ||
+		health.runs[1].Result != retentionhealth.ResultSucceeded {
+		t.Fatalf("independent-stage health runs = %#v", health.runs)
+	}
 }
 
 func TestMaintainerSkipsCleanupWithoutReconciliationLease(t *testing.T) {
 	t.Parallel()
 	store := &maintenanceStoreStub{reconcileResult: ReconcileResult{Skipped: true}}
-	maintainer := Maintainer{Store: store}
+	health := &analyticsHealthRecorderStub{}
+	maintainer := Maintainer{Store: store, Health: health}
 
 	if err := maintainer.MaintainOnce(context.Background()); err != nil {
 		t.Fatalf("MaintainOnce(skipped) error = %v", err)
@@ -137,12 +172,20 @@ func TestMaintainerSkipsCleanupWithoutReconciliationLease(t *testing.T) {
 	if len(store.calls) != 1 || !strings.HasPrefix(store.calls[0], "reconcile:") {
 		t.Fatalf("skipped maintenance calls = %#v", store.calls)
 	}
+	if len(health.runs) != 0 {
+		t.Fatalf("skipped maintenance health runs = %#v", health.runs)
+	}
+	if err := (Maintainer{Store: store}).MaintainOnce(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "health recorder is unavailable") {
+		t.Fatalf("MaintainOnce(no health recorder) error = %v", err)
+	}
 }
 
 func TestMaintainerBoundsPhaseTimeAndRetentionWork(t *testing.T) {
 	t.Parallel()
 	maintainer := Maintainer{
-		Store: blockingMaintenanceStore{}, PhaseTimeout: time.Millisecond,
+		Store: blockingMaintenanceStore{}, Health: &analyticsHealthRecorderStub{},
+		PhaseTimeout: time.Millisecond,
 	}
 	if err := maintainer.MaintainOnce(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("MaintainOnce(timeout) error = %v", err)
@@ -150,8 +193,9 @@ func TestMaintainerBoundsPhaseTimeAndRetentionWork(t *testing.T) {
 
 	var logs bytes.Buffer
 	store := &maintenanceStoreStub{eventsResults: []int64{10, 10}}
+	health := &analyticsHealthRecorderStub{}
 	maintainer = Maintainer{
-		Store: store, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+		Store: store, Health: health, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 		BatchSize: 10, MaxBatches: 2,
 	}
 	if err := maintainer.MaintainOnce(context.Background()); err != nil {
@@ -162,6 +206,26 @@ func TestMaintainerBoundsPhaseTimeAndRetentionWork(t *testing.T) {
 		!strings.Contains(logs.String(), `"backlog_possible":true`) {
 		t.Fatalf("retention budget logs = %s", logs.String())
 	}
+	if len(health.runs) != 2 || !health.runs[0].BudgetExhausted ||
+		health.runs[1].BudgetExhausted {
+		t.Fatalf("budget health runs = %#v", health.runs)
+	}
+}
+
+type analyticsHealthRecorderStub struct {
+	mu   sync.Mutex
+	runs []retentionhealth.Run
+	err  error
+}
+
+func (recorder *analyticsHealthRecorderStub) RecordRun(
+	_ context.Context,
+	run retentionhealth.Run,
+) error {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.runs = append(recorder.runs, run)
+	return recorder.err
 }
 
 type maintenanceStoreStub struct {

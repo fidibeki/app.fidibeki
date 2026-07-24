@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -15,7 +17,10 @@ func TestBudgetMaintainerBoundsRetentionCleanup(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 23, 8, 0, 0, 0, time.UTC)
 	store := &budgetCleanupStoreStub{deleted: []int64{3000, 2}}
-	maintainer := BudgetMaintainer{Store: store, Now: func() time.Time { return now }}
+	health := &budgetHealthRecorderStub{}
+	maintainer := BudgetMaintainer{
+		Store: store, Health: health, Now: func() time.Time { return now },
+	}
 	if err := maintainer.MaintainOnce(context.Background()); err != nil {
 		t.Fatalf("MaintainOnce() error = %v", err)
 	}
@@ -23,18 +28,44 @@ func TestBudgetMaintainerBoundsRetentionCleanup(t *testing.T) {
 		store.limit != budgetCleanupBatch {
 		t.Fatalf("cleanup = calls %d before %v limit %d", store.calls, store.before, store.limit)
 	}
+	if len(health.runs) != 1 ||
+		health.runs[0].Operation != retentionhealth.OperationAIBudgetLedgers ||
+		health.runs[0].Result != retentionhealth.ResultSucceeded ||
+		health.runs[0].Processed != 3002 || health.runs[0].BudgetExhausted ||
+		!health.runs[0].AttemptedAt.Equal(now) {
+		t.Fatalf("health runs = %#v", health.runs)
+	}
 }
 
 func TestBudgetMaintainerReturnsStoreFailureAndStopsWhenCanceled(t *testing.T) {
 	t.Parallel()
 	want := errors.New("database unavailable")
-	maintainer := BudgetMaintainer{Store: &budgetCleanupStoreStub{err: want}}
+	health := &budgetHealthRecorderStub{}
+	maintainer := BudgetMaintainer{Store: &budgetCleanupStoreStub{err: want}, Health: health}
 	if err := maintainer.MaintainOnce(context.Background()); !errors.Is(err, want) {
 		t.Fatalf("MaintainOnce() error = %v", err)
 	}
+	if len(health.runs) != 1 || health.runs[0].Result != retentionhealth.ResultFailed {
+		t.Fatalf("failed health runs = %#v", health.runs)
+	}
+	if err := (BudgetMaintainer{Store: &budgetCleanupStoreStub{}}).
+		MaintainOnce(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "health recorder is unavailable") {
+		t.Fatalf("MaintainOnce(no health recorder) error = %v", err)
+	}
+	recordFailure := errors.New("health database unavailable")
+	err := (BudgetMaintainer{
+		Store:  &budgetCleanupStoreStub{},
+		Health: &budgetHealthRecorderStub{err: recordFailure},
+	}).MaintainOnce(context.Background())
+	if !errors.Is(err, recordFailure) {
+		t.Fatalf("MaintainOnce(record failure) error = %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := (BudgetMaintainer{Store: &budgetCleanupStoreStub{}}).Run(ctx, 0); err != nil {
+	if err := (BudgetMaintainer{
+		Store: &budgetCleanupStoreStub{}, Health: &budgetHealthRecorderStub{},
+	}).Run(ctx, 0); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
@@ -71,6 +102,19 @@ func TestBudgetMaintenanceStoreDeletesEveryExpiredBudgetResource(t *testing.T) {
 	if err == nil || deleted != 5 {
 		t.Fatalf("DeleteExpiredBudgetData(failure) = %d, %v", deleted, err)
 	}
+}
+
+type budgetHealthRecorderStub struct {
+	runs []retentionhealth.Run
+	err  error
+}
+
+func (recorder *budgetHealthRecorderStub) RecordRun(
+	_ context.Context,
+	run retentionhealth.Run,
+) error {
+	recorder.runs = append(recorder.runs, run)
+	return recorder.err
 }
 
 type budgetCleanupStoreStub struct {

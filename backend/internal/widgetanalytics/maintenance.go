@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -34,6 +36,7 @@ type MaintenanceOperations interface {
 
 type Maintainer struct {
 	Store        MaintenanceOperations
+	Health       retentionhealth.Recorder
 	Logger       *slog.Logger
 	Now          func() time.Time
 	BatchSize    int
@@ -42,13 +45,22 @@ type Maintainer struct {
 }
 
 func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
+	if maintainer.Health == nil {
+		return errors.New("widget analytics retention health recorder is unavailable")
+	}
 	now := maintainer.now()
 	startedAt := time.Now()
 	reconcileCtx, cancelReconcile := maintainer.phaseContext(ctx)
 	reconciled, err := maintainer.Store.ReconcileRecent(reconcileCtx, now, analyticsReconciliationDays)
 	cancelReconcile()
 	if err != nil {
-		return fmt.Errorf("reconcile widget analytics: %w", err)
+		reconcileErr := fmt.Errorf("reconcile widget analytics: %w", err)
+		return errors.Join(reconcileErr,
+			maintainer.recordSweep(ctx, retentionhealth.OperationWidgetFunnelEvents,
+				now, 0, false, reconcileErr),
+			maintainer.recordSweep(ctx, retentionhealth.OperationWidgetFunnelDaily,
+				now, 0, false, reconcileErr),
+		)
 	}
 	if reconciled.Skipped {
 		maintainer.logger().InfoContext(ctx, "widget analytics maintenance skipped",
@@ -117,7 +129,34 @@ func (maintainer Maintainer) MaintainOnce(ctx context.Context) error {
 			"maximum_batches", maxBatches,
 		)
 	}
-	return maintenanceErr
+	recordErr := errors.Join(
+		maintainer.recordSweep(ctx, retentionhealth.OperationWidgetFunnelEvents,
+			now, eventsDeleted, eventsBudgetExhausted, eventsErr),
+		maintainer.recordSweep(ctx, retentionhealth.OperationWidgetFunnelDaily,
+			now, dailyDeleted, dailyBudgetExhausted, dailyErr),
+	)
+	return errors.Join(maintenanceErr, recordErr)
+}
+
+func (maintainer Maintainer) recordSweep(
+	ctx context.Context,
+	operation retentionhealth.Operation,
+	attemptedAt time.Time,
+	processed int64,
+	budgetExhausted bool,
+	sweepErr error,
+) error {
+	result := retentionhealth.ResultSucceeded
+	if sweepErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	if err := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation: operation, AttemptedAt: attemptedAt, Result: result,
+		Processed: processed, BudgetExhausted: budgetExhausted,
+	}); err != nil {
+		return fmt.Errorf("record %s retention health: %w", operation, err)
+	}
+	return nil
 }
 
 func (maintainer Maintainer) Run(ctx context.Context, interval time.Duration) error {

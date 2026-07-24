@@ -26,15 +26,19 @@ The registry is descriptive and read-only. It does not add cleaners, change exis
 or authorize deletion. Resource coverage is tested against migration DDL; the non-database
 inventory remains an engineering review boundary rather than a claim about provider enablement.
 
-The endpoint also returns a separate operational `health` object for the two enforced magic-link
-cleaners. Migration 105 keeps one current aggregate row per code-owned operation in
-`retention_maintenance_status`; it stores schedule metadata, last attempt/success, bounded counters,
+The endpoint also returns a separate operational `health` object for every enforced cleaner.
+Migration 105 keeps one current aggregate row per code-owned operation in
+`retention_maintenance_status`, and migration 109 extends the same contract from the two
+magic-link cleaners to the attachment, export-archive, reporter-request, replay-session,
+widget-funnel (raw and daily), abuse-diagnostic, AI-budget, and identity-asset cleaners; the
+ledger stores schedule metadata, last attempt/success, bounded counters,
 budget exhaustion, and only the generic failure code `cleanup_failed`. It stores no tenant, person,
 credential, token, IP/user-agent, or raw error data and no append-only run history. Health is derived
-as `healthy`, `attention`, `failed`, `overdue`, or `not_observed` from the hourly schedule and
-15-minute grace window. The bilingual Data & privacy surface shows the two tracked operations,
-their last success, next expected run, counts, and alert reason. Uninstrumented retention
-categories are not represented as healthy.
+as `healthy`, `attention`, `failed`, `overdue`, or `not_observed` from each operation's schedule and
+15-minute grace window. The bilingual Data & privacy surface shows the eleven tracked operations,
+their last success, next expected run, counts, and alert reason. Every enforced cleaner now reports
+into this ledger; categories without a cleaner still have no health row and are not represented
+as healthy.
 
 ## Records Of Processing Activities (ROPA) And DPIA Screening
 
@@ -69,7 +73,7 @@ processing-instruction and safeguards framework, not itself an Article 6 lawful 
 | Category | Examples | Technical purpose | Primary store | Effective technical retention |
 |---|---|---|---|---|
 | Workspace identity | Workspace name, slug, plan, status | Tenant routing, authorization, billing state | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
-| Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Login and invitation magic links (`tenant_magic_links`, `platform_admin_magic_links`) are hard-deleted, consumed or not, within 1 hour of their configured expiry (default 10 minutes) by bounded hourly maintainers; each deletion records a non-content audit event (`auth.magic_link_expired` in `tenant_access_events`, or `auth.platform_magic_link_expired` in the global `platform_security_events` ledger for platform-admin links). `retention_maintenance_status` retains only the current non-personal aggregate health of those two cleaners and drives overdue/failure/budget alerts in Data & privacy. Those minimized security events themselves, and other authentication/security records (sessions, platform admins, reporter access tokens), remain `decision_required`; no maximum period is claimed |
+| Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Login and invitation magic links (`tenant_magic_links`, `platform_admin_magic_links`) are hard-deleted, consumed or not, within 1 hour of their configured expiry (default 10 minutes) by bounded hourly maintainers; each deletion records a non-content audit event (`auth.magic_link_expired` in `tenant_access_events`, or `auth.platform_magic_link_expired` in the global `platform_security_events` ledger for platform-admin links). `retention_maintenance_status` retains only the current non-personal aggregate health of the enforced cleaners (these two included) and drives overdue/failure/budget alerts in Data & privacy. Those minimized security events themselves, and other authentication/security records (sessions, platform admins, reporter access tokens), remain `decision_required`; no maximum period is claimed |
 | Projects and widget configuration | Domains, rules, targeting, appearance, form blocks | Decide where and how feedback is collected | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | `decision_required`: supported subject anonymization is narrower than a general workflow-retention policy |
 | Reporter contact and consent | Normalized email; notification preference; structured consent evidence (purpose, notice version, locale, source); server-authoritative grant/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Contact follows supported anonymization/unsubscribe behavior. The maximum period for minimized consent evidence after withdrawal is `decision_required` |

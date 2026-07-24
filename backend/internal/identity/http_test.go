@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -279,6 +280,7 @@ func TestIdentityCleanupRunStopsWithItsContext(t *testing.T) {
 	maintainer := CleanupMaintainer{
 		Store:   Store{},
 		Storage: &identityFailureStorage{},
+		Health:  &identityHealthRecorderStub{},
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if err := maintainer.Run(ctx, 0); err != nil {
@@ -289,6 +291,12 @@ func TestIdentityCleanupRunStopsWithItsContext(t *testing.T) {
 func TestIdentityCleanupHelperFailures(t *testing.T) {
 	if err := (CleanupMaintainer{}).Maintain(context.Background()); err == nil {
 		t.Fatal("Maintain accepted unavailable storage")
+	}
+	if err := (CleanupMaintainer{
+		Storage: &identityFailureStorage{},
+	}).Maintain(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "health recorder is unavailable") {
+		t.Fatalf("Maintain(no health recorder) error = %v", err)
 	}
 
 	tenantID := uuid.NewString()
@@ -340,6 +348,19 @@ func TestIdentityCleanupHelperFailures(t *testing.T) {
 
 func pointerTo(value string) *string {
 	return &value
+}
+
+type identityHealthRecorderStub struct {
+	runs []retentionhealth.Run
+	err  error
+}
+
+func (recorder *identityHealthRecorderStub) RecordRun(
+	_ context.Context,
+	run retentionhealth.Run,
+) error {
+	recorder.runs = append(recorder.runs, run)
+	return recorder.err
 }
 
 type identityFailureStorage struct {

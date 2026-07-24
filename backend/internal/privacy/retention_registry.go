@@ -112,6 +112,7 @@ func retentionRegistry() []retentionDefinition {
 			Resources: combine(
 				tables("attachments"),
 				resource(RetentionObjectPrefix, "tenants/{tenant}/feedbacks/{feedback}/attachments/"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:attachments"),
 			),
 		},
 		{
@@ -126,6 +127,7 @@ func retentionRegistry() []retentionDefinition {
 				tables("identity_asset_deletions"),
 				resource(RetentionObjectPrefix, "tenants/{tenant}/identity/logos/"),
 				resource(RetentionObjectPrefix, "tenants/{tenant}/identity/members/"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:identity_asset_deletions"),
 			),
 		},
 		{
@@ -140,6 +142,7 @@ func retentionRegistry() []retentionDefinition {
 				tables("session_batches", "sessions"),
 				resource(RetentionObjectPrefix, "tenants/{tenant}/sessions/{session}/batches/"),
 				resource(RetentionObjectPrefix, "tenants/{tenant}/sessions/{session}/replay.json"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:replay_sessions"),
 			),
 		},
 		{
@@ -151,7 +154,10 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Event occurrence time.", Action: "Hard-delete expired raw events.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "widgetanalytics.Maintainer",
-			Resources:      tables("widget_funnel_events"),
+			Resources: combine(
+				tables("widget_funnel_events"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:widget_funnel_events"),
+			),
 		},
 		{
 			Category: "widget_daily", Label: "Daily widget funnel aggregates",
@@ -162,7 +168,10 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Aggregate calendar date.", Action: "Hard-delete expired daily aggregates.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "widgetanalytics.Maintainer",
-			Resources:      tables("widget_funnel_daily", "widget_funnel_maintenance"),
+			Resources: combine(
+				tables("widget_funnel_daily", "widget_funnel_maintenance"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:widget_funnel_daily"),
+			),
 		},
 		{
 			Category: "widget_analytics_browser", Label: "Widget analytics browser state",
@@ -244,6 +253,7 @@ func retentionRegistry() []retentionDefinition {
 					"ai_daily_usage", "ai_processing_runs", "ai_project_daily_usage",
 					"ai_work_reservations",
 				),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:ai_budget_ledgers"),
 			),
 		},
 		{
@@ -284,7 +294,10 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Archive completion time.", Action: "Delete object before expiring archive access.",
 			Cadence: "Daily", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "privacy.RetentionMaintainer",
-			Resources:      resource(RetentionObjectPrefix, "tenants/{tenant}/exports/"),
+			Resources: combine(
+				resource(RetentionObjectPrefix, "tenants/{tenant}/exports/"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:privacy_export_archives"),
+			),
 		},
 		{
 			Category: "unverified_requests", Label: "Unverified reporter requests",
@@ -295,7 +308,11 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Reporter request creation time.", Action: "Expire unverified request access.",
 			Cadence: "Daily", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "privacy.RetentionMaintainer",
-			Resources:      resource(RetentionDatabaseScope, "reporter_privacy_requests:unverified"),
+			Resources: combine(
+				resource(RetentionDatabaseScope, "reporter_privacy_requests:unverified"),
+				resource(RetentionDatabaseScope,
+					"retention_maintenance_status:reporter_privacy_requests:unverified"),
+			),
 		},
 		{
 			Category: "verified_requests", Label: "Verified reporter request access",
@@ -306,7 +323,11 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Reporter verification time.", Action: "Expire reporter result access.",
 			Cadence: "Daily", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "privacy.RetentionMaintainer",
-			Resources:      resource(RetentionDatabaseScope, "reporter_privacy_requests:verified_access"),
+			Resources: combine(
+				resource(RetentionDatabaseScope, "reporter_privacy_requests:verified_access"),
+				resource(RetentionDatabaseScope,
+					"retention_maintenance_status:reporter_privacy_requests:verified_access"),
+			),
 		},
 		{
 			Category: "access_security_audit", Label: "Sensitive-access and security audit evidence",
@@ -353,7 +374,10 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Hourly diagnostic bucket.", Action: "Hard-delete expired buckets.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
 			Implementation: "abuse.Maintainer",
-			Resources:      tables("abuse_diagnostics_hourly"),
+			Resources: combine(
+				tables("abuse_diagnostics_hourly"),
+				resource(RetentionDatabaseScope, "retention_maintenance_status:abuse_diagnostics"),
+			),
 		},
 		{
 			Category: "external_communications", Label: "External communication provider boundaries",

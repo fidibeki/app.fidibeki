@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -88,32 +89,58 @@ func (store BudgetMaintenanceStore) DeleteExpiredBudgetData(
 
 type BudgetMaintainer struct {
 	Store  BudgetCleanupStore
+	Health retentionhealth.Recorder
 	Now    func() time.Time
 	Logger *slog.Logger
 }
 
 func (maintainer BudgetMaintainer) MaintainOnce(ctx context.Context) error {
+	if maintainer.Health == nil {
+		return errors.New("AI budget retention health recorder is unavailable")
+	}
 	now := time.Now().UTC()
 	if maintainer.Now != nil {
 		now = maintainer.Now().UTC()
 	}
 	var total int64
+	var sweepErr error
+	budgetExhausted := true
 	for batch := 0; batch < budgetCleanupLimit; batch++ {
 		deleted, err := maintainer.Store.DeleteExpiredBudgetData(
 			ctx, now.AddDate(0, 0, -budgetRetentionDays), budgetCleanupBatch,
 		)
 		total += deleted
 		if err != nil {
-			return fmt.Errorf("clean AI budget data: %w", err)
+			budgetExhausted = false
+			sweepErr = fmt.Errorf("clean AI budget data: %w", err)
+			break
 		}
 		if deleted < budgetCleanupBatch {
-			maintainer.logger().InfoContext(ctx, "AI budget maintenance completed", "deleted", total)
-			return nil
+			budgetExhausted = false
+			break
 		}
 	}
-	maintainer.logger().WarnContext(ctx, "AI budget cleanup budget exhausted",
-		"deleted", total, "backlog_possible", true)
-	return nil
+	switch {
+	case sweepErr != nil:
+	case budgetExhausted:
+		maintainer.logger().WarnContext(ctx, "AI budget cleanup budget exhausted",
+			"deleted", total, "backlog_possible", true)
+	default:
+		maintainer.logger().InfoContext(ctx, "AI budget maintenance completed", "deleted", total)
+	}
+	result := retentionhealth.ResultSucceeded
+	if sweepErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	recordErr := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationAIBudgetLedgers,
+		AttemptedAt: now, Result: result, Processed: total,
+		BudgetExhausted: budgetExhausted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record AI budget retention health: %w", recordErr)
+	}
+	return errors.Join(sweepErr, recordErr)
 }
 
 func (maintainer BudgetMaintainer) Run(ctx context.Context, interval time.Duration) error {

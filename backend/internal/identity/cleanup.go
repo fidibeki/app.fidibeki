@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 )
 
@@ -137,7 +138,9 @@ func (store Store) FailCleanup(
 type CleanupMaintainer struct {
 	Store     Store
 	Storage   ObjectStorage
+	Health    retentionhealth.Recorder
 	Logger    *slog.Logger
+	Now       func() time.Time
 	BatchSize int
 }
 
@@ -145,10 +148,31 @@ func (maintainer CleanupMaintainer) Maintain(ctx context.Context) error {
 	if maintainer.Storage == nil {
 		return errors.New("identity cleanup storage is unavailable")
 	}
+	if maintainer.Health == nil {
+		return errors.New("identity cleanup health recorder is unavailable")
+	}
+	now := maintainer.now()
+	completed, sweepErr := maintainer.sweep(ctx)
+	result := retentionhealth.ResultSucceeded
+	if sweepErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	recordErr := maintainer.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:   retentionhealth.OperationIdentityAssetDeletions,
+		AttemptedAt: now, Result: result, Processed: completed,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record identity cleanup retention health: %w", recordErr)
+	}
+	return errors.Join(sweepErr, recordErr)
+}
+
+func (maintainer CleanupMaintainer) sweep(ctx context.Context) (int64, error) {
 	candidates, err := maintainer.Store.ClaimCleanup(ctx, maintainer.BatchSize)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	var completed int64
 	var failures []error
 	for _, candidate := range candidates {
 		current, currentErr := maintainer.Store.CleanupVersionIsCurrent(ctx, candidate)
@@ -159,7 +183,9 @@ func (maintainer CleanupMaintainer) Maintain(ctx context.Context) error {
 		if current {
 			if err := maintainer.Store.CompleteCleanup(ctx, candidate.ID); err != nil {
 				failures = append(failures, err)
+				continue
 			}
+			completed++
 			continue
 		}
 		removeErr := removeCandidateObjects(ctx, maintainer.Storage, candidate)
@@ -169,9 +195,18 @@ func (maintainer CleanupMaintainer) Maintain(ctx context.Context) error {
 		}
 		if err := maintainer.Store.CompleteCleanup(ctx, candidate.ID); err != nil {
 			failures = append(failures, err)
+			continue
 		}
+		completed++
 	}
-	return errors.Join(failures...)
+	return completed, errors.Join(failures...)
+}
+
+func (maintainer CleanupMaintainer) now() time.Time {
+	if maintainer.Now != nil {
+		return maintainer.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (maintainer CleanupMaintainer) deferFailure(

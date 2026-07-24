@@ -306,9 +306,10 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		!strings.Contains(retention.Body.String(), `"hold_behavior":"case_scoped"`) ||
 		!strings.Contains(retention.Body.String(), `"category":"attachments"`) ||
 		!strings.Contains(retention.Body.String(), `"health"`) ||
-		!strings.Contains(retention.Body.String(), `"tracked":2`) ||
+		!strings.Contains(retention.Body.String(), `"tracked":11`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"tenant_magic_links"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"platform_admin_magic_links"`) ||
+		!strings.Contains(retention.Body.String(), `"operation":"identity_asset_deletions"`) ||
 		!strings.Contains(retention.Body.String(), `"state":"not_observed"`) {
 		t.Fatalf("viewer retention = %d body=%s", retention.Code, retention.Body.String())
 	}

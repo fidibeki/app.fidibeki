@@ -12,7 +12,32 @@ type Operation string
 const (
 	OperationTenantMagicLinks        Operation = "tenant_magic_links"
 	OperationPlatformAdminMagicLinks Operation = "platform_admin_magic_links"
+	OperationAttachments             Operation = "attachments"
+	OperationPrivacyExportArchives   Operation = "privacy_export_archives"
+	OperationReporterPrivacyRequests Operation = "reporter_privacy_requests"
+	OperationReplaySessions          Operation = "replay_sessions"
+	OperationWidgetFunnelEvents      Operation = "widget_funnel_events"
+	OperationWidgetFunnelDaily       Operation = "widget_funnel_daily"
+	OperationAbuseDiagnostics        Operation = "abuse_diagnostics"
+	OperationAIBudgetLedgers         Operation = "ai_budget_ledgers"
+	OperationIdentityAssetDeletions  Operation = "identity_asset_deletions"
 )
+
+// Migrations 105 and 109 seed exactly one retention_maintenance_status row
+// per entry; Read fails when the table and this map disagree.
+var operationCategories = map[Operation]string{
+	OperationTenantMagicLinks:        "auth_magic_links",
+	OperationPlatformAdminMagicLinks: "auth_magic_links",
+	OperationAttachments:             "attachments",
+	OperationPrivacyExportArchives:   "export_archives",
+	OperationReporterPrivacyRequests: "privacy_rights",
+	OperationReplaySessions:          "session_replays",
+	OperationWidgetFunnelEvents:      "widget_events",
+	OperationWidgetFunnelDaily:       "widget_daily",
+	OperationAbuseDiagnostics:        "abuse_diagnostics",
+	OperationAIBudgetLedgers:         "ai_processing",
+	OperationIdentityAssetDeletions:  "identity_assets",
+}
 
 type Result string
 
@@ -108,9 +133,7 @@ type operationRecord struct {
 }
 
 func ValidateRun(run Run) error {
-	switch run.Operation {
-	case OperationTenantMagicLinks, OperationPlatformAdminMagicLinks:
-	default:
+	if _, known := operationCategories[run.Operation]; !known {
 		return fmt.Errorf("unknown retention operation %q", run.Operation)
 	}
 	if run.AttemptedAt.IsZero() {
@@ -164,12 +187,11 @@ func deriveHealth(record operationRecord, now time.Time) (OperationHealth, error
 			"retention operation %q has invalid schedule metadata", record.Operation,
 		)
 	}
-	switch record.Operation {
-	case OperationTenantMagicLinks, OperationPlatformAdminMagicLinks:
-	default:
+	category, known := operationCategories[record.Operation]
+	if !known {
 		return OperationHealth{}, fmt.Errorf("unknown retention operation %q", record.Operation)
 	}
-	if record.Category != "auth_magic_links" {
+	if record.Category != category {
 		return OperationHealth{}, fmt.Errorf(
 			"retention operation %q has unknown category %q", record.Operation, record.Category,
 		)
