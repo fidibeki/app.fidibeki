@@ -388,6 +388,16 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionProvider, Name: "stripe_billing_api"},
 			),
 		},
+		{
+			Category: "security_verification", Label: "Signup bot/abuse verification boundary",
+			Purpose: "Verify a signup request is not automated abuse before creating a workspace.",
+			Role:    "controller", Status: RetentionExternalControl,
+			DurationKind: retentionDurationExternal, Source: "External configuration",
+			Trigger: "Signup verification request.",
+			Action:  "Provider retention and deletion configuration must be verified.",
+			Cadence: "Provider controlled", HoldBehavior: RetentionHoldDecisionRequired,
+			Resources: resource(RetentionProvider, "cloudflare_turnstile"),
+		},
 	}
 }
 

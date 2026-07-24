@@ -9,7 +9,7 @@ customer-facing claims.
 
 ## Executable Retention Registry
 
-`GET /v1/privacy/retention` is backed by registry version 1. Its 26 lifecycle categories cover
+`GET /v1/privacy/retention` is backed by registry version 1. Its 27 lifecycle categories cover
 every one of the 67 PostgreSQL tables created by current migrations exactly once, plus the known
 object-prefix, queue, browser-key, and provider boundaries. Automated validation rejects duplicate
 resources and rejects `enforced` or `configurable` claims without a bounded lifecycle and a real
@@ -59,8 +59,8 @@ inventory remains an engineering review boundary rather than a claim about provi
 2. PostgreSQL stores workflow records under forced tenant RLS. Binary media and replay objects use
    tenant-prefixed keys in private S3-compatible storage.
 3. Background work uses Redis/Asynq for email, AI, replay merge, integrations, and privacy exports.
-   Queue payloads contain internal identifiers needed to load tenant-scoped records; queue payloads
-   are not included in exports.
+   Queue payloads contain internal identifiers and, for some tasks, message or delivery content
+   needed by the worker. Queue payloads are not included in exports.
 4. Configured email, AI, billing, telemetry, and integration providers receive only the data needed
    for their enabled operation.
 5. Workspace, verified reporter, and verified member-access exports are explicit allowlists.
@@ -75,12 +75,16 @@ The application has technical adapters or configuration for:
 
 - PostgreSQL for durable application data.
 - Redis and Asynq for rate limiting and background queues.
-- S3-compatible private object storage for attachments, replay objects, and temporary exports.
+- S3-compatible private object storage for attachments, replay objects, identity media, and
+  temporary exports.
 - Resend for configured transactional email delivery.
 - Google Gemini for configured AI analysis.
 - Stripe for configured billing and subscription processing.
 - Sentry for configured error telemetry.
 - Slack, Microsoft Teams, and generic customer webhooks for enabled operational notifications.
+- Cloudflare Turnstile for signup bot/abuse verification. The signup challenge token and the
+  submitting request's IP address are sent to Cloudflare (`backend/internal/billing/turnstile.go`);
+  required in staging and production.
 
 This list describes code paths, not the providers enabled in any particular environment. Deployment
 configuration, provider accounts, locations, subprocessors, contracts, and transfer mechanisms must

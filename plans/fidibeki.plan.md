@@ -649,7 +649,7 @@ was removed from the staging test tenant.
         audit-content, batch-limit, and concurrent-sweep (no double-delete/lost-row) coverage
         passed against real PostgreSQL; migration replay picked up migration 98 automatically.
       - [x] Executable registry slice: `GET /v1/privacy/retention` now derives its backward-compatible
-        response from a versioned, typed, code-owned registry with 26 lifecycle categories and
+        response from a versioned, typed, code-owned registry with 27 lifecycle categories and
         explicit `enforced`, `configurable`, `decision_required`, and `external_control` states.
         Migration-DDL tests prove that all 67 current PostgreSQL tables are assigned exactly once;
         object-prefix, queue, browser-key, and provider families are separately inventoried.
@@ -672,6 +672,23 @@ was removed from the staging test tenant.
         founder/legal review before any of those categories can be swept.
     - [ ] #63: establish layered notices, role matrix, DPA/subprocessor/transfer inventory,
       ROPA, and DPIA governance without publishing unverified claims.
+      - [x] Provider-governance foundation: a typed code-owned registry covers the 12 external,
+        customer-configured, infrastructure, and internal runtime boundaries currently represented
+        by the retention inventory, including Cloudflare Turnstile. Each row records evidenced
+        purpose, personal-data categories, activation mechanism, boundary kind, and explicit
+        `unknown`/`pending` legal entity, location, transfer, contract, owner, review, and approval
+        fields. The derived controller/processor role matrix covers all 27 retention categories.
+        Validation rejects drift between the two registries, placeholder approval bypasses,
+        inconsistent or stale approval evidence, and unbounded/duplicate category lists;
+        `make governance-check` is the focused local gate. This is deliberately not a static
+        outbound-call scanner, does not classify every service as a subprocessor, and publishes no
+        unverified legal claim.
+      - Remaining #63 slices: founder/legal review of actual provider entities, regions, contracts,
+        transfer mechanisms, roles, owners, and review dates; approved/published provider register
+        and Article 28 DPA; contextual customer-controller notices and version evidence; provider
+        change authorization/objection workflow; maintained ROPA and DPIA screening/decision
+        workflow; staging reconciliation, link tests, localized E2E, and release gating for
+        providers newly introduced in code as well as those added to the retention inventory.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,
       processor-to-controller notifications, decision evidence, and staging exercises.
       - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only

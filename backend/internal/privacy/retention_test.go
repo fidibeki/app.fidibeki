@@ -28,11 +28,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 26 {
+		len(starter.Policies) != 27 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 8, Configurable: 3, ExternalControl: 2, DecisionRequired: 13,
+		Enforced: 8, Configurable: 3, ExternalControl: 3, DecisionRequired: 13,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -141,7 +141,7 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 		{
 			kind: RetentionProvider,
 			want: []string{
-				"customer_generic_webhook", "email_capture_filesystem",
+				"cloudflare_turnstile", "customer_generic_webhook", "email_capture_filesystem",
 				"google_gemini_api", "microsoft_teams_incoming_webhook",
 				"postgresql_runtime", "redis_asynq", "resend_transactional_email",
 				"s3_compatible_object_storage", "sentry_error_telemetry",

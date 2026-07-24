@@ -1,4 +1,4 @@
-.PHONY: test test-short coverage format-check lint vulncheck migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
+.PHONY: test test-short coverage format-check lint vulncheck governance-check migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
 
 test:
 	cd backend && go test ./...
@@ -15,6 +15,14 @@ format-check:
 
 lint:
 	cd backend && go vet ./...
+
+# Local release gate for issue #63: fails if the provider governance registry is incomplete,
+# diverges from the retention registry's evidenced provider set, falsely marks an entry approved,
+# carries a stale review, or omits a personal-data category from the role matrix. This only detects
+# drift BETWEEN the two hand-maintained registries; it cannot discover a wholly new external adapter
+# that was never added to either one. Enables no provider and changes no runtime behavior.
+governance-check:
+	cd backend && go test ./internal/privacy/... -run 'Governance' -v
 
 vulncheck:
 	cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
