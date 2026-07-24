@@ -102,8 +102,8 @@ const trustPoints = [
           <p class="eyebrow">The loop</p>
           <h2 id="loop-heading">Most tools stop at the inbox. Fidibeki helps you finish the job.</h2>
           <p class="lede">
-            Reports enter at the top. Decisions narrow in the middle. Updates close it at the
-            bottom. Every stage leaves an audit trail.
+            Reports come in, decisions get made, and the person who spoke up hears the outcome.
+            Every stage leaves an audit trail.
           </p>
         </div>
         <LoopDiagram />
