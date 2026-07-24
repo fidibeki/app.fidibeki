@@ -24,9 +24,19 @@ on:
           - worker
           - web
           - widget
+      release:
+        description: Version bump for the release tag pushed after a successful deploy
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
 
 permissions:
-  contents: read
+  contents: write
   deployments: write
 
 jobs:
@@ -120,3 +130,24 @@ jobs:
             -f state="$state" \
             -f log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --silent
+      - name: Tag release
+        if: inputs.release != 'none'
+        env:
+          RELEASE: ${{ inputs.release }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          TARGETS: ${{ steps.resolve.outputs.targets }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          latest=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          latest="${latest:-v0.0.0}"
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "$RELEASE" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          version="v${major}.${minor}.${patch}"
+          git tag -a "$version" -m "Production release $version (services: $TARGETS)" "$SHA"
+          git push origin "refs/tags/$version"
+          echo "Tagged $version at $SHA (previous: $latest)" >> "$GITHUB_STEP_SUMMARY"

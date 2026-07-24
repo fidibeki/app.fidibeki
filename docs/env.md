@@ -119,5 +119,7 @@ manually dispatched GitHub `Promote Production` workflow and requires typing `fi
 workflow takes a `ref` input (default `main`; pin the SHA or tag that staging validated) and a
 `services` input (`all`, `backend` = api+worker, or a single service) for partial promotions. Every
 promotion writes a GitHub Deployment record, so the deployed-version history lives in the
-repository's **Environments → production** tab.
+repository's **Environments → production** tab. A `release` input (`patch`/`minor`/`major`, or
+`none` to skip) makes a successful promotion tag the promoted commit with the next semver version
+(`vX.Y.Z`) and push the tag; failed promotions never consume a version number.
 Add a required reviewer to the `production` GitHub environment when the repository plan supports it.
