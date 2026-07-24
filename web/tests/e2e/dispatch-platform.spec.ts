@@ -2236,7 +2236,22 @@ test('replay activation requires an explicit consent mode', async ({ page }, tes
   await page.getByLabel('Replay mode').selectOption('full')
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: 'Choose how consent is collected' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toHaveCount(2)
   await expect(dialog.getByRole('button', { name: 'Use this consent mode' })).toBeDisabled()
+
+  const managedCopy = dialog.getByRole('button', { name: /Fidibeki-managed notice/ }).locator('span').last()
+  const customerCopy = dialog.getByRole('button', { name: /Customer CMP/ }).locator('span').last()
+  await expect.poll(async () => {
+    const [managedBox, customerBox] = await Promise.all([
+      managedCopy.boundingBox(),
+      customerCopy.boundingBox(),
+    ])
+    const managedWidth = managedBox?.width || 0
+    const customerWidth = customerBox?.width || 0
+    return managedWidth > 100 &&
+      customerWidth > 100 &&
+      Math.abs(managedWidth - customerWidth) < 2
+  }).toBe(true)
 
   await dialog.getByRole('button', { name: /Customer CMP/ }).click()
   await expect(dialog.getByRole('button', { name: 'Use this consent mode' })).toBeEnabled()

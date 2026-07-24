@@ -5,6 +5,7 @@ export const englishMessages = {
   common: {
     workspace: 'Workspace',
     account: 'Account',
+    cancel: 'Cancel',
   },
   navigation: {
     overview: 'Overview',

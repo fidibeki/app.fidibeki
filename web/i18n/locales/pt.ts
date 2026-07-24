@@ -5,6 +5,7 @@ export const portugueseMessages = {
   common: {
     workspace: 'Workspace',
     account: 'Conta',
+    cancel: 'Cancelar',
   },
   navigation: {
     overview: 'Visão geral',

@@ -233,7 +233,9 @@ function confirm() {
             :data-active="draft.mode === 'fidibeki_managed'"
             @click="selectMode('fidibeki_managed')"
           >
-            <Check v-if="draft.mode === 'fidibeki_managed'" :size="14" />
+            <span class="replay-consent-mode-marker" aria-hidden="true">
+              <Check v-if="draft.mode === 'fidibeki_managed'" :size="14" />
+            </span>
             <span><b>{{ t('projects.editor.replay.consent.managed') }}</b><small>{{ t('projects.editor.replay.consent.managedHint') }}</small></span>
           </button>
           <button
@@ -241,7 +243,9 @@ function confirm() {
             :data-active="draft.mode === 'customer_cmp'"
             @click="selectMode('customer_cmp')"
           >
-            <Check v-if="draft.mode === 'customer_cmp'" :size="14" />
+            <span class="replay-consent-mode-marker" aria-hidden="true">
+              <Check v-if="draft.mode === 'customer_cmp'" :size="14" />
+            </span>
             <span><b>{{ t('projects.editor.replay.consent.customer') }}</b><small>{{ t('projects.editor.replay.consent.customerHint') }}</small></span>
           </button>
         </div>
@@ -355,6 +359,7 @@ function confirm() {
 .replay-consent-modes > button { display: grid; min-height: 76px; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 8px; padding: 12px; background: #fff; color: var(--muted); border: 0; text-align: left; }
 .replay-consent-modes > button + button { border-left: 1px solid var(--line-strong); }
 .replay-consent-modes > button[data-active='true'] { background: var(--teal-soft); color: var(--teal); }
+.replay-consent-mode-marker { display: block; width: 18px; min-height: 14px; }
 .replay-consent-modes span { display: grid; gap: 4px; }
 .replay-consent-modes b { color: var(--ink-soft); font-size: 11px; }
 .replay-consent-modes small { font-size: 9px; line-height: 1.45; }
