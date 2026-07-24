@@ -1132,6 +1132,11 @@ was removed from the staging test tenant.
       toolbar, URL synchronization, queue semantics, and backend contract. Approved design:
       `docs/superpowers/specs/2026-07-24-mobile-feedback-filters-design.md`; implementation plan:
       `docs/superpowers/plans/2026-07-24-mobile-feedback-filters-implementation.md`.
+    - [ ] #73: make the dashboard attention queue use the curated Feedback title before the
+      compatibility fallbacks to cleaned/raw reporter text. Fixtures must distinguish title from
+      description so the independent field contract cannot regress unnoticed. Approved design:
+      `docs/superpowers/specs/2026-07-24-dashboard-feedback-title-design.md`; implementation plan:
+      `docs/superpowers/plans/2026-07-24-dashboard-feedback-title-implementation.md`.
     - The #53-#55 privacy foundation is integrated on `main` through `81de75c`. Backend tests and 80.1%
       coverage, widget unit/typecheck/build and 40 browser journeys, web
       unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.
