@@ -301,7 +301,7 @@ test('Portuguese project and widget rule editor preserve customer content and ex
   await expect(page.getByText('Ativa · Prefixo de URL · prioridade 1')).toBeVisible()
 
   await expect(page.getByText('A editar regra')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Promoção de Saída' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Promoção de Saída', exact: true })).toBeVisible()
 
   const statusSelect = page.getByLabel('Estado do ciclo de vida')
   await expect(statusSelect).toHaveValue('active')
@@ -337,17 +337,15 @@ test('Portuguese project and widget rule editor preserve customer content and ex
   await expect(page.getByRole('alert')).not.toContainText('internal provider trace xyz')
   state.saveRuleShouldFail = false
 
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toBe('Eliminar “Promoção de Saída”?')
-    await dialog.dismiss()
-  })
   await page.getByRole('button', { name: 'Eliminar regra' }).click()
-  await expect(page.getByRole('heading', { name: 'Promoção de Saída' })).toBeVisible()
+  const deleteDialog = page.getByRole('dialog', { name: 'Eliminar “Promoção de Saída”?' })
+  await expect(deleteDialog).toBeVisible()
+  await deleteDialog.getByRole('button', { name: 'Cancelar' }).click()
+  await expect(deleteDialog).not.toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Promoção de Saída', exact: true })).toBeVisible()
 
-  page.once('dialog', async (dialog) => {
-    await dialog.accept()
-  })
   await page.getByRole('button', { name: 'Eliminar regra' }).click()
+  await deleteDialog.getByRole('button', { name: 'Eliminar regra' }).click()
   await expect.poll(() => state.ruleDeleted).toBe(true)
   await expect(page.getByText('Nenhuma regra configurada.')).toBeVisible()
 
@@ -362,11 +360,12 @@ test('Portuguese project and widget rule editor preserve customer content and ex
   expect(state.updateProjectBody!.allowed_domains).toEqual(project.allowed_domains)
   expect(state.updateProjectBody!.default_locale).toBe(project.default_locale)
 
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toBe(`Eliminar ${newProjectName} e todo o seu feedback?`)
-    await dialog.accept()
-  })
   await page.getByRole('button', { name: 'Eliminar projeto' }).click()
+  const deleteProjectDialog = page.getByRole('dialog', { name: `Eliminar ${newProjectName}?` })
+  await expect(deleteProjectDialog).toContainText(
+    'Elimina permanentemente este projeto e o feedback, issues, anexos e dados de replay relacionados.',
+  )
+  await deleteProjectDialog.getByRole('button', { name: 'Eliminar projeto' }).click()
   await page.waitForURL(`${tenantOrigin}/projects`)
   expect(state.projectDeleted).toBe(true)
 })

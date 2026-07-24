@@ -1502,6 +1502,7 @@ test('unknown standard workspace offers explicit signup with an editable slug', 
 
   await expect(page).toHaveURL(new RegExp(`http://localhost:${process.env.PLAYWRIGHT_PORT || '4321'}/signup\\?slug=missing$`))
   await expect(page.getByLabel('Workspace URL')).toHaveValue('missing')
+  await expect(page.locator('.signup-plan-grid')).toBeVisible()
   await page.getByLabel('Workspace URL').fill('another-workspace')
   await expect(page.getByLabel('Workspace URL')).toHaveValue('another-workspace')
 })
@@ -1686,7 +1687,7 @@ test('starter plan shows unavailable features and euro-denominated prices', asyn
   await authenticate(page, state)
   await openPrimary(page, 'Settings')
 
-  await expect(page.getByText('€4.99/month')).toBeVisible()
+  await expect(page.getByText('€4.99 / month')).toBeVisible()
   const aiFeature = page.locator('.settings-features li').filter({ hasText: /^ai$/i })
   await expect(aiFeature.locator('svg')).toHaveClass(/lucide-x/)
   await expect(page.locator('.settings-features .lucide-check')).toHaveCount(0)
@@ -1873,7 +1874,7 @@ test('widget appearance resolves workspace, project, and definition overrides', 
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
 
-  await expect(page.locator('.project-widget-preview > header')).toContainText('dark · bottom-left')
+  await expect(page.locator('.project-widget-preview > header')).toContainText('Dark · Bottom left')
   await expect(page.locator('.widget-preview-logo')).toHaveCount(0)
   await expect(page.locator('.widget-preview-modal')).toHaveCSS('background-color', 'rgb(16, 24, 23)')
   await expect(page.locator('.widget-preview-modal')).toHaveCSS('color', 'rgb(247, 250, 249)')
@@ -1984,8 +1985,12 @@ test('organization profile validates identity assets and updates the workspace i
   })
   await capture(page, testInfo, `organization-profile-${testInfo.project.name}`)
 
-  await organization.getByTitle('Remove workspace logo').click()
-  await expect(organization.getByRole('status')).toHaveText('Workspace logo removed.')
+  await organization.getByRole('button', {
+    name: /(?:Remove workspace logo|Remover logótipo do workspace)/,
+  }).click()
+  await expect(organization.getByRole('status')).toHaveText(
+    /(?:Workspace logo removed|Logótipo do workspace removido)\./,
+  )
   await expect(page.locator('.app-tenant-switcher img')).toHaveCount(0)
   expect(state.tenant.logo_version).toBeNull()
 })
@@ -4123,7 +4128,7 @@ test('workspace deletion supports the full recovery path', async ({ page }, test
   await page.locator('.app-account-menu summary').click()
   await page.getByRole('link', { name: 'Billing', exact: true }).click()
   await page.getByRole('button', { name: 'Schedule deletion' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Schedule workspace deletion' })
+  const dialog = page.getByRole('dialog', { name: 'Schedule deletion' })
   await expect(dialog.getByLabel(/Type acme to confirm/)).toBeFocused()
   await dialog.getByLabel(/Type acme to confirm/).fill('acme')
   await dialog.getByRole('button', { name: 'Schedule deletion' }).click()

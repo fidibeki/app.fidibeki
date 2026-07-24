@@ -41,6 +41,14 @@ export default defineNuxtConfig({
         'x-robots-tag': 'noindex, nofollow',
       },
     },
+    '/reporter/**': {
+      ssr: false,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex, nofollow',
+      },
+    },
     '/designs/**': { ssr: false },
   },
   runtimeConfig: {

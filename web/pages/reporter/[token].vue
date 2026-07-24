@@ -21,7 +21,7 @@ const confirmationRegion = ref<HTMLElement | null>(null)
 const { data, status, error, refresh } = await useAsyncData(
   () => `reporter-progress:${token.value}`,
   () => $apiFetch<{ progress: ReporterProgress }>(`/v1/reporter/progress/${encodeURIComponent(token.value)}`),
-  { watch: [token], server: !import.meta.dev },
+  { watch: [token], server: false },
 )
 
 const progress = computed(() => data.value?.progress)

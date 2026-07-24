@@ -1073,8 +1073,8 @@ useHead(() => ({
 .project-config-band { display: flex; min-height: 92px; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; background: #fff; border-bottom: 1px solid var(--line); }
 .project-config-band h1 { margin: 4px 0; font-size: 20px; }
 .project-config-band > div:first-child > span { color: var(--muted); font-size: 9px; }
-.project-embed { display: flex; width: min(520px, 52%); height: 40px; align-items: center; gap: 8px; padding-left: 10px; background: #f3f6f5; border: 1px solid var(--line); border-radius: 5px; }
-.project-embed code { flex: 1; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.project-embed { display: flex; width: min(520px, 52%); min-width: 0; height: 40px; overflow: hidden; align-items: center; gap: 8px; padding-left: 10px; background: #f3f6f5; border: 1px solid var(--line); border-radius: 5px; }
+.project-embed code { flex: 1; min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .project-embed button { display: grid; width: 38px; height: 38px; place-items: center; background: transparent; color: var(--teal); border: 0; border-left: 1px solid var(--line); }
 .project-install-diagnostics { display: grid; grid-template-columns: 104px minmax(0, 1fr); min-height: 62px; background: #f9fbfa; border-bottom: 1px solid var(--line); }
 .project-install-diagnostics > header { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 10px 0 16px; color: var(--muted); border-right: 1px solid var(--line); font-size: 8px; font-weight: 800; text-transform: uppercase; }
@@ -1138,8 +1138,9 @@ useHead(() => ({
 .project-toggle span small { color: var(--muted); font-size: 9px; font-weight: 500; line-height: 1.4; }
 .replay-privacy-note { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); color: var(--muted); }
 .replay-privacy-note svg { margin-top: 1px; color: var(--amber); }
-.replay-privacy-note p { display: grid; gap: 3px; margin: 0; font-size: 9px; line-height: 1.5; }
+.replay-privacy-note p { display: grid; min-width: 0; gap: 3px; margin: 0; font-size: 9px; line-height: 1.5; }
 .replay-privacy-note b { color: var(--ink-soft); }
+.replay-privacy-note span { overflow-wrap: anywhere; }
 .replay-consent-status { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; background: #fff8e8; border: 1px solid #e9cc84; border-radius: 5px; }
 .replay-consent-status[data-configured='true'] { background: var(--teal-soft); border-color: #acd5ca; }
 .replay-consent-status > div { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; color: var(--amber); }
