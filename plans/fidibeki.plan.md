@@ -544,7 +544,11 @@ was removed from the staging test tenant.
         references, locale, or source.
       - [ ] Close the documented legal decision on targeting/functional storage before broad
         enablement.
-    - [ ] #60: complete data-rights case management and execution.
+    - [x] #60: complete data-rights case management and execution. Closed on 2026-07-24 after
+      the authenticated staging gate passed end to end on `fb3f508` (case `PRV-60DFB5A0`:
+      member intake, progress and decision communications with confirmed delivery, completed
+      member export with valid ZIP download, terminal decision, append-only timeline,
+      dashboard count, and the authenticated Data & privacy UI without errors).
       - [x] Slice 1: canonical reporter/member cases, verification, deadlines, ownership,
         idempotent lifecycle/events, explicit processing restrictions, fail-closed AI,
         integrations, reporter email, replay, and analytics enforcement, public status, and
@@ -594,7 +598,7 @@ was removed from the staging test tenant.
           Transition idempotency covers the complete evidence payload. The bilingual backoffice
           renders the item ledger and reasoned decision workflow, with PostgreSQL integration and
           desktop/mobile E2E coverage.
-      - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
+      - [x] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
         - [x] First operational vertical: migration `95` adds tenant-scoped recipient actions and
           per-attempt delivery evidence for verified rectification and settled erasure cases.
@@ -620,8 +624,8 @@ was removed from the staging test tenant.
           actions and presents subject/verification/ownership evidence, scope, append-only
           timeline, communication history/retry, and the dashboard's failed-external count.
           Migration/RLS, backend/worker, typecheck, and desktop/mobile E2E pass locally.
-        - [ ] Deploy this completed slice to staging and run the authenticated staging E2E before
-          closing Slice 3 and #60.
+        - [x] Deployed the integrated revision to staging and passed the authenticated staging
+          E2E on 2026-07-24, closing Slice 3 and #60.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
       data quarantine, policy disablement, and external provider-assessment gates.
     - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,
@@ -970,7 +974,10 @@ was removed from the staging test tenant.
         an authenticated staging capture exercise; staging-only tabletop scenarios; and any future
         browser mutation forms, which must add explicit CSRF protection without weakening the
         bearer API contracts.
-    - [ ] #65: complete sensitive-access governance.
+    - [x] #65: complete sensitive-access governance. Closed on 2026-07-24 after the
+      post-migration-108 staging case `FID-65-STAGING-POSTFIX-20260724` proved denied/success
+      support access, CSV/UI visibility, and immutable actor provenance after deleting the
+      temporary platform admin.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
         deduplicates range traffic, and has backend/web coverage.
@@ -1044,11 +1051,15 @@ was removed from the staging test tenant.
         to stream an already-opened reader instead of opening it after commit, and added integration
         coverage proving a storage-open failure returns 503 without a false `success` audit row on
         both paths.
-      - [ ] Run the authenticated staging E2E for the completed support-access paths and tenant
-        audit workflow before closing #65. No deployment is performed while the current
-        staging-only/no-deployment product constraint remains active.
-    - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
+      - [x] Ran the authenticated staging E2E for the completed support-access paths and tenant
+        audit workflow on 2026-07-24; #65 is closed with that evidence.
+    - [x] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
+      Closed on 2026-07-24 after the authenticated staging gate proved minimum disclosure to a
+      temporary no-optional-fields destination, fail-closed restriction suppression, the manual
+      rectification boundary with append-only correction evidence, the downstream checklist and
+      Settings warnings in the authenticated UI, and safe deletion of the temporary integration
+      while ledgers and case evidence remain.
       - [x] Add the first minimized-delivery slice with migration 99. New Slack, Teams, and generic
         webhook destinations default to a fixed minimum (public/resource identity, moderated title,
         project, status/priority, event time, and authenticated Fidibeki resource link); existing
@@ -1090,10 +1101,9 @@ was removed from the staging test tenant.
         up/down/up/RLS/grants, frontend unit/typecheck/build, the complete local browser suite
         (212 passed; 54 configuration-gated skips), and focused desktop/mobile visual inspection
         pass locally.
-      - [ ] Run the authenticated staging E2E for profile configuration, minimized Slack/Teams/
-        webhook deliveries, restriction suppression, disclosure-ledger evidence, and the downstream
-        checklist before closing #66. No deployment is performed under the current
-        staging-only/no-deployment constraint.
+      - [x] Ran the authenticated staging E2E for profile configuration, minimized delivery,
+        restriction suppression, disclosure-ledger evidence, and the downstream checklist on
+        2026-07-24; #66 is closed with that evidence.
     - [x] #67: refine language and timezone preferences layout.
     - [x] #68: fix sidebar navigation label alignment and overflow.
     - [x] #69: make the attention queue note actionable.
@@ -1189,10 +1199,14 @@ was removed from the staging test tenant.
       legal/factual decisions; #60, #62, #64, #65, #66, and #71 await deployment of the exact
       validated commits plus authenticated staging evidence. Each issue contains its current
       evidence and remains open rather than claiming an unperformed gate.
-    - [ ] Deploy the exact validated `main` revision to staging, run the authenticated gates for
-      #60, #62, #64, #65, #66, and #71, and close only the issues whose evidence passes. Staging
-      deployment was explicitly authorized on 2026-07-24; production remains prohibited. #58 and
-      #63 still require the outstanding legal/factual decisions and are not unlocked by deployment.
+    - [x] Deployed the exact validated `main` revision `fb3f508` to staging and passed the
+      authenticated gates for #60, #65, #66, and #71; those issues are closed with evidence,
+      as are #72, #73, and #74. Production remains prohibited.
+    - [ ] Run the remaining authenticated staging gates: #62 after its outstanding retention
+      slices (sessions, delivery/outbox/notifications, workflow data, IP/UA, consent evidence,
+      tenant-shorter policies, broad holds, and alerts) and #64 notification capture/tabletop,
+      whose final acceptance also depends on #62/#63. #58 and #63 still require the outstanding
+      legal/factual decisions and are not unlocked by deployment.
   - [x] Preserve postponed scope in #7, #19, #22, #23, #27, #28, and #29 without implementation.
 
 Each phase ends with compatible migration `up/down/up` checks where applicable, focused backend,
