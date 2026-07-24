@@ -657,8 +657,24 @@ was removed from the staging test tenant.
         same dedup-window flood protection. Confirmed by construction and integration test that
         these events never carry a member identity, so they are excluded from the existing
         member-export sanitized access-events allowlist rather than needing a new export path.
-      - [ ] Extend the same platform-admin/support access primitive to the replay-playback and
-        privacy-export access paths (currently only feedback attachments are covered), add a
+      - [x] Extend the platform-admin/support access primitive to replay playback:
+        `GET /admin/tenants/{tenantID}/sessions/{sessionID}/support-access` requires platform-admin
+        auth plus the same explicit, length-bounded `X-Fidibeki-Support-Reason`/`X-Fidibeki-Support-Case`
+        headers (query-parameter-only justification is rejected as invalid), reuses `Store.GetSession`
+        and the tenant stream's ready/merged/storage-key contract under the same tenant-scoped RLS
+        context, records `actor_type=platform_admin` with `replay_session.support_accessed` and the
+        reason/case as safe metadata only, and shares the tenant route's merged-object streaming via
+        an extracted `writeReplayStreamContent` helper so the tenant-facing route is unchanged.
+        Denied/not-found/success outcomes audit fail-closed with the same dedup-window flood
+        protection as the attachment path. No migration was required (existing `accessaudit`
+        primitives and the `replay_session` resource type from #65's core slice already cover this
+        path). Integration coverage adds authorization (unauthenticated/denied-permission),
+        missing-reason/missing-case/query-only-credential rejection with dedup, wrong-tenant and
+        unknown-session not-found (each isolated to its own tenant), not-yet-merged session
+        not-found, successful playback streaming the merged object with the correct headers, and
+        audit-event identity/content-omission assertions.
+      - [ ] Extend the same platform-admin/support access primitive to the privacy-export access
+        path (currently only feedback attachments and replay playback are covered), add a
         tenant-visible indicator/filter for support access reason and case in the audit UI (the
         `data` blob is API-visible but not yet rendered), and add anomaly signals specific to
         platform-admin/support access volume before closing #65.

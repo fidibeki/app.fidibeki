@@ -315,14 +315,33 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
-	object, err := h.options.Storage.OpenObject(r.Context(), *session.StorageKey)
-	if err != nil {
+	writeReplayStreamContent(w, r, h.options.Storage, *session.StorageKey, session.ID, h.logger, func(err error) {
 		h.writeError(w, r, err)
+	})
+}
+
+// writeReplayStreamContent opens and streams an already-authorized merged
+// replay object. Shared by the tenant-facing stream above and the
+// platform-admin/support stream (platform_support_stream.go) so the content
+// type, caching, and copy behavior stay identical regardless of which access
+// path authorized the read.
+func writeReplayStreamContent(
+	w http.ResponseWriter,
+	r *http.Request,
+	storage ReplayStorage,
+	storageKey string,
+	sessionID string,
+	logger *slog.Logger,
+	writeError func(error),
+) {
+	object, err := storage.OpenObject(r.Context(), storageKey)
+	if err != nil {
+		writeError(err)
 		return
 	}
 	defer func() {
 		if err := object.Close(); err != nil {
-			h.logger.WarnContext(r.Context(), "close replay object", "error", err, "session_id", session.ID)
+			logger.WarnContext(r.Context(), "close replay object", "error", err, "session_id", sessionID)
 		}
 	}()
 	w.Header().Set("Content-Type", "application/json")
@@ -330,7 +349,7 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, object); err != nil {
-		h.logger.WarnContext(r.Context(), "stream replay object", "error", err, "session_id", session.ID)
+		logger.WarnContext(r.Context(), "stream replay object", "error", err, "session_id", sessionID)
 	}
 }
 
