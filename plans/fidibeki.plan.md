@@ -579,9 +579,12 @@ was removed from the staging test tenant.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
         deduplicates range traffic, and has backend/web coverage.
-      - [ ] Add supported platform-admin access paths with mandatory support reason/case,
-        revoked-credential and unusual API-key anomaly signals, load coverage, and explicit CSV
-        limit UX before closing.
+      - [x] Bound CSV exports independently at 5,000 rows with an explicit UI limit, preserve the
+        500-row JSON cap, exercise concurrent deduplication, and surface historical access by
+        now-inactive members plus sensitive access by non-expiring API keys.
+      - [ ] Add supported platform-admin access paths with a mandatory support reason/case and
+        include the resulting access ledger explicitly in the relevant governed exports before
+        closing.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
     - [x] #67: refine language and timezone preferences layout.

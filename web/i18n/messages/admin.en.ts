@@ -429,11 +429,11 @@ export const adminMessages = {
     unavailable: 'Access events unavailable',
     error: 'Access events could not be loaded.',
     none: 'No access events match these filters',
-    exportCSV: 'Export CSV',
+    exportCSV: 'Export CSV · max. 5,000',
     loadMore: 'Load more',
     unknownActor: 'unknown',
-    signalsEyebrow: 'Anomaly signals',
-    signals: 'Unusual access volume',
+    signalsEyebrow: 'Governance signals',
+    signals: 'Access requiring review',
     filters: {
       all: 'All',
       resourceType: 'Resource',
@@ -471,7 +471,7 @@ export const adminMessages = {
     },
     signalType: {
       bulk_access: 'Bulk access',
-      revoked_credential: 'Revoked credential',
+      revoked_credential: 'Access by inactive member',
       unusual_api_key: 'Non-expiring API key',
     },
     signalDetail: {

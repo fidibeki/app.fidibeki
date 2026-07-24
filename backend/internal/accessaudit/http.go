@@ -129,11 +129,6 @@ func (h *httpHandler) list(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseListFilter parses the request's list filters. CSV exports default to
-// (and cap at) maxCSVRows rather than the JSON view's defaultListLimit/
-// maxListLimit, since a CSV export is a single bounded bulk pull rather than
-// a paginated view (see maxCSVRows for the safe maximum this endpoint
-// guarantees for a single export).
 func parseListFilter(r *http.Request, isCSV bool) (ListFilter, error) {
 	q := r.URL.Query()
 	filter := ListFilter{

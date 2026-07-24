@@ -216,7 +216,7 @@ function signalDetail(signal: AccessEventSignal) {
 .access-audit-alert { display: flex; min-height: 38px; align-items: center; gap: 8px; margin: 0; padding: 8px 11px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; font-weight: 700; }
 .access-audit-empty { display: grid; place-items: center; gap: 6px; padding: 40px 16px; color: var(--muted); text-align: center; }
 .access-audit-empty h3 { margin: 0; font-size: 12px; color: var(--ink-soft); }
-.access-audit-table { width: 100%; }
+.access-audit-table { width: 100%; overflow-x: auto; }
 .access-audit-row { display: grid; grid-template-columns: minmax(150px, .9fr) minmax(150px, 1fr) minmax(150px, 1fr) 110px 120px; min-height: 52px; align-items: center; gap: 14px; padding: 7px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .access-audit-signals-table .access-audit-row { grid-template-columns: minmax(160px, 1fr) 140px 90px minmax(160px, 1.2fr) 140px; }
 .access-audit-row:last-child { border-bottom: 0; }
@@ -228,4 +228,9 @@ function signalDetail(signal: AccessEventSignal) {
 .access-audit-status[data-tone='success'] i { background: var(--green); }
 .access-audit-status[data-tone='danger'] i { background: var(--red); }
 .access-audit-footer { display: flex; justify-content: center; padding: 14px 16px; }
+@media (max-width: 700px) {
+  .access-audit-section > header { align-items: flex-start; flex-wrap: wrap; }
+  .access-audit-row { min-width: 760px; }
+  .access-audit-signals-table .access-audit-row { min-width: 740px; }
+}
 </style>

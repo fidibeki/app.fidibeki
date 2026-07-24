@@ -429,11 +429,11 @@ export const adminMessages = {
     unavailable: 'Eventos de acesso indisponíveis',
     error: 'Não foi possível carregar os eventos de acesso.',
     none: 'Nenhum evento de acesso corresponde a estes filtros',
-    exportCSV: 'Exportar CSV',
+    exportCSV: 'Exportar CSV · máx. 5.000',
     loadMore: 'Carregar mais',
     unknownActor: 'desconhecido',
-    signalsEyebrow: 'Sinais de anomalia',
-    signals: 'Volume de acesso invulgar',
+    signalsEyebrow: 'Sinais de governação',
+    signals: 'Acessos a rever',
     filters: {
       all: 'Todos',
       resourceType: 'Recurso',
@@ -471,7 +471,7 @@ export const adminMessages = {
     },
     signalType: {
       bulk_access: 'Acesso em massa',
-      revoked_credential: 'Credencial revogada',
+      revoked_credential: 'Acesso de membro inativo',
       unusual_api_key: 'Chave de API sem expiração',
     },
     signalDetail: {

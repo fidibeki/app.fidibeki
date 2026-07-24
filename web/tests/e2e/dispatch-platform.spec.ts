@@ -4114,6 +4114,7 @@ test('access audit log lists events, applies filters, and exports CSV', async ({
   await expect(page.getByRole('heading', { name: 'Access audit log' })).toBeVisible()
   await expect(page.locator('.access-audit-table')).toContainText('attachment-1')
   await expect(page.locator('.access-audit-table')).toContainText('session-1')
+  await expect(page.getByRole('button', { name: 'Export CSV · max. 5,000' })).toBeVisible()
   await capture(page, testInfo, `settings-access-audit-${testInfo.project.name}`)
 
   await page.locator('.access-audit-filters select').nth(2).selectOption('denied')
@@ -4122,9 +4123,50 @@ test('access audit log lists events, applies filters, and exports CSV', async ({
   await page.locator('.access-audit-filters select').nth(2).selectOption('')
 
   const downloadPromise = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export CSV' }).click()
+  await page.getByRole('button', { name: 'Export CSV · max. 5,000' }).click()
   const download = await downloadPromise
   expect(download.suggestedFilename()).toBe('fidibeki-access-events.csv')
+})
+
+test('access audit surfaces governance signals', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.accessEventSignals = [{
+    type: 'bulk_access',
+    actor_type: 'human',
+    actor_id: 'member-owner',
+    event_count: 86,
+    distinct_resources: 24,
+    denied_count: 3,
+    last_access_at: '2026-07-21T12:00:00.000Z',
+  }, {
+    type: 'revoked_credential',
+    actor_type: 'human',
+    actor_id: 'member-removed',
+    event_count: 12,
+    detail: 'removed',
+    last_access_at: '2026-07-20T10:00:00.000Z',
+  }, {
+    type: 'unusual_api_key',
+    actor_type: 'api_key',
+    actor_id: 'api-key-durable',
+    event_count: 31,
+    detail: 'no_expiration',
+    last_access_at: '2026-07-19T09:00:00.000Z',
+  }]
+
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Access audit' }).click()
+
+  const signals = page.locator('.access-audit-signals-table')
+  await expect(signals).toContainText('Bulk access')
+  await expect(signals).toContainText('24 resources · 3 denied')
+  await expect(signals).toContainText('Access by inactive member')
+  await expect(signals).toContainText('Removed')
+  await expect(signals).toContainText('Non-expiring API key')
+  await expect(signals).toContainText('No expiration')
+  await signals.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-access-audit-signals-${testInfo.project.name}`)
 })
 
 test('access audit tab requires audit:read and is hidden without it', async ({ page }, testInfo) => {

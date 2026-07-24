@@ -44,10 +44,7 @@ type ListFilter struct {
 	To           *time.Time
 	Cursor       string
 	Limit        int
-	// MaxLimit overrides maxListLimit for this call. Zero means maxListLimit.
-	// The tenant HTTP handler raises this to maxCSVRows for a CSV export,
-	// which is a single bounded bulk pull rather than a paginated view.
-	MaxLimit int
+	MaxLimit     int
 }
 
 const (
@@ -181,23 +178,13 @@ const (
 	// crosses a bounded, non-alerting threshold: bulk downloads, repeated
 	// cross-resource access, or unusual denied-access volume.
 	SignalBulkAccess = "bulk_access"
-	// SignalRevokedCredential flags a human actor whose tenant_members
-	// credential has since been deactivated or removed, surfacing what a
-	// departed/suspended member accessed while still active.
+	// SignalRevokedCredential flags historical access by a now-inactive member.
 	SignalRevokedCredential = "revoked_credential"
-	// SignalUnusualAPIKey flags an API key with no expiration date that has
-	// recorded access to sensitive resources - a non-expiring credential
-	// able to read sensitive tenant data indefinitely is a recognized
-	// governance anti-pattern worth surfacing for review.
+	// SignalUnusualAPIKey flags sensitive access by a non-expiring API key.
 	SignalUnusualAPIKey = "unusual_api_key"
 )
 
-// ActorSignal is a bounded, non-alerting anomaly surfaced in the admin audit
-// view. It carries no evidence content - only actor identity, volume, and a
-// short reason - so it is safe to render directly. Detail's meaning depends
-// on Type: for SignalRevokedCredential it is the actor's current
-// tenant_members status ("deactivated" or "removed"); for SignalUnusualAPIKey
-// it is a fixed reason code ("no_expiration").
+// ActorSignal is a bounded governance signal without evidence content.
 type ActorSignal struct {
 	Type              string    `json:"type"`
 	ActorType         string    `json:"actor_type"`
@@ -281,21 +268,11 @@ func (Store) DetectAnomalies(
 
 // RevokedCredentialParams bounds the revoked-credential scan.
 type RevokedCredentialParams struct {
-	// Window looks back this far for historical access by now-revoked
-	// members. Defaults to 90 days: unlike the live bulk-access signal, this
-	// is a retrospective/forensic view (e.g. offboarding review), so a
-	// short window would hide most of what it exists to surface.
 	Window time.Duration
 	Now    time.Time
 }
 
-// DetectRevokedCredentialAccess flags human actors whose tenant_members
-// credential has since been deactivated or removed, alongside what they
-// accessed while still active. This is well-founded on real data because
-// tenant_members rows are never hard-deleted (removal/deactivation is a
-// status update, see tenantmember.Store), so actor_member_id and the
-// member's current status both survive indefinitely - unlike API-key
-// revocation, which hard-deletes the row (see DetectUnusualAPIKeyAccess).
+// DetectRevokedCredentialAccess finds recent access by members who are now inactive.
 func (Store) DetectRevokedCredentialAccess(
 	ctx context.Context, query db.Querier, tenantID string, params RevokedCredentialParams,
 ) ([]ActorSignal, error) {
@@ -343,16 +320,7 @@ type UnusualAPIKeyParams struct {
 	Now    time.Time
 }
 
-// DetectUnusualAPIKeyAccess flags API keys with no expiration date
-// (expires_at IS NULL) that have recorded access to sensitive resources.
-// Deleting an API key hard-removes the row (see apikey.Store.Delete) and the
-// FK from tenant_access_events.actor_api_key_id sets to NULL on delete, which
-// also reclassifies actor_type to "system" (see the
-// tenant_access_events_classify_actor trigger) - so a since-revoked key
-// cannot be identified retroactively from the ledger alone. What can be
-// evidenced today is the inverse governance concern: a durable, non-expiring
-// credential that is actively reading sensitive tenant data and can
-// therefore never be "revoked by expiry".
+// DetectUnusualAPIKeyAccess finds recent sensitive access by non-expiring keys.
 func (Store) DetectUnusualAPIKeyAccess(
 	ctx context.Context, query db.Querier, tenantID string, params UnusualAPIKeyParams,
 ) ([]ActorSignal, error) {
