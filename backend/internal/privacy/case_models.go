@@ -161,17 +161,17 @@ type LegalHold struct {
 }
 
 type CaseExecution struct {
-	RightType         RightType             `json:"right_type"`
-	Primitive         ReporterAction        `json:"-"`
-	RequestStatus     ReporterRequestStatus `json:"request_status"`
-	JobID             *string               `json:"job_id,omitempty"`
-	JobStatus         *JobStatus            `json:"job_status,omitempty"`
-	JobExpiresAt      *time.Time            `json:"job_expires_at,omitempty"`
-	RecordCount       *int                  `json:"record_count,omitempty"`
-	ManualReviewCount *int                  `json:"manual_review_count,omitempty"`
-	ErrorMessage      *string               `json:"error_message,omitempty"`
-	StartedAt         time.Time             `json:"started_at"`
-	CompletedAt       *time.Time            `json:"completed_at,omitempty"`
+	RightType         RightType              `json:"right_type"`
+	Primitive         ReporterAction         `json:"-"`
+	RequestStatus     *ReporterRequestStatus `json:"request_status,omitempty"`
+	JobID             *string                `json:"job_id,omitempty"`
+	JobStatus         *JobStatus             `json:"job_status,omitempty"`
+	JobExpiresAt      *time.Time             `json:"job_expires_at,omitempty"`
+	RecordCount       *int                   `json:"record_count,omitempty"`
+	ManualReviewCount *int                   `json:"manual_review_count,omitempty"`
+	ErrorMessage      *string                `json:"error_message,omitempty"`
+	StartedAt         time.Time              `json:"started_at"`
+	CompletedAt       *time.Time             `json:"completed_at,omitempty"`
 }
 
 type PortabilityAssessment struct {

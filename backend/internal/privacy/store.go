@@ -48,7 +48,8 @@ func (Store) CreateWorkspaceExport(
 			id, tenant_id, kind, status, actor_member_id, created_at, updated_at
 		) VALUES ($1, $2, 'workspace_export', 'pending', $3, $4, $4)
 		ON CONFLICT DO NOTHING
-		RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
+			RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id,
+			          privacy_case_id, generation, attempts,
 		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
 		          object_key, object_size_bytes, error_message, created_at, updated_at
 	`, jobID, tenantID, actorMemberID, now.UTC()))
@@ -128,7 +129,7 @@ func (Store) RetryJob(
 	}
 	job, err := scanJob(query.QueryRow(ctx, `
 		WITH target AS (
-			SELECT id, tenant_id, kind, reporter_request_id
+			SELECT id, tenant_id, kind, reporter_request_id, privacy_case_id
 			FROM privacy_jobs
 			WHERE tenant_id = $1 AND id = $2 AND status = 'failed'
 			FOR UPDATE
@@ -144,9 +145,11 @@ func (Store) RetryJob(
 				  AND active.id <> target.id
 				  AND active.status IN ('pending', 'processing')
 				  AND (
-					(target.kind = 'workspace_export' AND active.kind = 'workspace_export')
-					OR (target.reporter_request_id IS NOT NULL
-					    AND active.reporter_request_id = target.reporter_request_id)
+						(target.kind = 'workspace_export' AND active.kind = 'workspace_export')
+						OR (target.reporter_request_id IS NOT NULL
+						    AND active.reporter_request_id = target.reporter_request_id)
+						OR (target.privacy_case_id IS NOT NULL
+						    AND active.privacy_case_id = target.privacy_case_id)
 				  )
 			)
 			RETURNING job.*
@@ -158,9 +161,10 @@ func (Store) RetryJob(
 			  AND request.id = updated_job.reporter_request_id
 			  AND request.status = 'failed'
 		)
-		SELECT id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
-		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
-		          object_key, object_size_bytes, error_message, created_at, updated_at
+		SELECT id, tenant_id, kind, status, actor_member_id, reporter_request_id,
+		       privacy_case_id, generation, attempts,
+		       enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
+		       object_key, object_size_bytes, error_message, created_at, updated_at
 		FROM updated_job
 	`, tenantID, jobID, now.UTC()))
 	if errors.Is(err, ErrNotFound) {
@@ -173,6 +177,25 @@ func (Store) RetryJob(
 		if err := recordPrivacyRequestAudit(
 			ctx, query, tenantID, "privacy.reporter_request_retried", actorMemberID,
 			*job.ReporterRequestID, map[string]any{"kind": job.Kind, "privacy_job_id": job.ID},
+		); err != nil {
+			return Job{}, err
+		}
+	} else if job.Kind == JobMemberExport && job.PrivacyCaseID != nil {
+		var subjectMemberID string
+		if err := query.QueryRow(ctx, `
+			SELECT subject_member_id
+			FROM privacy_cases
+			WHERE tenant_id = $1 AND id = $2
+			  AND subject_type = 'member' AND subject_member_id IS NOT NULL
+		`, tenantID, *job.PrivacyCaseID).Scan(&subjectMemberID); errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, ErrJobUnavailable
+		} else if err != nil {
+			return Job{}, fmt.Errorf("load member export retry subject: %w", err)
+		}
+		if err := recordMemberCaseAudit(
+			ctx, query, tenantID, "privacy.member_export_retried",
+			actorMemberID, subjectMemberID, *job.PrivacyCaseID, job.ID,
+			map[string]any{"kind": job.Kind},
 		); err != nil {
 			return Job{}, err
 		}
@@ -260,7 +283,8 @@ func (s Store) ClaimJob(
 		WHERE id = $1 AND tenant_id = $2 AND generation = $3
 		  AND (status = 'pending' OR status = 'processing')
 		  AND attempts < $5
-		RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id, generation, attempts,
+		RETURNING id, tenant_id, kind, status, actor_member_id, reporter_request_id,
+		          privacy_case_id, generation, attempts,
 		          enqueued_at, started_at, heartbeat_at, completed_at, expires_at,
 		          object_key, object_size_bytes, error_message, created_at, updated_at
 	`, jobID, tenantID, generation, now.UTC(), maximumJobAttempts))
@@ -284,7 +308,7 @@ func (s Store) MarkJobFailed(ctx context.Context, job Job, message string, now t
 			    generation = generation + 1, enqueued_at = NULL,
 			    started_at = NULL, heartbeat_at = NULL, error_message = $4
 			WHERE id = $1 AND tenant_id = $2 AND generation = $3 AND status = 'processing'
-			RETURNING id, status, reporter_request_id
+			RETURNING id, status, kind, reporter_request_id, privacy_case_id
 		), failed_request AS (
 			UPDATE reporter_privacy_requests AS request
 			SET status = 'failed', error_message = $4
@@ -297,13 +321,28 @@ func (s Store) MarkJobFailed(ctx context.Context, job Job, message string, now t
 		INSERT INTO tenant_access_events (
 			tenant_id, kind, actor_member_id, subject_member_id, data
 		)
-		SELECT $2, 'privacy.reporter_request_failed', NULL, NULL,
+		SELECT $2, 'privacy.reporter_request_failed', NULL::uuid, NULL::uuid,
 		       jsonb_build_object(
 			       'privacy_job_id', updated_job.id::text,
 			       'reporter_request_id', failed_request.id::text,
 			       'error', $4::text
 		       )
 		FROM updated_job CROSS JOIN failed_request
+		UNION ALL
+		SELECT $2, 'privacy.member_export_failed', NULL::uuid,
+		       privacy_case.subject_member_id,
+		       jsonb_build_object(
+			       'privacy_job_id', updated_job.id::text,
+			       'privacy_case_id', privacy_case.id::text,
+			       'error', $4::text
+		       )
+		FROM updated_job
+		JOIN privacy_cases AS privacy_case
+		  ON privacy_case.tenant_id = $2
+		 AND privacy_case.id = updated_job.privacy_case_id
+		WHERE updated_job.status = 'failed'
+		  AND updated_job.kind = 'member_export'
+		  AND privacy_case.subject_type = 'member'
 	`, job.ID, job.TenantID, job.Generation, message, maximumJobAttempts); err != nil {
 		return fmt.Errorf("mark privacy job failed: %w", err)
 	}
@@ -330,18 +369,29 @@ func (s Store) CompleteJob(
 			    object_key = $5, object_size_bytes = $6, error_message = NULL,
 			    context_privacy_version = 1
 			WHERE id = $1 AND tenant_id = $2 AND generation = $3 AND status = 'processing'
-			RETURNING id
+			RETURNING id, kind, actor_member_id, privacy_case_id
 		), audited AS (
 			INSERT INTO tenant_access_events (
 				tenant_id, kind, actor_member_id, subject_member_id, data
 			)
-			SELECT $2, 'privacy.export_completed', $7::uuid, NULL,
-			       $8::jsonb || jsonb_build_object('privacy_job_id', completed.id::text)
+			SELECT $2,
+			       CASE WHEN completed.kind = 'member_export'
+			            THEN 'privacy.member_export_completed'
+			            ELSE 'privacy.export_completed' END,
+			       completed.actor_member_id, privacy_case.subject_member_id,
+			       $7::jsonb
+			       || jsonb_build_object('privacy_job_id', completed.id::text)
+			       || jsonb_strip_nulls(jsonb_build_object(
+			          'privacy_case_id', completed.privacy_case_id::text
+			       ))
 			FROM completed
+			LEFT JOIN privacy_cases AS privacy_case
+			  ON privacy_case.tenant_id = $2
+			 AND privacy_case.id = completed.privacy_case_id
 			RETURNING id
 		)
 		SELECT id FROM completed
-	`, job.ID, job.TenantID, job.Generation, now.UTC(), objectKey, size, job.ActorMemberID, string(data)).
+	`, job.ID, job.TenantID, job.Generation, now.UTC(), objectKey, size, string(data)).
 		Scan(&completedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrJobUnavailable
@@ -430,7 +480,8 @@ func recordPrivacyAudit(
 }
 
 const jobSelect = `
-	SELECT job.id, job.tenant_id, job.kind, job.status, job.actor_member_id, job.reporter_request_id,
+	SELECT job.id, job.tenant_id, job.kind, job.status, job.actor_member_id,
+	       job.reporter_request_id, job.privacy_case_id,
 	       job.generation, job.attempts, job.enqueued_at, job.started_at,
 	       job.heartbeat_at, job.completed_at, job.expires_at,
 	       CASE WHEN job.context_privacy_version >= 1 THEN job.object_key END,
@@ -445,7 +496,8 @@ type rowScanner interface {
 func scanJob(row rowScanner) (Job, error) {
 	var job Job
 	err := row.Scan(
-		&job.ID, &job.TenantID, &job.Kind, &job.Status, &job.ActorMemberID, &job.ReporterRequestID,
+		&job.ID, &job.TenantID, &job.Kind, &job.Status, &job.ActorMemberID,
+		&job.ReporterRequestID, &job.PrivacyCaseID,
 		&job.Generation, &job.Attempts, &job.EnqueuedAt, &job.StartedAt,
 		&job.HeartbeatAt, &job.CompletedAt, &job.ExpiresAt, &job.ObjectKey,
 		&job.ObjectSizeBytes, &job.ErrorMessage, &job.CreatedAt, &job.UpdatedAt,

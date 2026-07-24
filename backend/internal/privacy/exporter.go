@@ -360,7 +360,8 @@ func (exporter Exporter) Handler() asynq.HandlerFunc {
 		if job.Kind == JobReporterAnonymize {
 			return exporter.anonymizeReporter(ctx, job)
 		}
-		if job.Kind != JobWorkspaceExport && job.Kind != JobReporterExport {
+		if job.Kind != JobWorkspaceExport && job.Kind != JobReporterExport &&
+			job.Kind != JobMemberExport {
 			return exporter.fail(ctx, job, fmt.Errorf("unsupported privacy job kind %q", job.Kind))
 		}
 		path, size, recordCount, manualReviewCount, err := exporter.buildArchive(ctx, job)
@@ -402,6 +403,9 @@ func (exporter Exporter) buildArchive(
 ) (string, int64, int, int, error) {
 	if job.Kind == JobReporterExport {
 		return exporter.buildReporterArchive(ctx, job)
+	}
+	if job.Kind == JobMemberExport {
+		return exporter.buildMemberArchive(ctx, job)
 	}
 	path, size, err := exporter.buildWorkspaceArchive(ctx, job)
 	return path, size, 0, 0, err

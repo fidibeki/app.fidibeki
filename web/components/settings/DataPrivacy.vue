@@ -148,7 +148,9 @@ function activeCaseHolds(item: PrivacyCase) {
 function caseCanExecute(item: PrivacyCase) {
   const portabilityApproved = item.right_type !== 'portability_assessment'
     || ['approved', 'partially_approved'].includes(item.portability_assessment?.decision || '')
-  return item.subject_type === 'reporter'
+  const supportedSubject = item.subject_type === 'reporter'
+    || (item.subject_type === 'member' && item.right_type === 'access')
+  return supportedSubject
     && Boolean(item.verified_at)
     && !item.execution
     && ['access', 'erasure', 'portability_assessment'].includes(item.right_type)
@@ -568,13 +570,13 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                     <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.execution') }}</p>
                     <template v-if="item.execution">
                       <b>{{ t(`admin.privacy.casePublic.rights.${item.execution.right_type}`) }}</b>
-                      <span class="privacy-status" :data-tone="statusTone(item.execution.job_status || item.execution.request_status)"><i />{{ statusLabel(item.execution.job_status || item.execution.request_status) }}</span>
+                      <span class="privacy-status" :data-tone="statusTone(item.execution.job_status || item.execution.request_status || 'pending')"><i />{{ statusLabel(item.execution.job_status || item.execution.request_status || 'pending') }}</span>
                       <small v-if="item.execution.record_count != null">{{ t('admin.privacy.settings.cases.records', { count: item.execution.record_count }) }}</small>
                       <small v-if="item.execution.manual_review_count">{{ t('admin.privacy.settings.cases.manualRecords', { count: item.execution.manual_review_count }) }}</small>
                     </template>
                     <small v-else>{{ t('admin.privacy.settings.cases.notStarted') }}</small>
                   </div>
-                  <button v-if="caseCanExecute(item)" class="app-button" :class="{ 'privacy-danger-button': item.right_type === 'erasure' }" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="startCaseExecution(item)">
+                  <button v-if="caseCanExecute(item)" class="app-button" :class="{ 'privacy-danger-button': item.right_type === 'erasure' }" type="button" :disabled="Boolean(actionPending) || (item.right_type === 'erasure' && activeCaseHolds(item).length > 0)" @click="startCaseExecution(item)">
                     <ShieldAlert v-if="item.right_type === 'erasure'" :size="15" />
                     <Play v-else :size="15" />
                     {{ t(item.right_type === 'erasure'
@@ -586,7 +588,7 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   <button v-else-if="['access', 'portability_assessment'].includes(item.execution?.right_type || '') && item.execution?.job_status === 'completed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="downloadCaseExecution(item)">
                     <Download :size="15" />{{ t(item.right_type === 'portability_assessment' ? 'admin.privacy.settings.cases.downloadPortability' : 'admin.privacy.settings.cases.downloadExport') }}
                   </button>
-                  <button v-else-if="item.execution?.job_id && item.execution.job_status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending) || activeCaseHolds(item).length > 0" @click="retryJob(item.execution.job_id)">
+                  <button v-else-if="item.execution?.job_id && item.execution.job_status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending) || (item.right_type === 'erasure' && activeCaseHolds(item).length > 0)" @click="retryJob(item.execution.job_id)">
                     <RefreshCw :size="15" />{{ t('admin.privacy.settings.cases.retryExecution') }}
                   </button>
                 </div>

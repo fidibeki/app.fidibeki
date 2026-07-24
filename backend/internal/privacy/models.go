@@ -28,6 +28,7 @@ type JobKind string
 const (
 	JobWorkspaceExport   JobKind = "workspace_export"
 	JobReporterExport    JobKind = "reporter_export"
+	JobMemberExport      JobKind = "member_export"
 	JobReporterAnonymize JobKind = "reporter_anonymize"
 )
 
@@ -71,6 +72,7 @@ type Job struct {
 	Status            JobStatus  `json:"status"`
 	ActorMemberID     *string    `json:"actor_member_id,omitempty"`
 	ReporterRequestID *string    `json:"-"`
+	PrivacyCaseID     *string    `json:"-"`
 	Generation        int        `json:"-"`
 	Attempts          int        `json:"attempts"`
 	EnqueuedAt        *time.Time `json:"-"`

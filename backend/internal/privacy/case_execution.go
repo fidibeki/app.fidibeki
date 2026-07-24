@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -223,9 +224,29 @@ func (Store) StartCaseExecution(
 		execution, loadErr := loadCaseExecution(ctx, query, tenantID, caseID)
 		return execution, false, loadErr
 	}
-	if privacyCase.SubjectType != SubjectReporter || privacyCase.SubjectEmail == nil ||
-		privacyCase.VerifiedAt == nil || caseStatusTerminal(privacyCase.Status) ||
+	var linkedJob bool
+	err = query.QueryRow(ctx, `
+		SELECT true FROM privacy_jobs
+		WHERE tenant_id = $1 AND privacy_case_id = $2
+		LIMIT 1
+	`, tenantID, caseID).Scan(&linkedJob)
+	if err == nil {
+		execution, loadErr := loadCaseExecution(ctx, query, tenantID, caseID)
+		return execution, false, loadErr
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return CaseExecution{}, false, fmt.Errorf("check linked case execution: %w", err)
+	}
+	if privacyCase.VerifiedAt == nil || caseStatusTerminal(privacyCase.Status) ||
 		privacyCase.Status == CasePendingVerification {
+		return CaseExecution{}, false, ErrCaseExecutionUnsupported
+	}
+	if privacyCase.SubjectType == SubjectMember {
+		return startMemberAccessExecution(
+			ctx, query, privacyCase, actorMemberID, idempotencyKey, now,
+		)
+	}
+	if privacyCase.SubjectType != SubjectReporter || privacyCase.SubjectEmail == nil {
 		return CaseExecution{}, false, ErrCaseExecutionUnsupported
 	}
 
@@ -336,6 +357,48 @@ func (Store) StartCaseExecution(
 	return execution, true, err
 }
 
+func startMemberAccessExecution(
+	ctx context.Context,
+	query db.Querier,
+	privacyCase PrivacyCase,
+	actorMemberID string,
+	idempotencyKey string,
+	now time.Time,
+) (CaseExecution, bool, error) {
+	if privacyCase.RightType != RightAccess || privacyCase.SubjectMemberID == nil {
+		return CaseExecution{}, false, ErrCaseExecutionUnsupported
+	}
+	jobID := uuid.NewString()
+	if _, err := query.Exec(ctx, `
+		INSERT INTO privacy_jobs (
+			id, tenant_id, kind, status, actor_member_id, privacy_case_id,
+			created_at, updated_at
+		) VALUES ($1, $2, 'member_export', 'pending', $3, $4, $5, $5)
+	`, jobID, privacyCase.TenantID, actorMemberID, privacyCase.ID, now.UTC()); err != nil {
+		return CaseExecution{}, false, fmt.Errorf("create member access export job: %w", err)
+	}
+	eventData := map[string]any{
+		"action": "member_export", "privacy_job_id": jobID,
+		"subject_member_id": *privacyCase.SubjectMemberID,
+	}
+	if err := insertCaseEvent(
+		ctx, query, privacyCase.TenantID, privacyCase.ID, "execute:"+idempotencyKey,
+		"privacy_case.execution_started", &actorMemberID, nil, nil, eventData, now,
+	); err != nil {
+		return CaseExecution{}, false, err
+	}
+	if err := recordMemberCaseAudit(
+		ctx, query, privacyCase.TenantID, "privacy.member_export_started",
+		actorMemberID, *privacyCase.SubjectMemberID, privacyCase.ID, jobID, eventData,
+	); err != nil {
+		return CaseExecution{}, false, err
+	}
+	execution, err := loadCaseExecution(
+		ctx, query, privacyCase.TenantID, privacyCase.ID,
+	)
+	return execution, true, err
+}
+
 func attachCaseOperationalState(
 	ctx context.Context,
 	query db.Querier,
@@ -406,12 +469,17 @@ func attachCaseOperationalState(
 	rows.Close()
 
 	for index := range cases {
-		if cases[index].LegacyReporterRequestID == nil {
+		if cases[index].LegacyReporterRequestID == nil &&
+			(cases[index].SubjectType != SubjectMember ||
+				cases[index].RightType != RightAccess) {
 			continue
 		}
 		execution, loadErr := loadCaseExecution(
 			ctx, query, tenantID, cases[index].ID,
 		)
+		if errors.Is(loadErr, ErrNotFound) {
+			continue
+		}
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -451,13 +519,63 @@ func loadCaseExecution(
 		&execution.ManualReviewCount, &execution.ErrorMessage, &execution.StartedAt,
 		&execution.CompletedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CaseExecution{}, ErrNotFound
-	}
 	if err != nil {
-		return CaseExecution{}, fmt.Errorf("load privacy case execution: %w", err)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return CaseExecution{}, fmt.Errorf("load reporter case execution: %w", err)
+		}
+		execution = CaseExecution{}
+		err = query.QueryRow(ctx, `
+			SELECT privacy_case.right_type, job.id, job.status, job.expires_at,
+			       job.error_message, job.created_at, job.completed_at
+			FROM privacy_cases AS privacy_case
+			JOIN privacy_jobs AS job
+			  ON job.tenant_id = privacy_case.tenant_id
+			 AND job.privacy_case_id = privacy_case.id
+			 AND job.kind = 'member_export'
+			WHERE privacy_case.tenant_id = $1 AND privacy_case.id = $2
+		`, tenantID, caseID).Scan(
+			&execution.RightType, &execution.JobID, &execution.JobStatus,
+			&execution.JobExpiresAt, &execution.ErrorMessage, &execution.StartedAt,
+			&execution.CompletedAt,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaseExecution{}, ErrNotFound
+		}
+		if err != nil {
+			return CaseExecution{}, fmt.Errorf("load member case execution: %w", err)
+		}
 	}
 	return execution, nil
+}
+
+func recordMemberCaseAudit(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	kind string,
+	actorMemberID string,
+	subjectMemberID string,
+	caseID string,
+	jobID string,
+	data map[string]any,
+) error {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("encode member privacy audit: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		INSERT INTO tenant_access_events (
+			tenant_id, kind, actor_member_id, subject_member_id, data
+		) VALUES (
+			$1, $2, $3, $4,
+			$5::jsonb
+			  || jsonb_build_object('privacy_case_id', $6::text)
+			  || jsonb_build_object('privacy_job_id', $7::text)
+		)
+	`, tenantID, kind, actorMemberID, subjectMemberID, string(encoded), caseID, jobID); err != nil {
+		return fmt.Errorf("record member privacy audit: %w", err)
+	}
+	return nil
 }
 
 func ensureCaseErasureAllowed(

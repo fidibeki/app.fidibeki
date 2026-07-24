@@ -353,7 +353,6 @@ func (handler *HTTPHandler) downloadCaseExecution(w http.ResponseWriter, r *http
 		return
 	}
 	if privacyCase.Execution == nil ||
-		privacyCase.Execution.Primitive != ReporterExport ||
 		privacyCase.Execution.JobID == nil {
 		handler.writeError(w, r, ErrJobUnavailable)
 		return
@@ -366,7 +365,13 @@ func (handler *HTTPHandler) downloadCaseExecution(w http.ResponseWriter, r *http
 		return
 	}
 	now := handler.now()
-	if job.Kind != JobReporterExport || job.Status != JobCompleted ||
+	reporterExport := privacyCase.SubjectType == SubjectReporter &&
+		privacyCase.Execution.Primitive == ReporterExport &&
+		job.Kind == JobReporterExport
+	memberExport := privacyCase.SubjectType == SubjectMember &&
+		privacyCase.RightType == RightAccess &&
+		job.Kind == JobMemberExport
+	if (!reporterExport && !memberExport) || job.Status != JobCompleted ||
 		job.ObjectKey == nil || job.ExpiresAt == nil || !job.ExpiresAt.After(now) {
 		handler.writeError(w, r, ErrJobUnavailable)
 		return

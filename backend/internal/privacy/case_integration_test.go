@@ -350,7 +350,7 @@ func TestPrivacyCaseReporterExecutionRespectsLegalHolds(t *testing.T) {
 	)
 	if err != nil || !created || execution.RightType != RightErasure ||
 		execution.Primitive != ReporterAnonymize ||
-		execution.RequestStatus != ReporterProcessing ||
+		execution.RequestStatus == nil || *execution.RequestStatus != ReporterProcessing ||
 		execution.JobID == nil || execution.JobStatus == nil ||
 		*execution.JobStatus != JobPending {
 		t.Fatalf("StartCaseExecution(erasure) = %#v created=%t error=%v",

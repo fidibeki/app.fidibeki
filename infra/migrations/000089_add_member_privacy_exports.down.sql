@@ -1,0 +1,2 @@
+-- PostgreSQL enum values cannot be removed safely in a reversible migration. The type is
+-- dropped by migration 000061 during a full rollback and the forward migration is idempotent.

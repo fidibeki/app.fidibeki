@@ -807,7 +807,7 @@ export interface PrivacyCaseLegalHold {
 
 export interface PrivacyCaseExecution {
   right_type: PrivacyRightType
-  request_status: ReporterPrivacyRequest['status']
+  request_status?: ReporterPrivacyRequest['status']
   job_id?: string
   job_status?: PrivacyExport['status']
   job_expires_at?: string

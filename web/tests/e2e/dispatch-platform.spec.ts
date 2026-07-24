@@ -423,6 +423,26 @@ function createMockState() {
       portability_assessment: undefined,
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
+    }, {
+      id: 'privacy-case-member-access',
+      public_id: 'PRV-MEMBER1',
+      subject_type: 'member',
+      right_type: 'access',
+      controller_role: 'controller',
+      status: 'in_progress',
+      subject_member_id: 'member-2',
+      requested_by_member_id: 'member-1',
+      owner_member_id: 'member-1',
+      verification_method: 'workspace_membership',
+      verified_at: '2026-07-21T12:00:00.000Z',
+      received_at: '2026-07-21T12:00:00.000Z',
+      deadline_at: '2026-08-20T12:00:00.000Z',
+      paused_seconds: 0,
+      scope: { intake_channel: 'backoffice' },
+      legal_holds: [],
+      execution: undefined,
+      created_at: '2026-07-21T12:00:00.000Z',
+      updated_at: '2026-07-21T12:00:00.000Z',
     }] as PrivacyCase[],
     reviewItems: [] as Array<{
       id: string
@@ -1353,7 +1373,7 @@ async function installMockAPI(page: Page, state: MockState) {
       if (!item) return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
       item.execution = {
         right_type: item.right_type,
-        request_status: 'processing',
+        ...(item.subject_type === 'reporter' ? { request_status: 'processing' as const } : {}),
         job_id: `${item.id}-job`,
         job_status: 'pending',
         started_at: now,
@@ -4054,6 +4074,30 @@ test('portability assessment gates the reporter archive', async ({ page }, testI
   })
   await portabilityCase.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-portability-assessment-${testInfo.project.name}`)
+})
+
+test('member access case queues a member-scoped archive', async ({ page }, testInfo) => {
+  const state = createMockState()
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Data & privacy' }).click()
+
+  const memberCase = page.locator('.privacy-case-entry', { hasText: 'PRV-MEMBER1' })
+  await expect(memberCase).toContainText('Jamie Torres')
+  await memberCase.getByTitle('Toggle case details').click()
+  await expect(memberCase.getByRole('button', { name: 'Start access export' })).toBeEnabled()
+
+  await memberCase.getByRole('button', { name: 'Start access export' }).click()
+  await expect(page.getByRole('status')).toContainText('access export was queued')
+  expect(state.privacyCases.find(item => item.id === 'privacy-case-member-access')?.execution).toMatchObject({
+    right_type: 'access',
+    job_status: 'pending',
+  })
+  expect(
+    state.privacyCases.find(item => item.id === 'privacy-case-member-access')?.execution?.request_status,
+  ).toBeUndefined()
+  await memberCase.scrollIntoViewIfNeeded()
+  await capture(page, testInfo, `settings-member-access-${testInfo.project.name}`)
 })
 
 test('access audit log lists events, applies filters, and exports CSV', async ({ page }, testInfo) => {

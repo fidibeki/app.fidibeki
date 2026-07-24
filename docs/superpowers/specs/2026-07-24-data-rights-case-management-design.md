@@ -147,8 +147,14 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   assessment with an approved category set and `jsonl_zip` format before execution. Partial
   approvals filter unapproved files from the generated archive instead of treating the assessment
   as display-only metadata.
-- Remaining slice 2 work includes member access and authentication/profile discovery, field-level
-  rectification with derived-data invalidation, itemized erasure exceptions, and first-class
-  partial/refusal execution evidence.
+- The member-access portion of slice 2b2 is implemented through migrations 89 and 90. A verified
+  member access case owns a retryable `member_export` job and authenticated download. Its
+  repeatable-read archive includes the member profile, session and magic-link metadata without
+  secrets, subject-authored activity, subject-addressed notifications, sanitized access events,
+  and case history. The allowlist excludes other members' content, hashes/tokens, raw audit
+  payloads, queue data, avatar binary, and internal legal-review notes. Start, completion, terminal
+  failure, retry, tenant isolation, and omission behavior are audited and tested.
+- Remaining slice 2 work includes field-level rectification with derived-data invalidation,
+  itemized erasure exceptions, and first-class partial/refusal execution evidence.
 - Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
   workflow remain pending.

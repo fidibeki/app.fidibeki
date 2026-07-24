@@ -372,6 +372,67 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	if invalidJob.Code != http.StatusNotFound {
 		t.Errorf("invalid export retry = %d body=%s", invalidJob.Code, invalidJob.Body.String())
 	}
+
+	privacyStore := Store{Database: database}
+	memberCase, _, _, err := privacyStore.CreateCase(
+		ctx, database, tenantID, ownerID, "http-member-access",
+		CreateCaseInput{
+			SubjectType:     SubjectMember,
+			RightType:       RightAccess,
+			ControllerRole:  RoleController,
+			SubjectMemberID: ownerID,
+			OwnerMemberID:   ownerID,
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatalf("create HTTP member access case: %v", err)
+	}
+	memberExecution, _, err := privacyStore.StartCaseExecution(
+		ctx, database, tenantID, memberCase.ID, ownerID,
+		"http-member-access-execution", now,
+	)
+	if err != nil || memberExecution.JobID == nil {
+		t.Fatalf("start HTTP member access case = %#v error=%v", memberExecution, err)
+	}
+	memberObjectKey := fmt.Sprintf(
+		"tenants/%s/exports/%s.zip", tenantID, *memberExecution.JobID,
+	)
+	if _, err := database.Exec(ctx, `
+		UPDATE privacy_jobs
+		SET status = 'completed', started_at = $3, heartbeat_at = $3,
+		    completed_at = $3, expires_at = $3::timestamptz + interval '7 days',
+		    object_key = $4, object_size_bytes = 4096, context_privacy_version = 1
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, *memberExecution.JobID, now, memberObjectKey); err != nil {
+		t.Fatalf("complete HTTP member access export: %v", err)
+	}
+	memberDownload := privacyHTTPRequest(
+		handler, ownerToken, http.MethodPost,
+		"/v1/privacy/cases/"+memberCase.ID+"/execution/download",
+	)
+	if memberDownload.Code != http.StatusOK ||
+		memberDownload.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("member case download = %d headers=%#v body=%s",
+			memberDownload.Code, memberDownload.Header(), memberDownload.Body.String())
+	}
+	if downloads.downloadKey != memberObjectKey ||
+		downloads.downloadFilename != fmt.Sprintf(
+			"fidibeki-http-privacy-%s-access-export.zip",
+			strings.ToLower(memberCase.PublicID),
+		) {
+		t.Errorf("member download request = key %q filename %q",
+			downloads.downloadKey, downloads.downloadFilename)
+	}
+	crossTenantMemberDownload := privacyHTTPRequest(
+		handler, otherToken, http.MethodPost,
+		"/v1/privacy/cases/"+memberCase.ID+"/execution/download",
+	)
+	if crossTenantMemberDownload.Code != http.StatusForbidden {
+		t.Errorf("cross-tenant member download = %d body=%s",
+			crossTenantMemberDownload.Code, crossTenantMemberDownload.Body.String())
+	}
+
 	retryCreated := privacyHTTPRequest(handler, ownerToken, http.MethodPost, "/v1/privacy/exports")
 	var retryEnvelope struct {
 		Export Job `json:"export"`

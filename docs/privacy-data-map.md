@@ -12,7 +12,7 @@ customer-facing claims.
 | Category | Examples | Technical purpose | Primary store | Effective technical retention |
 |---|---|---|---|---|
 | Workspace identity | Workspace name, slug, plan, status | Tenant routing, authorization, billing state | PostgreSQL | Workspace lifetime and deletion workflow |
-| Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Operational lifecycle; secrets and hashes are never exported |
+| Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Operational lifecycle; a verified member-access archive can include allowlisted profile and session/magic-link metadata, but never refresh hashes, token hashes, or credentials |
 | Projects and widget configuration | Domains, rules, targeting, appearance, form blocks | Decide where and how feedback is collected | PostgreSQL | Workspace lifetime |
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | Workspace lifetime until explicit workspace deletion or supported anonymization |
 | Reporter contact and consent | Normalized email; notification preference; structured consent evidence (purpose, notice version, locale, source); server-authoritative grant/withdrawn timestamps | Verification and opted-in status communication | PostgreSQL | Email and preference until anonymization, workspace deletion, or unsubscribe; non-identifying evidence metadata (purpose/notice version/locale/source/timestamps) is retained after withdrawal or anonymization as the minimum audit record proving consent was collected and honored |
@@ -28,7 +28,7 @@ customer-facing claims.
 | AI processing | Rule-owned authorization; minimized submitted text or explicitly selected media; redacted advisory results; provider/model/purpose/category/status evidence; category-only redaction manifest; external file deletion evidence | Suggest triage and analyze only the input categories explicitly enabled for the matching rule | PostgreSQL, private storage, Google Gemini Developer API when explicitly enabled | Existing and new rules default off. Source follows workflow/media retention; reporter anonymization removes derived values, manifests, and runs. Provider files are deleted immediately after processing with a retry ledger; Google documents a 48-hour automatic expiry as a fallback, not Fidibeki's deletion target. |
 | Billing | Plan/subscription state and external customer/subscription references | Entitlement, invoicing, dunning, and deletion scheduling | PostgreSQL and configured billing provider | Contractual/accounting review required; billing identifiers are never exported |
 | Audit and observability | Actor/resource IDs, change metadata, request/error telemetry | Security investigation, accountability, and service operation | PostgreSQL and configured telemetry provider | Technical operational lifecycle; avoid direct reporter email in privacy audit payloads |
-| Privacy jobs and requests | Hashed verification token, one-way email digest, job state, counts, private archive key | Verified access/anonymization, export, retry, and audit | PostgreSQL, Asynq/Redis, private object storage | Archives 7 days; unverified requests 48 hours; verified access 30 days |
+| Privacy cases, jobs, and requests | Case subject/right/evidence, hashed reporter verification token, one-way email digest, job state, counts, private archive key | Verified reporter/member access, assessed portability, anonymization execution, retry, and audit | PostgreSQL, Asynq/Redis, private object storage | Archives 7 days; unverified reporter requests 48 hours; verified reporter access 30 days; case lifecycle follows the approved rights-operation policy |
 
 ## Technical Data Flows
 
@@ -41,9 +41,11 @@ customer-facing claims.
    are not included in exports.
 4. Configured email, AI, billing, telemetry, and integration providers receive only the data needed
    for their enabled operation.
-5. Workspace and verified reporter exports are explicit allowlists. They omit credentials, token
-   hashes, API keys, sessions, magic links, billing provider identifiers, internal queue payloads,
-   and attachment/replay binaries.
+5. Workspace, verified reporter, and verified member-access exports are explicit allowlists.
+   Workspace and reporter exports omit authentication sessions and magic links entirely. A
+   member-access export includes only sanitized session/magic-link metadata and omits refresh/token
+   hashes. All scopes omit credentials, API keys, billing provider identifiers, internal queue
+   payloads, and attachment/replay/avatar binaries.
 
 ## Configurable Providers
 
@@ -71,6 +73,11 @@ be verified independently.
 - Object deletion precedes manifest mutation. Partial storage failures leave the database candidate
   retryable.
 - Export downloads are private, authorization is rechecked, and signed links last ten minutes.
+- Member-access exports are linked to the verified tenant-scoped case, run under a repeatable-read
+  snapshot, and expose only an allowlist of the subject's profile/authentication metadata,
+  subject-authored activity, subject-addressed notification metadata, sanitized access events, and
+  case history. Other member content, raw audit payloads, refresh/token hashes, and avatar binary
+  are not copied.
 - Privacy request and archive expiry is append-only audited without storing raw reporter email in
   audit data.
 - Widget-issued identifiers are not intended for personal fingerprinting and are never derived from

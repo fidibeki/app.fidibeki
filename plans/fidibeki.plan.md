@@ -553,9 +553,18 @@ was removed from the staging test tenant.
         idempotent, tenant-isolated, reasoned, and approve an explicit data-category set and
         `jsonl_zip` format before execution; partial approvals filter unapproved files from the
         generated archive. Bilingual desktop/mobile E2E covers assessment and execution gating.
-      - [ ] Slice 2b2: member access, broader authentication/profile discovery, field-level
-        rectification and derived-data invalidation, itemized erasure exceptions, and explicit
-        partial/refusal execution evidence.
+      - [ ] Slice 2b2: member access, rectification, erasure exceptions, and decision evidence.
+        - [x] Member access cases queue a case-linked `member_export` job and produce a
+          repeatable-read, tenant-scoped allowlist archive with the member profile, session and
+          magic-link metadata without hashes/tokens, subject-authored issue activity,
+          subject-addressed mentions/notifications, sanitized access events, and case history.
+          Other members' content, raw audit payloads, credentials, queue data, avatar binary, and
+          internal legal-review notes are explicitly omitted. Scheduling, completion, terminal
+          failure, retry, authenticated download, isolation, and the omission contract are audited
+          and covered through migrations `89` and `90`, PostgreSQL integration tests, and
+          bilingual desktop/mobile backoffice E2E.
+        - [ ] Implement field-level rectification with derived-data invalidation, itemized erasure
+          exceptions, and explicit partial/refusal execution evidence.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
