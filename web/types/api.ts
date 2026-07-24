@@ -904,6 +904,38 @@ export interface PrivacyFeedbackRectification {
   created_at: string
 }
 
+export type PrivacyRecipientActionKind = 'rectification' | 'erasure'
+export type PrivacyRecipientActionStatus = 'pending' | 'processing' | 'sent' | 'failed'
+
+export interface PrivacyRecipientDelivery {
+  id: string
+  attempt_number: number
+  status: PrivacyRecipientActionStatus
+  provider_message_id?: string
+  error_message?: string
+  started_at: string
+  completed_at?: string
+}
+
+export interface PrivacyRecipientAction {
+  id: string
+  privacy_case_id: string
+  action_kind: PrivacyRecipientActionKind
+  recipient_name: string
+  recipient_email: string
+  instruction_summary: string
+  status: PrivacyRecipientActionStatus
+  attempts: number
+  last_error?: string
+  provider_message_id?: string
+  last_attempt_at?: string
+  sent_at?: string
+  created_by_member_id: string
+  created_at: string
+  updated_at: string
+  delivery_attempts: PrivacyRecipientDelivery[]
+}
+
 export interface PrivacyCase {
   id: string
   public_id: string
@@ -933,6 +965,7 @@ export interface PrivacyCase {
   portability_assessment?: PrivacyPortabilityAssessment
   rectifications?: PrivacyCaseRectification[]
   feedback_rectifications?: PrivacyFeedbackRectification[]
+  recipient_actions?: PrivacyRecipientAction[]
   created_at: string
   updated_at: string
 }

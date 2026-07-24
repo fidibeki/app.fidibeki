@@ -81,12 +81,15 @@ const (
 )
 
 var (
-	ErrCaseTransition           = errors.New("privacy case transition is invalid")
-	ErrCaseReasonRequired       = errors.New("privacy case decision reason is required")
-	ErrCaseExecutionUnsupported = errors.New("privacy case execution is not supported")
-	ErrLegalHoldActive          = errors.New("privacy case has an active legal hold")
-	ErrIdempotencyConflict      = errors.New("idempotency key was reused with different input")
-	ErrProcessingRestricted     = errors.New("processing is restricted for this data subject")
+	ErrCaseTransition              = errors.New("privacy case transition is invalid")
+	ErrCaseReasonRequired          = errors.New("privacy case decision reason is required")
+	ErrCaseExecutionUnsupported    = errors.New("privacy case execution is not supported")
+	ErrLegalHoldActive             = errors.New("privacy case has an active legal hold")
+	ErrIdempotencyConflict         = errors.New("idempotency key was reused with different input")
+	ErrProcessingRestricted        = errors.New("processing is restricted for this data subject")
+	ErrRecipientActionEvidence     = errors.New("privacy recipient action requires completed evidence")
+	ErrRecipientActionNotRetryable = errors.New("privacy recipient action is not retryable")
+	ErrRecipientDeliveryInProgress = errors.New("privacy recipient delivery is already in progress")
 )
 
 type PrivacyCase struct {
@@ -120,6 +123,7 @@ type PrivacyCase struct {
 	PortabilityAssessment   *PortabilityAssessment  `json:"portability_assessment,omitempty"`
 	Rectifications          []CaseRectification     `json:"rectifications"`
 	FeedbackRectifications  []FeedbackRectification `json:"feedback_rectifications"`
+	RecipientActions        []RecipientAction       `json:"recipient_actions"`
 	CreatedAt               time.Time               `json:"created_at"`
 	UpdatedAt               time.Time               `json:"updated_at"`
 }
@@ -250,6 +254,75 @@ type RecordFeedbackRectificationInput struct {
 	FeedbackID  string
 	Description string
 	Reason      string
+}
+
+type RecipientActionKind string
+
+const (
+	RecipientActionRectification RecipientActionKind = "rectification"
+	RecipientActionErasure       RecipientActionKind = "erasure"
+)
+
+type RecipientActionStatus string
+
+const (
+	RecipientActionPending    RecipientActionStatus = "pending"
+	RecipientActionProcessing RecipientActionStatus = "processing"
+	RecipientActionSent       RecipientActionStatus = "sent"
+	RecipientActionFailed     RecipientActionStatus = "failed"
+)
+
+type RecipientDeliveryStatus string
+
+const (
+	RecipientDeliveryPending RecipientDeliveryStatus = "pending"
+	RecipientDeliverySent    RecipientDeliveryStatus = "sent"
+	RecipientDeliveryFailed  RecipientDeliveryStatus = "failed"
+)
+
+type RecipientAction struct {
+	ID                 string                `json:"id"`
+	PrivacyCaseID      string                `json:"privacy_case_id"`
+	ActionKind         RecipientActionKind   `json:"action_kind"`
+	RecipientName      string                `json:"recipient_name"`
+	RecipientEmail     string                `json:"recipient_email"`
+	InstructionSummary string                `json:"instruction_summary"`
+	Status             RecipientActionStatus `json:"status"`
+	Attempts           int                   `json:"attempts"`
+	LastError          *string               `json:"last_error,omitempty"`
+	ProviderMessageID  *string               `json:"provider_message_id,omitempty"`
+	LastAttemptAt      *time.Time            `json:"last_attempt_at,omitempty"`
+	SentAt             *time.Time            `json:"sent_at,omitempty"`
+	CreatedByMemberID  string                `json:"created_by_member_id"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	DeliveryAttempts   []RecipientDelivery   `json:"delivery_attempts"`
+}
+
+type RecipientDelivery struct {
+	ID                string                  `json:"id"`
+	AttemptNumber     int                     `json:"attempt_number"`
+	Status            RecipientDeliveryStatus `json:"status"`
+	ProviderMessageID *string                 `json:"provider_message_id,omitempty"`
+	ErrorMessage      *string                 `json:"error_message,omitempty"`
+	StartedAt         time.Time               `json:"started_at"`
+	CompletedAt       *time.Time              `json:"completed_at,omitempty"`
+}
+
+type CreateRecipientActionInput struct {
+	ActionKind         RecipientActionKind
+	RecipientName      string
+	RecipientEmail     string
+	InstructionSummary string
+}
+
+func ParseRecipientActionKind(value string) (RecipientActionKind, error) {
+	switch kind := RecipientActionKind(strings.TrimSpace(value)); kind {
+	case RecipientActionRectification, RecipientActionErasure:
+		return kind, nil
+	default:
+		return "", ErrInvalidRequest
+	}
 }
 
 type CreateCaseInput struct {

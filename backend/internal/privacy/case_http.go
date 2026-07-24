@@ -403,6 +403,77 @@ func (handler *HTTPHandler) applyFeedbackRectification(w http.ResponseWriter, r 
 	})
 }
 
+func (handler *HTTPHandler) createRecipientAction(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body struct {
+		ActionKind         string `json:"action_kind"`
+		RecipientName      string `json:"recipient_name"`
+		RecipientEmail     string `json:"recipient_email"`
+		InstructionSummary string `json:"instruction_summary"`
+	}
+	if !decodeCaseJSON(w, r, &body) {
+		return
+	}
+	actionKind, err := ParseRecipientActionKind(body.ActionKind)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	action, created, err := handler.options.Store.CreateRecipientAction(
+		r.Context(), query, resolved.ID, caseID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), CreateRecipientActionInput{
+			ActionKind: actionKind, RecipientName: body.RecipientName,
+			RecipientEmail:     body.RecipientEmail,
+			InstructionSummary: body.InstructionSummary,
+		}, handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+	}
+	api.WriteJSON(w, status, map[string]any{
+		"recipient_action": action, "created": created,
+	})
+}
+
+func (handler *HTTPHandler) retryRecipientAction(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := privacyCaseID(w, r)
+	if !ok {
+		return
+	}
+	actionID, ok := privacyRecipientActionID(w, r)
+	if !ok {
+		return
+	}
+	resolved, query, claims, ok := privacyRequestState(w, r)
+	if !ok {
+		return
+	}
+	action, retried, err := handler.options.Store.RetryRecipientAction(
+		r.Context(), query, resolved.ID, caseID, actionID, claims.Subject,
+		r.Header.Get("Idempotency-Key"), handler.now(),
+	)
+	if err != nil {
+		handler.writeError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"recipient_action": action, "retried": retried,
+	})
+}
+
 func (handler *HTTPHandler) startCaseExecution(w http.ResponseWriter, r *http.Request) {
 	caseID, ok := privacyCaseID(w, r)
 	if !ok {
@@ -532,6 +603,18 @@ func privacyLegalHoldID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return holdID, true
+}
+
+func privacyRecipientActionID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	actionID := strings.TrimSpace(chi.URLParam(r, "actionID"))
+	if _, err := uuid.Parse(actionID); err != nil {
+		api.WriteError(
+			w, http.StatusNotFound, api.CodeNotFound,
+			"privacy recipient action not found", nil,
+		)
+		return "", false
+	}
+	return actionID, true
 }
 
 func privacyCaseVerificationMessage(

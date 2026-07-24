@@ -30,6 +30,7 @@ type Options struct {
 	FileDeleteHandler             asynq.HandlerFunc
 	AIErrorHandler                asynq.ErrorHandler
 	ReporterHandler               asynq.HandlerFunc
+	RecipientHandler              asynq.HandlerFunc
 	LifecycleHandler              asynq.HandlerFunc
 	ReplayMergeHandler            asynq.HandlerFunc
 	ReplayVerificationHandler     asynq.HandlerFunc
@@ -64,7 +65,8 @@ func New(options Options) (*Worker, error) {
 	}
 	if options.PipelineHandler == nil || options.TextHandler == nil ||
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
-		options.AIErrorHandler == nil || options.ReporterHandler == nil || options.LifecycleHandler == nil ||
+		options.AIErrorHandler == nil || options.ReporterHandler == nil ||
+		options.RecipientHandler == nil || options.LifecycleHandler == nil ||
 		options.ReplayMergeHandler == nil || options.ReplayVerificationHandler == nil ||
 		options.AttachmentVerificationHandler == nil ||
 		options.IntegrationHandler == nil || options.PrivacyExportHandler == nil {
@@ -82,6 +84,7 @@ func New(options Options) (*Worker, error) {
 		return nil, err
 	}
 	emailMux.HandleFunc(issue.TaskReporterNotify, options.ReporterHandler)
+	emailMux.HandleFunc(privacy.TaskRecipientNotify, options.RecipientHandler)
 	emailMux.HandleFunc(email.TaskLifecycleEmail, options.LifecycleHandler)
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)

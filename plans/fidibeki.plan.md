@@ -593,6 +593,21 @@ was removed from the staging test tenant.
           desktop/mobile E2E coverage.
       - [ ] Slice 3: recipient action tracking, correction/erasure notifications, communications,
         failure recovery, and the complete bilingual case-detail workflow.
+        - [x] First operational vertical: migration `95` adds tenant-scoped recipient actions and
+          per-attempt delivery evidence for verified rectification and settled erasure cases.
+          Creation is blocked until the corresponding correction or erasure evidence exists,
+          idempotently writes the action, case activity, safe access audit, and outbox event in the
+          request transaction, and never treats enqueueing as delivery. The email worker records a
+          provider-confirmed `sent` result, stores a bounded generic failure instead of provider
+          detail, prevents concurrent automatic/manual retry sends with a short processing lease,
+          and uses one provider idempotency key per action. The message contains only workspace,
+          public case reference, action kind, and the operator-approved instruction — never raw
+          feedback, subject/reporter email, or legal-review notes. The bilingual case workflow
+          exposes evidence-gated creation, pending/processing/sent/failed state, attempt count,
+          failure recovery, and retry. PostgreSQL integration, worker/resolver, frontend
+          typecheck, and desktop/mobile E2E cover the vertical.
+        - [ ] Add subject-facing case communications and the remaining complete case-detail
+          timeline/scope/identity presentation before closing Slice 3 and #60.
     - [x] #61: add explicit, auditable AI governance, provider/purpose/input controls, sensitive
       data quarantine, policy disablement, and external provider-assessment gates.
     - [ ] #62: enforce lifecycle retention and legal holds for workflow, authentication,
@@ -647,6 +662,8 @@ was removed from the staging test tenant.
         tenant-visible indicator/filter for support access reason and case in the audit UI (the
         `data` blob is API-visible but not yet rendered), and add anomaly signals specific to
         platform-admin/support access volume before closing #65.
+      - [ ] Tighten attachment support-access outcome evidence so an object-storage `OpenObject`
+        failure cannot remain represented as a successful access after metadata lookup.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
     - [x] #67: refine language and timezone preferences layout.

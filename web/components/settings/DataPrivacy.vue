@@ -8,10 +8,12 @@ import {
   Download,
   FileArchive,
   LockKeyhole,
+  MailCheck,
   MoveRight,
   PencilLine,
   Play,
   RefreshCw,
+  Send,
   ShieldAlert,
   ShieldCheck,
   UnlockKeyhole,
@@ -29,6 +31,7 @@ import type {
   PrivacyFeedbackRectification,
   PrivacyPortabilityDataCategory,
   PrivacyPortabilityDecision,
+  PrivacyRecipientAction,
   PrivacyRightType,
   PrivacySubjectType,
   RectifiableFeedback,
@@ -117,6 +120,12 @@ type FeedbackRectificationDraft = {
 const rectifiableFeedbacks = ref<Record<string, RectifiableFeedback[]>>({})
 const feedbackRectificationDrafts = ref<Record<string, FeedbackRectificationDraft>>({})
 const rectifiableFeedbackLoading = ref<Record<string, boolean>>({})
+type RecipientActionDraft = {
+  recipientName: string
+  recipientEmail: string
+  instructionSummary: string
+}
+const recipientActionDrafts = ref<Record<string, RecipientActionDraft>>({})
 type CaseDecisionDraft = {
   status: PrivacyCaseStatus
   decisionSummary: string
@@ -301,6 +310,9 @@ async function toggleCase(item: PrivacyCase) {
   if (caseCanRectifyReporter(item) && !rectifiableFeedbacks.value[item.id]) {
     await loadRectifiableFeedbacks(item)
   }
+  if (item.right_type === 'rectification' || item.right_type === 'erasure') {
+    ensureRecipientActionDraft(item)
+  }
 }
 
 function ensureRectificationDraft(item: PrivacyCase) {
@@ -453,6 +465,75 @@ async function applyFeedbackRectification(item: PrivacyCase) {
   })
 }
 
+function caseRecipientActionEligible(item: PrivacyCase) {
+  if (!item.verified_at) return false
+  if (item.right_type === 'rectification') {
+    return Boolean(item.rectifications?.length || item.feedback_rectifications?.length)
+  }
+  return item.right_type === 'erasure'
+    && ['completed', 'partially_fulfilled'].includes(item.status)
+    && erasureExecutionSettled(item)
+}
+
+function ensureRecipientActionDraft(item: PrivacyCase) {
+  if (recipientActionDrafts.value[item.id]) return
+  recipientActionDrafts.value = {
+    ...recipientActionDrafts.value,
+    [item.id]: {
+      recipientName: '',
+      recipientEmail: '',
+      instructionSummary: '',
+    },
+  }
+}
+
+function recipientActionReady(item: PrivacyCase) {
+  const draft = recipientActionDrafts.value[item.id]
+  return caseRecipientActionEligible(item)
+    && Boolean(draft?.recipientName.trim())
+    && Boolean(draft?.recipientEmail.trim())
+    && Boolean(draft?.instructionSummary.trim())
+}
+
+async function createRecipientAction(item: PrivacyCase) {
+  if (!canWrite('tenant:update') || !recipientActionReady(item)) return
+  const draft = recipientActionDrafts.value[item.id]
+  await runAction(`recipient-action:${item.id}`, async () => {
+    await $apiFetch<{ recipient_action: PrivacyRecipientAction }>(
+      `/v1/privacy/cases/${item.id}/recipient-actions`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: {
+          action_kind: item.right_type,
+          recipient_name: draft.recipientName.trim(),
+          recipient_email: draft.recipientEmail.trim(),
+          instruction_summary: draft.instructionSummary.trim(),
+        },
+      },
+    )
+    recipientActionDrafts.value = {
+      ...recipientActionDrafts.value,
+      [item.id]: { recipientName: '', recipientEmail: '', instructionSummary: '' },
+    }
+    actionNotice.value = t('admin.privacy.settings.cases.recipientQueued')
+    await refresh()
+  })
+}
+
+async function retryRecipientAction(item: PrivacyCase, action: PrivacyRecipientAction) {
+  if (!canWrite('tenant:update') || action.status !== 'failed') return
+  await runAction(`recipient-action-retry:${action.id}`, async () => {
+    await $apiFetch(
+      `/v1/privacy/cases/${item.id}/recipient-actions/${action.id}/retry`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      },
+    )
+    actionNotice.value = t('admin.privacy.settings.cases.recipientRetryQueued')
+    await refresh()
+  })
+}
+
 async function startCaseExecution(item: PrivacyCase) {
   if (!canWrite('tenant:update') || !caseCanExecute(item)) return
   if (item.right_type === 'erasure'
@@ -549,7 +630,7 @@ function statusLabel(value: string) {
 }
 
 function statusTone(value: string) {
-  if (value === 'completed') return 'success'
+  if (value === 'completed' || value === 'sent') return 'success'
   if (value === 'failed' || value === 'expired') return 'danger'
   return 'pending'
 }
@@ -983,6 +1064,51 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                   </div>
                   <p v-else>{{ t('admin.privacy.settings.cases.erasureNoExceptions') }}</p>
                 </section>
+                <section v-if="item.right_type === 'rectification' || item.right_type === 'erasure'" class="privacy-recipient-actions">
+                  <header>
+                    <div>
+                      <p class="app-eyebrow">{{ t('admin.privacy.settings.cases.recipientEyebrow') }}</p>
+                      <b>{{ t('admin.privacy.settings.cases.recipientTitle') }}</b>
+                      <small>{{ t('admin.privacy.settings.cases.recipientDescription') }}</small>
+                    </div>
+                    <MailCheck :size="17" />
+                  </header>
+                  <p v-if="!caseRecipientActionEligible(item)" class="privacy-recipient-gate">{{ t('admin.privacy.settings.cases.recipientEvidenceRequired') }}</p>
+                  <form v-else-if="recipientActionDrafts[item.id]" @submit.prevent="createRecipientAction(item)">
+                    <label>{{ t('admin.privacy.settings.cases.recipientName') }}
+                      <input v-model.trim="recipientActionDrafts[item.id].recipientName" class="app-input" maxlength="200" required />
+                    </label>
+                    <label>{{ t('admin.privacy.settings.cases.recipientEmail') }}
+                      <input v-model.trim="recipientActionDrafts[item.id].recipientEmail" class="app-input" type="email" maxlength="320" required />
+                    </label>
+                    <label class="privacy-recipient-instruction">{{ t('admin.privacy.settings.cases.recipientInstruction') }}
+                      <textarea v-model="recipientActionDrafts[item.id].instructionSummary" class="app-textarea" maxlength="2000" required />
+                    </label>
+                    <button class="app-button" type="submit" :disabled="Boolean(actionPending) || !recipientActionReady(item)">
+                      <Send :size="14" />{{ actionPending === `recipient-action:${item.id}` ? t('admin.common.queuing') : t('admin.privacy.settings.cases.sendRecipientAction') }}
+                    </button>
+                  </form>
+                  <div class="privacy-recipient-history">
+                    <p v-if="!item.recipient_actions?.length">{{ t('admin.privacy.settings.cases.noRecipientActions') }}</p>
+                    <article v-for="action in item.recipient_actions || []" :key="action.id">
+                      <div class="privacy-recipient-summary">
+                        <b>{{ action.recipient_name }}</b>
+                        <span>{{ action.recipient_email }}</span>
+                        <small>{{ t(`admin.privacy.settings.cases.recipientKinds.${action.action_kind}`) }} · {{ dateTime(action.created_at) }} · {{ memberLabel(action.created_by_member_id) }}</small>
+                      </div>
+                      <p>{{ action.instruction_summary }}</p>
+                      <div class="privacy-recipient-delivery">
+                        <span class="privacy-status" :data-tone="statusTone(action.status)"><i />{{ statusLabel(action.status) }}</span>
+                        <small>{{ plural('admin.common.attempts', action.attempts, { count: action.attempts }) }}</small>
+                        <small v-if="action.sent_at">{{ t('admin.privacy.settings.cases.recipientSentAt', { date: dateTime(action.sent_at) }) }}</small>
+                        <small v-if="action.last_error">{{ action.last_error }}</small>
+                        <button v-if="action.status === 'failed'" class="app-button" type="button" :disabled="Boolean(actionPending)" @click="retryRecipientAction(item, action)">
+                          <RefreshCw :size="14" />{{ t('admin.privacy.settings.cases.retryRecipientAction') }}
+                        </button>
+                      </div>
+                    </article>
+                  </div>
+                </section>
                 <section class="privacy-case-decision">
                   <header>
                     <div><p class="app-eyebrow">{{ t('admin.privacy.settings.cases.decision') }}</p><b>{{ t('admin.privacy.settings.cases.decisionTitle') }}</b></div>
@@ -1293,6 +1419,25 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-erasure-items code { overflow-wrap: anywhere; color: var(--muted); font-family: inherit; font-size: 8px; }
 .privacy-erasure-items small { color: var(--muted); font-size: 8px; }
 .privacy-erasure-items p { margin: 2px 0 0; color: var(--ink-soft); font-size: 9px; line-height: 1.5; }
+.privacy-recipient-actions { display: grid; grid-column: 1 / -1; gap: 11px; padding: 14px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-recipient-actions > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; color: var(--teal); }
+.privacy-recipient-actions > header > div { display: grid; gap: 4px; }
+.privacy-recipient-actions > header b { color: var(--ink); font-size: 11px; }
+.privacy-recipient-actions > header small { max-width: 700px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-recipient-actions > form { display: grid; grid-template-columns: minmax(160px, .65fr) minmax(220px, .85fr) minmax(280px, 1.4fr) auto; align-items: end; gap: 10px; }
+.privacy-recipient-actions > form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
+.privacy-recipient-actions .app-textarea { min-height: 68px; resize: vertical; }
+.privacy-recipient-gate { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.privacy-recipient-history { display: grid; border-top: 1px solid var(--line); }
+.privacy-recipient-history > p { margin: 9px 0 0; color: var(--muted); font-size: 9px; }
+.privacy-recipient-history article { display: grid; grid-template-columns: minmax(190px, .7fr) minmax(260px, 1.3fr) minmax(150px, .55fr); align-items: start; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.privacy-recipient-history article:last-child { border-bottom: 0; }
+.privacy-recipient-history article > p { margin: 0; color: var(--ink-soft); font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+.privacy-recipient-summary, .privacy-recipient-delivery { display: grid; gap: 4px; min-width: 0; }
+.privacy-recipient-summary b { overflow-wrap: anywhere; color: var(--ink-soft); font-size: 10px; }
+.privacy-recipient-summary span { overflow-wrap: anywhere; color: var(--muted); font-size: 9px; }
+.privacy-recipient-summary small, .privacy-recipient-delivery small { color: var(--muted); font-size: 8px; line-height: 1.4; }
+.privacy-recipient-delivery .app-button { justify-self: start; margin-top: 3px; }
 .privacy-case-decision form { display: grid; grid-template-columns: minmax(150px, .5fr) minmax(240px, 1fr) auto; align-items: end; gap: 10px; }
 .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: minmax(150px, .5fr) repeat(3, minmax(210px, 1fr)) auto; }
 .privacy-case-decision form > label { display: grid; gap: 5px; color: var(--ink-soft); font-size: 9px; font-weight: 750; }
@@ -1363,6 +1508,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-feedback-rectification-form { grid-template-columns: 1fr 1fr !important; }
   .privacy-feedback-rectification-form .privacy-feedback-description { grid-column: 1 / -1; }
   .privacy-case-rectification > form .app-button { justify-self: end; }
+  .privacy-recipient-actions > form { grid-template-columns: 1fr 1fr; }
+  .privacy-recipient-instruction { grid-column: 1 / -1; }
+  .privacy-recipient-actions > form .app-button { justify-self: end; }
   .privacy-case-decision form, .privacy-case-decision .privacy-case-decision-form--evidence { grid-template-columns: 1fr 1fr; }
   .privacy-case-decision form .app-button { justify-self: end; }
   .privacy-case-execution { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -1394,6 +1542,10 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
   .privacy-feedback-rectification-history > svg { transform: rotate(90deg); }
   .privacy-case-rectification > form .app-button { width: 100%; }
   .privacy-case-erasure-review > header, .privacy-case-decision > header { flex-direction: column; }
+  .privacy-recipient-actions > header { flex-direction: row; }
+  .privacy-recipient-actions > form, .privacy-recipient-history article { grid-template-columns: 1fr; }
+  .privacy-recipient-instruction { grid-column: auto; }
+  .privacy-recipient-actions > form .app-button { width: 100%; }
   .privacy-erasure-totals { grid-template-columns: 1fr 1fr; }
   .privacy-erasure-totals span:nth-child(2) { border-right: 0; }
   .privacy-erasure-totals span:nth-child(-n+2) { border-bottom: 1px solid var(--line); }

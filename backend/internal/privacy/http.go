@@ -45,6 +45,8 @@ type HTTPStore interface {
 	ApplyCaseRectification(context.Context, db.Querier, string, string, string, string, RecordCaseRectificationInput, time.Time) (CaseRectification, bool, error)
 	ListRectifiableFeedbacks(context.Context, db.Querier, string, string) ([]RectifiableFeedback, error)
 	ApplyFeedbackRectification(context.Context, db.Querier, string, string, string, string, RecordFeedbackRectificationInput, time.Time) (FeedbackRectification, bool, error)
+	CreateRecipientAction(context.Context, db.Querier, string, string, string, string, CreateRecipientActionInput, time.Time) (RecipientAction, bool, error)
+	RetryRecipientAction(context.Context, db.Querier, string, string, string, string, string, time.Time) (RecipientAction, bool, error)
 	StartCaseExecution(context.Context, db.Querier, string, string, string, string, time.Time) (CaseExecution, bool, error)
 }
 
@@ -122,6 +124,10 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Get("/v1/privacy/cases/{caseID}/rectifiable-feedbacks", handler.listRectifiableFeedbacks)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/feedback-rectifications", handler.applyFeedbackRectification)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/recipient-actions", handler.createRecipientAction)
+	router.With(append(read, appmiddleware.RequireWritable)...).
+		Post("/v1/privacy/cases/{caseID}/recipient-actions/{actionID}/retry", handler.retryRecipientAction)
 	router.With(append(read, appmiddleware.RequireWritable)...).
 		Post("/v1/privacy/cases/{caseID}/execute", handler.startCaseExecution)
 	router.With(read...).
@@ -474,6 +480,10 @@ func (handler *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, e
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "an active legal hold blocks this privacy operation", nil)
 	case errors.Is(err, ErrCaseExecutionUnsupported):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "this privacy case cannot use automated execution", nil)
+	case errors.Is(err, ErrRecipientActionNotRetryable):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy recipient action is not retryable", nil)
+	case errors.Is(err, ErrRecipientActionEvidence):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "privacy recipient action requires completed correction or erasure evidence", nil)
 	default:
 		handler.logger.ErrorContext(r.Context(), "privacy request failed", "error", err)
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)

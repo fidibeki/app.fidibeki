@@ -416,6 +416,17 @@ func attachCaseOperationalState(
 		cases[index].LegalHolds = []LegalHold{}
 		cases[index].Rectifications = []CaseRectification{}
 		cases[index].FeedbackRectifications = []FeedbackRectification{}
+		cases[index].RecipientActions = []RecipientAction{}
+	}
+	recipientActions, err := listRecipientActions(ctx, query, tenantID, caseIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range cases {
+		cases[index].RecipientActions = recipientActions[cases[index].ID]
+		if cases[index].RecipientActions == nil {
+			cases[index].RecipientActions = []RecipientAction{}
+		}
 	}
 	rows, err := query.Query(ctx, `
 		SELECT `+legalHoldSelectColumns("legal_hold")+`

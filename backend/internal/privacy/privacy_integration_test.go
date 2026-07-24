@@ -480,6 +480,84 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		t.Fatalf("invalid member rectification = %d body=%s",
 			invalidRectification.Code, invalidRectification.Body.String())
 	}
+	recipientActionPath := "/v1/privacy/cases/" + rectificationCase.ID + "/recipient-actions"
+	recipientActionBody := `{
+		"action_kind":"rectification",
+		"recipient_name":"Payroll processor",
+		"recipient_email":"privacy@processor.example",
+		"instruction_summary":"Correct the approved profile fields in the downstream record."
+	}`
+	recipientCreated := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, recipientActionPath,
+		recipientActionBody, "http-recipient-action-create",
+	)
+	var recipientEnvelope struct {
+		RecipientAction RecipientAction `json:"recipient_action"`
+		Created         bool            `json:"created"`
+	}
+	if recipientCreated.Code != http.StatusCreated ||
+		json.Unmarshal(recipientCreated.Body.Bytes(), &recipientEnvelope) != nil ||
+		!recipientEnvelope.Created || recipientEnvelope.RecipientAction.ID == "" {
+		t.Fatalf("create recipient action = %d body=%s",
+			recipientCreated.Code, recipientCreated.Body.String())
+	}
+	recipientReplay := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, recipientActionPath,
+		recipientActionBody, "http-recipient-action-create",
+	)
+	if recipientReplay.Code != http.StatusOK ||
+		!strings.Contains(recipientReplay.Body.String(), `"created":false`) {
+		t.Fatalf("replay recipient action = %d body=%s",
+			recipientReplay.Code, recipientReplay.Body.String())
+	}
+	recipientConflict := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, recipientActionPath,
+		`{
+			"action_kind":"rectification",
+			"recipient_name":"Payroll processor",
+			"recipient_email":"privacy@processor.example",
+			"instruction_summary":"Different approved instruction."
+		}`, "http-recipient-action-create",
+	)
+	if recipientConflict.Code != http.StatusConflict {
+		t.Fatalf("recipient action conflict = %d body=%s",
+			recipientConflict.Code, recipientConflict.Body.String())
+	}
+	listedCases := privacyHTTPRequest(handler, ownerToken, http.MethodGet, "/v1/privacy/cases")
+	if listedCases.Code != http.StatusOK ||
+		!strings.Contains(listedCases.Body.String(), recipientEnvelope.RecipientAction.ID) {
+		t.Fatalf("list recipient action = %d body=%s",
+			listedCases.Code, listedCases.Body.String())
+	}
+	if _, err := database.Exec(ctx, `
+		UPDATE privacy_recipient_actions
+		SET status = 'failed', last_error = 'email provider delivery failed',
+		    updated_at = $3
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, recipientEnvelope.RecipientAction.ID, now); err != nil {
+		t.Fatalf("prepare recipient action retry: %v", err)
+	}
+	recipientRetryPath := recipientActionPath + "/" +
+		recipientEnvelope.RecipientAction.ID + "/retry"
+	recipientRetried := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, recipientRetryPath,
+		`{}`, "http-recipient-action-retry",
+	)
+	if recipientRetried.Code != http.StatusAccepted ||
+		!strings.Contains(recipientRetried.Body.String(), `"retried":true`) ||
+		!strings.Contains(recipientRetried.Body.String(), `"status":"pending"`) {
+		t.Fatalf("retry recipient action = %d body=%s",
+			recipientRetried.Code, recipientRetried.Body.String())
+	}
+	recipientRetryReplay := privacyHTTPJSONIdempotentRequest(
+		handler, ownerToken, http.MethodPost, recipientRetryPath,
+		`{}`, "http-recipient-action-retry",
+	)
+	if recipientRetryReplay.Code != http.StatusAccepted ||
+		!strings.Contains(recipientRetryReplay.Body.String(), `"retried":false`) {
+		t.Fatalf("replay recipient action retry = %d body=%s",
+			recipientRetryReplay.Code, recipientRetryReplay.Body.String())
+	}
 
 	var reporterFeedbackID string
 	if err := database.QueryRow(ctx, `

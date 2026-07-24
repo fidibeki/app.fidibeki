@@ -579,7 +579,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: outbox.Store{Database: pools.Admin},
 		Resolver: outbox.MultiResolver{
 			outbox.FeedbackResolver{}, issue.OutboxResolver{Database: pools.Admin},
-			email.LifecycleResolver{},
+			email.LifecycleResolver{}, privacy.RecipientOutboxResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
 		},
 		Enqueuer: outboxQueue, Logger: logger,
@@ -687,6 +687,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: issue.Store{Database: pools.Admin}, Sender: sender, Tokens: reporterTokens,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	recipientHandler := privacy.RecipientHandler{
+		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
+		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+	}
 	lifecycleHandler := email.LifecycleHandler{
 		Database: pools.Admin, Sender: sender,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
@@ -738,6 +742,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
 		AIErrorHandler:                processor.ErrorHandler(),
 		ReporterHandler:               reporterHandler.Handler(),
+		RecipientHandler:              recipientHandler.Handler(),
 		LifecycleHandler:              lifecycleHandler.Handler(),
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),

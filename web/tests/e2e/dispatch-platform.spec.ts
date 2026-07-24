@@ -513,6 +513,7 @@ function createMockState() {
       scope: { intake_channel: 'backoffice' },
       legal_holds: [],
       rectifications: [],
+      recipient_actions: [],
       created_at: '2026-07-21T12:00:00.000Z',
       updated_at: '2026-07-21T12:00:00.000Z',
     }, {
@@ -1591,6 +1592,58 @@ async function installMockAPI(page: Page, state: MockState) {
         created_at: now,
       }
       return json(route, { portability_assessment: item.portability_assessment, created: true }, 201)
+    }
+    const recipientActionMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/recipient-actions$/,
+    )
+    if (recipientActionMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === recipientActionMatch[1])
+      if (!item) {
+        return json(route, { error: { code: 'not_found', message: 'privacy case not found' } }, 404)
+      }
+      const input = body()
+      const action = {
+        id: `${item.id}-recipient-${(item.recipient_actions?.length || 0) + 1}`,
+        privacy_case_id: item.id,
+        action_kind: String(input.action_kind) as 'rectification' | 'erasure',
+        recipient_name: String(input.recipient_name),
+        recipient_email: String(input.recipient_email),
+        instruction_summary: String(input.instruction_summary),
+        status: 'failed' as const,
+        attempts: 1,
+        last_error: 'email provider delivery failed',
+        last_attempt_at: now,
+        created_by_member_id: 'member-1',
+        created_at: now,
+        updated_at: now,
+        delivery_attempts: [{
+          id: `${item.id}-recipient-attempt-1`,
+          attempt_number: 1,
+          status: 'failed' as const,
+          error_message: 'email provider delivery failed',
+          started_at: now,
+          completed_at: now,
+        }],
+      }
+      item.recipient_actions ||= []
+      item.recipient_actions.unshift(action)
+      return json(route, { recipient_action: action, created: true }, 201)
+    }
+    const recipientActionRetryMatch = path.match(
+      /^\/v1\/privacy\/cases\/([^/]+)\/recipient-actions\/([^/]+)\/retry$/,
+    )
+    if (recipientActionRetryMatch && method === 'POST') {
+      const item = state.privacyCases.find(candidate => candidate.id === recipientActionRetryMatch[1])
+      const action = item?.recipient_actions?.find(
+        candidate => candidate.id === recipientActionRetryMatch[2],
+      )
+      if (!action) {
+        return json(route, { error: { code: 'not_found', message: 'recipient action not found' } }, 404)
+      }
+      action.status = 'pending'
+      action.last_error = undefined
+      action.updated_at = now
+      return json(route, { recipient_action: action, retried: true }, 202)
     }
     const caseExecutionMatch = path.match(/^\/v1\/privacy\/cases\/([^/]+)\/execute$/)
     if (caseExecutionMatch && method === 'POST') {
@@ -4460,6 +4513,27 @@ test('member rectification applies selected profile changes and preserves eviden
     name: 'Jamie Corrected',
     locale: 'pt-PT',
     timezone: 'America/Toronto',
+  })
+  const recipientSection = rectificationCase.locator('.privacy-recipient-actions')
+  await recipientSection.getByLabel('Recipient', { exact: true }).fill('Payroll processor')
+  await recipientSection.getByLabel('Recipient email').fill('privacy@processor.example')
+  await recipientSection.getByLabel('Approved instruction').fill(
+    'Correct the approved profile fields in the downstream payroll record.',
+  )
+  await recipientSection.getByRole('button', { name: 'Send instruction' }).click()
+  await expect(page.getByRole('status')).toContainText('recipient action was queued')
+  await expect(recipientSection).toContainText('Payroll processor')
+  await expect(recipientSection).toContainText('email provider delivery failed')
+  await recipientSection.getByRole('button', { name: 'Retry delivery' }).click()
+  await expect(page.getByRole('status')).toContainText('recipient action retry was queued')
+  await expect(recipientSection).toContainText('Pending')
+  expect(
+    state.privacyCases.find(item => item.id === 'privacy-case-member-rectification')
+      ?.recipient_actions?.[0],
+  ).toMatchObject({
+    recipient_email: 'privacy@processor.example',
+    status: 'pending',
+    attempts: 1,
   })
   await rectificationCase.scrollIntoViewIfNeeded()
   await capture(page, testInfo, `settings-member-rectification-${testInfo.project.name}`)

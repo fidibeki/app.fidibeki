@@ -40,6 +40,13 @@ be updated or deleted.
 notification, delivery state, attempts, and completion evidence. It never implies successful
 notification before a recorded delivery result.
 
+Recipient corrective/erasure notices are explicit operator-created rights-compliance actions, not
+reporter update subscriptions. They therefore do not reuse the reporter marketing/progress consent
+gate or get silently suppressed as a generic integration. Creation still requires verified subject
+scope and completed correction/erasure evidence. The first delivery format is deliberately minimal:
+workspace, public case reference, action kind, and the approved instruction only; it excludes raw
+feedback, subject/reporter email, and internal legal-review notes.
+
 `PrivacyProcessingRestriction` is a separately queryable projection owned by a verified case. It
 lists blocked purposes and becomes active before the case is reported as in progress. Deactivation
 requires an explicit terminal decision event.
@@ -177,5 +184,13 @@ frontend tests, and staging E2E validation. Production remains out of scope.
   erasure outcomes require a decision summary, legal-review notes, and exception basis, and
   idempotency covers those values. The bilingual backoffice exposes both the itemized evidence and
   decision workflow with PostgreSQL integration and desktop/mobile E2E coverage.
-- Slice 3 recipient actions, notifications, communications, and complete bilingual case-detail
-  workflow remain pending.
+- The first Slice 3 vertical is implemented through migration 95. Verified rectification cases
+  with an applied correction, and terminal erasure cases with settled execution evidence, can
+  create tenant-scoped recipient actions. Each action is idempotent, writes a transactional outbox
+  event, and records append-oriented delivery attempts. Enqueueing remains `pending`; only provider
+  acceptance records `sent`. Provider failures are stored as a bounded generic error and can be
+  retried explicitly. A processing lease prevents concurrent automatic/manual attempts, while a
+  stable action-scoped provider idempotency key protects ambiguous provider responses. The
+  bilingual backoffice exposes evidence-gated creation, delivery state, attempts, and retry in the
+  case. Subject-facing case communications and the remaining complete case-detail presentation
+  are still pending before Slice 3 is complete.

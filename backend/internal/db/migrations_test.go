@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 94
+	const latestMigrationVersion = 95
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2484,6 +2484,45 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		DELETE FROM platform_admins WHERE id = ANY($1::uuid[])
 	`, []string{supportManagerID, limitedPlatformAdminID}); err != nil {
 		t.Fatalf("delete platform support permission fixtures: %v", err)
+	}
+	var recipientTablesProtected bool
+	if err := root.QueryRow(ctx, `
+		SELECT bool_and(relrowsecurity AND relforcerowsecurity)
+		FROM pg_class
+		WHERE oid = ANY(ARRAY[
+			'privacy_recipient_actions'::regclass,
+			'privacy_recipient_action_attempts'::regclass
+		])
+	`).Scan(&recipientTablesProtected); err != nil || !recipientTablesProtected {
+		t.Fatalf("recipient action RLS protected = %t, error = %v",
+			recipientTablesProtected, err)
+	}
+	var canSelectActions, canInsertActions, canDeleteActions bool
+	var canUpdateActionStatus, canUpdateRecipientEmail bool
+	if err := root.QueryRow(ctx, `
+		SELECT
+			has_table_privilege('fidibeki_app', 'privacy_recipient_actions', 'SELECT'),
+			has_table_privilege('fidibeki_app', 'privacy_recipient_actions', 'INSERT'),
+			has_table_privilege('fidibeki_app', 'privacy_recipient_actions', 'DELETE'),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_recipient_actions', 'status', 'UPDATE'
+			),
+			has_column_privilege(
+				'fidibeki_app', 'privacy_recipient_actions', 'recipient_email', 'UPDATE'
+			)
+	`).Scan(
+		&canSelectActions, &canInsertActions, &canDeleteActions,
+		&canUpdateActionStatus, &canUpdateRecipientEmail,
+	); err != nil {
+		t.Fatalf("read recipient action privileges: %v", err)
+	}
+	if !canSelectActions || !canInsertActions || canDeleteActions ||
+		!canUpdateActionStatus || canUpdateRecipientEmail {
+		t.Fatalf(
+			"recipient action privileges select=%t insert=%t delete=%t status_update=%t email_update=%t",
+			canSelectActions, canInsertActions, canDeleteActions,
+			canUpdateActionStatus, canUpdateRecipientEmail,
+		)
 	}
 
 	pools.Close()
