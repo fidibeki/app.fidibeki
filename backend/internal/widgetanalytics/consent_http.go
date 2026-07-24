@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 )
 
 type ConsentAuthorizer interface {
@@ -32,10 +33,11 @@ type ConsentAuthorizer interface {
 }
 
 func (h *PublicHTTPHandler) recordConsent(w http.ResponseWriter, r *http.Request) {
-	configuration, _, ok := h.authorize(w, r)
+	configuration, origin, ok := h.authorize(w, r)
 	if !ok {
 		return
 	}
+	widgetapi.SetCORSHeaders(w, origin)
 	var request struct {
 		WidgetRuleID  string `json:"widget_rule_id"`
 		Purpose       string `json:"purpose"`
@@ -156,10 +158,11 @@ func (h *PublicHTTPHandler) recordConsent(w http.ResponseWriter, r *http.Request
 }
 
 func (h *PublicHTTPHandler) revokeConsent(w http.ResponseWriter, r *http.Request) {
-	configuration, _, ok := h.authorize(w, r)
+	configuration, origin, ok := h.authorize(w, r)
 	if !ok {
 		return
 	}
+	widgetapi.SetCORSHeaders(w, origin)
 	var request struct {
 		Token string `json:"token"`
 	}
