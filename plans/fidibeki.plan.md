@@ -601,6 +601,27 @@ was removed from the staging test tenant.
       ROPA, and DPIA governance without publishing unverified claims.
     - [ ] #64: add a restricted personal-data breach register, immutable chronology,
       processor-to-controller notifications, decision evidence, and staging exercises.
+      - [x] Slice 1 (tracer bullet): platform-admin-only breach incident records and append-only
+        chronology. Migration `92` adds `breach_incidents`, `breach_incident_tenants`, and
+        `breach_chronology_entries` with no `fidibeki_app` grant at all — the fidibeki_admin-only
+        pool used by the existing platform-admin architecture is the enforcement boundary, so
+        tenant members and tenant API keys cannot reach this data regardless of application
+        wiring, and both tables reject `UPDATE`/`DELETE` outright. Creating an incident captures a
+        server-issued public ID, server-authoritative `created_at`, explicit `awareness_at`,
+        detection source, controller/processor role, bounded affected environment/system/data/
+        subject categories, confidentiality/integrity/availability impact, a containment summary,
+        and affected tenant references (validated to exist, exposed only as bare tenant IDs, never
+        tenant name/slug/billing content). Chronology entries stamp `occurred_at`/`created_at` from
+        the same server clock read, record actor identity, entry kind, and bounded evidence
+        references. Both operations are idempotency-key/fingerprint protected like the existing
+        privacy-case pattern. New `platform:breach:create/read/append` permissions gate three new
+        `/admin/breach-incidents` routes wired through the existing `RequirePlatformAdmin`
+        middleware. Backend coverage includes platform-admin-audience/permission
+        authorization (including explicit denial of a tenant-audience token), validation, store
+        idempotency/conflict, immutability-trigger, and a migration 92 up/down/up plus a
+        `fidibeki_app`/`fidibeki_admin` privilege-boundary check. Staged notifications, the 72-hour
+        authority deadline, Article 34 assessment, subprocessor intake, and templates remain for a
+        later slice.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,

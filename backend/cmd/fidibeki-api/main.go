@@ -18,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/apikey"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/billing"
+	"github.com/acidiney/app.fidibeki/backend/internal/breachregister"
 	"github.com/acidiney/app.fidibeki/backend/internal/cache"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -349,6 +350,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	privacy.RegisterPublicRoutes(platformRoutes, privacyPublicOptions)
+	breachregister.RegisterPlatformRoutes(platformRoutes, breachregister.HTTPOptions{
+		Store: breachregister.Store{Database: pools.Admin}, JWT: jwtManager,
+	})
 	platformRoutes.Mount("/", platformHandler)
 	tenantStore := tenantmember.Store{
 		RefreshTTL: settings.RefreshTokenTTL, RefreshRetryGrace: settings.RefreshRetryGrace,

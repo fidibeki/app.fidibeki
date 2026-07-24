@@ -48,6 +48,9 @@ const (
 	PermissionPlatformAdminRead     Permission = "platform:admin:read"
 	PermissionPlatformAdminUpdate   Permission = "platform:admin:update"
 	PermissionPlatformAdminDelete   Permission = "platform:admin:delete"
+	PermissionPlatformBreachCreate  Permission = "platform:breach:create"
+	PermissionPlatformBreachRead    Permission = "platform:breach:read"
+	PermissionPlatformBreachAppend  Permission = "platform:breach:append"
 )
 
 var AllPlatformPermissions = []Permission{
@@ -60,6 +63,9 @@ var AllPlatformPermissions = []Permission{
 	PermissionPlatformAdminRead,
 	PermissionPlatformAdminUpdate,
 	PermissionPlatformAdminDelete,
+	PermissionPlatformBreachCreate,
+	PermissionPlatformBreachRead,
+	PermissionPlatformBreachAppend,
 }
 
 var AllTenantPermissions = []Permission{
