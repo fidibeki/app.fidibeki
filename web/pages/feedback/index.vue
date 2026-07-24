@@ -653,8 +653,9 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-mobile-filters { display: none; }
 .feedback-mobile-filters summary { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); cursor: pointer; font-size: 10px; font-weight: 700; list-style: none; white-space: nowrap; }
 .feedback-mobile-filters summary::-webkit-details-marker { display: none; }
+.feedback-mobile-filters summary:focus { outline: 2px solid var(--teal); outline-offset: 2px; }
 .feedback-mobile-filters-count { display: inline-flex; min-width: 15px; height: 15px; align-items: center; justify-content: center; padding: 0 4px; background: var(--teal); color: #fff; border-radius: 8px; font-size: 9px; font-weight: 800; }
-.feedback-mobile-filters-panel { position: fixed; z-index: 60; top: 108px; right: 10px; bottom: 12px; left: 10px; display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 10px; overflow-y: auto; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.feedback-mobile-filters-panel { position: fixed; z-index: 60; top: 108px; right: 10px; left: 10px; display: grid; max-height: calc(100dvh - 120px); grid-template-columns: 1fr 1fr; align-content: start; gap: 10px; overflow-y: auto; padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .feedback-mobile-filters-panel label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .feedback-mobile-filters-panel label select,
 .feedback-mobile-filters-panel label input { width: 100%; }

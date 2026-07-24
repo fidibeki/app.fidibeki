@@ -4545,13 +4545,18 @@ test('mobile Filters disclosure exposes every structured filter and restores foc
   await capture(page, testInfo, 'feedback-filters-mobile-open')
 
   await panel.getByRole('button', { name: 'Clear filters' }).click()
-  expect(new URL(page.url()).search).toBe('?id=feedback-1')
+  await expect.poll(() => new URL(page.url()).search).toBe('?id=feedback-1')
   await expect(page.getByText('2 loaded')).toBeVisible()
   await expect(summary).toHaveAttribute('aria-label', 'Filters')
 
   await panel.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(page.locator('.feedback-mobile-filters-panel')).toBeHidden()
   await expect(summary).toBeFocused()
+  const focusStyle = await summary.evaluate(element => ({
+    outlineStyle: getComputedStyle(element).outlineStyle,
+    outlineWidth: getComputedStyle(element).outlineWidth,
+  }))
+  expect(focusStyle).toEqual({ outlineStyle: 'solid', outlineWidth: '2px' })
 })
 
 test('mobile filter panel stays within the viewport and scrolls internally on short screens', async ({ page }, testInfo) => {
@@ -4566,9 +4571,11 @@ test('mobile filter panel stays within the viewport and scrolls internally on sh
   await expectNoPageOverflow(page)
   const normalGeometry = await panel.evaluate((element) => ({
     bottom: element.getBoundingClientRect().bottom,
+    height: element.getBoundingClientRect().height,
     columns: getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length,
   }))
   expect(normalGeometry.bottom).toBeLessThanOrEqual(844)
+  expect(normalGeometry.height).toBeLessThan(650)
   expect(normalGeometry.columns).toBe(2)
 
   await page.setViewportSize({ width: 390, height: 380 })

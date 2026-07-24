@@ -65,10 +65,11 @@ the panel itself scrolls when its content exceeds the available height.
 
 **Status:** Done. The mobile toolbar no longer scrolls horizontally
 (`.feedback-filter-bar { overflow-x: visible }` under the `700px` breakpoint); the panel is a
-`position: fixed` overlay (`top/right/bottom/left`, `overflow-y: auto`, `align-content: start`)
-using a two-column grid that collapses to one column at `360px` and below. The geometry test
-confirms containment and internal scrolling at `390x844`, a short `390x380` viewport, and a narrow
-`340x844` viewport.
+content-sized `position: fixed` overlay with a viewport-relative `max-height`, `overflow-y: auto`,
+and `align-content: start`, using a two-column grid that collapses to one column at `360px` and
+below. The summary has an explicit focus ring for the focus restored by Done. The geometry test
+confirms compact containment at `390x844`, internal scrolling at a short `390x380` viewport, and a
+narrow `340x844` one-column viewport.
 
 ## Task 4: Run Complete Gates And Reconcile Records
 

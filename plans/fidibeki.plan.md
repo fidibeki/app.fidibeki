@@ -1138,11 +1138,12 @@ was removed from the staging test tenant.
       AI state, sentiment, from, to) bound to the existing reactive refs, and shows a pluralized
       active-count in the summary's accessible name once any of those ten is non-empty. Clear
       filters reuses the existing reset; Done closes the disclosure and restores focus to its
-      summary. The panel is a bounded, internally scrolling `position: fixed` overlay (two columns,
-      one column at 360px and below) and never creates document-level horizontal overflow. Desktop
-      and tablet keep their exact existing toolbar, controls, and CSS untouched behind a
-      `display: contents` wrapper. English/Portuguese strings were added for the trigger and Done;
-      all existing filter labels and Clear filters copy are reused unchanged.
+      summary, whose explicit focus ring remains visible after that restoration. The panel is a
+      content-sized, viewport-bounded `position: fixed` overlay with internal scrolling only when
+      needed (two columns, one column at 360px and below) and never creates document-level
+      horizontal overflow. Desktop and tablet keep their exact existing toolbar, controls, and CSS
+      untouched behind a `display: contents` wrapper. English/Portuguese strings were added for the
+      trigger and Done; all existing filter labels and Clear filters copy are reused unchanged.
       Verification: web unit tests (133 passed), Nuxt typecheck, and Nuxt production build all pass.
       Three new focused Playwright cases were added to `web/tests/e2e/dispatch-platform.spec.ts`
       (desktop toolbar preservation, mobile disclosure discovery/filtering/clear/focus-restoration,
