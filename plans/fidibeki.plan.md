@@ -1127,6 +1127,11 @@ was removed from the staging test tenant.
       - Desktop/mobile screenshots for both variants (including the long Portuguese wrap) and the
         editor's live preview were generated and visually inspected locally. Staging validation was
         not performed under the current no-deployment constraint.
+    - [ ] #72: replace the undiscoverable horizontally scrolling mobile Feedback filter toolbar
+      with one complete, bounded filter disclosure while preserving the current dense desktop
+      toolbar, URL synchronization, queue semantics, and backend contract. Approved design:
+      `docs/superpowers/specs/2026-07-24-mobile-feedback-filters-design.md`; implementation plan:
+      `docs/superpowers/plans/2026-07-24-mobile-feedback-filters-implementation.md`.
     - The #53-#55 privacy foundation is integrated on `main` through `81de75c`. Backend tests and 80.1%
       coverage, widget unit/typecheck/build and 40 browser journeys, web
       unit/typecheck/build, migration up/down/up, and focused feedback/replay integration all pass.
