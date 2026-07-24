@@ -53,6 +53,60 @@ const (
 	EntryClosed             ChronologyEntryKind = "closed"
 )
 
+// AuthorityNotificationDecision, RiskDecision, and CommunicationDecision are
+// operator-entered, reasoned decisions recorded on a breach assessment. None
+// of these values is ever derived automatically: the store always requires
+// an explicit decision plus non-empty reasoning (see issue #64's incident
+// contract -- Fidibeki must not claim that every incident requires authority
+// or data-subject notification).
+type AuthorityNotificationDecision string
+
+const (
+	AuthorityNotificationAssessmentPending AuthorityNotificationDecision = "assessment_pending"
+	AuthorityNotificationRequired          AuthorityNotificationDecision = "notification_required"
+	AuthorityNotificationNotRequired       AuthorityNotificationDecision = "notification_not_required"
+)
+
+type RiskDecision string
+
+const (
+	RiskAssessmentPending RiskDecision = "assessment_pending"
+	RiskHigh              RiskDecision = "high_risk"
+	RiskNotHigh           RiskDecision = "not_high_risk"
+)
+
+type CommunicationDecision string
+
+const (
+	CommunicationAssessmentPending CommunicationDecision = "assessment_pending"
+	CommunicationRequired          CommunicationDecision = "communication_required"
+	CommunicationNotRequired       CommunicationDecision = "communication_not_required"
+)
+
+func ParseAuthorityNotificationDecision(value string) (AuthorityNotificationDecision, error) {
+	switch AuthorityNotificationDecision(value) {
+	case AuthorityNotificationAssessmentPending, AuthorityNotificationRequired, AuthorityNotificationNotRequired:
+		return AuthorityNotificationDecision(value), nil
+	}
+	return "", ErrInvalidRequest
+}
+
+func ParseRiskDecision(value string) (RiskDecision, error) {
+	switch RiskDecision(value) {
+	case RiskAssessmentPending, RiskHigh, RiskNotHigh:
+		return RiskDecision(value), nil
+	}
+	return "", ErrInvalidRequest
+}
+
+func ParseCommunicationDecision(value string) (CommunicationDecision, error) {
+	switch CommunicationDecision(value) {
+	case CommunicationAssessmentPending, CommunicationRequired, CommunicationNotRequired:
+		return CommunicationDecision(value), nil
+	}
+	return "", ErrInvalidRequest
+}
+
 var (
 	ErrInvalidRequest      = errors.New("breach register request is invalid")
 	ErrNotFound            = errors.New("breach incident not found")
@@ -128,6 +182,37 @@ type Incident struct {
 	CreatedByPlatformAdminID  string          `json:"created_by_platform_admin_id"`
 	CreatedAt                 time.Time       `json:"created_at"`
 	AffectedTenantIDs         []string        `json:"affected_tenant_ids"`
+	// AuthorityNotificationDeadlineAt is the GDPR Article 33 72-hour clock,
+	// started at AwarenessAt (not at completion of the investigation) and
+	// computed server-side by the database (see migration 000096). It is
+	// always present and never editable.
+	AuthorityNotificationDeadlineAt time.Time `json:"authority_notification_deadline_at"`
+}
+
+// Assessment is one append-only, operator-entered snapshot of the
+// responsible controller's reasoned breach decisions and the facts they were
+// based on. Later facts are recorded as a new Assessment rather than by
+// rewriting a prior one, so the full reasoning history survives even if a
+// decision changes as the investigation progresses.
+type Assessment struct {
+	ID                                string                        `json:"id"`
+	BreachIncidentID                  string                        `json:"breach_incident_id"`
+	AuthorityNotificationDecision     AuthorityNotificationDecision `json:"authority_notification_decision"`
+	AuthorityNotificationReasoning    string                        `json:"authority_notification_reasoning"`
+	HighRiskToIndividuals             RiskDecision                  `json:"high_risk_to_individuals"`
+	HighRiskReasoning                 string                        `json:"high_risk_reasoning"`
+	DataSubjectCommunicationDecision  CommunicationDecision         `json:"data_subject_communication_decision"`
+	DataSubjectCommunicationReasoning string                        `json:"data_subject_communication_reasoning"`
+	EstimatedAffectedSubjectsMin      *int64                        `json:"estimated_affected_subjects_min,omitempty"`
+	EstimatedAffectedSubjectsMax      *int64                        `json:"estimated_affected_subjects_max,omitempty"`
+	EstimatedAffectedRecordsMin       *int64                        `json:"estimated_affected_records_min,omitempty"`
+	EstimatedAffectedRecordsMax       *int64                        `json:"estimated_affected_records_max,omitempty"`
+	LikelyConsequences                *string                       `json:"likely_consequences,omitempty"`
+	RecoveryMeasures                  *string                       `json:"recovery_measures,omitempty"`
+	EvidenceReferences                []string                      `json:"evidence_references"`
+	AssessedByPlatformAdminID         string                        `json:"assessed_by_platform_admin_id"`
+	AssessedAt                        time.Time                     `json:"assessed_at"`
+	CreatedAt                         time.Time                     `json:"created_at"`
 }
 
 // ChronologyEntry is one append-only fact recorded against an incident.
@@ -163,6 +248,28 @@ type AppendChronologyEntryInput struct {
 	EntryKind          ChronologyEntryKind
 	Summary            string
 	EvidenceReferences []string
+}
+
+// CreateAssessmentInput is one reasoned assessment snapshot. Reasoning is
+// required for every decision, every time -- an assessment always restates
+// the current reasoning rather than leaving a prior one to speak for a
+// changed decision. Estimates and narrative facts are optional: an early
+// assessment may only have a decision and reasoning, with facts recorded as
+// they become known.
+type CreateAssessmentInput struct {
+	AuthorityNotificationDecision     AuthorityNotificationDecision
+	AuthorityNotificationReasoning    string
+	HighRiskToIndividuals             RiskDecision
+	HighRiskReasoning                 string
+	DataSubjectCommunicationDecision  CommunicationDecision
+	DataSubjectCommunicationReasoning string
+	EstimatedAffectedSubjectsMin      *int64
+	EstimatedAffectedSubjectsMax      *int64
+	EstimatedAffectedRecordsMin       *int64
+	EstimatedAffectedRecordsMax       *int64
+	LikelyConsequences                *string
+	RecoveryMeasures                  *string
+	EvidenceReferences                []string
 }
 
 const maxAffectedTenants = 200
@@ -291,20 +398,131 @@ func normalizeAppendChronologyEntryInput(
 	if summary == "" || len(summary) > 4000 {
 		return AppendChronologyEntryInput{}, ErrInvalidRequest
 	}
-	if len(input.EvidenceReferences) > maxEvidenceReferences {
-		return AppendChronologyEntryInput{}, ErrInvalidRequest
-	}
-	references := make([]string, 0, len(input.EvidenceReferences))
-	for _, reference := range input.EvidenceReferences {
-		trimmed := strings.TrimSpace(reference)
-		if trimmed == "" || len(trimmed) > 300 || containsControlCharacter(trimmed) {
-			return AppendChronologyEntryInput{}, ErrInvalidRequest
-		}
-		references = append(references, trimmed)
+	references, err := normalizeEvidenceReferences(input.EvidenceReferences)
+	if err != nil {
+		return AppendChronologyEntryInput{}, err
 	}
 	return AppendChronologyEntryInput{
 		EntryKind: input.EntryKind, Summary: summary, EvidenceReferences: references,
 	}, nil
+}
+
+func normalizeEvidenceReferences(values []string) ([]string, error) {
+	if len(values) > maxEvidenceReferences {
+		return nil, ErrInvalidRequest
+	}
+	references := make([]string, 0, len(values))
+	for _, reference := range values {
+		trimmed := strings.TrimSpace(reference)
+		if trimmed == "" || len(trimmed) > 300 || containsControlCharacter(trimmed) {
+			return nil, ErrInvalidRequest
+		}
+		references = append(references, trimmed)
+	}
+	return references, nil
+}
+
+// maxEstimatedCount bounds affected-subject/record estimates. It matches the
+// database CHECK in migration 000096 so validation failures surface as a
+// clean ErrInvalidRequest rather than a raw constraint violation.
+const maxEstimatedCount = 1_000_000_000_000
+
+func normalizeCreateAssessmentInput(input CreateAssessmentInput) (CreateAssessmentInput, error) {
+	if _, err := ParseAuthorityNotificationDecision(string(input.AuthorityNotificationDecision)); err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	if _, err := ParseRiskDecision(string(input.HighRiskToIndividuals)); err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	if _, err := ParseCommunicationDecision(string(input.DataSubjectCommunicationDecision)); err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	authorityReasoning, err := normalizeRequiredReasoning(input.AuthorityNotificationReasoning)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	highRiskReasoning, err := normalizeRequiredReasoning(input.HighRiskReasoning)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	communicationReasoning, err := normalizeRequiredReasoning(input.DataSubjectCommunicationReasoning)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	subjectsMin, subjectsMax, err := normalizeEstimateRange(
+		input.EstimatedAffectedSubjectsMin, input.EstimatedAffectedSubjectsMax,
+	)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	recordsMin, recordsMax, err := normalizeEstimateRange(
+		input.EstimatedAffectedRecordsMin, input.EstimatedAffectedRecordsMax,
+	)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	likelyConsequences, err := normalizeOptionalNote(input.LikelyConsequences)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	recoveryMeasures, err := normalizeOptionalNote(input.RecoveryMeasures)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	references, err := normalizeEvidenceReferences(input.EvidenceReferences)
+	if err != nil {
+		return CreateAssessmentInput{}, err
+	}
+	return CreateAssessmentInput{
+		AuthorityNotificationDecision:     input.AuthorityNotificationDecision,
+		AuthorityNotificationReasoning:    authorityReasoning,
+		HighRiskToIndividuals:             input.HighRiskToIndividuals,
+		HighRiskReasoning:                 highRiskReasoning,
+		DataSubjectCommunicationDecision:  input.DataSubjectCommunicationDecision,
+		DataSubjectCommunicationReasoning: communicationReasoning,
+		EstimatedAffectedSubjectsMin:      subjectsMin,
+		EstimatedAffectedSubjectsMax:      subjectsMax,
+		EstimatedAffectedRecordsMin:       recordsMin,
+		EstimatedAffectedRecordsMax:       recordsMax,
+		LikelyConsequences:                likelyConsequences,
+		RecoveryMeasures:                  recoveryMeasures,
+		EvidenceReferences:                references,
+	}, nil
+}
+
+func normalizeRequiredReasoning(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || len(trimmed) > 4000 {
+		return "", ErrInvalidRequest
+	}
+	return trimmed, nil
+}
+
+func normalizeOptionalNote(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" || len(trimmed) > 4000 {
+		return nil, ErrInvalidRequest
+	}
+	return &trimmed, nil
+}
+
+// normalizeEstimateRange requires both bounds or neither, so a partial
+// estimate can never be recorded as if it were exact: a lower bound alone
+// without an upper one is not a bounded estimate.
+func normalizeEstimateRange(min, max *int64) (*int64, *int64, error) {
+	if (min == nil) != (max == nil) {
+		return nil, nil, ErrInvalidRequest
+	}
+	if min == nil {
+		return nil, nil, nil
+	}
+	if *min < 0 || *max < *min || *max > maxEstimatedCount {
+		return nil, nil, ErrInvalidRequest
+	}
+	return min, max, nil
 }
 
 func containsControlCharacter(value string) bool {

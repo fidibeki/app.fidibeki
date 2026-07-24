@@ -180,6 +180,148 @@ func TestNormalizeAppendChronologyEntryInputValidatesBounds(t *testing.T) {
 	}
 }
 
+func validCreateAssessmentInput() CreateAssessmentInput {
+	return CreateAssessmentInput{
+		AuthorityNotificationDecision:     AuthorityNotificationAssessmentPending,
+		AuthorityNotificationReasoning:    "Awaiting confirmation of exfiltration scope.",
+		HighRiskToIndividuals:             RiskAssessmentPending,
+		HighRiskReasoning:                 "Risk to data subjects not yet determined.",
+		DataSubjectCommunicationDecision:  CommunicationAssessmentPending,
+		DataSubjectCommunicationReasoning: "Depends on the risk assessment above.",
+	}
+}
+
+func TestNormalizeCreateAssessmentInputAcceptsValidInput(t *testing.T) {
+	t.Parallel()
+	if _, err := normalizeCreateAssessmentInput(validCreateAssessmentInput()); err != nil {
+		t.Fatalf("normalizeCreateAssessmentInput() error = %v", err)
+	}
+}
+
+func TestNormalizeCreateAssessmentInputRejectsInvalidFields(t *testing.T) {
+	t.Parallel()
+
+	subjectsMin, subjectsMax := int64(10), int64(20)
+
+	tests := map[string]func(CreateAssessmentInput) CreateAssessmentInput{
+		"unknown authority decision": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.AuthorityNotificationDecision = "not_real"
+			return input
+		},
+		"unknown risk decision": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.HighRiskToIndividuals = "not_real"
+			return input
+		},
+		"unknown communication decision": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.DataSubjectCommunicationDecision = "not_real"
+			return input
+		},
+		"empty authority reasoning": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.AuthorityNotificationReasoning = "   "
+			return input
+		},
+		"authority reasoning too long": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.AuthorityNotificationReasoning = strings.Repeat("a", 4001)
+			return input
+		},
+		"empty high risk reasoning": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.HighRiskReasoning = "   "
+			return input
+		},
+		"empty communication reasoning": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.DataSubjectCommunicationReasoning = "   "
+			return input
+		},
+		"subject estimate min without max": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.EstimatedAffectedSubjectsMin = &subjectsMin
+			return input
+		},
+		"subject estimate max without min": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.EstimatedAffectedSubjectsMax = &subjectsMax
+			return input
+		},
+		"subject estimate min greater than max": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.EstimatedAffectedSubjectsMin = &subjectsMax
+			input.EstimatedAffectedSubjectsMax = &subjectsMin
+			return input
+		},
+		"negative subject estimate": func(input CreateAssessmentInput) CreateAssessmentInput {
+			negative := int64(-1)
+			input.EstimatedAffectedSubjectsMin = &negative
+			input.EstimatedAffectedSubjectsMax = &subjectsMax
+			return input
+		},
+		"subject estimate exceeds bound": func(input CreateAssessmentInput) CreateAssessmentInput {
+			tooLarge := int64(maxEstimatedCount + 1)
+			input.EstimatedAffectedSubjectsMin = &subjectsMin
+			input.EstimatedAffectedSubjectsMax = &tooLarge
+			return input
+		},
+		"record estimate min without max": func(input CreateAssessmentInput) CreateAssessmentInput {
+			input.EstimatedAffectedRecordsMin = &subjectsMin
+			return input
+		},
+		"empty likely consequences": func(input CreateAssessmentInput) CreateAssessmentInput {
+			empty := "   "
+			input.LikelyConsequences = &empty
+			return input
+		},
+		"likely consequences too long": func(input CreateAssessmentInput) CreateAssessmentInput {
+			tooLong := strings.Repeat("a", 4001)
+			input.LikelyConsequences = &tooLong
+			return input
+		},
+		"empty recovery measures": func(input CreateAssessmentInput) CreateAssessmentInput {
+			empty := "   "
+			input.RecoveryMeasures = &empty
+			return input
+		},
+		"too many evidence references": func(input CreateAssessmentInput) CreateAssessmentInput {
+			for range maxEvidenceReferences + 1 {
+				input.EvidenceReferences = append(input.EvidenceReferences, "ref")
+			}
+			return input
+		},
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := normalizeCreateAssessmentInput(mutate(validCreateAssessmentInput())); err != ErrInvalidRequest {
+				t.Errorf("normalizeCreateAssessmentInput() error = %v, want ErrInvalidRequest", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeCreateAssessmentInputAcceptsBoundedEstimatesAndNotes(t *testing.T) {
+	t.Parallel()
+
+	subjectsMin, subjectsMax := int64(0), int64(1000)
+	recordsMin, recordsMax := int64(0), int64(2000)
+	consequences := "Possible unauthorized read access to contact details."
+	recovery := "Forced re-authentication and rotated the leaked credential."
+
+	input := validCreateAssessmentInput()
+	input.EstimatedAffectedSubjectsMin = &subjectsMin
+	input.EstimatedAffectedSubjectsMax = &subjectsMax
+	input.EstimatedAffectedRecordsMin = &recordsMin
+	input.EstimatedAffectedRecordsMax = &recordsMax
+	input.LikelyConsequences = &consequences
+	input.RecoveryMeasures = &recovery
+	input.EvidenceReferences = []string{"ticket:INC-42"}
+
+	normalized, err := normalizeCreateAssessmentInput(input)
+	if err != nil {
+		t.Fatalf("normalizeCreateAssessmentInput() error = %v", err)
+	}
+	if *normalized.EstimatedAffectedSubjectsMax != subjectsMax || *normalized.EstimatedAffectedRecordsMax != recordsMax {
+		t.Errorf("normalized estimates = %#v", normalized)
+	}
+	if *normalized.LikelyConsequences != consequences || *normalized.RecoveryMeasures != recovery {
+		t.Errorf("normalized notes = %#v", normalized)
+	}
+}
+
 func TestIncidentJSONNeverExposesTenantContent(t *testing.T) {
 	t.Parallel()
 	// Incident must only ever carry a bare tenant ID reference, never a

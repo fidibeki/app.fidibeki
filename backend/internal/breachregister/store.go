@@ -28,6 +28,11 @@ type Store struct {
 	Now      func() time.Time
 }
 
+// authorityNotificationDeadline is GDPR Article 33's 72-hour clock for
+// notifying the supervisory authority, started from awareness (see issue
+// #64's incident contract).
+const authorityNotificationDeadline = 72 * time.Hour
+
 func (s Store) now() time.Time {
 	if s.Now != nil {
 		return s.Now()
@@ -70,6 +75,12 @@ func (s Store) CreateIncident(
 
 	id := uuid.NewString()
 	publicID := "BR-" + strings.ToUpper(strings.ReplaceAll(id[:8], "-", ""))
+	// GDPR Article 33's 72-hour authority-notification clock, started at
+	// awareness (not at completion of the investigation). Computed here --
+	// not by the database -- because timestamptz + interval arithmetic isn't
+	// IMMUTABLE in Postgres; migration 000096's CHECK constraint guards this
+	// value can never drift from awareness_at.
+	authorityNotificationDeadlineAt := normalized.AwarenessAt.Add(authorityNotificationDeadline)
 
 	var storedFingerprint []byte
 	var created bool
@@ -80,9 +91,9 @@ func (s Store) CreateIncident(
 				affected_environments, affected_system_categories, affected_data_categories,
 				affected_subject_categories, confidentiality_impact, integrity_impact,
 				availability_impact, containment_summary, created_by_platform_admin_id,
-				idempotency_key, request_fingerprint, created_at
+				idempotency_key, request_fingerprint, created_at, authority_notification_deadline_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 			)
 			ON CONFLICT (idempotency_key) DO NOTHING
 			RETURNING *, true AS created
@@ -102,6 +113,7 @@ func (s Store) CreateIncident(
 		normalized.AffectedDataCategories, normalized.AffectedSubjectCategories,
 		normalized.ConfidentialityImpact, normalized.IntegrityImpact, normalized.AvailabilityImpact,
 		normalized.ContainmentSummary, actorPlatformAdminID, idempotencyKey, fingerprint[:], now,
+		authorityNotificationDeadlineAt,
 	), &storedFingerprint, &created)
 	if err != nil {
 		return Incident{}, fmt.Errorf("create breach incident: %w", err)
@@ -176,7 +188,9 @@ func (s Store) ListIncidents(ctx context.Context, filter ListFilter) ([]Incident
 	return incidents, nil
 }
 
-func (s Store) GetIncident(ctx context.Context, incidentID string) (Incident, []ChronologyEntry, error) {
+func (s Store) GetIncident(
+	ctx context.Context, incidentID string,
+) (Incident, []ChronologyEntry, []Assessment, error) {
 	incident, err := scanIncidentWithTenants(s.Database.QueryRow(ctx, `
 		SELECT `+breachIncidentSelectColumns("incident")+`,
 		       COALESCE((
@@ -188,16 +202,20 @@ func (s Store) GetIncident(ctx context.Context, incidentID string) (Incident, []
 		WHERE incident.id = $1
 	`, incidentID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Incident{}, nil, ErrNotFound
+		return Incident{}, nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return Incident{}, nil, fmt.Errorf("get breach incident: %w", err)
+		return Incident{}, nil, nil, fmt.Errorf("get breach incident: %w", err)
 	}
 	entries, err := s.listChronologyEntries(ctx, incidentID)
 	if err != nil {
-		return Incident{}, nil, err
+		return Incident{}, nil, nil, err
 	}
-	return incident, entries, nil
+	assessments, err := s.listAssessments(ctx, incidentID)
+	if err != nil {
+		return Incident{}, nil, nil, err
+	}
+	return incident, entries, assessments, nil
 }
 
 func (s Store) listChronologyEntries(ctx context.Context, incidentID string) ([]ChronologyEntry, error) {
@@ -304,6 +322,122 @@ func (s Store) AppendChronologyEntry(
 	return entry, nil
 }
 
+func (s Store) listAssessments(ctx context.Context, incidentID string) ([]Assessment, error) {
+	rows, err := s.Database.Query(ctx, `
+		SELECT `+breachAssessmentSelectColumns("assessment")+`
+		FROM breach_assessments AS assessment
+		WHERE assessment.breach_incident_id = $1
+		ORDER BY assessment.sequence
+	`, incidentID)
+	if err != nil {
+		return nil, fmt.Errorf("list breach assessments: %w", err)
+	}
+	defer rows.Close()
+	assessments := make([]Assessment, 0)
+	for rows.Next() {
+		assessment, err := scanAssessment(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan breach assessment: %w", err)
+		}
+		assessments = append(assessments, assessment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate breach assessments: %w", err)
+	}
+	return assessments, nil
+}
+
+// CreateAssessment appends one reasoned assessment snapshot to an incident.
+// Like AppendChronologyEntry, it locks the parent incident row so a
+// concurrent append and a not-found race resolve deterministically, and it
+// is idempotency-key/fingerprint protected so a retried request never
+// creates a second row.
+func (s Store) CreateAssessment(
+	ctx context.Context,
+	incidentID string,
+	actorPlatformAdminID string,
+	idempotencyKey string,
+	input CreateAssessmentInput,
+) (Assessment, error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" || len(idempotencyKey) > 200 || strings.TrimSpace(actorPlatformAdminID) == "" {
+		return Assessment{}, ErrInvalidRequest
+	}
+	normalized, err := normalizeCreateAssessmentInput(input)
+	if err != nil {
+		return Assessment{}, err
+	}
+	fingerprint, err := createAssessmentFingerprint(normalized)
+	if err != nil {
+		return Assessment{}, err
+	}
+	now := s.now().UTC()
+
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return Assessment{}, fmt.Errorf("begin breach assessment creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var incidentExists string
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM breach_incidents WHERE id = $1 FOR UPDATE
+	`, incidentID).Scan(&incidentExists); errors.Is(err, pgx.ErrNoRows) {
+		return Assessment{}, ErrNotFound
+	} else if err != nil {
+		return Assessment{}, fmt.Errorf("lock breach incident for assessment: %w", err)
+	}
+
+	var storedFingerprint []byte
+	var created bool
+	assessment, err := scanAssessment(tx.QueryRow(ctx, `
+		WITH inserted AS (
+			INSERT INTO breach_assessments (
+				id, breach_incident_id, authority_notification_decision,
+				authority_notification_reasoning, high_risk_to_individuals, high_risk_reasoning,
+				data_subject_communication_decision, data_subject_communication_reasoning,
+				estimated_affected_subjects_min, estimated_affected_subjects_max,
+				estimated_affected_records_min, estimated_affected_records_max,
+				likely_consequences, recovery_measures, evidence_references,
+				assessed_by_platform_admin_id, idempotency_key, request_fingerprint,
+				assessed_at, created_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19
+			)
+			ON CONFLICT (breach_incident_id, idempotency_key) DO NOTHING
+			RETURNING *, true AS created
+		), selected AS (
+			SELECT * FROM inserted
+			UNION ALL
+			SELECT existing.*, false AS created
+			FROM breach_assessments AS existing
+			WHERE existing.breach_incident_id = $2 AND existing.idempotency_key = $17
+			  AND NOT EXISTS (SELECT 1 FROM inserted)
+		)
+		SELECT `+breachAssessmentSelectColumns("selected")+`,
+		       selected.request_fingerprint, selected.created
+		FROM selected
+	`, uuid.NewString(), incidentID, normalized.AuthorityNotificationDecision,
+		normalized.AuthorityNotificationReasoning, normalized.HighRiskToIndividuals,
+		normalized.HighRiskReasoning, normalized.DataSubjectCommunicationDecision,
+		normalized.DataSubjectCommunicationReasoning, normalized.EstimatedAffectedSubjectsMin,
+		normalized.EstimatedAffectedSubjectsMax, normalized.EstimatedAffectedRecordsMin,
+		normalized.EstimatedAffectedRecordsMax, normalized.LikelyConsequences,
+		normalized.RecoveryMeasures, normalized.EvidenceReferences, actorPlatformAdminID,
+		idempotencyKey, fingerprint[:], now,
+	), &storedFingerprint, &created)
+	if err != nil {
+		return Assessment{}, fmt.Errorf("create breach assessment: %w", err)
+	}
+	if !bytes.Equal(storedFingerprint, fingerprint[:]) {
+		return Assessment{}, ErrIdempotencyConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Assessment{}, fmt.Errorf("commit breach assessment creation: %w", err)
+	}
+	return assessment, nil
+}
+
 func requireTenantsExist(ctx context.Context, query db.Querier, tenantIDs []string) error {
 	var count int
 	if err := query.QueryRow(ctx, `
@@ -385,6 +519,14 @@ func chronologyEntryFingerprint(input AppendChronologyEntryInput) ([sha256.Size]
 	return sha256.Sum256(encoded), nil
 }
 
+func createAssessmentFingerprint(input CreateAssessmentInput) ([sha256.Size]byte, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return [sha256.Size]byte{}, fmt.Errorf("encode breach assessment fingerprint: %w", err)
+	}
+	return sha256.Sum256(encoded), nil
+}
+
 type rowScanner interface {
 	Scan(...any) error
 }
@@ -396,7 +538,8 @@ func breachIncidentSelectColumns(alias string) string {
 		alias + `.affected_data_categories, ` + alias + `.affected_subject_categories, ` +
 		alias + `.confidentiality_impact, ` + alias + `.integrity_impact, ` +
 		alias + `.availability_impact, ` + alias + `.containment_summary, ` +
-		alias + `.created_by_platform_admin_id, ` + alias + `.created_at`
+		alias + `.created_by_platform_admin_id, ` + alias + `.created_at, ` +
+		alias + `.authority_notification_deadline_at`
 }
 
 func scanIncident(row rowScanner, extra ...any) (Incident, error) {
@@ -407,6 +550,7 @@ func scanIncident(row rowScanner, extra ...any) (Incident, error) {
 		&incident.AffectedDataCategories, &incident.AffectedSubjectCategories,
 		&incident.ConfidentialityImpact, &incident.IntegrityImpact, &incident.AvailabilityImpact,
 		&incident.ContainmentSummary, &incident.CreatedByPlatformAdminID, &incident.CreatedAt,
+		&incident.AuthorityNotificationDeadlineAt,
 	}
 	destinations = append(destinations, extra...)
 	err := row.Scan(destinations...)
@@ -421,10 +565,40 @@ func scanIncidentWithTenants(row rowScanner) (Incident, error) {
 		&incident.AffectedDataCategories, &incident.AffectedSubjectCategories,
 		&incident.ConfidentialityImpact, &incident.IntegrityImpact, &incident.AvailabilityImpact,
 		&incident.ContainmentSummary, &incident.CreatedByPlatformAdminID, &incident.CreatedAt,
-		&incident.AffectedTenantIDs,
+		&incident.AuthorityNotificationDeadlineAt, &incident.AffectedTenantIDs,
 	}
 	err := row.Scan(destinations...)
 	return incident, err
+}
+
+func breachAssessmentSelectColumns(alias string) string {
+	return alias + `.id, ` + alias + `.breach_incident_id, ` +
+		alias + `.authority_notification_decision, ` + alias + `.authority_notification_reasoning, ` +
+		alias + `.high_risk_to_individuals, ` + alias + `.high_risk_reasoning, ` +
+		alias + `.data_subject_communication_decision, ` +
+		alias + `.data_subject_communication_reasoning, ` +
+		alias + `.estimated_affected_subjects_min, ` + alias + `.estimated_affected_subjects_max, ` +
+		alias + `.estimated_affected_records_min, ` + alias + `.estimated_affected_records_max, ` +
+		alias + `.likely_consequences, ` + alias + `.recovery_measures, ` +
+		alias + `.evidence_references, ` + alias + `.assessed_by_platform_admin_id, ` +
+		alias + `.assessed_at, ` + alias + `.created_at`
+}
+
+func scanAssessment(row rowScanner, extra ...any) (Assessment, error) {
+	var assessment Assessment
+	destinations := []any{
+		&assessment.ID, &assessment.BreachIncidentID, &assessment.AuthorityNotificationDecision,
+		&assessment.AuthorityNotificationReasoning, &assessment.HighRiskToIndividuals,
+		&assessment.HighRiskReasoning, &assessment.DataSubjectCommunicationDecision,
+		&assessment.DataSubjectCommunicationReasoning, &assessment.EstimatedAffectedSubjectsMin,
+		&assessment.EstimatedAffectedSubjectsMax, &assessment.EstimatedAffectedRecordsMin,
+		&assessment.EstimatedAffectedRecordsMax, &assessment.LikelyConsequences,
+		&assessment.RecoveryMeasures, &assessment.EvidenceReferences,
+		&assessment.AssessedByPlatformAdminID, &assessment.AssessedAt, &assessment.CreatedAt,
+	}
+	destinations = append(destinations, extra...)
+	err := row.Scan(destinations...)
+	return assessment, err
 }
 
 func chronologyEntrySelectColumns(alias string) string {

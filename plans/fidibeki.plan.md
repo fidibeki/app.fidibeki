@@ -637,6 +637,46 @@ was removed from the staging test tenant.
         `fidibeki_app`/`fidibeki_admin` privilege-boundary check. Staged notifications, the 72-hour
         authority deadline, Article 34 assessment, subprocessor intake, and templates remain for a
         later slice.
+      - [x] Slice 2 (tracer bullet): server-authoritative 72-hour authority-notification deadline
+        plus append-only, reasoned breach assessment evidence. Migration `96` adds
+        `authority_notification_deadline_at` to `breach_incidents` (GDPR Article 33's clock,
+        started at `awareness_at`, never at completion of the investigation) and a new
+        `breach_assessments` table, both still outside the `fidibeki_app` grant boundary and both
+        immutable via the same append-only trigger as migration 92. The deadline can't be a
+        `GENERATED` column — `timestamptz + interval` is only `STABLE` in Postgres, not
+        `IMMUTABLE` — so the store computes and inserts it itself from `awareness_at` at create
+        time (the same server-authoritative pattern already used for `created_at`/`occurred_at`),
+        while the migration temporarily removes and immediately recreates the append-only trigger
+        for its controlled existing-row backfill; a `CHECK` constraint guards the deadline can
+        never drift. Each assessment row is a full
+        reasoned-decision snapshot rather than a partial patch: an explicit
+        `authority_notification_decision`, `high_risk_to_individuals`, and
+        `data_subject_communication_decision` (each `assessment_pending` /
+        `*_required` / `*_not_required`, with pending supplied explicitly — nothing is inferred
+        automatically from the incident's facts), each paired with mandatory, bounded reasoning
+        text restated every time. Bounded, optional facts ride along on the same row: paired
+        min/max affected-subject and affected-record estimates (both bounds required together, so
+        a lower bound alone can't misrepresent an exact count), likely consequences, recovery
+        measures, and bounded evidence references (the reference-validation logic is now shared
+        with chronology entries via `normalizeEvidenceReferences` instead of duplicated). `GET
+        /admin/breach-incidents/{id}` now returns `assessments` alongside `chronology`; a new
+        `POST .../assessments` route reuses the existing `platform:breach:append` permission —
+        recording an assessment is the same actor class and trust level as appending a chronology
+        entry, so no new permission was added. Coverage adds unit tests for the assessment
+        normalization bounds, HTTP authorization/validation tests for the new route (plus a
+        `assessments` field visibility test on `GET`), and PostgreSQL integration coverage:
+        assessment idempotency/conflict/not-found, the computed-deadline value, immutability on
+        `breach_assessments`, the `fidibeki_app`/`fidibeki_admin` privilege boundary extended to
+        the new table, and — new versus slice 1 — an explicit migration 96 up/down/up cycle that
+        exercises the down migration directly (slice 1 never had one) plus a full-chain migration
+        test update (`latestMigrationVersion` in `internal/db/migrations_test.go`) and a real
+        pre-existing incident backfill that proves the immutable trigger is restored. Still
+        remaining for a later slice: staged processor-to-controller notifications (delivery
+        evidence, retries, follow-up updates), notification/closure/post-incident templates,
+        contact/DPA wiring to #63's role matrix, subprocessor incident intake, containment
+        checklists, post-incident actions/owners/corrective-issue links, and the tabletop
+        exercises across attachment disclosure, replay access, database cross-tenant exposure,
+        leaked integration secret, and subprocessor breach.
     - [ ] #65: complete sensitive-access governance.
       - [x] Core attachment, replay, and export access auditing is transactional and fail-closed,
         distinguishes human/API-key/system actors, provides tenant filters/CSV/anomaly counts,
@@ -664,7 +704,9 @@ was removed from the staging test tenant.
         and the tenant stream's ready/merged/storage-key contract under the same tenant-scoped RLS
         context, records `actor_type=platform_admin` with `replay_session.support_accessed` and the
         reason/case as safe metadata only, and shares the tenant route's merged-object streaming via
-        an extracted `writeReplayStreamContent` helper so the tenant-facing route is unchanged.
+        an extracted `writeReplayStreamContent` helper. Both routes open the storage object before
+        recording a successful access, so storage-open failure returns unavailable without leaving
+        false success evidence; the helper then owns the already-open stream.
         Denied/not-found/success outcomes audit fail-closed with the same dedup-window flood
         protection as the attachment path. No migration was required (existing `accessaudit`
         primitives and the `replay_session` resource type from #65's core slice already cover this

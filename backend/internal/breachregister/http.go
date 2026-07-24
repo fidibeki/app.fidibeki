@@ -19,10 +19,13 @@ import (
 type BreachStore interface {
 	CreateIncident(context.Context, string, string, CreateIncidentInput) (Incident, error)
 	ListIncidents(context.Context, ListFilter) ([]Incident, error)
-	GetIncident(context.Context, string) (Incident, []ChronologyEntry, error)
+	GetIncident(context.Context, string) (Incident, []ChronologyEntry, []Assessment, error)
 	AppendChronologyEntry(
 		context.Context, string, string, string, AppendChronologyEntryInput,
 	) (ChronologyEntry, error)
+	CreateAssessment(
+		context.Context, string, string, string, CreateAssessmentInput,
+	) (Assessment, error)
 }
 
 type TokenVerifier interface {
@@ -54,6 +57,8 @@ func RegisterPlatformRoutes(router chi.Router, options HTTPOptions) {
 		Get("/admin/breach-incidents/{incidentID}", handler.getIncident)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
 		Post("/admin/breach-incidents/{incidentID}/chronology", handler.appendChronologyEntry)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformBreachAppend)).
+		Post("/admin/breach-incidents/{incidentID}/assessments", handler.createAssessment)
 }
 
 type createIncidentRequest struct {
@@ -137,12 +142,14 @@ func (h *httpHandler) getIncident(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
 		return
 	}
-	incident, entries, err := h.options.Store.GetIncident(r.Context(), incidentID)
+	incident, entries, assessments, err := h.options.Store.GetIncident(r.Context(), incidentID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	api.WriteJSON(w, http.StatusOK, map[string]any{"incident": incident, "chronology": entries})
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"incident": incident, "chronology": entries, "assessments": assessments,
+	})
 }
 
 type appendChronologyEntryRequest struct {
@@ -183,6 +190,77 @@ func (h *httpHandler) appendChronologyEntry(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"entry": entry})
+}
+
+type createAssessmentRequest struct {
+	AuthorityNotificationDecision     string   `json:"authority_notification_decision"`
+	AuthorityNotificationReasoning    string   `json:"authority_notification_reasoning"`
+	HighRiskToIndividuals             string   `json:"high_risk_to_individuals"`
+	HighRiskReasoning                 string   `json:"high_risk_reasoning"`
+	DataSubjectCommunicationDecision  string   `json:"data_subject_communication_decision"`
+	DataSubjectCommunicationReasoning string   `json:"data_subject_communication_reasoning"`
+	EstimatedAffectedSubjectsMin      *int64   `json:"estimated_affected_subjects_min"`
+	EstimatedAffectedSubjectsMax      *int64   `json:"estimated_affected_subjects_max"`
+	EstimatedAffectedRecordsMin       *int64   `json:"estimated_affected_records_min"`
+	EstimatedAffectedRecordsMax       *int64   `json:"estimated_affected_records_max"`
+	LikelyConsequences                *string  `json:"likely_consequences"`
+	RecoveryMeasures                  *string  `json:"recovery_measures"`
+	EvidenceReferences                []string `json:"evidence_references"`
+}
+
+func (h *httpHandler) createAssessment(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "incidentID")
+	if _, err := uuid.Parse(incidentID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "breach incident not found", nil)
+		return
+	}
+	var request createAssessmentRequest
+	if !decodeRequest(w, r, &request) {
+		return
+	}
+	authorityDecision, err := ParseAuthorityNotificationDecision(request.AuthorityNotificationDecision)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	riskDecision, err := ParseRiskDecision(request.HighRiskToIndividuals)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	communicationDecision, err := ParseCommunicationDecision(request.DataSubjectCommunicationDecision)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	assessment, err := h.options.Store.CreateAssessment(
+		r.Context(), incidentID, claims.Subject, r.Header.Get("Idempotency-Key"),
+		CreateAssessmentInput{
+			AuthorityNotificationDecision:     authorityDecision,
+			AuthorityNotificationReasoning:    request.AuthorityNotificationReasoning,
+			HighRiskToIndividuals:             riskDecision,
+			HighRiskReasoning:                 request.HighRiskReasoning,
+			DataSubjectCommunicationDecision:  communicationDecision,
+			DataSubjectCommunicationReasoning: request.DataSubjectCommunicationReasoning,
+			EstimatedAffectedSubjectsMin:      request.EstimatedAffectedSubjectsMin,
+			EstimatedAffectedSubjectsMax:      request.EstimatedAffectedSubjectsMax,
+			EstimatedAffectedRecordsMin:       request.EstimatedAffectedRecordsMin,
+			EstimatedAffectedRecordsMax:       request.EstimatedAffectedRecordsMax,
+			LikelyConsequences:                request.LikelyConsequences,
+			RecoveryMeasures:                  request.RecoveryMeasures,
+			EvidenceReferences:                request.EvidenceReferences,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"assessment": assessment})
 }
 
 func writeError(w http.ResponseWriter, err error) {

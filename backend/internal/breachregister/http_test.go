@@ -15,21 +15,27 @@ import (
 )
 
 type fakeStore struct {
-	created       Incident
-	createErr     error
-	createdInput  CreateIncidentInput
-	createdActor  string
-	createdKey    string
-	incidents     []Incident
-	listErr       error
-	getIncident   Incident
-	getEntries    []ChronologyEntry
-	getErr        error
-	appendedEntry ChronologyEntry
-	appendErr     error
-	appendedActor string
-	appendedKey   string
-	appendedInput AppendChronologyEntryInput
+	created           Incident
+	createErr         error
+	createdInput      CreateIncidentInput
+	createdActor      string
+	createdKey        string
+	incidents         []Incident
+	listErr           error
+	getIncident       Incident
+	getEntries        []ChronologyEntry
+	getAssessments    []Assessment
+	getErr            error
+	appendedEntry     ChronologyEntry
+	appendErr         error
+	appendedActor     string
+	appendedKey       string
+	appendedInput     AppendChronologyEntryInput
+	createdAssessment Assessment
+	assessErr         error
+	assessedActor     string
+	assessedKey       string
+	assessedInput     CreateAssessmentInput
 }
 
 func (f *fakeStore) CreateIncident(
@@ -45,8 +51,8 @@ func (f *fakeStore) ListIncidents(context.Context, ListFilter) ([]Incident, erro
 	return f.incidents, f.listErr
 }
 
-func (f *fakeStore) GetIncident(context.Context, string) (Incident, []ChronologyEntry, error) {
-	return f.getIncident, f.getEntries, f.getErr
+func (f *fakeStore) GetIncident(context.Context, string) (Incident, []ChronologyEntry, []Assessment, error) {
+	return f.getIncident, f.getEntries, f.getAssessments, f.getErr
 }
 
 func (f *fakeStore) AppendChronologyEntry(
@@ -57,6 +63,16 @@ func (f *fakeStore) AppendChronologyEntry(
 	f.appendedKey = idempotencyKey
 	f.appendedInput = input
 	return f.appendedEntry, f.appendErr
+}
+
+func (f *fakeStore) CreateAssessment(
+	_ context.Context, _ string, actorPlatformAdminID string, idempotencyKey string,
+	input CreateAssessmentInput,
+) (Assessment, error) {
+	f.assessedActor = actorPlatformAdminID
+	f.assessedKey = idempotencyKey
+	f.assessedInput = input
+	return f.createdAssessment, f.assessErr
 }
 
 func newTestHandler(t *testing.T, store *fakeStore) (http.Handler, *auth.JWTManager) {
@@ -325,5 +341,137 @@ func TestAppendChronologyEntryRequiresAppendPermissionAndValidatesKind(t *testin
 	}
 	if store.appendedInput.EntryKind != EntryContained {
 		t.Errorf("append input = %#v", store.appendedInput)
+	}
+}
+
+func validCreateAssessmentBody() string {
+	return `{
+		"authority_notification_decision": "assessment_pending",
+		"authority_notification_reasoning": "Awaiting confirmation of exfiltration scope.",
+		"high_risk_to_individuals": "assessment_pending",
+		"high_risk_reasoning": "Risk to data subjects not yet determined.",
+		"data_subject_communication_decision": "assessment_pending",
+		"data_subject_communication_reasoning": "Depends on the risk assessment above.",
+		"estimated_affected_subjects_min": 50,
+		"estimated_affected_subjects_max": 200,
+		"likely_consequences": "Possible unauthorized read access to contact details.",
+		"evidence_references": ["ticket:INC-42"]
+	}`
+}
+
+func TestCreateAssessmentRequiresAppendPermissionAndValidatesDecisions(t *testing.T) {
+	t.Parallel()
+
+	validID := "11111111-1111-1111-1111-111111111111"
+	store := &fakeStore{createdAssessment: Assessment{
+		ID: "assessment-id", AuthorityNotificationDecision: AuthorityNotificationAssessmentPending,
+	}}
+	handler, jwtManager := newTestHandler(t, store)
+	path := "/admin/breach-incidents/" + validID + "/assessments"
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(
+		http.MethodPost, path, strings.NewReader(validCreateAssessmentBody()),
+	))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated status = %d", unauthenticated.Code)
+	}
+
+	readOnlyToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachRead)},
+	)
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodPost, path, strings.NewReader(validCreateAssessmentBody()))
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readOnlyToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Errorf("forbidden status = %d", forbidden.Code)
+	}
+
+	appendToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachAppend)},
+	)
+
+	for name, body := range map[string]string{
+		"invalid authority decision": `{"authority_notification_decision":"not_real",
+			"authority_notification_reasoning":"reason","high_risk_to_individuals":"assessment_pending",
+			"high_risk_reasoning":"reason","data_subject_communication_decision":"assessment_pending",
+			"data_subject_communication_reasoning":"reason"}`,
+		"invalid risk decision": `{"authority_notification_decision":"assessment_pending",
+			"authority_notification_reasoning":"reason","high_risk_to_individuals":"not_real",
+			"high_risk_reasoning":"reason","data_subject_communication_decision":"assessment_pending",
+			"data_subject_communication_reasoning":"reason"}`,
+		"invalid communication decision": `{"authority_notification_decision":"assessment_pending",
+			"authority_notification_reasoning":"reason","high_risk_to_individuals":"assessment_pending",
+			"high_risk_reasoning":"reason","data_subject_communication_decision":"not_real",
+			"data_subject_communication_reasoning":"reason"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer "+appendToken)
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnprocessableEntity {
+				t.Errorf("%s status = %d, body = %s", name, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+
+	ok := httptest.NewRecorder()
+	okRequest := httptest.NewRequest(http.MethodPost, path, strings.NewReader(validCreateAssessmentBody()))
+	okRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	okRequest.Header.Set("Idempotency-Key", "assess-key-1")
+	handler.ServeHTTP(ok, okRequest)
+	if ok.Code != http.StatusCreated {
+		t.Fatalf("create assessment status = %d, body = %s", ok.Code, ok.Body.String())
+	}
+	if store.assessedActor != "admin-id" || store.assessedKey != "assess-key-1" {
+		t.Errorf("assessment actor/key = %q/%q", store.assessedActor, store.assessedKey)
+	}
+	if store.assessedInput.AuthorityNotificationDecision != AuthorityNotificationAssessmentPending {
+		t.Errorf("assessment input = %#v", store.assessedInput)
+	}
+	if store.assessedInput.EstimatedAffectedSubjectsMin == nil || *store.assessedInput.EstimatedAffectedSubjectsMin != 50 {
+		t.Errorf("assessment estimate = %#v", store.assessedInput)
+	}
+
+	nonUUID := httptest.NewRecorder()
+	nonUUIDRequest := httptest.NewRequest(
+		http.MethodPost, "/admin/breach-incidents/not-a-uuid/assessments", strings.NewReader(validCreateAssessmentBody()),
+	)
+	nonUUIDRequest.Header.Set("Authorization", "Bearer "+appendToken)
+	handler.ServeHTTP(nonUUID, nonUUIDRequest)
+	if nonUUID.Code != http.StatusNotFound {
+		t.Errorf("non-UUID incident path status = %d, want 404", nonUUID.Code)
+	}
+}
+
+func TestGetIncidentIncludesAssessments(t *testing.T) {
+	t.Parallel()
+
+	validID := "11111111-1111-1111-1111-111111111111"
+	store := &fakeStore{
+		getIncident:    Incident{ID: validID, PublicID: "BR-ABCDEF12"},
+		getAssessments: []Assessment{{ID: "assessment-id", AuthorityNotificationDecision: AuthorityNotificationRequired}},
+	}
+	handler, jwtManager := newTestHandler(t, store)
+	readToken, _, _ := jwtManager.Issue(
+		"admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformBreachRead)},
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/admin/breach-incidents/"+validID, nil)
+	request.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	assessments, ok := response["assessments"].([]any)
+	if !ok || len(assessments) != 1 {
+		t.Fatalf("response assessments = %#v", response["assessments"])
 	}
 }

@@ -59,7 +59,9 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	// member or tenant API key could reach restricted breach data even
 	// without an application bug — this is the actual enforcement boundary,
 	// not merely an application-layer permission check.
-	for _, table := range []string{"breach_incidents", "breach_incident_tenants", "breach_chronology_entries"} {
+	for _, table := range []string{
+		"breach_incidents", "breach_incident_tenants", "breach_chronology_entries", "breach_assessments",
+	} {
 		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 			var allowed bool
 			if err := connection.QueryRow(ctx,
@@ -175,11 +177,31 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("ListIncidents() = %#v, error = %v", listed, err)
 	}
 
-	fetched, entries, err := store.GetIncident(ctx, incident.ID)
-	if err != nil || fetched.ID != incident.ID || len(entries) != 0 {
-		t.Fatalf("GetIncident() = %#v/%#v, error = %v", fetched, entries, err)
+	// The 72-hour authority-notification deadline is server-computed from
+	// awareness_at, not from created_at or client input.
+	wantDeadline := baseInput.AwarenessAt.Add(72 * time.Hour)
+	if !incident.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
+		t.Fatalf(
+			"authority notification deadline = %v, want %v",
+			incident.AuthorityNotificationDeadlineAt, wantDeadline,
+		)
 	}
-	if _, _, err := store.GetIncident(ctx, "00000000-0000-4000-8000-000000000000"); !errors.Is(err, ErrNotFound) {
+
+	fetched, entries, assessments, err := store.GetIncident(ctx, incident.ID)
+	if err != nil || fetched.ID != incident.ID || len(entries) != 0 || len(assessments) != 0 {
+		t.Fatalf(
+			"GetIncident() = %#v/%#v/%#v, error = %v", fetched, entries, assessments, err,
+		)
+	}
+	if !fetched.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
+		t.Fatalf(
+			"fetched authority notification deadline = %v, want %v",
+			fetched.AuthorityNotificationDeadlineAt, wantDeadline,
+		)
+	}
+	if _, _, _, err := store.GetIncident(
+		ctx, "00000000-0000-4000-8000-000000000000",
+	); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetIncident(missing) error = %v, want ErrNotFound", err)
 	}
 
@@ -225,13 +247,92 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		t.Fatalf("AppendChronologyEntry(missing incident) error = %v, want ErrNotFound", err)
 	}
 
-	_, entriesAfterAppend, err := store.GetIncident(ctx, incident.ID)
+	_, entriesAfterAppend, _, err := store.GetIncident(ctx, incident.ID)
 	if err != nil || len(entriesAfterAppend) != 1 || entriesAfterAppend[0].ID != entry.ID {
 		t.Fatalf("GetIncident() chronology = %#v, error = %v", entriesAfterAppend, err)
 	}
 
-	// Facts that change are new chronology rows, never a rewrite of history:
-	// both tables reject UPDATE and DELETE outright.
+	// Assessment creation: reasoned, operator-entered decisions, bounded
+	// estimates, server-authoritative timestamps, actor identity,
+	// idempotency, and immutability. The first assessment leaves the
+	// authority-notification decision pending -- nothing here is inferred
+	// automatically from the incident's facts.
+	subjectsMin, subjectsMax := int64(50), int64(200)
+	recordsMin, recordsMax := int64(50), int64(400)
+	likelyConsequences := "Possible unauthorized read access to contact details."
+	recoveryMeasures := "Forced re-authentication and rotated the leaked credential."
+	assessmentInput := CreateAssessmentInput{
+		AuthorityNotificationDecision:     AuthorityNotificationAssessmentPending,
+		AuthorityNotificationReasoning:    "Awaiting confirmation of exfiltration scope before deciding.",
+		HighRiskToIndividuals:             RiskAssessmentPending,
+		HighRiskReasoning:                 "Risk to data subjects not yet determined.",
+		DataSubjectCommunicationDecision:  CommunicationAssessmentPending,
+		DataSubjectCommunicationReasoning: "Communication decision depends on the risk assessment above.",
+		EstimatedAffectedSubjectsMin:      &subjectsMin,
+		EstimatedAffectedSubjectsMax:      &subjectsMax,
+		EstimatedAffectedRecordsMin:       &recordsMin,
+		EstimatedAffectedRecordsMax:       &recordsMax,
+		LikelyConsequences:                &likelyConsequences,
+		RecoveryMeasures:                  &recoveryMeasures,
+		EvidenceReferences:                []string{"ticket:INC-42"},
+	}
+	assessment, err := store.CreateAssessment(ctx, incident.ID, platformAdminID, "assess-key-1", assessmentInput)
+	if err != nil {
+		t.Fatalf("CreateAssessment() error = %v", err)
+	}
+	if !assessment.AssessedAt.Equal(now) || !assessment.CreatedAt.Equal(now) {
+		t.Fatalf(
+			"assessment timestamps = %v/%v, want both %v", assessment.AssessedAt, assessment.CreatedAt, now,
+		)
+	}
+	if assessment.AssessedByPlatformAdminID != platformAdminID {
+		t.Errorf("assessment actor = %q, want %q", assessment.AssessedByPlatformAdminID, platformAdminID)
+	}
+	if assessment.AuthorityNotificationDecision != AuthorityNotificationAssessmentPending {
+		t.Errorf(
+			"assessment authority decision = %q, want %q",
+			assessment.AuthorityNotificationDecision, AuthorityNotificationAssessmentPending,
+		)
+	}
+	if assessment.EstimatedAffectedSubjectsMin == nil || *assessment.EstimatedAffectedSubjectsMin != subjectsMin ||
+		assessment.EstimatedAffectedSubjectsMax == nil || *assessment.EstimatedAffectedSubjectsMax != subjectsMax {
+		t.Fatalf("assessment subject estimate = %#v", assessment)
+	}
+
+	replayedAssessment, err := store.CreateAssessment(
+		ctx, incident.ID, platformAdminID, "assess-key-1", assessmentInput,
+	)
+	if err != nil || replayedAssessment.ID != assessment.ID {
+		t.Fatalf("idempotent CreateAssessment() = %#v, error = %v", replayedAssessment, err)
+	}
+	var assessmentCount int
+	if err := connection.QueryRow(ctx,
+		`SELECT count(*) FROM breach_assessments WHERE breach_incident_id = $1`, incident.ID,
+	).Scan(&assessmentCount); err != nil || assessmentCount != 1 {
+		t.Fatalf("breach_assessments row count = %d, error = %v, want 1", assessmentCount, err)
+	}
+
+	conflictingAssessment := assessmentInput
+	conflictingAssessment.AuthorityNotificationReasoning = "A materially different reasoning narrative."
+	if _, err := store.CreateAssessment(
+		ctx, incident.ID, platformAdminID, "assess-key-1", conflictingAssessment,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting CreateAssessment() error = %v, want ErrIdempotencyConflict", err)
+	}
+
+	if _, err := store.CreateAssessment(
+		ctx, "00000000-0000-4000-8000-000000000000", platformAdminID, "assess-key-2", assessmentInput,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateAssessment(missing incident) error = %v, want ErrNotFound", err)
+	}
+
+	_, _, assessmentsAfterCreate, err := store.GetIncident(ctx, incident.ID)
+	if err != nil || len(assessmentsAfterCreate) != 1 || assessmentsAfterCreate[0].ID != assessment.ID {
+		t.Fatalf("GetIncident() assessments = %#v, error = %v", assessmentsAfterCreate, err)
+	}
+
+	// Facts that change are new rows, never a rewrite of history: every
+	// breach register table rejects UPDATE and DELETE outright.
 	if _, err := connection.Exec(ctx,
 		`UPDATE breach_incidents SET containment_summary = 'rewritten' WHERE id = $1`, incident.ID,
 	); err == nil {
@@ -249,6 +350,174 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 		`DELETE FROM breach_chronology_entries WHERE id = $1`, entry.ID,
 	); err == nil {
 		t.Fatal("DELETE breach_chronology_entries succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx,
+		`UPDATE breach_assessments SET authority_notification_reasoning = 'rewritten' WHERE id = $1`, assessment.ID,
+	); err == nil {
+		t.Fatal("UPDATE breach_assessments succeeded, want append-only rejection")
+	}
+	if _, err := connection.Exec(ctx,
+		`DELETE FROM breach_assessments WHERE id = $1`, assessment.ID,
+	); err == nil {
+		t.Fatal("DELETE breach_assessments succeeded, want append-only rejection")
+	}
+}
+
+// TestMigration096RollsBackAndReappliesCleanly exercises migration 000096's
+// down.sql directly (up -> down -> up), since the tracer bullet in migration
+// 000092 only ever exercised a single Up. This is the only test that would
+// catch a wrong DROP order or a leftover object in the down migration.
+func TestMigration096RollsBackAndReappliesCleanly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	container, err := postgrescontainer.Run(ctx,
+		"postgres:16-alpine",
+		postgrescontainer.WithDatabase("fidibeki"),
+		postgrescontainer.WithUsername("postgres"),
+		postgrescontainer.WithPassword("postgres"),
+		postgrescontainer.BasicWaitStrategies(),
+	)
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := testcontainers.TerminateContainer(container); err != nil {
+			t.Errorf("terminate PostgreSQL container: %v", err)
+		}
+	})
+	databaseURL, err := container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("get PostgreSQL URL: %v", err)
+	}
+	migrator, err := db.NewMigrator(databaseURL, migrationsPath(t))
+	if err != nil {
+		t.Fatalf("create migrator: %v", err)
+	}
+	t.Cleanup(func() { _ = migrator.Close() })
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate up: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate 96 down: %v", err)
+	}
+
+	connection, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect PostgreSQL: %v", err)
+	}
+	t.Cleanup(connection.Close)
+
+	// Migration 92 made incidents append-only. Exercise a real 95 -> 96
+	// upgrade with an existing incident so migration 96's controlled
+	// deadline backfill cannot regress into being blocked by that trigger.
+	var legacyPlatformAdminID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('legacy-migration-check@example.test', '{}') RETURNING id
+	`).Scan(&legacyPlatformAdminID); err != nil {
+		t.Fatalf("create legacy platform admin fixture: %v", err)
+	}
+	legacyAwarenessAt := time.Date(2026, time.July, 18, 8, 30, 0, 0, time.UTC)
+	var legacyIncidentID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO breach_incidents (
+			public_id, awareness_at, detection_source, controller_role,
+			affected_environments, affected_system_categories, affected_data_categories,
+			affected_subject_categories, confidentiality_impact, integrity_impact,
+			availability_impact, containment_summary, created_by_platform_admin_id,
+			idempotency_key, request_fingerprint, created_at
+		) VALUES (
+			'BR-LEGACY96', $1::timestamptz, 'internal_monitoring', 'controller',
+			'{staging}', '{database}', '{contact_info}', '{tenant_members}',
+			true, false, false, 'Contained before migration 96.', $2,
+			'legacy-migration-96', decode(repeat('00', 32), 'hex'),
+			$1::timestamptz + interval '1 hour'
+		) RETURNING id
+	`, legacyAwarenessAt, legacyPlatformAdminID).Scan(&legacyIncidentID); err != nil {
+		t.Fatalf("create pre-migration-96 breach incident: %v", err)
+	}
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate existing incident up to 96: %v", err)
+	}
+	var legacyDeadline time.Time
+	if err := connection.QueryRow(ctx, `
+		SELECT authority_notification_deadline_at
+		FROM breach_incidents
+		WHERE id = $1
+	`, legacyIncidentID).Scan(&legacyDeadline); err != nil {
+		t.Fatalf("read backfilled authority deadline: %v", err)
+	}
+	if want := legacyAwarenessAt.Add(72 * time.Hour); !legacyDeadline.Equal(want) {
+		t.Fatalf("backfilled authority deadline = %v, want %v", legacyDeadline, want)
+	}
+	if _, err := connection.Exec(ctx, `
+		UPDATE breach_incidents SET containment_summary = 'must remain immutable' WHERE id = $1
+	`, legacyIncidentID); err == nil {
+		t.Fatal("post-migration breach incident UPDATE succeeded, want append-only rejection")
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate 96 down after existing-row upgrade: %v", err)
+	}
+	if err := migrator.Up(); err != nil {
+		t.Fatalf("migrate 96 up after rollback: %v", err)
+	}
+
+	var deadlineColumnExists bool
+	if err := connection.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'breach_incidents' AND column_name = 'authority_notification_deadline_at'
+		)
+	`).Scan(&deadlineColumnExists); err != nil || !deadlineColumnExists {
+		t.Fatalf("authority_notification_deadline_at column exists = %t, error = %v", deadlineColumnExists, err)
+	}
+
+	var assessmentsGranted bool
+	if err := connection.QueryRow(ctx,
+		`SELECT has_table_privilege('fidibeki_admin', 'breach_assessments', 'INSERT')`,
+	).Scan(&assessmentsGranted); err != nil || !assessmentsGranted {
+		t.Fatalf("fidibeki_admin breach_assessments INSERT privilege = %t, error = %v", assessmentsGranted, err)
+	}
+
+	// The reapplied 72-hour deadline and reasoned-assessment insert path
+	// must both still work after the rollback/reapply cycle.
+	var platformAdminID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO platform_admins (email, permissions)
+		VALUES ('migration-check@example.test', '{}') RETURNING id
+	`).Scan(&platformAdminID); err != nil {
+		t.Fatalf("create platform admin fixture: %v", err)
+	}
+	var tenantID string
+	if err := connection.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Acme', 'acme-migration-check', 'growth', 'active') RETURNING id
+	`).Scan(&tenantID); err != nil {
+		t.Fatalf("create tenant fixture: %v", err)
+	}
+
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	store := Store{Database: connection, Now: func() time.Time { return now }}
+	incident, err := store.CreateIncident(ctx, platformAdminID, "migration-check-key", CreateIncidentInput{
+		AwarenessAt: now.Add(-time.Hour), DetectionSource: DetectionInternalMonitoring,
+		ControllerRole: RoleProcessor, AffectedEnvironments: []string{"staging"},
+		AffectedSystemCategories: []string{"database"}, AffectedDataCategories: []string{"contact_info"},
+		AffectedSubjectCategories: []string{"tenant_members"}, ConfidentialityImpact: true,
+		ContainmentSummary: "Rotated the affected credential.", AffectedTenantIDs: []string{tenantID},
+	})
+	if err != nil {
+		t.Fatalf("CreateIncident() after migration cycle error = %v", err)
+	}
+	wantDeadline := now.Add(-time.Hour).Add(72 * time.Hour)
+	if !incident.AuthorityNotificationDeadlineAt.Equal(wantDeadline) {
+		t.Fatalf(
+			"authority notification deadline = %v, want %v",
+			incident.AuthorityNotificationDeadlineAt, wantDeadline,
+		)
 	}
 }
 
