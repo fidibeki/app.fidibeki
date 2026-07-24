@@ -805,6 +805,36 @@ was removed from the staging test tenant.
         staging-only/no-deployment product constraint remains active.
     - [ ] #66: add safe per-integration field profiles, disclosure ledgers, destination
       capabilities, restriction enforcement, and rectification/erasure action tracking.
+      - [x] Add the first minimized-delivery slice with migration 99. New Slack, Teams, and generic
+        webhook destinations default to a fixed minimum (public/resource identity, moderated title,
+        project, status/priority, event time, and authenticated Fidibeki resource link); existing
+        destinations are backfilled with the legacy optional groups so the migration does not
+        silently break their payload contract. Per-destination allowlists can opt into description,
+        origin/path-only source page, rating, classification, workflow context, and attachment
+        metadata. Email addresses, query parameters, fragments, credentials, consent/replay
+        identifiers, IP/user-agent data, and raw attachment evidence are never selectable.
+      - [x] Apply the same projection after the existing moderation gate to Slack Block Kit, Teams,
+        and generic webhook output. Generic webhooks keep schema `1.0` and gain additive `privacy`
+        metadata. Workflow actor payloads use ID/display name only; source-page actions and payloads
+        strip query and fragment; attachment actions remain authenticated Fidibeki routes rather
+        than provider/object-storage URLs.
+      - [x] Record a disclosure ledger on each delivery attempt without copying the payload:
+        destination kind/ID, profile version, selected data-category names, delivery result, and a
+        truthful capability snapshot. Incoming-webhook destinations explicitly report that
+        delivered messages cannot be updated, deleted, or recalled while Fidibeki links remain
+        authenticated and access-controlled. Restriction enforcement remains before the provider
+        request and records a failed/suppressed attempt.
+      - [x] Add owner UI for create/edit disclosure profiles with minimum-data summary, explicit
+        opt-in checkboxes, external-retention warning, and synthetic preview. Desktop/mobile E2E
+        covers creation and profile update; backend coverage proves allowlist validation, tenant
+        permissions, minimized sentinels, URL stripping, ledger categories, capability truth, and
+        existing moderation/retry behavior.
+      - [ ] Add downstream rectification/erasure action records and operational follow-up for data
+        already delivered to third-party destinations. Do not imply that incoming webhooks can
+        mutate or recall provider-retained messages.
+      - [ ] Run the authenticated staging E2E for profile configuration, minimized Slack/Teams/
+        webhook deliveries, restriction suppression, and disclosure-ledger evidence before closing
+        #66. No deployment is performed under the current staging-only/no-deployment constraint.
     - [x] #67: refine language and timezone preferences layout.
     - [x] #68: fix sidebar navigation label alignment and overflow.
     - [x] #69: make the attention queue note actionable.

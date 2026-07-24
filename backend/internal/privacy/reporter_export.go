@@ -294,6 +294,10 @@ var reporterExportFiles = []exportFile{
 			'provider_message_id', delivery.provider_message_id,
 			'error_message', delivery.error_message, 'sent_at', delivery.sent_at,
 			'webhook_event_id', delivery.webhook_event_id,
+			'destination_kind', delivery.destination_kind,
+			'privacy_profile_version', delivery.privacy_profile_version,
+			'data_categories', delivery.data_categories,
+			'destination_capabilities', delivery.destination_capabilities,
 			'created_at', delivery.created_at
 		)
 		FROM delivery_logs AS delivery

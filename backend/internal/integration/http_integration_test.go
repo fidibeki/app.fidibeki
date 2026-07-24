@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -153,7 +154,8 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	createBody := fmt.Sprintf(`{
 		"kind":"webhook","name":"Product webhook","webhook_url":%q,
 		"custom_headers":{"Authorization":"Bearer stored-secret"},
-		"events":["feedback.created","issue.updated"]
+		"events":["feedback.created","issue.updated"],
+		"privacy_fields":["description","page","rating","classification","workflow","attachments"]
 	}`, successEndpoint.URL)
 	createdResponse := integrationRequest(handler, "acme", http.MethodPost, "/v1/integrations", createBody, ownerToken)
 	if createdResponse.Code != http.StatusCreated {
@@ -166,8 +168,62 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	decodeIntegrationResponse(t, createdResponse, &created)
 	if created.Integration.ID == "" || created.WebhookSecret == "" ||
 		created.Integration.WebhookSecretFingerprint == nil ||
-		len(created.Integration.CustomHeaderNames) != 1 {
+		len(created.Integration.CustomHeaderNames) != 1 ||
+		created.Integration.PrivacyProfileVersion != PrivacyProfileVersion ||
+		created.Integration.DestinationCapabilities.MessageRecall {
 		t.Fatalf("create response = %#v", created)
+	}
+	privacyResponse := integrationRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/integrations/"+created.Integration.ID+"/privacy",
+		`{"privacy_fields":[]}`, ownerToken,
+	)
+	if privacyResponse.Code != http.StatusOK {
+		t.Fatalf("minimum privacy update status = %d, body = %s",
+			privacyResponse.Code, privacyResponse.Body.String())
+	}
+	var privacyUpdated struct {
+		Integration Integration `json:"integration"`
+	}
+	decodeIntegrationResponse(t, privacyResponse, &privacyUpdated)
+	if len(privacyUpdated.Integration.PrivacyFields) != 0 {
+		t.Fatalf("minimum privacy fields = %#v", privacyUpdated.Integration.PrivacyFields)
+	}
+	privacyDenied := integrationRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/integrations/"+created.Integration.ID+"/privacy",
+		`{"privacy_fields":["description"]}`, createOnlyToken,
+	)
+	if privacyDenied.Code != http.StatusForbidden {
+		t.Fatalf("create-only privacy update status = %d", privacyDenied.Code)
+	}
+	privacyCrossTenant := integrationRequest(
+		handler, "beta", http.MethodPatch,
+		"/v1/integrations/"+created.Integration.ID+"/privacy",
+		`{"privacy_fields":["description"]}`, betaToken,
+	)
+	if privacyCrossTenant.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant privacy update status = %d, body = %s",
+			privacyCrossTenant.Code, privacyCrossTenant.Body.String())
+	}
+	privacyInvalid := integrationRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/integrations/"+created.Integration.ID+"/privacy",
+		`{"privacy_fields":["reporter_email"]}`, ownerToken,
+	)
+	if privacyInvalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid privacy update status = %d, body = %s",
+			privacyInvalid.Code, privacyInvalid.Body.String())
+	}
+	privacyResponse = integrationRequest(
+		handler, "acme", http.MethodPatch,
+		"/v1/integrations/"+created.Integration.ID+"/privacy",
+		`{"privacy_fields":["description","page","rating","classification","workflow","attachments"]}`,
+		ownerToken,
+	)
+	if privacyResponse.Code != http.StatusOK {
+		t.Fatalf("full privacy update status = %d, body = %s",
+			privacyResponse.Code, privacyResponse.Body.String())
 	}
 	var secretCiphertext, headerCiphertext []byte
 	var fingerprint string
@@ -333,6 +389,90 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if sentCount != 2 || failedCount != 1 {
 		t.Errorf("delivery log counts = sent %d failed %d", sentCount, failedCount)
 	}
+	var categories []string
+	var destinationKind string
+	var profileVersion int
+	var canRecall bool
+	if err := root.QueryRow(ctx, `
+		SELECT data_categories, destination_kind::text, privacy_profile_version,
+		       (destination_capabilities->>'message_recall')::boolean
+		FROM delivery_logs
+		WHERE outbox_event_id = $1 AND integration_id = $2
+	`, outboxID, created.Integration.ID).Scan(
+		&categories, &destinationKind, &profileVersion, &canRecall,
+	); err != nil {
+		t.Fatalf("read disclosure ledger: %v", err)
+	}
+	if destinationKind != string(KindWebhook) || profileVersion != PrivacyProfileVersion ||
+		canRecall || !slices.Contains(categories, "description") ||
+		!slices.Contains(categories, "attachment_metadata") {
+		t.Errorf("disclosure ledger = kind %q version %d recall %t categories %#v",
+			destinationKind, profileVersion, canRecall, categories)
+	}
+	var restrictedFeedbackID, restrictedCaseID, restrictedOutboxID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO feedbacks (
+			tenant_id, project_id, public_id, client_feedback_id, title, description,
+			page_url, reporter_email, text_process_status, ai_processed_at
+		) VALUES (
+			$1, $2, 'fb_Rstr0001', gen_random_uuid(), 'Restricted title',
+			'RESTRICTED-DESCRIPTION', 'https://example.test/private?token=secret',
+			'restricted@example.test', 'skipped', now()
+		) RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&restrictedFeedbackID); err != nil {
+		t.Fatalf("create restricted integration feedback: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO privacy_cases (
+			tenant_id, public_id, subject_type, right_type, controller_role, status,
+			subject_email, subject_email_digest, requested_by_member_id, owner_member_id,
+			verification_expires_at, verification_method, verified_at, received_at,
+			deadline_at, idempotency_key, request_fingerprint
+		) VALUES (
+			$1, 'PRIV-RESTRICTED-1', 'reporter', 'restriction',
+			'customer_controller_assistance', 'in_progress',
+			'restricted@example.test', digest('restricted@example.test', 'sha256'), $2, $2,
+			now() + interval '1 day', 'email_link', now(), now(), now() + interval '30 days',
+			'integration-restriction-test', digest('integration-restriction-test', 'sha256')
+		) RETURNING id
+	`, tenantIDs["acme"], memberIDs["acme"]).Scan(&restrictedCaseID); err != nil {
+		t.Fatalf("create restricted integration privacy case: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO privacy_processing_restrictions (
+			tenant_id, privacy_case_id, purposes, reason, activated_at
+		) VALUES ($1, $2, '{integration}', 'Reporter restriction request', now())
+	`, tenantIDs["acme"], restrictedCaseID); err != nil {
+		t.Fatalf("activate integration restriction: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, event_key)
+		VALUES ($1, 'feedback.created', 'feedback', $2, 'restricted-test') RETURNING id
+	`, tenantIDs["acme"], restrictedFeedbackID).Scan(&restrictedOutboxID); err != nil {
+		t.Fatalf("create restricted integration event: %v", err)
+	}
+	restrictedPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: restrictedOutboxID, TenantID: tenantIDs["acme"],
+		ResourceID: restrictedFeedbackID, IntegrationID: created.Integration.ID,
+	})
+	if err := delivery.Handler()(ctx, asynq.NewTask(TaskDeliver, restrictedPayload)); err != nil {
+		t.Fatalf("suppress restricted integration delivery: %v", err)
+	}
+	var restrictedStatus, restrictedError string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, error_message
+		FROM delivery_logs
+		WHERE outbox_event_id = $1 AND integration_id = $2
+	`, restrictedOutboxID, created.Integration.ID).Scan(
+		&restrictedStatus, &restrictedError,
+	); err != nil {
+		t.Fatalf("read restricted integration ledger: %v", err)
+	}
+	if requestCount != 1 || restrictedStatus != "failed" ||
+		restrictedError != "integration delivery suppressed by privacy restriction" {
+		t.Errorf("restricted delivery = requests %d status %q error %q",
+			requestCount, restrictedStatus, restrictedError)
+	}
 	const unsafeDescription = "The payment step is unclear."
 	const unsafeText = "The checkout is confusing"
 	if _, err := root.Exec(ctx, `
@@ -480,7 +620,10 @@ func createIntegrationThroughAPI(
 	endpoint string,
 ) string {
 	t.Helper()
-	body := fmt.Sprintf(`{"kind":%q,"name":%q,"webhook_url":%q,"events":["feedback.created"]}`,
+	body := fmt.Sprintf(`{
+		"kind":%q,"name":%q,"webhook_url":%q,"events":["feedback.created"],
+		"privacy_fields":["description","page","rating","classification","workflow","attachments"]
+	}`,
 		kind, strings.ToUpper(string(kind)), endpoint)
 	response := integrationRequest(handler, slug, http.MethodPost, "/v1/integrations", body, token)
 	if response.Code != http.StatusCreated {

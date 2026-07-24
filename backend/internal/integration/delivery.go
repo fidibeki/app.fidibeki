@@ -50,12 +50,13 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	var secretCiphertext []byte
 	var channel *string
 	var changesJSON []byte
-	var actorID, actorName, actorEmail *string
+	var actorID, actorName *string
 	var activityKind string
 	err := s.Database.QueryRow(ctx, `
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, tenant.plan, tenant.status,
 		       integration.id, integration.kind, integration.webhook_url, integration.channel,
 		       integration.custom_headers_ciphertext, integration.webhook_secret_ciphertext,
+		       integration.privacy_fields, integration.privacy_profile_version,
 		       event.event, event.resource_type, event.resource_id, event.created_at,
 		       COALESCE(feedback.public_id, issue.public_id),
 		       COALESCE(feedback.title, issue.title, ''),
@@ -86,7 +87,7 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		           ''
 		       ),
 		       COALESCE(issue_activity.kind, ''),
-		       actor.id::text, actor.name, actor.email::text,
+		       actor.id::text, actor.name,
 		       evidence.attachment_count, evidence.attachment_kinds,
 		       evidence.attachment_feedback_id,
 		       COALESCE(issue_moderation.title_moderated, false),
@@ -200,6 +201,7 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
 		&notification.TenantSlug, &plan, &status, &notification.IntegrationID, &notification.Kind,
 		&notification.WebhookURL, &channel, &headersCiphertext, &secretCiphertext,
+		&notification.PrivacyFields, &notification.PrivacyProfileVersion,
 		&notification.Event, &notification.ResourceType, &notification.ResourceID,
 		&notification.OccurredAt, &notification.PublicID, &notification.Title,
 		&notification.Description, &notification.Text, &notification.SuggestedTitle,
@@ -211,7 +213,7 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		&notification.ProjectID, &notification.ProjectName, &notification.FeedbackID,
 		&notification.Category, &notification.Actionability, &notification.Priority,
 		&changesJSON, &notification.Comment, &activityKind,
-		&actorID, &actorName, &actorEmail,
+		&actorID, &actorName,
 		&notification.AttachmentCount, &notification.AttachmentKinds,
 		&notification.AttachmentFeedbackID,
 		&notification.IssueTitleModerated, &notification.IssueDescriptionModerated,
@@ -261,12 +263,10 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		if actorName != nil {
 			notification.Actor.Name = *actorName
 		}
-		if actorEmail != nil {
-			notification.Actor.Email = *actorEmail
-		}
 	} else if activityKind == "reporter.responded" {
 		notification.Actor = &NotificationActor{Type: "reporter", Name: "Reporter"}
 	}
+	notification.DestinationCapabilities = destinationCapabilities()
 	if !supportedEvent(notification.Event, notification.ResourceType) || notification.PublicID == "" {
 		return Notification{}, ErrNotFound
 	}
@@ -340,6 +340,10 @@ func (s Store) StartDeliveryAttempt(
 	notification Notification,
 	attemptNumber int,
 ) (DeliveryAttempt, error) {
+	capabilities, err := json.Marshal(notification.DestinationCapabilities)
+	if err != nil {
+		return DeliveryAttempt{}, fmt.Errorf("encode integration destination capabilities: %w", err)
+	}
 	deliveryKey := "integration:" + notification.IntegrationID
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE delivery_logs
@@ -351,11 +355,12 @@ func (s Store) StartDeliveryAttempt(
 	}
 	var attempt DeliveryAttempt
 	var status string
-	err := s.Database.QueryRow(ctx, `
+	err = s.Database.QueryRow(ctx, `
 		INSERT INTO delivery_logs (
 			tenant_id, outbox_event_id, integration_id, delivery_key, event,
-			resource_type, resource_id, attempt_number
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			resource_type, resource_id, attempt_number, destination_kind,
+			privacy_profile_version, data_categories, destination_capabilities
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (outbox_event_id, delivery_key, attempt_number) DO UPDATE
 		SET status = CASE
 		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.status
@@ -364,11 +369,29 @@ func (s Store) StartDeliveryAttempt(
 		    error_message = CASE
 		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.error_message
 		        ELSE NULL
+		    END,
+		    destination_kind = CASE
+		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.destination_kind
+		        ELSE EXCLUDED.destination_kind
+		    END,
+		    privacy_profile_version = CASE
+		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.privacy_profile_version
+		        ELSE EXCLUDED.privacy_profile_version
+		    END,
+		    data_categories = CASE
+		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.data_categories
+		        ELSE EXCLUDED.data_categories
+		    END,
+		    destination_capabilities = CASE
+		        WHEN delivery_logs.status IN ('sent', 'bounced') THEN delivery_logs.destination_capabilities
+		        ELSE EXCLUDED.destination_capabilities
 		    END
 		RETURNING id, status
 	`, notification.TenantID, notification.OutboxEventID, notification.IntegrationID,
 		deliveryKey, notification.Event, notification.ResourceType,
-		notification.ResourceID, attemptNumber).Scan(&attempt.ID, &status)
+		notification.ResourceID, attemptNumber, notification.Kind,
+		notification.PrivacyProfileVersion, notificationDataCategories(notification),
+		string(capabilities)).Scan(&attempt.ID, &status)
 	if err != nil {
 		return DeliveryAttempt{}, fmt.Errorf("start integration delivery attempt: %w", err)
 	}
@@ -416,6 +439,7 @@ func (h DeliveryHandler) Handler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
+		notification = withNotificationURLs(notification, h.PublicBaseURL, h.BaseDomain)
 		retryCount, _ := asynq.GetRetryCount(ctx)
 		attempt, err := h.Store.StartDeliveryAttempt(ctx, notification, retryCount+1)
 		if err != nil {
@@ -449,7 +473,6 @@ func (h DeliveryHandler) Handler() asynq.HandlerFunc {
 }
 
 func (h DeliveryHandler) deliver(ctx context.Context, notification Notification) (string, error) {
-	notification = withNotificationURLs(notification, h.PublicBaseURL, h.BaseDomain)
 	body, err := notificationBody(notification)
 	if err != nil {
 		return "", fmt.Errorf("encode integration notification: %w", err)
@@ -629,22 +652,42 @@ func teamsMessage(notification Notification) map[string]any {
 func webhookMessage(notification Notification) map[string]any {
 	data := map[string]any{
 		"id": notification.ResourceID, "public_id": notification.PublicID,
-		"url":   notification.ResourceURL,
-		"title": notification.Title, "description": notification.Description, "text": notification.Text,
-		"page_url": notification.PageURL, "rating": notification.Rating,
+		"url": notification.ResourceURL, "title": notification.Title,
 		"issue_public_id": notification.IssuePublicID, "issue_status": notification.IssueStatus,
-		"priority": notification.Priority,
-		"classification": map[string]string{
-			"category": notification.Category, "actionability": notification.Actionability,
-		},
+		"status": notificationStatus(notification), "priority": notification.Priority,
 		"project": map[string]string{
 			"id": notification.ProjectID, "name": notification.ProjectName,
 		},
-		"attachments": map[string]any{
+	}
+	if notificationAllows(notification, PrivacyFieldDescription) {
+		data["description"] = notification.Description
+		data["text"] = notification.Text
+	}
+	if notificationAllows(notification, PrivacyFieldPage) {
+		data["page_url"] = integrationSafePageURL(notification.PageURL)
+	}
+	if notificationAllows(notification, PrivacyFieldRating) {
+		data["rating"] = notification.Rating
+	}
+	if notificationAllows(notification, PrivacyFieldClassification) {
+		data["classification"] = map[string]string{
+			"category": notification.Category, "actionability": notification.Actionability,
+		}
+	}
+	if notificationAllows(notification, PrivacyFieldAttachments) {
+		data["attachments"] = map[string]any{
 			"count": notification.AttachmentCount,
 			"kinds": notification.AttachmentKinds,
 			"url":   notification.AttachmentsURL,
-		},
+		}
+	}
+	changes := map[string]Change{}
+	var actor *NotificationActor
+	comment := ""
+	if notificationAllows(notification, PrivacyFieldWorkflow) {
+		changes = notification.Changes
+		actor = notification.Actor
+		comment = notification.Comment
 	}
 	return map[string]any{
 		"schema_version": "1.0",
@@ -656,10 +699,15 @@ func webhookMessage(notification Notification) map[string]any {
 			"id": notification.ResourceID, "public_id": notification.PublicID,
 			"type": notification.ResourceType, "url": notification.ResourceURL,
 		},
-		"changes": notification.Changes,
-		"actor":   notification.Actor,
-		"comment": notification.Comment,
+		"changes": changes,
+		"actor":   actor,
+		"comment": comment,
 		"data":    data,
+		"privacy": map[string]any{
+			"profile_version":          notification.PrivacyProfileVersion,
+			"data_categories":          notificationDataCategories(notification),
+			"destination_capabilities": notification.DestinationCapabilities,
+		},
 	}
 }
 
@@ -667,15 +715,17 @@ func notificationCopy(notification Notification) (string, string) {
 	if notification.ResourceType == "feedback" {
 		headline := "New feedback " + notification.PublicID
 		detail := notification.Title
-		description := strings.TrimSpace(notification.Description)
-		if description == "" {
-			description = strings.TrimSpace(notification.Text)
-		}
-		if description != "" && description != detail {
-			if detail == "" {
-				detail = description
-			} else {
-				detail += "\n" + description
+		if notificationAllows(notification, PrivacyFieldDescription) {
+			description := strings.TrimSpace(notification.Description)
+			if description == "" {
+				description = strings.TrimSpace(notification.Text)
+			}
+			if description != "" && description != detail {
+				if detail == "" {
+					detail = description
+				} else {
+					detail += "\n" + description
+				}
 			}
 		}
 		if detail == "" {
@@ -691,7 +741,8 @@ func notificationCopy(notification Notification) (string, string) {
 		headline = "Issue " + notification.PublicID + " resolved"
 	}
 	detail := notification.Title
-	if notification.Description != "" && notification.Description != detail {
+	if notificationAllows(notification, PrivacyFieldDescription) &&
+		notification.Description != "" && notification.Description != detail {
 		if detail == "" {
 			detail = notification.Description
 		} else {
@@ -714,26 +765,32 @@ func notificationFacts(notification Notification) []notificationFact {
 		}
 	}
 	add("Project", notification.ProjectName)
-	add("Page", integrationPageLabel(notification.PageURL))
-	if notification.Rating != nil {
+	if notificationAllows(notification, PrivacyFieldPage) {
+		add("Page", integrationPageLabel(notification.PageURL))
+	}
+	if notificationAllows(notification, PrivacyFieldRating) && notification.Rating != nil {
 		add("Rating", fmt.Sprintf("%d/5", *notification.Rating))
 	}
-	add("Category", strings.ReplaceAll(notification.Category, "_", " "))
-	add("Actionability", strings.ReplaceAll(notification.Actionability, "_", " "))
+	if notificationAllows(notification, PrivacyFieldClassification) {
+		add("Category", strings.ReplaceAll(notification.Category, "_", " "))
+		add("Actionability", strings.ReplaceAll(notification.Actionability, "_", " "))
+	}
 	add("Priority", strings.ReplaceAll(notification.Priority, "_", " "))
-	status := strings.ReplaceAll(notification.IssueStatus, "_", " ")
+	status := strings.ReplaceAll(notificationStatus(notification), "_", " ")
 	if notification.OldStatus != "" && notification.NewStatus != "" {
 		status = strings.ReplaceAll(notification.OldStatus, "_", " ") + " -> " +
 			strings.ReplaceAll(notification.NewStatus, "_", " ")
 	}
 	add("Status", status)
-	if notification.Actor != nil {
-		add("Actor", notificationActorLabel(*notification.Actor))
+	if notificationAllows(notification, PrivacyFieldWorkflow) {
+		if notification.Actor != nil {
+			add("Actor", notificationActorLabel(*notification.Actor))
+		}
+		if notification.Comment != "" {
+			add("Comment", notification.Comment)
+		}
 	}
-	if notification.Comment != "" {
-		add("Comment", notification.Comment)
-	}
-	if notification.AttachmentCount > 0 {
+	if notificationAllows(notification, PrivacyFieldAttachments) && notification.AttachmentCount > 0 {
 		value := fmt.Sprintf("%d", notification.AttachmentCount)
 		if len(notification.AttachmentKinds) > 0 {
 			value += " (" + strings.Join(notification.AttachmentKinds, ", ") + ")"
@@ -761,12 +818,17 @@ func integrationActions(notification Notification) []integrationAction {
 			candidates = append(candidates, integrationAction{Label: "Open issue", URL: notification.IssueURL})
 		}
 	}
-	if integrationSpecificPageURL(notification.PageURL) {
-		candidates = append(candidates, integrationAction{Label: "View page", URL: notification.PageURL})
+	if notificationAllows(notification, PrivacyFieldPage) &&
+		integrationSpecificPageURL(notification.PageURL) {
+		candidates = append(candidates, integrationAction{
+			Label: "View page", URL: integrationSafePageURL(notification.PageURL),
+		})
 	}
-	candidates = append(candidates,
-		integrationAction{Label: "View attachments", URL: notification.AttachmentsURL},
-	)
+	if notificationAllows(notification, PrivacyFieldAttachments) {
+		candidates = append(candidates,
+			integrationAction{Label: "View attachments", URL: notification.AttachmentsURL},
+		)
+	}
 	actions := make([]integrationAction, 0, len(candidates))
 	for _, action := range candidates {
 		if integrationActionURL(action.URL) {
@@ -787,20 +849,72 @@ func integrationActionURL(value string) bool {
 	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != ""
 }
 
-func integrationPageLabel(value string) string {
+func integrationSafePageURL(value string) string {
 	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return ""
+	}
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	parsed.User = nil
+	return parsed.String()
+}
+
+func integrationPageLabel(value string) string {
+	parsed, err := url.Parse(integrationSafePageURL(value))
 	if err != nil || parsed.Host == "" {
 		return ""
 	}
 	return truncateIntegrationText(parsed.Host+parsed.EscapedPath(), 100)
 }
 
+func notificationAllows(notification Notification, field string) bool {
+	for _, allowed := range notification.PrivacyFields {
+		if allowed == field {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationStatus(notification Notification) string {
+	if notification.ResourceType == "feedback" {
+		return notification.FeedbackStatus
+	}
+	return notification.IssueStatus
+}
+
+func notificationDataCategories(notification Notification) []string {
+	categories := []string{"event_metadata", "resource_identity"}
+	add := func(category string, present bool) {
+		if present {
+			categories = append(categories, category)
+		}
+	}
+	add("sanitized_title", strings.TrimSpace(notification.Title) != "")
+	add("project", notification.ProjectID != "" || strings.TrimSpace(notification.ProjectName) != "")
+	add("workflow_status", strings.TrimSpace(notificationStatus(notification)) != "")
+	add("priority", strings.TrimSpace(notification.Priority) != "")
+	add("fidibeki_link", notification.ResourceURL != "")
+	add("description", notificationAllows(notification, PrivacyFieldDescription) &&
+		(strings.TrimSpace(notification.Description) != "" || strings.TrimSpace(notification.Text) != ""))
+	add("source_page", notificationAllows(notification, PrivacyFieldPage) &&
+		integrationSafePageURL(notification.PageURL) != "")
+	add("rating", notificationAllows(notification, PrivacyFieldRating) && notification.Rating != nil)
+	add("classification", notificationAllows(notification, PrivacyFieldClassification) &&
+		(notification.Category != "" || notification.Actionability != ""))
+	add("workflow_context", notificationAllows(notification, PrivacyFieldWorkflow) &&
+		(len(notification.Changes) > 0 || notification.Actor != nil || notification.Comment != ""))
+	add("attachment_metadata", notificationAllows(notification, PrivacyFieldAttachments) &&
+		notification.AttachmentCount > 0)
+	return categories
+}
+
 func notificationActorLabel(actor NotificationActor) string {
 	if actor.Name != "" {
 		return actor.Name
-	}
-	if actor.Email != "" {
-		return actor.Email
 	}
 	if actor.Type == "reporter" {
 		return "Reporter"

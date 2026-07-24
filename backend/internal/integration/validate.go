@@ -39,7 +39,36 @@ func ValidateCreate(input CreateInput, allowInsecureURL ...bool) (CreateValues, 
 	}
 	values.Events, fields = validateEvents(input.Events, fields)
 	values.CustomHeaders, fields = validateHeaders(input.Kind, input.CustomHeaders, fields)
+	values.PrivacyFields, fields = validatePrivacyFields(input.PrivacyFields, fields)
 	return values, fields
+}
+
+func ValidatePrivacyUpdate(input UpdatePrivacyInput) ([]string, []FieldError) {
+	return validatePrivacyFields(input.PrivacyFields, nil)
+}
+
+func validatePrivacyFields(values []string, fields []FieldError) ([]string, []FieldError) {
+	allowed := make(map[string]struct{}, len(allPrivacyFields))
+	for _, field := range allPrivacyFields {
+		allowed[field] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	validated := make([]string, 0, len(values))
+	for _, field := range values {
+		field = strings.TrimSpace(field)
+		if _, ok := allowed[field]; !ok {
+			return nil, append(fields, FieldError{
+				Field: "privacy_fields", Message: "contains an unsupported field group",
+			})
+		}
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		seen[field] = struct{}{}
+		validated = append(validated, field)
+	}
+	sort.Strings(validated)
+	return validated, fields
 }
 
 func validWebhookURL(value string, allowInsecureURL ...bool) bool {

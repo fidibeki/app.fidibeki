@@ -9,6 +9,7 @@ import {
   MailCheck,
   Plus,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   UserCheck,
   UserPlus,
@@ -26,6 +27,7 @@ import type {
   Integration,
   IntegrationEvent,
   IntegrationKind,
+  IntegrationPrivacyField,
   Member,
   MemberDomain,
   OrganizationProfile,
@@ -86,7 +88,7 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
   }
 })
 
-const modal = ref<'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | null>(null)
+const modal = ref<'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | 'integration-privacy' | null>(null)
 const pending = ref(false)
 const formError = ref('')
 const reporterAccessError = ref('')
@@ -121,6 +123,8 @@ const integrationName = ref('')
 const integrationURL = ref('')
 const integrationChannel = ref('')
 const integrationEvents = ref<IntegrationEvent[]>(['feedback.created'])
+const integrationPrivacyFields = ref<IntegrationPrivacyField[]>([])
+const selectedIntegration = ref<Integration | null>(null)
 const workspaceAppearance = ref<WidgetAppearanceOverrides>({})
 const revealedSecret = ref('')
 type DestructiveSettingAction =
@@ -156,6 +160,7 @@ const modalTitle = computed(() => {
   }
   if (modal.value === 'transfer') return t('admin.settings.modal.transferOwnership')
   if (modal.value === 'key') return t('admin.settings.modal.createKey')
+  if (modal.value === 'integration-privacy') return t('admin.settings.modal.integrationPrivacy')
   return t('admin.settings.modal.addIntegration')
 })
 const modalEyebrow = computed(() => {
@@ -163,6 +168,7 @@ const modalEyebrow = computed(() => {
   if (modal.value === 'member-lifecycle') return t('admin.settings.modal.memberLifecycle')
   if (modal.value === 'transfer') return t('admin.settings.modal.workspaceOwner')
   if (modal.value === 'key') return t('admin.settings.modal.machineCredential')
+  if (modal.value === 'integration-privacy') return t('admin.settings.modal.dataDisclosure')
   return t('admin.settings.modal.deliveryEndpoint')
 })
 const destructiveTitle = computed(() => {
@@ -217,6 +223,23 @@ function eventLabel(value: IntegrationEvent) {
     'issue.resolved': 'issueResolved',
   }[value]
   return t(`admin.settings.integrations.event.${key}`)
+}
+
+const privacyFieldOptions: IntegrationPrivacyField[] = [
+  'description',
+  'page',
+  'rating',
+  'classification',
+  'workflow',
+  'attachments',
+]
+
+function privacyFieldLabel(value: IntegrationPrivacyField) {
+  return t(`admin.settings.integrations.privacy.field.${value}`)
+}
+
+function privacyFieldDescription(value: IntegrationPrivacyField) {
+  return t(`admin.settings.integrations.privacy.fieldDescription.${value}`)
 }
 
 function applyPreset(target: 'member' | 'key', preset: PermissionPreset) {
@@ -444,6 +467,8 @@ function openIntegration() {
   integrationURL.value = ''
   integrationChannel.value = ''
   integrationEvents.value = ['feedback.created']
+  integrationPrivacyFields.value = []
+  selectedIntegration.value = null
   modal.value = 'integration'
 }
 
@@ -451,6 +476,20 @@ function toggleEvent(event: IntegrationEvent) {
   integrationEvents.value = integrationEvents.value.includes(event)
     ? integrationEvents.value.filter((value) => value !== event)
     : [...integrationEvents.value, event]
+}
+
+function togglePrivacyField(field: IntegrationPrivacyField) {
+  integrationPrivacyFields.value = integrationPrivacyFields.value.includes(field)
+    ? integrationPrivacyFields.value.filter(value => value !== field)
+    : [...integrationPrivacyFields.value, field]
+}
+
+function openIntegrationPrivacy(integration: Integration) {
+  if (!canWrite('integration:update')) return
+  formError.value = ''
+  selectedIntegration.value = integration
+  integrationPrivacyFields.value = [...(integration.privacy_fields || [])]
+  modal.value = 'integration-privacy'
 }
 
 async function createIntegration() {
@@ -467,6 +506,7 @@ async function createIntegration() {
         channel: integrationKind.value === 'slack' ? integrationChannel.value : null,
         custom_headers: {},
         events: integrationEvents.value,
+        privacy_fields: integrationPrivacyFields.value,
         is_active: true,
       },
     })
@@ -475,6 +515,26 @@ async function createIntegration() {
     if (!revealedSecret.value) modal.value = null
   } catch (createError) {
     formError.value = localizedError.message(createError, 'admin.settings.errors.integrationCreate')
+  } finally {
+    pending.value = false
+  }
+}
+
+async function saveIntegrationPrivacy() {
+  const integration = selectedIntegration.value
+  if (!integration || !canWrite('integration:update') || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    await $apiFetch(`/v1/integrations/${integration.id}/privacy`, {
+      method: 'PATCH',
+      body: { privacy_fields: integrationPrivacyFields.value },
+    })
+    await refresh()
+    modal.value = null
+    selectedIntegration.value = null
+  } catch (updateError) {
+    formError.value = localizedError.message(updateError, 'admin.settings.errors.integrationPrivacy')
   } finally {
     pending.value = false
   }
@@ -719,8 +779,11 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
             <span><b>{{ integration.name }}</b><small>{{ integration.kind }}</small></span>
             <code>{{ integration.webhook_url }}</code>
             <span>{{ t('admin.settings.integrations.subscribed', { count: integer(integration.events.length) }) }}</span>
-            <span class="settings-state"><i />{{ integration.is_active ? t('admin.common.active') : t('admin.common.paused') }}</span>
-            <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.integrations.remove')" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
+            <span class="settings-state"><i /><span>{{ integration.is_active ? t('admin.common.active') : t('admin.common.paused') }}<small>{{ integration.privacy_fields?.length ? t('admin.settings.integrations.privacy.optionalCount', { count: integer(integration.privacy_fields.length) }) : t('admin.settings.integrations.privacy.minimum') }}</small></span></span>
+            <span class="settings-row-actions">
+              <button v-if="canWrite('integration:update')" class="app-icon-button" :title="t('admin.settings.integrations.privacy.configure')" @click="openIntegrationPrivacy(integration)"><SlidersHorizontal :size="16" /></button>
+              <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.integrations.remove')" @click="deleteIntegration(integration)"><Trash2 :size="16" /></button>
+            </span>
           </div>
         </div>
       </section>
@@ -769,14 +832,49 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedToken ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedToken" class="app-button app-button--primary" type="submit" :disabled="pending || !keyName || !keyPermissions.length">{{ pending ? t('admin.common.creating') : t('admin.settings.keys.create') }}</button></footer>
         </form>
 
-        <form v-else @submit.prevent="createIntegration">
+        <form v-else-if="modal === 'integration'" @submit.prevent="createIntegration">
           <div v-if="revealedSecret" class="settings-secret"><ShieldCheck :size="20" /><h3>{{ t('admin.settings.integrations.signingSecret') }}</h3><code>{{ revealedSecret }}</code><button class="app-button" type="button" @click="copySecret"><Copy :size="15" /> {{ t('admin.settings.integrations.copySecret') }}</button></div>
           <template v-else>
             <div class="settings-form-grid"><label>{{ t('admin.settings.integrations.type') }}<select v-model="integrationKind" class="app-select" autofocus><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="teams">Teams</option></select></label><label>{{ t('admin.settings.integrations.name') }}<input v-model.trim="integrationName" class="app-input" required maxlength="100" :placeholder="t('admin.settings.integrations.namePlaceholder')" /></label><label class="wide">{{ t('admin.settings.integrations.webhookURL') }}<input v-model.trim="integrationURL" class="app-input" type="url" required placeholder="https://hooks.example.com/..." /></label><label v-if="integrationKind === 'slack'" class="wide">{{ t('admin.settings.integrations.channel') }}<input v-model.trim="integrationChannel" class="app-input" required placeholder="#feedback" /></label></div>
             <fieldset class="settings-events"><legend>{{ t('admin.settings.integrations.events') }}</legend><label v-for="event in (['feedback.created', 'issue.created', 'issue.updated', 'issue.resolved'] as IntegrationEvent[])" :key="event"><input type="checkbox" :checked="integrationEvents.includes(event)" @change="toggleEvent(event)" />{{ eventLabel(event) }}</label></fieldset>
+            <section class="settings-disclosure-warning"><AlertTriangle :size="17" /><div><b>{{ t('admin.settings.integrations.privacy.destinationTitle') }}</b><p>{{ t('admin.settings.integrations.privacy.destinationWarning') }}</p></div></section>
+            <fieldset class="settings-privacy-fields">
+              <legend>{{ t('admin.settings.integrations.privacy.optionalFields') }}</legend>
+              <p>{{ t('admin.settings.integrations.privacy.minimumIncluded') }}</p>
+              <label v-for="field in privacyFieldOptions" :key="field">
+                <input type="checkbox" :checked="integrationPrivacyFields.includes(field)" @change="togglePrivacyField(field)" />
+                <span><b>{{ privacyFieldLabel(field) }}</b><small>{{ privacyFieldDescription(field) }}</small></span>
+              </label>
+            </fieldset>
+            <section class="settings-disclosure-preview" aria-live="polite">
+              <span>{{ t('admin.settings.integrations.privacy.syntheticPreview') }}</span>
+              <b>fb_EXAMPLE · {{ t('admin.settings.integrations.privacy.previewTitle') }}</b>
+              <small>{{ t('admin.settings.integrations.privacy.previewMinimum') }}</small>
+              <small v-if="integrationPrivacyFields.length">{{ integrationPrivacyFields.map(privacyFieldLabel).join(' · ') }}</small>
+            </section>
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? t('admin.common.connecting') : t('admin.settings.integrations.add') }}</button></footer>
+        </form>
+
+        <form v-else class="settings-integration-privacy-form" @submit.prevent="saveIntegrationPrivacy">
+          <section class="settings-disclosure-warning"><AlertTriangle :size="17" /><div><b>{{ t('admin.settings.integrations.privacy.destinationTitle') }}</b><p>{{ t('admin.settings.integrations.privacy.destinationWarning') }}</p></div></section>
+          <fieldset class="settings-privacy-fields">
+            <legend>{{ t('admin.settings.integrations.privacy.optionalFields') }}</legend>
+            <p>{{ t('admin.settings.integrations.privacy.minimumIncluded') }}</p>
+            <label v-for="field in privacyFieldOptions" :key="field">
+              <input type="checkbox" :checked="integrationPrivacyFields.includes(field)" @change="togglePrivacyField(field)" />
+              <span><b>{{ privacyFieldLabel(field) }}</b><small>{{ privacyFieldDescription(field) }}</small></span>
+            </label>
+          </fieldset>
+          <section class="settings-disclosure-preview" aria-live="polite">
+            <span>{{ t('admin.settings.integrations.privacy.syntheticPreview') }}</span>
+            <b>fb_EXAMPLE · {{ t('admin.settings.integrations.privacy.previewTitle') }}</b>
+            <small>{{ t('admin.settings.integrations.privacy.previewMinimum') }}</small>
+            <small v-if="integrationPrivacyFields.length">{{ integrationPrivacyFields.map(privacyFieldLabel).join(' · ') }}</small>
+          </section>
+          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending">{{ pending ? t('admin.common.saving') : t('admin.settings.integrations.privacy.save') }}</button></footer>
         </form>
       </section>
     </AppDialog>
@@ -847,7 +945,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-row--head { min-height: 36px; padding-top: 0; padding-bottom: 0; background: #f8faf9; font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .settings-members .settings-row { grid-template-columns: minmax(190px, 1.5fr) minmax(110px, .7fr) minmax(110px, .7fr) minmax(38px, auto); }
 .settings-keys .settings-row { grid-template-columns: minmax(190px, 1.3fr) minmax(160px, 1fr) 100px 100px 38px; }
-.settings-integrations .settings-row { grid-template-columns: minmax(170px, .8fr) minmax(220px, 1.4fr) 100px 90px 38px; }
+.settings-integrations .settings-row { grid-template-columns: minmax(170px, .8fr) minmax(220px, 1.4fr) 100px 110px 76px; }
 .settings-row > span { min-width: 0; }
 .settings-row > span > b { display: block; color: var(--ink-soft); font-size: 11px; }
 .settings-row small, .settings-row code { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -859,6 +957,10 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-member-access small { margin: 0; }
 .settings-member-access > b.settings-owner-label { display: inline-flex; height: 21px; align-items: center; justify-content: center; padding: 0 7px; background: var(--teal-soft); color: var(--teal); border-radius: 4px; font-size: 9px; line-height: 1; text-transform: uppercase; }
 .settings-member-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.settings-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.settings-integrations .settings-state { align-items: flex-start; text-transform: none; }
+.settings-integrations .settings-state > i { margin-top: 3px; }
+.settings-integrations .settings-state > span { min-width: 0; }
 .settings-danger-icon { color: var(--red); }
 .settings-empty { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 8px; color: var(--muted); }
 .settings-empty h3 { margin: 0; color: var(--ink-soft); font-size: 12px; }
@@ -886,6 +988,23 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-events input { accent-color: var(--teal); }
 .settings-events { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 10px; margin: 15px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
 .settings-events legend { padding: 0 4px; }
+.settings-disclosure-warning { display: flex; align-items: flex-start; gap: 9px; margin: 15px 0 0; padding: 11px 12px; background: #fff9eb; border: 1px solid #ead9ad; border-radius: 5px; color: #795d1d; }
+.settings-disclosure-warning svg { flex: 0 0 auto; margin-top: 1px; }
+.settings-disclosure-warning b { display: block; color: #604912; font-size: 10px; }
+.settings-disclosure-warning p { margin: 3px 0 0; font-size: 9px; line-height: 1.55; }
+.settings-privacy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin: 15px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
+.settings-privacy-fields legend { padding: 0 4px; color: var(--ink); font-size: 10px; font-weight: 800; }
+.settings-privacy-fields > p { grid-column: 1 / -1; margin: 0 0 8px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.settings-privacy-fields label { display: flex; min-height: 46px; align-items: flex-start; gap: 8px; padding: 7px 0; color: var(--ink-soft); }
+.settings-privacy-fields input { width: 15px; height: 15px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--teal); }
+.settings-privacy-fields label span { min-width: 0; }
+.settings-privacy-fields label b, .settings-privacy-fields label small { display: block; }
+.settings-privacy-fields label b { font-size: 10px; }
+.settings-privacy-fields label small { margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 450; line-height: 1.45; }
+.settings-disclosure-preview { display: grid; gap: 4px; margin-top: 15px; padding: 11px 12px; background: var(--surface-soft); border-left: 3px solid var(--teal); }
+.settings-disclosure-preview > span { color: var(--teal); font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.settings-disclosure-preview > b { color: var(--ink); font-size: 11px; }
+.settings-disclosure-preview > small { color: var(--muted); font-size: 9px; line-height: 1.45; }
 .settings-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px -16px -16px; padding: 12px 16px; background: #f8faf9; border-top: 1px solid var(--line); }
 .settings-form-error { padding: 9px 10px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; }
 .settings-field-error { color: var(--red); font-size: 9px; font-weight: 650; line-height: 1.4; }
@@ -894,6 +1013,6 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-secret h3 { margin: 0; font-size: 14px; }
 .settings-secret code { width: 100%; padding: 10px; overflow-wrap: anywhere; background: #f3f6f5; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; }
 .capitalize { text-transform: capitalize; }
-@media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row { grid-template-columns: minmax(0, 1fr) auto minmax(38px, auto); } .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) 38px; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } .settings-members .settings-row > .settings-member-access, .settings-members .settings-row > .settings-member-actions { display: flex; } }
-@media (max-width: 650px) { .settings-tabs { flex-wrap: wrap; gap: 8px 15px; overflow-x: visible; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
+@media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row { grid-template-columns: minmax(0, 1fr) auto minmax(38px, auto); } .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) auto; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } .settings-members .settings-row > .settings-member-access, .settings-members .settings-row > .settings-member-actions, .settings-integrations .settings-row > .settings-row-actions { display: flex; } }
+@media (max-width: 650px) { .settings-tabs { flex-wrap: wrap; gap: 8px 15px; overflow-x: visible; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-privacy-fields, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
 </style>

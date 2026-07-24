@@ -59,12 +59,14 @@ func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 		Kind: KindWebhook, Name: "  Deploy alerts  ", WebhookURL: "https://hooks.example.test/fidibeki",
 		Events:        []string{EventIssueUpdated, EventFeedbackCreated, EventIssueUpdated},
 		CustomHeaders: map[string]string{"Authorization": "Bearer secret"}, Active: &active,
+		PrivacyFields: []string{PrivacyFieldPage, PrivacyFieldDescription, PrivacyFieldPage},
 	})
 	if len(fields) != 0 {
 		t.Fatalf("ValidateCreate(valid) fields = %#v", fields)
 	}
 	if values.Name != "Deploy alerts" || values.Active || len(values.Events) != 2 ||
-		values.Events[0] != EventFeedbackCreated || values.CustomHeaders["Authorization"] != "Bearer secret" {
+		values.Events[0] != EventFeedbackCreated || values.CustomHeaders["Authorization"] != "Bearer secret" ||
+		len(values.PrivacyFields) != 2 || values.PrivacyFields[0] != PrivacyFieldDescription {
 		t.Errorf("validated values = %#v", values)
 	}
 
@@ -77,6 +79,7 @@ func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 		{Kind: KindWebhook, Name: "Alerts", WebhookURL: "https://example.test", Events: []string{"unknown"}},
 		{Kind: KindWebhook, Name: "Alerts", WebhookURL: "https://example.test", Events: []string{EventFeedbackCreated}, CustomHeaders: map[string]string{"X-Fidibeki-Signature": "override"}},
 		{Kind: KindSlack, Name: "Alerts", WebhookURL: "https://example.test", Events: []string{EventFeedbackCreated}, CustomHeaders: map[string]string{"Authorization": "secret"}},
+		{Kind: KindSlack, Name: "Alerts", WebhookURL: "https://example.test", Events: []string{EventFeedbackCreated}, PrivacyFields: []string{"reporter_email"}},
 	}
 	for index, input := range invalidCases {
 		if _, fields := ValidateCreate(input); len(fields) == 0 {
@@ -87,6 +90,62 @@ func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 		!validWebhookURL("http://127.0.0.1:8080/hook", true) ||
 		!validWebhookURL("http://localhost:8080/hook", true) {
 		t.Error("loopback development webhook URL rejected")
+	}
+}
+
+func TestNotificationPrivacyProfileDefaultsToMinimumAndStripsPageSecrets(t *testing.T) {
+	t.Parallel()
+	rating := 1
+	notification := Notification{
+		Kind: KindWebhook, OutboxEventID: "event-id", Event: EventFeedbackCreated,
+		ResourceType: "feedback", ResourceID: "feedback-id", PublicID: "fb_private",
+		Title: "Sanitized title", Description: "DESCRIPTION-SENTINEL", Text: "TEXT-SENTINEL",
+		PageURL: "https://example.test/chart?asset=BAI#private-fragment", Rating: &rating,
+		Category: "billing", Actionability: "actionable", Priority: "high",
+		ProjectID: "project-id", ProjectName: "Storefront", FeedbackStatus: "new",
+		ResourceURL:     "https://acme.fidibeki.com/feedback/feedback-id",
+		AttachmentsURL:  "https://acme.fidibeki.com/feedback/feedback-id#attachments",
+		AttachmentCount: 2, AttachmentKinds: []string{"audio", "screenshot"},
+		Changes: map[string]Change{"priority": {From: "low", To: "high"}},
+		Actor:   &NotificationActor{Type: "member", ID: "member-id", Name: "ACTOR-SENTINEL"},
+		Comment: "COMMENT-SENTINEL", PrivacyProfileVersion: PrivacyProfileVersion,
+		DestinationCapabilities: destinationCapabilities(),
+	}
+	body, err := notificationBody(notification)
+	if err != nil {
+		t.Fatalf("notificationBody(minimum) error = %v", err)
+	}
+	for _, forbidden := range []string{
+		"DESCRIPTION-SENTINEL", "TEXT-SENTINEL", "asset=BAI", "private-fragment",
+		"ACTOR-SENTINEL", "COMMENT-SENTINEL", "audio", "billing", "actionable",
+	} {
+		if bytes.Contains(body, []byte(forbidden)) {
+			t.Errorf("minimum webhook disclosed %q: %s", forbidden, body)
+		}
+	}
+	for _, required := range []string{
+		"fb_private", "Sanitized title", "Storefront", `"status":"new"`, `"priority":"high"`,
+	} {
+		if !bytes.Contains(body, []byte(required)) {
+			t.Errorf("minimum webhook omitted %q: %s", required, body)
+		}
+	}
+
+	notification.PrivacyFields = append([]string(nil), allPrivacyFields...)
+	body, err = notificationBody(notification)
+	if err != nil {
+		t.Fatalf("notificationBody(full profile) error = %v", err)
+	}
+	for _, required := range []string{
+		"DESCRIPTION-SENTINEL", "ACTOR-SENTINEL", "COMMENT-SENTINEL",
+		`"page_url":"https://example.test/chart"`, `"attachment_metadata"`,
+	} {
+		if !bytes.Contains(body, []byte(required)) {
+			t.Errorf("full-profile webhook omitted %q: %s", required, body)
+		}
+	}
+	if bytes.Contains(body, []byte("asset=BAI")) || bytes.Contains(body, []byte("private-fragment")) {
+		t.Errorf("full-profile webhook retained page query or hash: %s", body)
 	}
 }
 
@@ -107,9 +166,12 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 		PageURL:         "https://example.test/checkout",
 		AttachmentsURL:  "https://acme.fidibeki.com/feedback/feedback-id#attachments",
 		AttachmentCount: 2, AttachmentKinds: []string{"audio", "screenshot"},
-		Changes: map[string]Change{"priority": {From: nil, To: "high"}},
-		Actor:   &NotificationActor{Type: "member", ID: "member-id", Name: "Alex"},
-		Comment: "Needs review",
+		Changes:                 map[string]Change{"priority": {From: nil, To: "high"}},
+		Actor:                   &NotificationActor{Type: "member", ID: "member-id", Name: "Alex"},
+		Comment:                 "Needs review",
+		PrivacyFields:           append([]string(nil), allPrivacyFields...),
+		PrivacyProfileVersion:   PrivacyProfileVersion,
+		DestinationCapabilities: destinationCapabilities(),
 	}
 	notification.Kind = KindSlack
 	body, err := notificationBody(notification)
@@ -176,9 +238,10 @@ func TestIntegrationActionsDoNotPresentOriginOnlyContextAsAnExactPage(t *testing
 		}
 	}
 	actions = integrationActions(Notification{
-		ResourceType: "feedback",
-		ResourceURL:  "https://acme.fidibeki.com/feedback/feedback-id",
-		PageURL:      "https://example.test/checkout",
+		ResourceType:  "feedback",
+		ResourceURL:   "https://acme.fidibeki.com/feedback/feedback-id",
+		PageURL:       "https://example.test/checkout",
+		PrivacyFields: []string{PrivacyFieldPage},
 	})
 	found := false
 	for _, action := range actions {
@@ -257,7 +320,7 @@ func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 		actor NotificationActor
 		want  string
 	}{
-		{NotificationActor{Type: "member", Email: "alex@example.test"}, "alex@example.test"},
+		{NotificationActor{Type: "member"}, "member"},
 		{NotificationActor{Type: "reporter"}, "Reporter"},
 		{NotificationActor{Type: "service"}, "service"},
 	} {
@@ -273,6 +336,7 @@ func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 	}
 	feedbackHeadline, feedbackDetail := notificationCopy(Notification{
 		ResourceType: "feedback", PublicID: "fb_123", Description: "Original report",
+		PrivacyFields: []string{PrivacyFieldDescription},
 	})
 	if feedbackHeadline != "New feedback fb_123" || feedbackDetail != "Original report" {
 		t.Errorf("fallback feedback copy = %q / %q", feedbackHeadline, feedbackDetail)
@@ -281,12 +345,16 @@ func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 	if emptyHeadline != "New feedback fb_empty" || emptyDetail != "Feedback received without a text comment." {
 		t.Errorf("empty feedback copy = %q / %q", emptyHeadline, emptyDetail)
 	}
-	_, legacyDetail := notificationCopy(Notification{ResourceType: "feedback", Text: "Legacy feedback text"})
+	_, legacyDetail := notificationCopy(Notification{
+		ResourceType: "feedback", Text: "Legacy feedback text",
+		PrivacyFields: []string{PrivacyFieldDescription},
+	})
 	if legacyDetail != "Legacy feedback text" {
 		t.Errorf("legacy feedback detail = %q", legacyDetail)
 	}
 	_, issueDetail := notificationCopy(Notification{
 		ResourceType: "issue", Event: EventIssueUpdated, Description: "Issue-only description",
+		PrivacyFields: []string{PrivacyFieldDescription},
 	})
 	if issueDetail != "Issue-only description" {
 		t.Errorf("description-only issue detail = %q", issueDetail)
@@ -294,6 +362,7 @@ func TestTerminalHelpersAndUnsupportedEvents(t *testing.T) {
 	_, completeIssueDetail := notificationCopy(Notification{
 		ResourceType: "issue", Event: EventIssueUpdated,
 		Title: "Issue title", Description: "Issue description",
+		PrivacyFields: []string{PrivacyFieldDescription},
 	})
 	if completeIssueDetail != "Issue title\nIssue description" {
 		t.Errorf("complete issue detail = %q", completeIssueDetail)

@@ -2023,10 +2023,24 @@ async function installMockAPI(page: Page, state: MockState) {
       const integration = {
         id: 'integration-1', kind: input.kind, name: input.name, webhook_url: input.webhook_url,
         channel: input.channel, webhook_secret_fingerprint: 'sha256:demo', custom_header_names: [],
-        events: input.events, is_active: true, created_at: now, updated_at: now,
+        events: input.events, privacy_fields: input.privacy_fields || [], privacy_profile_version: 1,
+        destination_capabilities: {
+          message_update: false, message_delete: false, message_recall: false,
+          fidibeki_links_require_authentication: true, fidibeki_links_access_controlled: true,
+        },
+        is_active: true, created_at: now, updated_at: now,
       }
       state.integrations.push(integration)
       return json(route, { integration, webhook_secret: 'whsec_dispatch_demo' }, 201)
+    }
+    const integrationPrivacyMatch = path.match(/^\/v1\/integrations\/([^/]+)\/privacy$/)
+    if (integrationPrivacyMatch && method === 'PATCH') {
+      const input = body()
+      const integration = state.integrations.find(candidate => candidate.id === integrationPrivacyMatch[1])
+      if (!integration) return json(route, { error: { code: 'not_found', message: 'resource not found' } }, 404)
+      integration.privacy_fields = input.privacy_fields
+      integration.privacy_profile_version = 1
+      return json(route, { integration })
     }
     const integrationMatch = path.match(/^\/v1\/integrations\/([^/]+)$/)
     if (integrationMatch && method === 'DELETE') {
@@ -4252,11 +4266,55 @@ test('settings creates one-time credentials and delivery secrets', async ({ page
   await expect(page.getByRole('heading', { name: 'Integrations', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Add integration' }).click()
   const dialog = page.getByRole('dialog', { name: 'Add integration' })
-  await dialog.getByLabel('Name').fill('Product operations')
+  await dialog.getByLabel('Name', { exact: true }).fill('Product operations')
   await dialog.getByLabel('Webhook URL').fill('https://hooks.acme.test/fidibeki')
+  await expect(dialog).toContainText('Fidibeki cannot update, delete, or recall a delivered message')
+  await expect(dialog).toContainText('Synthetic preview')
+  await dialog.getByRole('checkbox', { name: /^Description/ }).check()
+  await dialog.getByRole('checkbox', { name: /^Source page/ }).check()
   await dialog.getByRole('button', { name: 'Add integration' }).click()
   await expect(page.getByRole('heading', { name: 'Signing secret' })).toBeVisible()
   expect(state.integrations).toHaveLength(1)
+  expect(state.integrations[0]?.privacy_fields).toEqual(['description', 'page'])
+  await dialog.getByRole('button', { name: 'Done' }).click()
+
+  await page.getByTitle('Configure data disclosure').click()
+  const privacyDialog = page.getByRole('dialog', { name: 'Data disclosure' })
+  await expect(privacyDialog.getByRole('checkbox', { name: /^Description/ })).toBeChecked()
+  await privacyDialog.getByRole('checkbox', { name: /^Source page/ }).uncheck()
+  await privacyDialog.getByRole('checkbox', { name: /^Rating/ }).check()
+  await privacyDialog.getByRole('button', { name: 'Save disclosure profile' }).click()
+  await expect(privacyDialog).not.toBeVisible()
+  expect(state.integrations[0]?.privacy_fields).toEqual(['description', 'rating'])
+})
+
+test('integration disclosure profile remains usable on responsive layouts', async ({ page }, testInfo) => {
+  const state = createMockState()
+  state.integrations.push({
+    id: 'integration-privacy', kind: 'slack', name: 'Feedback operations',
+    webhook_url: 'https://hooks.slack.test/fidibeki', channel: '#feedback',
+    webhook_secret_fingerprint: null, custom_header_names: [],
+    events: ['feedback.created', 'issue.updated'],
+    privacy_fields: [], privacy_profile_version: 1,
+    destination_capabilities: {
+      message_update: false, message_delete: false, message_recall: false,
+      fidibeki_links_require_authentication: true, fidibeki_links_access_controlled: true,
+    },
+    is_active: true, created_at: now, updated_at: now,
+  })
+  await authenticate(page, state)
+  await openPrimary(page, 'Settings')
+  await page.getByRole('link', { name: 'Integrations' }).click()
+
+  await page.getByTitle('Configure data disclosure').click()
+  const dialog = page.getByRole('dialog', { name: 'Data disclosure' })
+  await expect(dialog).toContainText('Always included: public ID, sanitized title')
+  await expect(dialog.getByRole('checkbox', { name: /^Description/ })).not.toBeChecked()
+  await dialog.getByRole('checkbox', { name: /^Attachment metadata/ }).check()
+  await capture(page, testInfo, 'integration-disclosure-profile')
+  await dialog.getByRole('button', { name: 'Save disclosure profile' }).click()
+  await expect(dialog).not.toBeVisible()
+  expect(state.integrations[0]?.privacy_fields).toEqual(['attachments'])
 })
 
 test('shared confirmations cover rule, key, and integration removal', async ({ page }, testInfo) => {

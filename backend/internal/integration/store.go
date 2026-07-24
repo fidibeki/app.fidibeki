@@ -44,13 +44,13 @@ func (s Store) Create(ctx context.Context, query db.Querier, tenantID string, va
 	integration, _, err := s.scan(query.QueryRow(ctx, `
 		INSERT INTO integrations (
 			id, tenant_id, kind, name, webhook_url, channel, custom_headers_ciphertext,
-			webhook_secret_ciphertext, webhook_secret_fingerprint, events, is_active
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			webhook_secret_ciphertext, webhook_secret_fingerprint, events, privacy_fields, is_active
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, tenant_id, kind, name, webhook_url, channel,
 		          custom_headers_ciphertext, webhook_secret_fingerprint, events,
-		          is_active, created_at, updated_at
+		          privacy_fields, privacy_profile_version, is_active, created_at, updated_at
 	`, values.ID, tenantID, values.Kind, values.Name, values.WebhookURL, values.Channel,
-		headersCiphertext, secretCiphertext, fingerprint, values.Events, values.Active))
+		headersCiphertext, secretCiphertext, fingerprint, values.Events, values.PrivacyFields, values.Active))
 	if err != nil {
 		return Integration{}, fmt.Errorf("create integration: %w", err)
 	}
@@ -61,7 +61,7 @@ func (s Store) List(ctx context.Context, query db.Querier, tenantID string) ([]I
 	rows, err := query.Query(ctx, `
 		SELECT id, tenant_id, kind, name, webhook_url, channel,
 		       custom_headers_ciphertext, webhook_secret_fingerprint, events,
-		       is_active, created_at, updated_at
+		       privacy_fields, privacy_profile_version, is_active, created_at, updated_at
 		FROM integrations
 		WHERE tenant_id = $1
 		ORDER BY created_at, id
@@ -82,6 +82,27 @@ func (s Store) List(ctx context.Context, query db.Querier, tenantID string) ([]I
 		return nil, fmt.Errorf("iterate integrations: %w", err)
 	}
 	return integrations, nil
+}
+
+func (s Store) UpdatePrivacy(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	integrationID string,
+	privacyFields []string,
+) (Integration, error) {
+	integration, _, err := s.scan(query.QueryRow(ctx, `
+		UPDATE integrations
+		SET privacy_fields = $3, privacy_profile_version = $4, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id, tenant_id, kind, name, webhook_url, channel,
+		          custom_headers_ciphertext, webhook_secret_fingerprint, events,
+		          privacy_fields, privacy_profile_version, is_active, created_at, updated_at
+	`, tenantID, integrationID, privacyFields, PrivacyProfileVersion))
+	if err != nil {
+		return Integration{}, fmt.Errorf("update integration privacy profile: %w", err)
+	}
+	return integration, nil
 }
 
 func (s Store) Delete(ctx context.Context, query db.Querier, tenantID, integrationID string) error {
@@ -106,7 +127,8 @@ func (s Store) scan(row scanner) (Integration, string, error) {
 	err := row.Scan(
 		&integration.ID, &tenantID, &integration.Kind, &integration.Name,
 		&integration.WebhookURL, &integration.Channel, &headersCiphertext,
-		&integration.WebhookSecretFingerprint, &integration.Events, &integration.Active,
+		&integration.WebhookSecretFingerprint, &integration.Events, &integration.PrivacyFields,
+		&integration.PrivacyProfileVersion, &integration.Active,
 		&integration.CreatedAt, &integration.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -130,5 +152,16 @@ func (s Store) scan(row scanner) (Integration, string, error) {
 		}
 		sort.Strings(integration.CustomHeaderNames)
 	}
+	integration.DestinationCapabilities = destinationCapabilities()
 	return integration, tenantID, nil
+}
+
+func destinationCapabilities() DestinationCapabilities {
+	return DestinationCapabilities{
+		MessageUpdate:                 false,
+		MessageDelete:                 false,
+		MessageRecall:                 false,
+		FidibekiLinksRequireAuth:      true,
+		FidibekiLinksAccessControlled: true,
+	}
 }

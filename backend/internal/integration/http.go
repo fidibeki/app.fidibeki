@@ -36,6 +36,8 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		Post("/v1/integrations", handler.create)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIntegrationRead))...).
 		Get("/v1/integrations", handler.list)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIntegrationUpdate))...).
+		Patch("/v1/integrations/{integrationID}/privacy", handler.updatePrivacy)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIntegrationDelete))...).
 		Delete("/v1/integrations/{integrationID}", handler.delete)
 }
@@ -87,6 +89,36 @@ func (h *HTTPHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"integrations": integrations})
+}
+
+func (h *HTTPHandler) updatePrivacy(w http.ResponseWriter, r *http.Request) {
+	integrationID := chi.URLParam(r, "integrationID")
+	if _, err := uuid.Parse(integrationID); err != nil {
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
+		return
+	}
+	resolved, query, ok := integrationRequestState(w, r)
+	if !ok || !requireIntegrationPlan(w, resolved) {
+		return
+	}
+	var input UpdatePrivacyInput
+	if !decodeIntegrationJSON(w, r, &input) {
+		return
+	}
+	privacyFields, fields := ValidatePrivacyUpdate(input)
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"request validation failed", map[string]any{"fields": fields})
+		return
+	}
+	updated, err := h.options.Store.UpdatePrivacy(
+		r.Context(), query, resolved.ID, integrationID, privacyFields,
+	)
+	if err != nil {
+		writeIntegrationError(w, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"integration": updated})
 }
 
 func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request) {

@@ -25,18 +25,49 @@ const (
 	EventIssueResolved   = "issue.resolved"
 )
 
+const PrivacyProfileVersion = 1
+
+const (
+	PrivacyFieldDescription    = "description"
+	PrivacyFieldPage           = "page"
+	PrivacyFieldRating         = "rating"
+	PrivacyFieldClassification = "classification"
+	PrivacyFieldWorkflow       = "workflow"
+	PrivacyFieldAttachments    = "attachments"
+)
+
+var allPrivacyFields = []string{
+	PrivacyFieldDescription,
+	PrivacyFieldPage,
+	PrivacyFieldRating,
+	PrivacyFieldClassification,
+	PrivacyFieldWorkflow,
+	PrivacyFieldAttachments,
+}
+
+type DestinationCapabilities struct {
+	MessageUpdate                 bool `json:"message_update"`
+	MessageDelete                 bool `json:"message_delete"`
+	MessageRecall                 bool `json:"message_recall"`
+	FidibekiLinksRequireAuth      bool `json:"fidibeki_links_require_authentication"`
+	FidibekiLinksAccessControlled bool `json:"fidibeki_links_access_controlled"`
+}
+
 type Integration struct {
-	ID                       string    `json:"id"`
-	Kind                     Kind      `json:"kind"`
-	Name                     string    `json:"name"`
-	WebhookURL               string    `json:"webhook_url"`
-	Channel                  *string   `json:"channel,omitempty"`
-	WebhookSecretFingerprint *string   `json:"webhook_secret_fingerprint,omitempty"`
-	CustomHeaderNames        []string  `json:"custom_header_names"`
-	Events                   []string  `json:"events"`
-	Active                   bool      `json:"is_active"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"`
+	ID                       string                  `json:"id"`
+	Kind                     Kind                    `json:"kind"`
+	Name                     string                  `json:"name"`
+	WebhookURL               string                  `json:"webhook_url"`
+	Channel                  *string                 `json:"channel,omitempty"`
+	WebhookSecretFingerprint *string                 `json:"webhook_secret_fingerprint,omitempty"`
+	CustomHeaderNames        []string                `json:"custom_header_names"`
+	Events                   []string                `json:"events"`
+	PrivacyFields            []string                `json:"privacy_fields"`
+	PrivacyProfileVersion    int                     `json:"privacy_profile_version"`
+	DestinationCapabilities  DestinationCapabilities `json:"destination_capabilities"`
+	Active                   bool                    `json:"is_active"`
+	CreatedAt                time.Time               `json:"created_at"`
+	UpdatedAt                time.Time               `json:"updated_at"`
 }
 
 type CreateInput struct {
@@ -46,6 +77,7 @@ type CreateInput struct {
 	Channel       *string           `json:"channel"`
 	CustomHeaders map[string]string `json:"custom_headers"`
 	Events        []string          `json:"events"`
+	PrivacyFields []string          `json:"privacy_fields"`
 	Active        *bool             `json:"is_active"`
 }
 
@@ -57,8 +89,13 @@ type CreateValues struct {
 	Channel       *string
 	CustomHeaders map[string]string
 	Events        []string
+	PrivacyFields []string
 	Active        bool
 	WebhookSecret string
+}
+
+type UpdatePrivacyInput struct {
+	PrivacyFields []string `json:"privacy_fields"`
 }
 
 type FieldError struct {
@@ -77,6 +114,9 @@ type Notification struct {
 	Channel                   string
 	CustomHeaders             map[string]string
 	WebhookSecret             string
+	PrivacyFields             []string
+	PrivacyProfileVersion     int
+	DestinationCapabilities   DestinationCapabilities
 	Event                     string
 	ResourceType              string
 	ResourceID                string
@@ -125,10 +165,9 @@ type Change struct {
 }
 
 type NotificationActor struct {
-	Type  string `json:"type"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 type DeliveryAttempt struct {

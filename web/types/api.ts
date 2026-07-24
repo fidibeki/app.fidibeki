@@ -1098,6 +1098,13 @@ export interface APIKey {
 
 export type IntegrationKind = 'slack' | 'teams' | 'webhook'
 export type IntegrationEvent = 'feedback.created' | 'issue.created' | 'issue.updated' | 'issue.resolved'
+export type IntegrationPrivacyField =
+  | 'description'
+  | 'page'
+  | 'rating'
+  | 'classification'
+  | 'workflow'
+  | 'attachments'
 
 export interface Integration {
   id: string
@@ -1108,6 +1115,15 @@ export interface Integration {
   webhook_secret_fingerprint?: string
   custom_header_names: string[]
   events: IntegrationEvent[]
+  privacy_fields: IntegrationPrivacyField[]
+  privacy_profile_version: number
+  destination_capabilities: {
+    message_update: boolean
+    message_delete: boolean
+    message_recall: boolean
+    fidibeki_links_require_authentication: boolean
+    fidibeki_links_access_controlled: boolean
+  }
   is_active: boolean
   created_at: string
   updated_at: string
