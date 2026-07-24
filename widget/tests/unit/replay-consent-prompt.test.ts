@@ -27,10 +27,8 @@ describe('managed replay consent prompt', () => {
     const unmount = mountReplayConsentPrompt({
       consent,
       locale: 'pt-pt',
-      state: 'new',
       onAccept: accept,
       onReject: reject,
-      onWithdraw: vi.fn(),
     })
     const host = document.querySelector<HTMLElement>('[data-fidibeki-replay-consent]')
     const root = host?.shadowRoot
@@ -52,31 +50,21 @@ describe('managed replay consent prompt', () => {
     expect(document.querySelector('[data-fidibeki-replay-consent]')).toBeNull()
   })
 
-  it('keeps withdrawal one action away from the compact privacy control', async () => {
-    const withdraw = vi.fn(async () => {})
+  it('offers the decision only, leaving no standing control over the host page', () => {
     const unmount = mountReplayConsentPrompt({
       consent,
       locale: 'pt-pt',
-      state: 'active',
       onAccept: vi.fn(),
       onReject: vi.fn(),
-      onWithdraw: withdraw,
     })
     const root = document.querySelector<HTMLElement>('[data-fidibeki-replay-consent]')!.shadowRoot!
-    const launcher = root.querySelector<HTMLButtonElement>('.privacy-launcher')!
-    expect(launcher.textContent).toContain('Privacidade da reprodução')
 
-    launcher.click()
-    const withdrawButton = root.querySelector<HTMLButtonElement>('.withdraw')!
-    expect(withdrawButton.textContent).toContain('Retirar consentimento')
-    withdrawButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true)
-    expect(root.activeElement).toBe(launcher)
-
-    launcher.click()
-    withdrawButton.click()
-    await Promise.resolve()
-    expect(withdraw).toHaveBeenCalledTimes(1)
+    // Withdrawal lives in the feedback widget's privacy column, so this host must never keep a
+    // launcher pinned over the customer's layout once a decision exists.
+    expect(root.querySelector('.privacy-launcher')).toBeNull()
+    expect(root.querySelector('.withdraw')).toBeNull()
+    expect([...root.querySelectorAll('button')].map(button => button.className))
+      .toEqual(['decision reject', 'decision accept'])
     unmount()
   })
 })

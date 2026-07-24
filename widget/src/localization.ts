@@ -23,6 +23,11 @@ export interface WidgetSystemCopy {
   rightsContact: string
   privacyPolicy: string
   managedBy: string
+  privacyChoices: string
+  closePrivacyChoices: string
+  consentRetention: string
+  withdrawn: string
+  withdrawError: string
   aiDisclosure: string
   aiScope: string
   aiInputNames: Record<AIInputCategory, string>
@@ -64,6 +69,11 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     privacyContact: 'Privacy contact', rightsContact: 'Rights contact',
     privacyPolicy: 'Privacy policy',
     managedBy: 'Managed by',
+    privacyChoices: 'Privacy choices',
+    closePrivacyChoices: 'Close privacy choices',
+    consentRetention: 'Retained for up to {days} days.',
+    withdrawn: 'Consent withdrawn.',
+    withdrawError: 'Your choice could not be saved. Please try again.',
     aiDisclosure: 'Selected feedback content may be processed by Google Gemini for advisory analysis.',
     aiScope: 'Content types: {categories}.',
     aiInputNames: {
@@ -100,6 +110,11 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     privacyContact: 'Contacto de privacidade', rightsContact: 'Direitos e pedidos',
     privacyPolicy: 'Política de privacidade',
     managedBy: 'Gerido por',
+    privacyChoices: 'Escolhas de privacidade',
+    closePrivacyChoices: 'Fechar escolhas de privacidade',
+    consentRetention: 'Conservado até {days} dias.',
+    withdrawn: 'Consentimento retirado.',
+    withdrawError: 'Não foi possível guardar a escolha. Tenta novamente.',
     aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo Google Gemini para análise consultiva.',
     aiScope: 'Tipos de conteúdo: {categories}.',
     aiInputNames: {
