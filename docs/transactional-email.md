@@ -29,10 +29,43 @@ same monitored address.
 | Payment failed or recovered | Persisted billing access transition | Billing managers and billing contact | Billing, mandatory |
 | Subscription activation, plan change, or cancellation | Material persisted subscription change | Billing managers and billing contact | Billing, mandatory |
 | Account deletion scheduled or cancelled | Authorized account lifecycle action | Workspace administrators | Account, mandatory |
+| Member activity and digests | Optional workspace events inside a delivered window | Members who opted in | Optional, preference-controlled |
 
 Bounced or complained addresses are excluded where recipient state is available. Billing contacts
-are deduplicated against authorized administrators. Later assignment, mention, security-change, and
-digest emails remain deferred until member notification preferences exist.
+are deduplicated against authorized administrators.
+
+## Member notification preferences
+
+Optional product notifications are the only class a member can route. Each member chooses, per
+workspace, whether assignments, mentions, comments, important Issue changes, and new-feedback
+summaries arrive immediately, in a daily digest, in a weekly digest, or not at all. Defaults are
+low-noise: directly addressed work (assignments, mentions) is immediate, comments are off, Issue
+changes are daily, and new feedback is a weekly summary. The new-feedback category has no immediate
+mode at all — in the API contract and in the database CHECK constraint — so one email per feedback
+submission is unreachable by configuration rather than merely disabled by default.
+
+Mandatory authentication, security, account-deletion, and critical billing messages are composed by
+their own paths and are never checked against a preference row. Reporter consent and the reporter
+unsubscribe link stay separate: they live on the feedback and Issue rows and are not affected by any
+member preference.
+
+All three cadences run through one windowed pipeline. Immediate delivery is a short window rather
+than a second notification path, so the transactional write path for comments, mentions, and
+assignments is untouched. A window is half-open, `[start, end)`, and is claimed in
+`member_digest_deliveries` under a unique `(tenant, member, cadence, window_start)` key before
+anything is sent; the claim is the deduplication point. A window with no events is never claimed, so
+empty digests leave no row and send no mail. Only delivered or suppressed windows advance the
+cursor, an unfinished window is resumed at its own start, and each hand-off carries a delivery-scoped
+idempotency key, so a retry after a crash or provider failure cannot duplicate or omit events.
+
+Digests are prepared for the member's own timezone (falling back to the workspace default, then UTC)
+at their chosen hour and weekday. Every digest carries a workspace settings link and a signed
+one-click opt-out at `/v1/member-notifications/unsubscribe`. That endpoint renders a confirmation
+form on `GET` so a mail scanner cannot silence anyone, applies the change on `POST`, and returns a
+byte-identical response for valid, forged, expired, and unknown tokens, so it cannot be used to
+enumerate members or workspaces. Bounced and complained addresses are suppressed for this optional
+class and the withheld window stays visible in the member's delivery diagnostics. Preference changes
+and emailed opt-outs are recorded in the append-only `tenant_access_events` ledger.
 
 Reporter emails require explicit, structured consent evidence (purpose, notice version, locale,
 affirmative state), not just a boolean preference. Consent is checked twice: once when the

@@ -15,7 +15,12 @@ const (
 	AudiencePlatform            = "platform"
 	AudienceTenant              = "tenant"
 	AudienceReporterUnsubscribe = "reporter-unsubscribe"
-	reporterFeedbackPermission  = "feedback"
+	// AudienceMemberUnsubscribe is bound to one member in one workspace and
+	// grants exactly one action: turning that member's optional product
+	// notifications off. It carries no permissions and cannot authenticate a
+	// session, so a leaked digest footer link cannot read workspace data.
+	AudienceMemberUnsubscribe  = "member-unsubscribe"
+	reporterFeedbackPermission = "feedback"
 )
 
 var ErrInvalidAccessToken = errors.New("invalid access token")
@@ -100,6 +105,16 @@ func (m *JWTManager) IssueFeedbackReporterUnsubscribe(
 	return m.issue(feedbackID, AudienceReporterUnsubscribe, tenantID, []string{reporterFeedbackPermission}, nil)
 }
 
+func (m *JWTManager) IssueMemberNotificationUnsubscribe(
+	memberID string,
+	tenantID string,
+) (string, time.Time, error) {
+	if tenantID == "" {
+		return "", time.Time{}, errors.New("JWT tenant ID is required")
+	}
+	return m.issue(memberID, AudienceMemberUnsubscribe, tenantID, nil, nil)
+}
+
 func IsFeedbackReporterUnsubscribe(claims Claims) bool {
 	return len(claims.Permissions) == 1 && claims.Permissions[0] == reporterFeedbackPermission
 }
@@ -131,7 +146,7 @@ func (m *JWTManager) issue(
 		return "", time.Time{}, errors.New("JWT subject is required")
 	}
 	if audience != AudiencePlatform && audience != AudienceTenant &&
-		audience != AudienceReporterUnsubscribe {
+		audience != AudienceReporterUnsubscribe && audience != AudienceMemberUnsubscribe {
 		return "", time.Time{}, errors.New("JWT audience is invalid")
 	}
 	now := m.now()

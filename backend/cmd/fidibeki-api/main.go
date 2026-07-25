@@ -28,6 +28,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	"github.com/acidiney/app.fidibeki/backend/internal/logging"
+	"github.com/acidiney/app.fidibeki/backend/internal/membernotify"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/observability"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
@@ -223,6 +224,14 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	if err != nil {
 		return fmt.Errorf("initialize reporter token manager: %w", err)
 	}
+	// Digest footer links live as long as the mail that carries them, so they
+	// share the long-lived unsubscribe TTL rather than the 10-minute session one.
+	memberNotificationTokens, err := auth.NewJWTManager(
+		settings.JWTSecret, platformadmin.DefaultIssuer, settings.ReporterTokenTTL,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize member notification token manager: %w", err)
+	}
 	emailQueue, err := email.OpenQueue(settings.RedisURL)
 	if err != nil {
 		return err
@@ -345,6 +354,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
+	membernotify.RegisterPublicRoutes(platformRoutes, membernotify.PublicHTTPOptions{
+		Store: membernotify.Store{}, Database: pools.Admin, Tokens: memberNotificationTokens,
+		Logger: logger,
+	})
 	privacyPublicOptions := privacy.PublicHTTPOptions{
 		Store: privacy.Store{Database: pools.Admin}, Begin: db.BeginFromPool(pools.Admin),
 		Storage: objectStorage, Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
@@ -391,6 +404,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	identity.RegisterTenantRoutes(tenantRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, JWT: jwtManager, Storage: objectStorage,
 		Limiter: publicLimiter, PublicBaseURL: settings.PublicBaseURL, Logger: logger,
+	})
+	membernotify.RegisterRoutes(tenantRoutes, membernotify.HTTPOptions{
+		Store: membernotify.Store{}, JWT: jwtManager, Logger: logger,
 	})
 	privacy.RegisterRoutes(tenantRoutes, privacy.HTTPOptions{
 		Store: privacy.Store{}, JWT: jwtManager, Storage: objectStorage, Email: emailQueue,
@@ -581,6 +597,18 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: billingStore, Email: billingEmailQueue,
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 		AuthFrom: settings.ResendAuthFrom, Logger: logger,
+	}
+	memberDigestTokens, err := auth.NewJWTManager(
+		settings.JWTSecret, platformadmin.DefaultIssuer, settings.ReporterTokenTTL,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize member notification token manager: %w", err)
+	}
+	memberDigests := membernotify.Scheduler{
+		Store: membernotify.DigestStore{Database: pools.Admin}, Email: billingEmailQueue,
+		Tokens: memberDigestTokens, PublicBaseURL: settings.PublicBaseURL,
+		BaseDomain: settings.BaseDomain, AuthFrom: settings.ResendAuthFrom,
+		MaxMembers: settings.DigestMembersPerRun, Logger: logger,
 	}
 	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL)
 	if err != nil {
@@ -802,7 +830,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 16)
+	backgroundDone := make(chan error, 17)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
@@ -819,6 +847,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
+	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()
 	workerErr := worker.Run(workerCtx)
 	cancel()
 	return errors.Join(
@@ -827,7 +856,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone,
+		<-backgroundDone, <-backgroundDone,
 	)
 }
 

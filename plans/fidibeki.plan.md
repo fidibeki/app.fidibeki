@@ -164,6 +164,30 @@ was removed from the staging test tenant.
     and add schema `1.0`, event/resource URLs, changes, actor, comment, classification, project, and
     attachment metadata. Outbox event keys associate Issue creation and updates with the immutable
     activity actor without adding another delivery path.
+- [x] #27: add per-member, per-workspace notification preferences and windowed digest delivery.
+  - Migration `111` adds `member_notification_preferences` (assignments, mentions, comments,
+    important Issue changes, and new-feedback summaries, plus digest hour and weekday) and the
+    `member_digest_deliveries` ledger. Defaults are low-noise, and the new-feedback category has no
+    immediate mode in either the API contract or the database CHECK, so one email per feedback
+    submission is unreachable by configuration.
+  - All three cadences run through one windowed pipeline in `internal/membernotify`: immediate is a
+    short window rather than a second notification path, so the transactional comment, mention, and
+    assignment writes are untouched. Windows are half-open and claimed under a unique
+    `(tenant, member, cadence, window_start)` key; empty windows are never claimed, only delivered or
+    suppressed windows advance the cursor, unfinished windows are resumed at their own start, and
+    each hand-off carries a delivery-scoped idempotency key.
+  - Mandatory authentication, security, account-deletion, and billing mail keeps its own paths and is
+    never consulted against a preference. Reporter consent and reporter unsubscribe remain on the
+    feedback and Issue rows. Signed one-click opt-out confirms on `POST`, is scanner-safe on `GET`,
+    and answers identically for valid, forged, expired, and unknown tokens so it cannot enumerate
+    members or workspaces. Bounced and complained addresses are suppressed for this class and stay
+    visible in the member's delivery diagnostics; preference and opt-out changes are audited in
+    `tenant_access_events`.
+  - Coverage: Go unit tests for defaults, mode validation, mandatory-class protection, timezone and
+    weekday window math, retry determinism, and unsubscribe enumeration safety; container-backed
+    tests for preference persistence and audit, exactly-once delivery, empty-window skipping, failed
+    and abandoned window retakes, bounce suppression, and RBAC scoping; web unit and desktop/mobile
+    E2E coverage of the settings page.
 
 #### Phase 3: Widget Platform
 

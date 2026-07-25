@@ -71,6 +71,7 @@ for both services because configuration is validated before the command starts.
 | `AI_DAILY_REQUEST_LIMIT` | no | Tenant-independent safety ceiling; default `5000`. |
 | `AI_PROJECT_DAILY_REQUEST_LIMIT` | no | Per-project daily AI safety ceiling; default `2000`. |
 | `AI_RECONCILE_INTERVAL` | no | Stalled-task reconciliation interval; default `5m`. |
+| `DIGEST_MEMBERS_PER_RUN` | no | Members processed per notification-digest pass, per cadence; default `200`. |
 | `SENTRY_DSN` | no | Backend Sentry DSN. Empty disables reporting. |
 
 ### Browser upload CORS

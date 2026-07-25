@@ -12,6 +12,7 @@ export const portugueseMessages = {
     feedback: 'Feedback',
     issues: 'Issues',
     notifications: 'Notificações',
+    notificationPreferences: 'Preferências de notificações',
     analytics: 'Análises',
     projects: 'Projetos',
     settings: 'Definições',

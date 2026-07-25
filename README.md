@@ -102,6 +102,16 @@ records every provider attempt in `delivery_logs`. In production, set `EMAIL_DRI
 `RESEND_API_KEY`, and `RESEND_WEBHOOK_SECRET`; point the Resend webhook at
 `https://api.fidibeki.com/v1/webhooks/resend` for bounce and complaint handling.
 
+Members route their own optional notifications at `/settings/notifications`, backed by
+`GET`/`PATCH /v1/notification-preferences`. Assignments, mentions, comments, important Issue changes,
+and new-feedback summaries are each delivered immediately, in a daily or weekly digest, or not at
+all; defaults are low-noise and new feedback is summary-only, so no setting produces one email per
+submission. Digests use the member's timezone and chosen delivery window, are claimed per window in
+`member_digest_deliveries` so retries cannot duplicate or omit events, and are never sent empty.
+Every digest carries a signed one-click opt-out at `/v1/member-notifications/unsubscribe`.
+Authentication, security, account-deletion, and billing mail is separate and cannot be disabled
+there. See [docs/transactional-email.md](docs/transactional-email.md).
+
 Scale and Enterprise tenants can manage Slack, Teams, and generic webhook destinations at
 `/v1/integrations`. Each destination selects from `feedback.created`, `issue.created`,
 `issue.updated`, and `issue.resolved`; the outbox creates one deterministic

@@ -56,8 +56,9 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Approved deletion or anonymization policy is not yet implemented.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"api_keys", "projects", "tags", "tenant_deletions", "tenant_member_domains",
-				"tenant_members", "tenants", "widget_rule_target_conditions", "widget_rules",
+				"api_keys", "member_notification_preferences", "projects", "tags",
+				"tenant_deletions", "tenant_member_domains", "tenant_members", "tenants",
+				"widget_rule_target_conditions", "widget_rules",
 			),
 		},
 		{
@@ -264,7 +265,9 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Integration and domain-event delivery lifecycle.",
 			Action:  "Credential, outbox, attempt, and disclosure-ledger periods require approval.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
-			Resources: tables("delivery_logs", "integrations", "outbox_events"),
+			Resources: tables(
+				"delivery_logs", "integrations", "member_digest_deliveries", "outbox_events",
+			),
 		},
 		{
 			Category: "privacy_rights", Label: "Privacy cases and rights-operation evidence",
