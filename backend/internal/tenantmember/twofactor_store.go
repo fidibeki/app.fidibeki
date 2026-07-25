@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/jackc/pgx/v5"
@@ -444,6 +445,15 @@ func (s Store) TwoFactorPolicy(
 	if err != nil {
 		return TwoFactorPolicy{}, fmt.Errorf("read two-factor policy: %w", err)
 	}
+	// Under required single sign-on the identity provider owns multi-factor
+	// assurance, so the Fidibeki-managed control no longer applies. The stored
+	// policy is left untouched: it becomes meaningful again the moment local
+	// authentication is restored.
+	mode, err := Store{}.SSOMode(ctx, query, tenantID)
+	if err != nil {
+		return TwoFactorPolicy{}, err
+	}
+	policy.ManagedByIdP = mode == auth.SSOModeRequired
 	return policy, nil
 }
 
@@ -460,6 +470,23 @@ func (s Store) SetTwoFactorPolicy(
 ) (TwoFactorPolicy, error) {
 	if policy != TwoFactorPolicyOptional && policy != TwoFactorPolicyRequired {
 		return TwoFactorPolicy{}, ErrTwoFactorPolicyInvalid
+	}
+	// Required single sign-on delegates multi-factor assurance to the identity
+	// provider, so the Fidibeki-managed policy cannot be changed while it is
+	// active. Refusing here rather than in the UI keeps the guarantee in the
+	// one place every caller passes through.
+	mode, err := Store{}.SSOMode(ctx, query, tenantID)
+	if err != nil {
+		return TwoFactorPolicy{}, err
+	}
+	if mode == auth.SSOModeRequired {
+		if err := recordTenantAccessEvent(
+			ctx, query, tenantID, "two_factor.policy_denied", &actorMemberID, nil,
+			map[string]any{"reason": "sso_required_idp_manages_mfa", "requested_policy": policy},
+		); err != nil {
+			return TwoFactorPolicy{}, err
+		}
+		return TwoFactorPolicy{}, ErrTwoFactorManagedByIdP
 	}
 	var current string
 	if err := query.QueryRow(ctx, `

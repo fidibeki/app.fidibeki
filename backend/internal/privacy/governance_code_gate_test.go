@@ -32,8 +32,12 @@ type providerCodeSignal struct {
 }
 
 var governedGoDependencies = map[string]dependencyClassification{
-	"github.com/Eyevinn/mp4ff":                                     {Class: dependencyApplication},
+	"github.com/Eyevinn/mp4ff": {Class: dependencyApplication},
+	// Used only by internal/samlsso's test identity provider, which mints
+	// genuinely signed assertions so the signature path is exercised for real.
+	"github.com/beevik/etree":                                      {Class: dependencyBuildTest},
 	"github.com/getsentry/sentry-go":                               {Class: dependencyProvider, ProviderIDs: []string{"sentry_error_telemetry"}},
+	"github.com/crewjam/saml":                                      {Class: dependencyProvider, ProviderIDs: []string{"customer_saml_identity_provider"}},
 	"github.com/go-chi/chi/v5":                                     {Class: dependencyApplication},
 	"github.com/go-redis/redis_rate/v10":                           {Class: dependencyProvider, ProviderIDs: []string{"redis_asynq"}},
 	"github.com/golang-jwt/jwt/v5":                                 {Class: dependencyApplication},
@@ -42,8 +46,10 @@ var governedGoDependencies = map[string]dependencyClassification{
 	"github.com/hibiken/asynq":                                     {Class: dependencyProvider, ProviderIDs: []string{"redis_asynq"}},
 	"github.com/jackc/pgx/v5":                                      {Class: dependencyProvider, ProviderIDs: []string{"postgresql_runtime"}},
 	"github.com/joho/godotenv":                                     {Class: dependencyApplication},
+	"github.com/mattermost/xml-roundtrip-validator":                {Class: dependencyProvider, ProviderIDs: []string{"customer_saml_identity_provider"}},
 	"github.com/minio/minio-go/v7":                                 {Class: dependencyProvider, ProviderIDs: []string{"s3_compatible_object_storage"}},
 	"github.com/redis/go-redis/v9":                                 {Class: dependencyProvider, ProviderIDs: []string{"redis_asynq"}},
+	"github.com/russellhaering/goxmldsig":                          {Class: dependencyProvider, ProviderIDs: []string{"customer_saml_identity_provider"}},
 	"github.com/stripe/stripe-go/v85":                              {Class: dependencyProvider, ProviderIDs: []string{"stripe_billing_api"}},
 	"github.com/svix/svix-webhooks":                                {Class: dependencyApplication},
 	"github.com/testcontainers/testcontainers-go":                  {Class: dependencyBuildTest},
@@ -99,6 +105,7 @@ var governedHTTPCallSites = map[string][]string{
 	},
 	"backend/internal/issuetracker/jira.go":   {"jira_cloud_issue_tracker"},
 	"backend/internal/issuetracker/linear.go": {"linear_issue_tracker"},
+	"backend/internal/samlsso/metadata.go":    {"customer_saml_identity_provider"},
 }
 
 var governedProviderCodeSignals = map[string][]providerCodeSignal{
@@ -144,6 +151,9 @@ var governedProviderCodeSignals = map[string][]providerCodeSignal{
 	"linear_issue_tracker": {
 		{Path: "backend/internal/issuetracker/models.go", Contains: `ProviderLinear Provider = "linear"`},
 		{Path: "backend/internal/issuetracker/linear.go", Contains: "api.linear.app/graphql"},
+	},
+	"customer_saml_identity_provider": {
+		{Path: "backend/internal/samlsso/metadata.go", Contains: "func (f MetadataFetcher) Fetch"},
 	},
 	"cloudflare_turnstile": {
 		{Path: "backend/internal/billing/turnstile.go", Contains: "challenges.cloudflare.com/turnstile/v0/siteverify"},

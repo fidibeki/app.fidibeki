@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
@@ -243,10 +244,33 @@ func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Resolved before issuing the link so the break-glass use is recorded in the
+	// same transaction that grants it: an owner sign-in that bypasses Required
+	// SSO is never possible without a matching audit row.
+	member, breakGlass, err := h.options.Service.BreakGlassLogin(r.Context(), query, resolved, request.Email)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	message, err := h.options.Service.RequestMagicLink(r.Context(), query, resolved, request.Email)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if breakGlass {
+		if err := accessaudit.Record(r.Context(), query, accessaudit.RecordInput{
+			TenantID: resolved.ID, Kind: "sso.break_glass_login_requested",
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: member.ID},
+			ResourceType: accessaudit.ResourceSSOConfiguration, ResourceID: resolved.ID,
+			Action: "break_glass", Outcome: accessaudit.OutcomeSuccess,
+			Data: map[string]any{"reason": "workspace_owner_recovery"},
+		}); err != nil {
+			h.options.Logger.ErrorContext(
+				r.Context(), "SSO break-glass audit failed", "error", err, "tenant_id", resolved.ID,
+			)
+			api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+			return
+		}
 	}
 	if message != nil && !appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
 		return h.options.Email.Enqueue(ctx, *message)
@@ -613,6 +637,14 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 	payload := map[string]any{
 		"access_token": tokens.AccessToken, "token_type": "Bearer",
 		"expires_in": int(time.Until(tokens.ExpiresAt).Seconds()), "member": tokens.Member,
+		// SAML-authenticated sessions delegate multi-factor assurance to the
+		// identity provider, so the client must be able to tell them apart
+		// from local ones without inspecting the credential. The identity
+		// provider's subject stays server-side.
+		"authentication": map[string]any{
+			"method":        tokens.Security.AuthenticationMethod,
+			"idp_entity_id": tokens.Security.SAMLIdPEntityID,
+		},
 		"tenant": map[string]any{
 			"id": resolved.ID, "name": resolved.Name, "slug": resolved.Slug,
 			"plan": resolved.Plan, "status": resolved.Status, "trial_ends_at": resolved.TrialEndsAt,
@@ -641,6 +673,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrMagicLinkInvalid), errors.Is(err, ErrRefreshInvalid),
 		errors.Is(err, ErrRefreshExpired), errors.Is(err, ErrRefreshReuse):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)
+	case errors.Is(err, ErrLocalLoginDisabled):
+		api.WriteError(w, http.StatusForbidden, api.CodeSSORequired,
+			"this workspace requires single sign-on", nil)
 	case errors.Is(err, ErrMemberExists):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member already exists", nil)
 	case errors.Is(err, ErrMemberDomainAlreadyVerified):
@@ -677,6 +712,9 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "no two-factor challenge is pending", nil)
 	case errors.Is(err, ErrTwoFactorPolicyBlocked):
 		api.WriteError(w, http.StatusConflict, api.CodeTwoFactorPolicyBlocked, "two-factor policy blocks this change", nil)
+	case errors.Is(err, ErrTwoFactorManagedByIdP):
+		api.WriteError(w, http.StatusConflict, api.CodeTwoFactorManagedByIdP,
+			"multi-factor authentication is managed by your identity provider", nil)
 	case errors.Is(err, ErrTwoFactorPolicyInvalid):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "two-factor policy is invalid", nil)
 	case strings.Contains(err.Error(), "email is invalid"):

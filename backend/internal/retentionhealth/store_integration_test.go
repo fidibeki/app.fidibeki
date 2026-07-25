@@ -96,7 +96,7 @@ func TestStoreRecordsAndReadsBoundedRetentionHealth(t *testing.T) {
 		t.Fatalf("identity health past its minute schedule = %#v", identity)
 	}
 	if report.Summary != (Summary{
-		Tracked: 11, Healthy: 1, Attention: 1, Failed: 1, Overdue: 1, NotObserved: 7,
+		Tracked: 12, Healthy: 1, Attention: 1, Failed: 1, Overdue: 1, NotObserved: 8,
 	}) {
 		t.Fatalf("health summary = %#v", report.Summary)
 	}

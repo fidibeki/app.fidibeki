@@ -39,6 +39,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
+	"github.com/acidiney/app.fidibeki/backend/internal/samlsso"
 	"github.com/acidiney/app.fidibeki/backend/internal/server"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -437,6 +438,19 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	aiprocessing.RegisterRoutes(tenantRoutes, aiprocessing.HTTPOptions{
 		Store: aiprocessing.Store{}, JWT: jwtManager, Scheduler: aiScheduler,
 	})
+	samlEndpoints := samlsso.Endpoints{
+		WebBaseURL: settings.WebPublicBaseURL, BaseDomain: settings.BaseDomain,
+	}
+	samlStore := samlsso.Store{Cipher: integrationCipher}
+	samlsso.RegisterRoutes(tenantRoutes, samlsso.HTTPOptions{
+		Service: samlsso.Service{
+			Store: samlStore, MagicLinks: tenantStore, Endpoints: samlEndpoints,
+			Fetcher: samlsso.MetadataFetcher{
+				AllowInsecure: settings.Environment == "local" || settings.Environment == "test",
+			},
+		},
+		Store: samlStore, JWT: jwtManager, Logger: logger,
+	})
 	tenantapi.RegisterRoutes(tenantRoutes)
 	tenantRoutes.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
@@ -717,6 +731,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:  platformadmin.MaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,
 	}
+	samlAuthRetention := samlsso.Maintainer{
+		Store:  samlsso.MaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -821,7 +839,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 16)
+	backgroundDone := make(chan error, 17)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
@@ -836,6 +854,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	workerErr := worker.Run(workerCtx)
@@ -846,7 +865,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone,
+		<-backgroundDone, <-backgroundDone,
 	)
 }
 

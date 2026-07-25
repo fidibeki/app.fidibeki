@@ -260,8 +260,10 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectTenantMembers, ROPADataSubjectPlatformAdmins, ROPADataSubjectReporters,
 			},
-			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryAuthenticationSecurity},
-			RetentionCategories: []string{"auth_magic_links", "authentication_security"},
+			DataCategories: []ROPADataCategoryClass{ROPADataCategoryAuthenticationSecurity},
+			RetentionCategories: []string{
+				"auth_magic_links", "authentication_security", "external_identity",
+			},
 			SecurityControls: []string{
 				"Reporter request tokens stored only as SHA-256 hashes and rate limited",
 				"Hourly bounded magic-link expiry maintainers (tenantmember.Maintainer, platformadmin.Maintainer)",

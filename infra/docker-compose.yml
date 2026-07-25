@@ -7,6 +7,9 @@ x-api-environment: &api-environment
   HTTP_ADDRESS: :8080
   BASE_DOMAIN: localhost
   PUBLIC_BASE_URL: http://api.localhost:8088
+  # The Nuxt dev server terminates browser-facing tenant URLs locally. Override
+  # when it runs on a different port.
+  WEB_PUBLIC_BASE_URL: ${WEB_PUBLIC_BASE_URL:-http://api.localhost:3000}
   DATABASE_URL_APP: postgres://fidibeki_app:fidibeki-app-local@pgbouncer:6432/fidibeki?sslmode=disable
   DATABASE_URL_ADMIN: postgres://fidibeki_admin:fidibeki-admin-local@pgbouncer:6432/fidibeki?sslmode=disable
   DATABASE_URL_DIRECT: postgres://postgres:postgres@postgres:5432/fidibeki?sslmode=disable

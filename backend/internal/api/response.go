@@ -21,6 +21,9 @@ const (
 	CodeOwnershipConfirmation ErrorCode = "invalid_ownership_confirmation"
 	CodeOwnershipTarget       ErrorCode = "invalid_ownership_target"
 	CodeMemberAlreadyRemoved  ErrorCode = "member_already_removed"
+	CodeSSORequired           ErrorCode = "sso_required"
+	CodeSSOConfiguration      ErrorCode = "invalid_sso_configuration"
+	CodeSSONotTested          ErrorCode = "sso_test_required"
 	CodeValidation            ErrorCode = "validation_error"
 	// CodeTwoFactorEnrollmentRequired marks an authenticated member session that
 	// cannot reach workspace data until it completes two-factor enrolment;
@@ -30,11 +33,15 @@ const (
 	CodeTwoFactorChallengeRequired  ErrorCode = "two_factor_challenge_required"
 	CodeTwoFactorInvalid            ErrorCode = "two_factor_code_invalid"
 	CodeTwoFactorPolicyBlocked      ErrorCode = "two_factor_policy_blocked"
-	CodeRateLimitExceeded           ErrorCode = "rate_limit_exceeded"
-	CodePlanLimitExceeded           ErrorCode = "plan_limit_exceeded"
-	CodePlanFeatureUnavailable      ErrorCode = "plan_feature_unavailable"
-	CodeInternal                    ErrorCode = "internal_error"
-	CodeServiceUnavailable          ErrorCode = "service_unavailable"
+	// CodeTwoFactorManagedByIdP marks a Fidibeki two-factor control that is
+	// inert because required single sign-on delegates assurance to the
+	// organization's identity provider.
+	CodeTwoFactorManagedByIdP  ErrorCode = "two_factor_managed_by_idp"
+	CodeRateLimitExceeded      ErrorCode = "rate_limit_exceeded"
+	CodePlanLimitExceeded      ErrorCode = "plan_limit_exceeded"
+	CodePlanFeatureUnavailable ErrorCode = "plan_feature_unavailable"
+	CodeInternal               ErrorCode = "internal_error"
+	CodeServiceUnavailable     ErrorCode = "service_unavailable"
 )
 
 type Error struct {

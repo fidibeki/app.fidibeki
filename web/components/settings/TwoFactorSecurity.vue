@@ -92,13 +92,16 @@ onMounted(load)
         <p v-if="failure" class="two-factor-policy-alert" role="alert">
           <AlertTriangle :size="15" />{{ failure }}
         </p>
+        <p v-if="policy?.managed_by_idp" class="two-factor-policy-idp" role="status">
+          <ShieldCheck :size="15" />{{ t('admin.settings.security.managedByIdP') }}
+        </p>
         <div class="two-factor-policy-choices">
           <button
             v-for="mode in modes"
             :key="mode"
             type="button"
             :data-selected="policy?.policy === mode"
-            :disabled="!canWrite('tenant:update') || saving || loading"
+            :disabled="!canWrite('tenant:update') || saving || loading || policy?.managed_by_idp"
             @click="selectPolicy(mode)"
           >
             <span>
@@ -170,6 +173,20 @@ onMounted(load)
 .two-factor-policy-body { display: grid; gap: 14px; padding: 16px; }
 .two-factor-policy-body--tight { padding-bottom: 0; }
 .two-factor-policy-body > p { margin: 0; max-width: 78ch; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.two-factor-policy-idp {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 11px 13px;
+  background: var(--teal-soft);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--radius);
+  color: var(--teal);
+  font-size: 11px;
+  line-height: 1.5;
+}
 .two-factor-policy-note { margin: 0; max-width: 78ch; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .two-factor-policy-mode { padding: 5px 7px; background: var(--surface-soft); color: var(--muted); border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .two-factor-policy-mode[data-enforced='true'] { background: var(--green-soft); color: var(--green); }

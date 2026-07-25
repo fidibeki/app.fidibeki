@@ -140,13 +140,17 @@ func TestTenantTwoFactorAuthenticationFlow(t *testing.T) {
 	})
 
 	t.Run("SAML sessions bypass the Fidibeki challenge", func(t *testing.T) {
-		// SAML is not implemented yet, so the session is stamped directly. The
-		// point of the test is that the state machine recognises the method and
-		// never asks a delegated session for a Fidibeki code.
+		// The session is stamped directly rather than driven through a real
+		// assertion, which internal/samlsso covers end to end. The point here is
+		// that the state machine recognises the method and never asks a
+		// delegated session for a Fidibeki code. The identity provider and
+		// subject are set too because a SAML session is required to be
+		// attributable to the provider that asserted it.
 		_, cookie := harness.signInExpectingChallenge(t, "owner@acme.test")
 		if _, err := harness.root.Exec(harness.ctx, `
 			UPDATE tenant_member_sessions
-			SET authentication_method = 'saml', two_factor_state = 'not_required'
+			SET authentication_method = 'saml', two_factor_state = 'not_required',
+			    saml_idp_entity_id = 'https://idp.test/entity', saml_subject_id = 'owner@acme.test'
 			WHERE tenant_id = $1 AND refresh_hash = $2
 		`, harness.tenantID, auth.HashToken(cookie.Value)); err != nil {
 			t.Fatalf("mark session as SAML: %v", err)
