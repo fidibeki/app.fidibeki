@@ -129,6 +129,28 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			valid: true,
 		},
 		{
+			name: "shadow dom removal",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"removes":[{"parentId":1,"id":3,"isShadow":true}]}}`,
+			valid: true,
+		},
+		{
+			name: "cleared text mutation",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"texts":[{"id":4,"value":null}]}}`,
+			valid: true,
+		},
+		{
+			name: "non-boolean shadow marker",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"removes":[{"parentId":1,"id":3,"isShadow":"yes"}]}}`,
+		},
+		{
+			name: "raw text mutation",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"texts":[{"id":4,"value":"Jane Doe"}]}}`,
+		},
+		{
 			name:  "mouse movement",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":1,"positions":[{"x":10,"y":20,"id":2,"timeOffset":5}]}}`,
 			valid: true,

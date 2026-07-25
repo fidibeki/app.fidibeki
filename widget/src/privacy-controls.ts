@@ -44,6 +44,7 @@ export function mountPrivacyControls(options: PrivacyControlsOptions): () => voi
 
   const host = document.createElement('div')
   host.dataset.fidibekiPrivacyControls = ''
+  host.dataset.fidibekiBlock = ''
   const shadow = host.attachShadow({ mode: 'open' })
   shadow.innerHTML = `<style>${styles(
     accent, accentForeground, side, appearance?.theme ?? options.rule.theme,

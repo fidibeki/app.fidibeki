@@ -124,6 +124,7 @@ export function mountConsentPrompt(options: ConsentPromptOptions): () => void {
 
   const host = document.createElement('div')
   host.dataset.fidibekiConsent = ''
+  host.dataset.fidibekiBlock = ''
   const root = host.attachShadow({ mode: 'open' })
   root.innerHTML = `
     <style>

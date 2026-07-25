@@ -89,6 +89,9 @@ export function mountWidget(options: MountOptions): () => void {
   document.getElementById(hostID)?.remove()
   const host = document.createElement('div')
   host.id = hostID
+  // Excluded from replay recording: rrweb serializes blocked hosts as placeholders, so the
+  // widget's own shadow DOM never reaches the anonymity pipeline or the batch verifier.
+  host.dataset.fidibekiBlock = ''
   const shadow = host.attachShadow({ mode: 'open' })
   const appearance = options.rule.appearance
   const accent = appearance?.accent_color ?? options.rule.accent_color ?? '#147d64'

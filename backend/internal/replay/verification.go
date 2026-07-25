@@ -801,8 +801,12 @@ func validReplayMutationData(data map[string]any) bool {
 		}
 		for _, value := range removes {
 			removed, ok := replayObject(value)
-			if !ok || !hasOnlyKeys(removed, "parentId", "id") ||
+			if !ok || !hasOnlyKeys(removed, "parentId", "id", "isShadow") ||
 				!replayID(removed["parentId"], false) || !replayID(removed["id"], false) {
+				return false
+			}
+			// rrweb marks removals inside native shadow roots so the player can locate the node.
+			if shadow, exists := removed["isShadow"]; exists && !replayBoolean(shadow) {
 				return false
 			}
 		}
@@ -814,10 +818,15 @@ func validReplayMutationData(data map[string]any) bool {
 		}
 		for _, value := range texts {
 			text, ok := replayObject(value)
-			masked, textOK := text["value"].(string)
-			if !ok || !hasOnlyKeys(text, "id", "value") ||
-				!replayID(text["id"], false) || !textOK || !maskedReplayText(masked) {
+			if !ok || !hasOnlyKeys(text, "id", "value") || !replayID(text["id"], false) {
 				return false
+			}
+			// rrweb emits null when a text node's content is cleared; null carries no text.
+			if text["value"] != nil {
+				masked, textOK := text["value"].(string)
+				if !textOK || !maskedReplayText(masked) {
+					return false
+				}
 			}
 		}
 	}
