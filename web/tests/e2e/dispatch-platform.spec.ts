@@ -4541,7 +4541,9 @@ test('desktop feedback toolbar keeps every structured filter directly available'
   await expect(page).toHaveURL(/sentiment=negative/)
 
   await page.getByRole('button', { name: 'Clear filters' }).click()
-  expect(new URL(page.url()).search).toBe('?id=feedback-1')
+  // Clearing writes the query through an async router.replace, so the URL
+  // settles a tick after the click.
+  await expect.poll(() => new URL(page.url()).search).toBe('?id=feedback-1')
   await expect(page.getByText('2 loaded')).toBeVisible()
 })
 
