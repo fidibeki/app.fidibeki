@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { Check, Code2, RefreshCw, ShieldCheck, X } from '@lucide/vue'
+import { Check, Code2, RefreshCw, ShieldCheck, X } from '@lucide/vue';
 import type {
   AnalyticsConsentConfig,
   AnalyticsConsentDiagnostic,
   AnalyticsConsentMode,
   AnalyticsConsentNotice,
-} from '~/types/api'
+} from '~/types/api';
 
 const props = defineProps<{
   open: boolean
@@ -365,7 +365,7 @@ function confirm() {
 .analytics-consent-anonymous p, .analytics-consent-runtime p { display: grid; gap: 3px; margin: 0; }
 .analytics-consent-anonymous b, .analytics-consent-runtime b { color: var(--ink-soft); font-size: 11px; }
 .analytics-consent-anonymous span, .analytics-consent-runtime span { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.analytics-consent-modes { display: grid; min-height: fit-content; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.analytics-consent-modes { display: grid; min-height: fit-content; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line-strong); border-radius: 6px; }
 .analytics-consent-modes > button { display: grid; min-height: 76px; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 8px; padding: 12px; background: #fff; color: var(--muted); border: 0; text-align: left; }
 .analytics-consent-modes > button + button { border-left: 1px solid var(--line-strong); }
 .analytics-consent-modes > button[data-active='true'] { background: var(--teal-soft); color: var(--teal); }
