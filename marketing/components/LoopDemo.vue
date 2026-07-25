@@ -64,9 +64,9 @@ onBeforeUnmount(() => {
     <!-- The demo burns its captions into the video, so the same story is
          written out here for screen readers and anyone who blocks media. -->
     <figcaption class="loop-demo-caption">
-      A guest taps a checkout button that does nothing, rates the page two stars, and writes one
-      sentence. Fidibeki attaches the screenshot and the exact element, posts the report into
-      Slack, and tells the guest once it is resolved.
+      A guest taps a checkout button that does nothing, rates the page two stars, writes one
+      sentence, and chooses to attach a screenshot and the exact element. Fidibeki delivers the
+      report into Slack and tells the guest once it is resolved.
     </figcaption>
   </figure>
 </template>
