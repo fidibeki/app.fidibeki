@@ -270,8 +270,17 @@ useHead({ title: computed(() => t('admin.notifications.pageTitle')) })
 </template>
 
 <style scoped>
+/* .app-page does not space its children, so the stacked surfaces set their own
+   rhythm, matching the 16px used by the other settings pages. */
 .notifications-page {
+  display: grid;
   max-width: 920px;
+  gap: 16px;
+  align-content: start;
+}
+/* The head keeps its usual 22px below it once the grid gap is added. */
+.notifications-page > .app-page-head {
+  margin-bottom: 6px;
 }
 .notifications-surface {
   display: grid;
