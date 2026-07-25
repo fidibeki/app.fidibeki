@@ -48,6 +48,7 @@ type Config struct {
 	InternalProxySecret       string
 	TrustedProxyCIDRs         []netip.Prefix
 	IntegrationEncryptionKey  string
+	TwoFactorEncryptionKey    string
 	StripeSecretKey           string
 	StripeWebhookSecret       string
 	StripePriceStarter        string
@@ -162,6 +163,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		InternalProxySecret:       get("INTERNAL_PROXY_SECRET", ""),
 		TrustedProxyCIDRs:         trustedProxyCIDRs,
 		IntegrationEncryptionKey:  get("INTEGRATION_ENCRYPTION_KEY", ""),
+		TwoFactorEncryptionKey:    get("TWO_FACTOR_ENCRYPTION_KEY", ""),
 		StripeSecretKey:           get("STRIPE_SECRET_KEY", ""),
 		StripeWebhookSecret:       get("STRIPE_WEBHOOK_SECRET", ""),
 		StripePriceStarter:        get("STRIPE_PRICE_STARTER", ""),
@@ -298,6 +300,7 @@ func (c Config) validate() []error {
 		"S3_SECRET_KEY":              c.S3SecretKey,
 		"JWT_SECRET":                 c.JWTSecret,
 		"INTEGRATION_ENCRYPTION_KEY": c.IntegrationEncryptionKey,
+		"TWO_FACTOR_ENCRYPTION_KEY":  c.TwoFactorEncryptionKey,
 	}
 	for name, value := range required {
 		if value == "" {
@@ -361,6 +364,17 @@ func (c Config) validate() []error {
 			validationErrors = append(validationErrors,
 				fmt.Errorf("INTEGRATION_ENCRYPTION_KEY must be base64 encoding of exactly 32 bytes"))
 		}
+	}
+	if c.TwoFactorEncryptionKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(c.TwoFactorEncryptionKey)
+		if err != nil || len(decoded) != 32 {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must be base64 encoding of exactly 32 bytes"))
+		}
+	}
+	if c.TwoFactorEncryptionKey != "" && c.TwoFactorEncryptionKey == c.IntegrationEncryptionKey {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must differ from INTEGRATION_ENCRYPTION_KEY"))
 	}
 	if c.AccessTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be positive"))

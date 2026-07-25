@@ -407,25 +407,6 @@ func TestParseCertificateAcceptsPEMAndBareBase64(t *testing.T) {
 	}
 }
 
-// Local sessions must keep carrying no identity-provider fields, because the
-// database constraint refuses a row that mixes the two.
-func TestSessionIdentityNormalization(t *testing.T) {
-	t.Parallel()
-	local := auth.SessionIdentity{
-		Method: auth.AuthenticationMethodLocal, IdPEntityID: "leaked", SubjectID: "leaked",
-	}.Normalized()
-	if local.IdPEntityID != "" || local.SubjectID != "" || local.IsSAML() {
-		t.Fatalf("local identity = %#v, want no identity-provider fields", local)
-	}
-	saml := auth.SAMLSessionIdentity("https://idp.test/entity", "subject").Normalized()
-	if !saml.IsSAML() || saml.IdPEntityID == "" || saml.SubjectID == "" {
-		t.Fatalf("SAML identity = %#v, want the provider and subject preserved", saml)
-	}
-	if unset := (auth.SessionIdentity{}).Normalized(); unset.Method != auth.AuthenticationMethodLocal {
-		t.Fatalf("unset identity = %#v, want the local default", unset)
-	}
-}
-
 func parseIP(t *testing.T, value string) net.IP {
 	t.Helper()
 	address := net.ParseIP(value)

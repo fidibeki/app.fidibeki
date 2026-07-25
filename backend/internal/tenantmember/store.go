@@ -105,27 +105,30 @@ func (s Store) FindMemberByEmail(
 	return member, nil
 }
 
-// SSOMode reports the organization's single sign-on enforcement mode. A tenant
-// with no SAML configuration has no row, which is the disabled default: SSO is
-// opt-in and never changes authentication for organizations that never set it
-// up. Read here rather than through internal/samlsso because that package
-// depends on this one.
-func (Store) SSOMode(
+// FindMemberByID loads one active member of the workspace. Two-factor
+// enrolment needs the member's email to label the authenticator entry.
+func (s Store) FindMemberByID(
 	ctx context.Context,
 	query db.Querier,
 	tenantID string,
-) (auth.SSOMode, error) {
-	var mode auth.SSOMode
-	err := query.QueryRow(ctx, `
-		SELECT mode::text FROM tenant_saml_configurations WHERE tenant_id = $1
-	`, tenantID).Scan(&mode)
+	memberID string,
+) (Member, error) {
+	member, err := scanMemberWithRole(query.QueryRow(ctx, `
+		SELECT member.id, member.tenant_id, member.email, member.name, member.avatar_version,
+		       member.locale, member.timezone, member.permissions,
+		       member.status, member.authorization_version,
+		       member.id = tenant.owner_member_id, member.last_login_at IS NOT NULL
+		FROM tenant_members AS member
+		JOIN tenants AS tenant ON tenant.id = member.tenant_id
+		WHERE member.tenant_id = $1 AND member.id = $2 AND member.status = 'active'
+	`, tenantID, memberID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.SSOModeDisabled, nil
+		return Member{}, ErrMemberNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("read tenant SSO mode: %w", err)
+		return Member{}, fmt.Errorf("find tenant member by ID: %w", err)
 	}
-	return mode, nil
+	return member, nil
 }
 
 func (s Store) IsMemberEmailDomainAllowed(
@@ -244,6 +247,29 @@ func (s Store) VerifyMemberDomain(
 	return memberDomain, nil
 }
 
+// SSOMode reports the organization's single sign-on enforcement mode. A tenant
+// with no SAML configuration has no row, which is the disabled default: SSO is
+// opt-in and never changes authentication for organizations that never set it
+// up. Read here rather than through internal/samlsso because that package
+// depends on this one.
+func (Store) SSOMode(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+) (auth.SSOMode, error) {
+	var mode auth.SSOMode
+	err := query.QueryRow(ctx, `
+		SELECT mode::text FROM tenant_saml_configurations WHERE tenant_id = $1
+	`, tenantID).Scan(&mode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.SSOModeDisabled, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read tenant SSO mode: %w", err)
+	}
+	return mode, nil
+}
+
 func (s Store) CreateMagicLink(
 	ctx context.Context,
 	query db.Querier,
@@ -282,17 +308,18 @@ func (s Store) CreateSAMLMagicLink(
 	email string,
 	tokenHash string,
 	expiresAt time.Time,
-	identity auth.SessionIdentity,
+	idpEntityID string,
+	subjectID string,
 ) error {
-	if !identity.IsSAML() {
-		return errors.New("SAML magic link requires SAML session identity")
+	if idpEntityID == "" || subjectID == "" {
+		return errors.New("SAML magic link requires an identity provider and subject")
 	}
 	_, err := query.Exec(ctx, `
 		INSERT INTO tenant_magic_links (
 			tenant_id, member_id, email, invited_permissions, token_hash, expires_at,
 			authentication_method, saml_idp_entity_id, saml_subject_id
 		) VALUES ($1, $2, $3, '{}', $4, $5, 'saml', $6, $7)
-	`, tenantID, memberID, email, tokenHash, expiresAt, identity.IdPEntityID, identity.SubjectID)
+	`, tenantID, memberID, email, tokenHash, expiresAt, idpEntityID, subjectID)
 	if err != nil {
 		return fmt.Errorf("create tenant SAML magic link: %w", err)
 	}
@@ -307,13 +334,13 @@ func (s Store) ConsumeMagicLink(
 	refreshHash string,
 	userAgent string,
 	ip string,
-) (Member, auth.SessionIdentity, error) {
+) (Member, SessionSecurity, error) {
 	var linkID string
 	var memberID *string
 	var email string
 	var invitedPermissions []string
-	var identity auth.SessionIdentity
-	var idpEntityID, subjectID *string
+	var linkMethod string
+	var linkIdPEntityID, linkSubjectID *string
 	err := query.QueryRow(ctx, `
 		SELECT id, member_id, email, invited_permissions,
 		       authentication_method, saml_idp_entity_id, saml_subject_id
@@ -323,35 +350,28 @@ func (s Store) ConsumeMagicLink(
 		FOR UPDATE
 	`, tenantID, tokenHash, s.now()).Scan(
 		&linkID, &memberID, &email, &invitedPermissions,
-		&identity.Method, &idpEntityID, &subjectID,
+		&linkMethod, &linkIdPEntityID, &linkSubjectID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Member{}, auth.SessionIdentity{}, ErrMagicLinkInvalid
+		return Member{}, SessionSecurity{}, ErrMagicLinkInvalid
 	}
 	if err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("lock tenant magic link: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("lock tenant magic link: %w", err)
 	}
-	if idpEntityID != nil {
-		identity.IdPEntityID = *idpEntityID
-	}
-	if subjectID != nil {
-		identity.SubjectID = *subjectID
-	}
-	identity = identity.Normalized()
 
 	var member Member
+	if memberID == nil && linkMethod == AuthenticationMethodSAML {
+		// The SAML handoff always binds an existing member; an unbound link
+		// reaching here would mean an assertion could enrol itself.
+		return Member{}, SessionSecurity{}, ErrMagicLinkInvalid
+	}
 	if memberID == nil {
-		if identity.IsSAML() {
-			// The SAML handoff always binds an existing member; an unbound
-			// link reaching here would mean an assertion could enrol itself.
-			return Member{}, auth.SessionIdentity{}, ErrMagicLinkInvalid
-		}
 		allowed, err := s.IsMemberEmailDomainAllowed(ctx, query, tenantID, email)
 		if err != nil {
-			return Member{}, auth.SessionIdentity{}, err
+			return Member{}, SessionSecurity{}, err
 		}
 		if !allowed {
-			return Member{}, auth.SessionIdentity{}, ErrMemberDomainNotVerified
+			return Member{}, SessionSecurity{}, ErrMemberDomainNotVerified
 		}
 		member, err = scanMember(query.QueryRow(ctx, `
 			INSERT INTO tenant_members (tenant_id, email, permissions)
@@ -360,7 +380,7 @@ func (s Store) ConsumeMagicLink(
 			          permissions, status, authorization_version
 		`, tenantID, email, invitedPermissions))
 		if err != nil {
-			return Member{}, auth.SessionIdentity{}, fmt.Errorf("accept tenant invitation: %w", err)
+			return Member{}, SessionSecurity{}, fmt.Errorf("accept tenant invitation: %w", err)
 		}
 		memberID = &member.ID
 	} else {
@@ -374,19 +394,19 @@ func (s Store) ConsumeMagicLink(
 			WHERE member.tenant_id = $1 AND member.id = $2 AND member.status = 'active'
 		`, tenantID, *memberID))
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Member{}, auth.SessionIdentity{}, ErrMagicLinkInvalid
+			return Member{}, SessionSecurity{}, ErrMagicLinkInvalid
 		}
 		if err != nil {
-			return Member{}, auth.SessionIdentity{}, fmt.Errorf("load tenant member for magic link: %w", err)
+			return Member{}, SessionSecurity{}, fmt.Errorf("load tenant member for magic link: %w", err)
 		}
 	}
 	if _, err := query.Exec(ctx, `
 		UPDATE tenant_magic_links SET consumed_at = $2, member_id = $3 WHERE id = $1
 	`, linkID, s.now(), member.ID); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("consume tenant magic link: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("consume tenant magic link: %w", err)
 	}
 	if err := lockTenantMember(ctx, query, tenantID, member.ID); err != nil {
-		return Member{}, auth.SessionIdentity{}, err
+		return Member{}, SessionSecurity{}, err
 	}
 	if _, err := query.Exec(ctx, `
 		INSERT INTO outbox_events (tenant_id, event, resource_type, resource_id, data)
@@ -397,25 +417,54 @@ func (s Store) ConsumeMagicLink(
 		  AND tenant.owner_member_id = $2::uuid
 		ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
 	`, tenantID, member.ID); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("schedule owner welcome email: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("schedule owner welcome email: %w", err)
 	}
 	if _, err := query.Exec(ctx,
 		`UPDATE tenant_members SET last_login_at = $3 WHERE tenant_id = $1 AND id = $2`,
 		tenantID, member.ID, s.now(),
 	); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("update tenant member login: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("update tenant member login: %w", err)
 	}
 	member.Verified = true
+	security, err := s.sessionSecurity(ctx, query, tenantID, member.ID)
+	if err != nil {
+		return Member{}, SessionSecurity{}, err
+	}
+	// A local magic link is a Fidibeki proof of identity, so the session stays
+	// subject to the Fidibeki two-factor policy and an enrolled member owes the
+	// TOTP challenge before the session becomes usable. A SAML handoff instead
+	// delegates that assurance to the identity provider, so it is never
+	// challenged — and the enrolment it bypasses is left untouched, ready to
+	// apply again if local authentication is restored.
+	security.AuthenticationMethod = AuthenticationMethodLocal
+	security.TwoFactorState = TwoFactorStateNotRequired
+	if linkMethod == AuthenticationMethodSAML {
+		security.AuthenticationMethod = AuthenticationMethodSAML
+		if linkIdPEntityID != nil {
+			security.SAMLIdPEntityID = *linkIdPEntityID
+		}
+		if linkSubjectID != nil {
+			security.SAMLSubjectID = *linkSubjectID
+		}
+	} else if security.Enrolled {
+		security.TwoFactorState = TwoFactorStatePending
+	}
+	security = security.NormalizedForPersistence()
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_member_sessions (
 			tenant_id, member_id, refresh_hash, user_agent, ip,
-			authentication_method, saml_idp_entity_id, saml_subject_id
-		) VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet, $6, NULLIF($7, ''), NULLIF($8, ''))
+			authentication_method, two_factor_state, saml_idp_entity_id, saml_subject_id
+		)
+		VALUES (
+			$1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet, $6, $7,
+			NULLIF($8, ''), NULLIF($9, '')
+		)
 	`, tenantID, member.ID, refreshHash, userAgent, ip,
-		identity.Method, identity.IdPEntityID, identity.SubjectID); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("create tenant member session: %w", err)
+		security.AuthenticationMethod, security.TwoFactorState,
+		security.SAMLIdPEntityID, security.SAMLSubjectID); err != nil {
+		return Member{}, SessionSecurity{}, fmt.Errorf("create tenant member session: %w", err)
 	}
-	return member, identity, nil
+	return member, security, nil
 }
 
 type memberDomainScanner interface {
@@ -440,21 +489,28 @@ func (s Store) RotateSession(
 	nextHash string,
 	userAgent string,
 	ip string,
-) (Member, auth.SessionIdentity, error) {
+) (Member, SessionSecurity, error) {
 	checkedAt := s.now()
 	retryGrace := s.refreshRetryGrace()
 	if _, err := lockTenantMemberForSession(ctx, query, tenantID, currentHash); err != nil {
-		return Member{}, auth.SessionIdentity{}, err
+		return Member{}, SessionSecurity{}, err
 	}
 	var sessionID string
-	var identity auth.SessionIdentity
-	var idpEntityID, subjectID *string
 	var issuedAt time.Time
 	var revokedAt pgtype.Timestamptz
 	var retryAllowed bool
+	security := SessionSecurity{}
 	member, err := scanSessionMember(query.QueryRow(ctx, `
 		SELECT session.id, session.issued_at, session.revoked_at,
-		       session.authentication_method, session.saml_idp_entity_id, session.saml_subject_id,
+		       session.authentication_method, session.two_factor_state,
+		       session.saml_idp_entity_id, session.saml_subject_id,
+		       tenant.two_factor_policy = 'required',
+		       EXISTS (
+		           SELECT 1 FROM tenant_member_totp AS enrolment
+		           WHERE enrolment.tenant_id = session.tenant_id
+		             AND enrolment.member_id = session.member_id
+		             AND enrolment.confirmed_at IS NOT NULL
+		       ),
 		       session.rotated_at IS NOT NULL
 		         AND session.rotated_at >= $4
 		         AND $8
@@ -481,36 +537,28 @@ func (s Store) RotateSession(
 		FOR UPDATE OF session
 	`, tenantID, currentHash, nextHash, checkedAt.Add(-retryGrace), userAgent, ip,
 		checkedAt.Add(-s.refreshTTL()), retryGrace > 0),
-		&sessionID, &issuedAt, &revokedAt, &identity.Method, &idpEntityID, &subjectID, &retryAllowed,
+		&sessionID, &issuedAt, &revokedAt, &retryAllowed, &security,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Member{}, auth.SessionIdentity{}, ErrRefreshInvalid
+		return Member{}, SessionSecurity{}, ErrRefreshInvalid
 	}
 	if err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("lock tenant member session: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("lock tenant member session: %w", err)
 	}
-	if idpEntityID != nil {
-		identity.IdPEntityID = *idpEntityID
-	}
-	if subjectID != nil {
-		identity.SubjectID = *subjectID
-	}
-	// A refreshed session keeps the provenance of the credential that created
-	// it, so an IdP-assured session never silently downgrades to local on
-	// rotation.
-	identity = identity.Normalized()
 	if revokedAt.Valid && !retryAllowed {
 		if _, err := query.Exec(ctx, `
 			UPDATE tenant_member_sessions
 			SET revoked_at = COALESCE(revoked_at, $3), rotated_at = NULL, replacement_hash = NULL
 			WHERE tenant_id = $1 AND member_id = $2
 		`, tenantID, member.ID, checkedAt); err != nil {
-			return Member{}, auth.SessionIdentity{}, fmt.Errorf("revoke reused tenant member sessions: %w", err)
+			return Member{}, SessionSecurity{}, fmt.Errorf("revoke reused tenant member sessions: %w", err)
 		}
-		return Member{}, auth.SessionIdentity{}, ErrRefreshReuse
+		return Member{}, SessionSecurity{}, ErrRefreshReuse
 	}
 	if revokedAt.Valid {
-		return member, identity, nil
+		// A retried rotation returns the successor that already exists, so the
+		// session's two-factor state is reported unchanged.
+		return member, security, nil
 	}
 	if !issuedAt.Add(s.refreshTTL()).After(checkedAt) {
 		if _, err := query.Exec(ctx,
@@ -519,27 +567,35 @@ func (s Store) RotateSession(
 			 WHERE tenant_id = $1 AND id = $2`,
 			tenantID, sessionID, checkedAt,
 		); err != nil {
-			return Member{}, auth.SessionIdentity{}, fmt.Errorf("revoke expired tenant member session: %w", err)
+			return Member{}, SessionSecurity{}, fmt.Errorf("revoke expired tenant member session: %w", err)
 		}
-		return Member{}, auth.SessionIdentity{}, ErrRefreshExpired
+		return Member{}, SessionSecurity{}, ErrRefreshExpired
 	}
 	if _, err := query.Exec(ctx, `
 		UPDATE tenant_member_sessions
 		SET revoked_at = $3, last_used_at = $3, rotated_at = $3, replacement_hash = $4
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, sessionID, checkedAt, nextHash); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("rotate old tenant member session: %w", err)
+		return Member{}, SessionSecurity{}, fmt.Errorf("rotate old tenant member session: %w", err)
 	}
+	// The successor inherits how the session authenticated and whether it still
+	// owes a challenge, so refreshing can never launder a pending session into
+	// a satisfied one.
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_member_sessions (
 			tenant_id, member_id, refresh_hash, user_agent, ip,
-			authentication_method, saml_idp_entity_id, saml_subject_id
-		) VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet, $6, NULLIF($7, ''), NULLIF($8, ''))
-	`, tenantID, member.ID, nextHash, userAgent, ip,
-		identity.Method, identity.IdPEntityID, identity.SubjectID); err != nil {
-		return Member{}, auth.SessionIdentity{}, fmt.Errorf("create rotated tenant member session: %w", err)
+			authentication_method, two_factor_state, two_factor_verified_at,
+			saml_idp_entity_id, saml_subject_id
+		)
+		SELECT $1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet,
+		       previous.authentication_method, previous.two_factor_state, previous.two_factor_verified_at,
+		       previous.saml_idp_entity_id, previous.saml_subject_id
+		FROM tenant_member_sessions AS previous
+		WHERE previous.tenant_id = $1 AND previous.id = $6
+	`, tenantID, member.ID, nextHash, userAgent, ip, sessionID); err != nil {
+		return Member{}, SessionSecurity{}, fmt.Errorf("create rotated tenant member session: %w", err)
 	}
-	return member, identity, nil
+	return member, security, nil
 }
 
 func (s Store) RevokeSession(
@@ -1114,19 +1170,28 @@ func scanSessionMember(
 	sessionID *string,
 	issuedAt *time.Time,
 	revokedAt *pgtype.Timestamptz,
-	authenticationMethod *string,
-	idpEntityID **string,
-	subjectID **string,
 	retryAllowed *bool,
+	security *SessionSecurity,
 ) (Member, error) {
 	var member Member
 	var owner bool
+	var idpEntityID, subjectID *string
 	err := row.Scan(
-		sessionID, issuedAt, revokedAt, authenticationMethod, idpEntityID, subjectID, retryAllowed,
+		sessionID, issuedAt, revokedAt,
+		&security.AuthenticationMethod, &security.TwoFactorState,
+		&idpEntityID, &subjectID,
+		&security.PolicyRequired, &security.Enrolled,
+		retryAllowed,
 		&member.ID, &member.TenantID, &member.Email, &member.Name, &member.AvatarVersion,
 		&member.Locale, &member.Timezone, &member.Permissions,
 		&member.Status, &member.AuthorizationVersion, &owner, &member.Verified,
 	)
+	if idpEntityID != nil {
+		security.SAMLIdPEntityID = *idpEntityID
+	}
+	if subjectID != nil {
+		security.SAMLSubjectID = *subjectID
+	}
 	member.Role = "member"
 	if owner {
 		member.Role = "owner"

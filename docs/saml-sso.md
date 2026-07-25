@@ -65,15 +65,25 @@ never applies to an untested configuration.
 ## Multi-factor authentication
 
 A SAML-authenticated session delegates multi-factor assurance to the identity
-provider. Fidibeki does not add a second challenge to those sessions, and the
-settings page says so explicitly while Required mode is active.
+provider, so Fidibeki never issues it a TOTP challenge. Every session records
+the credential path that produced it — `authentication_method` is `local` or
+`saml`, alongside the asserting identity provider and subject — and the
+two-factor state machine reads that method rather than inspecting the
+credential again.
 
-Fidibeki has no local TOTP factor today; member sign-in is magic-link based.
-Every session now records the credential path that produced it
-(`authentication_method` is `local` or `saml`, alongside the asserting identity
-provider and subject), which is the enforcement point a future Fidibeki-managed
-second factor will read. Enabling SSO deletes no credentials, so restoring local
-authentication restores whatever local policy applied before.
+How this interacts with Fidibeki's own two-factor authentication:
+
+| SSO mode | SAML sessions | Local sessions |
+| --- | --- | --- |
+| **Disabled** | n/a | Follow the organization's two-factor policy. |
+| **Optional** | Never challenged. | Follow the organization's two-factor policy. |
+| **Required** | Never challenged. | Only the owner break-glass path exists, and it still follows the local policy. |
+
+Under **Required** mode the organization's Fidibeki two-factor control is
+disabled and the settings page explains that MFA is managed by the identity
+provider. The stored policy is left untouched rather than rewritten, and
+**enabling SSO never deletes a TOTP enrolment or its recovery codes** — both
+apply again the moment the workspace returns to Optional or Disabled.
 
 ## Certificate rotation
 

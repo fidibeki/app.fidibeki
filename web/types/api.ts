@@ -83,12 +83,37 @@ export interface OrganizationProfile {
   logo_version?: string | null
 }
 
+export type TwoFactorPolicyMode = 'optional' | 'required'
+export type TwoFactorRequirement = 'challenge_required' | 'enrollment_required'
+
+export interface TwoFactorRequirementResponse {
+  status: TwoFactorRequirement
+}
+
+/**
+ * A session that still owes its two-factor challenge is answered with the
+ * requirement alone: no access token and no workspace metadata.
+ */
 export interface AuthResponse {
   access_token: string
   token_type: 'Bearer'
   expires_in: number
   member: Member
   tenant: TenantSummary
+  two_factor?: TwoFactorRequirementResponse
+}
+
+export type AuthOrTwoFactorResponse = AuthResponse | { two_factor: TwoFactorRequirementResponse }
+
+export function twoFactorRequirement(
+  response: AuthOrTwoFactorResponse | null | undefined,
+): TwoFactorRequirement | null {
+  const status = response && 'two_factor' in response ? response.two_factor?.status : null
+  return status === 'challenge_required' || status === 'enrollment_required' ? status : null
+}
+
+export function isAuthResponse(response: AuthOrTwoFactorResponse): response is AuthResponse {
+  return typeof (response as AuthResponse).access_token === 'string'
 }
 
 export interface AuthSession {
@@ -96,6 +121,37 @@ export interface AuthSession {
   expiresAt: number | null
   member: Member | null
   tenant: TenantSummary | null
+}
+
+export interface TwoFactorStatus {
+  policy: TwoFactorPolicyMode
+  enrolled: boolean
+  confirmed_at?: string | null
+  recovery_codes_remaining: number
+  can_remove: boolean
+  authentication_method: 'local' | 'saml'
+}
+
+export interface TwoFactorEnrollment {
+  secret: string
+  provisioning_uri: string
+  qr_code_svg: string
+}
+
+export interface TwoFactorPolicy {
+  policy: TwoFactorPolicyMode
+  updated_at?: string | null
+  updated_by?: string | null
+  /** Required single sign-on has delegated multi-factor assurance to the IdP. */
+  managed_by_idp: boolean
+}
+
+export interface TwoFactorCompliance {
+  member_id: string
+  email: string
+  name?: string | null
+  enrolled: boolean
+  confirmed_at?: string | null
 }
 
 export interface APIErrorBody {

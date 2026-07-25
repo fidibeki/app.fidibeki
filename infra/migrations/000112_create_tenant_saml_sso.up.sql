@@ -93,16 +93,15 @@ CREATE TABLE tenant_saml_assertions (
 CREATE INDEX idx_tenant_saml_assertions_expiry
     ON tenant_saml_assertions (not_on_or_after);
 
--- Records how a session came to exist. Existing rows predate SAML and are
--- therefore local by definition.
+-- Migration 000111 already records authentication_method on a session for
+-- two-factor purposes. These columns add which identity provider asserted it
+-- and under what subject, which is what makes a SAML session auditable.
 ALTER TABLE tenant_member_sessions
-    ADD COLUMN authentication_method text NOT NULL DEFAULT 'local'
-        CHECK (authentication_method IN ('local', 'saml')),
     ADD COLUMN saml_idp_entity_id text,
     ADD COLUMN saml_subject_id text,
     ADD CONSTRAINT tenant_member_sessions_saml_identity_consistency CHECK (
         (authentication_method = 'saml' AND saml_idp_entity_id IS NOT NULL AND saml_subject_id IS NOT NULL)
-        OR (authentication_method = 'local' AND saml_idp_entity_id IS NULL AND saml_subject_id IS NULL)
+        OR (authentication_method <> 'saml' AND saml_idp_entity_id IS NULL AND saml_subject_id IS NULL)
     );
 
 -- The ACS hands off through a short-lived single-use magic link so SAML reuses

@@ -23,11 +23,11 @@ ALTER TABLE tenant_magic_links
     DROP COLUMN saml_idp_entity_id,
     DROP COLUMN authentication_method;
 
+-- authentication_method belongs to migration 000111 and stays.
 ALTER TABLE tenant_member_sessions
     DROP CONSTRAINT tenant_member_sessions_saml_identity_consistency,
     DROP COLUMN saml_subject_id,
-    DROP COLUMN saml_idp_entity_id,
-    DROP COLUMN authentication_method;
+    DROP COLUMN saml_idp_entity_id;
 
 DROP TABLE tenant_saml_assertions;
 DROP TABLE tenant_saml_auth_requests;

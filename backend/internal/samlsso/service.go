@@ -33,7 +33,7 @@ const (
 type MagicLinkStore interface {
 	CreateSAMLMagicLink(
 		ctx context.Context, query db.Querier, tenantID, memberID, email, tokenHash string,
-		expiresAt time.Time, identity auth.SessionIdentity,
+		expiresAt time.Time, idpEntityID, subjectID string,
 	) error
 }
 
@@ -463,10 +463,9 @@ func (s Service) ConsumeAssertion(
 	if err != nil {
 		return Outcome{}, err
 	}
-	sessionIdentity := auth.SAMLSessionIdentity(identity.IdPEntityID, identity.SubjectID)
 	if err := s.MagicLinks.CreateSAMLMagicLink(
 		ctx, query, resolved.ID, member.ID, member.Email, tokenHash,
-		now.Add(s.handoffTTL()), sessionIdentity,
+		now.Add(s.handoffTTL()), identity.IdPEntityID, identity.SubjectID,
 	); err != nil {
 		return Outcome{}, err
 	}

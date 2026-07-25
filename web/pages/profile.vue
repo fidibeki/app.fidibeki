@@ -287,7 +287,9 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
       </div>
     </section>
 
-    <section v-else class="app-surface app-state">
+    <TwoFactorEnrollment v-if="member" class="profile-security" />
+
+    <section v-if="!member" class="app-surface app-state">
       <div><UserRound :size="24" /><h2>{{ t('profile.unavailable') }}</h2></div>
     </section>
   </div>
@@ -296,6 +298,9 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
 <style scoped>
 .profile-page {
   max-width: 920px;
+}
+.profile-security {
+  margin-top: 16px;
 }
 .profile-surface {
   overflow: hidden;

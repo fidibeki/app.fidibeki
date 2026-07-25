@@ -23,3 +23,20 @@ aa390e2ccebbc299c7c6015b1c22fa44147c3643:web/tests/e2e/ci-web-server.mjs:generic
 # Deterministic abuse-rotation and encryption fixtures introduced by the public-protection tests.
 bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/abuse/abuse_test.go:generic-api-key:15
 bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/config/config_test.go:generic-api-key:60
+
+# Two-factor auth (issue #22): deterministic base64 encryption fixtures shared
+# with INTEGRATION_ENCRYPTION_KEY above. Two findings per line are the raw and
+# base64-decoded matches gitleaks emits for the same value.
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:.env.example:generic-api-key:42
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/config/config_test.go:generic-api-key:62
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/config/config_test.go:generic-api-key:117
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/config/config_test.go:generic-api-key:186
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/twofactor/twofactor_test.go:generic-api-key:226
+2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/tenantmember/twofactor_integration_test.go:generic-api-key:26
+
+# Pre-existing test fixtures the full-history scan surfaced on this branch but
+# never originated here. proxy_host_test.go holds a deterministic shared
+# secret; semantic-events.test.ts embeds a JWT-shaped string to assert the
+# personal-data denylist rejects it.
+10b22f2b34435f4632d52ac8d9fef5deae51aee6:backend/internal/middleware/proxy_host_test.go:generic-api-key:53
+51b8842f4ede3a17b53c748808fdaf9284c9b4c2:widget/tests/unit/semantic-events.test.ts:jwt:58

@@ -2,21 +2,19 @@
 
 Implements [issue #23](https://github.com/acidiney/app.fidibeki/issues/23).
 
-## Scope note
+## Interaction with Fidibeki two-factor authentication
 
-The issue's "Interaction With Fidibeki 2FA" section describes behaviour relative to a
-Fidibeki-managed TOTP factor. **Fidibeki has no local TOTP/2FA feature today** — tenant-member
-authentication is magic-link only. So this work delivers the half that exists now:
+Fidibeki-managed TOTP landed on main in #98, and its session model already
+anticipates SAML: `SessionSecurity.AuthenticationMethod` exists and
+`Requirement()` exempts a SAML session from the challenge. This work feeds that
+model rather than building a parallel one — the SAML handoff stamps the session
+as `saml`, so the existing state machine does the exempting.
 
-- every session records the authentication method that produced it, and SAML sessions are
-  marked `saml`;
-- the enforcement point that a future TOTP challenge would hang off (`authentication_method`)
-  is in place and covered by tests;
-- the settings UI carries the "MFA is managed by your identity provider" explanation in
-  Required mode.
+On top of that:
 
-Enabling SSO deletes no credentials, so the "TOTP survives SSO enablement" requirement holds
-vacuously and will keep holding when TOTP lands.
+- Required SSO disables the organization's Fidibeki two-factor control and says
+  why, without rewriting the stored policy.
+- Enabling SSO never deletes a TOTP enrolment or its recovery codes.
 
 ## Architecture
 
@@ -46,7 +44,7 @@ New optional env `WEB_PUBLIC_BASE_URL` (defaults to `PUBLIC_BASE_URL`) supplies 
 browser-facing scheme/port. Production leaves it unset; local dev sets
 `http://api.localhost:3000` so the Nuxt dev server terminates the flow.
 
-## Data model (migration `000111`)
+## Data model (migration `000112`)
 
 - `tenant_sso_mode` enum: `disabled` | `optional` | `required`.
 - `tenant_saml_configurations` — one row per tenant. IdP entity ID, SSO URL, optional metadata
@@ -59,8 +57,9 @@ browser-facing scheme/port. Production leaves it unset; local dev sets
   short TTL, carries purpose (`login` | `test`), relay state, and the initiating member for
   test logins.
 - `tenant_saml_assertions` — assertion-ID replay ledger keyed by `(tenant_id, assertion_hash)`.
-- `tenant_magic_links` and `tenant_member_sessions` gain `authentication_method`,
-  `saml_idp_entity_id`, `saml_subject_id`.
+- `tenant_magic_links` gains `authentication_method`, `saml_idp_entity_id`, and
+  `saml_subject_id`; `tenant_member_sessions` gains the two identity columns
+  (migration `000111` already added `authentication_method` there for two-factor).
 
 All tenant-scoped tables get the standard RLS isolation policy.
 

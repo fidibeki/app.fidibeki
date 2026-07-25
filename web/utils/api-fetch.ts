@@ -26,6 +26,15 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
   return fallback
 }
 
+/**
+ * The machine-readable code an API error carries, used to branch on outcomes
+ * the message alone cannot distinguish.
+ */
+export function apiErrorCode(error: unknown): string {
+  const code = extractAPIError(error)?.code
+  return typeof code === 'string' ? code : ''
+}
+
 export function apiFieldErrors(
   error: unknown,
   localizedFallbacks: Record<string, string> = {},

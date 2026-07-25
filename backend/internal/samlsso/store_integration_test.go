@@ -93,7 +93,7 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 		// The handoff is exchanged the same way an emailed magic link is, so
 		// the session it produces goes through the proven issuing path.
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
-			member, identity, err := harness.members.ConsumeMagicLink(
+			member, security, err := harness.members.ConsumeMagicLink(
 				ctx, query, acme.id, auth.HashToken(handoffToken),
 				strings.Repeat("a", 64), "test-agent", "203.0.113.10",
 			)
@@ -103,8 +103,14 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 			if member.ID != acme.ownerID {
 				t.Errorf("member = %q, want %q", member.ID, acme.ownerID)
 			}
-			if !identity.IsSAML() || identity.IdPEntityID != acme.idp.entityID {
-				t.Fatalf("session identity = %#v, want a SAML session from the configured IdP", identity)
+			if !security.IsSAML() || security.SAMLIdPEntityID != acme.idp.entityID {
+				t.Fatalf("session security = %#v, want a SAML session from the configured IdP", security)
+			}
+			// The identity provider owns multi-factor assurance, so Fidibeki
+			// must never ask this session for a TOTP code.
+			if security.Requirement() != tenantmember.TwoFactorRequirementNone {
+				t.Fatalf("Requirement() = %q, want no Fidibeki challenge for a SAML session",
+					security.Requirement())
 			}
 		})
 
@@ -118,7 +124,7 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 			`, acme.id, acme.ownerID).Scan(&method, &idpEntityID, &subjectID); err != nil {
 				t.Fatalf("read session provenance: %v", err)
 			}
-			if method != auth.AuthenticationMethodSAML || idpEntityID != acme.idp.entityID {
+			if method != tenantmember.AuthenticationMethodSAML || idpEntityID != acme.idp.entityID {
 				t.Fatalf(
 					"session provenance = %q/%q, want a SAML session from %q",
 					method, idpEntityID, acme.idp.entityID,
@@ -301,6 +307,31 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 				ctx, query, acme.resolved, "owner@acme.test",
 			); err != nil {
 				t.Fatalf("owner RequestMagicLink() error = %v, want the break-glass path to work", err)
+			}
+		})
+	})
+
+	// Required SSO hands multi-factor assurance to the identity provider, so
+	// the Fidibeki-managed control goes inert. The stored policy and any
+	// enrolment survive untouched, ready to apply again if local
+	// authentication is restored.
+	t.Run("required mode disables the Fidibeki two-factor control", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			policy, err := harness.members.TwoFactorPolicy(ctx, query, acme.id)
+			if err != nil {
+				t.Fatalf("TwoFactorPolicy() error = %v", err)
+			}
+			if !policy.ManagedByIdP {
+				t.Fatalf("ManagedByIdP = false under required SSO, want the control reported inert")
+			}
+			if _, err := harness.members.SetTwoFactorPolicy(
+				ctx, query, acme.id, acme.ownerID, tenantmember.TwoFactorPolicyRequired,
+			); !errors.Is(err, tenantmember.ErrTwoFactorManagedByIdP) {
+				t.Fatalf("SetTwoFactorPolicy() error = %v, want ErrTwoFactorManagedByIdP", err)
+			}
+			// The underlying policy must be preserved, not rewritten.
+			if policy.Policy != tenantmember.TwoFactorPolicyOptional {
+				t.Fatalf("stored policy = %q, want the pre-SSO value preserved", policy.Policy)
 			}
 		})
 	})

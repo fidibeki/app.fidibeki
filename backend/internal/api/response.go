@@ -8,23 +8,35 @@ import (
 type ErrorCode string
 
 const (
-	CodeBadRequest             ErrorCode = "bad_request"
-	CodeUnauthenticated        ErrorCode = "unauthenticated"
-	CodeForbidden              ErrorCode = "forbidden"
-	CodeTenantSuspended        ErrorCode = "tenant_suspended"
-	CodeNotFound               ErrorCode = "not_found"
-	CodeUnknownTenant          ErrorCode = "unknown_tenant"
-	CodeConflict               ErrorCode = "conflict"
-	CodeOwnerProtected         ErrorCode = "owner_protected"
-	CodeLastAdministrator      ErrorCode = "last_administrator"
-	CodeRecentAuthRequired     ErrorCode = "recent_authentication_required"
-	CodeOwnershipConfirmation  ErrorCode = "invalid_ownership_confirmation"
-	CodeOwnershipTarget        ErrorCode = "invalid_ownership_target"
-	CodeMemberAlreadyRemoved   ErrorCode = "member_already_removed"
-	CodeSSORequired            ErrorCode = "sso_required"
-	CodeSSOConfiguration       ErrorCode = "invalid_sso_configuration"
-	CodeSSONotTested           ErrorCode = "sso_test_required"
-	CodeValidation             ErrorCode = "validation_error"
+	CodeBadRequest            ErrorCode = "bad_request"
+	CodeUnauthenticated       ErrorCode = "unauthenticated"
+	CodeForbidden             ErrorCode = "forbidden"
+	CodeTenantSuspended       ErrorCode = "tenant_suspended"
+	CodeNotFound              ErrorCode = "not_found"
+	CodeUnknownTenant         ErrorCode = "unknown_tenant"
+	CodeConflict              ErrorCode = "conflict"
+	CodeOwnerProtected        ErrorCode = "owner_protected"
+	CodeLastAdministrator     ErrorCode = "last_administrator"
+	CodeRecentAuthRequired    ErrorCode = "recent_authentication_required"
+	CodeOwnershipConfirmation ErrorCode = "invalid_ownership_confirmation"
+	CodeOwnershipTarget       ErrorCode = "invalid_ownership_target"
+	CodeMemberAlreadyRemoved  ErrorCode = "member_already_removed"
+	CodeSSORequired           ErrorCode = "sso_required"
+	CodeSSOConfiguration      ErrorCode = "invalid_sso_configuration"
+	CodeSSONotTested          ErrorCode = "sso_test_required"
+	CodeValidation            ErrorCode = "validation_error"
+	// CodeTwoFactorEnrollmentRequired marks an authenticated member session that
+	// cannot reach workspace data until it completes two-factor enrolment;
+	// CodeTwoFactorChallengeRequired marks one that still owes its TOTP
+	// challenge for this sign-in.
+	CodeTwoFactorEnrollmentRequired ErrorCode = "two_factor_enrollment_required"
+	CodeTwoFactorChallengeRequired  ErrorCode = "two_factor_challenge_required"
+	CodeTwoFactorInvalid            ErrorCode = "two_factor_code_invalid"
+	CodeTwoFactorPolicyBlocked      ErrorCode = "two_factor_policy_blocked"
+	// CodeTwoFactorManagedByIdP marks a Fidibeki two-factor control that is
+	// inert because required single sign-on delegates assurance to the
+	// organization's identity provider.
+	CodeTwoFactorManagedByIdP  ErrorCode = "two_factor_managed_by_idp"
 	CodeRateLimitExceeded      ErrorCode = "rate_limit_exceeded"
 	CodePlanLimitExceeded      ErrorCode = "plan_limit_exceeded"
 	CodePlanFeatureUnavailable ErrorCode = "plan_feature_unavailable"

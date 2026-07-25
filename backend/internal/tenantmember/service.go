@@ -21,11 +21,11 @@ type MemberStore interface {
 	FindMemberByEmail(context.Context, db.Querier, string, string) (Member, error)
 	IsMemberEmailDomainAllowed(context.Context, db.Querier, string, string) (bool, error)
 	CreateMagicLink(context.Context, db.Querier, string, *string, string, []string, string, time.Time) error
-	ConsumeMagicLink(context.Context, db.Querier, string, string, string, string, string) (Member, auth.SessionIdentity, error)
+	ConsumeMagicLink(context.Context, db.Querier, string, string, string, string, string) (Member, SessionSecurity, error)
 	SSOMode(context.Context, db.Querier, string) (auth.SSOMode, error)
 	RequestMemberDomainVerification(context.Context, db.Querier, string, string, string, string, time.Time) (MemberDomain, error)
 	VerifyMemberDomain(context.Context, db.Querier, string, string) (MemberDomain, error)
-	RotateSession(context.Context, db.Querier, string, string, string, string, string) (Member, auth.SessionIdentity, error)
+	RotateSession(context.Context, db.Querier, string, string, string, string, string) (Member, SessionSecurity, error)
 	RevokeSession(context.Context, db.Querier, string, string) error
 }
 
@@ -280,11 +280,31 @@ func (s Service) Verify(
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	member, identity, err := s.Store.ConsumeMagicLink(
+	member, security, err := s.Store.ConsumeMagicLink(
 		ctx, query, tenantID, auth.HashToken(rawToken), refreshHash, userAgent, ip,
 	)
 	if err != nil {
 		return SessionTokens{}, err
+	}
+	return s.issueSession(refreshToken, tenantID, member, security)
+}
+
+// issueSession turns a freshly created or rotated session into the response
+// payload. A session that still owes its two-factor challenge deliberately
+// receives no access token: primary authentication alone must not reach
+// workspace data.
+func (s Service) issueSession(
+	refreshToken string,
+	tenantID string,
+	member Member,
+	security SessionSecurity,
+) (SessionTokens, error) {
+	tokens := SessionTokens{
+		RefreshToken: refreshToken, Member: member,
+		Security: security, Requirement: security.Requirement(),
+	}
+	if tokens.Requirement == TwoFactorRequirementChallenge {
+		return tokens, nil
 	}
 	accessToken, expiresAt, err := s.JWT.IssueTenantMember(
 		member.ID, tenantID, member.Permissions, member.AuthorizationVersion,
@@ -292,10 +312,8 @@ func (s Service) Verify(
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	return SessionTokens{
-		AccessToken: accessToken, RefreshToken: refreshToken, ExpiresAt: expiresAt,
-		Member: member, Identity: identity,
-	}, nil
+	tokens.AccessToken, tokens.ExpiresAt = accessToken, expiresAt
+	return tokens, nil
 }
 
 func (s Service) Refresh(
@@ -313,22 +331,13 @@ func (s Service) Refresh(
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	member, identity, err := s.Store.RotateSession(
+	member, security, err := s.Store.RotateSession(
 		ctx, query, tenantID, auth.HashToken(currentToken), nextHash, userAgent, ip,
 	)
 	if err != nil {
 		return SessionTokens{}, err
 	}
-	accessToken, expiresAt, err := s.JWT.IssueTenantMember(
-		member.ID, tenantID, member.Permissions, member.AuthorizationVersion,
-	)
-	if err != nil {
-		return SessionTokens{}, err
-	}
-	return SessionTokens{
-		AccessToken: accessToken, RefreshToken: nextToken, ExpiresAt: expiresAt,
-		Member: member, Identity: identity,
-	}, nil
+	return s.issueSession(nextToken, tenantID, member, security)
 }
 
 func (s Service) Logout(ctx context.Context, query db.Querier, tenantID, token string) error {
