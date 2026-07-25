@@ -292,3 +292,71 @@ func TestSuppressionReasonsAndPermissionScoping(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestCopyReflectsCadenceAndVolume(t *testing.T) {
+	t.Parallel()
+	candidate := digestCandidate()
+	cases := []struct {
+		cadence     string
+		total       int
+		wantSubject string
+		wantHeading string
+	}{
+		{CadenceImmediate, 1, "Acme: 1 update for you", "1 update in your activity"},
+		{CadenceImmediate, 4, "Acme: 4 updates for you", "4 updates in your activity"},
+		{CadenceDaily, 9, "Acme: daily digest", "9 updates in your daily digest"},
+		{CadenceWeekly, 30, "Acme: weekly digest", "30 updates in your weekly digest"},
+	}
+	for _, testCase := range cases {
+		if subject := digestSubject(testCase.cadence, candidate, testCase.total); subject != testCase.wantSubject {
+			t.Fatalf("subject = %q, want %q", subject, testCase.wantSubject)
+		}
+		if heading := digestHeading(testCase.cadence, testCase.total); heading != testCase.wantHeading {
+			t.Fatalf("heading = %q, want %q", heading, testCase.wantHeading)
+		}
+	}
+}
+
+// A long section lists a bounded sample and says how much it is showing, rather
+// than silently dropping the rest.
+func TestSectionSummaryReportsTruncation(t *testing.T) {
+	t.Parallel()
+	if summary := sectionSummary(Section{Total: 1}); summary != "1 update" {
+		t.Fatalf("single-event summary = %q", summary)
+	}
+	if summary := sectionSummary(Section{Total: 3, Events: make([]Event, 3)}); summary != "3 updates" {
+		t.Fatalf("complete summary = %q", summary)
+	}
+	truncated := sectionSummary(Section{
+		Total: 25, Events: make([]Event, maxSectionEvents), Remainder: 15,
+	})
+	if !strings.Contains(truncated, "25 updates") || !strings.Contains(truncated, "showing the first 10") {
+		t.Fatalf("truncated summary = %q", truncated)
+	}
+}
+
+// The loop keeps running past a failing pass and stops when the context ends.
+func TestRunSurvivesFailuresAndStopsWithTheContext(t *testing.T) {
+	t.Parallel()
+	source := &fakeSource{
+		candidates: map[string][]Candidate{CadenceImmediate: {digestCandidate()}},
+		sections:   mentionSections(),
+	}
+	queue := &fakeQueue{err: errors.New("redis unavailable")}
+	scheduler := testScheduler(t, source, queue)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- scheduler.Run(ctx, time.Millisecond) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned %v, want a clean shutdown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not stop when its context was cancelled")
+	}
+	if len(source.failed) == 0 {
+		t.Fatal("the first pass did not record its failure")
+	}
+}
