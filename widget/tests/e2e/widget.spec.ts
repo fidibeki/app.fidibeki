@@ -518,6 +518,35 @@ for (const presentation of ['launcher', 'inline', 'reaction', 'prompt'] as const
   })
 }
 
+test('rating fills every star up to the selected value', async ({ page }) => {
+  await page.route('**/v1/widget/config*', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(definitionConfiguration('inline')),
+  }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+
+  await page.goto('/sample.html')
+  const stars = page.locator('.scale .choice')
+  const states = (attribute: string) => stars.evaluateAll(
+    (nodes, name) => nodes.map(node => node.getAttribute(name)),
+    attribute,
+  )
+  await expect(stars).toHaveCount(5)
+  expect(await states('data-filled')).toEqual(['false', 'false', 'false', 'false', 'false'])
+
+  await page.getByRole('button', { name: '4 out of 5' }).click()
+  // A four-star rating means four filled stars, not just the fourth one.
+  expect(await states('data-filled')).toEqual(['true', 'true', 'true', 'true', 'false'])
+  // The pressed state stays on the chosen value so assistive tech reads one selection.
+  expect(await states('aria-pressed')).toEqual(['false', 'false', 'false', 'true', 'false'])
+  const filled = await stars.nth(0).evaluate(node => getComputedStyle(node).color)
+  const empty = await stars.nth(4).evaluate(node => getComputedStyle(node).color)
+  expect(filled).not.toBe(empty)
+
+  // Lowering the rating has to empty the stars above it again.
+  await page.getByRole('button', { name: '2 out of 5' }).click()
+  expect(await states('data-filled')).toEqual(['true', 'true', 'false', 'false', 'false'])
+})
+
 test('uses Portuguese page language before English browser preferences', async ({ page }) => {
   const configuration = definitionConfiguration('inline')
   const submissions: Array<Record<string, unknown>> = []
