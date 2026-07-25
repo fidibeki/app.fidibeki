@@ -35,6 +35,16 @@ useSiteMeta({
   ],
 })
 
+// Product Hunt launch badge. The image is served live from Product Hunt so the
+// ranking and vote count stay current; it is served per theme the same way the
+// customer logo wall is.
+const productHuntPostId = 1205878
+const productHuntUrl =
+  'https://www.producthunt.com/products/fidibeki?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-fidibeki'
+const productHuntAlt = `${siteName} - Product feedback that finishes the job | Product Hunt`
+const productHuntBadge = (theme: 'light' | 'dark') =>
+  `https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=${productHuntPostId}&theme=${theme}`
+
 const trustPoints = [
   {
     title: 'Privacy first capture',
@@ -67,6 +77,29 @@ const trustPoints = [
             <a :href="links.demo" class="btn btn-ghost btn-large" rel="noopener" target="_blank">Book a demo</a>
           </div>
           <p class="hero-note">{{ trialDays }}-day free trial · No credit card required</p>
+          <a
+            class="hero-badge"
+            :href="productHuntUrl"
+            rel="noopener"
+            target="_blank"
+          >
+            <img
+              class="hero-badge-light"
+              :src="productHuntBadge('light')"
+              :alt="productHuntAlt"
+              width="250"
+              height="54"
+              loading="lazy"
+            />
+            <img
+              class="hero-badge-dark"
+              :src="productHuntBadge('dark')"
+              :alt="productHuntAlt"
+              width="250"
+              height="54"
+              loading="lazy"
+            />
+          </a>
         </div>
         <div class="hero-visual">
           <ProductVignette />
@@ -106,6 +139,7 @@ const trustPoints = [
             Every stage leaves an audit trail.
           </p>
         </div>
+        <LoopDemo />
         <LoopDiagram />
       </div>
     </section>
@@ -274,6 +308,24 @@ const trustPoints = [
   font-size: 0.88rem;
 }
 
+.hero-badge {
+  display: inline-block;
+  margin-top: 1.25rem;
+  border-radius: 10px;
+  transition: transform 160ms ease;
+}
+
+.hero-badge:hover,
+.hero-badge:focus-visible {
+  transform: translateY(-2px);
+}
+
+.hero-badge img {
+  display: block;
+  width: 250px;
+  height: 54px;
+}
+
 .hero-visual {
   justify-self: center;
   width: 100%;
@@ -336,11 +388,13 @@ const trustPoints = [
   width: auto;
 }
 
-:root[data-theme='light'] .customer-logo-dark {
+:root[data-theme='light'] .customer-logo-dark,
+:root[data-theme='light'] .hero-badge-dark {
   display: none;
 }
 
-:root[data-theme='dark'] .customer-logo-light {
+:root[data-theme='dark'] .customer-logo-light,
+:root[data-theme='dark'] .hero-badge-light {
   display: none;
 }
 
