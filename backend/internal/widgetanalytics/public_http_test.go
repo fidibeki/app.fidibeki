@@ -193,6 +193,36 @@ func TestPublicHTTPRejectsUnmatchedFunnelEventAsValidation(t *testing.T) {
 	}
 }
 
+// An event ID already taken by different content cannot be satisfied by resending either, so it
+// must stay non-retryable. The server recomputes page_key from the rule's current privacy
+// settings, so editing a rule while an event sits in the outbox is enough to reach this.
+func TestPublicHTTPRejectsConflictingEventIDAsConflict(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	tx := &analyticsTransaction{}
+	handler := publicAnalyticsHandler(PublicHTTPOptions{
+		Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+		Begin:      func(context.Context) (db.Transaction, error) { return tx, nil },
+		Store: &eventStoreStub{err: &EventIDConflictError{
+			Index: 0, EventID: "00000000-0000-4000-8000-000000000001",
+		}},
+		Consent: &consentAuthorizerStub{allow: true}, Now: func() time.Time { return now },
+	})
+
+	response := performAnalyticsRequest(handler, http.MethodPost,
+		"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"code":"conflict"`) ||
+		!strings.Contains(response.Body.String(), `events[0].event_id`) {
+		t.Fatalf("response body = %s", response.Body.String())
+	}
+	if tx.commitCalls != 0 || tx.rollbackCalls != 1 {
+		t.Fatalf("transaction = commits %d rollbacks %d", tx.commitCalls, tx.rollbackCalls)
+	}
+}
+
 // Genuine infrastructure failures must keep their retryable 503 so the outbox replays them.
 func TestPublicHTTPKeepsServiceUnavailableForStoreOutage(t *testing.T) {
 	t.Parallel()
