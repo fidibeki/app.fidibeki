@@ -100,7 +100,9 @@ notification commands.
 1. Create the replacement in the provider first and record its owner and expiry.
 2. Update staging, deploy, and verify the affected integration before production.
 3. For `JWT_SECRET`, expect all sessions to be revoked. For `INTEGRATION_ENCRYPTION_KEY`, re-encrypt
-   stored integration credentials before removing the previous key.
+   stored integration credentials before removing the previous key. `TWO_FACTOR_ENCRYPTION_KEY`
+   cannot be re-encrypted without the previous key: rotating it makes every stored TOTP secret
+   undecryptable, so plan it as a workspace-wide re-enrolment and tell members before the change.
 4. Deploy production through the manually confirmed promotion workflow, verify, then revoke the old provider credential.
 5. Search logs and repository history for accidental exposure and rotate again if exposure is possible.
 

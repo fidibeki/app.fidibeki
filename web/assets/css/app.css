@@ -31,6 +31,7 @@
 .app-brand {
   display: flex;
   width: 150px;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   color: var(--ink);
@@ -78,6 +79,7 @@
   min-width: 150px;
   max-width: 220px;
   min-height: 38px;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   padding: 0 9px;
@@ -114,10 +116,14 @@
   margin-left: auto;
 }
 
+/* The search is the only elastic item in the topbar: every other control is
+   flex: 0 0 auto, so tight widths shrink the input instead of clipping icons. */
 .app-global-search {
   display: flex;
   width: min(360px, 31vw);
+  min-width: 96px;
   height: 38px;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   margin-left: 2px;
@@ -144,6 +150,7 @@
 
 .app-trial-status {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   margin-left: auto;
@@ -181,6 +188,7 @@
 
 .app-account-menu {
   position: relative;
+  flex: 0 0 auto;
 }
 
 .app-account-menu summary {
@@ -700,9 +708,13 @@
     display: none;
   }
 
+  /* The workspace name is hidden here, so the pill sizes to the mark plus the
+     gear. A fixed width was narrower than that content and clipped the gear. */
   .app-tenant-switcher {
-    min-width: 52px;
-    width: 52px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 0 8px;
   }
 
   .app-global-search {

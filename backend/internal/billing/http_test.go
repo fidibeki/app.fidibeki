@@ -143,18 +143,24 @@ type billingHTTPMemberRow struct {
 }
 
 func (r billingHTTPMemberRow) Scan(destinations ...any) error {
-	if len(destinations) != 3 {
+	if len(destinations) != 5 {
 		return errors.New("unexpected member auth scan destination count")
 	}
 	permissions, permissionsOK := destinations[0].(*[]string)
 	status, statusOK := destinations[1].(*string)
 	version, versionOK := destinations[2].(*int)
-	if !permissionsOK || !statusOK || !versionOK {
+	twoFactorRequired, requiredOK := destinations[3].(*bool)
+	twoFactorEnrolled, enrolledOK := destinations[4].(*bool)
+	if !permissionsOK || !statusOK || !versionOK || !requiredOK || !enrolledOK {
 		return errors.New("unexpected member auth scan destination type")
 	}
 	*permissions = append([]string(nil), r.permissions...)
 	*status = r.status
 	*version = 0
+	// This workspace leaves two-factor authentication optional, so billing
+	// routes stay reachable without an enrolment.
+	*twoFactorRequired = false
+	*twoFactorEnrolled = false
 	return nil
 }
 

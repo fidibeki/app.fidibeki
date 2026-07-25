@@ -53,7 +53,7 @@ const localizedError = useLocalizedAPIError()
 const { currency, date, integer, plural } = useRegionalFormat()
 const { success: showSuccessToast } = useAppToast()
 
-const tabIDs = ['workspace', 'members', 'keys', 'integrations', 'health', 'privacy', 'audit'] as const
+const tabIDs = ['workspace', 'members', 'security', 'keys', 'integrations', 'health', 'privacy', 'audit'] as const
 type SettingsTab = typeof tabIDs[number]
 const tabs = computed(() => tabIDs.map(id => ({
   id,
@@ -1002,6 +1002,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
       </section>
       </div>
 
+      <TwoFactorSecurity v-else-if="activeTab === 'security'" />
       <SubmissionHealth v-else-if="activeTab === 'health'" :projects="data.projects" />
       <AccessAuditLog v-else-if="activeTab === 'audit'" />
       <DataPrivacy v-else :members="data.members" @member-changed="updatePrivacyMember" />

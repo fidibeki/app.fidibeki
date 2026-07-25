@@ -98,7 +98,8 @@ func retentionRegistry() []retentionDefinition {
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
 				"platform_admin_sessions", "platform_admins", "platform_security_events",
-				"reporter_access_tokens", "tenant_member_sessions",
+				"reporter_access_tokens", "tenant_member_recovery_codes", "tenant_member_sessions",
+				"tenant_member_totp",
 			),
 		},
 		{
