@@ -579,9 +579,12 @@ func assertCrossTenantEventIDCollision(
 			t.Fatalf("cross-tenant analytics filter error = %v", err)
 		}
 	}
-	if _, err := store.InsertEvents(ctx, tx, values); !errors.Is(err, errEventIDConflict) {
+	// The typed error is what keeps the HTTP layer on 409 instead of a retryable 503.
+	var conflicting *EventIDConflictError
+	if _, err := store.InsertEvents(ctx, tx, values); !errors.As(err, &conflicting) ||
+		!errors.Is(err, ErrEventIDConflict) {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("cross-tenant event ID collision error = %v, want %v", err, errEventIDConflict)
+		t.Fatalf("cross-tenant event ID collision error = %v, want *EventIDConflictError", err)
 	}
 	_ = tx.Rollback(ctx)
 }

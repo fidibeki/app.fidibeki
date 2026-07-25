@@ -140,6 +140,19 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 			}})
 		return
 	}
+	var conflicting *EventIDConflictError
+	if errors.As(err, &conflicting) {
+		// The ID is already taken by different content — a stored row that disagrees, another
+		// tenant's event, or a blocked insert with no lifecycle row behind it. Resending cannot
+		// change any of those, so this must stay outside the retryable 5xx range for exactly the
+		// same reason MatchedEventRequiredError does.
+		api.WriteError(w, http.StatusConflict, api.CodeConflict,
+			"widget analytics event conflicts with an existing event", []map[string]string{{
+				"field":   fmt.Sprintf("events[%d].event_id", conflicting.Index),
+				"message": "must not reuse the ID of a different event",
+			}})
+		return
+	}
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return
