@@ -49,6 +49,9 @@ func TestSelfServicePlansAreStableAndExcludeEnterprise(t *testing.T) {
 		if plan.MonthlyPriceCents == nil {
 			t.Errorf("SelfServicePlans()[%d].MonthlyPriceCents = nil", index)
 		}
+		if plan.YearlyPriceCents == nil {
+			t.Errorf("SelfServicePlans()[%d].YearlyPriceCents = nil", index)
+		}
 	}
 }
 

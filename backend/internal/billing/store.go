@@ -121,6 +121,7 @@ func (s Store) ApplyEvent(
 	event EventSignal,
 	subscription Subscription,
 	remotePlan tenant.Plan,
+	remoteInterval BillingInterval,
 ) (bool, error) {
 	tx, err := s.Database.Begin(ctx)
 	if err != nil {
@@ -152,6 +153,9 @@ func (s Store) ApplyEvent(
 
 	status := stripeTenantStatus(subscription.Status)
 	plan := current.Plan
+	// The interval follows the plan: a deferred downgrade keeps the current
+	// plan active, so the interval of the incoming price must wait with it.
+	interval := current.BillingInterval
 	var pending *tenant.Plan
 	if current.PendingPlan != nil {
 		value := *current.PendingPlan
@@ -165,9 +169,11 @@ func (s Store) ApplyEvent(
 	case "invoice.paid":
 		if pending != nil && *pending == remotePlan {
 			plan = remotePlan
+			interval = remoteInterval
 			pending = nil
 		} else if planRank(remotePlan) >= planRank(plan) {
 			plan = remotePlan
+			interval = remoteInterval
 			pending = nil
 		}
 	default:
@@ -176,19 +182,22 @@ func (s Store) ApplyEvent(
 			pending = &value
 		} else {
 			plan = remotePlan
+			interval = remoteInterval
 			pending = nil
 		}
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE tenants
 		SET stripe_customer_id = $2, stripe_subscription_id = $3,
-		    plan = $4, pending_plan = $5, status = $6, trial_ends_at = $7
+		    plan = $4, pending_plan = $5, billing_interval = $6, status = $7, trial_ends_at = $8
 		WHERE id = $1
-	`, current.ID, subscription.CustomerID, subscription.ID, plan, pending, status, subscription.TrialEndsAt); err != nil {
+	`, current.ID, subscription.CustomerID, subscription.ID, plan, pending, intervalValue(interval),
+		status, subscription.TrialEndsAt); err != nil {
 		return false, fmt.Errorf("apply Stripe event: %w", err)
 	}
 	materialChange := current.Status != status || current.Plan != plan ||
 		current.StripeSubscriptionID != subscription.ID ||
+		current.BillingInterval != interval ||
 		planValue(current.PendingPlan) != planValue(pending)
 	if materialChange {
 		if _, err := tx.Exec(ctx, `
@@ -201,12 +210,14 @@ func (s Store) ApplyEvent(
 					'previous_status', $4::text, 'status', $5::text,
 					'previous_plan', $6::text, 'plan', $7::text,
 					'previous_pending_plan', $8::text, 'pending_plan', $9::text,
-					'previous_subscription_id', $10::text, 'subscription_id', $11::text
+					'previous_billing_interval', $10::text, 'billing_interval', $11::text,
+					'previous_subscription_id', $12::text, 'subscription_id', $13::text
 				)
 			)
 			ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
 		`, current.ID, event.ID, event.Type, current.Status, status, current.Plan, plan,
 			planValue(current.PendingPlan), planValue(pending),
+			string(current.BillingInterval), string(interval),
 			current.StripeSubscriptionID, subscription.ID); err != nil {
 			return false, fmt.Errorf("record billing lifecycle event: %w", err)
 		}
@@ -300,6 +311,14 @@ func planValue(value *tenant.Plan) string {
 		return ""
 	}
 	return string(*value)
+}
+
+func intervalValue(interval BillingInterval) *string {
+	if interval == "" {
+		return nil
+	}
+	value := string(interval)
+	return &value
 }
 
 func (s Store) MemberEmails(ctx context.Context, tenantID string) ([]string, error) {
@@ -444,7 +463,8 @@ func (s Store) PurgeUnverified(ctx context.Context, tenantID string) error {
 }
 
 const tenantSelect = `
-	SELECT id, name, slug, plan, pending_plan, status, COALESCE(billing_email::text, ''),
+	SELECT id, name, slug, plan, pending_plan, COALESCE(billing_interval, ''), status,
+	       COALESCE(billing_email::text, ''),
 	       COALESCE(stripe_customer_id, ''), COALESCE(stripe_subscription_id, ''), trial_ends_at,
 	       deletion_requested_at, deletion_requested_by_member_id
 	FROM tenants`
@@ -454,10 +474,11 @@ type rowScanner interface{ Scan(...any) error }
 func scanTenant(row rowScanner) (Tenant, error) {
 	var result Tenant
 	var pending pgtype.Text
+	var interval string
 	var trial, deletion pgtype.Timestamptz
 	var requester pgtype.UUID
 	err := row.Scan(
-		&result.ID, &result.Name, &result.Slug, &result.Plan, &pending, &result.Status,
+		&result.ID, &result.Name, &result.Slug, &result.Plan, &pending, &interval, &result.Status,
 		&result.BillingEmail, &result.StripeCustomerID, &result.StripeSubscriptionID,
 		&trial, &deletion, &requester,
 	)
@@ -471,6 +492,7 @@ func scanTenant(row rowScanner) (Tenant, error) {
 		value := tenant.Plan(pending.String)
 		result.PendingPlan = &value
 	}
+	result.BillingInterval = BillingInterval(interval)
 	if trial.Valid {
 		result.TrialEndsAt = &trial.Time
 	}

@@ -3,15 +3,15 @@ import { allTenantPermissions } from '../../data/permissions'
 
 const now = '2026-07-21T12:00:00.000Z'
 const plans = [{
-  plan: 'starter', monthly_price_cents: 499, yearly_discount_percent: 7,
+  plan: 'starter', monthly_price_cents: 499, yearly_price_cents: 5568, yearly_discount_percent: 7,
   limits: { projects: 1, feedback_per_month: 500, users: 1, storage_days: 30 },
   features: { ai: false, session_replay: false, slack: false, video: false, audio: false, dom_capture: false, custom_domain: false },
 }, {
-  plan: 'growth', monthly_price_cents: 999, yearly_discount_percent: 14,
+  plan: 'growth', monthly_price_cents: 999, yearly_price_cents: 10308, yearly_discount_percent: 14,
   limits: { projects: 4, feedback_per_month: 2500, users: 3, storage_days: 90 },
   features: { ai: true, session_replay: true, slack: false, video: false, audio: true, dom_capture: true, custom_domain: false },
 }, {
-  plan: 'scale', monthly_price_cents: 2799, yearly_discount_percent: 14,
+  plan: 'scale', monthly_price_cents: 2799, yearly_price_cents: 28884, yearly_discount_percent: 14,
   limits: { projects: 10, feedback_per_month: 10000, users: 10, storage_days: 365 },
   features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: false },
 }]

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle, ArrowUpRight, Check, Clock3, CreditCard, ShieldAlert, Trash2, X } from '@lucide/vue'
-import type { BillingSummary, PlanCatalogResponse, PlanDefinition, TenantPlan } from '~/types/api'
+import type { BillingInterval, BillingSummary, PlanCatalogResponse, PlanDefinition, TenantPlan } from '~/types/api'
 
 const route = useRoute()
 const { $apiFetch, $refreshSession } = useNuxtApp()
@@ -12,10 +12,12 @@ const pendingAction = ref('')
 const actionError = ref('')
 const deleteOpen = ref(false)
 const confirmation = ref('')
+const interval = ref<BillingInterval>('monthly')
 
 const enterprisePlan: PlanDefinition = {
   plan: 'enterprise',
   monthly_price_cents: null,
+  yearly_price_cents: null,
   yearly_discount_percent: null,
   limits: { projects: -1, feedback_per_month: -1, users: -1, storage_days: -1 },
   features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: true },
@@ -47,6 +49,10 @@ function planLabel(plan: TenantPlan) {
   return t(`admin.plans.${plan}`)
 }
 
+function intervalLabel(value: BillingInterval) {
+  return t(`admin.billing.${value === 'yearly' ? 'intervalYearly' : 'intervalMonthly'}`)
+}
+
 function planLimit(value: number) {
   return value < 0 ? t('admin.common.custom') : String(value)
 }
@@ -59,17 +65,26 @@ function planPrice(cents: number) {
   return currency(cents / 100, 'EUR')
 }
 
+function cardPriceCents(plan: PlanDefinition) {
+  if (interval.value === 'yearly' && plan.yearly_price_cents != null) return plan.yearly_price_cents / 12
+  return plan.monthly_price_cents
+}
+
 async function checkout(plan: TenantPlan) {
   if (!canWrite('billing:manage')) return
   if (plan === 'enterprise') {
     window.location.href = 'mailto:sales@fidibeki.com?subject=Fidibeki%20Enterprise'
     return
   }
+  // Match the card display: cardPriceCents falls back to the monthly price
+  // when a plan has no yearly price, so checkout must fall back with it.
+  const entry = plans.value.find(candidate => candidate.plan === plan)
+  const billingInterval: BillingInterval = interval.value === 'yearly' && entry?.yearly_price_cents != null ? 'yearly' : 'monthly'
   pendingAction.value = `checkout:${plan}`
   actionError.value = ''
   try {
     const response = await $apiFetch<{ url: string }>('/v1/billing/checkout', {
-      method: 'POST', body: { plan },
+      method: 'POST', body: { plan, billing_interval: billingInterval },
     })
     window.location.assign(response.url)
   } catch (checkoutError) {
@@ -148,15 +163,27 @@ useHead(() => ({ title: t('admin.billing.pageTitle') }))
       </section>
 
       <section class="billing-summary app-surface">
-        <div><p class="app-eyebrow">{{ t('admin.billing.currentPlan') }}</p><h2>{{ planLabel(billing.plan) }}</h2><span v-if="billing.pending_plan">{{ t('admin.billing.changesNextPeriod', { plan: planLabel(billing.pending_plan) }) }}</span><span v-else>{{ statusLabel(billing.status) }}</span></div>
+        <div><p class="app-eyebrow">{{ t('admin.billing.currentPlan') }}</p><h2>{{ planLabel(billing.plan) }}</h2><span v-if="billing.pending_plan">{{ t('admin.billing.changesNextPeriod', { plan: planLabel(billing.pending_plan) }) }}</span><span v-else>{{ statusLabel(billing.status) }}<template v-if="billing.billing_interval"> · {{ intervalLabel(billing.billing_interval) }}</template></span></div>
         <div><p class="app-eyebrow">{{ t('admin.billing.trial') }}</p><h2>{{ trialDays == null ? t('admin.billing.notActive') : plural('admin.common.days', trialDays, { count: trialDays }) }}</h2><span>{{ billing.trial_ends_at ? date(billing.trial_ends_at) : t('admin.billing.noTrialEnd') }}</span></div>
         <div><p class="app-eyebrow">{{ t('admin.billing.paymentAccount') }}</p><h2>{{ billing.has_customer ? t('admin.billing.connected') : t('admin.billing.notCreated') }}</h2><span>{{ billing.has_subscription ? t('admin.billing.subscriptionActive') : t('admin.billing.noSubscription') }}</span></div>
         <button v-if="canWrite('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? t('admin.common.opening') : t('admin.billing.portal') }}<ArrowUpRight :size="13" /></button>
       </section>
 
+      <div class="billing-interval-toggle" role="group">
+        <button type="button" :data-active="interval === 'monthly'" @click="interval = 'monthly'">{{ t('admin.billing.billedMonthly') }}</button>
+        <button type="button" :data-active="interval === 'yearly'" @click="interval = 'yearly'">{{ t('admin.billing.billedYearly') }}</button>
+      </div>
+
       <section class="billing-plans">
         <article v-for="plan in plans" :key="plan.plan" class="billing-plan app-surface" :data-current="billing.plan === plan.plan">
-          <header><span v-if="billing.plan === plan.plan">{{ t('admin.billing.current') }}</span><p>{{ planLabel(plan.plan) }}</p><h2>{{ plan.monthly_price_cents == null ? t('admin.common.custom') : planPrice(plan.monthly_price_cents) }}<small v-if="plan.plan !== 'enterprise'">{{ t('admin.billing.perMonth') }}</small></h2></header>
+          <header>
+            <span v-if="billing.plan === plan.plan">{{ t('admin.billing.current') }}</span>
+            <p>{{ planLabel(plan.plan) }}</p>
+            <h2>{{ cardPriceCents(plan) == null ? t('admin.common.custom') : planPrice(cardPriceCents(plan)!) }}<small v-if="plan.plan !== 'enterprise'">{{ t('admin.billing.perMonth') }}</small></h2>
+            <p v-if="interval === 'yearly' && plan.yearly_price_cents != null" class="billing-plan-yearly">
+              <template v-if="plan.yearly_discount_percent">{{ t('admin.billing.yearlySave', { percent: plan.yearly_discount_percent }) }} · </template>{{ t('admin.billing.billedYearlyTotal', { price: planPrice(plan.yearly_price_cents) }) }}
+            </p>
+          </header>
           <dl>
             <div><dt>{{ t('admin.billing.projects') }}</dt><dd>{{ planLimit(plan.limits.projects) }}</dd></div>
             <div><dt>{{ t('admin.billing.members') }}</dt><dd>{{ planLimit(plan.limits.users) }}</dd></div>
@@ -207,10 +234,14 @@ useHead(() => ({ title: t('admin.billing.pageTitle') }))
 .billing-summary h2 { margin: 5px 0 3px; font-size: 17px; }
 .billing-summary span { color: var(--muted); font-size: 10px; text-transform: capitalize; }
 .billing-summary > button { margin: 18px; }
+.billing-interval-toggle { display: inline-flex; margin: 0 0 12px; padding: 2px; background: var(--surface-soft, var(--line)); border: 1px solid var(--line); border-radius: 5px; gap: 2px; }
+.billing-interval-toggle button { padding: 5px 12px; background: none; color: var(--muted); border: 0; border-radius: 4px; font-size: 10px; font-weight: 750; cursor: pointer; }
+.billing-interval-toggle button[data-active='true'] { background: var(--teal-soft); color: var(--teal); }
 .billing-plans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .billing-plan { position: relative; overflow: hidden; }
 .billing-plan[data-current='true'] { border-color: var(--teal); box-shadow: inset 0 3px 0 var(--teal); }
 .billing-plan header { min-height: 112px; padding: 16px; border-bottom: 1px solid var(--line); }
+.billing-plan header p.billing-plan-yearly { margin: 6px 0 0; color: var(--teal); font-size: 9px; font-weight: 650; }
 .billing-plan header > span { position: absolute; top: 9px; right: 9px; padding: 3px 6px; background: var(--teal-soft); color: var(--teal); border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .billing-plan header p { margin: 14px 0 7px; color: var(--ink-soft); font-size: 11px; font-weight: 750; }
 .billing-plan h2 { margin: 0; font-size: 21px; }

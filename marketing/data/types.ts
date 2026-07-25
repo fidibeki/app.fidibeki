@@ -53,6 +53,7 @@ export interface PlanEntry {
   id: 'starter' | 'growth' | 'scale' | 'enterprise'
   name: string
   monthlyPriceCents: number | null
+  yearlyPriceCents: number | null
   yearlyDiscountPercent: number | null
   blurb: string
   selfServe: boolean

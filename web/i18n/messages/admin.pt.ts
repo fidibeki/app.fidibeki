@@ -54,7 +54,7 @@ export const adminMessages = {
   plans: {
     starter: 'Starter',
     growth: 'Growth',
-    pro: 'Pro',
+    scale: 'Scale',
     enterprise: 'Enterprise',
   },
   features: {
@@ -436,6 +436,12 @@ export const adminMessages = {
     portal: 'Portal de faturação',
     current: 'Atual',
     perMonth: ' / mês',
+    billedMonthly: 'Mensal',
+    billedYearly: 'Anual',
+    yearlySave: 'Poupe {percent}%',
+    billedYearlyTotal: '{price} faturados anualmente',
+    intervalMonthly: 'Faturação mensal',
+    intervalYearly: 'Faturação anual',
     projects: 'Projetos',
     members: 'Membros',
     aiReplay: 'IA e replay',

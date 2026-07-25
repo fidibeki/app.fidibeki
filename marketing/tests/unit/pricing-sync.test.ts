@@ -58,6 +58,24 @@ describe('pricing data mirrors the backend plan catalog', () => {
       }
     })
 
+    it(`matches ${plan.id} yearly price`, () => {
+      if (plan.yearlyPriceCents === null) {
+        expect(block).not.toContain('YearlyPriceCents')
+      } else {
+        expect(
+          extractInt(block, /YearlyPriceCents:\s*intPointer\((\d+)\)/, 'yearly price'),
+        ).toBe(plan.yearlyPriceCents)
+      }
+    })
+
+    it(`keeps ${plan.id} yearly price at or below the advertised discount`, () => {
+      if (plan.yearlyPriceCents === null || plan.monthlyPriceCents === null || plan.yearlyDiscountPercent === null) return
+      const fullYear = plan.monthlyPriceCents * 12
+      const advertisedCeiling = fullYear * (1 - plan.yearlyDiscountPercent / 100)
+      expect(plan.yearlyPriceCents).toBeLessThanOrEqual(advertisedCeiling)
+      expect(plan.yearlyPriceCents % 12).toBe(0)
+    })
+
     it(`matches ${plan.id} yearly discount`, () => {
       if (plan.yearlyDiscountPercent === null) {
         expect(block).not.toContain('YearlyDiscountPercent')

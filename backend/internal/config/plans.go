@@ -79,23 +79,30 @@ func (f PlanFeatures) Enabled(feature Feature) bool {
 type PlanDefinition struct {
 	Plan                  tenant.Plan  `json:"plan"`
 	MonthlyPriceCents     *int         `json:"monthly_price_cents"`
+	YearlyPriceCents      *int         `json:"yearly_price_cents"`
 	YearlyDiscountPercent *int         `json:"yearly_discount_percent"`
 	Limits                PlanLimits   `json:"limits"`
 	Features              PlanFeatures `json:"features"`
 }
 
+// Yearly prices must match the Stripe yearly price objects exactly. They are
+// multiples of 12 so clients can show an even per-month amount, and each keeps
+// the effective discount at or above the advertised YearlyDiscountPercent.
 var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanStarter: {
-		Plan: tenant.PlanStarter, MonthlyPriceCents: intPointer(499), YearlyDiscountPercent: intPointer(7),
+		Plan: tenant.PlanStarter, MonthlyPriceCents: intPointer(499),
+		YearlyPriceCents: intPointer(5568), YearlyDiscountPercent: intPointer(7),
 		Limits: PlanLimits{Projects: 1, FeedbackPerMonth: 500, Users: 1, StorageDays: 30},
 	},
 	tenant.PlanGrowth: {
-		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(999), YearlyDiscountPercent: intPointer(14),
+		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(999),
+		YearlyPriceCents: intPointer(10308), YearlyDiscountPercent: intPointer(14),
 		Limits:   PlanLimits{Projects: 4, FeedbackPerMonth: 2500, Users: 3, StorageDays: 90},
 		Features: PlanFeatures{AI: true, Replay: true, Audio: true, DOMCapture: true},
 	},
 	tenant.PlanScale: {
-		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(2799), YearlyDiscountPercent: intPointer(14),
+		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(2799),
+		YearlyPriceCents: intPointer(28884), YearlyDiscountPercent: intPointer(14),
 		Limits:   PlanLimits{Projects: 10, FeedbackPerMonth: 10000, Users: 10, StorageDays: 365},
 		Features: PlanFeatures{AI: true, Replay: true, Slack: true, Video: true, Audio: true, DOMCapture: true},
 	},

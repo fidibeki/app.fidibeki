@@ -112,9 +112,14 @@ func (h *HTTPHandler) getBilling(w http.ResponseWriter, r *http.Request) {
 		writeBillingError(w, err)
 		return
 	}
+	var interval *BillingInterval
+	if current.BillingInterval != "" {
+		interval = &current.BillingInterval
+	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"billing": map[string]any{
 			"plan": current.Plan, "pending_plan": current.PendingPlan, "status": current.Status,
+			"billing_interval":      interval,
 			"trial_ends_at":         current.TrialEndsAt,
 			"has_customer":          current.StripeCustomerID != "",
 			"has_subscription":      current.StripeSubscriptionID != "",
@@ -125,17 +130,21 @@ func (h *HTTPHandler) getBilling(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) checkout(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Plan tenant.Plan `json:"plan"`
+		Plan            tenant.Plan     `json:"plan"`
+		BillingInterval BillingInterval `json:"billing_interval"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
+	}
+	if request.BillingInterval == "" {
+		request.BillingInterval = IntervalMonthly
 	}
 	resolved, ok := appmiddleware.TenantFromContext(r.Context())
 	if !ok {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
-	checkoutURL, err := h.options.Service.Checkout(r.Context(), resolved.ID, request.Plan)
+	checkoutURL, err := h.options.Service.Checkout(r.Context(), resolved.ID, request.Plan, request.BillingInterval)
 	if err != nil {
 		writeBillingError(w, err)
 		return
@@ -225,6 +234,8 @@ func writeBillingError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant slug already exists", nil)
 	case errors.Is(err, ErrUnsupportedPlan):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "plan is invalid", nil)
+	case errors.Is(err, ErrUnsupportedInterval):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "billing interval is invalid", nil)
 	case errors.Is(err, ErrAlreadySubscribed), errors.Is(err, ErrDeletionPending):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, err.Error(), nil)
 	case errors.Is(err, ErrConfirmation):

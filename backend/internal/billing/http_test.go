@@ -43,7 +43,7 @@ func TestTenantBillingRoutesDuringDeletionGrace(t *testing.T) {
 	newHandler := func(store *serviceStoreStub, provider *providerStub) http.Handler {
 		service := Service{
 			Store: store, Provider: provider,
-			Prices:        PriceCatalog{tenant.PlanGrowth: "price_growth"},
+			Prices:        PriceCatalog{tenant.PlanGrowth: {Monthly: "price_growth"}},
 			PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost",
 		}
 		router := chi.NewRouter()
