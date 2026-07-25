@@ -20,7 +20,11 @@ import (
 type Store struct{}
 
 var (
-	errEventIDConflict         = errors.New("widget funnel event ID conflicts with another event")
+	// ErrEventIDConflict reports a submitted event whose ID is already taken by different content:
+	// a stored row that disagrees with the submission, an ID owned by another tenant, or an insert
+	// blocked by a constraint with no matching lifecycle row. None of those can be satisfied by
+	// resending, so like ErrMatchedEventRequired this must never surface as a retryable 5xx.
+	ErrEventIDConflict         = errors.New("widget funnel event ID conflicts with another event")
 	ErrAnalyticsFilterNotFound = errors.New("analytics filter not found")
 	// ErrMatchedEventRequired reports a request-data violation: a non-matched funnel event
 	// arrived without the "matched" event that opens its page-view funnel. Callers must surface
@@ -41,6 +45,19 @@ func (e *MatchedEventRequiredError) Error() string {
 }
 
 func (e *MatchedEventRequiredError) Unwrap() error { return ErrMatchedEventRequired }
+
+// EventIDConflictError locates the conflicting event within the submitted batch, mirroring
+// MatchedEventRequiredError so both unsatisfiable-by-retry rejections are reported the same way.
+type EventIDConflictError struct {
+	Index   int
+	EventID string
+}
+
+func (e *EventIDConflictError) Error() string {
+	return fmt.Sprintf("widget funnel event %d (%s) conflicts with another event", e.Index, e.EventID)
+}
+
+func (e *EventIDConflictError) Unwrap() error { return ErrEventIDConflict }
 
 const (
 	maximumAnalyticsBreakdownRows = 100
@@ -85,6 +102,9 @@ func (Store) InsertEvents(
 		inserted, err := insertEvent(ctx, query, event, event.EventType != EventMatched)
 		if errors.Is(err, ErrMatchedEventRequired) {
 			return IngestResult{}, &MatchedEventRequiredError{Index: index, EventID: event.EventID}
+		}
+		if errors.Is(err, ErrEventIDConflict) {
+			return IngestResult{}, &EventIDConflictError{Index: index, EventID: event.EventID}
 		}
 		if err != nil {
 			return IngestResult{}, err
@@ -257,12 +277,12 @@ func classifyExistingEventID(ctx context.Context, query db.Querier, event EventV
 		if sameImmutableEvent(existing, event) {
 			return false, nil
 		}
-		return false, errEventIDConflict
+		return false, ErrEventIDConflict
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return false, fmt.Errorf("classify widget funnel event ID conflict: %w", err)
 	}
-	return false, errEventIDConflict
+	return false, ErrEventIDConflict
 }
 
 func classifyLifecycleDuplicate(ctx context.Context, query db.Querier, event EventValues) (bool, error) {
@@ -279,7 +299,7 @@ func classifyLifecycleDuplicate(ctx context.Context, query db.Querier, event Eve
 	if lifecycleExists {
 		return false, nil
 	}
-	return false, errEventIDConflict
+	return false, ErrEventIDConflict
 }
 
 func sameImmutableEvent(left, right EventValues) bool {
