@@ -1250,6 +1250,68 @@ export interface Integration {
   updated_at: string
 }
 
+export type IssueTrackerProvider = 'jira' | 'linear'
+export type ExternalLinkStatus = 'pending' | 'created' | 'failed'
+
+export interface IssueTrackerConnection {
+  id: string
+  provider: IssueTrackerProvider
+  site_url: string
+  account_label: string
+  credential_fingerprint: string
+  destination_id: string
+  destination_key: string
+  destination_name: string
+  issue_type_id: string
+  issue_type_name: string
+  sub_destination_id: string
+  sub_destination_name: string
+  is_enabled: boolean
+  auto_create: boolean
+  validated_at?: string | null
+  last_error: string
+  created_at: string
+  updated_at: string
+}
+
+export interface IssueTrackerDestinationRef {
+  id: string
+  name: string
+}
+
+export interface IssueTrackerDestination {
+  id: string
+  key: string
+  name: string
+  issue_types?: IssueTrackerDestinationRef[]
+  projects?: IssueTrackerDestinationRef[]
+}
+
+export interface IssueExternalLink {
+  id: string
+  issue_id: string
+  provider: IssueTrackerProvider
+  status: ExternalLinkStatus
+  request_title: string
+  request_description: string
+  request_priority: string
+  destination_id: string
+  destination_name: string
+  issue_type_id: string
+  external_id: string
+  external_key: string
+  external_url: string
+  last_error: string
+  attempt_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface IssueExternalPage {
+  external_links: IssueExternalLink[]
+  available_providers: IssueTrackerConnection[]
+}
+
 export type BillingInterval = 'monthly' | 'yearly'
 
 export interface BillingSummary {

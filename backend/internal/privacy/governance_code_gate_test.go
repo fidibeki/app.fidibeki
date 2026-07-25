@@ -97,6 +97,8 @@ var governedHTTPCallSites = map[string][]string{
 		"microsoft_teams_incoming_webhook",
 		"customer_generic_webhook",
 	},
+	"backend/internal/issuetracker/jira.go":   {"jira_cloud_issue_tracker"},
+	"backend/internal/issuetracker/linear.go": {"linear_issue_tracker"},
 }
 
 var governedProviderCodeSignals = map[string][]providerCodeSignal{
@@ -134,6 +136,14 @@ var governedProviderCodeSignals = map[string][]providerCodeSignal{
 	},
 	"customer_generic_webhook": {
 		{Path: "backend/internal/integration/models.go", Contains: `KindWebhook Kind = "webhook"`},
+	},
+	"jira_cloud_issue_tracker": {
+		{Path: "backend/internal/issuetracker/models.go", Contains: `ProviderJira   Provider = "jira"`},
+		{Path: "backend/internal/issuetracker/jira.go", Contains: "/rest/api/3/issue"},
+	},
+	"linear_issue_tracker": {
+		{Path: "backend/internal/issuetracker/models.go", Contains: `ProviderLinear Provider = "linear"`},
+		{Path: "backend/internal/issuetracker/linear.go", Contains: "api.linear.app/graphql"},
 	},
 	"cloudflare_turnstile": {
 		{Path: "backend/internal/billing/turnstile.go", Contains: "challenges.cloudflare.com/turnstile/v0/siteverify"},

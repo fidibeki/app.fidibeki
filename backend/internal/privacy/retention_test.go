@@ -95,8 +95,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 74 {
-		t.Fatalf("migration table count = %d, want 74", len(migrated))
+	if len(migrated) != 76 {
+		t.Fatalf("migration table count = %d, want 76", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(
@@ -143,7 +143,8 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 			kind: RetentionProvider,
 			want: []string{
 				"cloudflare_turnstile", "customer_generic_webhook", "email_capture_filesystem",
-				"google_gemini_api", "microsoft_teams_incoming_webhook",
+				"google_gemini_api", "jira_cloud_issue_tracker", "linear_issue_tracker",
+				"microsoft_teams_incoming_webhook",
 				"postgresql_runtime", "redis_asynq", "resend_transactional_email",
 				"s3_compatible_object_storage", "sentry_error_telemetry",
 				"slack_incoming_webhook", "stripe_billing_api",

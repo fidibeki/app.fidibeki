@@ -433,7 +433,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 		{
 			ActivityID: "integration_notification_delivery", Version: 1,
 			Label:               "Integration notification delivery",
-			Purpose:             "Deliver minimized operational notifications to customer-configured Slack, Teams, and webhook destinations, and track follow-up on already-disclosed copies.",
+			Purpose:             "Deliver minimized operational notifications to customer-configured Slack, Teams, and webhook destinations, record external issue-tracker configuration and creation attempts, and track follow-up on already-disclosed copies.",
 			Role:                RetentionRoleProcessor,
 			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers, ROPADataSubjectReporters},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryContentCommunications, ROPADataCategoryTechnicalUsage},
@@ -549,7 +549,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 		{
 			ActivityID: "external_communications_delivery", Version: 1,
 			Label:   "External communications delivery",
-			Purpose: "Deliver transactional and lifecycle email and configured operational notifications.",
+			Purpose: "Deliver transactional and lifecycle email, configured operational notifications, and reviewer-confirmed issue copies to an enabled external issue tracker.",
 			Role:    RetentionRoleControllerProcessor,
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectTenantMembers, ROPADataSubjectReporters, ROPADataSubjectPlatformAdmins,

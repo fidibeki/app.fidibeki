@@ -150,6 +150,7 @@ function signalDetail(signal: AccessEventSignal) {
               <option value="feedback_attachment">{{ t('admin.accessAudit.resourceType.feedback_attachment') }}</option>
               <option value="replay_session">{{ t('admin.accessAudit.resourceType.replay_session') }}</option>
               <option value="privacy_export">{{ t('admin.accessAudit.resourceType.privacy_export') }}</option>
+              <option value="issue_tracker">{{ t('admin.accessAudit.resourceType.issue_tracker') }}</option>
             </select>
           </label>
           <label>{{ t('admin.accessAudit.filters.actorType') }}
