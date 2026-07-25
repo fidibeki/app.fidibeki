@@ -47,6 +47,9 @@ type Config struct {
 	StripePriceStarter        string
 	StripePriceGrowth         string
 	StripePriceScale          string
+	StripePriceStarterYearly  string
+	StripePriceGrowthYearly   string
+	StripePriceScaleYearly    string
 	TurnstileSecretKey        string
 	TurnstileSiteKey          string
 	AccessTokenTTL            time.Duration
@@ -157,6 +160,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		StripePriceStarter:        get("STRIPE_PRICE_STARTER", ""),
 		StripePriceGrowth:         get("STRIPE_PRICE_GROWTH", ""),
 		StripePriceScale:          get("STRIPE_PRICE_SCALE", ""),
+		StripePriceStarterYearly:  get("STRIPE_PRICE_STARTER_YEARLY", ""),
+		StripePriceGrowthYearly:   get("STRIPE_PRICE_GROWTH_YEARLY", ""),
+		StripePriceScaleYearly:    get("STRIPE_PRICE_SCALE_YEARLY", ""),
 		TurnstileSecretKey:        get("TURNSTILE_SECRET_KEY", ""),
 		TurnstileSiteKey:          get("TURNSTILE_SITE_KEY", ""),
 		AccessTokenTTL:            accessTokenTTL,
@@ -425,8 +431,12 @@ func (c Config) validate() []error {
 		for name, value := range map[string]string{
 			"STRIPE_SECRET_KEY": c.StripeSecretKey, "STRIPE_WEBHOOK_SECRET": c.StripeWebhookSecret,
 			"STRIPE_PRICE_STARTER": c.StripePriceStarter, "STRIPE_PRICE_GROWTH": c.StripePriceGrowth,
-			"STRIPE_PRICE_SCALE": c.StripePriceScale, "TURNSTILE_SECRET_KEY": c.TurnstileSecretKey,
-			"TURNSTILE_SITE_KEY": c.TurnstileSiteKey,
+			"STRIPE_PRICE_SCALE":          c.StripePriceScale,
+			"STRIPE_PRICE_STARTER_YEARLY": c.StripePriceStarterYearly,
+			"STRIPE_PRICE_GROWTH_YEARLY":  c.StripePriceGrowthYearly,
+			"STRIPE_PRICE_SCALE_YEARLY":   c.StripePriceScaleYearly,
+			"TURNSTILE_SECRET_KEY":        c.TurnstileSecretKey,
+			"TURNSTILE_SITE_KEY":          c.TurnstileSiteKey,
 		} {
 			if value == "" {
 				validationErrors = append(validationErrors, fmt.Errorf("%s is required in %s", name, c.Environment))
@@ -480,6 +490,9 @@ func (c Config) Redacted() map[string]any {
 		"stripe_price_starter":         c.StripePriceStarter,
 		"stripe_price_growth":          c.StripePriceGrowth,
 		"stripe_price_scale":           c.StripePriceScale,
+		"stripe_price_starter_yearly":  c.StripePriceStarterYearly,
+		"stripe_price_growth_yearly":   c.StripePriceGrowthYearly,
+		"stripe_price_scale_yearly":    c.StripePriceScaleYearly,
 		"turnstile_secret_key":         "[REDACTED]",
 		"turnstile_site_key":           c.TurnstileSiteKey,
 		"access_token_ttl":             c.AccessTokenTTL.String(),

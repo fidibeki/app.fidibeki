@@ -18,6 +18,7 @@ var (
 	ErrSlugConflict        = errors.New("tenant slug already exists")
 	ErrEmailConflict       = errors.New("member email already exists")
 	ErrUnsupportedPlan     = errors.New("plan is not available for self-service billing")
+	ErrUnsupportedInterval = errors.New("billing interval is not available for self-service billing")
 	ErrAlreadySubscribed   = errors.New("tenant already has a Stripe subscription")
 	ErrConfirmation        = errors.New("tenant confirmation does not match")
 	ErrDeletionPending     = errors.New("tenant deletion is already pending")
@@ -26,12 +27,20 @@ var (
 	ErrInvalidWebhook      = errors.New("invalid billing webhook")
 )
 
+type BillingInterval string
+
+const (
+	IntervalMonthly BillingInterval = "monthly"
+	IntervalYearly  BillingInterval = "yearly"
+)
+
 type Tenant struct {
 	ID                          string
 	Name                        string
 	Slug                        string
 	Plan                        tenant.Plan
 	PendingPlan                 *tenant.Plan
+	BillingInterval             BillingInterval
 	Status                      tenant.Status
 	BillingEmail                string
 	StripeCustomerID            string
@@ -94,23 +103,45 @@ type Provider interface {
 	VerifyEvent([]byte, string) (EventSignal, error)
 }
 
-type PriceCatalog map[tenant.Plan]string
+type PlanPrices struct {
+	Monthly string
+	Yearly  string
+}
 
-func (c PriceCatalog) Price(plan tenant.Plan) (string, bool) {
+func (p PlanPrices) price(interval BillingInterval) string {
+	switch interval {
+	case IntervalMonthly:
+		return p.Monthly
+	case IntervalYearly:
+		return p.Yearly
+	default:
+		return ""
+	}
+}
+
+type PriceCatalog map[tenant.Plan]PlanPrices
+
+func (c PriceCatalog) Price(plan tenant.Plan, interval BillingInterval) (string, bool) {
 	if plan == tenant.PlanEnterprise {
 		return "", false
 	}
-	price := c[plan]
+	price := c[plan].price(interval)
 	return price, price != ""
 }
 
-func (c PriceCatalog) Plan(priceID string) (tenant.Plan, bool) {
+func (c PriceCatalog) Plan(priceID string) (tenant.Plan, BillingInterval, bool) {
+	if priceID == "" {
+		return "", "", false
+	}
 	for plan, configured := range c {
-		if configured == priceID && configured != "" {
-			return plan, true
+		switch priceID {
+		case configured.Monthly:
+			return plan, IntervalMonthly, true
+		case configured.Yearly:
+			return plan, IntervalYearly, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 func planRank(plan tenant.Plan) int {

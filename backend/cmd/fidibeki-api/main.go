@@ -296,9 +296,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	billingService := billing.Service{
 		Store: billingStore, Provider: billingProvider, Verifier: signupVerifier, Email: emailQueue,
 		Prices: billing.PriceCatalog{
-			tenant.PlanStarter: settings.StripePriceStarter,
-			tenant.PlanGrowth:  settings.StripePriceGrowth,
-			tenant.PlanScale:   settings.StripePriceScale,
+			tenant.PlanStarter: {Monthly: settings.StripePriceStarter, Yearly: settings.StripePriceStarterYearly},
+			tenant.PlanGrowth:  {Monthly: settings.StripePriceGrowth, Yearly: settings.StripePriceGrowthYearly},
+			tenant.PlanScale:   {Monthly: settings.StripePriceScale, Yearly: settings.StripePriceScaleYearly},
 		},
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 		AuthFrom: settings.ResendAuthFrom,

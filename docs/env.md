@@ -59,6 +59,9 @@ for both services because configuration is validated before the command starts.
 | `STRIPE_PRICE_STARTER` | staging/prod | Starter recurring Price ID. |
 | `STRIPE_PRICE_GROWTH` | staging/prod | Growth recurring Price ID. |
 | `STRIPE_PRICE_SCALE` | staging/prod | Scale recurring Price ID. |
+| `STRIPE_PRICE_STARTER_YEARLY` | staging/prod | Starter yearly recurring Price ID. |
+| `STRIPE_PRICE_GROWTH_YEARLY` | staging/prod | Growth yearly recurring Price ID. |
+| `STRIPE_PRICE_SCALE_YEARLY` | staging/prod | Scale yearly recurring Price ID. |
 | `TURNSTILE_SECRET_KEY` | staging/prod | Cloudflare Turnstile server key. |
 | `TURNSTILE_SITE_KEY` | staging/prod | Cloudflare Turnstile public key. |
 | `GEMINI_API_KEY` | production | Gemini API key. Empty is allowed outside production. |

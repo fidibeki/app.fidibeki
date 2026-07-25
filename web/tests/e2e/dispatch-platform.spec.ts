@@ -47,15 +47,15 @@ function mockRetentionPolicy(
 }
 
 const planCatalog = [{
-  plan: 'starter', monthly_price_cents: 499, yearly_discount_percent: 7,
+  plan: 'starter', monthly_price_cents: 499, yearly_price_cents: 5568, yearly_discount_percent: 7,
   limits: { projects: 1, feedback_per_month: 500, users: 1, storage_days: 30 },
   features: { ai: false, session_replay: false, slack: false, video: false, audio: false, dom_capture: false, custom_domain: false },
 }, {
-  plan: 'growth', monthly_price_cents: 999, yearly_discount_percent: 14,
+  plan: 'growth', monthly_price_cents: 999, yearly_price_cents: 10308, yearly_discount_percent: 14,
   limits: { projects: 4, feedback_per_month: 2500, users: 3, storage_days: 90 },
   features: { ai: true, session_replay: true, slack: false, video: false, audio: true, dom_capture: true, custom_domain: false },
 }, {
-  plan: 'scale', monthly_price_cents: 2799, yearly_discount_percent: 14,
+  plan: 'scale', monthly_price_cents: 2799, yearly_price_cents: 28884, yearly_discount_percent: 14,
   limits: { projects: 10, feedback_per_month: 10000, users: 10, storage_days: 365 },
   features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: false },
 }]
@@ -2309,6 +2309,7 @@ async function installMockAPI(page: Page, state: MockState) {
     if (path === '/v1/billing' && method === 'GET') return json(route, { billing: {
       plan: state.tenant.plan,
       status: state.tenant.status,
+      billing_interval: null,
       trial_ends_at: state.tenant.trial_ends_at,
       has_customer: false,
       has_subscription: false,
@@ -2646,6 +2647,16 @@ test('starter plan shows unavailable features and euro-denominated prices', asyn
   await expect(page.locator('.billing-plan').filter({ hasText: 'Starter' })).toContainText('€4.99')
   await expect(page.locator('.billing-plans')).not.toContainText('$')
   await capture(page, testInfo, 'billing-euro-catalog')
+
+  await page.getByRole('button', { name: 'Yearly' }).click()
+  const yearlyStarter = page.locator('.billing-plan').filter({ hasText: 'Starter' })
+  await expect(yearlyStarter).toContainText('€4.64')
+  await expect(yearlyStarter).toContainText('Save 7%')
+  await expect(yearlyStarter).toContainText('€55.68 billed yearly')
+  await capture(page, testInfo, 'billing-euro-catalog-yearly')
+
+  await page.getByRole('button', { name: 'Monthly' }).click()
+  await expect(page.locator('.billing-plan').filter({ hasText: 'Starter' })).toContainText('€4.99')
 })
 
 test('starter feedback without evidence does not offer invalid AI reprocessing', async ({ page }, testInfo) => {
@@ -4530,7 +4541,9 @@ test('desktop feedback toolbar keeps every structured filter directly available'
   await expect(page).toHaveURL(/sentiment=negative/)
 
   await page.getByRole('button', { name: 'Clear filters' }).click()
-  expect(new URL(page.url()).search).toBe('?id=feedback-1')
+  // Clearing writes the query through an async router.replace, so the URL
+  // settles a tick after the click.
+  await expect.poll(() => new URL(page.url()).search).toBe('?id=feedback-1')
   await expect(page.getByText('2 loaded')).toBeVisible()
 })
 

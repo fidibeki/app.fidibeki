@@ -23,18 +23,36 @@ import (
 )
 
 func TestPriceCatalogAndStripeStatus(t *testing.T) {
-	catalog := PriceCatalog{tenant.PlanStarter: "price_starter", tenant.PlanScale: "price_scale"}
-	if price, ok := catalog.Price(tenant.PlanStarter); !ok || price != "price_starter" {
-		t.Fatalf("Price(starter) = %q, %t", price, ok)
+	catalog := PriceCatalog{
+		tenant.PlanStarter: {Monthly: "price_starter", Yearly: "price_starter_yearly"},
+		tenant.PlanScale:   {Monthly: "price_scale"},
 	}
-	if _, ok := catalog.Price(tenant.PlanEnterprise); ok {
+	if price, ok := catalog.Price(tenant.PlanStarter, IntervalMonthly); !ok || price != "price_starter" {
+		t.Fatalf("Price(starter, monthly) = %q, %t", price, ok)
+	}
+	if price, ok := catalog.Price(tenant.PlanStarter, IntervalYearly); !ok || price != "price_starter_yearly" {
+		t.Fatalf("Price(starter, yearly) = %q, %t", price, ok)
+	}
+	if _, ok := catalog.Price(tenant.PlanScale, IntervalYearly); ok {
+		t.Fatal("Price(scale, yearly) available without configured price")
+	}
+	if _, ok := catalog.Price(tenant.PlanStarter, BillingInterval("weekly")); ok {
+		t.Fatal("Price(unknown interval) available")
+	}
+	if _, ok := catalog.Price(tenant.PlanEnterprise, IntervalMonthly); ok {
 		t.Fatal("Price(enterprise) available")
 	}
-	if plan, ok := catalog.Plan("price_scale"); !ok || plan != tenant.PlanScale {
-		t.Fatalf("Plan(price_scale) = %q, %t", plan, ok)
+	if plan, interval, ok := catalog.Plan("price_scale"); !ok || plan != tenant.PlanScale || interval != IntervalMonthly {
+		t.Fatalf("Plan(price_scale) = %q, %q, %t", plan, interval, ok)
 	}
-	if _, ok := catalog.Plan("missing"); ok {
+	if plan, interval, ok := catalog.Plan("price_starter_yearly"); !ok || plan != tenant.PlanStarter || interval != IntervalYearly {
+		t.Fatalf("Plan(price_starter_yearly) = %q, %q, %t", plan, interval, ok)
+	}
+	if _, _, ok := catalog.Plan("missing"); ok {
 		t.Fatal("Plan(missing) found")
+	}
+	if _, _, ok := catalog.Plan(""); ok {
+		t.Fatal("Plan(empty) found")
 	}
 	if planRank(tenant.PlanGrowth) <= planRank(tenant.PlanStarter) || planRank("unknown") != 0 {
 		t.Fatal("unexpected plan ranking")
@@ -209,7 +227,7 @@ func TestPlatformHTTPRoutesAndErrors(t *testing.T) {
 	}}
 	service := Service{
 		Store: store, Provider: provider, Verifier: LocalSignupVerifier{}, Email: &emailCapture{},
-		Prices:        PriceCatalog{tenant.PlanStarter: "price_starter"},
+		Prices:        PriceCatalog{tenant.PlanStarter: {Monthly: "price_starter"}},
 		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com", AuthFrom: "auth@fidibeki.com",
 	}
 	router := chi.NewRouter()
@@ -287,7 +305,9 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 	service := Service{
 		Store: store, Provider: provider, Verifier: LocalSignupVerifier{}, Email: emails,
 		Prices: PriceCatalog{
-			tenant.PlanStarter: "price_starter", tenant.PlanGrowth: "price_growth", tenant.PlanScale: "price_scale",
+			tenant.PlanStarter: {Monthly: "price_starter", Yearly: "price_starter_yearly"},
+			tenant.PlanGrowth:  {Monthly: "price_growth", Yearly: "price_growth_yearly"},
+			tenant.PlanScale:   {Monthly: "price_scale", Yearly: "price_scale_yearly"},
 		},
 		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
 		AuthFrom: "Fidibeki <auth@fidibeki.com>", Now: func() time.Time { return now },
@@ -306,7 +326,7 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 		t.Fatalf("signup email = %#v", emails.messages)
 	}
 
-	checkoutURL, err := service.Checkout(context.Background(), "tenant-id", tenant.PlanScale)
+	checkoutURL, err := service.Checkout(context.Background(), "tenant-id", tenant.PlanScale, IntervalMonthly)
 	if err != nil || checkoutURL != "https://checkout.stripe.test/session" {
 		t.Fatalf("Checkout() = %q, %v", checkoutURL, err)
 	}
@@ -314,14 +334,27 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 		provider.checkoutInput.PriceID != "price_scale" {
 		t.Fatalf("provider inputs = customer %#v checkout %#v", provider.customerInput, provider.checkoutInput)
 	}
+	if _, err := service.Checkout(context.Background(), "tenant-id", tenant.PlanScale, IntervalYearly); err != nil {
+		t.Fatalf("Checkout(yearly) error = %v", err)
+	}
+	if provider.checkoutInput.PriceID != "price_scale_yearly" {
+		t.Fatalf("Checkout(yearly) price = %q", provider.checkoutInput.PriceID)
+	}
+	if _, err := service.Checkout(context.Background(), "tenant-id", tenant.PlanScale, BillingInterval("weekly")); !errors.Is(err, ErrUnsupportedInterval) {
+		t.Fatalf("Checkout(weekly) error = %v", err)
+	}
 	store.tenant.StripeCustomerID = "cus_1"
 	portalURL, err := service.Portal(context.Background(), "tenant-id")
 	if err != nil || portalURL != "https://billing.stripe.test/session" {
 		t.Fatalf("Portal() = %q, %v", portalURL, err)
 	}
 	processed, err := service.HandleWebhook(context.Background(), []byte("payload"), "signature")
-	if err != nil || !processed || store.appliedPlan != tenant.PlanScale {
-		t.Fatalf("HandleWebhook() = %t, %v, plan %q", processed, err, store.appliedPlan)
+	if err != nil || !processed || store.appliedPlan != tenant.PlanScale || store.appliedInterval != IntervalMonthly {
+		t.Fatalf("HandleWebhook() = %t, %v, plan %q, interval %q", processed, err, store.appliedPlan, store.appliedInterval)
+	}
+	provider.subscription.PriceID = "price_scale_yearly"
+	if _, err := service.HandleWebhook(context.Background(), []byte("payload"), "signature"); err != nil || store.appliedInterval != IntervalYearly {
+		t.Fatalf("HandleWebhook(yearly) = %v, interval %q", err, store.appliedInterval)
 	}
 }
 
@@ -342,14 +375,17 @@ func TestServiceRejectsInvalidSignupAndConflicts(t *testing.T) {
 	}}
 	service.Store = store
 	service.Provider = &providerStub{}
-	service.Prices = PriceCatalog{tenant.PlanGrowth: "price"}
-	if _, err := service.Checkout(context.Background(), "tenant", tenant.PlanGrowth); !errors.Is(err, ErrAlreadySubscribed) {
+	service.Prices = PriceCatalog{tenant.PlanGrowth: {Monthly: "price"}}
+	if _, err := service.Checkout(context.Background(), "tenant", tenant.PlanGrowth, IntervalMonthly); !errors.Is(err, ErrAlreadySubscribed) {
 		t.Fatalf("Checkout(existing) error = %v", err)
+	}
+	if _, err := service.Checkout(context.Background(), "tenant", tenant.PlanGrowth, IntervalYearly); !errors.Is(err, ErrUnsupportedPlan) {
+		t.Fatalf("Checkout(yearly without price) error = %v", err)
 	}
 	store.tenant.StripeSubscriptionID = ""
 	requested := time.Now()
 	store.tenant.DeletionRequestedAt = &requested
-	if _, err := service.Checkout(context.Background(), "tenant", tenant.PlanGrowth); !errors.Is(err, ErrDeletionPending) {
+	if _, err := service.Checkout(context.Background(), "tenant", tenant.PlanGrowth, IntervalMonthly); !errors.Is(err, ErrDeletionPending) {
 		t.Fatalf("Checkout(deleting) error = %v", err)
 	}
 }
@@ -357,7 +393,7 @@ func TestServiceRejectsInvalidSignupAndConflicts(t *testing.T) {
 func TestServiceErrorPaths(t *testing.T) {
 	ctx := context.Background()
 	valid := SignupInput{Name: "Acme", Slug: "acme", Email: "owner@acme.test", Plan: tenant.PlanStarter}
-	service := Service{Prices: PriceCatalog{tenant.PlanStarter: "price_starter"}}
+	service := Service{Prices: PriceCatalog{tenant.PlanStarter: {Monthly: "price_starter"}}}
 	if _, err := service.Signup(ctx, valid, "", "", ""); !errors.Is(err, ErrTurnstile) {
 		t.Fatalf("Signup(no verifier) error = %v", err)
 	}
@@ -379,16 +415,16 @@ func TestServiceErrorPaths(t *testing.T) {
 	}
 	emails.err = nil
 
-	if _, err := service.Checkout(ctx, "tenant", tenant.PlanEnterprise); !errors.Is(err, ErrUnsupportedPlan) {
+	if _, err := service.Checkout(ctx, "tenant", tenant.PlanEnterprise, IntervalMonthly); !errors.Is(err, ErrUnsupportedPlan) {
 		t.Fatalf("Checkout(enterprise) error = %v", err)
 	}
 	store.getErr = errors.New("database down")
-	if _, err := service.Checkout(ctx, "tenant", tenant.PlanStarter); err == nil {
+	if _, err := service.Checkout(ctx, "tenant", tenant.PlanStarter, IntervalMonthly); err == nil {
 		t.Fatal("Checkout(store error) error = nil")
 	}
 	store.getErr = nil
 	provider.err = errors.New("Stripe down")
-	if _, err := service.Checkout(ctx, "tenant", tenant.PlanStarter); err == nil {
+	if _, err := service.Checkout(ctx, "tenant", tenant.PlanStarter, IntervalMonthly); err == nil {
 		t.Fatal("Checkout(provider error) error = nil")
 	}
 	if _, err := service.Portal(ctx, "tenant"); err == nil {
@@ -545,6 +581,7 @@ type serviceStoreStub struct {
 	signup               SignupResult
 	signupInput          SignupInput
 	appliedPlan          tenant.Plan
+	appliedInterval      BillingInterval
 	deletion             Tenant
 	emails               []string
 	signupErr            error
@@ -574,8 +611,11 @@ func (s *serviceStoreStub) SaveCustomer(_ context.Context, _, customer string) (
 func (s *serviceStoreStub) FindByStripeReference(context.Context, string, string) (Tenant, error) {
 	return s.tenant, nil
 }
-func (s *serviceStoreStub) ApplyEvent(_ context.Context, _ EventSignal, _ Subscription, plan tenant.Plan) (bool, error) {
+func (s *serviceStoreStub) ApplyEvent(
+	_ context.Context, _ EventSignal, _ Subscription, plan tenant.Plan, interval BillingInterval,
+) (bool, error) {
 	s.appliedPlan = plan
+	s.appliedInterval = interval
 	return true, s.applyErr
 }
 func (s *serviceStoreStub) RequestDeletion(context.Context, string, string, string) (Tenant, error) {

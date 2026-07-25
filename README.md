@@ -78,7 +78,9 @@ its explicit permission and the tenant ID embedded in the JWT.
 Self-service signup is `POST http://api.localhost:8088/v1/signup`. It creates a 14-day trial and
 the first tenant admin, then queues a fragment-based magic link. Production and staging require
 Cloudflare Turnstile plus `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and one Stripe Price ID in
-each of `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, and `STRIPE_PRICE_SCALE`. Configure the
+each of `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, and `STRIPE_PRICE_SCALE`, plus their yearly
+counterparts `STRIPE_PRICE_STARTER_YEARLY`, `STRIPE_PRICE_GROWTH_YEARLY`, and
+`STRIPE_PRICE_SCALE_YEARLY`. Configure the
 Stripe endpoint at `https://api.fidibeki.com/v1/billing/webhooks/stripe` for these six events:
 `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
 `customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`.

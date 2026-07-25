@@ -30,7 +30,7 @@ type ServiceStore interface {
 	Get(context.Context, string) (Tenant, error)
 	SaveCustomer(context.Context, string, string) (string, error)
 	FindByStripeReference(context.Context, string, string) (Tenant, error)
-	ApplyEvent(context.Context, EventSignal, Subscription, tenant.Plan) (bool, error)
+	ApplyEvent(context.Context, EventSignal, Subscription, tenant.Plan, BillingInterval) (bool, error)
 	RequestDeletion(context.Context, string, string, string) (Tenant, error)
 	CancelDeletion(context.Context, string, string) error
 	MemberEmails(context.Context, string) ([]string, error)
@@ -103,8 +103,13 @@ func (s Service) Signup(
 	return result.Tenant, nil
 }
 
-func (s Service) Checkout(ctx context.Context, tenantID string, plan tenant.Plan) (string, error) {
-	priceID, ok := s.Prices.Price(plan)
+func (s Service) Checkout(
+	ctx context.Context, tenantID string, plan tenant.Plan, interval BillingInterval,
+) (string, error) {
+	if interval != IntervalMonthly && interval != IntervalYearly {
+		return "", ErrUnsupportedInterval
+	}
+	priceID, ok := s.Prices.Price(plan, interval)
 	if !ok {
 		return "", ErrUnsupportedPlan
 	}
@@ -193,11 +198,11 @@ func (s Service) HandleWebhook(ctx context.Context, payload []byte, signature st
 	if err != nil {
 		return false, err
 	}
-	remotePlan, ok := s.Prices.Plan(subscription.PriceID)
+	remotePlan, remoteInterval, ok := s.Prices.Plan(subscription.PriceID)
 	if !ok {
 		return false, ErrUnsupportedPlan
 	}
-	return s.Store.ApplyEvent(ctx, signal, subscription, remotePlan)
+	return s.Store.ApplyEvent(ctx, signal, subscription, remotePlan, remoteInterval)
 }
 
 func (s Service) RequestDeletion(ctx context.Context, tenantID, memberID, confirmation string) (time.Time, error) {

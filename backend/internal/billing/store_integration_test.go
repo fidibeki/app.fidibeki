@@ -94,25 +94,26 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	subscription := Subscription{
 		ID: "sub_1", CustomerID: "cus_1", PriceID: "price_growth", Status: "trialing", TrialEndsAt: &trialEnd,
 	}
-	processed, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth)
+	processed, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth, IntervalMonthly)
 	if err != nil || !processed {
 		t.Fatalf("ApplyEvent(updated) = %t, %v", processed, err)
 	}
 	loaded, _ = store.Get(ctx, loaded.ID)
 	if loaded.Plan != tenant.PlanScale || loaded.PendingPlan == nil || *loaded.PendingPlan != tenant.PlanGrowth ||
-		loaded.StripeSubscriptionID != "sub_1" {
+		loaded.StripeSubscriptionID != "sub_1" || loaded.BillingInterval != "" {
 		t.Fatalf("tenant after downgrade = %#v", loaded)
 	}
-	if duplicate, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth); err != nil || duplicate {
+	if duplicate, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth, IntervalMonthly); err != nil || duplicate {
 		t.Fatalf("ApplyEvent(duplicate) = %t, %v", duplicate, err)
 	}
 	subscription.Status = "active"
-	processed, err = store.ApplyEvent(ctx, EventSignal{ID: "evt_paid", Type: "invoice.paid"}, subscription, tenant.PlanGrowth)
+	processed, err = store.ApplyEvent(ctx, EventSignal{ID: "evt_paid", Type: "invoice.paid"}, subscription, tenant.PlanGrowth, IntervalYearly)
 	if err != nil || !processed {
 		t.Fatalf("ApplyEvent(paid) = %t, %v", processed, err)
 	}
 	loaded, _ = store.Get(ctx, loaded.ID)
-	if loaded.Plan != tenant.PlanGrowth || loaded.PendingPlan != nil || loaded.Status != tenant.StatusActive {
+	if loaded.Plan != tenant.PlanGrowth || loaded.PendingPlan != nil || loaded.Status != tenant.StatusActive ||
+		loaded.BillingInterval != IntervalYearly {
 		t.Fatalf("tenant after paid invoice = %#v", loaded)
 	}
 	var billingEventCount int
@@ -282,7 +283,9 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 	service := Service{
 		Store: store, Provider: provider, Email: emails,
 		Prices: PriceCatalog{
-			tenant.PlanStarter: "price_starter", tenant.PlanGrowth: "price_growth", tenant.PlanScale: "price_scale",
+			tenant.PlanStarter: {Monthly: "price_starter", Yearly: "price_starter_yearly"},
+			tenant.PlanGrowth:  {Monthly: "price_growth", Yearly: "price_growth_yearly"},
+			tenant.PlanScale:   {Monthly: "price_scale", Yearly: "price_scale_yearly"},
 		},
 		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost", AuthFrom: "auth@fidibeki.com",
 		Now: func() time.Time { return now },

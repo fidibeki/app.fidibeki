@@ -667,6 +667,7 @@ export interface PlanFeatures {
 export interface PlanDefinition {
   plan: TenantPlan
   monthly_price_cents?: number | null
+  yearly_price_cents?: number | null
   yearly_discount_percent?: number | null
   limits: PlanLimits
   features: PlanFeatures
@@ -1249,10 +1250,13 @@ export interface Integration {
   updated_at: string
 }
 
+export type BillingInterval = 'monthly' | 'yearly'
+
 export interface BillingSummary {
   plan: TenantPlan
   pending_plan?: TenantPlan | null
   status: TenantStatus
+  billing_interval?: BillingInterval | null
   trial_ends_at?: string | null
   has_customer: boolean
   has_subscription: boolean
