@@ -271,6 +271,19 @@ func (s Service) RemoveCertificate(
 	if err != nil {
 		return Configuration{}, err
 	}
+	// Resolved before the last-certificate guard so an unknown ID is reported as
+	// missing rather than as the protected last certificate, which would tell
+	// the caller something untrue about what they asked to remove.
+	var known bool
+	for _, certificate := range configuration.Certificates {
+		if certificate.ID == certificateID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return Configuration{}, ErrCertificateNotFound
+	}
 	if configuration.Mode != auth.SSOModeDisabled && len(configuration.Certificates) <= 1 {
 		return Configuration{}, ErrLastCertificate
 	}

@@ -386,3 +386,57 @@ func (stubRow) Scan(...any) error { return errors.New("unavailable") }
 type stubRecorder struct{}
 
 func (stubRecorder) RecordRun(context.Context, retentionhealth.Run) error { return nil }
+
+func TestValidationErrorCarriesItsFieldsAndUnwraps(t *testing.T) {
+	t.Parallel()
+	err := ValidationError{Fields: map[string]string{"idp_sso_url": "must use HTTPS"}}
+	if !errors.Is(err, ErrValidation) {
+		t.Fatal("ValidationError does not unwrap to ErrValidation")
+	}
+	if err.Error() != ErrValidation.Error() {
+		t.Fatalf("Error() = %q, want %q", err.Error(), ErrValidation.Error())
+	}
+	if err.Fields["idp_sso_url"] != "must use HTTPS" {
+		t.Fatalf("Fields = %v, want the rejected field preserved", err.Fields)
+	}
+}
+
+// The metadata URL doubles as the entity ID, so the two must never drift.
+func TestEndpointsMetadataMatchesTheEntityID(t *testing.T) {
+	t.Parallel()
+	endpoints := testEndpoints()
+	metadata, err := endpoints.Metadata(testSlug)
+	if err != nil {
+		t.Fatalf("Metadata() error = %v", err)
+	}
+	entityID, err := endpoints.EntityID(testSlug)
+	if err != nil {
+		t.Fatalf("EntityID() error = %v", err)
+	}
+	if metadata != entityID {
+		t.Fatalf("Metadata() = %q, EntityID() = %q, want them identical", metadata, entityID)
+	}
+	if _, err := endpoints.Metadata("not a slug"); err == nil {
+		t.Error("Metadata() error = nil for an invalid slug")
+	}
+}
+
+// A test sign-in returns the administrator to the settings tab carrying its
+// outcome, so the result is visible without a second lookup.
+func TestTestResultURLCarriesTheOutcome(t *testing.T) {
+	t.Parallel()
+	target, err := testEndpoints().TestResult(testSlug, "passed", "")
+	if err != nil {
+		t.Fatalf("TestResult() error = %v", err)
+	}
+	if !strings.Contains(target, "saml_test=passed") || !strings.Contains(target, "tab=sso") {
+		t.Fatalf("TestResult() = %q, want the outcome and the settings tab", target)
+	}
+	detailed, err := testEndpoints().TestResult(testSlug, "failed", "assertion_invalid")
+	if err != nil {
+		t.Fatalf("TestResult(detail) error = %v", err)
+	}
+	if !strings.Contains(detailed, "saml_test_detail=assertion_invalid") {
+		t.Fatalf("TestResult(detail) = %q, want the detail preserved", detailed)
+	}
+}

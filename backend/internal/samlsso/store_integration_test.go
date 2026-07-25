@@ -370,6 +370,111 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 		})
 	})
 
+	// The login page reads this before any credential is entered, so it must
+	// describe the organization's policy and nothing about its members.
+	t.Run("policy discovery reports organization state only", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			policy, err := harness.service.Policy(ctx, query, acme.resolved)
+			if err != nil {
+				t.Fatalf("Policy() error = %v", err)
+			}
+			if policy.Mode != auth.SSOModeRequired {
+				t.Fatalf("Mode = %q, want required", policy.Mode)
+			}
+			if policy.LocalLoginEnabled {
+				t.Error("LocalLoginEnabled = true under required mode")
+			}
+			if !policy.BreakGlassAvailable {
+				t.Error("BreakGlassAvailable = false under required mode")
+			}
+			if policy.StartURL == "" {
+				t.Error("StartURL is empty, want the sign-in entry point")
+			}
+		})
+		// A workspace that never configured SSO is indistinguishable from one
+		// that disabled it: both report the unchanged local-login default.
+		unconfigured := harness.workspace(ctx, t, "initech", "Initech")
+		harness.withTenant(ctx, t, unconfigured, func(query db.Querier) {
+			policy, err := harness.service.Policy(ctx, query, unconfigured.resolved)
+			if err != nil {
+				t.Fatalf("Policy(unconfigured) error = %v", err)
+			}
+			if policy.Mode != auth.SSOModeDisabled || !policy.LocalLoginEnabled {
+				t.Fatalf("policy = %#v, want the disabled local-login default", policy)
+			}
+			if policy.StartURL != "" || policy.BreakGlassAvailable {
+				t.Fatalf("policy = %#v, want no SSO entry point advertised", policy)
+			}
+		})
+	})
+
+	t.Run("service provider metadata is rendered for the identity provider", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			document, err := harness.service.Metadata(ctx, query, acme.resolved)
+			if err != nil {
+				t.Fatalf("Metadata() error = %v", err)
+			}
+			rendered := string(document)
+			// Derived from the harness rather than written out, so the test
+			// cannot drift from the environment the endpoints are built from.
+			entityID, err := harness.service.Endpoints.EntityID(acme.slug)
+			if err != nil {
+				t.Fatalf("EntityID() error = %v", err)
+			}
+			acs, err := harness.service.Endpoints.ACS(acme.slug)
+			if err != nil {
+				t.Fatalf("ACS() error = %v", err)
+			}
+			for _, want := range []string{entityID, acs, "AssertionConsumerService"} {
+				if !strings.Contains(rendered, want) {
+					t.Errorf("metadata does not contain %q", want)
+				}
+			}
+		})
+	})
+
+	t.Run("a failed test is recorded without disturbing the tested marker", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if err := harness.service.RecordTestFailure(
+				ctx, query, acme.id, "assertion_invalid",
+			); err != nil {
+				t.Fatalf("RecordTestFailure() error = %v", err)
+			}
+			configuration, err := harness.store.Get(ctx, query, acme.id)
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if configuration.LastTestError == nil || *configuration.LastTestError != "assertion_invalid" {
+				t.Fatalf("LastTestError = %v, want the recorded reason", configuration.LastTestError)
+			}
+			// A failure must not retract the earlier success that unlocked
+			// required mode, or a transient error would silently disable SSO.
+			if !configuration.Tested() {
+				t.Error("Tested() = false, want the earlier successful test preserved")
+			}
+		})
+	})
+
+	t.Run("removing the configuration restores local authentication", func(t *testing.T) {
+		harness.withTenant(ctx, t, globex, func(query db.Querier) {
+			if err := harness.store.Delete(ctx, query, globex.id); err != nil {
+				t.Fatalf("Delete() error = %v", err)
+			}
+			if _, err := harness.store.Get(ctx, query, globex.id); !errors.Is(err, ErrNotConfigured) {
+				t.Fatalf("Get() error = %v, want ErrNotConfigured after removal", err)
+			}
+			// Removing a configuration that is not there is an error, not a
+			// silent success, so a mistaken second call is visible.
+			if err := harness.store.Delete(ctx, query, globex.id); !errors.Is(err, ErrNotConfigured) {
+				t.Fatalf("second Delete() error = %v, want ErrNotConfigured", err)
+			}
+			mode, err := harness.members.SSOMode(ctx, query, globex.id)
+			if err != nil || mode != auth.SSOModeDisabled {
+				t.Fatalf("SSOMode() = %q, %v, want disabled after removal", mode, err)
+			}
+		})
+	})
+
 	t.Run("expired artifacts are swept once they can no longer be accepted", func(t *testing.T) {
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
 			// Written directly so both timestamps sit in the past; the table
@@ -503,6 +608,22 @@ func (h *samlHarness) workspace(ctx context.Context, t *testing.T, slug, name st
 		h.configure(ctx, t, workspace)
 	}
 	return workspace
+}
+
+// member adds an ordinary workspace member, used to prove the configuration
+// surface is closed to anyone without workspace administration.
+func (h *samlHarness) member(
+	ctx context.Context, t *testing.T, workspace samlWorkspace, email string, permissions []string,
+) string {
+	t.Helper()
+	var id string
+	if err := h.root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, $2, $3) RETURNING id
+	`, workspace.id, email, permissions).Scan(&id); err != nil {
+		t.Fatalf("create member %s: %v", email, err)
+	}
+	return id
 }
 
 func (h *samlHarness) configure(ctx context.Context, t *testing.T, workspace samlWorkspace) {
