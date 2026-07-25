@@ -170,7 +170,7 @@ function isActive(to: string) {
 }
 
 .site-header.scrolled .header-shell {
-  max-width: min(75rem, calc(100% - 2rem));
+  max-width: min(93%, calc(100% - 2rem));
   transform: translateY(0.75rem);
   border-color: var(--line);
   box-shadow: var(--shadow-card);
