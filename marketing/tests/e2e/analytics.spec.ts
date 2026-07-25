@@ -25,7 +25,7 @@ test('banner shows on first visit and accept loads analytics and the widget pers
   await expect(page.locator(umamiScript)).toHaveCount(0)
   await expect(page.locator(widgetScript)).toHaveCount(0)
 
-  await banner.getByRole('button', { name: 'Allow' }).click()
+  await banner.getByRole('button', { name: 'Accept All' }).click()
   await expect(banner).toBeHidden()
   await expect(page.locator(umamiScript)).toHaveCount(1)
   await expect(page.locator(umamiScript)).toHaveAttribute(

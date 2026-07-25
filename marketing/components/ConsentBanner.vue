@@ -80,15 +80,6 @@ watch(() => selections.widget, (enabled) => {
       </label>
     </fieldset>
     <div class="consent-actions">
-      <button
-        v-if="!expanded"
-        type="button"
-        class="consent-more"
-        aria-expanded="false"
-        @click="expanded = true"
-      >
-        More options
-      </button>
       <button type="button" class="btn btn-ghost consent-btn" @click="decline">Decline</button>
       <button
         v-if="expanded"
@@ -98,8 +89,17 @@ watch(() => selections.widget, (enabled) => {
       >
         Save choices
       </button>
-      <button type="button" class="btn btn-primary consent-btn" @click="accept">Allow</button>
+      <button type="button" class="btn btn-primary consent-btn" @click="accept">Accept All</button>
     </div>
+    <button
+      v-if="!expanded"
+      type="button"
+      class="consent-more"
+      aria-expanded="false"
+      @click="expanded = true"
+    >
+      More options
+    </button>
   </aside>
 </template>
 
@@ -190,12 +190,14 @@ watch(() => selections.widget, (enabled) => {
 }
 
 .consent-more {
+  width: 100%;
   padding: 0;
   border: 0;
   background: none;
   color: var(--ink-soft);
   font-size: 0.84rem;
   font-weight: 600;
+  text-align: center;
   text-decoration: underline;
   cursor: pointer;
 }
