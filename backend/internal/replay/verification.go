@@ -721,8 +721,14 @@ func validReplayInputData(data map[string]any) bool {
 	if !hasOnlyKeys(data, "source", "id", "text", "isChecked", "userTriggered") {
 		return false
 	}
-	if value, exists := data["id"]; exists && !replayID(value, false) {
-		return false
+	// rrweb stamps id -1 on input events for elements it did not serialize (anything inside
+	// a blocked region, e.g. [data-fidibeki-block]). The widget drops these client-side, but
+	// they must not poison a batch when an older widget forwards them.
+	if value, exists := data["id"]; exists {
+		parsed, ok := replayInteger(value)
+		if !ok || parsed < -1 {
+			return false
+		}
 	}
 	if text, exists := data["text"]; exists {
 		value, ok := text.(string)

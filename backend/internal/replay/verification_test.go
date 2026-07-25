@@ -187,6 +187,15 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			valid: true,
 		},
 		{
+			name:  "masked input from an unserialized blocked element",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":-1,"text":"****","isChecked":false}}`,
+			valid: true,
+		},
+		{
+			name:  "input with impossible node id",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":-2,"text":"****"}}`,
+		},
+		{
 			name:  "media interaction",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"currentTime":12.5,"volume":0.5,"muted":false}}`,
 			valid: true,
