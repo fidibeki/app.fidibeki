@@ -139,6 +139,7 @@ const trustPoints = [
             Every stage leaves an audit trail.
           </p>
         </div>
+        <LoopDemo />
         <LoopDiagram />
       </div>
     </section>
