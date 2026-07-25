@@ -141,9 +141,20 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			valid: true,
 		},
 		{
+			name: "shadow text node added under shadow root",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"adds":[{"parentId":160,"nextId":null,"node":{"type":3,"id":163,"textContent":"****","isShadow":true}}]}}`,
+			valid: true,
+		},
+		{
 			name: "non-boolean shadow marker",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
 				`"removes":[{"parentId":1,"id":3,"isShadow":"yes"}]}}`,
+		},
+		{
+			name: "non-boolean shadow marker on text node",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"adds":[{"parentId":160,"nextId":null,"node":{"type":3,"id":163,"textContent":"****","isShadow":"yes"}}]}}`,
 		},
 		{
 			name: "raw text mutation",

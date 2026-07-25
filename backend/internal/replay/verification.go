@@ -543,14 +543,16 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 			return false
 		}
 	case 3:
-		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isStyle") {
+		// rrweb marks any node mutation-added directly under a native shadow root with
+		// isShadow, regardless of node type — not just elements.
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isStyle", "isShadow") {
 			return false
 		}
 		if value, exists := node["isStyle"]; exists && !replayBoolean(value) {
 			return false
 		}
 	case 4, 5:
-		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent") {
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isShadow") {
 			return false
 		}
 	}

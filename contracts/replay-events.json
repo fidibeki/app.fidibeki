@@ -90,6 +90,38 @@
       }
     },
     {
+      "name": "mutation adding nodes into a native shadow root",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": {
+          "source": 0,
+          "adds": [
+            {
+              "parentId": 11,
+              "nextId": null,
+              "node": { "type": 2, "id": 160, "tagName": "div", "attributes": {}, "childNodes": [], "isShadowHost": true }
+            },
+            {
+              "parentId": 160,
+              "nextId": null,
+              "node": { "type": 2, "id": 161, "tagName": "section", "attributes": {}, "childNodes": [], "isShadow": true }
+            },
+            {
+              "parentId": 160,
+              "nextId": 161,
+              "node": { "type": 3, "id": 163, "textContent": "\n    ", "isShadow": true }
+            },
+            {
+              "parentId": 161,
+              "nextId": null,
+              "node": { "type": 3, "id": 162, "textContent": "******* *******" }
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "mouse move",
       "event": {
         "type": 3,
