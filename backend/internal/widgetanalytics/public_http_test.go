@@ -163,6 +163,54 @@ func TestPublicHTTPEnforcesBodyAndEventRateLimitsBeforeTransaction(t *testing.T)
 	})
 }
 
+// A funnel event whose "matched" opener never arrived can never succeed on replay. Answering it
+// with 5xx made the widget outbox classify the batch as retryable and resend it every five
+// seconds until the events aged out, so the status must stay in the non-retryable 4xx range.
+func TestPublicHTTPRejectsUnmatchedFunnelEventAsValidation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	tx := &analyticsTransaction{}
+	handler := publicAnalyticsHandler(PublicHTTPOptions{
+		Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+		Begin:      func(context.Context) (db.Transaction, error) { return tx, nil },
+		Store: &eventStoreStub{err: &MatchedEventRequiredError{
+			Index: 0, EventID: "00000000-0000-4000-8000-000000000001",
+		}},
+		Consent: &consentAuthorizerStub{allow: true}, Now: func() time.Time { return now },
+	})
+
+	response := performAnalyticsRequest(handler, http.MethodPost,
+		"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"code":"validation_error"`) ||
+		!strings.Contains(response.Body.String(), `events[0].event_type`) {
+		t.Fatalf("response body = %s", response.Body.String())
+	}
+	if tx.commitCalls != 0 || tx.rollbackCalls != 1 {
+		t.Fatalf("transaction = commits %d rollbacks %d", tx.commitCalls, tx.rollbackCalls)
+	}
+}
+
+// Genuine infrastructure failures must keep their retryable 503 so the outbox replays them.
+func TestPublicHTTPKeepsServiceUnavailableForStoreOutage(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	handler := publicAnalyticsHandler(PublicHTTPOptions{
+		Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+		Begin:      func(context.Context) (db.Transaction, error) { return &analyticsTransaction{}, nil },
+		Store:      &eventStoreStub{err: errors.New("connection reset by peer")},
+		Consent:    &consentAuthorizerStub{allow: true}, Now: func() time.Time { return now },
+	})
+
+	response := performAnalyticsRequest(handler, http.MethodPost,
+		"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSummaryCalculatesRatesWithNullZeroDenominators(t *testing.T) {
 	t.Parallel()
 	summary := Summary{Matched: 8, Impressions: 4, Interactions: 2, Submissions: 1}

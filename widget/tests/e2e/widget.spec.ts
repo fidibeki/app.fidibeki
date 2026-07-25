@@ -1466,6 +1466,71 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
   await expect(column.locator('.privacy-choice')).toHaveCount(2)
 })
 
+// evaluate() reaches its "matched" call while the managed prompt is still unanswered, so the
+// consent gate used to drop it permanently: the visitor accepted, the widget mounted, and the
+// funnel opened on an impression the backend had no matched event to attribute. The backend
+// rejected that batch as a retryable 503, so the outbox replayed it every five seconds for the
+// whole 24-hour retention window. A distinct rule id keeps the purpose undecided — the shared
+// beforeEach seed targets rule-browser and consent storage keys are scoped per rule.
+test('managed analytics consent opens the funnel with matched once the grant lands', async ({ page }) => {
+  const rule: WidgetRule = {
+    ...browserRule,
+    id: 'rule-managed-analytics',
+    // Exit intent reproduces the production ordering the bug depended on: the visitor answers the
+    // prompt first, and the widget only becomes visible afterwards, so the impression is gated
+    // open while "matched" had already been silently dropped.
+    trigger_type: 'exit_intent',
+    trigger_delay_seconds: null,
+    trigger_scroll_percent: null,
+    analytics_consent: {
+      mode: 'fidibeki_managed',
+      notice_version: '2026-07',
+      controller_name: 'Acme Studio',
+      privacy_policy_url: 'https://example.com/privacy',
+      supported_locales: ['en'],
+      retention_days: 30,
+      expiry_days: 30,
+      notices: {
+        en: {
+          title: 'Help us understand how this widget is used',
+          description: 'Allow pseudonymous collection of analytics about your interactions.',
+          accept_label: 'Accept',
+          reject_label: 'Reject',
+          withdraw_label: 'Withdraw consent',
+        },
+      },
+    },
+  }
+  const events = await captureAnalytics(page, { ...browserConfiguration(rule), default_locale: 'en' })
+  await page.route('**/v1/widget/analytics-consents?*', async (route) => {
+    const body = route.request().postDataJSON() as { grant_token: string }
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ state: 'active', token: body.grant_token, expires_at: '2099-01-01T00:00:00Z' }),
+    })
+  })
+
+  await page.goto('/sample.html')
+  const dialog = page.locator('[data-fidibeki-consent]')
+  await expect(dialog.getByRole('heading', { name: 'Help us understand how this widget is used' })).toBeVisible()
+  // Nothing may be measured before the visitor decides.
+  expect(events).toEqual([])
+
+  await dialog.getByRole('button', { name: 'Accept', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  // The grant alone must open the funnel, without waiting for the widget to appear.
+  await expect.poll(() => events).toEqual(['matched'])
+
+  await page.evaluate(() => document.dispatchEvent(new MouseEvent('mouseout', {
+    clientY: 0,
+    relatedTarget: null,
+  })))
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+  // The impression the backend validates against now has its matched event to attribute to.
+  await expect.poll(() => events).toEqual(['matched', 'impression'])
+})
+
 test('managed replay consent renders the supported Portuguese notice', async ({ page }) => {
   const replayRule: WidgetRule = {
     ...browserRule,

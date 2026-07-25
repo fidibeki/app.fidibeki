@@ -206,7 +206,16 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       onChanged: (state) => {
         if (state === 'revoked') wipeAnalyticsIdentity()
         notifyPrivacyChoices()
-        if (cache) void synchronizeAnalyticsConsent(cache.value, currentAnalyticsRule)
+        if (!cache) return
+        const grantedRule = currentAnalyticsRule
+        void synchronizeAnalyticsConsent(cache.value, grantedRule).then(() => {
+          // evaluate() records "matched" before the visitor has answered the prompt, so the gate
+          // in recordAnalytics drops it and the funnel would open on an impression the backend
+          // cannot attribute to any matched event. Re-emit it the moment the grant lands.
+          // FunnelTracker.record is idempotent per page view and rule, so replaying it here is a
+          // no-op whenever evaluate() already succeeded.
+          if (state === 'granted' && grantedRule) recordAnalytics('matched', grantedRule)
+        })
       },
     })
     return analyticsConsent
