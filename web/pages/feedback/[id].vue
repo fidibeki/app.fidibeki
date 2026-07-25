@@ -75,6 +75,24 @@ function attachmentStatus(attachment: FeedbackAttachment) {
   return attachment.safety_status === 'safe' ? attachment.processing_status : attachment.safety_status
 }
 
+// A quarantined upload carries the specific reason it was refused; showing it is what makes a
+// rejection actionable instead of leaving every failure as the same opaque sentence.
+const attachmentRejectionKeys: Record<string, string> = {
+  empty_upload: 'emptyUpload',
+  size_mismatch: 'sizeMismatch',
+  unknown_signature: 'unknownSignature',
+  signature_mismatch: 'signatureMismatch',
+  kind_mismatch: 'kindMismatch',
+  invalid_structure: 'invalidStructure',
+  invalid_json: 'invalidJson',
+}
+
+function attachmentError(attachment: FeedbackAttachment) {
+  if (!attachment.error_message) return ''
+  const key = attachmentRejectionKeys[attachment.safety_error_reason || '']
+  return key ? t(`feedback.detail.attachmentRejected.${key}`) : t('feedback.detail.attachmentFailed')
+}
+
 const safeDOMSnapshot = computed(() => {
   if (!feedback.value?.dom_snapshot_html) return ''
   const content = feedback.value.dom_snapshot_html
@@ -260,7 +278,7 @@ useHead(() => ({
               <div v-if="feedback.attachments.length" class="feedback-attachment-list">
                 <article v-for="attachmentItem in feedback.attachments" :key="attachmentItem.id">
                   <span class="feedback-evidence-icon"><component :is="evidenceIcons[attachmentItem.kind]" :size="18" /></span>
-                  <div><b>{{ evidenceKindLabel(attachmentItem.kind) }}</b><span>{{ t('feedback.detail.attachmentSize', { contentType: attachmentItem.content_type, size: attachmentSize(attachmentItem.size_bytes) }) }}</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ t('feedback.detail.attachmentFailed') }}</p></div>
+                  <div><b>{{ evidenceKindLabel(attachmentItem.kind) }}</b><span>{{ t('feedback.detail.attachmentSize', { contentType: attachmentItem.content_type, size: attachmentSize(attachmentItem.size_bytes) }) }}</span><p v-if="attachmentItem.transcription">{{ attachmentItem.transcription }}</p><p v-if="attachmentItem.error_message" class="feedback-attachment-error">{{ attachmentError(attachmentItem) }}</p></div>
                   <span class="status-pill" :class="`status-${attachmentStatus(attachmentItem)}`">{{ statusLabel(attachmentStatus(attachmentItem)) }}</span>
                   <div class="feedback-attachment-actions"><AttachmentPreview :attachment="attachmentItem" /><button v-if="attachmentItem.safety_status === 'safe' && attachmentItem.processing_status === 'failed' && attachmentItem.completed_at && canWrite('feedback:update') && aiEnabled" class="app-button" :disabled="mutationPending" @click="retryAttachment(attachmentItem.id)">{{ t('feedback.actions.retry') }}</button></div>
                 </article>

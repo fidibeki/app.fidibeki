@@ -40,6 +40,12 @@ func TestSignatureScanner(t *testing.T) {
 			body: validWebMFixture(), wantType: "video/webm"},
 		{name: "webm block group", kind: AttachmentVideo, contentType: "video/webm",
 			body: webMFixtureVariant(2, "A_OPUS", true, true, true, true), wantType: "video/webm"},
+		// Firefox's MediaRecorder streams every cluster with an unknown size, so a recording of
+		// any real length arrives as several unknown-size clusters.
+		{name: "streamed webm audio", kind: AttachmentAudio, contentType: "audio/webm",
+			body: streamingWebMFixture(3), wantType: "video/webm"},
+		{name: "streamed webm video", kind: AttachmentVideo, contentType: "video/webm",
+			body: streamingWebMFixture(1), wantType: "video/webm"},
 		{name: "ogg", kind: AttachmentAudio, contentType: "audio/ogg",
 			body: validOggFixture(), wantType: "audio/ogg"},
 		{name: "wav", kind: AttachmentAudio, contentType: "audio/wav",
@@ -107,6 +113,17 @@ func TestSignatureScanner(t *testing.T) {
 			wantReason: "invalid_structure"},
 		{name: "webm missing timecode", kind: AttachmentVideo, contentType: "video/webm",
 			body:       webMFixtureVariant(2, "A_OPUS", false, true, true, true),
+			wantReason: "invalid_structure"},
+		{name: "streamed webm without blocks", kind: AttachmentAudio, contentType: "audio/webm",
+			body:       streamingWebMFixtureVariant(3, true, false),
+			wantReason: "invalid_structure"},
+		{name: "streamed webm without tracks", kind: AttachmentAudio, contentType: "audio/webm",
+			body:       streamingWebMFixtureVariant(3, false, true),
+			wantReason: "invalid_structure"},
+		{name: "streamed webm with unreadable cluster payload", kind: AttachmentAudio,
+			contentType: "audio/webm",
+			body: append(streamingWebMFixtureVariant(1, true, true),
+				[]byte{0x00, 0x00, 0x00, 0x00}...),
 			wantReason: "invalid_structure"},
 		{name: "webm short block", kind: AttachmentVideo, contentType: "video/webm",
 			body:       webMFixtureVariant(2, "A_OPUS", true, false, true, true),
@@ -378,6 +395,43 @@ func webMFixtureVariant(
 	}
 	segment := ebmlFixture([]byte{0x18, 0x53, 0x80, 0x67}, segmentBody)
 	return append(append([]byte{}, header...), segment...)
+}
+
+// streamingWebMFixture mirrors a live-muxed recording: the segment and every cluster carry the
+// unknown-size marker instead of a length because the muxer cannot seek back to patch one in.
+func streamingWebMFixture(clusters int) []byte {
+	return streamingWebMFixtureVariant(clusters, true, true)
+}
+
+func streamingWebMFixtureVariant(clusters int, includeTracks, includeBlocks bool) []byte {
+	header := ebmlFixture([]byte{0x1a, 0x45, 0xdf, 0xa3},
+		ebmlFixture([]byte{0x42, 0x82}, []byte("webm")))
+	track := bytes.Join([][]byte{
+		ebmlFixture([]byte{0xd7}, []byte{1}),
+		ebmlFixture([]byte{0x83}, []byte{2}),
+		ebmlFixture([]byte{0x86}, []byte("A_OPUS")),
+	}, nil)
+	segmentBody := make([]byte, 0)
+	if includeTracks {
+		segmentBody = append(segmentBody, ebmlFixture(
+			[]byte{0x16, 0x54, 0xae, 0x6b}, ebmlFixture([]byte{0xae}, track),
+		)...)
+	}
+	for index := range clusters {
+		segmentBody = append(segmentBody, unknownSizeFixture([]byte{0x1f, 0x43, 0xb6, 0x75})...)
+		segmentBody = append(segmentBody, ebmlFixture([]byte{0xe7}, []byte{byte(index)})...)
+		if includeBlocks {
+			segmentBody = append(segmentBody,
+				ebmlFixture([]byte{0xa3}, []byte{0x81, 0, 0, 0x80, 1})...)
+		}
+	}
+	body := append(append([]byte{}, header...), unknownSizeFixture([]byte{0x18, 0x53, 0x80, 0x67})...)
+	return append(body, segmentBody...)
+}
+
+// unknownSizeFixture writes an element header whose size is the all-ones "unknown length" vint.
+func unknownSizeFixture(id []byte) []byte {
+	return append(append([]byte{}, id...), 0xff)
 }
 
 func ebmlFixture(id, payload []byte) []byte {

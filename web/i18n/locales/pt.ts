@@ -814,6 +814,10 @@ export const portugueseMessages = {
         advisoryTitle: 'As recomendações são apenas consultivas',
         advisoryDescription: 'A AI não cria issues nem executa ações de workflow automaticamente.',
         acknowledgment: 'Confirmo que este workspace está autorizado a enviar o conteúdo selecionado ao Google Gemini, atualizou o seu aviso de privacidade e assume a responsabilidade pela recolha e utilização lícitas.',
+        acknowledgmentRequired: 'Confirme a autorização acima para continuar.',
+        selectContent: 'Selecione pelo menos um tipo de conteúdo para processar.',
+        privacyURLInvalid: 'Indique o aviso de privacidade do cliente como URL HTTPS.',
+        saveReminder: 'Aplica-se quando guardar o widget.',
         enable: 'Ativar análise por AI',
       },
       blocks: {
