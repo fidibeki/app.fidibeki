@@ -31,6 +31,7 @@ func TestConfigurationReportsEveryMissingRequiredValue(t *testing.T) {
 		"S3_SECRET_KEY",
 		"JWT_SECRET",
 		"INTEGRATION_ENCRYPTION_KEY",
+		"TWO_FACTOR_ENCRYPTION_KEY",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error %q does not mention %s", err, name)
@@ -58,6 +59,7 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		"INTERNAL_PROXY_SECRET":        "abcdef0123456789abcdef0123456789",
 		"TRUSTED_PROXY_CIDRS":          "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY":   "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"TWO_FACTOR_ENCRYPTION_KEY":    "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
 		"AUTH_REFRESH_RETRY_GRACE":     "10s",
 		"SENTRY_DSN":                   "https://public:private@sentry.example.test/1",
 		"GEMINI_API_KEY":               "gemini-secret",
@@ -112,6 +114,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"TRUSTED_PROXY_CIDRS":        "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"TWO_FACTOR_ENCRYPTION_KEY":  "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
 		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 	}
 
@@ -180,6 +183,7 @@ func TestConfigurationUsesPlatformPortWhenAddressIsUnset(t *testing.T) {
 		"S3_SECRET_KEY":              "fidibeki-local-secret",
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+		"TWO_FACTOR_ENCRYPTION_KEY":  "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
 	}
 	got, err := config.FromLookup(func(name string) (string, bool) {
 		value, exists := values[name]
@@ -214,6 +218,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"INTERNAL_PROXY_SECRET":          "too-short",
 		"TRUSTED_PROXY_CIDRS":            "not-a-network",
 		"INTEGRATION_ENCRYPTION_KEY":     "not-base64",
+		"TWO_FACTOR_ENCRYPTION_KEY":      "not-base64-either",
 		"READINESS_TIMEOUT":              "soon",
 		"SHUTDOWN_TIMEOUT":               "0s",
 		"DATABASE_APP_MAX_CONNS":         "many",
@@ -249,6 +254,7 @@ func TestConfigurationRejectsMalformedValues(t *testing.T) {
 		"DATABASE_URL_DIRECT", "REDIS_URL", "S3_ENDPOINT", "JWT_SECRET",
 		"ABUSE_BUCKET_SECRET", "ABUSE_BUCKET_PREVIOUS_SECRET",
 		"INTERNAL_PROXY_SECRET", "TRUSTED_PROXY_CIDRS", "INTEGRATION_ENCRYPTION_KEY",
+		"TWO_FACTOR_ENCRYPTION_KEY",
 		"READINESS_TIMEOUT", "SHUTDOWN_TIMEOUT", "DATABASE_APP_MAX_CONNS",
 		"DATABASE_ADMIN_MAX_CONNS", "S3_AUTO_CREATE_BUCKET", "LOG_LEVEL",
 		"AUTH_ACCESS_TOKEN_TTL", "AUTH_MAGIC_LINK_TTL", "AUTH_REFRESH_TOKEN_TTL",

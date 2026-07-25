@@ -23,7 +23,105 @@ var (
 	ErrMemberAlreadyRemoved         = errors.New("tenant member is already removed")
 	ErrMemberStatusInvalid          = errors.New("tenant member status is invalid")
 	ErrMemberActorInvalid           = errors.New("active tenant member actor is required")
+	ErrTwoFactorNotEnrolled         = errors.New("tenant member is not enrolled in two-factor authentication")
+	ErrTwoFactorAlreadyEnrolled     = errors.New("tenant member is already enrolled in two-factor authentication")
+	ErrTwoFactorCodeInvalid         = errors.New("two-factor code is invalid")
+	ErrTwoFactorChallengeNotPending = errors.New("session has no pending two-factor challenge")
+	ErrTwoFactorPolicyInvalid       = errors.New("two-factor policy is invalid")
+	// ErrTwoFactorPolicyBlocked guards the two lock-out paths: requiring the
+	// policy while the acting administrator is not itself recoverable, and
+	// removing an enrolment the workspace policy still demands.
+	ErrTwoFactorPolicyBlocked = errors.New("two-factor policy blocks this change")
 )
+
+// Two-factor session states. A session is created "pending" when the member is
+// enrolled and must still answer the challenge, becomes "satisfied" once it
+// does, and stays "not_required" when Fidibeki-managed two-factor does not
+// apply to it — including every SAML-authenticated session.
+const (
+	TwoFactorStateNotRequired = "not_required"
+	TwoFactorStatePending     = "pending"
+	TwoFactorStateSatisfied   = "satisfied"
+)
+
+const (
+	AuthenticationMethodLocal = "local"
+	AuthenticationMethodSAML  = "saml"
+)
+
+const (
+	TwoFactorPolicyOptional = "optional"
+	TwoFactorPolicyRequired = "required"
+)
+
+// Two-factor requirement statuses returned to a client that has authenticated
+// but cannot yet be given an access token.
+const (
+	TwoFactorRequirementNone       = ""
+	TwoFactorRequirementChallenge  = "challenge_required"
+	TwoFactorRequirementEnrollment = "enrollment_required"
+)
+
+// SessionSecurity describes how a session proved identity and what it still
+// owes before it can carry workspace access.
+type SessionSecurity struct {
+	AuthenticationMethod string
+	TwoFactorState       string
+	PolicyRequired       bool
+	Enrolled             bool
+}
+
+// Requirement maps a session's state onto what the client must do next. A SAML
+// session never has a Fidibeki-managed requirement because its authentication
+// assurance is delegated to the identity provider.
+func (s SessionSecurity) Requirement() string {
+	if s.AuthenticationMethod == AuthenticationMethodSAML {
+		return TwoFactorRequirementNone
+	}
+	if s.TwoFactorState == TwoFactorStatePending {
+		return TwoFactorRequirementChallenge
+	}
+	if s.PolicyRequired && !s.Enrolled {
+		return TwoFactorRequirementEnrollment
+	}
+	return TwoFactorRequirementNone
+}
+
+// TwoFactorStatus is a member's own view of their enrolment. It never carries
+// the shared secret or any recovery code.
+type TwoFactorStatus struct {
+	Policy                 string     `json:"policy"`
+	Enrolled               bool       `json:"enrolled"`
+	ConfirmedAt            *time.Time `json:"confirmed_at,omitempty"`
+	RecoveryCodesRemaining int        `json:"recovery_codes_remaining"`
+	CanRemove              bool       `json:"can_remove"`
+	AuthenticationMethod   string     `json:"authentication_method"`
+}
+
+// TwoFactorEnrollment is returned once, when enrolment starts. The secret and
+// provisioning payload exist only in this response.
+type TwoFactorEnrollment struct {
+	Secret          string `json:"secret"`
+	ProvisioningURI string `json:"provisioning_uri"`
+	QRCodeSVG       string `json:"qr_code_svg"`
+}
+
+// TwoFactorPolicy is the organization-level setting.
+type TwoFactorPolicy struct {
+	Policy    string     `json:"policy"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy *string    `json:"updated_by,omitempty"`
+}
+
+// TwoFactorCompliance is one row of the administrator's compliance view. It
+// deliberately carries no secret, no recovery code, and no code counter.
+type TwoFactorCompliance struct {
+	MemberID    string     `json:"member_id"`
+	Email       string     `json:"email"`
+	Name        *string    `json:"name,omitempty"`
+	Enrolled    bool       `json:"enrolled"`
+	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+}
 
 type MemberStatus string
 
@@ -74,4 +172,8 @@ type SessionTokens struct {
 	RefreshToken string
 	ExpiresAt    time.Time
 	Member       Member
+	// Requirement is empty for a session that may carry workspace access, and
+	// otherwise names the two-factor step the member still owes.
+	Requirement string
+	Security    SessionSecurity
 }

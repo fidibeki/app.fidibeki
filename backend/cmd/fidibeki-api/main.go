@@ -44,6 +44,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	jobworker "github.com/acidiney/app.fidibeki/backend/internal/worker"
@@ -158,6 +159,10 @@ func runMigrations(logger *slog.Logger, settings config.Config, args []string) i
 
 func serve(ctx context.Context, logger *slog.Logger, settings config.Config) error {
 	integrationCipher, err := integration.NewCipher(settings.IntegrationEncryptionKey)
+	if err != nil {
+		return err
+	}
+	twoFactorCipher, err := twofactor.NewCipher(settings.TwoFactorEncryptionKey)
 	if err != nil {
 		return err
 	}
@@ -385,6 +390,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	billing.RegisterTenantRoutes(tenantRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	tenantmember.RegisterRoutes(tenantRoutes, tenantmember.HTTPOptions{
 		Service: tenantService, Store: tenantStore, JWT: jwtManager, Email: emailQueue,
+		TwoFactor: tenantmember.TwoFactorService{Store: tenantStore, Cipher: twoFactorCipher},
+		Limiter:   publicLimiter, TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})

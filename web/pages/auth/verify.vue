@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AlertTriangle, CheckCircle2 } from '@lucide/vue'
-import type { AuthResponse, Project } from '~/types/api'
+import type { AuthOrTwoFactorResponse, AuthResponse, Project } from '~/types/api'
+import { isAuthResponse, twoFactorRequirement } from '~/types/api'
 
 definePageMeta({ layout: false })
 
@@ -9,7 +10,7 @@ const { t } = useI18n()
 const localizedError = useLocalizedAPIError()
 const route = useRoute()
 const router = useRouter()
-const { apply } = useAuth()
+const { apply, pendingTwoFactor } = useAuth()
 const state = ref<'verifying' | 'success' | 'failed'>('verifying')
 const errorMessage = ref('')
 let verificationAttempt = 0
@@ -51,9 +52,9 @@ async function verifyCurrentLink() {
     return
   }
 
-  let response: AuthResponse
+  let verified: AuthOrTwoFactorResponse
   try {
-    response = await $apiFetch<AuthResponse>('/auth/verify', {
+    verified = await $apiFetch<AuthOrTwoFactorResponse>('/auth/verify', {
       method: 'POST',
       body: { token },
       auth: false,
@@ -68,11 +69,22 @@ async function verifyCurrentLink() {
   }
 
   if (!isCurrentAttempt(attempt, controller)) return
+  const returnTo = typeof route.query.return_to === 'string' && route.query.return_to.startsWith('/') &&
+    !route.query.return_to.startsWith('//') ? route.query.return_to : ''
+
+  if (!isAuthResponse(verified)) {
+    // The workspace still owes a two-factor challenge, so this sign-in carries
+    // no token: send the member on to answer it.
+    pendingTwoFactor.value = twoFactorRequirement(verified)
+    state.value = 'success'
+    await navigateTo({ path: '/auth/two-factor', query: returnTo ? { return_to: returnTo } : {} })
+    return
+  }
+
+  const response: AuthResponse = verified
   apply(response)
   state.value = 'success'
 
-  const returnTo = typeof route.query.return_to === 'string' && route.query.return_to.startsWith('/') &&
-    !route.query.return_to.startsWith('//') ? route.query.return_to : ''
   if (returnTo) {
     if (!isCurrentAttempt(attempt, controller)) return
     await navigateTo(returnTo)
