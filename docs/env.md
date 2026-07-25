@@ -17,6 +17,7 @@ for both services because configuration is validated before the command starts.
 | `HTTP_ADDRESS` | no | Explicit listen address; overrides `PORT`. |
 | `BASE_DOMAIN` | yes | Root host without scheme, for example `fidibeki.com`. |
 | `PUBLIC_BASE_URL` | yes | Public API origin, for example `https://api.fidibeki.com`. |
+| `WEB_PUBLIC_BASE_URL` | no | Browser-facing origin used to derive tenant URLs (SAML entity ID, assertion consumer, post-login redirects). Defaults to `PUBLIC_BASE_URL`; set it when the web tier answers on a different scheme or port, as it does in local development. |
 | `READINESS_TIMEOUT` | no | Per-request readiness budget; default `2s`. |
 | `SHUTDOWN_TIMEOUT` | no | Graceful shutdown budget; default `10s`. |
 | `DATABASE_URL_APP` | yes | Runtime URL with the `fidibeki_app` username and password. `migrate up` applies these credentials to the RLS-constrained role. |

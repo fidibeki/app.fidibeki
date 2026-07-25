@@ -71,6 +71,16 @@ to the Asynq monitor at `http://api.localhost:8088/admin/queues/` and the read-o
 privacy-incident workspace at `http://api.localhost:8088/admin/operations/privacy-incidents`;
 merely previewing the email link does not consume its one-time token.
 
+Organizations can authenticate members through their own SAML 2.0 identity provider. SSO is
+per organization and disabled by default. Administrators with `tenant:update` configure it under
+`/v1/sso/saml` and in **Settings → Single sign-on**; the identity provider uses
+`https://<tenant>.<base-domain>/auth/sso/saml/metadata` and `.../acs`, both derived from
+`WEB_PUBLIC_BASE_URL` (default `PUBLIC_BASE_URL`) and `BASE_DOMAIN`. Required mode is refused
+until a test sign-in has succeeded and a signing certificate is currently valid, the workspace
+owner keeps an audited break-glass link, and SAML sessions are marked `authentication_method =
+saml` so multi-factor assurance stays with the identity provider. See
+[docs/saml-sso.md](docs/saml-sso.md) for setup, certificate rotation, and outage recovery.
+
 Authenticated platform administrators manage tenants under `/admin/tenants`. Authenticated tenant
 members can invite and manage members under `/auth/invite` and `/v1/members`; every route enforces
 its explicit permission and the tenant ID embedded in the JWT.

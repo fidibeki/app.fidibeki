@@ -676,6 +676,12 @@
   border-color: var(--red-line);
 }
 
+/* Used for the restricted owner recovery path under required single sign-on. */
+.auth-message--warning {
+  background: var(--surface-muted, var(--surface));
+  color: var(--muted) !important;
+}
+
 @media (max-width: 980px) {
   .app-shell,
   .app-shell--queues {

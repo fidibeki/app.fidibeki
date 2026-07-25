@@ -83,9 +83,10 @@ func retentionRegistry() []retentionDefinition {
 			Source:       "Platform default", Trigger: "Authoritative expires_at timestamp.",
 			Action:  "Hard-delete credential row and retain a non-content audit event.",
 			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
-			Implementation: "tenantmember.Maintainer, platformadmin.Maintainer",
+			Implementation: "tenantmember.Maintainer, platformadmin.Maintainer, samlsso.Maintainer",
 			Resources: tables(
 				"platform_admin_magic_links", "retention_maintenance_status", "tenant_magic_links",
+				"tenant_saml_assertions", "tenant_saml_auth_requests",
 			),
 		},
 		{
@@ -99,6 +100,7 @@ func retentionRegistry() []retentionDefinition {
 			Resources: tables(
 				"platform_admin_sessions", "platform_admins", "platform_security_events",
 				"reporter_access_tokens", "tenant_member_sessions",
+				"tenant_saml_certificates", "tenant_saml_configurations",
 			),
 		},
 		{
@@ -393,6 +395,20 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionProvider, Name: "slack_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "microsoft_teams_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "customer_generic_webhook"},
+			),
+		},
+		{
+			Category: "external_identity", Label: "Customer identity provider boundary",
+			Purpose: "Authenticate workspace members through the organization's own identity provider.",
+			Role:    "controller", Status: RetentionExternalControl,
+			DurationKind: retentionDurationExternal, Source: "External configuration",
+			Trigger: "Member sign-in through the configured identity provider.",
+			Action: "Assertions are validated in memory and never stored; only a hashed assertion " +
+				"ID and a non-content audit event remain, and the identity provider controls its " +
+				"own authentication records.",
+			Cadence: "Provider controlled", HoldBehavior: RetentionHoldNotApplicable,
+			Resources: resources(
+				retentionResource{Kind: RetentionProvider, Name: "customer_saml_identity_provider"},
 			),
 		},
 		{

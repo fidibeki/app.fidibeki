@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ArrowRight, Building2, CheckCircle2, RefreshCw } from '@lucide/vue'
-import type { TenantConfiguration } from '~/types/api'
+import { ArrowRight, Building2, CheckCircle2, RefreshCw, ShieldCheck } from '@lucide/vue'
+import type { SSOPolicy, TenantConfiguration } from '~/types/api'
+import { loginPathsFor, ssoErrorMessageKey } from '~/utils/sso-policy'
 import {
   applicationURL,
   isApplicationHost,
@@ -15,6 +16,7 @@ definePageMeta({ layout: false })
 const route = useRoute()
 const { t } = useI18n()
 const { authenticated } = useAuth()
+const { $refreshSession } = useNuxtApp()
 const localizedError = useLocalizedAPIError()
 const { $apiFetch } = useNuxtApp()
 const email = ref('')
@@ -30,6 +32,13 @@ const signupURL = applicationURL(appURL, baseDomain, '/signup', requestURL)
 const locatorMode = isApplicationHost(requestURL.hostname, baseDomain, appURL)
 const locatorSlug = ref('')
 const locatorError = ref('')
+// Organization-level SSO policy. It is fetched before any credential is
+// entered and carries no membership information, so the login page can present
+// the right path without revealing who belongs to this workspace.
+const ssoPolicy = ref<SSOPolicy | null>(null)
+const showBreakGlass = ref(false)
+const ssoErrorKey = computed(() => ssoErrorMessageKey(route.query.sso_error))
+const loginPaths = computed(() => loginPathsFor(ssoPolicy.value, showBreakGlass.value))
 const suggestedSlug = workspaceSlugFromStandardHost(requestURL.hostname, baseDomain)
 const suggestedSignupURL = suggestedSlug
   ? applicationURL(appURL, baseDomain, `/signup?slug=${encodeURIComponent(suggestedSlug)}`, requestURL)
@@ -72,6 +81,25 @@ async function checkWorkspace() {
   }
 }
 
+async function loadSSOPolicy() {
+  try {
+    ssoPolicy.value = await $apiFetch<SSOPolicy>('/auth/sso/saml/status', {
+      auth: false,
+      retryAuth: false,
+    })
+  } catch {
+    // A workspace without SSO, or a transient failure, leaves the existing
+    // email path exactly as it was.
+    ssoPolicy.value = null
+  }
+}
+
+async function continueWithSSO() {
+  const startURL = ssoPolicy.value?.start_url
+  if (!startURL) return
+  await navigateTo(startURL, { external: true })
+}
+
 async function submit() {
   if (pending.value) return
   pending.value = true
@@ -102,13 +130,35 @@ async function openWorkspace() {
 
 if (import.meta.server && !import.meta.dev && !locatorMode) await checkWorkspace()
 
+// A member returning from an identity provider arrives through a cross-site
+// POST redirect, and browsers withhold SameSite=Lax cookies from that
+// navigation. The server-rendered pass therefore cannot see a live session and
+// routes here. The same cookie is available to a same-site request from this
+// page, so one client-side refresh recovers the session instead of asking an
+// already-signed-in member to authenticate again.
+async function recoverSessionForReturn() {
+  if (authenticated.value) return true
+  const returnTo = typeof route.query.return_to === 'string' ? route.query.return_to : ''
+  if (!returnTo.startsWith('/') || returnTo.startsWith('//')) return false
+  try {
+    await $refreshSession()
+  } catch {
+    return false
+  }
+  return authenticated.value
+}
+
 onMounted(async () => {
   if (locatorMode) return
   if (workspaceState.value === 'checking') await checkWorkspace()
-  if (workspaceState.value === 'available' && authenticated.value) {
+  if (workspaceState.value !== 'available') return
+  const recovered = await recoverSessionForReturn()
+  if (recovered || authenticated.value) {
     const destination = typeof route.query.return_to === 'string' ? route.query.return_to : '/'
     await navigateTo(destination)
+    return
   }
+  await loadSSOPolicy()
 })
 
 useHead({ title: computed(() => t('auth.login.pageTitle')) })
@@ -163,14 +213,30 @@ useHead({ title: computed(() => t('auth.login.pageTitle')) })
       <form v-else class="auth-form" @submit.prevent="submit">
         <p class="app-eyebrow">{{ hostLabel }}</p>
         <h2>{{ t('auth.login.title') }}</h2>
-        <p>{{ t('auth.login.description') }}</p>
-        <label>
-          {{ t('auth.login.email') }}
-          <input v-model.trim="email" class="app-input" type="email" autocomplete="email" required :placeholder="t('auth.login.emailPlaceholder')" />
-        </label>
-        <button class="app-button app-button--primary" type="submit" :disabled="pending || !email">
-          {{ pending ? t('auth.login.sending') : t('auth.login.submit') }} <ArrowRight v-if="!pending" :size="16" />
+        <p>{{ loginPaths.localLoginEnabled ? t('auth.login.description') : t('auth.login.ssoRequiredDescription') }}</p>
+        <p v-if="ssoErrorKey" class="auth-message auth-message--error auth-sso-error" role="alert">{{ t(ssoErrorKey) }}</p>
+        <button v-if="loginPaths.ssoAvailable" class="app-button app-button--primary auth-sso-button" type="button" @click="continueWithSSO">
+          <ShieldCheck :size="16" aria-hidden="true" /> {{ t('auth.login.continueWithSSO') }}
         </button>
+        <p v-if="loginPaths.ssoAvailable && loginPaths.localLoginVisible" class="auth-divider"><span>{{ t('auth.login.or') }}</span></p>
+        <template v-if="loginPaths.localLoginVisible">
+          <label>
+            {{ t('auth.login.email') }}
+            <input v-model.trim="email" class="app-input" type="email" autocomplete="email" required :placeholder="t('auth.login.emailPlaceholder')" />
+          </label>
+          <button class="app-button" :class="{ 'app-button--primary': !loginPaths.ssoAvailable }" type="submit" :disabled="pending || !email">
+            {{ pending ? t('auth.login.sending') : t('auth.login.submit') }} <ArrowRight v-if="!pending" :size="16" />
+          </button>
+        </template>
+        <button
+          v-else-if="loginPaths.breakGlassAvailable"
+          class="auth-break-glass" type="button" @click="showBreakGlass = true"
+        >
+          {{ t('auth.login.breakGlassPrompt') }}
+        </button>
+        <p v-if="showBreakGlass && !loginPaths.localLoginEnabled" class="auth-message auth-message--warning" role="status">
+          {{ t('auth.login.breakGlassNotice') }}
+        </p>
         <p v-if="sent" class="auth-message auth-message--success" role="status"><CheckCircle2 :size="15" aria-hidden="true" /><span>{{ t('auth.login.sent') }}</span></p>
         <p v-if="errorMessage" class="auth-message auth-message--error" role="alert">{{ errorMessage }}</p>
         <p class="auth-signup-link">{{ t('auth.login.newAccount') }} <a :href="signupURL">{{ t('auth.login.signup') }}</a></p>
@@ -186,6 +252,12 @@ useHead({ title: computed(() => t('auth.login.pageTitle')) })
 .auth-workspace-state > .app-spinner { margin-bottom: 10px; }
 .auth-workspace-state > h2 { margin-bottom: 8px; }
 .auth-workspace-state > p:not(.app-eyebrow) { margin-bottom: 22px; }
+/* The base .auth-message shorthand sets margin-bottom to 0 with !important. */
+.auth-sso-error { margin-bottom: 14px !important; }
+.auth-sso-button { justify-content: center; }
+.auth-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 !important; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { flex: 1; height: 1px; background: var(--line); content: ''; }
+.auth-break-glass { padding: 0; background: none; border: 0; color: var(--muted); font-size: 11px; font-weight: 650; text-align: left; text-decoration: underline; cursor: pointer; }
 .auth-signup-link { margin-top: 20px !important; text-align: center; }
 .auth-signup-link a { color: var(--teal); font-weight: 750; }
 .locator-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; margin-top: 6px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; }

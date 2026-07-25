@@ -686,6 +686,62 @@ export interface TenantConfiguration {
   plan: PlanDefinition
 }
 
+export type SSOMode = 'disabled' | 'optional' | 'required'
+
+/** Organization-level SSO policy the login page reads before any session exists. */
+export interface SSOPolicy {
+  mode: SSOMode
+  start_url?: string
+  local_login_enabled: boolean
+  break_glass_available: boolean
+}
+
+export interface SAMLCertificate {
+  id: string
+  certificate: string
+  fingerprint: string
+  subject: string
+  not_before: string
+  not_after: string
+  created_at: string
+}
+
+export interface SAMLConfiguration {
+  mode: SSOMode
+  idp_entity_id: string
+  idp_sso_url: string
+  idp_metadata_url?: string
+  email_domains: string[]
+  allow_idp_initiated: boolean
+  sp_certificate: string
+  last_tested_at?: string
+  last_test_error?: string
+  last_successful_login_at?: string
+  created_at: string
+  updated_at: string
+  updated_by_member_id?: string
+  certificates: SAMLCertificate[]
+}
+
+/** The service-provider values an administrator copies into their IdP. */
+export interface SAMLServiceProvider {
+  entity_id: string
+  acs_url: string
+  metadata_url: string
+  start_url: string
+  certificate: string
+}
+
+export type SAMLWarning = 'no_valid_certificate' | 'certificate_expiring' | 'mfa_managed_by_idp'
+
+export interface SAMLSettings {
+  configured: boolean
+  sso: SAMLConfiguration | null
+  service_provider: SAMLServiceProvider
+  can_require?: boolean
+  warnings?: SAMLWarning[]
+}
+
 export type PrivacyJobKind = 'workspace_export' | 'reporter_export' | 'reporter_anonymize'
 export type PrivacyJobStatus =
   | 'pending'

@@ -3,6 +3,8 @@ package tenantmember
 import (
 	"errors"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 )
 
 var (
@@ -23,7 +25,13 @@ var (
 	ErrMemberAlreadyRemoved         = errors.New("tenant member is already removed")
 	ErrMemberStatusInvalid          = errors.New("tenant member status is invalid")
 	ErrMemberActorInvalid           = errors.New("active tenant member actor is required")
+	ErrLocalLoginDisabled           = errors.New("local login is disabled by the organization's single sign-on policy")
 )
+
+// IsOwner reports whether this member is the workspace owner. Under Required
+// SSO the owner is the only member who keeps local login, as the audited
+// break-glass path.
+func (m Member) IsOwner() bool { return m.Role == "owner" }
 
 type MemberStatus string
 
@@ -74,4 +82,8 @@ type SessionTokens struct {
 	RefreshToken string
 	ExpiresAt    time.Time
 	Member       Member
+	// Identity records how this session was authenticated, so clients and
+	// downstream assurance policy can distinguish an IdP-assured session from
+	// a local one.
+	Identity auth.SessionIdentity
 }
