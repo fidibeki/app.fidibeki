@@ -1,7 +1,12 @@
 import { record } from 'rrweb'
 import { privacySafeLocation } from '../privacy-location'
 import type { WidgetRule } from '../types'
-import { createReplayMaskTextFn, replayMaskTextSelector, sanitizeReplayEvent } from './privacy'
+import {
+  createReplayMaskTextFn,
+  isUnserializedReplayEvent,
+  replayMaskTextSelector,
+  sanitizeReplayEvent,
+} from './privacy'
 
 const batchEventLimit = 50
 const batchTargetBytes = 200 * 1024
@@ -95,6 +100,9 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   const captureEvent = (event: unknown) => {
     if (stopped || eventCount >= maxEvents) return
+    // Interactions inside blocked regions arrive with mirror id -1 and cannot replay;
+    // dropping them is expected policy, not a sanitization failure worth reporting.
+    if (isUnserializedReplayEvent(event)) return
     const sanitized = sanitizeReplayEvent(event, location.target)
     if (sanitized === null) {
       options.onError?.(new Error('replay event failed anonymity sanitization and was dropped'))

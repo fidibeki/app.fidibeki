@@ -2,9 +2,30 @@ import {
   SAFE_TEXT_ATTRIBUTE,
   canonicalizeReplayURL,
   createReplayMaskTextFn,
+  isUnserializedReplayEvent,
   replayMaskTextSelector,
   sanitizeReplayEvent as sanitizeReplayEventForSession,
 } from '../../src/modules/privacy'
+
+describe('isUnserializedReplayEvent', () => {
+  it('flags incremental events that target mirror id -1 (blocked regions)', () => {
+    expect(isUnserializedReplayEvent({
+      type: 3, timestamp: 1, data: { source: 5, id: -1, text: '****', isChecked: false },
+    })).toBe(true)
+    expect(isUnserializedReplayEvent({
+      type: 3, timestamp: 1, data: { source: 3, id: -1, x: 1, y: 2 },
+    })).toBe(true)
+  })
+
+  it('leaves events with real targets, other types, and malformed input alone', () => {
+    expect(isUnserializedReplayEvent({
+      type: 3, timestamp: 1, data: { source: 5, id: 7, text: '****' },
+    })).toBe(false)
+    expect(isUnserializedReplayEvent({ type: 3, timestamp: 1, data: { source: 0 } })).toBe(false)
+    expect(isUnserializedReplayEvent({ type: 2, timestamp: 1, data: { id: -1 } })).toBe(false)
+    expect(isUnserializedReplayEvent(null)).toBe(false)
+  })
+})
 
 describe('canonicalizeReplayURL', () => {
   it('strips credentials, query parameters, and the fragment', () => {

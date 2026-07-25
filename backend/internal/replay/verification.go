@@ -543,14 +543,16 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 			return false
 		}
 	case 3:
-		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isStyle") {
+		// rrweb marks any node mutation-added directly under a native shadow root with
+		// isShadow, regardless of node type — not just elements.
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isStyle", "isShadow") {
 			return false
 		}
 		if value, exists := node["isStyle"]; exists && !replayBoolean(value) {
 			return false
 		}
 	case 4, 5:
-		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent") {
+		if !hasOnlyKeys(node, "type", "id", "rootId", "textContent", "isShadow") {
 			return false
 		}
 	}
@@ -719,8 +721,14 @@ func validReplayInputData(data map[string]any) bool {
 	if !hasOnlyKeys(data, "source", "id", "text", "isChecked", "userTriggered") {
 		return false
 	}
-	if value, exists := data["id"]; exists && !replayID(value, false) {
-		return false
+	// rrweb stamps id -1 on input events for elements it did not serialize (anything inside
+	// a blocked region, e.g. [data-fidibeki-block]). The widget drops these client-side, but
+	// they must not poison a batch when an older widget forwards them.
+	if value, exists := data["id"]; exists {
+		parsed, ok := replayInteger(value)
+		if !ok || parsed < -1 {
+			return false
+		}
 	}
 	if text, exists := data["text"]; exists {
 		value, ok := text.(string)
@@ -801,8 +809,12 @@ func validReplayMutationData(data map[string]any) bool {
 		}
 		for _, value := range removes {
 			removed, ok := replayObject(value)
-			if !ok || !hasOnlyKeys(removed, "parentId", "id") ||
+			if !ok || !hasOnlyKeys(removed, "parentId", "id", "isShadow") ||
 				!replayID(removed["parentId"], false) || !replayID(removed["id"], false) {
+				return false
+			}
+			// rrweb marks removals inside native shadow roots so the player can locate the node.
+			if shadow, exists := removed["isShadow"]; exists && !replayBoolean(shadow) {
 				return false
 			}
 		}
@@ -814,10 +826,15 @@ func validReplayMutationData(data map[string]any) bool {
 		}
 		for _, value := range texts {
 			text, ok := replayObject(value)
-			masked, textOK := text["value"].(string)
-			if !ok || !hasOnlyKeys(text, "id", "value") ||
-				!replayID(text["id"], false) || !textOK || !maskedReplayText(masked) {
+			if !ok || !hasOnlyKeys(text, "id", "value") || !replayID(text["id"], false) {
 				return false
+			}
+			// rrweb emits null when a text node's content is cleared; null carries no text.
+			if text["value"] != nil {
+				masked, textOK := text["value"].(string)
+				if !textOK || !maskedReplayText(masked) {
+					return false
+				}
 			}
 		}
 	}

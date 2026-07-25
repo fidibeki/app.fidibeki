@@ -131,6 +131,18 @@ interface ReplayEventLike {
 }
 
 /**
+ * True for incremental events that reference no serialized node: rrweb stamps mirror id -1
+ * on interactions inside blocked regions (e.g. the Fidibeki widget's own UI). They cannot
+ * replay, so callers drop them silently as policy rather than reporting a failure.
+ */
+export function isUnserializedReplayEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object') return false
+  const candidate = event as ReplayEventLike
+  return candidate.type === EVENT_TYPE_INCREMENTAL_SNAPSHOT &&
+    (candidate.data as { id?: unknown } | undefined)?.id === -1
+}
+
+/**
  * Sanitizes one serialized rrweb event in place for anonymity: pins Meta/navigation URLs to
  * the server-verifiable session projection, and strips non-allowlisted attributes from
  * full-snapshot and newly-added DOM nodes (rrweb has no built-in hook for this). Returns

@@ -129,6 +129,39 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			valid: true,
 		},
 		{
+			name: "shadow dom removal",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"removes":[{"parentId":1,"id":3,"isShadow":true}]}}`,
+			valid: true,
+		},
+		{
+			name: "cleared text mutation",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"texts":[{"id":4,"value":null}]}}`,
+			valid: true,
+		},
+		{
+			name: "shadow text node added under shadow root",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"adds":[{"parentId":160,"nextId":null,"node":{"type":3,"id":163,"textContent":"****","isShadow":true}}]}}`,
+			valid: true,
+		},
+		{
+			name: "non-boolean shadow marker",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"removes":[{"parentId":1,"id":3,"isShadow":"yes"}]}}`,
+		},
+		{
+			name: "non-boolean shadow marker on text node",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"adds":[{"parentId":160,"nextId":null,"node":{"type":3,"id":163,"textContent":"****","isShadow":"yes"}}]}}`,
+		},
+		{
+			name: "raw text mutation",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
+				`"texts":[{"id":4,"value":"Jane Doe"}]}}`,
+		},
+		{
 			name:  "mouse movement",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":1,"positions":[{"x":10,"y":20,"id":2,"timeOffset":5}]}}`,
 			valid: true,
@@ -152,6 +185,15 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			name:  "masked input",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":2,"text":"****","isChecked":true,"userTriggered":false}}`,
 			valid: true,
+		},
+		{
+			name:  "masked input from an unserialized blocked element",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":-1,"text":"****","isChecked":false}}`,
+			valid: true,
+		},
+		{
+			name:  "input with impossible node id",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":5,"id":-2,"text":"****"}}`,
 		},
 		{
 			name:  "media interaction",

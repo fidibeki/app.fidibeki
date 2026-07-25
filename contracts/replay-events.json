@@ -1,0 +1,197 @@
+{
+  "$comment": "Shared client/server replay event contract. Every event must (1) pass the widget sanitizer unchanged (widget/tests/unit/replay-contract.test.ts) and (2) be accepted by the backend batch verifier (backend/internal/replay/contract_test.go). Events are in final wire form: text already masked, attributes already allow-listed. If either side rejects an entry here, the client and server allow-lists have drifted and finalization will 409 in production.",
+  "page_url": "https://example.com/chart",
+  "events": [
+    {
+      "name": "dom content loaded",
+      "event": { "type": 0, "timestamp": 1784800000000, "data": {} }
+    },
+    {
+      "name": "load",
+      "event": { "type": 1, "timestamp": 1784800000000, "data": {} }
+    },
+    {
+      "name": "full snapshot with masked and safe text",
+      "event": {
+        "type": 2,
+        "timestamp": 1784800000000,
+        "data": {
+          "node": {
+            "type": 0,
+            "id": 1,
+            "childNodes": [
+              {
+                "type": 2,
+                "id": 2,
+                "tagName": "div",
+                "attributes": {},
+                "childNodes": [
+                  { "type": 3, "id": 3, "textContent": "**** ***" }
+                ]
+              },
+              {
+                "type": 2,
+                "id": 4,
+                "tagName": "span",
+                "attributes": { "data-fidibeki-safe-text": "" },
+                "childNodes": [
+                  { "type": 3, "id": 5, "textContent": "Powered by Fidibeki" }
+                ]
+              }
+            ]
+          },
+          "initialOffset": { "top": 0, "left": 0 }
+        }
+      }
+    },
+    {
+      "name": "meta",
+      "event": {
+        "type": 4,
+        "timestamp": 1784800000000,
+        "data": { "href": "https://example.com/chart", "width": 1280, "height": 720 }
+      }
+    },
+    {
+      "name": "custom navigation",
+      "event": {
+        "type": 5,
+        "timestamp": 1784800000000,
+        "data": { "tag": "navigation", "payload": { "url": "https://example.com/chart" } }
+      }
+    },
+    {
+      "name": "mutation with shadow removal and cleared text",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": {
+          "source": 0,
+          "adds": [
+            {
+              "parentId": 1,
+              "nextId": null,
+              "node": { "type": 2, "id": 6, "tagName": "div", "attributes": {} }
+            }
+          ],
+          "removes": [
+            { "parentId": 1, "id": 3 },
+            { "parentId": 7, "id": 8, "isShadow": true }
+          ],
+          "texts": [
+            { "id": 4, "value": "****" },
+            { "id": 5, "value": null }
+          ],
+          "attributes": [
+            { "id": 6, "attributes": { "data-fidibeki-safe-text": null } }
+          ],
+          "isAttachIframe": false
+        }
+      }
+    },
+    {
+      "name": "mutation adding nodes into a native shadow root",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": {
+          "source": 0,
+          "adds": [
+            {
+              "parentId": 11,
+              "nextId": null,
+              "node": { "type": 2, "id": 160, "tagName": "div", "attributes": {}, "childNodes": [], "isShadowHost": true }
+            },
+            {
+              "parentId": 160,
+              "nextId": null,
+              "node": { "type": 2, "id": 161, "tagName": "section", "attributes": {}, "childNodes": [], "isShadow": true }
+            },
+            {
+              "parentId": 160,
+              "nextId": 161,
+              "node": { "type": 3, "id": 163, "textContent": "\n    ", "isShadow": true }
+            },
+            {
+              "parentId": 161,
+              "nextId": null,
+              "node": { "type": 3, "id": 162, "textContent": "******* *******" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mouse move",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 1, "positions": [{ "x": 10, "y": 20, "id": 2, "timeOffset": 5 }] }
+      }
+    },
+    {
+      "name": "mouse interaction",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 2, "type": 0, "id": 2, "x": 10, "y": 20, "pointerType": "mouse" }
+      }
+    },
+    {
+      "name": "scroll",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 3, "id": 2, "x": 10, "y": 20 }
+      }
+    },
+    {
+      "name": "viewport resize",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 4, "width": 1280, "height": 720 }
+      }
+    },
+    {
+      "name": "masked input",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 5, "id": 2, "text": "****", "isChecked": true, "userTriggered": false }
+      }
+    },
+    {
+      "name": "touch move",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 6, "positions": [{ "x": 12, "y": 34, "id": 2, "timeOffset": 3 }] }
+      }
+    },
+    {
+      "name": "media interaction",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 7, "type": 0, "id": 2, "currentTime": 12.5, "volume": 0.5, "muted": false }
+      }
+    },
+    {
+      "name": "drag",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 12, "positions": [{ "x": 44, "y": 55, "id": 2, "timeOffset": 8 }] }
+      }
+    },
+    {
+      "name": "selection",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000000,
+        "data": { "source": 14, "ranges": [{ "start": 2, "startOffset": 0, "end": 2, "endOffset": 4 }] }
+      }
+    }
+  ]
+}
