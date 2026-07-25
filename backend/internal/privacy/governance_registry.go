@@ -290,6 +290,22 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceEnvironmentPerTenantConfig, "external_communications",
 		),
 		pendingProvider(
+			"customer_saml_identity_provider", "Customer-configured SAML identity provider",
+			"identity_provider",
+			GovernanceBoundaryCustomerConfiguredDestination,
+			"Authenticate workspace members through the organization's own identity provider and "+
+				"retrieve that provider's published SAML metadata.",
+			[]string{
+				"member work email address asserted by the identity provider",
+				"identity-provider subject identifier",
+			},
+			"backend/internal/samlsso/metadata.go (MetadataFetcher.Fetch retrieves the "+
+				"tenant-configured IdP metadata URL); backend/internal/samlsso/provider.go "+
+				"(assertion validation)",
+			"a tenant-created tenant_saml_configurations row, not a global environment variable",
+			GovernanceEnvironmentPerTenantConfig, "external_identity",
+		),
+		pendingProvider(
 			"cloudflare_turnstile", "Cloudflare Turnstile signup verification", "security_verification",
 			GovernanceBoundaryServiceProvider,
 			"Verify a signup request is not automated abuse.",

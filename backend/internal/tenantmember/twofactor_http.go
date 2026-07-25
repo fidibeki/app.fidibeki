@@ -344,6 +344,7 @@ func isTwoFactorDecisionError(err error) bool {
 		errors.Is(err, ErrTwoFactorAlreadyEnrolled) ||
 		errors.Is(err, ErrTwoFactorChallengeNotPending) ||
 		errors.Is(err, ErrTwoFactorPolicyBlocked) ||
+		errors.Is(err, ErrTwoFactorManagedByIdP) ||
 		errors.Is(err, ErrTwoFactorPolicyInvalid) ||
 		errors.Is(err, ErrRecentAuthenticationRequired) ||
 		errors.Is(err, ErrMemberActorInvalid) ||

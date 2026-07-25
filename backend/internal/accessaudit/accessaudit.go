@@ -36,6 +36,11 @@ const (
 	ResourceFeedbackAttachment = "feedback_attachment"
 	ResourceReplaySession      = "replay_session"
 	ResourcePrivacyExport      = "privacy_export"
+	// ResourceSSOConfiguration covers the organization's SAML SSO lifecycle:
+	// configuration, test, enablement, disablement, certificate rotation,
+	// break-glass, and login outcomes. Assertions and IdP-asserted attributes
+	// are never recorded, only the structured provenance of each event.
+	ResourceSSOConfiguration = "sso_configuration"
 )
 
 // DefaultDedupWindow bounds how many access events a single actor can

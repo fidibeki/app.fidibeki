@@ -29,11 +29,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 27 {
+		len(starter.Policies) != 28 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 8, Configurable: 3, ExternalControl: 3, DecisionRequired: 13,
+		Enforced: 8, Configurable: 3, ExternalControl: 4, DecisionRequired: 13,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -95,8 +95,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 76 {
-		t.Fatalf("migration table count = %d, want 76", len(migrated))
+	if len(migrated) != 80 {
+		t.Fatalf("migration table count = %d, want 80", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(
@@ -142,7 +142,8 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 		{
 			kind: RetentionProvider,
 			want: []string{
-				"cloudflare_turnstile", "customer_generic_webhook", "email_capture_filesystem",
+				"cloudflare_turnstile", "customer_generic_webhook",
+				"customer_saml_identity_provider", "email_capture_filesystem",
 				"google_gemini_api", "microsoft_teams_incoming_webhook",
 				"postgresql_runtime", "redis_asynq", "resend_transactional_email",
 				"s3_compatible_object_storage", "sentry_error_telemetry",

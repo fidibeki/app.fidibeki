@@ -23,6 +23,7 @@ var (
 	ErrMemberAlreadyRemoved         = errors.New("tenant member is already removed")
 	ErrMemberStatusInvalid          = errors.New("tenant member status is invalid")
 	ErrMemberActorInvalid           = errors.New("active tenant member actor is required")
+	ErrLocalLoginDisabled           = errors.New("local login is disabled by the organization's single sign-on policy")
 	ErrTwoFactorNotEnrolled         = errors.New("tenant member is not enrolled in two-factor authentication")
 	ErrTwoFactorAlreadyEnrolled     = errors.New("tenant member is already enrolled in two-factor authentication")
 	ErrTwoFactorCodeInvalid         = errors.New("two-factor code is invalid")
@@ -32,6 +33,9 @@ var (
 	// policy while the acting administrator is not itself recoverable, and
 	// removing an enrolment the workspace policy still demands.
 	ErrTwoFactorPolicyBlocked = errors.New("two-factor policy blocks this change")
+	// ErrTwoFactorManagedByIdP is returned when required single sign-on has
+	// delegated multi-factor assurance to the identity provider.
+	ErrTwoFactorManagedByIdP = errors.New("multi-factor authentication is managed by the identity provider")
 )
 
 // Two-factor session states. A session is created "pending" when the member is
@@ -69,6 +73,28 @@ type SessionSecurity struct {
 	TwoFactorState       string
 	PolicyRequired       bool
 	Enrolled             bool
+	// SAMLIdPEntityID and SAMLSubjectID identify the asserting identity
+	// provider and its subject. They are set only for a SAML session and are
+	// persisted for audit; neither is ever serialized to a client.
+	SAMLIdPEntityID string
+	SAMLSubjectID   string
+}
+
+// IsSAML reports whether an identity provider authenticated this session.
+// Such a session delegates multi-factor assurance to that provider and never
+// receives a Fidibeki-managed challenge.
+func (s SessionSecurity) IsSAML() bool {
+	return s.AuthenticationMethod == AuthenticationMethodSAML
+}
+
+// NormalizedForPersistence fills in the local default and drops identity
+// provider fields that would violate the sessions table's consistency check.
+func (s SessionSecurity) NormalizedForPersistence() SessionSecurity {
+	if !s.IsSAML() {
+		s.AuthenticationMethod = AuthenticationMethodLocal
+		s.SAMLIdPEntityID, s.SAMLSubjectID = "", ""
+	}
+	return s
 }
 
 // Requirement maps a session's state onto what the client must do next. A SAML
@@ -106,11 +132,14 @@ type TwoFactorEnrollment struct {
 	QRCodeSVG       string `json:"qr_code_svg"`
 }
 
-// TwoFactorPolicy is the organization-level setting.
+// TwoFactorPolicy is the organization-level setting. ManagedByIdP reports that
+// required single sign-on has taken multi-factor assurance out of Fidibeki's
+// hands, so the control is inert until local authentication is restored.
 type TwoFactorPolicy struct {
-	Policy    string     `json:"policy"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
-	UpdatedBy *string    `json:"updated_by,omitempty"`
+	Policy       string     `json:"policy"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy    *string    `json:"updated_by,omitempty"`
+	ManagedByIdP bool       `json:"managed_by_idp"`
 }
 
 // TwoFactorCompliance is one row of the administrator's compliance view. It
@@ -122,6 +151,11 @@ type TwoFactorCompliance struct {
 	Enrolled    bool       `json:"enrolled"`
 	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
 }
+
+// IsOwner reports whether this member is the workspace owner. Under Required
+// SSO the owner is the only member who keeps local login, as the audited
+// break-glass path.
+func (m Member) IsOwner() bool { return m.Role == "owner" }
 
 type MemberStatus string
 

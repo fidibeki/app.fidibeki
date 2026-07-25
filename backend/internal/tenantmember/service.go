@@ -3,7 +3,6 @@ package tenantmember
 import (
 	"context"
 	"errors"
-	"net"
 	"net/mail"
 	"net/url"
 	"regexp"
@@ -23,6 +22,7 @@ type MemberStore interface {
 	IsMemberEmailDomainAllowed(context.Context, db.Querier, string, string) (bool, error)
 	CreateMagicLink(context.Context, db.Querier, string, *string, string, []string, string, time.Time) error
 	ConsumeMagicLink(context.Context, db.Querier, string, string, string, string, string) (Member, SessionSecurity, error)
+	SSOMode(context.Context, db.Querier, string) (auth.SSOMode, error)
 	RequestMemberDomainVerification(context.Context, db.Querier, string, string, string, string, time.Time) (MemberDomain, error)
 	VerifyMemberDomain(context.Context, db.Querier, string, string) (MemberDomain, error)
 	RotateSession(context.Context, db.Querier, string, string, string, string, string) (Member, SessionSecurity, error)
@@ -73,7 +73,45 @@ func (s Service) RequestMagicLink(
 	if member.Status != MemberStatusActive {
 		return nil, nil
 	}
+	mode, err := s.Store.SSOMode(ctx, query, resolved.ID)
+	if err != nil {
+		return nil, err
+	}
+	// Required mode closes normal local member login. The workspace owner keeps
+	// it as the documented break-glass path for certificate expiry, IdP outage,
+	// and misconfiguration; the caller audits that use. Enforcing here rather
+	// than at the handler keeps every local-login entry point covered.
+	if mode == auth.SSOModeRequired && !member.IsOwner() {
+		return nil, ErrLocalLoginDisabled
+	}
 	return s.createLink(ctx, query, resolved, &member.ID, member.Email, nil)
+}
+
+// BreakGlassLogin reports whether a local magic link for this member is only
+// permitted because they are the workspace owner under Required SSO. Callers
+// audit a true result as a break-glass event.
+func (s Service) BreakGlassLogin(
+	ctx context.Context,
+	query db.Querier,
+	resolved tenant.Tenant,
+	rawEmail string,
+) (Member, bool, error) {
+	emailAddress, err := normalizeEmail(rawEmail)
+	if err != nil {
+		return Member{}, false, nil
+	}
+	member, err := s.Store.FindMemberByEmail(ctx, query, resolved.ID, emailAddress)
+	if errors.Is(err, ErrMemberNotFound) {
+		return Member{}, false, nil
+	}
+	if err != nil {
+		return Member{}, false, err
+	}
+	mode, err := s.Store.SSOMode(ctx, query, resolved.ID)
+	if err != nil {
+		return Member{}, false, err
+	}
+	return member, mode == auth.SSOModeRequired && member.IsOwner(), nil
 }
 
 func (s Service) Invite(
@@ -310,18 +348,10 @@ func (s Service) Logout(ctx context.Context, query db.Querier, tenantID, token s
 }
 
 func (s Service) tokenURL(slug, path, token string) (string, error) {
-	base, err := url.Parse(s.PublicBaseURL)
-	if err != nil || !base.IsAbs() || base.Host == "" {
-		return "", errors.New("public base URL is invalid")
+	base, err := tenant.PublicURL(s.PublicBaseURL, s.BaseDomain, slug, path)
+	if err != nil {
+		return "", err
 	}
-	_, port, _ := net.SplitHostPort(base.Host)
-	host := slug + "." + s.BaseDomain
-	if port != "" {
-		host = net.JoinHostPort(host, port)
-	}
-	base.Host = host
-	base.Path = path
-	base.RawQuery = ""
 	base.Fragment = url.Values{"token": []string{token}}.Encode()
 	return base.String(), nil
 }
