@@ -140,36 +140,36 @@ useHead(() => ({
 </template>
 
 <style scoped>
-.privacy-page { min-height: 100vh; background: #f5f7f6; color: #18201f; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-.privacy-brand { display: flex; min-height: 62px; align-items: center; gap: 9px; padding: 0 max(20px, calc((100vw - 760px) / 2)); background: #fff; border-bottom: 1px solid #dce3e1; }
-.privacy-brand > span { display: grid; width: 30px; height: 30px; place-items: center; background: #087f73; color: #fff; border-radius: 5px; font-size: 13px; font-weight: 850; }
+.privacy-page { min-height: 100vh; background: var(--canvas); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+.privacy-brand { display: flex; min-height: 62px; align-items: center; gap: 9px; padding: 0 max(20px, calc((100vw - 760px) / 2)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-brand > span { display: grid; width: 30px; height: 30px; place-items: center; background: var(--teal-fill); color: var(--on-accent); border-radius: 5px; font-size: 13px; font-weight: 850; }
 .privacy-brand b { font-size: 14px; }
 main { width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 36px; }
-.privacy-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid #dce3e1; }
-.privacy-heading p { margin: 0 0 8px; color: #087f73; font-size: 11px; font-weight: 800; }
+.privacy-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.privacy-heading p { margin: 0 0 8px; color: var(--teal); font-size: 11px; font-weight: 800; }
 .privacy-heading h1 { max-width: 620px; margin: 0 0 10px; font-size: clamp(22px, 4vw, 32px); line-height: 1.2; }
-.privacy-heading div > span { color: #66736f; font-size: 11px; }
-.privacy-status { flex: 0 0 auto; padding: 5px 8px; background: #e7efed; color: #53615d; border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: capitalize; }
-.privacy-status[data-status='completed'] { background: #def4ec; color: #167d68; }
-.privacy-status[data-status='failed'], .privacy-status[data-status='expired'] { background: #fce8ea; color: #b42335; }
-.privacy-result { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin-top: 30px; padding: 20px; background: #fff; border: 1px solid #d4dcda; border-radius: 6px; }
-.privacy-result > svg { color: #087f73; }
+.privacy-heading div > span { color: var(--muted); font-size: 11px; }
+.privacy-status { flex: 0 0 auto; padding: 5px 8px; background: var(--surface-soft); color: var(--muted); border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: capitalize; }
+.privacy-status[data-status='completed'] { background: var(--teal-soft); color: var(--teal); }
+.privacy-status[data-status='failed'], .privacy-status[data-status='expired'] { background: var(--red-soft); color: var(--red); }
+.privacy-result { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin-top: 30px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.privacy-result > svg { color: var(--teal); }
 .privacy-result h2, .privacy-security h2 { margin: 1px 0 7px; font-size: 14px; }
-.privacy-result p, .privacy-security p { margin: 0; color: #586662; font-size: 12px; line-height: 1.6; }
-.privacy-result .privacy-review { margin-top: 10px; padding: 9px 10px; background: #fff9e9; color: #765d1d; border: 1px solid #eadcad; border-radius: 4px; font-size: 10px; }
-.privacy-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; margin-top: 16px; padding: 0 15px; background: #087f73; color: #fff; border: 1px solid #087f73; border-radius: 5px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
-.privacy-button--secondary { background: #fff; color: #087f73; }
+.privacy-result p, .privacy-security p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.privacy-result .privacy-review { margin-top: 10px; padding: 9px 10px; background: var(--amber-soft); color: var(--amber-ink); border: 1px solid var(--amber-line); border-radius: 4px; font-size: 10px; }
+.privacy-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; margin-top: 16px; padding: 0 15px; background: var(--teal-fill); color: var(--on-accent); border: 1px solid var(--teal); border-radius: 5px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.privacy-button--secondary { background: var(--surface); color: var(--teal); }
 .privacy-button:disabled { cursor: not-allowed; opacity: .55; }
-.privacy-security { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; margin-top: 24px; padding: 15px 2px; border-top: 1px solid #dce3e1; }
-.privacy-security > svg { color: #66736f; }
+.privacy-security { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; margin-top: 24px; padding: 15px 2px; border-top: 1px solid var(--line); }
+.privacy-security > svg { color: var(--muted); }
 .privacy-security h2 { font-size: 12px; }
 .privacy-security p { font-size: 10px; }
-.privacy-error { display: flex; align-items: center; gap: 8px; margin: 20px 0 -10px; padding: 10px; background: #fce8ea; color: #b42335; border-radius: 4px; font-size: 10px; }
+.privacy-error { display: flex; align-items: center; gap: 8px; margin: 20px 0 -10px; padding: 10px; background: var(--red-soft); color: var(--red); border-radius: 4px; font-size: 10px; }
 .privacy-state { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 10px; text-align: center; }
 .privacy-state h1 { margin: 0; font-size: 22px; }
-.privacy-state p { max-width: 360px; margin: 0; color: #66736f; font-size: 12px; line-height: 1.5; }
-.privacy-spinner { width: 22px; height: 22px; border: 2px solid #d2ddda; border-top-color: #087f73; border-radius: 50%; animation: spin .7s linear infinite; }
-.privacy-page > footer { padding: 20px; color: #77827f; border-top: 1px solid #dce3e1; font-size: 10px; text-align: center; }
+.privacy-state p { max-width: 360px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.privacy-spinner { width: 22px; height: 22px; border: 2px solid var(--line); border-top-color: var(--teal); border-radius: 50%; animation: spin .7s linear infinite; }
+.privacy-page > footer { padding: 20px; color: var(--muted); border-top: 1px solid var(--line); font-size: 10px; text-align: center; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 600px) {
   main { padding-top: 30px; }

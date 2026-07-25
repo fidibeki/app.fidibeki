@@ -328,7 +328,7 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
 }
 .profile-body > aside {
   padding: 24px;
-  background: #f8faf9;
+  background: var(--surface-subtle);
   border-right: 1px solid var(--line);
 }
 .profile-avatar {
@@ -393,7 +393,7 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   min-height: 38px;
 }
 .profile-preference > .app-input:disabled {
-  background: #eef1f0;
+  background: var(--surface-soft);
   color: var(--muted);
   border-color: var(--line);
   cursor: not-allowed;
@@ -478,7 +478,7 @@ useHead({ title: computed(() => t('profile.pageTitle')) })
   justify-content: flex-end;
   gap: 16px;
   padding: 12px 24px;
-  background: #f8faf9;
+  background: var(--surface-subtle);
   border-top: 1px solid var(--line);
 }
 .profile-form-footer p {

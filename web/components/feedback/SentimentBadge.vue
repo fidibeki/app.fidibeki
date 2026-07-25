@@ -66,10 +66,10 @@ const detail = computed(() => classification.value === 'unscored'
 }
 .sentiment-badge:hover,
 .sentiment-badge:focus { --sentiment-detail-visible: 1; outline: none; }
-.sentiment-badge:focus-visible { box-shadow: 0 0 0 2px rgb(8 127 115 / 24%); }
-.sentiment-negative { background: var(--red-soft); color: #8f2732; border-color: #efc2c6; }
+.sentiment-badge:focus-visible { box-shadow: 0 0 0 2px var(--accent-glow); }
+.sentiment-negative { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
 .sentiment-negative::before { background: var(--red); }
-.sentiment-neutral { background: #f1f3f2; color: #53605c; }
-.sentiment-positive { background: var(--green-soft); color: #175f40; border-color: #b8dfca; }
+.sentiment-neutral { background: var(--surface-subtle); color: var(--muted); }
+.sentiment-positive { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
 .sentiment-positive::before { background: var(--green); }
 </style>

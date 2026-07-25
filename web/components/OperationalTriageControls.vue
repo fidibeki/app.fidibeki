@@ -125,21 +125,23 @@ function onTagChange(tagID: string, event: Event) {
 .triage-field { display: grid; gap: 7px; margin: 0 0 13px; padding: 0; border: 0; }
 .triage-field > span,
 .triage-field legend { display: flex; align-items: center; gap: 5px; padding: 0; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.triage-field select { width: 100%; height: 34px; padding: 0 9px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
+.triage-field select { width: 100%; height: 34px; padding: 0 9px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; }
 .triage-field > .triage-assignee-current { display: flex; min-height: 30px; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 10px; font-weight: 400; text-transform: none; }
 .triage-assignee-current i,
 .triage-readonly-avatar i { display: block; width: 24px; height: 24px; flex: 0 0 24px; overflow: hidden; border-radius: 50%; font-size: 8px; font-style: normal; }
 .triage-priority-control { display: grid; min-height: 34px; grid-template-columns: repeat(4, minmax(0, 1fr)) 32px; }
-.triage-priority-control button { min-width: 0; padding: 0 4px; background: #fff; color: var(--muted); border: 1px solid var(--line); border-right: 0; font-size: 9px; font-weight: 750; }
+.triage-priority-control button { min-width: 0; padding: 0 4px; background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-right: 0; font-size: 9px; font-weight: 750; }
 .triage-priority-control button:first-child { border-radius: 4px 0 0 4px; }
 .triage-priority-control button:last-child { border-right: 1px solid var(--line); border-radius: 0 4px 4px 0; }
-.triage-priority-control button[aria-pressed='true'] { position: relative; z-index: 1; color: #fff; border-color: #315b52; background: #315b52; }
+/* Selected priority chips are solid fills carrying --on-accent text, so they
+   hold their value across themes rather than following the status tokens. */
+.triage-priority-control button[aria-pressed='true'] { position: relative; z-index: 1; color: var(--on-accent); border-color: #315b52; background: #315b52; }
 .triage-priority-control button[data-priority='urgent'][aria-pressed='true'] { border-color: #a63e4a; background: #a63e4a; }
 .triage-priority-control button[data-priority='high'][aria-pressed='true'] { border-color: #bd641f; background: #bd641f; }
 .triage-priority-control button[data-priority='medium'][aria-pressed='true'] { border-color: #8a711d; background: #8a711d; }
 .triage-priority-control .triage-clear { display: grid; place-items: center; color: var(--muted); }
 .triage-tag-picker > div { display: flex; flex-wrap: wrap; gap: 6px; }
-.triage-tag-picker label { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 7px; background: #fff; color: var(--ink-soft); border: 1px solid; border-radius: 4px; font-size: 9px; }
+.triage-tag-picker label { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 7px; background: var(--surface); color: var(--ink-soft); border: 1px solid; border-radius: 4px; font-size: 9px; }
 .triage-tag-picker input { width: 13px; height: 13px; margin: 0; accent-color: var(--teal); }
 .triage-tag-picker label > span { width: 7px; height: 7px; border-radius: 50%; }
 .triage-empty { color: var(--muted); font-size: 10px; }

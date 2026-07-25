@@ -205,7 +205,7 @@ function setLogoReset(enabled: boolean) {
 .appearance-color code { min-width: 0; overflow: hidden; padding: 0 8px; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .appearance-color button { display: grid; width: 34px; height: 36px; place-items: center; background: transparent; color: var(--muted); border: 0; border-left: 1px solid var(--line); }
 .appearance-color[data-invalid='true'],
-.appearance-editor :is(input, select)[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
+.appearance-editor :is(input, select)[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-glow); }
 .appearance-field-error { color: var(--red); font-size: 9px; font-weight: 650; line-height: 1.4; }
 .appearance-accent-preview { display: flex; min-height: 54px; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
 .appearance-accent-preview > span { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 4px; font-size: 12px; font-weight: 800; }

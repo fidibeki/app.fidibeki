@@ -109,7 +109,7 @@ function reset() {
 .decision-diagnostics header span { display: inline-flex; align-items: center; gap: 5px; color: var(--amber); font-size: 9px; font-weight: 750; }
 .decision-diagnostics header span[data-eligible='true'] { color: var(--green); }
 .decision-diagnostics header button { display: grid; width: 30px; height: 30px; place-items: center; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; }
-.decision-meter { position: relative; height: 7px; overflow: visible; background: #e5eae8; border-radius: 2px; }
+.decision-meter { position: relative; height: 7px; overflow: visible; background: var(--surface-soft); border-radius: 2px; }
 .decision-meter > span { display: block; height: 100%; background: var(--teal); border-radius: inherit; transition: width .16s ease; }
 .decision-meter small { position: absolute; right: 0; bottom: 10px; color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
 .decision-signal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }

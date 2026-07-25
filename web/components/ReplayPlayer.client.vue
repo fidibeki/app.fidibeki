@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.replay-player { position: relative; min-width: 0; min-height: 430px; overflow: hidden; background: #edf2f0; }
+.replay-player { position: relative; min-width: 0; min-height: 430px; overflow: hidden; background: var(--surface-soft); }
 .replay-player-state { display: grid; min-height: 430px; place-items: center; align-content: center; gap: 9px; padding: 28px; color: var(--muted); text-align: center; }
 .replay-player-state h3, .replay-player-state p { margin: 0; }
 .replay-player-state h3 { color: var(--ink); font-size: 13px; }
@@ -180,7 +180,7 @@ onBeforeUnmount(() => {
 .replay-player-target { display: grid; min-width: 0; min-height: 430px; place-items: center; padding: 14px; overflow: hidden; }
 .replay-player-count { position: absolute; top: 9px; right: 9px; z-index: 3; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; background: rgb(255 255 255 / 90%); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
 .replay-player-target :deep(.rr-player) { float: none; box-shadow: none; }
-.replay-player-target :deep(.rr-controller) { background: #fff; }
+.replay-player-target :deep(.rr-controller) { background: var(--surface); }
 .replay-player--fullscreen { display: flex; min-height: 0; background: #000; }
 .replay-player--fullscreen .replay-player-target { flex: 1; min-height: 0; height: 100%; }
 .replay-player--fullscreen .replay-player-target :deep(.rr-player) { max-width: 100%; max-height: 100%; }

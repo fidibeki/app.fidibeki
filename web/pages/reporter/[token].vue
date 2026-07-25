@@ -238,7 +238,7 @@ useHead(() => ({
 .reporter-clarification textarea:focus-visible {
   border-color: var(--teal);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(8 127 115 / 10%);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .reporter-clarification form p[role='alert'] {

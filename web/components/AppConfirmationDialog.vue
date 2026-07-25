@@ -80,8 +80,8 @@ function cancel(pending = false) {
   border-radius: 4px;
   font-size: 10px;
 }
-.app-confirmation__action { background: var(--red); color: #fff; border-color: var(--red); }
-.app-confirmation__action:hover:not(:disabled) { background: #982f3a; border-color: #982f3a; }
+.app-confirmation__action { background: var(--red-fill); color: var(--on-accent); border-color: var(--red-fill); }
+.app-confirmation__action:hover:not(:disabled) { background: var(--red-fill); border-color: var(--red-fill); }
 .app-confirmation__spinner { animation: app-confirmation-spin 800ms linear infinite; }
 @keyframes app-confirmation-spin { to { transform: rotate(360deg); } }
 

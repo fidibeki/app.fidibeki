@@ -183,7 +183,7 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, 0.65fr)) minmax(260px, 1.45fr);
   margin-bottom: 18px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
 }
@@ -220,7 +220,7 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
 .dashboard-projects header a { display: flex; align-items: center; gap: 4px; color: var(--teal); font-size: 11px; font-weight: 750; text-decoration: none; }
 .dashboard-work-row { display: grid; min-height: 58px; grid-template-columns: 5px 38px minmax(220px, 1fr) 94px 110px 44px 18px; align-items: center; gap: 10px; padding: 0 14px 0 0; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
 .dashboard-work-row:last-child { border-bottom: 0; }
-.dashboard-work-row:hover { background: #f7faf9; }
+.dashboard-work-row:hover { background: var(--surface-subtle); }
 .dashboard-priority { align-self: stretch; background: var(--line); }
 .dashboard-priority[data-tone='critical'],
 .dashboard-priority[data-tone='failed'] { background: var(--red); }
@@ -236,7 +236,7 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
 
 .dashboard-projects > a { display: grid; min-height: 62px; grid-template-columns: 34px minmax(180px, 1fr) minmax(190px, auto) 18px; align-items: center; gap: 12px; padding: 0 18px; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
 .dashboard-projects > a:last-child { border-bottom: 0; }
-.dashboard-projects > a:hover { background: #f7faf9; }
+.dashboard-projects > a:hover { background: var(--surface-subtle); }
 .dashboard-project-mark { display: grid; width: 30px; height: 30px; place-items: center; background: var(--teal-soft); color: var(--teal); border-radius: 5px; font-size: 11px; font-weight: 800; }
 .dashboard-projects a p { display: flex; min-width: 0; flex-direction: column; gap: 3px; margin: 0; }
 .dashboard-projects a p b { font-size: 12px; }

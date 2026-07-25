@@ -66,14 +66,14 @@ useHead(() => ({ title: t('notifications.pageTitle') }))
 </template>
 
 <style scoped>
-.notifications-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 5px; font-size: 11px; }
+.notifications-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid var(--red-line); border-radius: 5px; font-size: 11px; }
 .notifications-empty > div { display: grid; max-width: 420px; justify-items: center; gap: 8px; }
 .notifications-empty h2, .notifications-empty p { margin: 0; }
 .notifications-list { overflow: hidden; }
 .notifications-list > header,
 .notifications-list > button { display: grid; grid-template-columns: minmax(260px, 1.5fr) minmax(190px, 1fr) 150px 24px; align-items: center; gap: 16px; padding: 0 16px; }
 .notifications-list > header { min-height: 38px; background: var(--surface-soft); color: var(--muted); border-bottom: 1px solid var(--line); font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.notifications-list > button { width: 100%; min-height: 68px; background: #fff; color: var(--ink-soft); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+.notifications-list > button { width: 100%; min-height: 68px; background: var(--surface); color: var(--ink-soft); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
 .notifications-list > button:last-child { border-bottom: 0; }
 .notifications-list > button:hover { background: var(--surface-soft); }
 .notifications-list > button[data-unread='true'] { box-shadow: inset 3px 0 0 var(--teal); }
@@ -86,7 +86,7 @@ useHead(() => ({ title: t('notifications.pageTitle') }))
 .notifications-list time { color: var(--muted); font-size: 9px; }
 .notifications-state { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .notifications-state > i { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; overflow: hidden; background: var(--surface-soft); color: var(--muted); border: 1px solid var(--line); border-radius: 50%; font-size: 8px; font-style: normal; }
-button[data-unread='true'] .notifications-state > i { background: var(--teal-soft); color: var(--teal); border-color: #9ed6ca; }
+button[data-unread='true'] .notifications-state > i { background: var(--teal-soft); color: var(--teal); border-color: var(--teal-line); }
 .notifications-state > span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 @media (max-width: 760px) { .notifications-list > header { display: none; } .notifications-list > button { grid-template-columns: minmax(0, 1fr) 20px; gap: 8px; padding: 12px; } .notifications-list > button > span:not(.notifications-state), .notifications-list time { grid-column: 1; margin-left: 38px; } .notifications-list > button > svg { grid-column: 2; grid-row: 1 / 4; } }
 </style>

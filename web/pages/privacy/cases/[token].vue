@@ -102,31 +102,31 @@ useHead(() => ({
 </template>
 
 <style scoped>
-.privacy-case-page { min-height: 100vh; background: #f5f7f6; color: #18201f; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-.privacy-case-brand { display: flex; min-height: 62px; align-items: center; gap: 9px; padding: 0 max(20px, calc((100vw - 760px) / 2)); background: #fff; border-bottom: 1px solid #dce3e1; }
-.privacy-case-brand > span { display: grid; width: 30px; height: 30px; place-items: center; background: #087f73; color: #fff; border-radius: 5px; font-size: 13px; font-weight: 850; }
+.privacy-case-page { min-height: 100vh; background: var(--canvas); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+.privacy-case-brand { display: flex; min-height: 62px; align-items: center; gap: 9px; padding: 0 max(20px, calc((100vw - 760px) / 2)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.privacy-case-brand > span { display: grid; width: 30px; height: 30px; place-items: center; background: var(--teal-fill); color: var(--on-accent); border-radius: 5px; font-size: 13px; font-weight: 850; }
 .privacy-case-brand b { font-size: 14px; }
 main { width: min(760px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 36px; }
-.privacy-case-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid #dce3e1; }
-.privacy-case-heading p { margin: 0 0 8px; color: #087f73; font-size: 11px; font-weight: 800; }
+.privacy-case-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.privacy-case-heading p { margin: 0 0 8px; color: var(--teal); font-size: 11px; font-weight: 800; }
 .privacy-case-heading h1 { margin: 0 0 10px; font-size: clamp(22px, 4vw, 32px); line-height: 1.2; }
-.privacy-case-heading div > span { color: #66736f; font-size: 11px; }
-.privacy-case-status { flex: 0 0 auto; padding: 5px 8px; background: #def4ec; color: #167d68; border-radius: 4px; font-size: 9px; font-weight: 800; }
-.privacy-case-result { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin-top: 30px; padding: 20px; background: #fff; border: 1px solid #d4dcda; border-radius: 6px; }
-.privacy-case-result > svg { color: #087f73; }
+.privacy-case-heading div > span { color: var(--muted); font-size: 11px; }
+.privacy-case-status { flex: 0 0 auto; padding: 5px 8px; background: var(--teal-soft); color: var(--teal); border-radius: 4px; font-size: 9px; font-weight: 800; }
+.privacy-case-result { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin-top: 30px; padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.privacy-case-result > svg { color: var(--teal); }
 .privacy-case-result h2 { margin: 1px 0 7px; font-size: 14px; }
-.privacy-case-result p, .privacy-case-notice p { margin: 0; color: #586662; font-size: 12px; line-height: 1.6; }
-.privacy-case-result dl { display: grid; gap: 5px; margin: 16px 0 0; color: #66736f; font-size: 10px; }
+.privacy-case-result p, .privacy-case-notice p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.privacy-case-result dl { display: grid; gap: 5px; margin: 16px 0 0; color: var(--muted); font-size: 10px; }
 .privacy-case-result dt { font-weight: 650; }
-.privacy-case-notice { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; margin-top: 24px; padding: 15px 2px; border-top: 1px solid #dce3e1; }
-.privacy-case-notice > svg { color: #66736f; }
+.privacy-case-notice { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; margin-top: 24px; padding: 15px 2px; border-top: 1px solid var(--line); }
+.privacy-case-notice > svg { color: var(--muted); }
 .privacy-case-notice p { font-size: 10px; }
 .privacy-case-state { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 10px; text-align: center; }
 .privacy-case-state h1 { margin: 0; font-size: 22px; }
-.privacy-case-state p { max-width: 380px; margin: 0; color: #66736f; font-size: 12px; line-height: 1.5; }
-.privacy-case-spinner { width: 22px; height: 22px; border: 2px solid #d2ddda; border-top-color: #087f73; border-radius: 50%; animation: spin .7s linear infinite; }
-.privacy-case-button { min-height: 38px; padding: 0 15px; background: #087f73; color: #fff; border: 1px solid #087f73; border-radius: 5px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
-.privacy-case-page > footer { padding: 20px; color: #77827f; border-top: 1px solid #dce3e1; font-size: 10px; text-align: center; }
+.privacy-case-state p { max-width: 380px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.privacy-case-spinner { width: 22px; height: 22px; border: 2px solid var(--line); border-top-color: var(--teal); border-radius: 50%; animation: spin .7s linear infinite; }
+.privacy-case-button { min-height: 38px; padding: 0 15px; background: var(--teal-fill); color: var(--on-accent); border: 1px solid var(--teal); border-radius: 5px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.privacy-case-page > footer { padding: 20px; color: var(--muted); border-top: 1px solid var(--line); font-size: 10px; text-align: center; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 600px) {
   main { padding-top: 30px; }

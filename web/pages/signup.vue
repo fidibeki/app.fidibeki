@@ -258,7 +258,8 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 </template>
 
 <style scoped>
-.signup-page { display: grid; min-height: 100vh; grid-template-columns: minmax(320px, .82fr) minmax(540px, 1.18fr); background: #fff; }
+.signup-page { display: grid; min-height: 100vh; grid-template-columns: minmax(320px, .82fr) minmax(540px, 1.18fr); background: var(--surface); }
+/* Fixed dark brand panel in both themes, mirroring .auth-context. */
 .signup-context { display: flex; min-height: 100vh; flex-direction: column; justify-content: space-between; gap: 48px; padding: clamp(28px, 4vw, 58px); background: #17231f; color: #f5f8f7; }
 .signup-brand { display: inline-flex; width: fit-content; }
 .signup-brand img { display: block; width: 144px; height: auto; }
@@ -267,12 +268,12 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 .signup-context-copy h1 { max-width: 510px; font-size: clamp(34px, 4.2vw, 58px); line-height: 1.02; }
 .signup-context-copy > p:last-child { max-width: 430px; margin-top: 16px; color: #b9c7c2; font-size: 14px; line-height: 1.65; }
 .workspace-locator { max-width: 430px; }
-.workspace-locator > label { display: block; margin-bottom: 8px; color: #c8d3cf; font-size: 11px; font-weight: 700; }
+.workspace-locator > label { display: block; margin-bottom: 8px; color: var(--line-strong); font-size: 11px; font-weight: 700; }
 .workspace-locator > div { display: flex; min-height: 42px; align-items: center; overflow: hidden; background: #26332f; border: 1px solid #4a5a54; border-radius: 5px; }
 .workspace-locator input { min-width: 80px; flex: 1; padding: 0 0 0 11px; background: transparent; color: #fff; border: 0; outline: 0; }
-.workspace-locator span { max-width: 190px; overflow: hidden; color: #91a29c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-locator button { display: grid; width: 42px; height: 40px; margin-left: 7px; place-items: center; background: #fff; color: #17231f; border: 0; }
-.workspace-locator > p { margin-top: 7px; color: #f4aeb5; font-size: 10px; }
+.workspace-locator span { max-width: 190px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-locator button { display: grid; width: 42px; height: 40px; margin-left: 7px; place-items: center; background: var(--surface); color: #17231f; border: 0; }
+.workspace-locator > p { margin-top: 7px; color: var(--red-line); font-size: 10px; }
 .signup-panel { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 42px clamp(28px, 6vw, 88px); }
 .signup-form, .signup-confirmation { width: min(650px, 100%); }
 .signup-form > header { margin-bottom: 25px; }
@@ -284,8 +285,8 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 .signup-field-grid .app-input { width: 100%; min-width: 0; min-height: 42px; }
 .signup-field-grid label > small { color: var(--red); font-size: 9px; font-weight: 600; }
 .signup-slug-field { margin-top: 13px; }
-.signup-slug-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
-.signup-slug-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgb(8 127 115 / 10%); }
+.signup-slug-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; }
+.signup-slug-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px var(--accent-glow); }
 .signup-slug-control[data-invalid='true'] { border-color: var(--red); }
 .signup-slug-control input { min-width: 80px; flex: 1; padding: 0 0 0 10px; border: 0; outline: 0; }
 .signup-slug-control b { max-width: 55%; padding: 0 10px; overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -294,7 +295,7 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 .signup-plans legend { margin-bottom: 7px; }
 .signup-plan-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .signup-plan-grid > label { display: flex; min-height: 83px; flex-direction: column; justify-content: space-between; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
-.signup-plan-grid > label:hover { background: #f8faf9; border-color: var(--line-strong); }
+.signup-plan-grid > label:hover { background: var(--surface-subtle); border-color: var(--line-strong); }
 .signup-plan-grid > label[data-selected='true'] { background: var(--teal-soft); border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); }
 .signup-plan-grid input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .signup-plan-grid label > span { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
@@ -303,7 +304,7 @@ useHead({ title: computed(() => t('auth.signup.pageTitle')) })
 .signup-plan-grid strong small, .signup-plan-grid label > small { color: var(--muted); font-size: 8px; font-weight: 600; }
 .signup-plan-state { display: flex; min-height: 83px; align-items: center; justify-content: center; gap: 8px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; font-size: 11px; }
 .signup-plan-state--error { color: var(--red); }
-.signup-plan-state button { display: grid; width: 30px; height: 30px; place-items: center; background: #fff; border: 1px solid var(--line); border-radius: 4px; }
+.signup-plan-state button { display: grid; width: 30px; height: 30px; place-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; }
 .signup-submit { width: 100%; min-height: 44px; margin-top: 14px; }
 .signup-challenge-retry { width: 100%; margin-top: 10px; }
 .signup-confirmation > svg { color: var(--green); margin-bottom: 24px; }

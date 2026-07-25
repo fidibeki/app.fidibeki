@@ -58,6 +58,6 @@ function closeFromBackdrop(event: MouseEvent) {
 }
 
 .app-dialog::backdrop {
-  background: rgb(10 20 17 / 42%);
+  background: var(--scrim);
 }
 </style>

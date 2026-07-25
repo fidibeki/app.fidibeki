@@ -123,7 +123,8 @@ watch(
         <span class="sr-only">{{ t('navigation.openNavigation') }}</span>
       </button>
       <NuxtLink :to="workspaceHome" class="app-brand" :aria-label="t('navigation.workspaceLabel')">
-        <img src="/brand/fidibeki-color.png" alt="Fidibeki" />
+        <img class="app-brand-light" src="/brand/fidibeki-color.png" alt="Fidibeki" />
+        <img class="app-brand-dark" src="/brand/fidibeki-white.png" alt="Fidibeki" />
       </NuxtLink>
       <NuxtLink class="app-tenant-switcher" to="/settings" :title="t('navigation.workspaceSettings')">
         <span><WorkspaceMark :tenant-id="tenant?.id || ''" :name="tenant?.name" :logo-version="tenant?.logo_version" /></span>
@@ -137,6 +138,7 @@ watch(
       <NuxtLink v-if="tenant?.status === 'trial'" to="/billing" class="app-trial-status">
         <i /> {{ trialLabel }}
       </NuxtLink>
+      <ThemeToggle />
       <details ref="accountMenu" class="app-account-menu">
         <summary>
           <i class="app-account-avatar"><MemberAvatar :member-id="member?.id || ''" :name="member?.name" :email="member?.email" :avatar-version="member?.avatar_version" /></i>

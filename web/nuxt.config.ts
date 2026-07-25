@@ -15,7 +15,20 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   app: {
     head: {
+      meta: [
+        { name: 'theme-color', content: '#f5f7f6', media: '(prefers-color-scheme: light)' },
+        { name: 'theme-color', content: '#0b1210', media: '(prefers-color-scheme: dark)' },
+      ],
       link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+      script: [
+        {
+          // Applies the persisted or system theme before first paint to avoid a
+          // flash of the wrong color scheme. Uses the same storage key as the
+          // marketing site; see useTheme.ts on why that is per-origin.
+          innerHTML: `(function(){try{var t=localStorage.getItem('fidibeki-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='light'}})()`,
+          tagPriority: 'critical',
+        },
+      ],
     },
   },
   modules: ['@nuxtjs/i18n'],

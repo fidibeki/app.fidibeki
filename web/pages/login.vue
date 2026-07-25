@@ -188,8 +188,8 @@ useHead({ title: computed(() => t('auth.login.pageTitle')) })
 .auth-workspace-state > p:not(.app-eyebrow) { margin-bottom: 22px; }
 .auth-signup-link { margin-top: 20px !important; text-align: center; }
 .auth-signup-link a { color: var(--teal); font-weight: 750; }
-.locator-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; margin-top: 6px; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
-.locator-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgb(8 127 115 / 10%); }
+.locator-control { display: flex; min-height: 42px; align-items: center; overflow: hidden; margin-top: 6px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; }
+.locator-control:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px var(--accent-glow); }
 .locator-control[data-invalid='true'] { border-color: var(--red); }
 .locator-control input { min-width: 80px; flex: 1; padding: 0 0 0 10px; border: 0; outline: 0; }
 .locator-control b { max-width: 55%; padding: 0 10px; overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
