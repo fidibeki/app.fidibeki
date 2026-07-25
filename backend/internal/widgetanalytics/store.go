@@ -22,7 +22,25 @@ type Store struct{}
 var (
 	errEventIDConflict         = errors.New("widget funnel event ID conflicts with another event")
 	ErrAnalyticsFilterNotFound = errors.New("analytics filter not found")
+	// ErrMatchedEventRequired reports a request-data violation: a non-matched funnel event
+	// arrived without the "matched" event that opens its page-view funnel. Callers must surface
+	// it as a validation failure and never as an infrastructure error — the widget outbox treats
+	// 5xx as retryable, so a 503 here makes it replay the same unsatisfiable batch forever.
+	ErrMatchedEventRequired = errors.New("widget funnel event requires a matching matched event")
 )
+
+// MatchedEventRequiredError locates the offending event within the submitted batch so the HTTP
+// layer can name it in the same events[index] field format every other validation error uses.
+type MatchedEventRequiredError struct {
+	Index   int
+	EventID string
+}
+
+func (e *MatchedEventRequiredError) Error() string {
+	return fmt.Sprintf("widget funnel event %d (%s) requires a matching matched event", e.Index, e.EventID)
+}
+
+func (e *MatchedEventRequiredError) Unwrap() error { return ErrMatchedEventRequired }
 
 const (
 	maximumAnalyticsBreakdownRows = 100
@@ -51,7 +69,7 @@ func (Store) InsertEvents(
 	if err := lockAnalyticsProject(ctx, query, tenantID, projectID); err != nil {
 		return IngestResult{}, err
 	}
-	for _, event := range events {
+	for index, event := range events {
 		if event.FeedbackID != nil {
 			err := privacy.EnsureFeedbackProcessingAllowed(
 				ctx, query, event.TenantID, *event.FeedbackID, privacy.PurposeAnalytics,
@@ -65,6 +83,9 @@ func (Store) InsertEvents(
 			}
 		}
 		inserted, err := insertEvent(ctx, query, event, event.EventType != EventMatched)
+		if errors.Is(err, ErrMatchedEventRequired) {
+			return IngestResult{}, &MatchedEventRequiredError{Index: index, EventID: event.EventID}
+		}
 		if err != nil {
 			return IngestResult{}, err
 		}
@@ -169,7 +190,7 @@ func insertEvent(
 			return false, fmt.Errorf("check widget funnel matched event: %w", err)
 		}
 		if !matched {
-			return false, errors.New("widget funnel event requires a matching matched event")
+			return false, ErrMatchedEventRequired
 		}
 	}
 	var insertedID string

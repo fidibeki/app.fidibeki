@@ -127,6 +127,19 @@ func (h *PublicHTTPHandler) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.options.Store.InsertEvents(r.Context(), tx, values)
+	var outOfOrder *MatchedEventRequiredError
+	if errors.As(err, &outOfOrder) {
+		// A funnel event whose "matched" opener never arrived is bad request data, not a failing
+		// dependency. Reporting it as 5xx made the widget outbox classify the batch as retryable
+		// and replay it every five seconds for as long as the events stayed within their 24-hour
+		// retention window, so it must stay a non-retryable validation response.
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"widget analytics events are invalid", []map[string]string{{
+				"field":   fmt.Sprintf("events[%d].event_type", outOfOrder.Index),
+				"message": "must follow a matched event for the same rule, visitor, and page view",
+			}})
+		return
+	}
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return

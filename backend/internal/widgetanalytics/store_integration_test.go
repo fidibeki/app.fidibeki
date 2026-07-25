@@ -776,9 +776,21 @@ func assertEventWithoutMatchedIsRejected(
 	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, configuration.TenantID); err != nil {
 		t.Fatalf("set unmatched impression tenant: %v", err)
 	}
-	if _, err := store.InsertEvents(ctx, tx, values); err == nil {
+	_, err = store.InsertEvents(ctx, tx, values)
+	if err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("impression without matched event succeeded")
+	}
+	// The typed error is what keeps the HTTP layer on 422 instead of a retryable 503.
+	var outOfOrder *MatchedEventRequiredError
+	if !errors.As(err, &outOfOrder) || outOfOrder.Index != 0 ||
+		outOfOrder.EventID != "00000000-0000-4000-8000-000000000031" {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("unmatched impression error = %v, want *MatchedEventRequiredError for index 0", err)
+	}
+	if !errors.Is(err, ErrMatchedEventRequired) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("unmatched impression error does not unwrap to ErrMatchedEventRequired: %v", err)
 	}
 	_ = tx.Rollback(ctx)
 }
