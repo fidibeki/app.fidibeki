@@ -40,8 +40,7 @@ useSiteMeta({
         <div class="card docs-quickstart">
           <h2>The 30-second version</h2>
           <p>Create a project, allow your domain, paste one script tag:</p>
-          <pre><code>&lt;script src="https://widget.fidibeki.com/v1/loader.js"
-        data-fidibeki-key="pk_live_..." async&gt;&lt;/script&gt;</code></pre>
+          <pre><code>&lt;script src="https://widget.fidibeki.com/v1/loader.js" data-fidibeki-key="pk_live_..." async&gt;&lt;/script&gt;</code></pre>
           <p class="docs-quickstart-note">
             The loader is async, renders in a shadow root, and checks the browser origin against
             your allowed domains. Full details in

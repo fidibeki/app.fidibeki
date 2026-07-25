@@ -27,7 +27,7 @@ export const docs: DocEntry[] = [
         code: {
           language: 'html',
           snippet:
-            '<script src="https://widget.fidibeki.com/v1/loader.js"\n        data-fidibeki-key="pk_live_..." async><\/script>',
+            '<script src="https://widget.fidibeki.com/v1/loader.js" data-fidibeki-key="pk_live_..." async><\/script>',
         },
       },
       {
