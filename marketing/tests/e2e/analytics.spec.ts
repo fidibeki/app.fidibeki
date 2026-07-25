@@ -37,6 +37,11 @@ test('banner shows on first visit and accept loads analytics and the widget pers
     'data-fidibeki-key',
     'pk_live_GjFasO9215CNAax7LbWhiP',
   )
+  // Accepting also records the consent reference this site forwards to the widget as its
+  // customer_cmp consentId for widget analytics and session replay.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('fidibeki-consent-widget-id')))
+    .not.toBeNull()
 
   await page.goto('/pricing')
   await expect(page.getByRole('complementary', { name: 'Privacy choices' })).toBeHidden()

@@ -27,6 +27,9 @@ pnpm typecheck:marketing
 | `NUXT_PUBLIC_UMAMI_WEBSITE_ID` | `1d518b00-…` | Umami website id. Analytics load only after the visitor accepts the consent banner; set empty to disable entirely. |
 | `NUXT_PUBLIC_WIDGET_SCRIPT_URL` | `https://widget.fidibeki.com/v1/loader.js` | Fidibeki widget loader script location. |
 | `NUXT_PUBLIC_WIDGET_KEY` | `pk_live_GjFasO9215CNAax7LbWhiP` | Publishable key for the Fidibeki widget instance running on this site. Loads only after the visitor accepts the consent banner; set empty to disable entirely. |
+| `NUXT_PUBLIC_WIDGET_CONSENT_LOCALE` | `en` | Locale asserted in the widget consent grants; must be one of the widget rule's supported locales. |
+| `NUXT_PUBLIC_WIDGET_ANALYTICS_NOTICE_VERSION` | `2026-07` | Notice version asserted when the banner grants `widget_analytics` to the widget; must match the widget rule's customer_cmp analytics consent configuration. |
+| `NUXT_PUBLIC_WIDGET_REPLAY_NOTICE_VERSION` | `2026-07` | Notice version asserted when the banner grants `session_replay` to the widget; must match the widget rule's customer_cmp replay consent configuration. |
 
 The footer LinkedIn icon is an explicit placeholder — set `linkedInUrl` in
 `components/SiteFooter.vue` when a real profile exists.

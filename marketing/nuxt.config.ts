@@ -54,6 +54,14 @@ export default defineNuxtConfig({
       widgetScriptUrl:
         process.env.NUXT_PUBLIC_WIDGET_SCRIPT_URL || 'https://widget.fidibeki.com/v1/loader.js',
       widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || 'pk_live_GjFasO9215CNAax7LbWhiP',
+      // The banner acts as this site's CMP for the widget, so these must mirror the widget
+      // rule's consent configuration: customer_cmp mode with these exact notice versions and a
+      // supported locale, otherwise the grants are refused and the widget collects nothing.
+      widgetConsentLocale: process.env.NUXT_PUBLIC_WIDGET_CONSENT_LOCALE || 'en',
+      widgetAnalyticsNoticeVersion:
+        process.env.NUXT_PUBLIC_WIDGET_ANALYTICS_NOTICE_VERSION || '2026-07',
+      widgetReplayNoticeVersion:
+        process.env.NUXT_PUBLIC_WIDGET_REPLAY_NOTICE_VERSION || '2026-07',
     },
   },
   typescript: {
