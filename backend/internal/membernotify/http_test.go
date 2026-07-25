@@ -3,7 +3,6 @@ package membernotify
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -60,15 +59,15 @@ func performUnsubscribe(
 	method string,
 	token string,
 ) (*httptest.ResponseRecorder, string) {
-	target := UnsubscribePath
-	var body io.Reader
-	request := httptest.NewRequest(method, target, nil)
+	var request *http.Request
 	if method == http.MethodPost {
-		body = strings.NewReader(url.Values{"token": {token}}.Encode())
-		request = httptest.NewRequest(method, target, body)
+		body := strings.NewReader(url.Values{"token": {token}}.Encode())
+		request = httptest.NewRequest(method, UnsubscribePath, body)
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	} else {
-		request = httptest.NewRequest(method, target+"?token="+url.QueryEscape(token), nil)
+		request = httptest.NewRequest(
+			method, UnsubscribePath+"?token="+url.QueryEscape(token), nil,
+		)
 	}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
