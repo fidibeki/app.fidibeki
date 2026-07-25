@@ -1,18 +1,23 @@
+import {
+  allDenied,
+  allGranted,
+  normalizeSelections,
+  parseStoredConsent,
+  serializeConsent,
+  type ConsentSelections,
+} from '~/utils/consent-choices'
 import { grantWidgetConsents, type FidibekiNamespace } from '~/utils/widget-consent'
-
-export type ConsentChoice = 'granted' | 'denied' | 'pending'
 
 const STORAGE_KEY = 'fidibeki-consent'
 const WIDGET_CONSENT_ID_KEY = 'fidibeki-consent-widget-id'
 
-function readStoredChoice(): ConsentChoice {
+function readStoredSelections(): ConsentSelections | null {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored === 'granted' || stored === 'denied') return stored
+    return parseStoredConsent(localStorage.getItem(STORAGE_KEY))
   } catch {
     // Storage unavailable — treat as undecided every visit.
+    return null
   }
-  return 'pending'
 }
 
 // The reference this site records for the visitor's acceptance, passed to the widget as the
@@ -35,18 +40,19 @@ function widgetConsentID(): string {
  * a visitor opts in, but we still only load either after an explicit
  * opt-in and remember the visitor's choice either way.
  *
- * The banner is also this site's CMP for the widget: one acceptance covers
- * Umami plus the widget's own purposes, forwarded to the widget as
- * customer_cmp grants (see utils/widget-consent.ts) so the widget never
- * shows a second prompt of its own. Declining simply never loads the
- * widget, so there is nothing to deny on its side.
+ * The banner is also this site's CMP for the widget: the visitor can accept
+ * everything, decline everything, or pick purposes individually. Selected
+ * widget purposes are forwarded to the widget as customer_cmp grants (see
+ * utils/widget-consent.ts) so the widget never shows a second prompt of its
+ * own; unselected ones are simply never granted, which in customer_cmp mode
+ * means the widget collects nothing for them.
  */
 export function useConsent() {
-  const choice = useState<ConsentChoice>('consent', () => 'pending')
+  const selections = useState<ConsentSelections | null>('consent', () => null)
+  const pending = computed(() => selections.value === null)
   const config = useRuntimeConfig()
 
   function loadAnalytics() {
-    if (!import.meta.client) return
     if (!config.public.umamiWebsiteId) return
     if (document.querySelector('script[data-website-id]')) return
     const script = document.createElement('script')
@@ -56,8 +62,7 @@ export function useConsent() {
     document.head.appendChild(script)
   }
 
-  function loadWidget() {
-    if (!import.meta.client) return
+  function loadWidget(granted: ConsentSelections) {
     if (!config.public.widgetKey) return
     if (!document.querySelector('script[data-fidibeki-key]')) {
       const script = document.createElement('script')
@@ -66,44 +71,55 @@ export function useConsent() {
       script.dataset.fidibekiKey = config.public.widgetKey
       document.head.appendChild(script)
     }
+    if (!granted.widgetAnalytics && !granted.sessionReplay) return
     void grantWidgetConsents({
       consentId: widgetConsentID(),
       locale: config.public.widgetConsentLocale,
-      analyticsNoticeVersion: config.public.widgetAnalyticsNoticeVersion,
-      replayNoticeVersion: config.public.widgetReplayNoticeVersion,
+      analyticsNoticeVersion: granted.widgetAnalytics
+        ? config.public.widgetAnalyticsNoticeVersion
+        : '',
+      replayNoticeVersion: granted.sessionReplay ? config.public.widgetReplayNoticeVersion : '',
       namespace: () => (window as Window & { Fidibeki?: FidibekiNamespace }).Fidibeki,
       onError: (purpose, error) =>
         console.warn(`[fidibeki] widget ${purpose} consent grant failed`, error),
     })
   }
 
-  function persist(value: 'granted' | 'denied') {
-    choice.value = value
+  function apply(granted: ConsentSelections) {
+    if (!import.meta.client) return
+    if (granted.umami) loadAnalytics()
+    if (granted.widget) loadWidget(granted)
+  }
+
+  function decide(value: ConsentSelections) {
+    const granted = normalizeSelections(value)
+    selections.value = granted
     try {
-      localStorage.setItem(STORAGE_KEY, value)
+      localStorage.setItem(STORAGE_KEY, serializeConsent(granted))
     } catch {
       // Non-fatal: the banner will simply reappear next visit.
     }
+    apply(granted)
   }
 
   function accept() {
-    persist('granted')
-    loadAnalytics()
-    loadWidget()
+    decide(allGranted)
   }
 
   function decline() {
-    persist('denied')
+    decide(allDenied)
+  }
+
+  function save(value: ConsentSelections) {
+    decide(value)
   }
 
   function initialize() {
     if (!import.meta.client) return
-    choice.value = readStoredChoice()
-    if (choice.value === 'granted') {
-      loadAnalytics()
-      loadWidget()
-    }
+    const stored = readStoredSelections()
+    selections.value = stored
+    if (stored) apply(stored)
   }
 
-  return { choice, accept, decline, initialize }
+  return { pending, accept, decline, save, initialize }
 }

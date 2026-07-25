@@ -50,6 +50,51 @@ test('banner shows on first visit and accept loads analytics and the widget pers
   await context.close()
 })
 
+test('more options lets a visitor allow only site analytics', async ({ browser }) => {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  await page.goto('/')
+
+  const banner = page.getByRole('complementary', { name: 'Privacy choices' })
+  await banner.getByRole('button', { name: 'More options' }).click()
+  // The widget purposes depend on the widget itself being allowed.
+  await expect(banner.getByRole('checkbox', { name: /Widget usage analytics/ })).toBeDisabled()
+  await expect(banner.getByRole('checkbox', { name: /Session replay/ })).toBeDisabled()
+
+  await banner.getByRole('checkbox', { name: /Site analytics/ }).check()
+  await banner.getByRole('button', { name: 'Save choices' }).click()
+  await expect(banner).toBeHidden()
+  await expect(page.locator(umamiScript)).toHaveCount(1)
+  await expect(page.locator(widgetScript)).toHaveCount(0)
+
+  await page.reload()
+  await expect(page.getByRole('complementary', { name: 'Privacy choices' })).toBeHidden()
+  await expect(page.locator(umamiScript)).toHaveCount(1)
+  await expect(page.locator(widgetScript)).toHaveCount(0)
+  await context.close()
+})
+
+test('more options lets a visitor allow only the feedback widget', async ({ browser }) => {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  await page.goto('/')
+
+  const banner = page.getByRole('complementary', { name: 'Privacy choices' })
+  await banner.getByRole('button', { name: 'More options' }).click()
+  await banner.getByRole('checkbox', { name: /Feedback widget/ }).check()
+  await banner.getByRole('checkbox', { name: /Widget usage analytics/ }).check()
+  await banner.getByRole('button', { name: 'Save choices' }).click()
+  await expect(banner).toBeHidden()
+  await expect(page.locator(widgetScript)).toHaveCount(1)
+  await expect(page.locator(umamiScript)).toHaveCount(0)
+
+  await page.reload()
+  await expect(page.getByRole('complementary', { name: 'Privacy choices' })).toBeHidden()
+  await expect(page.locator(widgetScript)).toHaveCount(1)
+  await expect(page.locator(umamiScript)).toHaveCount(0)
+  await context.close()
+})
+
 test('decline is remembered and never loads analytics or the widget', async ({ browser }) => {
   const context = await browser.newContext()
   const page = await context.newPage()
