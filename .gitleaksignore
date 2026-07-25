@@ -26,7 +26,20 @@ bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/config/config_test.go:
 
 # Two-factor auth (issue #22): deterministic base64 encryption fixtures shared
 # with INTEGRATION_ENCRYPTION_KEY above. Two findings per line are the raw and
-# base64-decoded matches gitleaks emits for the same value.
+# base64-decoded matches gitleaks emits for the same value. The commit is the
+# squash merge on main, not the branch commit these lines were written against:
+# a fingerprint naming a commit that never reached main matches nothing.
+45928f82286eb6db0ffd5246fa5fa78979a9998b:.env.example:generic-api-key:42
+45928f82286eb6db0ffd5246fa5fa78979a9998b:backend/internal/config/config_test.go:generic-api-key:62
+45928f82286eb6db0ffd5246fa5fa78979a9998b:backend/internal/config/config_test.go:generic-api-key:117
+45928f82286eb6db0ffd5246fa5fa78979a9998b:backend/internal/config/config_test.go:generic-api-key:186
+45928f82286eb6db0ffd5246fa5fa78979a9998b:backend/internal/twofactor/twofactor_test.go:generic-api-key:226
+45928f82286eb6db0ffd5246fa5fa78979a9998b:backend/internal/tenantmember/twofactor_integration_test.go:generic-api-key:26
+
+# The same fixtures under the pre-squash branch commit. The scan runs with
+# fetch-depth 0 and covers every ref, so while claude/github-issue-22-ff6476
+# still exists on the remote its copy is scanned too and needs its own
+# fingerprints. These lines become redundant once that branch is deleted.
 2ee5c2e68e1bc133663389952170d7e9e8104b7b:.env.example:generic-api-key:42
 2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/config/config_test.go:generic-api-key:62
 2ee5c2e68e1bc133663389952170d7e9e8104b7b:backend/internal/config/config_test.go:generic-api-key:117
