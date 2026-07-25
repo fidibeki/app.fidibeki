@@ -24,6 +24,8 @@ const { toast, dismiss } = useAppToast()
 </template>
 
 <style scoped>
+/* Overlay chrome stays dark in both themes: it reads as a raised surface on
+   the light canvas and keeps its border separation on the dark one. */
 .app-toast {
   position: fixed;
   right: 20px;

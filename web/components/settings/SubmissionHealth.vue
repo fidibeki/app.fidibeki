@@ -247,13 +247,13 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
 .submission-health-categories article { display: grid; min-height: 84px; grid-template-columns: 4px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .submission-health-categories article:nth-child(odd) { border-right: 1px solid var(--line); }
 .submission-health-categories article > i { width: 4px; height: 34px; background: var(--green); border-radius: 2px; }
-.submission-health-categories article[data-state='quiet'] > i { background: #aab5b1; }
+.submission-health-categories article[data-state='quiet'] > i { background: var(--muted); }
 .submission-health-categories article[data-tone='red'][data-state='attention'] > i { background: var(--red); }
 .submission-health-categories article[data-tone='amber'][data-state='attention'] > i { background: var(--amber); }
-.submission-health-categories article[data-tone='blue'][data-state='attention'] > i { background: #3975a8; }
-.submission-health-categories article[data-tone='violet'][data-state='attention'] > i { background: #7357a6; }
+.submission-health-categories article[data-tone='blue'][data-state='attention'] > i { background: var(--blue); }
+.submission-health-categories article[data-tone='violet'][data-state='attention'] > i { background: var(--indigo); }
 .submission-health-categories article[data-tone='teal'][data-state='attention'] > i { background: var(--teal); }
-.submission-health-categories article[data-tone='rose'][data-state='attention'] > i { background: #b85a73; }
+.submission-health-categories article[data-tone='rose'][data-state='attention'] > i { background: var(--red); }
 .submission-health-categories article div { min-width: 0; }
 .submission-health-categories h3 { margin: 0; color: var(--ink-soft); font-size: 11px; }
 .submission-health-categories p { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
@@ -270,7 +270,7 @@ watch([permitted, range, projectID], () => { void loadHealth() }, { immediate: t
 .submission-health-no-trend { display: grid; height: 96px; place-items: center; margin-top: 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; }
 .submission-health-trend-labels { display: flex; justify-content: space-between; gap: 10px; margin-top: 7px; color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
 .submission-health-reasons > header, .submission-health-reasons > div { display: grid; grid-template-columns: minmax(0, 1fr) 72px; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--line); }
-.submission-health-reasons > header { min-height: 34px; background: #f8faf9; color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
+.submission-health-reasons > header { min-height: 34px; background: var(--surface-subtle); color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
 .submission-health-reasons > header span:last-child { text-align: right; }
 .submission-health-reasons > div { min-height: 52px; }
 .submission-health-reasons > div:last-child { border-bottom: 0; }

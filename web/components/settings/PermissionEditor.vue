@@ -64,11 +64,11 @@ function localizedPermission(permission: string) {
 .permission-editor > header > div:first-child { display: flex; flex-direction: column; gap: 2px; }
 .permission-editor > header b { color: var(--ink); font-size: 10px; }
 .permission-editor > header span { color: var(--muted); font-size: 9px; text-transform: capitalize; }
-.permission-presets { display: inline-grid; grid-template-columns: repeat(3, 1fr); padding: 2px; background: #edf2f0; border: 1px solid var(--line); border-radius: 5px; }
+.permission-presets { display: inline-grid; grid-template-columns: repeat(3, 1fr); padding: 2px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
 .permission-presets button { min-width: 62px; min-height: 29px; padding: 0 9px; background: transparent; color: var(--muted); border: 0; border-radius: 3px; font-size: 9px; font-weight: 750; text-transform: capitalize; }
-.permission-presets button[data-active='true'] { background: #fff; color: var(--teal); box-shadow: 0 1px 2px rgb(20 42 36 / 12%); }
+.permission-presets button[data-active='true'] { background: var(--surface); color: var(--teal); box-shadow: 0 1px 2px var(--shadow-soft); }
 .permission-groups { padding-bottom: 8px; columns: 3; column-gap: 20px; }
-.permission-groups fieldset { min-width: 0; margin: 0; padding: 12px 0 10px; break-inside: avoid; border: 0; border-top: 1px solid #e8edeb; }
+.permission-groups fieldset { min-width: 0; margin: 0; padding: 12px 0 10px; break-inside: avoid; border: 0; border-top: 1px solid var(--surface-soft); }
 .permission-groups legend { width: 100%; padding: 0 0 6px; color: var(--ink); font-size: 9px; font-weight: 800; }
 .permission-groups legend small { float: right; color: var(--muted); font-size: 8px; font-weight: 650; }
 .permission-groups label { display: flex; min-height: 27px; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; text-transform: capitalize; }

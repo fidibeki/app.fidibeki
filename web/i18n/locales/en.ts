@@ -37,6 +37,10 @@ export const englishMessages = {
     },
     deletionPending: 'This workspace is pending deletion and is read-only.',
     reviewDeletion: 'Review deletion',
+    theme: {
+      switchToLight: 'Switch to light theme',
+      switchToDark: 'Switch to dark theme',
+    },
   },
   profile: {
     pageTitle: 'Profile - Fidibeki',

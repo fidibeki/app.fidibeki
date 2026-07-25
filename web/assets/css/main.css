@@ -1,4 +1,26 @@
 :root {
+  --radius: 6px;
+
+  /* Solid fills keep the same value in both themes so white button text retains
+     its contrast ratio. The matching *text* tokens (--teal, --red, --amber,
+     --green, --blue) brighten in dark mode and must not be used as fills
+     behind --on-accent text. */
+  --teal-fill: #087f73;
+  --teal-fill-strong: #076f65;
+  --red-fill: #b83c48;
+  --amber-fill: #a45b08;
+  --green-fill: #247c55;
+  --blue-fill: #2b63c6;
+  --on-accent: #ffffff;
+
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+/* Bare :root doubles as the fallback so a missing or invalid data-theme still
+   renders a styled page rather than unresolved variables. */
+:root,
+:root[data-theme='light'] {
   color-scheme: light;
   --canvas: #f5f7f6;
   --surface: #ffffff;
@@ -19,10 +41,84 @@
   --red: #b83c48;
   --red-soft: #fbe7e9;
   --indigo: #655ab5;
+
+  /* Tinted borders that pair with the --*-soft fills. */
+  --green-line: #b5d9c6;
+  --red-line: #e7b5bb;
+  --amber-line: #e4bd80;
+  --amber-ink: #6f420d;
+
+  /* App chrome. */
+  --surface-subtle: #f8faf9;
+  --teal-line: #acd5ca;
+  --rail: #eef2f0;
+  --rail-soft: #f9faf9;
+  --rail-active: #dfeae7;
+  --rail-active-soft: #e6efec;
+  --row-hover: #edf5f3;
+  --footer-soft: #fbfcfb;
+  --placeholder: #84908d;
+  --auth-canvas: #edf2f0;
+  --red-glow: rgb(184 60 72 / 12%);
+  --shadow-soft: rgb(20 42 36 / 12%);
+
+  /* Reversed out of the page — toasts, brand mark. */
+  --inverse-surface: #17211f;
+  --inverse-ink: #ffffff;
+
+  --scrim: rgb(10 20 17 / 42%);
+  --focus-ring: rgb(43 99 198 / 30%);
+  --accent-glow: rgb(8 127 115 / 10%);
   --shadow-overlay: 0 20px 50px rgb(20 38 33 / 14%);
-  --radius: 6px;
-  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
-  font-synthesis: none;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0b1210;
+  --surface: #121a17;
+  --surface-soft: #172420;
+  --ink: #eef4f1;
+  --ink-soft: #c9d6d0;
+  --muted: #93a7a0;
+  --line: #22302a;
+  --line-strong: #35473f;
+  --teal: #3ec5b2;
+  --teal-soft: #11322c;
+  --blue: #79a9f2;
+  --blue-soft: #16243c;
+  --green: #58c68d;
+  --green-soft: #122f22;
+  --amber: #e2a54e;
+  --amber-soft: #382812;
+  --red: #f0909a;
+  --red-soft: #3b1e22;
+  --indigo: #a89cf2;
+
+  --green-line: #1e5138;
+  --red-line: #5d2f36;
+  --amber-line: #573f1d;
+  --amber-ink: #e2a54e;
+
+  --surface-subtle: #151d1a;
+  --teal-line: #2f5b52;
+  --rail: #0e1614;
+  --rail-soft: #0f1815;
+  --rail-active: #17302a;
+  --rail-active-soft: #17302a;
+  --row-hover: #17241f;
+  --footer-soft: #0f1714;
+  --placeholder: #7d8f89;
+  --auth-canvas: #0b1210;
+  --red-glow: rgb(240 144 154 / 22%);
+  --shadow-soft: rgb(0 0 0 / 40%);
+
+  --inverse-surface: #eef4f1;
+  --inverse-ink: #0b1210;
+
+  --scrim: rgb(0 0 0 / 60%);
+  --focus-ring: rgb(95 214 198 / 40%);
+  --accent-glow: rgb(62 197 178 / 18%);
+  --shadow-overlay: 0 20px 50px rgb(0 0 0 / 50%);
 }
 
 * {
@@ -58,6 +154,15 @@ select {
   letter-spacing: 0;
 }
 
+/* Under color-scheme: dark the UA paints bare fields a grey that seams against
+   the wrapper they sit in. Inheriting the wrapper's background matches the
+   light-mode result (where the UA default was already white) in both themes.
+   Classes like .field and .app-input still set their own background. */
+input:not([type='checkbox']):not([type='radio']),
+textarea {
+  background-color: transparent;
+}
+
 button,
 select {
   cursor: pointer;
@@ -68,7 +173,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 3px solid rgb(43 99 198 / 30%);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -132,13 +237,13 @@ svg {
 }
 
 .primary-button {
-  background: var(--teal);
-  color: #fff;
-  border: 1px solid var(--teal);
+  background: var(--teal-fill);
+  color: var(--on-accent);
+  border: 1px solid var(--teal-fill);
 }
 
 .primary-button:hover {
-  background: #076f65;
+  background: var(--teal-fill-strong);
 }
 
 .secondary-button {
@@ -159,7 +264,7 @@ svg {
 .danger-button {
   background: var(--surface);
   color: var(--red);
-  border: 1px solid #e2a8ad;
+  border: 1px solid var(--red-line);
 }
 
 .field,
@@ -181,7 +286,7 @@ svg {
 }
 
 .field::placeholder {
-  color: #84908d;
+  color: var(--placeholder);
 }
 
 .status-pill,
@@ -220,7 +325,7 @@ svg {
   max-height: calc(100dvh - 40px);
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
   box-shadow: var(--shadow-overlay);
@@ -268,7 +373,7 @@ svg {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  background: #fbfcfb;
+  background: var(--footer-soft);
   border-top: 1px solid var(--line);
 }
 
@@ -362,7 +467,7 @@ svg {
 
 .data-table tbody tr:hover,
 .data-table tbody tr[data-selected='true'] {
-  background: #edf5f3;
+  background: var(--row-hover);
 }
 
 .page-heading {
@@ -408,8 +513,8 @@ svg {
   bottom: 24px;
   max-width: min(360px, calc(100vw - 32px));
   padding: 12px 14px;
-  background: var(--ink);
-  color: #fff;
+  background: var(--inverse-surface);
+  color: var(--inverse-ink);
   border-radius: var(--radius);
   box-shadow: var(--shadow-overlay);
 }

@@ -169,7 +169,7 @@ function confirm() {
 .ai-processing-body legend { width: 100%; margin-bottom: 8px; font-weight: 700; }
 .ai-processing-body fieldset label, .ai-processing-acknowledgment { display: flex; align-items: flex-start; gap: 8px; }
 .ai-processing-policy { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
-.ai-processing-acknowledgment { padding: 12px; background: #f6f8f7; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.ai-processing-acknowledgment { padding: 12px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.5; }
 .ai-processing-blocked { margin: 0 auto 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; text-align: left; }
 @media (max-width: 560px) {
   .ai-processing-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }

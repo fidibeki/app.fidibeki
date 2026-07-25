@@ -193,6 +193,7 @@ function issueAction(action: 'createIssue' | 'linkIssue' | 'unlinkIssue') {
 </template>
 
 <style scoped>
+/* Always-dark floating action bar, same rationale as .app-toast. */
 .feedback-bulk-bar { position: relative; z-index: 40; display: flex; height: 45px; align-items: center; gap: 6px; padding: 6px 12px; background: #17342f; color: #fff; }
 .feedback-bulk-bar b { margin-right: auto; font-size: 11px; white-space: nowrap; }
 .feedback-bulk-bar button,
@@ -208,8 +209,8 @@ function issueAction(action: 'createIssue' | 'linkIssue' | 'unlinkIssue') {
 .bulk-popover { position: relative; }
 .bulk-popover summary { list-style: none; }
 .bulk-popover summary::-webkit-details-marker { display: none; }
-.bulk-popover > div { position: absolute; top: 36px; right: 0; z-index: 70; display: grid; min-width: 180px; gap: 4px; padding: 6px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow-overlay); }
-.bulk-popover > div button { justify-content: flex-start; background: #fff; color: var(--ink); border: 0; }
+.bulk-popover > div { position: absolute; top: 36px; right: 0; z-index: 70; display: grid; min-width: 180px; gap: 4px; padding: 6px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow-overlay); }
+.bulk-popover > div button { justify-content: flex-start; background: var(--surface); color: var(--ink); border: 0; }
 .bulk-popover > div button:hover { background: var(--surface-soft); }
 .bulk-popover > div button:disabled { cursor: not-allowed; opacity: .5; }
 .bulk-issue-popover > div > p { max-width: 220px; margin: 4px 6px 7px; color: var(--muted); font-size: 9px; line-height: 1.45; }
@@ -217,12 +218,12 @@ function issueAction(action: 'createIssue' | 'linkIssue' | 'unlinkIssue') {
 .bulk-compact-menu fieldset button > span { width: 7px; height: 17px; border-radius: 2px; }
 .bulk-popover > div > span { padding: 8px; color: var(--muted); font-size: 10px; }
 .bulk-compact-actions { position: relative; }
-.bulk-compact-menu { position: absolute; top: 38px; right: 0; z-index: 80; display: grid; width: min(350px, calc(100vw - 20px)); grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow-overlay); }
+.bulk-compact-menu { position: absolute; top: 38px; right: 0; z-index: 80; display: grid; width: min(350px, calc(100vw - 20px)); grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; box-shadow: var(--shadow-overlay); }
 .bulk-compact-menu label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.bulk-compact-menu label select { width: 100%; max-width: none; background: #fff; color: var(--ink); border-color: var(--line); }
+.bulk-compact-menu label select { width: 100%; max-width: none; background: var(--surface); color: var(--ink); border-color: var(--line); }
 .bulk-compact-menu fieldset { display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; border: 0; }
 .bulk-compact-menu legend { width: 100%; margin-bottom: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
-.bulk-compact-menu fieldset button { height: 29px; background: #fff; color: var(--ink); border-color: var(--line); }
+.bulk-compact-menu fieldset button { height: 29px; background: var(--surface); color: var(--ink); border-color: var(--line); }
 .bulk-compact-menu fieldset > span { color: var(--muted); font-size: 10px; }
 .bulk-compact-menu .bulk-issue-actions p { width: 100%; margin: 0 0 3px; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .bulk-compact-menu .bulk-issue-actions button { flex: 1 1 92px; justify-content: center; }

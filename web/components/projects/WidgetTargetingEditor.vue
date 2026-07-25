@@ -185,10 +185,10 @@ function emptyCondition(): WidgetTargetConditionInput {
 
 <style scoped>
 .targeting-editor { display: flex; flex-direction: column; gap: 14px; }
-.targeting-mode { display: inline-grid; width: min(100%, 360px); grid-template-columns: 1fr 1fr; padding: 3px; background: #eef2f1; border: 1px solid var(--line); border-radius: 5px; }
+.targeting-mode { display: inline-grid; width: min(100%, 360px); grid-template-columns: 1fr 1fr; padding: 3px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
 .targeting-mode button { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; padding: 0 10px; background: transparent; color: var(--muted); border: 0; border-radius: 3px; font-size: 9px; font-weight: 750; }
-.targeting-mode button[data-active='true'] { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgb(20 42 36 / 12%); }
-.targeting-all-pages { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 0 10px; background: #f7faf9; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 5px; font-size: 9px; font-weight: 700; }
+.targeting-mode button[data-active='true'] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px var(--shadow-soft); }
+.targeting-all-pages { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 0 10px; background: var(--surface-subtle); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 5px; font-size: 9px; font-weight: 700; }
 .targeting-group { display: flex; flex-direction: column; gap: 7px; }
 .targeting-group > header { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 10px; }
 .targeting-group > header div { display: flex; align-items: center; gap: 6px; }
@@ -200,9 +200,9 @@ function emptyCondition(): WidgetTargetConditionInput {
 .targeting-condition .app-select,
 .targeting-condition .app-input { min-width: 0; height: 36px; font-size: 9px; }
 .targeting-editor :is(input, select)[aria-invalid='true'],
-.targeting-group[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(184 60 72 / 12%); }
+.targeting-group[aria-invalid='true'] { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-glow); }
 .targeting-remove { display: grid; width: 32px; height: 36px; place-items: center; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; }
-.targeting-remove:hover { color: var(--red); border-color: #e4adb4; }
+.targeting-remove:hover { color: var(--red); border-color: var(--red-line); }
 .targeting-condition .targeting-error { grid-column: 2 / -1; }
 .targeting-error { margin: 0; color: var(--red); font-size: 8px; }
 .targeting-tester { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: end; padding-top: 12px; border-top: 1px solid var(--line); }

@@ -85,16 +85,16 @@ useHead(() => ({ title: t('projects.list.pageTitle') }))
 .project-list { overflow: hidden; }
 .project-list > header,
 .project-list > a { display: grid; min-height: 62px; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.2fr) minmax(180px, 1fr) 90px 18px; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); }
-.project-list > header { min-height: 38px; background: #f8faf9; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.project-list > header { min-height: 38px; background: var(--surface-subtle); color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .project-list > a { color: var(--ink-soft); font-size: 10px; text-decoration: none; }
-.project-list > a:hover { background: #f7faf9; }
+.project-list > a:hover { background: var(--surface-subtle); }
 .project-list > a:last-child { border-bottom: 0; }
 .project-list-name { display: flex; align-items: center; gap: 10px; }
 .project-list-name i { display: grid; width: 31px; height: 31px; place-items: center; background: var(--teal-soft); color: var(--teal); border-radius: 5px; font-style: normal; font-weight: 800; }
 .project-list code,
 .project-list > a > span:not(.project-list-name) { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .project-list time { color: var(--muted); font-size: 9px; }
-.app-modal { width: min(520px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.app-modal { width: min(520px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .app-modal > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .app-modal h2 { margin: 4px 0 0; font-size: 15px; }
 .app-modal form { padding: 16px; }

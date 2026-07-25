@@ -37,6 +37,10 @@ export const portugueseMessages = {
     },
     deletionPending: 'Este workspace aguarda eliminação e está em modo de leitura.',
     reviewDeletion: 'Rever eliminação',
+    theme: {
+      switchToLight: 'Mudar para o tema claro',
+      switchToDark: 'Mudar para o tema escuro',
+    },
   },
   profile: {
     pageTitle: 'Perfil - Fidibeki',

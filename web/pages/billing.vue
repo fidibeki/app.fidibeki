@@ -222,10 +222,10 @@ useHead(() => ({ title: t('admin.billing.pageTitle') }))
 </template>
 
 <style scoped>
-.billing-notice { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; background: var(--amber-soft); color: var(--amber); border: 1px solid #e8c995; border-radius: 5px; font-size: 11px; }
-.billing-notice--success { background: var(--green-soft); color: var(--green); border-color: #b5d9c6; }
-.billing-notice--error { background: var(--red-soft); color: var(--red); border-color: #e7b5bb; }
-.billing-deletion-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 12px 14px; background: var(--amber-soft); color: #6f420d; border: 1px solid #e4bd80; border-radius: 6px; }
+.billing-notice { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; background: var(--amber-soft); color: var(--amber); border: 1px solid var(--amber-line); border-radius: 5px; font-size: 11px; }
+.billing-notice--success { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.billing-notice--error { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.billing-deletion-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 12px 14px; background: var(--amber-soft); color: var(--amber-ink); border: 1px solid var(--amber-line); border-radius: 6px; }
 .billing-deletion-banner > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .billing-deletion-banner b { font-size: 12px; }
 .billing-deletion-banner span { font-size: 10px; }
@@ -253,18 +253,18 @@ useHead(() => ({ title: t('admin.billing.pageTitle') }))
 .billing-plan dd { color: var(--ink-soft); font-weight: 750; }
 .billing-plan > button, .billing-current { display: flex; width: calc(100% - 24px); min-height: 38px; align-items: center; justify-content: center; gap: 6px; margin: 12px; }
 .billing-current { color: var(--green); font-size: 10px; font-weight: 750; }
-.billing-danger { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 16px; border-color: #e3b7bc; }
+.billing-danger { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 16px; border-color: var(--red-line); }
 .billing-danger h2 { margin: 3px 0; font-size: 14px; }
 .billing-danger span { color: var(--muted); font-size: 10px; }
-.billing-delete-button { background: #fff; color: var(--red); border-color: #d8a1a8; }
+.billing-delete-button { background: var(--surface); color: var(--red); border-color: var(--red-line); }
 .billing-delete-button:hover:not(:disabled) { background: var(--red-soft); }
-.billing-modal { width: min(500px, 100%); background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
+.billing-modal { width: min(500px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .billing-modal > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 11px 15px; border-bottom: 1px solid var(--line); }
 .billing-modal h2 { margin: 3px 0 0; font-size: 15px; }
 .billing-modal form { padding: 16px; }
 .billing-modal label { display: flex; flex-direction: column; gap: 7px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .billing-modal label code { display: inline; }
-.billing-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px -16px -16px; padding: 12px 16px; background: #f8faf9; border-top: 1px solid var(--line); }
+.billing-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin: 16px -16px -16px; padding: 12px 16px; background: var(--surface-subtle); border-top: 1px solid var(--line); }
 .billing-form-error { color: var(--red); font-size: 10px; }
 .capitalize { text-transform: capitalize; }
 @media (max-width: 1050px) { .billing-plans { grid-template-columns: repeat(2, 1fr); } .billing-summary { grid-template-columns: repeat(3, 1fr); } .billing-summary > button { grid-column: 1 / -1; } }

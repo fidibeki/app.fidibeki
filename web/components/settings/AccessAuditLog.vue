@@ -255,11 +255,11 @@ function signalDetail(signal: AccessEventSignal) {
 .access-audit-row { display: grid; grid-template-columns: minmax(150px, .9fr) minmax(150px, 1fr) minmax(150px, 1fr) 110px 120px; min-height: 52px; align-items: center; gap: 14px; padding: 7px 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .access-audit-signals-table .access-audit-row { grid-template-columns: minmax(160px, 1fr) 140px 90px minmax(160px, 1.2fr) 140px; }
 .access-audit-row:last-child { border-bottom: 0; }
-.access-audit-row--head { min-height: 36px; padding-top: 0; padding-bottom: 0; background: #f8faf9; font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.access-audit-row--head { min-height: 36px; padding-top: 0; padding-bottom: 0; background: var(--surface-subtle); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .access-audit-row > span { min-width: 0; }
 .access-audit-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
 .access-audit-status { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 700; text-transform: capitalize; }
-.access-audit-status i { width: 7px; height: 7px; background: #b98a26; border-radius: 50%; }
+.access-audit-status i { width: 7px; height: 7px; background: var(--amber-ink); border-radius: 50%; }
 .access-audit-status[data-tone='success'] i { background: var(--green); }
 .access-audit-status[data-tone='danger'] i { background: var(--red); }
 .access-audit-footer { display: flex; justify-content: center; padding: 14px 16px; }

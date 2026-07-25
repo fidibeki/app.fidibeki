@@ -365,7 +365,7 @@ useHead(() => ({
 .issue-detail-editor label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .issue-detail-editor textarea { min-height: 100px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
 .issue-detail-editor > div { display: flex; justify-content: flex-end; gap: 7px; }
-.issues-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid #efc2c6; border-radius: 5px; font-size: 11px; }
+.issues-error { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 10px 12px; background: var(--red-soft); color: var(--red); border: 1px solid var(--red-line); border-radius: 5px; font-size: 11px; }
 .issue-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }
 .issue-detail-grid main,
 .issue-detail-grid aside { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
@@ -388,7 +388,7 @@ useHead(() => ({
 .issue-comment-form > textarea { min-height: 78px; grid-column: 1 / -1; padding: 9px; border: 1px solid var(--line-strong); border-radius: 5px; resize: vertical; font: inherit; font-size: 11px; }
 .issue-comment-form fieldset { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; border: 0; }
 .issue-comment-form legend { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; color: var(--muted); font-size: 9px; font-weight: 750; }
-.issue-comment-form label { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 7px; background: #fff; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 9px; }
+.issue-comment-form label { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 9px; }
 .issue-comment-form label:has(input:checked) { color: var(--teal); border-color: var(--teal); }
 .issue-comment-form button { align-self: end; }
 .issue-feedback > header > span { color: var(--muted); font-size: 9px; }
@@ -402,7 +402,7 @@ useHead(() => ({
 .issue-empty { padding: 30px; color: var(--muted); font-size: 11px; text-align: center; }
 .issue-history ol { margin: 0; padding: 14px 18px; list-style: none; }
 .issue-history li { display: grid; min-height: 66px; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; }
-.issue-history li > span { position: relative; width: 8px; height: 8px; margin-top: 4px; background: var(--teal); border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px var(--teal); }
+.issue-history li > span { position: relative; width: 8px; height: 8px; margin-top: 4px; background: var(--teal); border: 2px solid var(--surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--teal); }
 .issue-history li > .issue-activity-avatar[data-actor='true'] { width: 22px; height: 22px; margin: -3px 0 0 -7px; overflow: hidden; background: var(--teal-soft); border: 1px solid var(--line); box-shadow: none; font-size: 7px; }
 .issue-history li > .issue-activity-avatar[data-actor='true']::after { top: 22px; left: 10px; height: 42px; }
 .issue-history li > span::after { position: absolute; top: 10px; left: 2px; width: 1px; height: 51px; background: var(--line); content: ''; }

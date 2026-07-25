@@ -408,7 +408,7 @@ async function removeLogo() {
 }
 .organization-identity {
   padding: 18px;
-  background: #f8faf9;
+  background: var(--surface-subtle);
   border-right: 1px solid var(--line);
 }
 .organization-logo-preview {
@@ -416,7 +416,7 @@ async function removeLogo() {
   height: 112px;
   margin: 0 auto;
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   font-size: 22px;
@@ -493,7 +493,7 @@ async function removeLogo() {
   width: 38px;
   height: 38px;
   padding: 3px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: 5px;
 }

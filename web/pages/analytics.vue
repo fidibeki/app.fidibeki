@@ -215,13 +215,13 @@ useHead(() => ({ title: t('analytics.pageTitle') }))
 <style scoped>
 .analytics-page { max-width: 1540px; margin: 0 auto; }
 .analytics-heading { margin-bottom: 16px; }
-.analytics-toolbar { display: grid; grid-template-columns: auto minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) 38px; align-items: end; gap: 10px; margin-bottom: 18px; padding: 12px; background: #eef2f0; border: 1px solid var(--line); border-radius: 6px; }
+.analytics-toolbar { display: grid; grid-template-columns: auto minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) 38px; align-items: end; gap: 10px; margin-bottom: 18px; padding: 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px; }
 .analytics-toolbar label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .analytics-toolbar .app-select { width: 100%; min-width: 0; font-size: 11px; text-transform: none; }
-.analytics-range { display: grid; height: 38px; grid-template-columns: repeat(3, 44px); padding: 3px; background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; }
+.analytics-range { display: grid; height: 38px; grid-template-columns: repeat(3, 44px); padding: 3px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 5px; }
 .analytics-range button { padding: 0; background: transparent; border: 0; border-radius: 3px; color: var(--muted); font-size: 10px; font-weight: 750; }
-.analytics-range button[aria-pressed='true'] { background: #dfeae7; color: var(--teal); }
-.analytics-reset { border-color: var(--line-strong); background: #fff; }
+.analytics-range button[aria-pressed='true'] { background: var(--rail-active); color: var(--teal); }
+.analytics-reset { border-color: var(--line-strong); background: var(--surface); }
 .analytics-reset:disabled { cursor: default; opacity: 0.45; }
 .analytics-ledger { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line-strong); border-bottom: 1px solid var(--line-strong); }
 .analytics-ledger article { display: grid; min-height: 118px; align-content: center; padding: 16px 20px; border-right: 1px solid var(--line); }
@@ -245,7 +245,7 @@ useHead(() => ({ title: t('analytics.pageTitle') }))
 .analytics-table-scroll { max-width: 100%; overflow-x: auto; }
 table { width: 100%; min-width: 820px; border-collapse: collapse; table-layout: fixed; }
 th, td { height: 51px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
-thead th { height: 38px; background: #f8faf9; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+thead th { height: 38px; background: var(--surface-subtle); color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 thead th:first-child, tbody th { width: 30%; text-align: left; }
 tbody th { overflow: hidden; }
 tbody th strong, tbody th span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
