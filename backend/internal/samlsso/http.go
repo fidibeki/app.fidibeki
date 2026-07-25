@@ -244,12 +244,12 @@ func (h *HTTPHandler) configure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims, _ := appmiddleware.TenantClaimsFromContext(r.Context())
-	configuration, err := h.options.Service.Configure(r.Context(), query, resolved, ConfigurationInput{
-		MetadataURL: request.MetadataURL, MetadataXML: request.MetadataXML,
-		IdPEntityID: request.IdPEntityID, IdPSSOURL: request.IdPSSOURL,
-		Certificates: request.Certificates, EmailDomains: request.EmailDomains,
-		AllowIDPInitiated: request.AllowIDPInitiated, ReplaceCertificates: request.ReplaceCertificates,
-	}, claims.Subject)
+	// configureRequest exists to carry the JSON tags and is otherwise identical
+	// to ConfigurationInput, so a conversion says exactly that. If the two ever
+	// diverge the conversion stops compiling, which is the point.
+	configuration, err := h.options.Service.Configure(
+		r.Context(), query, resolved, ConfigurationInput(request), claims.Subject,
+	)
 	if err != nil {
 		h.writeError(w, r, err)
 		return

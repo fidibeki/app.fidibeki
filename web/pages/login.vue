@@ -35,7 +35,10 @@ const locatorError = ref('')
 // Organization-level SSO policy. It is fetched before any credential is
 // entered and carries no membership information, so the login page can present
 // the right path without revealing who belongs to this workspace.
-const ssoPolicy = ref<SSOPolicy | null>(null)
+const ssoPolicy = useState<SSOPolicy | null>(
+  `workspace:sso-policy:${requestURL.host}`,
+  () => null,
+)
 const showBreakGlass = ref(false)
 const ssoErrorKey = computed(() => ssoErrorMessageKey(route.query.sso_error))
 const loginPaths = computed(() => loginPathsFor(ssoPolicy.value, showBreakGlass.value))
@@ -83,13 +86,14 @@ async function checkWorkspace() {
 
 async function loadSSOPolicy() {
   try {
-    ssoPolicy.value = await $apiFetch<SSOPolicy>('/auth/sso/saml/status', {
+    const policy = await $apiFetch<SSOPolicy>('/auth/sso/saml/status', {
       auth: false,
       retryAuth: false,
     })
+    // A workspace without SSO answers with the disabled default; anything that
+    // is not a recognisable policy leaves the email path exactly as it was.
+    ssoPolicy.value = policy && typeof policy.mode === 'string' ? policy : null
   } catch {
-    // A workspace without SSO, or a transient failure, leaves the existing
-    // email path exactly as it was.
     ssoPolicy.value = null
   }
 }
@@ -128,7 +132,12 @@ async function openWorkspace() {
   await navigateTo(workspaceLoginURL(normalized, baseDomain, requestURL), { external: true })
 }
 
-if (import.meta.server && !import.meta.dev && !locatorMode) await checkWorkspace()
+if (import.meta.server && !import.meta.dev && !locatorMode) {
+  await checkWorkspace()
+  // Resolved before the first paint so the sign-in options never rearrange
+  // under a member who has already started typing.
+  if (workspaceState.value === 'available') await loadSSOPolicy()
+}
 
 // A member returning from an identity provider arrives through a cross-site
 // POST redirect, and browsers withhold SameSite=Lax cookies from that
@@ -158,7 +167,9 @@ onMounted(async () => {
     await navigateTo(destination)
     return
   }
-  await loadSSOPolicy()
+  // Already resolved during the server render in production; this covers the
+  // development and client-navigation paths.
+  if (!ssoPolicy.value) await loadSSOPolicy()
 })
 
 useHead({ title: computed(() => t('auth.login.pageTitle')) })
