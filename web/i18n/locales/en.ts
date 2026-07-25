@@ -814,6 +814,10 @@ export const englishMessages = {
         advisoryTitle: 'Recommendations remain advisory',
         advisoryDescription: 'AI does not create issues or take workflow actions automatically.',
         acknowledgment: 'I confirm that this workspace is authorized to send the selected content to Google Gemini, has updated its privacy notice, and accepts responsibility for lawful collection and use.',
+        acknowledgmentRequired: 'Confirm the authorization above to continue.',
+        selectContent: 'Select at least one type of content to process.',
+        privacyURLInvalid: 'Enter the customer privacy notice as an HTTPS URL.',
+        saveReminder: 'Applies when you save the widget.',
         enable: 'Enable AI analysis',
       },
       blocks: {

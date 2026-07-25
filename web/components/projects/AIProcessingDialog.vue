@@ -20,6 +20,26 @@ const privacyURL = ref('')
 const categories = ref<AIInputCategory[]>([])
 const acknowledged = ref(false)
 
+const contractChanged = computed(() => {
+  if (!props.initial.enabled) return true
+  const stored = [...(props.initial.input_categories || [])].sort()
+  const selected = [...categories.value].sort()
+  return stored.length !== selected.length
+    || stored.some((category, index) => category !== selected[index])
+    || (props.initial.privacy_policy_url || '') !== privacyURL.value.trim()
+})
+
+const valid = computed(() =>
+  categories.value.length > 0 && acknowledged.value && validPrivacyURL(privacyURL.value),
+)
+
+const blockedReason = computed(() => {
+  if (valid.value) return ''
+  if (categories.value.length === 0) return t('projects.editor.ai.selectContent')
+  if (!validPrivacyURL(privacyURL.value)) return t('projects.editor.ai.privacyURLInvalid')
+  return t('projects.editor.ai.acknowledgmentRequired')
+})
+
 watch(() => props.open, (open) => {
   if (!open) return
   privacyURL.value = props.initial.privacy_policy_url || props.defaultPrivacyUrl || ''
@@ -28,12 +48,18 @@ watch(() => props.open, (open) => {
     : ['feedback_text']
   categories.value = categories.value.filter(category => categoryAvailable(category))
   if (categories.value.length === 0) categories.value = ['feedback_text']
-  acknowledged.value = false
+  // A configuration that is already acknowledged stays acknowledged while it is unchanged, the
+  // same rule the API applies when it decides whether to re-stamp the acknowledgement. Reopening
+  // the dialog to review it therefore never silently drops an authorization already given.
+  acknowledged.value = Boolean(props.initial.enabled && props.initial.acknowledged)
+    && !contractChanged.value
 }, { immediate: true })
 
-const valid = computed(() =>
-  categories.value.length > 0 && acknowledged.value && validPrivacyURL(privacyURL.value),
-)
+// Changing what is sent to the provider is a new authorization, so a stored confirmation stops
+// counting for the changed contract and has to be given again.
+watch(contractChanged, (changed) => {
+  if (changed) acknowledged.value = false
+})
 
 function categoryAvailable(category: AIInputCategory) {
   if (category === 'feedback_text') return true
@@ -121,6 +147,8 @@ function confirm() {
       </div>
 
       <footer class="app-modal__actions">
+        <p v-if="blockedReason" class="ai-processing-blocked" role="status">{{ blockedReason }}</p>
+        <p v-else class="ai-processing-blocked">{{ t('projects.editor.ai.saveReminder') }}</p>
         <button class="app-button" type="button" @click="emit('cancel')">{{ t('common.cancel') }}</button>
         <button class="app-button app-button--primary" type="button" :disabled="!valid" @click="confirm">{{ t('projects.editor.ai.enable') }}</button>
       </footer>
@@ -142,6 +170,7 @@ function confirm() {
 .ai-processing-body fieldset label, .ai-processing-acknowledgment { display: flex; align-items: flex-start; gap: 8px; }
 .ai-processing-policy { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
 .ai-processing-acknowledgment { padding: 12px; background: #f6f8f7; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.ai-processing-blocked { margin: 0 auto 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; text-align: left; }
 @media (max-width: 560px) {
   .ai-processing-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .ai-processing-body fieldset { display: grid; }

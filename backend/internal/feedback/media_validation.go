@@ -237,21 +237,66 @@ func validWebMReader(reader io.ReaderAt, size int64) bool {
 		if !ok {
 			return false
 		}
+		// Live muxers (Firefox's MediaRecorder writes every cluster this way) cannot seek back to
+		// patch in a length, so they emit unknown-size elements that end where the next
+		// segment-level element begins. Resolving that boundary is what makes a streamed
+		// recording readable instead of collapsing the rest of the file into one element.
+		if element.unknownSize {
+			end, resolved := unknownSizeElementEnd(reader, element.payloadStart, segment.payloadEnd)
+			if !resolved {
+				return false
+			}
+			element.payloadEnd = end
+			element.unknownSize = false
+			following = end
+		}
 		switch element.id {
 		case 0x1654ae6b:
-			sawTracks = validWebMTracks(reader, element)
+			sawTracks = sawTracks || validWebMTracks(reader, element)
 		case 0x1f43b675:
-			if element.unknownSize {
-				element.payloadEnd = segment.payloadEnd
-			}
-			sawCluster = validWebMCluster(reader, element)
+			sawCluster = sawCluster || validWebMCluster(reader, element)
 		}
-		if element.unknownSize {
-			break
+		if following <= offset {
+			return false
 		}
 		offset = following
 	}
 	return sawTracks && sawCluster
+}
+
+// segmentLevelElement reports whether the identifier belongs to a direct child of Segment. An
+// unknown-size element ends at the first such identifier because those never nest inside a cluster.
+func segmentLevelElement(id uint64) bool {
+	switch id {
+	case 0x114d9b74, // SeekHead
+		0x1549a966, // Info
+		0x1654ae6b, // Tracks
+		0x1f43b675, // Cluster
+		0x1c53bb6b, // Cues
+		0x1941a469, // Attachments
+		0x1043a770, // Chapters
+		0x1254c367: // Tags
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownSizeElementEnd(reader io.ReaderAt, start, limit int64) (int64, bool) {
+	for offset := start; offset < limit; {
+		child, following, ok := readEBMLElement(reader, offset, limit)
+		if !ok {
+			return 0, false
+		}
+		if segmentLevelElement(child.id) {
+			return offset, true
+		}
+		if child.unknownSize || following <= offset {
+			return 0, false
+		}
+		offset = following
+	}
+	return limit, true
 }
 
 func validWebMHeader(reader io.ReaderAt, header ebmlElement) bool {
@@ -322,11 +367,12 @@ func validWebMCluster(reader io.ReaderAt, cluster ebmlElement) bool {
 		}
 		switch element.id {
 		case 0xe7:
-			_, sawTimecode = readEBMLUint(reader, element)
+			_, timecode := readEBMLUint(reader, element)
+			sawTimecode = sawTimecode || timecode
 		case 0xa3:
-			sawBlock = element.payloadEnd-element.payloadStart >= 5
+			sawBlock = sawBlock || element.payloadEnd-element.payloadStart >= 5
 		case 0xa0:
-			sawBlock = validWebMBlockGroup(reader, element)
+			sawBlock = sawBlock || validWebMBlockGroup(reader, element)
 		}
 		if element.unknownSize {
 			return false
