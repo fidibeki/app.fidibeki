@@ -737,9 +737,19 @@ export interface SignupResponse {
   tenant: TenantSummary
 }
 
+/**
+ * Deployment-level facts, not workspace settings. They exist so the UI never offers an
+ * action this deployment cannot carry out.
+ */
+export interface DeploymentCapabilities {
+  /** False when no Slack app is configured, which hides the one-click install button. */
+  slack_one_click_install: boolean
+}
+
 export interface TenantConfiguration {
   tenant: TenantSummary
   plan: PlanDefinition
+  capabilities?: DeploymentCapabilities
 }
 
 export type SSOMode = 'disabled' | 'optional' | 'required'

@@ -13,26 +13,35 @@ import (
 
 type ContextResolver func(context.Context) (tenant.Tenant, bool)
 
+// Capabilities are deployment-level facts the browser needs in order to avoid offering an
+// action this deployment cannot perform. They describe the installation, not the workspace,
+// and never carry a credential.
+type Capabilities struct {
+	// SlackOneClickInstall is false when no Slack app is configured. The Settings page hides
+	// the install button rather than offering one that can only fail at the callback.
+	SlackOneClickInstall bool `json:"slack_one_click_install"`
+}
+
 func NewHTTPHandler(resolvers ...ContextResolver) http.Handler {
 	router := chi.NewRouter()
-	RegisterRoutes(router, resolvers...)
+	RegisterRoutes(router, Capabilities{}, resolvers...)
 	router.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
 	})
 	return router
 }
 
-func RegisterRoutes(router chi.Router, resolvers ...ContextResolver) {
+func RegisterRoutes(router chi.Router, capabilities Capabilities, resolvers ...ContextResolver) {
 	resolve := appmiddleware.TenantFromContext
 	if len(resolvers) > 0 {
 		resolve = resolvers[0]
-		router.Get("/v1/config", configHandler(resolve))
+		router.Get("/v1/config", configHandler(resolve, capabilities))
 		return
 	}
-	router.With(appmiddleware.RequireActive).Get("/v1/config", configHandler(resolve))
+	router.With(appmiddleware.RequireActive).Get("/v1/config", configHandler(resolve, capabilities))
 }
 
-func configHandler(resolve ContextResolver) http.HandlerFunc {
+func configHandler(resolve ContextResolver, capabilities Capabilities) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resolved, ok := resolve(r.Context())
 		if !ok {
@@ -65,6 +74,7 @@ func configHandler(resolve ContextResolver) http.HandlerFunc {
 			},
 			"organization_profile": resolved.OrganizationProfile(),
 			"plan":                 definition,
+			"capabilities":         capabilities,
 		})
 	}
 }

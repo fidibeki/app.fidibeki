@@ -481,7 +481,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		},
 		Store: samlStore, JWT: jwtManager, Logger: logger,
 	})
-	tenantapi.RegisterRoutes(tenantRoutes)
+	tenantapi.RegisterRoutes(tenantRoutes, tenantapi.Capabilities{
+		SlackOneClickInstall: slackOAuth.Configured(),
+	})
 	tenantRoutes.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
 	})

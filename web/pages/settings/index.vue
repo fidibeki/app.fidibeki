@@ -522,6 +522,12 @@ function openIntegration() {
   modal.value = 'integration'
 }
 
+// Only offered when the deployment actually has a Slack app; otherwise the button could
+// only ever lead to a failed callback.
+const slackInstallAvailable = computed(
+  () => data.value?.configuration.capabilities?.slack_one_click_install === true,
+)
+
 function openSlackInstall() {
   if (!canWrite('integration:create')) return
   formError.value = ''
@@ -1035,7 +1041,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           <p v-if="trackerError" class="settings-form-error settings-tracker-error" role="alert">{{ trackerError }}</p>
         </section>
         <section class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><div class="settings-header-actions"><button v-if="canWrite('integration:create')" class="app-button settings-slack-button" @click="openSlackInstall"><img src="/brand/fidibeki-mark.svg" alt="" width="16" height="16" /> {{ t('admin.settings.integrations.slack.add') }}</button><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></div></header>
+        <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><div class="settings-header-actions"><button v-if="canWrite('integration:create') && slackInstallAvailable" class="app-button settings-slack-button" @click="openSlackInstall"><img src="/brand/fidibeki-mark.svg" alt="" width="16" height="16" /> {{ t('admin.settings.integrations.slack.add') }}</button><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></div></header>
         <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.integrations.accessRequired') }}</h3></div>
         <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>{{ t('admin.settings.integrations.none') }}</h3></div>
         <div v-else class="settings-table settings-integrations">
