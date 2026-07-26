@@ -73,10 +73,8 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 		"devDependencies:vitest":              {Class: dependencyBuildTest},
 	},
 	"web/package.json": {
-		"dependencies:@lucide/vue":  {Class: dependencyApplication},
-		"dependencies:@nuxtjs/i18n": {Class: dependencyApplication},
-		// Syntax highlighting for code snippets in web/utils/highlight.ts. Tokenizes in the
-		// browser, reaches no network, and crosses no processing boundary.
+		"dependencies:@lucide/vue":         {Class: dependencyApplication},
+		"dependencies:@nuxtjs/i18n":        {Class: dependencyApplication},
 		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:re2js":               {Class: dependencyApplication},
@@ -88,8 +86,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 		"devDependencies:vue-tsc":          {Class: dependencyBuildTest},
 	},
 	"marketing/package.json": {
-		"dependencies:@lucide/vue": {Class: dependencyApplication},
-		// Same browser-only syntax highlighting as the web app; no network, no boundary.
+		"dependencies:@lucide/vue":         {Class: dependencyApplication},
 		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:vue":                 {Class: dependencyApplication},
