@@ -60,3 +60,14 @@ bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/config/config_test.go:
 # claude/fidibeki-issue-19-a896b5, which the all-refs scan still reaches.
 # Redundant once that branch is deleted from the remote.
 d04c390777d6da05d60a62e1c01d43b0e03d7236:backend/internal/issuetracker/http_integration_test.go:generic-api-key:31
+
+# Testimonials (#107): the publishable widget key, briefly pinned as a constant
+# in the test that covers mounting the loader. The value is public by design —
+# it ships in every rendered page and the API gates it on the browser Origin
+# against the project's allowed domains — but it named a real project, so the
+# working tree now takes it from NUXT_PUBLIC_WIDGET_KEY and holds no literal
+# anywhere. This fingerprint names the branch commit it was written in, which
+# the all-refs scan still reaches while the branch exists; the squash merge
+# carries only the final tree, so it never enters main's history. Redundant
+# once claude/feedback-testimonial-design-9836b7 is deleted from the remote.
+adcb7561e0f709b7162ede6e56ca7e7c7da1c45b:web/tests/unit/feedback-widget.test.ts:generic-api-key:4

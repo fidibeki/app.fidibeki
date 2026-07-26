@@ -14,6 +14,7 @@ export const plans: PlanEntry[] = [
     limits: { projects: 1, feedbackPerMonth: 500, users: 1, storageDays: 30 },
     features: {
       ai: false,
+      testimonials: false,
       sessionReplay: false,
       slack: false,
       video: false,
@@ -34,6 +35,7 @@ export const plans: PlanEntry[] = [
     limits: { projects: 4, feedbackPerMonth: 2500, users: 3, storageDays: 90 },
     features: {
       ai: true,
+      testimonials: true,
       sessionReplay: true,
       slack: false,
       video: false,
@@ -53,6 +55,7 @@ export const plans: PlanEntry[] = [
     limits: { projects: 10, feedbackPerMonth: 10000, users: 10, storageDays: 365 },
     features: {
       ai: true,
+      testimonials: true,
       sessionReplay: true,
       slack: true,
       video: true,
@@ -72,6 +75,7 @@ export const plans: PlanEntry[] = [
     limits: { projects: -1, feedbackPerMonth: -1, users: -1, storageDays: -1 },
     features: {
       ai: true,
+      testimonials: true,
       sessionReplay: true,
       slack: true,
       video: true,
@@ -102,6 +106,7 @@ export const planComparisonRows = [
   { key: 'users', label: 'Team members' },
   { key: 'storageDays', label: 'Replay & attachment retention' },
   { key: 'ai', label: 'AI analysis' },
+  { key: 'testimonials', label: 'Testimonials & walls' },
   { key: 'sessionReplay', label: 'Session replay' },
   { key: 'audio', label: 'Audio attachments' },
   { key: 'video', label: 'Video attachments' },

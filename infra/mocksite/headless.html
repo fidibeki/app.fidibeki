@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Headless rendering — Northwind</title>
+<style>
+  :root {
+    --ink: #16211f; --muted: #6b7a76; --line: #e2e8e5;
+    --accent: #0f766e; --surface: #ffffff; --canvas: #f6f8f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
+      --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--canvas); color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 1080px; margin: 0 auto; padding: 20px 24px;
+  }
+  .brand { font-weight: 800; letter-spacing: -0.02em; }
+  nav a { margin-left: 20px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 24px 80px; }
+  h1 { margin: 48px 0 8px; font-size: 34px; letter-spacing: -0.03em; }
+  .lede { margin: 0 0 28px; color: var(--muted); max-width: 620px; }
+  .note {
+    padding: 14px 16px; margin-bottom: 28px; background: var(--surface);
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 8px; font-size: 14px; color: var(--muted);
+  }
+  .cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); margin: 0; padding: 0; list-style: none; }
+  .card {
+    display: flex; flex-direction: column; gap: 12px; padding: 18px; height: 100%;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  }
+  blockquote { margin: 0; font-size: 15px; line-height: 1.55; }
+  cite { font-size: 13px; font-style: normal; font-weight: 650; }
+  .role { display: block; color: var(--muted); font-size: 12px; }
+  pre {
+    padding: 14px; overflow-x: auto; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 8px; font-size: 12px;
+  }
+</style>
+<script>
+  // The wall identifier comes from ?wall=, so `admin seed-testimonials` can print
+  // a URL that just works instead of asking anyone to edit this file. It is
+  // remembered afterwards, so following a link between these pages keeps it.
+  (function () {
+    var fromQuery = new URLSearchParams(location.search).get('wall')
+    if (fromQuery) try { localStorage.setItem('fidibeki-demo-wall', fromQuery) } catch (e) {}
+    var wall = fromQuery || (function () {
+      try { return localStorage.getItem('fidibeki-demo-wall') } catch (e) { return null }
+    })()
+    if (!wall) return
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('fidibeki-wall, fidibeki-testimonial').forEach(function (element) {
+        element.setAttribute('wall', wall)
+      })
+      document.querySelectorAll('[data-wall-id]').forEach(function (element) {
+        element.textContent = wall
+      })
+    })
+    window.FIDIBEKI_DEMO_WALL = wall
+  })()
+</script>
+</head>
+<body>
+  <header>
+    <span class="brand">Northwind</span>
+    <nav>
+      <a href="/">Product</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/headless.html">Headless</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Rendered from the public JSON API</h1>
+    <p class="lede">
+      This page uses no Fidibeki JavaScript. It reads the same endpoint the Web Component reads and
+      renders the markup itself — which is the answer for anyone who wants the quotes in their
+      server-rendered HTML rather than behind a shadow root.
+    </p>
+    <div class="note">
+      In production this fetch happens on the server, at build or request time, and the quotes ship
+      as real HTML. It runs in the browser here only so this file can stay a static demo page.
+    </div>
+
+    <ul class="cards" id="cards"></ul>
+
+    <h2>The request</h2>
+    <pre id="request"></pre>
+  </main>
+
+<script>
+  const WALL = window.FIDIBEKI_DEMO_WALL || ''
+  const ENDPOINT = `http://widget.localhost:8088/v1/public/walls/${WALL}`
+  // Without a wall there is nothing to fetch, and firing the request anyway
+  // would put a confusing 404 in the console of a page that is working fine.
+  if (!WALL) {
+    document.getElementById('request').textContent =
+      'No wall configured. Run: admin seed-testimonials, then open the printed URL.'
+  } else {
+    document.getElementById('request').textContent = `GET ${ENDPOINT}`
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  }
+
+  if (WALL) fetch(ENDPOINT, { credentials: 'omit' })
+    .then(response => response.ok ? response.json() : null)
+    .then(payload => {
+      if (!payload || !Array.isArray(payload.cards)) return
+      document.getElementById('cards').innerHTML = payload.cards.map(card => `
+        <li class="card">
+          <blockquote>${escapeHTML(card.quote)}</blockquote>
+          <div>
+            ${card.author?.name ? `<cite>${escapeHTML(card.author.name)}</cite>` : ''}
+            ${card.author?.role || card.author?.company
+              ? `<span class="role">${escapeHTML([card.author.role, card.author.company].filter(Boolean).join(' · '))}</span>`
+              : ''}
+          </div>
+        </li>
+      `).join('')
+    })
+    .catch(() => {})
+</script>
+</body>
+</html>

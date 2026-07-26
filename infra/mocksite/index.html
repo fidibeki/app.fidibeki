@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Northwind — project tracking that stays out of the way</title>
+<!--
+  This is a stand-in for a customer's marketing site. It is deliberately served
+  from demo.localhost rather than from the app, so the embed crosses a real
+  origin boundary and genuinely exercises CORS, CORP and the referrer allowlist
+  instead of accidentally passing because everything shared one host.
+
+  The only Fidibeki-specific lines on this page are the script tag and the
+  <fidibeki-wall> element. That is the whole integration.
+-->
+<script async src="http://widget.localhost:8088/v1/testimonials.js"></script>
+<style>
+  :root {
+    --ink: #16211f;
+    --muted: #6b7a76;
+    --line: #e2e8e5;
+    --accent: #0f766e;
+    --surface: #ffffff;
+    --canvas: #f6f8f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
+      --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 20px 24px;
+  }
+  .brand { font-weight: 800; letter-spacing: -0.02em; }
+  nav a { margin-left: 20px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  nav a:hover { color: var(--ink); }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 24px 80px; }
+  .hero { padding: 64px 0 40px; max-width: 640px; }
+  h1 { margin: 0 0 16px; font-size: clamp(32px, 5vw, 52px); line-height: 1.08; letter-spacing: -0.03em; }
+  .hero p { margin: 0 0 28px; color: var(--muted); font-size: 19px; }
+  .cta {
+    display: inline-block; padding: 12px 22px; background: var(--accent);
+    color: #fff; border-radius: 8px; text-decoration: none; font-weight: 650;
+  }
+  section { padding: 48px 0; border-top: 1px solid var(--line); }
+  h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.02em; }
+  .lede { margin: 0 0 28px; color: var(--muted); }
+  fidibeki-wall, fidibeki-testimonial { display: block; }
+  /* The embed exposes ::part hooks, so a customer restyles it without forking. */
+  fidibeki-wall::part(card) { box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
+  .hero-quote { max-width: 560px; margin-top: 32px; }
+  footer { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; color: var(--muted); font-size: 13px; }
+</style>
+<script>
+  // The wall identifier comes from ?wall=, so `admin seed-testimonials` can print
+  // a URL that just works instead of asking anyone to edit this file. It is
+  // remembered afterwards, so following a link between these pages keeps it.
+  (function () {
+    var fromQuery = new URLSearchParams(location.search).get('wall')
+    if (fromQuery) try { localStorage.setItem('fidibeki-demo-wall', fromQuery) } catch (e) {}
+    var wall = fromQuery || (function () {
+      try { return localStorage.getItem('fidibeki-demo-wall') } catch (e) { return null }
+    })()
+    if (!wall) return
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('fidibeki-wall, fidibeki-testimonial').forEach(function (element) {
+        element.setAttribute('wall', wall)
+      })
+      document.querySelectorAll('[data-wall-id]').forEach(function (element) {
+        element.textContent = wall
+      })
+    })
+    window.FIDIBEKI_DEMO_WALL = wall
+  })()
+</script>
+</head>
+<body>
+  <header>
+    <span class="brand">Northwind</span>
+    <nav>
+      <a href="/">Product</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/headless.html">Headless</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Project tracking that stays out of the way.</h1>
+      <p>Plan, track and ship without the ceremony. Northwind is the tracker your team forgets it is using.</p>
+      <a class="cta" href="#">Start free</a>
+
+      <!-- One quote under the hero: the commonest first integration. -->
+      <div class="hero-quote">
+        <fidibeki-testimonial></fidibeki-testimonial>
+      </div>
+    </div>
+
+    <section>
+      <h2>Loved by teams who hate process</h2>
+      <p class="lede">Every quote below is a real piece of product feedback whose author agreed to publish it.</p>
+      <fidibeki-wall></fidibeki-wall>
+    </section>
+  </main>
+
+  <footer>
+    Northwind is a fictional company used to test the Fidibeki testimonials embed.
+  </footer>
+</body>
+</html>

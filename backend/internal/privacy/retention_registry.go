@@ -273,6 +273,29 @@ func retentionRegistry() []retentionDefinition {
 			),
 		},
 		{
+			Category: "testimonials", Label: "Published testimonials and collection evidence",
+			Purpose: "Publish author-consented quotes, and evidence that consent was given and withdrawn.",
+			// Controller and processor: the customer decides what to publish, but
+			// Fidibeki serves the bytes from its own domain and holds the consent
+			// record, so neither role alone describes it.
+			Role: "controller_and_processor", Status: RetentionDecisionRequired,
+			DurationKind: retentionDurationDecision, Source: "Policy decision required",
+			Trigger: "Collection request, consent grant, publication, and consent withdrawal.",
+			// A revoked testimonial keeps a tombstone: identifier, revocation time,
+			// notice version and a hash of the consent evidence. That is enough to
+			// evidence that consent existed and was withdrawn, with none of the
+			// personal data retained. How long the tombstone itself lives is the
+			// decision still outstanding.
+			Action:  "Purge author fields and media on withdrawal; tombstone period requires approval.",
+			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
+			Resources: tables(
+				"testimonial_candidates", "testimonial_forms", "testimonial_media",
+				"testimonial_media_renditions", "testimonial_requests", "testimonial_tags",
+				"testimonial_wall_daily_views", "testimonial_wall_items",
+				"testimonial_wall_snapshots", "testimonial_walls", "testimonials",
+			),
+		},
+		{
 			Category: "privacy_rights", Label: "Privacy cases and rights-operation evidence",
 			Purpose: "Verify, execute, review, and evidence privacy-rights operations.",
 			Role:    "controller_and_processor", Status: RetentionDecisionRequired,

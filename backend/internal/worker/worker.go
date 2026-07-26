@@ -14,6 +14,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
+	"github.com/acidiney/app.fidibeki/backend/internal/testimonial"
 	"github.com/hibiken/asynq"
 )
 
@@ -39,9 +40,12 @@ type Options struct {
 	ReplayMergeHandler            asynq.HandlerFunc
 	ReplayVerificationHandler     asynq.HandlerFunc
 	AttachmentVerificationHandler asynq.HandlerFunc
-	IntegrationHandler            asynq.HandlerFunc
-	IssueTrackerHandler           asynq.HandlerFunc
-	PrivacyExportHandler          asynq.HandlerFunc
+	// TestimonialTranscodeHandler is optional: a deployment without ffmpeg simply
+	// does not register it, and uploads stay pending rather than failing loudly.
+	TestimonialTranscodeHandler asynq.HandlerFunc
+	IntegrationHandler          asynq.HandlerFunc
+	IssueTrackerHandler         asynq.HandlerFunc
+	PrivacyExportHandler        asynq.HandlerFunc
 }
 
 type Worker struct {
@@ -112,6 +116,9 @@ func New(options Options) (*Worker, error) {
 	mediaMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
 	mediaMux.HandleFunc(replay.TaskVerifyBatch, options.ReplayVerificationHandler)
 	mediaMux.HandleFunc(feedback.TaskAttachmentVerify, options.AttachmentVerificationHandler)
+	if options.TestimonialTranscodeHandler != nil {
+		mediaMux.HandleFunc(testimonial.TaskTranscode, options.TestimonialTranscodeHandler)
+	}
 	privacyMux := asynq.NewServeMux()
 	privacyMux.HandleFunc(privacy.TaskExport, options.PrivacyExportHandler)
 	aiMux := asynq.NewServeMux()
@@ -131,6 +138,9 @@ func New(options Options) (*Worker, error) {
 			Concurrency: options.MediaConcurrency,
 			Queues: map[string]int{
 				replay.QueueName: 1, feedback.VerificationQueueName: 1,
+				// Weighted below the others: one encode runs for minutes, and
+				// nothing a person is waiting on should queue behind it.
+				testimonial.TranscodeQueueName: 1,
 			},
 			Logger: options.Logger,
 		}),

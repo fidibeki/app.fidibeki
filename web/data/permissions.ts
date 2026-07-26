@@ -32,6 +32,16 @@ export const tenantPermissionGroups = [
     permissions: ['integration:create', 'integration:read', 'integration:update', 'integration:delete'],
   },
   {
+    // testimonial:publish is listed separately from testimonial:update on
+    // purpose: staging a wall is an internal edit, publishing it puts a named
+    // person's words and face on the open internet.
+    label: 'Testimonials',
+    permissions: [
+      'testimonial:read', 'testimonial:create', 'testimonial:update',
+      'testimonial:delete', 'testimonial:publish',
+    ],
+  },
+  {
     label: 'Account',
     permissions: ['billing:manage', 'billing:read', 'tenant:update', 'tenant:read'],
   },

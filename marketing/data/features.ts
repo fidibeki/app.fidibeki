@@ -38,7 +38,7 @@ export const features: FeatureEntry[] = [
         body: 'Reporters can add screenshots, audio notes, element attachments, or video clips if the rule enables those tools. Session replay records only when a rule turns it on and the environment supports it. Uploads go straight to object storage through brief presigned URLs, are verified for size and type, and pass a quarantine check before anyone can view them.',
       },
     ],
-    related: ['session-replay', 'ai-analysis'],
+    related: ['session-replay', 'ai-analysis', 'testimonials'],
   },
   {
     slug: 'session-replay',
@@ -154,7 +154,54 @@ export const features: FeatureEntry[] = [
         body: 'Reporter access tokens are random, stored only as hashes, rate limited, and expiring. Every update includes a long lasting unsubscribe link, and delivery attempts, bounces, and complaints are logged so you can prove what was sent.',
       },
     ],
-    related: ['issue-tracking', 'feedback-widget'],
+    related: ['issue-tracking', 'feedback-widget', 'testimonials'],
+  },
+  {
+    slug: 'testimonials',
+    name: 'Testimonials',
+    loopStage: 'Communicate',
+    tagline: 'Your best feedback is already praise. Publish it, with permission.',
+    summary:
+      'Fidibeki scores the feedback you already collected, asks those reporters for permission in their own words, and gives you a wall you can embed with one script tag. Nothing goes public until the person who wrote it says yes and you approve it.',
+    icon: 'quote',
+    availability: 'Growth, Scale & Enterprise',
+    highlights: [
+      'A ranked queue of feedback worth asking about, with the reason for each rank',
+      'One link asks the author for their words, their name, their photo, and their video, each granted separately',
+      'Nothing publishes until the author consents and a teammate with publish rights approves',
+      'Seven arrangements: grid, masonry, carousel, marquee, list, spotlight, or your own code',
+      'Video testimonials in portrait or landscape, shown in the shape they were recorded in, on Scale and above',
+      'Editing a published quote suspends it until the author agrees to the new wording',
+    ],
+    sections: [
+      {
+        heading: 'The testimonial you need is already in your inbox',
+        body: 'Somebody already wrote you a five star review. It is sitting in your feedback list between a broken link and a pricing question. Fidibeki scores every report on sentiment, rating, length, specificity, and whether the person can be contacted at all, then puts the strongest at the top of a Suggested queue and shows you why each one ranked where it did. You send the request in one click, to the address that reporter already left.',
+      },
+      {
+        heading: 'Consent is a record, not a checkbox',
+        body: 'The author sees their own words and chooses, field by field, what may be published: the quote, their name and role, their company, their photo, their video. Each grant is stored with the wording it was given for. Every published testimonial carries a withdrawal link that works without an account, and a withdrawn testimonial disappears from your wall on the next publish.',
+        bullets: [
+          'Separate consent for quote, identity, company, photo, and video',
+          'Editing the quote after consent suspends it until the author approves the new wording',
+          'A withdrawal link on every testimonial, honored without anyone having to be asked',
+          'Approval to publish is its own permission, separate from the right to edit',
+        ],
+      },
+      {
+        heading: 'One script tag, or none at all',
+        body: 'Pick an arrangement in the backoffice and paste two lines into your site. The embed renders inside a shadow root, so your styles never leak in and ours never leak out, and every part of a card can be restyled with CSS custom properties without forking anything. Prefer to build it yourself? Choose the custom layout and you get the same wall as JSON, open to any origin, containing only what each author agreed to publish.',
+        code: {
+          language: 'html',
+          snippet: '<script async src="https://widget.fidibeki.com/v1/testimonials.js"></script>\n<fidibeki-wall wall="wl_your_wall_id"></fidibeki-wall>',
+        },
+      },
+      {
+        heading: 'Video, in the shape it was filmed',
+        body: 'A phone held upright records a portrait clip, and most walls letterbox it into a shape it was never in. Fidibeki transcodes each upload to a 720p rendition, keeps its real dimensions, and sizes the player from them, so a portrait recording stays portrait and a landscape one stays landscape. A still frame stands in until playback starts, and no footage reaches a wall until a teammate has watched it.',
+      },
+    ],
+    related: ['feedback-widget', 'reporter-loop', 'ai-analysis'],
   },
   {
     slug: 'workspace-permissions',
@@ -189,25 +236,42 @@ export const features: FeatureEntry[] = [
     slug: 'enterprise-authentication',
     name: 'Enterprise authentication',
     loopStage: 'Track',
-    tagline: 'SAML SSO and IdP managed MFA for larger teams.',
+    tagline: 'Sign in through your identity provider, or turn on two factor and require it.',
     summary:
-      'Planned support for SAML 2.0 single sign on and identity provider managed multi factor authentication, so larger teams can enforce their own access policies.',
+      'SAML 2.0 single sign on with optional and required modes, and TOTP two factor authentication members enrol in themselves and admins can require across the workspace. Both refuse the configurations that would lock you out.',
     icon: 'shield-check',
-    availability: 'Enterprise, planned',
+    availability: 'Enterprise',
     highlights: [
-      'SAML 2.0 single sign on, planned',
-      'Organization level two factor authentication policy, planned',
-      'IdP managed multi factor authentication, planned',
-      'Optional and required SSO modes per organization, planned',
+      'SAML 2.0 SP initiated single sign on against your own provider',
+      'Three modes per organization: disabled, optional, or required',
+      'Required mode unlocks only after a test login actually succeeds',
+      'TOTP two factor with any authenticator app, plus recovery codes',
+      'Require two factor workspace wide, with a compliance view of who has enrolled',
+      'Admins can reset a locked out member without disabling the policy',
     ],
     sections: [
       {
         heading: 'Bring your own identity provider',
-        body: 'We are planning SAML SSO so members can authenticate through your existing provider. The first version will support SP initiated login, verified email claims, and organization scoped enforcement modes.',
+        body: 'Members authenticate through your existing SAML 2.0 provider. Login is service provider initiated, email claims are verified, and each organization chooses its own enforcement: disabled, optional so members may use either route, or required so normal member access goes through your IdP.',
+        bullets: [
+          'Optional mode lets members choose SAML or a magic link',
+          'Required mode routes normal member access through your provider',
+          'Under required mode every workspace answers identically, so the login page reveals nothing about who has SSO',
+        ],
       },
       {
-        heading: 'MFA through your IdP',
-        body: 'Multi factor authentication requirements will be delegated to your identity provider, keeping Fidibeki simple while letting you enforce your own assurance level.',
+        heading: 'Required mode has to be earned',
+        body: 'You cannot switch an organization to required until a test assertion from your provider has actually succeeded. A typo in a certificate or an entity ID would otherwise lock every member out of a workspace at the moment the setting is saved, and the people who could undo it are the people now locked out.',
+      },
+      {
+        heading: 'Two factor, by the member and by the organization',
+        body: 'Any member can enrol a TOTP authenticator from their own security settings and gets recovery codes for the day the phone is gone. An admin can require two factor for the whole workspace: members who have not enrolled are walked through it on their next sign in, and a compliance view shows who is still pending. If required SSO is already on, MFA is left to your identity provider rather than asked for twice.',
+        bullets: [
+          'Enrolment is per member; enforcement is per organization',
+          'Recovery codes are single use and can be regenerated',
+          'The policy refuses changes that would lock out the last administrator',
+          'Admins can reset one member’s enrolment without turning the policy off',
+        ],
       },
     ],
     related: ['workspace-permissions'],

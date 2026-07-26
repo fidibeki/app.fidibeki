@@ -99,6 +99,16 @@ const diagnosticMessage = computed(() => {
 
 const diagnosticReady = computed(() => Boolean(diagnostic.value?.latest_session_started_at))
 
+/** The call the customer's own consent manager has to make, filled in with the
+ *  notice version and locale they just chose. */
+const runtimeSnippet = computed(() => `fidibeki.replay.grantConsent({
+  consentId: "cmp-reference",
+  purpose: "session_replay",
+  noticeVersion: "${draft.value.notice_version}",
+  locale: "${draft.value.supported_locales[0] || 'en'}",
+  source: "customer_cmp"
+})`)
+
 function emptyConsent(): ReplayConsentConfig {
   return {
     mode: 'none',
@@ -315,13 +325,7 @@ function confirm() {
 
           <div v-if="draft.mode === 'customer_cmp'" class="replay-consent-runtime">
             <div><Code2 :size="16" /><p><b>{{ t('projects.editor.replay.consent.runtimeTitle') }}</b><span>{{ t('projects.editor.replay.consent.runtimeDescription') }}</span></p></div>
-            <pre>fidibeki.replay.grantConsent({
-  consentId: "cmp-reference",
-  purpose: "session_replay",
-  noticeVersion: "{{ draft.notice_version }}",
-  locale: "{{ draft.supported_locales[0] || 'en' }}",
-  source: "customer_cmp"
-})</pre>
+            <AppCodeBlock :code="runtimeSnippet" language="js" />
             <div class="replay-consent-diagnostic" :data-ready="diagnosticReady" data-consent-diagnostic>
               <span>{{ diagnosticMessage }}</span>
               <button

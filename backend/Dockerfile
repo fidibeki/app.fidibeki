@@ -9,7 +9,11 @@ RUN cd backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/fidi
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata \
+# ffmpeg is for the worker, which transcodes testimonial video. It rides in the
+# shared image because `serve` and `worker` are the same binary with different
+# arguments; the cost is roughly 80MB on an image that also serves HTTP. Splitting
+# into separate api and worker images is the obvious next step if that matters.
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && addgroup -S fidibeki \
     && adduser -S -G fidibeki fidibeki \
     && mkdir -p /var/lib/fidibeki-emails \

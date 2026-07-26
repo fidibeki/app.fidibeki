@@ -83,6 +83,31 @@ func TestCanUseFeatureRejectsUnavailableAndUnknownFeatures(t *testing.T) {
 	}
 }
 
+// Testimonials cannot be sold on a plan without AI. The Suggested queue refuses
+// to rank text that never completed moderation, moderation is the AI pass, and a
+// queue that is empty for good is not a feature.
+func TestTestimonialsAreAvailableExactlyWhereAIIs(t *testing.T) {
+	t.Parallel()
+
+	for _, plan := range []tenant.Plan{
+		tenant.PlanStarter, tenant.PlanGrowth, tenant.PlanScale, tenant.PlanEnterprise,
+	} {
+		resolved := tenant.Tenant{Plan: plan}
+		ai := config.CanUseFeature(resolved, config.FeatureAI)
+		testimonials := config.CanUseFeature(resolved, config.FeatureTestimonials)
+		if ai != testimonials {
+			t.Errorf("%s: ai = %t but testimonials = %t; they have to move together",
+				plan, ai, testimonials)
+		}
+	}
+	if config.CanUseFeature(tenant.Tenant{Plan: tenant.PlanStarter}, config.FeatureTestimonials) {
+		t.Error("starter testimonials = true, want false")
+	}
+	if !config.CanUseFeature(tenant.Tenant{Plan: tenant.PlanGrowth}, config.FeatureTestimonials) {
+		t.Error("growth testimonials = false, want true")
+	}
+}
+
 func TestPlanLimitValueRejectsUnknownLimit(t *testing.T) {
 	t.Parallel()
 	definition, _ := config.PlanFor(tenant.PlanStarter)

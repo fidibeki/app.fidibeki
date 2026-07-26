@@ -14,6 +14,7 @@ import {
   Link2,
   LogOut,
   Menu,
+  MessageSquareQuote,
   PanelRightOpen,
   Search,
   Settings,
@@ -22,6 +23,7 @@ import {
   X,
 } from '@lucide/vue'
 import { feedbackQueueFromQuery, type FeedbackQueueID } from '~/utils/feedback-queue'
+import type { TenantConfiguration } from '~/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,12 +31,39 @@ const { t } = useI18n()
 const { can, member, tenant } = useAuth()
 const { plural } = useRegionalFormat()
 const { $apiFetch, $clearSession } = useNuxtApp()
+const runtime = useRuntimeConfig()
 const mobileNavOpen = ref(false)
+
+// We use our own product. The widget is mounted from this layout rather than a
+// global plugin so it stays on the signed-in workspace: the pages that opt out
+// of this layout are somebody else's — a reporter reading their issue, an author
+// giving a testimonial, a person exercising a privacy right — and our feedback
+// launcher does not belong on any of them.
+//
+// Nothing is torn down on unmount, because that is how a customer integrates it
+// and running it any other way would be testing something we do not ship.
+onMounted(() => {
+  mountFeedbackWidget(
+    document,
+    String(runtime.public.widgetUrl || ''),
+    String(runtime.public.widgetKey || ''),
+  )
+})
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const loggingOut = ref(false)
 const accountMenu = ref<HTMLDetailsElement | null>(null)
 const mobileMenuButton = ref<HTMLButtonElement | null>(null)
 const mobileNavCloseButton = ref<HTMLButtonElement | null>(null)
+
+// Which features the plan carries, read from the server rather than mapped from
+// the plan name here: a second copy of that mapping would drift from the one the
+// API enforces, and the rail would offer a screen the routes refuse.
+const { data: configuration } = await useAsyncData(
+  'workspace-plan',
+  () => $apiFetch<TenantConfiguration>('/v1/config'),
+  { server: false },
+)
+const planFeatures = computed(() => configuration.value?.plan.features)
 
 const showQueueRail = computed(() => can('feedback:read') && (route.path.startsWith('/feedback') || route.path === '/'))
 const workspaceHome = computed(() => firstAccessibleWorkspacePath(member.value?.permissions || []))
@@ -53,11 +82,18 @@ const primaryNavigation = [
   { labelKey: 'navigation.feedback', to: '/feedback', icon: Inbox, permissions: ['feedback:read'] },
   { labelKey: 'navigation.issues', to: '/issues', icon: LayoutList, permissions: ['issue:read'] },
   { labelKey: 'navigation.notifications', to: '/notifications', icon: Bell, permissions: ['issue:read'] },
+  { labelKey: 'navigation.testimonials', to: '/testimonials', icon: MessageSquareQuote, permissions: ['testimonial:read'], feature: 'testimonials' as const },
   { labelKey: 'navigation.analytics', to: '/analytics', icon: BarChart3, permissions: ['project:read'] },
   { labelKey: 'navigation.projects', to: '/projects', icon: FolderKanban, permissions: ['project:read'] },
   { labelKey: 'navigation.settings', to: '/settings', icon: Settings, permissions: ['tenant:read'] },
 ]
-const availablePrimaryNavigation = computed(() => primaryNavigation.filter(item => item.permissions.every(can)))
+const availablePrimaryNavigation = computed(() => primaryNavigation.filter((item) => {
+  if (!item.permissions.every(can)) return false
+  const feature = 'feature' in item ? item.feature : undefined
+  // Until the plan is known, a gated item stays hidden. Showing it and taking it
+  // away a moment later is worse than showing it a moment late.
+  return !feature || planFeatures.value?.[feature] === true
+}))
 
 const queueNavigation: Array<{ id: FeedbackQueueID, labelKey: string, to: string, icon: typeof Inbox }> = [
   { id: 'open', labelKey: 'navigation.queues.open', to: '/feedback?status=open', icon: Inbox },
