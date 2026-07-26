@@ -362,6 +362,15 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
+	// The author answering a testimonial request is not a member and never will
+	// be, so the token is the only credential. Resolution runs on the admin pool
+	// because the workspace is unknown until the digest is matched; everything
+	// after that happens inside a transaction pinned to that tenant.
+	testimonialCollectOptions := testimonial.CollectHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Logger: logger,
+	}
+	testimonial.RegisterCollectRoutes(platformRoutes, testimonialCollectOptions)
 	membernotify.RegisterPublicRoutes(platformRoutes, membernotify.PublicHTTPOptions{
 		Store: membernotify.Store{}, Database: pools.Admin, Tokens: memberNotificationTokens,
 		Logger: logger,

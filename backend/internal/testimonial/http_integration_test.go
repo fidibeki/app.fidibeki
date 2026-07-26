@@ -141,25 +141,83 @@ func TestTestimonialAPI(t *testing.T) {
 		}
 	})
 
-	// Submit as the author would, then drive the rest through the API.
+	// The author's side, over the real public endpoints rather than the store.
+	collectRoutes := chi.NewRouter()
+	RegisterCollectRoutes(collectRoutes, CollectHTTPOptions{
+		Store: Store{}, Resolver: env.pools.Admin, Begin: db.BeginFromPool(env.pools.App),
+		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Now:    func() time.Time { return now },
+	})
+	collectServer := httptest.NewServer(collectRoutes)
+	defer collectServer.Close()
+	collectPath := "/v1/public/testimonial-requests/" + created.Token
+
+	// An unknown token is indistinguishable from an expired one: an anonymous
+	// caller is not owed the difference.
+	unknown := publicCall(t, collectServer.URL, http.MethodGet,
+		"/v1/public/testimonial-requests/not-a-real-token", "")
+	if unknown.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown token status = %d, want 404", unknown.StatusCode)
+	}
+
+	loaded := publicCall(t, collectServer.URL, http.MethodGet, collectPath, "")
+	if loaded.StatusCode != http.StatusOK {
+		t.Fatalf("load collect page status = %d", loaded.StatusCode)
+	}
+	if cache := loaded.Header.Get("Cache-Control"); cache != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store on an author's draft", cache)
+	}
+	if robots := loaded.Header.Get("X-Robots-Tag"); !strings.Contains(robots, "noindex") {
+		t.Errorf("X-Robots-Tag = %q, want the collection page kept out of indexes", robots)
+	}
+
+	// Publishing without permission for the words is not a testimonial.
+	noQuoteConsent := publicCall(t, collectServer.URL, http.MethodPost, collectPath,
+		`{"quote":"Anything at all here","consent":{"quote":false,"identity":true}}`)
+	if noQuoteConsent.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("submission without quote consent = %d, want 422", noQuoteConsent.StatusCode)
+	}
+	// Publishing an identity with no name to publish is incoherent.
+	namelessIdentity := publicCall(t, collectServer.URL, http.MethodPost, collectPath,
+		`{"quote":"Anything at all here","consent":{"quote":true,"identity":true}}`)
+	if namelessIdentity.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("identity consent without a name = %d, want 422", namelessIdentity.StatusCode)
+	}
+
+	submitted := publicCall(t, collectServer.URL, http.MethodPost, collectPath,
+		`{"quote":"We cut our triage time from 3 days to 20 minutes in the first week.",`+
+			`"author_name":"Ana Marques","author_role":"Head of Support",`+
+			`"consent":{"quote":true,"identity":true},"notice_version":"v1","locale":"pt-PT"}`)
+	if submitted.StatusCode != http.StatusCreated {
+		t.Fatalf("submit status = %d", submitted.StatusCode)
+	}
+
+	// A second submission on the same token must not create a second testimonial.
+	replay := publicCall(t, collectServer.URL, http.MethodPost, collectPath,
+		`{"quote":"A different quote entirely","consent":{"quote":true}}`)
+	if replay.StatusCode == http.StatusCreated {
+		t.Fatal("a spent collection token created a second testimonial")
+	}
+	// Revisiting the link still works, so the author sees their confirmation.
+	revisited := publicCall(t, collectServer.URL, http.MethodGet, collectPath, "")
+	if revisited.StatusCode != http.StatusOK {
+		t.Fatalf("revisit status = %d, want the confirmation to remain readable", revisited.StatusCode)
+	}
+
 	var item Testimonial
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
-		publicID, _ := GeneratePublicID(PrefixTestimonial)
-		_, revocationHash, _ := GenerateToken()
-		var err error
-		item, err = store.SubmitCollection(ctx, tx, env.tenantID, publicID, revocationHash,
-			SubmissionValues{
-				ProjectID: &env.projectID, FeedbackID: &env.feedbackID,
-				RequestID: created.Request.ID, Source: SourceFeedback,
-				Quote:   "We cut our triage time from 3 days to 20 minutes in the first week.",
-				Author:  AuthorDetails{Name: "Ana Marques", Role: "Head of Support"},
-				Scopes:  ConsentScopes{Quote: true, Identity: true},
-				Consent: ConsentEvidence{NoticeVersion: "v1"},
-			}, now)
+		items, err := store.ListTestimonials(ctx, tx, env.tenantID, "", 10)
 		if err != nil {
-			t.Fatalf("submit: %v", err)
+			t.Fatalf("list after submission: %v", err)
 		}
+		if len(items) != 1 {
+			t.Fatalf("testimonials = %d, want exactly one after a replayed submit", len(items))
+		}
+		item = items[0]
 	})
+	if item.ConsentState != ConsentGranted || !item.Scopes.Identity {
+		t.Fatalf("collected testimonial = %#v, want granted consent including identity", item)
+	}
 
 	if got := apiCall(handler, http.MethodPost, "/v1/testimonials/"+item.ID+"/approve", "", fullToken); got.Code != http.StatusNoContent {
 		t.Fatalf("approve status = %d, body = %s", got.Code, got.Body.String())
@@ -274,6 +332,29 @@ func TestTestimonialAPI(t *testing.T) {
 	if dismissed.Code != http.StatusNoContent {
 		t.Fatalf("dismiss status = %d, body = %s", dismissed.Code, dismissed.Body.String())
 	}
+}
+
+// publicCall drives an unauthenticated endpoint over a real socket, so the
+// headers a browser would see are the ones under test.
+func publicCall(t *testing.T, base, method, path, body string) *http.Response {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	request, err := http.NewRequest(method, base+path, reader)
+	if err != nil {
+		t.Fatalf("build public request: %v", err)
+	}
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("call public endpoint: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	return response
 }
 
 func apiCall(handler http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
