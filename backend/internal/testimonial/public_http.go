@@ -11,7 +11,6 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 )
 
 // snapshotMaxAge and snapshotStaleWhileRevalidate bound how long a revocation
@@ -38,7 +37,7 @@ type PublicHTTPOptions struct {
 	Authorizer PublicAuthorizer
 	// Begin opens a transaction on the app pool, where row-level security
 	// applies. The authorizer runs on the admin pool before this.
-	Begin  func(context.Context) (pgx.Tx, error)
+	Begin  db.BeginFunc
 	Logger *slog.Logger
 	Now    func() time.Time
 }

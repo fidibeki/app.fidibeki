@@ -46,6 +46,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
+	"github.com/acidiney/app.fidibeki/backend/internal/testimonial"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
@@ -445,6 +446,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: abuse.Store{}, JWT: jwtManager, Logger: logger,
 	})
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
+	testimonial.RegisterRoutes(tenantRoutes, testimonial.HTTPOptions{
+		Store: testimonial.Store{}, JWT: jwtManager, Logger: logger,
+	})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
 	})
@@ -514,6 +518,17 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: widgetanalytics.Store{}, Consent: widgetanalytics.ConsentStore{},
 		Limiter:           ratelimit.NewRedisLimiter(redisClient.Client()),
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
+	})
+	// The testimonials embed rides the widget host, which already carries the
+	// permissive CORS and long-lived asset caching an embed needs. The authorizer
+	// runs on the admin pool because it resolves a workspace before any tenant
+	// context exists; every read after that is inside a transaction that pins
+	// app.tenant_id, so row-level security still applies.
+	testimonial.RegisterPublicRoutes(widgetRoutes, testimonial.PublicHTTPOptions{
+		Store:      testimonial.Store{},
+		Authorizer: testimonial.PublicAuthorizer{Database: pools.Admin},
+		Begin:      db.BeginFromPool(pools.App),
+		Logger:     logger,
 	})
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: replay.Store{},

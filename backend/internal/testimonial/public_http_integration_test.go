@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -425,7 +426,7 @@ func (e *testimonialEnvironment) publicServer(t *testing.T) *httptest.Server {
 	RegisterPublicRoutes(router, PublicHTTPOptions{
 		Store:      Store{},
 		Authorizer: PublicAuthorizer{Database: e.pools.Admin},
-		Begin:      func(ctx context.Context) (pgx.Tx, error) { return e.pools.App.Begin(ctx) },
+		Begin:      db.BeginFromPool(e.pools.App),
 	})
 	return httptest.NewServer(router)
 }
@@ -475,8 +476,8 @@ func newTestimonialEnvironment(ctx context.Context, t *testing.T) *testimonialEn
 	}
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)
-		VALUES ($1, 'owner@acme.test', ARRAY['feedback:read']) RETURNING id
-	`, env.tenantID).Scan(&env.memberID); err != nil {
+		VALUES ($1, 'owner@acme.test', $2) RETURNING id
+	`, env.tenantID, auth.TenantPermissionStrings()).Scan(&env.memberID); err != nil {
 		t.Fatalf("create member: %v", err)
 	}
 	if err := root.QueryRow(ctx, `

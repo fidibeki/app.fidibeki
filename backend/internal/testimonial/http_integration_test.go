@@ -1,0 +1,302 @@
+package testimonial
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+)
+
+// TestTestimonialAPI drives the backoffice API the way the UI will: list the
+// Suggested queue, send a collection request, approve, build a wall and publish
+// it.
+//
+// The permission assertions are the point of the second half. Publishing is a
+// separate grant from editing because it is the step that puts a named person's
+// words on the public internet, and a test is the only thing that keeps those
+// two from quietly collapsing into one.
+func TestTestimonialAPI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	env := newTestimonialEnvironment(ctx, t)
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+
+	jwtManager, err := auth.NewJWTManager(strings.Repeat("t", 32), "fidibeki", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("create JWT manager: %v", err)
+	}
+	fullToken, _, _ := jwtManager.IssueTenant(env.memberID, env.tenantID, auth.TenantPermissionStrings())
+
+	// A member who may edit everything but may not publish.
+	var editorID string
+	if err := env.root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'editor@acme.test', ARRAY['testimonial:read','testimonial:create','testimonial:update'])
+		RETURNING id
+	`, env.tenantID).Scan(&editorID); err != nil {
+		t.Fatalf("create editor: %v", err)
+	}
+	editorToken, _, _ := jwtManager.IssueTenant(editorID, env.tenantID, []string{
+		string(auth.PermissionTestimonialRead),
+		string(auth.PermissionTestimonialCreate),
+		string(auth.PermissionTestimonialUpdate),
+	})
+
+	routes := chi.NewRouter()
+	RegisterRoutes(routes, HTTPOptions{
+		Store: Store{}, JWT: jwtManager,
+		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Now:    func() time.Time { return now },
+	})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: env.pools.Admin},
+		Begin: db.BeginFromPool(env.pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	})(routes)
+
+	store := Store{}
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		assessment := Score(Input{
+			Text:             "We cut our triage time from 3 days to 20 minutes in the first week.",
+			Rating:           intPointer(5),
+			FeedbackStatus:   "open",
+			ModerationStatus: ModerationCompleted,
+			SentimentScore:   floatPointer(0.9),
+			Actionability:    "not_actionable",
+			AuthorReachable:  true,
+			Language:         "en",
+			SupportedLocales: []string{"en"},
+		})
+		if err := store.UpsertCandidate(ctx, tx, env.tenantID, env.feedbackID, env.projectID,
+			assessment, assessment.BaseScore, now); err != nil {
+			t.Fatalf("seed candidate: %v", err)
+		}
+	})
+
+	// The Suggested queue, with the reasons that explain each rank.
+	listed := apiCall(handler, http.MethodGet, "/v1/testimonial-candidates", "", fullToken)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list candidates status = %d, body = %s", listed.Code, listed.Body.String())
+	}
+	var candidates struct {
+		Candidates []Candidate `json:"candidates"`
+	}
+	decodeAPI(t, listed, &candidates)
+	if len(candidates.Candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", candidates.Candidates)
+	}
+	if len(candidates.Candidates[0].Reasons) == 0 {
+		t.Error("a suggested candidate must explain itself")
+	}
+
+	// Requesting a testimonial. The address is supplied by the caller rather
+	// than lifted from the feedback record, because the reporter email was
+	// collected under a different consent purpose.
+	missingEmail := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-candidates/"+env.feedbackID+"/request", `{"recipient_email":""}`, fullToken)
+	if missingEmail.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty recipient status = %d, want 422", missingEmail.Code)
+	}
+	requested := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-candidates/"+env.feedbackID+"/request",
+		`{"recipient_email":"author@example.test"}`, fullToken)
+	if requested.Code != http.StatusCreated {
+		t.Fatalf("request status = %d, body = %s", requested.Code, requested.Body.String())
+	}
+	var created struct {
+		Token   string  `json:"token"`
+		Request Request `json:"request"`
+	}
+	decodeAPI(t, requested, &created)
+	if created.Token == "" {
+		t.Fatal("the plaintext token must be returned once, for the message the customer sends")
+	}
+	// What we stored must be the digest, never the token itself.
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		var stored string
+		if err := tx.QueryRow(ctx, `SELECT token_hash FROM testimonial_requests WHERE id = $1`,
+			created.Request.ID).Scan(&stored); err != nil {
+			t.Fatalf("read stored token: %v", err)
+		}
+		if stored == created.Token {
+			t.Fatal("the plaintext token was stored")
+		}
+		if stored != HashToken(created.Token) {
+			t.Fatal("the stored digest does not match the issued token")
+		}
+	})
+
+	// Submit as the author would, then drive the rest through the API.
+	var item Testimonial
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		publicID, _ := GeneratePublicID(PrefixTestimonial)
+		_, revocationHash, _ := GenerateToken()
+		var err error
+		item, err = store.SubmitCollection(ctx, tx, env.tenantID, publicID, revocationHash,
+			SubmissionValues{
+				ProjectID: &env.projectID, FeedbackID: &env.feedbackID,
+				RequestID: created.Request.ID, Source: SourceFeedback,
+				Quote:   "We cut our triage time from 3 days to 20 minutes in the first week.",
+				Author:  AuthorDetails{Name: "Ana Marques", Role: "Head of Support"},
+				Scopes:  ConsentScopes{Quote: true, Identity: true},
+				Consent: ConsentEvidence{NoticeVersion: "v1"},
+			}, now)
+		if err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+	})
+
+	if got := apiCall(handler, http.MethodPost, "/v1/testimonials/"+item.ID+"/approve", "", fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("approve status = %d, body = %s", got.Code, got.Body.String())
+	}
+
+	// Editing the quote must suspend consent and say so, rather than letting the
+	// customer discover it when publishing fails.
+	edited := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
+		`{"quote":"We cut triage a lot."}`, fullToken)
+	if edited.Code != http.StatusOK {
+		t.Fatalf("edit status = %d, body = %s", edited.Code, edited.Body.String())
+	}
+	var editResult struct {
+		ConsentState      ConsentState `json:"consent_state"`
+		RequiresReconsent bool         `json:"requires_reconsent"`
+	}
+	decodeAPI(t, edited, &editResult)
+	if !editResult.RequiresReconsent || editResult.ConsentState != ConsentPendingReconsent {
+		t.Fatalf("edit result = %#v, want a re-consent requirement", editResult)
+	}
+
+	// Put the consented wording back so the wall can be published.
+	if got := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
+		`{"quote":"We cut our triage time from 3 days to 20 minutes in the first week."}`,
+		fullToken); got.Code != http.StatusOK {
+		t.Fatalf("restore quote status = %d", got.Code)
+	}
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE testimonials SET consent_state = 'granted' WHERE tenant_id = $1 AND id = $2
+		`, env.tenantID, item.ID); err != nil {
+			t.Fatalf("restore consent: %v", err)
+		}
+	})
+
+	// Wall creation validates before the database has to.
+	if got := apiCall(handler, http.MethodPost, "/v1/testimonial-walls",
+		`{"name":"Homepage","slug":"Not A Slug"}`, fullToken); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid slug status = %d, want 422", got.Code)
+	}
+	wallResponse := apiCall(handler, http.MethodPost, "/v1/testimonial-walls",
+		`{"name":"Homepage","slug":"homepage","layout":"grid"}`, fullToken)
+	if wallResponse.Code != http.StatusCreated {
+		t.Fatalf("create wall status = %d, body = %s", wallResponse.Code, wallResponse.Body.String())
+	}
+	var wallResult struct {
+		Wall Wall `json:"wall"`
+	}
+	decodeAPI(t, wallResponse, &wallResult)
+	if wallResult.Wall.Status != WallDraft {
+		t.Fatalf("a new wall must start as a draft, got %q", wallResult.Wall.Status)
+	}
+
+	itemsBody := `{"items":[{"testimonial_id":"` + item.ID + `","position":0,"pinned":false}]}`
+	if got := apiCall(handler, http.MethodPut,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/items", itemsBody, fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("set items status = %d, body = %s", got.Code, got.Body.String())
+	}
+	duplicate := `{"items":[{"testimonial_id":"` + item.ID + `"},{"testimonial_id":"` + item.ID + `"}]}`
+	if got := apiCall(handler, http.MethodPut,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/items", duplicate, fullToken); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("duplicate item status = %d, want 422", got.Code)
+	}
+
+	// Editing is not publishing.
+	forbidden := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/publish", "", editorToken)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("publish without testimonial:publish = %d, want 403", forbidden.Code)
+	}
+	// ...but that member can still stage the wall.
+	if got := apiCall(handler, http.MethodPut,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/items", itemsBody, editorToken); got.Code != http.StatusNoContent {
+		t.Fatalf("editor could not stage a wall: %d", got.Code)
+	}
+
+	published := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/publish", "", fullToken)
+	if published.Code != http.StatusOK {
+		t.Fatalf("publish status = %d, body = %s", published.Code, published.Body.String())
+	}
+	var publishResult struct {
+		Version   int    `json:"version"`
+		Published int    `json:"published"`
+		Skipped   int    `json:"skipped"`
+		PublicID  string `json:"public_id"`
+		ETag      string `json:"etag"`
+	}
+	decodeAPI(t, published, &publishResult)
+	if publishResult.Published != 1 || publishResult.Version != 1 || publishResult.ETag == "" {
+		t.Fatalf("publish result = %#v", publishResult)
+	}
+
+	// The wall detail view feeds the editor.
+	detail := apiCall(handler, http.MethodGet, "/v1/testimonial-walls/"+wallResult.Wall.ID, "", fullToken)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("wall detail status = %d", detail.Code)
+	}
+
+	if got := apiCall(handler, http.MethodGet, "/v1/testimonials?status=nonsense", "", fullToken); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid status filter = %d, want 422", got.Code)
+	}
+	if got := apiCall(handler, http.MethodGet, "/v1/testimonials/not-a-uuid", "", fullToken); got.Code != http.StatusNotFound {
+		t.Fatalf("malformed identifier = %d, want 404", got.Code)
+	}
+	if got := apiCall(handler, http.MethodGet, "/v1/testimonials", "", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous list = %d, want 401", got.Code)
+	}
+
+	dismissed := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-candidates/"+env.feedbackID+"/dismiss", "", fullToken)
+	if dismissed.Code != http.StatusNoContent {
+		t.Fatalf("dismiss status = %d, body = %s", dismissed.Code, dismissed.Body.String())
+	}
+}
+
+func apiCall(handler http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	request := httptest.NewRequest(method, "http://acme.localhost"+path, reader)
+	request.Host = "acme.localhost"
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func decodeAPI(t *testing.T, response *httptest.ResponseRecorder, target any) {
+	t.Helper()
+	if err := json.Unmarshal(response.Body.Bytes(), target); err != nil {
+		t.Fatalf("decode response: %v (%s)", err, response.Body.String())
+	}
+}

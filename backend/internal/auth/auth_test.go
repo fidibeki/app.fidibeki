@@ -152,11 +152,19 @@ func TestPlatformPermissionsAreExplicit(t *testing.T) {
 func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	t.Parallel()
 	permissions := TenantPermissionStrings()
-	if len(permissions) != 33 {
-		t.Fatalf("tenant permission count = %d, want 33", len(permissions))
+	if len(permissions) != 38 {
+		t.Fatalf("tenant permission count = %d, want 38", len(permissions))
 	}
 	if !ValidTenantPermissions(permissions) {
 		t.Error("full tenant permission set is invalid")
+	}
+	// Publishing a testimonial puts a named person's words on the public
+	// internet. It must stay a separate grant from editing one.
+	if !HasPermission(permissions, PermissionTestimonialPublish) {
+		t.Error("testimonial:publish is missing from the tenant permission set")
+	}
+	if PermissionTestimonialPublish == PermissionTestimonialUpdate {
+		t.Error("testimonial:publish must not collapse into testimonial:update")
 	}
 	if ValidTenantPermissions([]string{"project:read", "project:read"}) {
 		t.Error("duplicate permission was accepted")
