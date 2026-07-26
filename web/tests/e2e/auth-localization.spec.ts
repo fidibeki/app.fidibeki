@@ -123,7 +123,13 @@ test('Portuguese public authentication and signup surfaces keep safe localized c
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-AO')
   await expect(page).toHaveTitle('Iniciar sessão · Fidibeki')
   await expect(page.getByRole('heading', { name: 'Iniciar sessão na Fidibeki' })).toBeVisible()
+  // Submit is disabled until the email ref has a value, and v-model does not read
+  // the DOM back on hydration: filling the server-rendered input before Vue
+  // attaches leaves the ref empty and the button disabled for good. Wait for the
+  // app to mount first, as activation-flow does.
+  await page.waitForFunction(() => Boolean((document.querySelector('#__nuxt') as Element & { __vue_app__?: unknown })?.__vue_app__))
   await page.getByLabel('Email profissional').fill('owner@acme.ao')
+  await expect(page.getByRole('button', { name: 'Enviar link de acesso' })).toBeEnabled()
   await page.getByRole('button', { name: 'Enviar link de acesso' }).click()
   await expect(page.getByRole('status')).toContainText('Consulte a sua caixa de entrada')
 
