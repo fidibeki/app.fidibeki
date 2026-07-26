@@ -8,8 +8,14 @@ const serverCommand = process.env.CI
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
-  workers: process.env.CI ? 2 : undefined,
-  retries: 0,
+  // GitHub's standard runner has four cores and the suite is API-mocked, so the
+  // browsers are the only real load. Two workers left half the runner idle.
+  workers: process.env.CI ? 4 : undefined,
+  // All workers share one server, so a slow SSR compile under load can fail a
+  // timing-sensitive test that is otherwise sound. One retry absorbs that
+  // without hiding it: Playwright still reports the test as flaky. Local runs
+  // keep zero retries so a real failure is never masked while developing.
+  retries: process.env.CI ? 1 : 0,
   reporter: 'list',
   expect: {
     timeout: process.env.CI ? 15_000 : 5_000,

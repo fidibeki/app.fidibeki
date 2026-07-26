@@ -41,4 +41,12 @@ jobs:
       - run: pnpm --filter @fidibeki/web build
       - run: pnpm --filter @fidibeki/web exec playwright install --with-deps chromium
       - run: pnpm --filter @fidibeki/web test:e2e
-      - run: docker build -f web/Dockerfile .
+      - uses: docker/setup-buildx-action@v3
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: web/Dockerfile
+          push: false
+          cache-from: type=gha,scope=web-image
+          cache-to: type=gha,mode=max,scope=web-image

@@ -2273,6 +2273,9 @@ async function installMockAPI(page: Page, state: MockState) {
       return route.fulfill({ status: 204 })
     }
     if (path === '/v1/integrations' && method === 'GET') return json(route, { integrations: state.integrations })
+    // Settings loads its tabs in one Promise.all, so an unmocked route here fails
+    // the whole page rather than just the tracker card.
+    if (path === '/v1/issue-trackers' && method === 'GET') return json(route, { issue_trackers: [] })
     if (path === '/v1/integrations' && method === 'POST') {
       const input = body()
       const integration = {
