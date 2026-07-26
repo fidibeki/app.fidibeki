@@ -84,6 +84,14 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(update...).Post("/v1/testimonials/{testimonialID}/approve", handler.approve)
 	router.With(update...).Patch("/v1/testimonials/{testimonialID}", handler.updateTestimonial)
 	router.With(update...).Put("/v1/testimonials/{testimonialID}/tags", handler.setTags)
+	// Clearing footage for publication takes the publish grant and the video
+	// entitlement, not merely the right to edit a quote.
+	router.With(append(publish,
+		appmiddleware.RequirePlanLimit(appmiddleware.PlanLimitOptions{
+			Feature:    config.FeatureVideo,
+			UpgradeURL: "/v1/billing",
+			Logger:     options.Logger,
+		}))...).Post("/v1/testimonials/{testimonialID}/video/review", handler.reviewVideo)
 
 	router.With(read...).Get("/v1/testimonial-walls", handler.listWalls)
 	router.With(create...).Post("/v1/testimonial-walls", handler.createWall)
@@ -585,6 +593,26 @@ func (h *HTTPHandler) publishWall(w http.ResponseWriter, r *http.Request) {
 		"public_id":    wall.PublicID,
 		"published_at": snapshot.PublishedAt,
 	})
+}
+
+// reviewVideo records that someone watched the footage before it goes public.
+//
+// It refuses while the asset is still being scanned or transcoded: clearing a
+// video nobody can watch yet would be a signature on an unread page.
+func (h *HTTPHandler) reviewVideo(w http.ResponseWriter, r *http.Request) {
+	tenantID, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	id, ok := uuidParam(w, r, "testimonialID")
+	if !ok {
+		return
+	}
+	if err := h.options.Store.ReviewMedia(r.Context(), query, tenantID, id, memberID(r), h.now()); err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // deleteWall removes a wall and everything that only existed to render it.

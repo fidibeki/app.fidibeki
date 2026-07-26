@@ -3,6 +3,7 @@ package testimonial
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,6 +182,10 @@ func TestTestimonialLifecycle(t *testing.T) {
 		t.Fatalf("conditional request status = %d, want 304", notModified.StatusCode)
 	}
 
+	// Before revoking, while the testimonial is still publishable on every other
+	// count: footage of its own has to be watched before it goes out.
+	exerciseVideoReviewGate(ctx, t, env, store, wall, item, now)
+
 	// Revocation must take effect on the very next read, without any rebuild.
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
 		if err := store.Revoke(ctx, tx, env.tenantID, item.ID, "author changed their mind", now); err != nil {
@@ -218,6 +223,74 @@ func TestTestimonialLifecycle(t *testing.T) {
 // exerciseStoreSurface covers the reads and writes the backoffice depends on:
 // the Suggested queue, dismissal, the re-consent trigger, tagging, and the
 // wall-membership cleanup that stops archived testimonials leaving ghost rows.
+// exerciseVideoReviewGate proves that footage is held back until a member has
+// watched it, and that the gate is the review rather than the approval: the
+// testimonial here is already approved and consented, and still cannot publish.
+func exerciseVideoReviewGate(
+	ctx context.Context,
+	t *testing.T,
+	env *testimonialEnvironment,
+	store Store,
+	wall Wall,
+	item Testimonial,
+	now time.Time,
+) {
+	t.Helper()
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		publicID, err := GeneratePublicID(PrefixMedia)
+		if err != nil {
+			t.Fatalf("generate media id: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO testimonial_media (
+				tenant_id, testimonial_id, public_id, role, source_storage_key, content_type,
+				size_bytes, width, height, safety_status, transcode_status, content_hash
+			) VALUES ($1, $2, $3, 'video', 'uploads/clip.mp4', 'video/mp4', 4096, 1080, 1920,
+				'safe', 'ready', repeat('a', 64))
+		`, env.tenantID, item.ID, publicID); err != nil {
+			t.Fatalf("insert video media: %v", err)
+		}
+
+		cards, err := store.LoadWallCards(ctx, tx, env.tenantID, wall.ID)
+		if err != nil {
+			t.Fatalf("load cards with video: %v", err)
+		}
+		if len(cards) != 1 || !cards[0].HasVideo {
+			t.Fatalf("cards = %#v, want one carrying video", cards)
+		}
+		if cards[0].VideoReviewed {
+			t.Error("video was cleared for publication without anyone watching it")
+		}
+		if payload := BuildSnapshotPayload(wall, cards, now); len(payload.Cards) != 0 {
+			t.Errorf("unreviewed footage reached a snapshot: %#v", payload.Cards)
+		}
+
+		if err := store.ReviewMedia(ctx, tx, env.tenantID, item.ID, env.memberID, now); err != nil {
+			t.Fatalf("review media: %v", err)
+		}
+		reviewed, err := store.LoadWallCards(ctx, tx, env.tenantID, wall.ID)
+		if err != nil {
+			t.Fatalf("reload cards: %v", err)
+		}
+		if !reviewed[0].VideoReviewed {
+			t.Fatal("the review was recorded but did not reach the card")
+		}
+		if payload := BuildSnapshotPayload(wall, reviewed, now); len(payload.Cards) != 1 {
+			t.Errorf("reviewed footage was still held back: %#v", payload)
+		}
+
+		// Reviewing a testimonial with no video is refused rather than silently
+		// succeeding, so a stray call cannot look like a cleared asset.
+		if _, err := tx.Exec(ctx, `DELETE FROM testimonial_media WHERE tenant_id = $1`,
+			env.tenantID); err != nil {
+			t.Fatalf("clear media: %v", err)
+		}
+		if err := store.ReviewMedia(ctx, tx, env.tenantID, item.ID, env.memberID, now); !errors.Is(err, ErrNotFound) {
+			t.Errorf("review with no video = %v, want ErrNotFound", err)
+		}
+	})
+}
+
 func exerciseStoreSurface(
 	ctx context.Context,
 	t *testing.T,

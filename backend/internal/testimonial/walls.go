@@ -203,6 +203,35 @@ func (Store) RemoveTestimonialFromWalls(
 	return nil
 }
 
+// ReviewMedia records that a member watched an asset and cleared it.
+//
+// It is deliberately separate from approving the testimonial. Approving the
+// quote means someone read the words; it says nothing about what else is in
+// frame — a face, a room, whoever walked past behind them. Publishing footage
+// asks for its own pair of eyes.
+func (Store) ReviewMedia(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, testimonialID, memberID string,
+	now time.Time,
+) error {
+	tag, err := query.Exec(ctx, `
+		UPDATE testimonial_media
+		SET reviewed_at = $4, reviewed_by = $3
+		WHERE tenant_id = $1 AND testimonial_id = $2 AND role = 'video'
+		  AND safety_status = 'safe' AND transcode_status = 'ready'
+	`, tenantID, testimonialID, memberID, now)
+	if err != nil {
+		return fmt.Errorf("review testimonial media: %w", err)
+	}
+	// Nothing matched: either there is no video, or it is not yet safe and
+	// transcoded. Clearing footage nobody can watch yet is not a review.
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteWall removes a wall and, by cascade, its items, snapshots and view
 // counters.
 //
@@ -253,6 +282,7 @@ func (Store) LoadWallCards(
 		       t.consent_state, t.consent_scopes, item.position,
 		       COALESCE(avatar.public_id, ''), COALESCE(avatar.content_hash, ''),
 		       COALESCE(video.public_id, ''), COALESCE(video.content_hash, ''),
+		       video.reviewed_at IS NOT NULL,
 		       COALESCE(bool_and(
 		           media.safety_status = 'safe' AND media.transcode_status = 'ready'
 		       ) FILTER (WHERE media.id IS NOT NULL), true),
@@ -274,7 +304,7 @@ func (Store) LoadWallCards(
 		GROUP BY t.id, t.public_id, t.consented_text, t.quote, t.headline, t.author_name,
 		         t.author_role, t.author_company, t.author_company_url, t.rating, t.status,
 		         t.consent_state, t.consent_scopes, item.position, avatar.public_id,
-		         avatar.content_hash, video.public_id, video.content_hash
+		         avatar.content_hash, video.public_id, video.content_hash, video.reviewed_at
 		ORDER BY item.position
 	`, tenantID, wallID)
 	if err != nil {
@@ -292,7 +322,8 @@ func (Store) LoadWallCards(
 			&card.ID, &card.PublicID, &card.ConsentedText, &card.Quote, &card.Headline,
 			&author.name, &author.role, &author.company, &author.companyURL,
 			&card.Rating, &card.Status, &card.ConsentState, &scopes, &card.Position,
-			&avatarID, &avatarHash, &videoID, &videoHash, &card.MediaReady, &card.TagNames,
+			&avatarID, &avatarHash, &videoID, &videoHash, &card.VideoReviewed,
+			&card.MediaReady, &card.TagNames,
 		); err != nil {
 			return nil, fmt.Errorf("scan testimonial wall card: %w", err)
 		}
@@ -307,9 +338,6 @@ func (Store) LoadWallCards(
 			card.HasVideo = true
 			card.VideoURL = MediaPath(videoID, videoHash, "mp4")
 		}
-		// Video review is recorded on the media row in a later slice; until then a
-		// wall containing video cannot be published, which is the safe direction.
-		card.VideoReviewed = false
 		cards = append(cards, card)
 	}
 	return cards, rows.Err()
