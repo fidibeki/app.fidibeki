@@ -104,17 +104,21 @@ func TestTestimonialAPI(t *testing.T) {
 		t.Error("a suggested candidate must explain itself")
 	}
 
-	// Requesting a testimonial. The address is supplied by the caller rather
-	// than lifted from the feedback record, because the reporter email was
-	// collected under a different consent purpose.
-	missingEmail := apiCall(handler, http.MethodPost,
-		"/v1/testimonial-candidates/"+env.feedbackID+"/request", `{"recipient_email":""}`, fullToken)
-	if missingEmail.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("empty recipient status = %d, want 422", missingEmail.Code)
+	// Requesting a testimonial. The address comes from the feedback record, which
+	// is the only address anyone here can be said to hold: the customer never saw
+	// it, and inviting them to type one would be inviting them to invent one.
+	// Naming a recipient is refused rather than ignored, so a caller expecting to
+	// choose one is told, not quietly overruled.
+	chosenRecipient := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-candidates/"+env.feedbackID+"/request",
+		`{"recipient_email":"attacker@example.test"}`, fullToken)
+	if chosenRecipient.Code != http.StatusBadRequest {
+		t.Fatalf("caller-chosen recipient status = %d, want 400 (%s)",
+			chosenRecipient.Code, chosenRecipient.Body.String())
 	}
 	requested := apiCall(handler, http.MethodPost,
 		"/v1/testimonial-candidates/"+env.feedbackID+"/request",
-		`{"recipient_email":"author@example.test"}`, fullToken)
+		`{"prompt":"Would you be happy for us to publish this?"}`, fullToken)
 	if requested.Code != http.StatusCreated {
 		t.Fatalf("request status = %d, body = %s", requested.Code, requested.Body.String())
 	}
@@ -125,6 +129,59 @@ func TestTestimonialAPI(t *testing.T) {
 	decodeAPI(t, requested, &created)
 	if created.Token == "" {
 		t.Fatal("the plaintext token must be returned once, for the message the customer sends")
+	}
+	// An address in the body is ignored rather than honoured: the endpoint is not
+	// a way to send a workspace-branded invitation to an arbitrary inbox.
+	if created.Request.RecipientEmail != "reporter@example.test" {
+		t.Errorf("recipient = %q, want the address on the feedback record",
+			created.Request.RecipientEmail)
+	}
+
+	// A feedback with no reporter address, or whose reporter did not agree to be
+	// contacted, cannot be asked at all.
+	var anonymousID string
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO feedbacks (
+				tenant_id, project_id, public_id, client_feedback_id, rating, text, page_url,
+				text_process_status
+			) VALUES ($1, $2, 'fb_ANON0001', gen_random_uuid(), 5, 'Anonymous but glowing.',
+				'https://example.com/', 'completed')
+			RETURNING id
+		`, env.tenantID, env.projectID).Scan(&anonymousID); err != nil {
+			t.Fatalf("create anonymous feedback: %v", err)
+		}
+	})
+	anonymous := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-candidates/"+anonymousID+"/request", `{}`, fullToken)
+	if anonymous.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("anonymous request status = %d, want 422 (%s)", anonymous.Code, anonymous.Body.String())
+	}
+
+	// Inviting someone who never left feedback is a different act with a
+	// different justification: there is no record to draw an address from, so the
+	// customer supplies one out of a relationship only they have.
+	invited := apiCall(handler, http.MethodPost, "/v1/testimonial-requests",
+		`{"recipient_email":"customer@example.test","prompt":"Would you write a line for us?"}`,
+		fullToken)
+	if invited.Code != http.StatusCreated {
+		t.Fatalf("invite status = %d, body = %s", invited.Code, invited.Body.String())
+	}
+	var invite struct {
+		Token   string  `json:"token"`
+		Request Request `json:"request"`
+	}
+	decodeAPI(t, invited, &invite)
+	if invite.Token == "" || invite.Request.FeedbackID != nil {
+		t.Fatalf("invite = %#v, want a token and no feedback behind it", invite.Request)
+	}
+	if invite.Request.RecipientEmail != "customer@example.test" {
+		t.Errorf("invite recipient = %q, want the supplied address", invite.Request.RecipientEmail)
+	}
+	badInvite := apiCall(handler, http.MethodPost, "/v1/testimonial-requests",
+		`{"recipient_email":"not-an-address"}`, fullToken)
+	if badInvite.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid invite status = %d, want 422", badInvite.Code)
 	}
 	// What we stored must be the digest, never the token itself.
 	env.withTenant(ctx, t, func(tx pgx.Tx) {

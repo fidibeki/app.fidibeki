@@ -162,6 +162,40 @@ func (Store) DismissCandidate(
 
 // CreateRequest stores a collection or re-consent invitation. Only the token
 // digest is persisted; the caller holds the plaintext for the email.
+// ErrNotContactable reports that a feedback carries no address its reporter
+// agreed to be reached on.
+var ErrNotContactable = errors.New("testimonial: feedback has no contactable reporter")
+
+// FeedbackRecipient returns the address a testimonial request for this feedback
+// may be sent to.
+//
+// It is the reporter's own address, and only when they asked to be contacted
+// about this feedback. That consent is what makes asking them about the same
+// feedback a compatible purpose; without it there is no address here to use,
+// whatever the caller supplies.
+func (Store) FeedbackRecipient(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, feedbackID string,
+) (string, error) {
+	var email *string
+	var permitted bool
+	err := query.QueryRow(ctx, `
+		SELECT reporter_email, notify_reporter
+		FROM feedbacks WHERE tenant_id = $1 AND id = $2
+	`, tenantID, feedbackID).Scan(&email, &permitted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("load feedback recipient: %w", err)
+	}
+	if email == nil || *email == "" || !permitted {
+		return "", ErrNotContactable
+	}
+	return *email, nil
+}
+
 func (Store) CreateRequest(
 	ctx context.Context,
 	query db.Querier,

@@ -1516,6 +1516,8 @@ export interface TestimonialCandidate {
   reasons: string[]
   signals: Record<string, number>
   suggested_excerpt: string | null
+  /** The reporter's own address, present only when they asked to be contacted. */
+  reporter_email: string | null
   contact_permitted: boolean
   created_at: string
 }

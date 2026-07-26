@@ -63,6 +63,10 @@ const runtime = useRuntimeConfig()
 const revocationLink = computed(() =>
   `${runtime.public.appUrl || ''}/testimonials/revoke/${revocationToken.value}`)
 
+// An invitation to someone who never left feedback arrives with nothing behind
+// it, so the page cannot ask them to review words they never wrote.
+const fromScratch = computed(() => !request.value?.original_text && !request.value?.proposed_quote)
+
 // Clamped rather than trusted: the score is rendered as a fixed row of five, so
 // a value outside the range would otherwise draw a broken one.
 const stars = computed(() => {
@@ -167,8 +171,11 @@ useHead(() => ({
           <header class="app-page-head collect-heading">
             <div>
               <p class="app-eyebrow"><Quote :size="13" /> {{ t('collectTestimonial.eyebrow') }}</p>
-              <h1>{{ t('collectTestimonial.title') }}</h1>
-              <span>{{ request.prompt || t('collectTestimonial.subtitle') }}</span>
+              <h1>{{ fromScratch ? t('collectTestimonial.blankTitle') : t('collectTestimonial.title') }}</h1>
+              <span>
+                {{ request.prompt ||
+                  (fromScratch ? t('collectTestimonial.blankSubtitle') : t('collectTestimonial.subtitle')) }}
+              </span>
             </div>
           </header>
 
@@ -176,7 +183,9 @@ useHead(() => ({
             <label>
               {{ t('collectTestimonial.quoteLabel') }}
               <textarea v-model="quote" maxlength="2000" required autofocus />
-              <span class="collect-hint">{{ t('collectTestimonial.quoteHint') }}</span>
+              <span class="collect-hint">
+                {{ fromScratch ? t('collectTestimonial.blankQuoteHint') : t('collectTestimonial.quoteHint') }}
+              </span>
             </label>
 
             <!-- Their own stars, stated because they are published alongside the

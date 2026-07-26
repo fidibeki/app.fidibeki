@@ -498,10 +498,10 @@ func newTestimonialEnvironment(ctx context.Context, t *testing.T) *testimonialEn
 	if err := root.QueryRow(ctx, `
 		INSERT INTO feedbacks (
 			tenant_id, project_id, public_id, client_feedback_id, rating, text, page_url,
-			text_process_status
+			text_process_status, reporter_email, notify_reporter
 		) VALUES ($1, $2, 'fb_ABCD1234', gen_random_uuid(), 5,
 			'We cut our triage time from 3 days to 20 minutes in the first week.',
-			'https://example.com/pricing', 'completed')
+			'https://example.com/pricing', 'completed', 'reporter@example.test', true)
 		RETURNING id
 	`, env.tenantID, env.projectID).Scan(&env.feedbackID); err != nil {
 		t.Fatalf("create feedback: %v", err)

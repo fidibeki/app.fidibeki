@@ -66,6 +66,7 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(read...).Get("/v1/testimonial-candidates", handler.listCandidates)
 	router.With(create...).Post("/v1/testimonial-candidates/{feedbackID}/dismiss", handler.dismissCandidate)
 	router.With(create...).Post("/v1/testimonial-candidates/{feedbackID}/request", handler.requestTestimonial)
+	router.With(create...).Post("/v1/testimonial-requests", handler.inviteTestimonial)
 
 	router.With(read...).Get("/v1/testimonials", handler.listTestimonials)
 	router.With(read...).Get("/v1/testimonials/{testimonialID}", handler.getTestimonial)
@@ -126,21 +127,19 @@ func (h *HTTPHandler) dismissCandidate(w http.ResponseWriter, r *http.Request) {
 // testimonial is a different purpose. Until a testimonial_requests purpose
 // exists, the customer confirms the address they already have a relationship
 // with, and we do not silently repurpose the one we hold.
+// requestTestimonial asks the person behind a piece of feedback for a
+// testimonial about it.
+//
+// The address is read from the feedback record and never taken from the body.
+// The customer never saw the reporter's address, so asking them to supply one
+// would either invite them to invent it or turn this endpoint into a way to
+// send a workspace-branded invitation to any inbox at all.
 func (h *HTTPHandler) requestTestimonial(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		RecipientEmail string  `json:"recipient_email"`
-		Prompt         *string `json:"prompt"`
-		Locale         *string `json:"locale"`
+		Prompt *string `json:"prompt"`
+		Locale *string `json:"locale"`
 	}
 	if !decodeJSON(w, r, &request) {
-		return
-	}
-	email := strings.TrimSpace(request.RecipientEmail)
-	if email == "" || !strings.Contains(email, "@") || len(email) > 320 {
-		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
-			"a recipient email is required", map[string]string{
-				"recipient_email": "must be an email address",
-			})
 		return
 	}
 	tenantID, query, ok := requestState(w, r)
@@ -149,6 +148,18 @@ func (h *HTTPHandler) requestTestimonial(w http.ResponseWriter, r *http.Request)
 	}
 	feedbackID, ok := uuidParam(w, r, "feedbackID")
 	if !ok {
+		return
+	}
+	email, err := h.options.Store.FeedbackRecipient(r.Context(), query, tenantID, feedbackID)
+	if errors.Is(err, ErrNotContactable) {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"this feedback has no contactable author", map[string]string{
+				"recipient_email": "the reporter left no address, or did not agree to be contacted",
+			})
+		return
+	}
+	if err != nil {
+		h.writeStoreError(w, r, err)
 		return
 	}
 	token, tokenHash, err := GenerateToken()
@@ -179,6 +190,73 @@ func (h *HTTPHandler) requestTestimonial(w http.ResponseWriter, r *http.Request)
 		"request": created,
 		"token":   token,
 	})
+}
+
+// inviteTestimonial asks someone who never left feedback.
+//
+// Here the caller does supply the address, and that is the honest arrangement:
+// there is no record to draw one from, and the relationship justifying the ask
+// is the customer's own. The person still writes their own words and gives
+// their own permission before anything can be published.
+func (h *HTTPHandler) inviteTestimonial(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		RecipientEmail string  `json:"recipient_email"`
+		ProjectID      *string `json:"project_id"`
+		Prompt         *string `json:"prompt"`
+		Locale         *string `json:"locale"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	email := strings.TrimSpace(request.RecipientEmail)
+	if !validEmail(email) {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"a recipient email is required", map[string]string{
+				"recipient_email": "must be an email address",
+			})
+		return
+	}
+	tenantID, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	if request.ProjectID != nil {
+		if _, err := uuid.Parse(*request.ProjectID); err != nil {
+			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+				"project is invalid", map[string]string{"project_id": "must be a project identifier"})
+			return
+		}
+	}
+	token, tokenHash, err := GenerateToken()
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	actor := memberID(r)
+	now := h.now()
+	created, err := h.options.Store.CreateRequest(r.Context(), query, tenantID, RequestValues{
+		ProjectID:      request.ProjectID,
+		Kind:           RequestCollection,
+		TokenHash:      tokenHash,
+		RecipientEmail: email,
+		Prompt:         request.Prompt,
+		Locale:         request.Locale,
+		ExpiresAt:      now.Add(requestTTL),
+		SentAt:         &now,
+		CreatedBy:      &actor,
+	})
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusCreated, map[string]any{"request": created, "token": token})
+}
+
+// validEmail is a shape check, not a deliverability check: the address is only
+// ever shown back to the customer who typed it.
+func validEmail(value string) bool {
+	at := strings.Index(value, "@")
+	return at > 0 && at < len(value)-1 && len(value) <= 320 && !strings.ContainsAny(value, " \t\n")
 }
 
 func (h *HTTPHandler) listTestimonials(w http.ResponseWriter, r *http.Request) {

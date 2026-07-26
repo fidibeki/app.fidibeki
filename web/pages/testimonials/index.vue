@@ -34,6 +34,7 @@ const busyID = ref('')
 const copiedID = ref('')
 
 const requestFor = ref<TestimonialCandidate | null>(null)
+const inviting = ref(false)
 const requestEmail = ref('')
 const requestPrompt = ref('')
 const requestLink = ref('')
@@ -130,24 +131,54 @@ function embedSnippet(wall: TestimonialWall) {
   return `<script async src="${host}/v1/testimonials.js"><\/script>\n<fidibeki-wall wall="${wall.public_id}"><\/fidibeki-wall>`
 }
 
-function openRequest(candidate: TestimonialCandidate) {
-  requestFor.value = candidate
+function resetRequest() {
   requestEmail.value = ''
   requestPrompt.value = ''
   requestLink.value = ''
   mutationError.value = ''
 }
 
+function openRequest(candidate: TestimonialCandidate) {
+  inviting.value = false
+  requestFor.value = candidate
+  resetRequest()
+}
+
+// Asking someone who never left feedback. There is no record to draw an address
+// from, so this is the one path where the customer supplies one.
+function openInvite() {
+  requestFor.value = null
+  inviting.value = true
+  resetRequest()
+}
+
+function closeRequest() {
+  requestFor.value = null
+  inviting.value = false
+}
+
+const requestOpen = computed(() => Boolean(requestFor.value) || inviting.value)
+const canSubmitRequest = computed(() => !busyID.value &&
+  (!inviting.value || requestEmail.value.includes('@')))
+
 async function submitRequest() {
   const candidate = requestFor.value
-  if (!candidate || busyID.value) return
-  busyID.value = candidate.feedback_id
+  if (!requestOpen.value || !canSubmitRequest.value) return
+  busyID.value = candidate?.feedback_id || 'invite'
   mutationError.value = ''
   try {
-    const created = await $apiFetch<{ token: string }>(
-      `/v1/testimonial-candidates/${candidate.feedback_id}/request`,
-      { method: 'POST', body: { recipient_email: requestEmail.value, prompt: requestPrompt.value || null } },
-    )
+    // Two endpoints, because they rest on different justifications: one reaches
+    // the reporter at the address they left, the other reaches a contact only
+    // the customer has. Neither publishes anything without the author's consent.
+    const created = candidate
+      ? await $apiFetch<{ token: string }>(
+        `/v1/testimonial-candidates/${candidate.feedback_id}/request`,
+        { method: 'POST', body: { prompt: requestPrompt.value || null } },
+      )
+      : await $apiFetch<{ token: string }>('/v1/testimonial-requests', {
+        method: 'POST',
+        body: { recipient_email: requestEmail.value.trim(), prompt: requestPrompt.value || null },
+      })
     // Shown once. The plaintext is never stored, so it cannot be recovered.
     requestLink.value = `${window.location.origin}/testimonials/collect/${created.token}`
   } catch (requestError) {
@@ -314,6 +345,13 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
         <h1>{{ t('testimonials.title') }}</h1>
         <span>{{ t('testimonials.subtitle') }}</span>
       </div>
+      <!-- Not everyone worth quoting left feedback first. -->
+      <button
+        v-if="canWrite('testimonial:create')" type="button" class="app-button app-button--primary"
+        @click="openInvite"
+      >
+        <Plus :size="13" /> {{ t('testimonials.inviteAction') }}
+      </button>
     </header>
 
     <nav class="testimonial-tabs" :aria-label="t('testimonials.tabsLabel')">
@@ -370,6 +408,11 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
               <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
               <div class="candidate-reasons">
                 <RatingMark :rating="candidate.rating" stars compact />
+                <!-- Stated on the row, because it decides whether this one can be
+                     asked at all. -->
+                <span v-if="!candidate.contact_permitted" class="tag tag--muted">
+                  {{ t('testimonials.anonymousAuthor') }}
+                </span>
                 <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
               </div>
             </div>
@@ -385,7 +428,9 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             </button>
             <button
               type="button" class="app-button app-button--primary"
-              :disabled="busyID === candidate.feedback_id" @click="openRequest(candidate)"
+              :disabled="busyID === candidate.feedback_id || !candidate.contact_permitted"
+              :title="candidate.contact_permitted ? undefined : t('testimonials.anonymousCannotAsk')"
+              @click="openRequest(candidate)"
             >
               {{ t('testimonials.requestAction') }}
             </button>
@@ -584,20 +629,32 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
     </template>
 
     <AppDialog
-      :open="Boolean(requestFor)" aria-labelledby="request-testimonial-title"
-      @close="requestFor = null"
+      :open="requestOpen" aria-labelledby="request-testimonial-title"
+      @close="closeRequest"
     >
       <section class="app-modal">
         <header>
           <div>
             <p class="app-eyebrow">{{ t('testimonials.eyebrow') }}</p>
-            <h2 id="request-testimonial-title">{{ t('testimonials.requestTitle') }}</h2>
+            <h2 id="request-testimonial-title">
+              {{ inviting ? t('testimonials.inviteTitle') : t('testimonials.requestTitle') }}
+            </h2>
           </div>
-          <button class="app-icon-button" type="button" @click="requestFor = null"><X :size="18" /></button>
+          <button class="app-icon-button" type="button" @click="closeRequest"><X :size="18" /></button>
         </header>
         <div class="app-modal__body">
-          <p class="request-help">{{ t('testimonials.requestDescription') }}</p>
-          <label>
+          <p class="request-help">
+            {{ inviting ? t('testimonials.inviteDescription') : t('testimonials.requestDescription') }}
+          </p>
+          <!-- For a candidate the address is the one the reporter left when they
+               asked to be contacted. It is shown, not typed: the customer never
+               held it, so offering a field would be offering them to invent one. -->
+          <div v-if="!inviting" class="request-recipient">
+            <p class="section-label">{{ t('testimonials.requestEmailLabel') }}</p>
+            <b>{{ requestFor?.reporter_email }}</b>
+            <span>{{ t('testimonials.requestRecipientNote') }}</span>
+          </div>
+          <label v-else>
             {{ t('testimonials.requestEmailLabel') }}
             <input v-model.trim="requestEmail" class="app-input" type="email" required autofocus />
           </label>
@@ -615,12 +672,12 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           </div>
         </div>
         <footer>
-          <button type="button" class="app-button" @click="requestFor = null">
-            {{ t('testimonials.requestCancel') }}
+          <button type="button" class="app-button" @click="closeRequest">
+            {{ requestLink ? t('testimonials.requestDone') : t('testimonials.requestCancel') }}
           </button>
           <button
             v-if="!requestLink" type="button" class="app-button app-button--primary"
-            :disabled="!requestEmail || Boolean(busyID)" @click="submitRequest"
+            :disabled="!canSubmitRequest" @click="submitRequest"
           >
             {{ t('testimonials.requestSubmit') }}
           </button>
@@ -732,6 +789,10 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .wall-embed pre,
 .request-link pre { margin: 7px 0; padding: 9px 10px; overflow-x: auto; background: var(--canvas); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .request-help { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; text-transform: none; }
+.request-recipient { display: grid; gap: 3px; padding: 9px 11px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
+.request-recipient b { overflow-wrap: anywhere; color: var(--ink); font-size: 11px; }
+.request-recipient span { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.tag--muted { color: var(--muted); font-style: italic; }
 .request-prompt { min-height: 76px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); font: inherit; font-size: 11px; line-height: 1.5; resize: vertical; text-transform: none; }
 .request-prompt:focus-visible { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px var(--accent-glow); }
 .request-link .secondary-button { min-height: 30px; font-size: 9px; }
