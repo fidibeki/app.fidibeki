@@ -106,6 +106,12 @@ export default defineNuxtConfig({
       appUrl: publicAppUrl,
       baseDomain: publicBaseDomain,
       widgetUrl: publicWidgetUrl,
+      // Our own project key, so the backoffice runs the widget the same way a
+      // customer does. Public keys are meant to be in the page — the API checks
+      // the browser Origin against the project's allowed domains — and this is
+      // the same key the marketing site already ships. Blank it to switch the
+      // widget off for a deployment.
+      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || 'pk_live_GjFasO9215CNAax7LbWhiP',
       turnstileSiteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
     },
   },
