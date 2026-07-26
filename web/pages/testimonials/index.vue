@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
-  AlertTriangle, Check, Copy, GripVertical, LayoutGrid, MessageSquareQuote, Sparkles, X,
+  AlertTriangle, ArrowDown, ArrowUp, Check, Copy, GripVertical, LayoutGrid, MessageSquareQuote,
+  Plus, Sparkles, X,
 } from '@lucide/vue'
 import type {
   Testimonial, TestimonialCandidate, TestimonialPublishResult, TestimonialWall,
@@ -14,7 +15,19 @@ const { plural } = useRegionalFormat()
 const runtime = useRuntimeConfig()
 
 type Tab = 'suggested' | 'library' | 'walls'
-const tab = ref<Tab>('suggested')
+const tabs: Tab[] = ['suggested', 'library', 'walls']
+
+// The tab lives in the URL so a refresh lands where you were and a colleague can
+// be sent straight to the queue being discussed.
+const route = useRoute()
+const router = useRouter()
+const tab = computed<Tab>({
+  get: () => tabs.find(value => value === route.query.tab) || 'suggested',
+  set: (value) => {
+    // Replace, not push: flicking between queues is not navigation history.
+    router.replace({ query: { ...route.query, tab: value === 'suggested' ? undefined : value } })
+  },
+})
 const mutationError = ref('')
 const notice = ref('')
 const busyID = ref('')
@@ -31,6 +44,10 @@ const newWallName = ref('')
 // in what order is the customer's decision, never inferred.
 const editingWall = ref<TestimonialWall | null>(null)
 const selection = ref<string[]>([])
+// What the wall was last saved as, so the editor can say whether there is
+// anything to save rather than offering the button unconditionally.
+const savedSelection = ref<string[]>([])
+const unsaved = computed(() => selection.value.join() !== savedSelection.value.join())
 
 const { data, status, error, refresh } = await useAsyncData('testimonials', async () => {
   const [candidates, testimonials, walls] = await Promise.all([
@@ -48,6 +65,23 @@ const { data, status, error, refresh } = await useAsyncData('testimonials', asyn
 const candidates = computed(() => data.value?.candidates || [])
 const testimonials = computed(() => data.value?.testimonials || [])
 const walls = computed(() => data.value?.walls || [])
+const tabCounts = computed<Record<Tab, number>>(() => ({
+  suggested: candidates.value.length,
+  library: testimonials.value.length,
+  walls: walls.value.length,
+}))
+/**
+ * What the queue's pending action does, stated once rather than on every row —
+ * and only while something is actually waiting for it, so it explains a button
+ * that is on screen rather than a rule with nothing to apply to.
+ */
+const tabHint = computed(() => {
+  if (tab.value === 'suggested' && candidates.value.length) return t('testimonials.requestHint')
+  if (tab.value === 'library' && testimonials.value.some(item => item.status === 'pending_review')) {
+    return t('testimonials.approveHint')
+  }
+  return ''
+})
 /** Only an approved, consented testimonial can be put on a wall. */
 const publishable = computed(() => testimonials.value.filter(item =>
   item.status === 'approved' && item.consent_state === 'granted'))
@@ -162,9 +196,11 @@ async function openWall(wall: TestimonialWall) {
     selection.value = [...detail.cards]
       .sort((left, right) => left.position - right.position)
       .map(card => card.id)
+    savedSelection.value = [...selection.value]
   } catch (failure) {
     mutationError.value = apiErrorMessage(failure, 'testimonials.wallLoadFailed')
     selection.value = []
+    savedSelection.value = []
   }
 }
 
@@ -177,13 +213,43 @@ function remove(id: string) {
 }
 
 function move(id: string, offset: number) {
-  const index = selection.value.indexOf(id)
-  const next = index + offset
-  if (index < 0 || next < 0 || next >= selection.value.length) return
+  reorder(selection.value.indexOf(id), selection.value.indexOf(id) + offset)
+}
+
+function reorder(from: number, to: number) {
+  if (from < 0 || to < 0 || from === to || to >= selection.value.length) return
   const reordered = [...selection.value]
-  const [moved] = reordered.splice(index, 1)
-  reordered.splice(next, 0, moved)
+  const [moved] = reordered.splice(from, 1)
+  reordered.splice(to, 0, moved)
   selection.value = reordered
+}
+
+// Dragging is the obvious gesture for an ordered list, so the grip has to
+// actually drag. The arrow buttons stay as the keyboard path — a pointer-only
+// reorder would lock out anyone not using one.
+const draggingID = ref('')
+const dropTargetID = ref('')
+
+function startDrag(id: string, event: DragEvent) {
+  draggingID.value = id
+  if (!event.dataTransfer) return
+  event.dataTransfer.effectAllowed = 'move'
+  // Firefox refuses to start a drag without payload, even one nothing reads.
+  event.dataTransfer.setData('text/plain', id)
+}
+
+function dragOver(id: string) {
+  if (draggingID.value && id !== draggingID.value) dropTargetID.value = id
+}
+
+function drop(id: string) {
+  reorder(selection.value.indexOf(draggingID.value), selection.value.indexOf(id))
+  endDrag()
+}
+
+function endDrag() {
+  draggingID.value = ''
+  dropTargetID.value = ''
 }
 
 const saveSelection = () => {
@@ -194,6 +260,7 @@ const saveSelection = () => {
       method: 'PUT',
       body: { items: selection.value.map((id, position) => ({ testimonial_id: id, position, pinned: false })) },
     })
+    savedSelection.value = [...selection.value]
     notice.value = t('testimonials.selectionSaved')
   }, 'testimonials.selectionFailed')
 }
@@ -239,16 +306,21 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 
     <nav class="testimonial-tabs" :aria-label="t('testimonials.tabsLabel')">
       <button
-        v-for="value in (['suggested', 'library', 'walls'] as Tab[])" :key="value"
-        type="button" class="filter-chip" :aria-pressed="tab === value"
-        @click="tab = value; editingWall = null"
+        v-for="value in tabs" :key="value"
+        type="button" class="filter-chip" :aria-pressed="tab === value" @click="tab = value"
       >
         {{ t(`testimonials.tab${value.charAt(0).toUpperCase()}${value.slice(1)}`) }}
+        <!-- The size of each queue is the reason to open it, so it does not
+             require opening it to find out. -->
+        <b v-if="tabCounts[value]">{{ tabCounts[value] }}</b>
       </button>
     </nav>
 
     <p v-if="mutationError" class="testimonial-alert" role="alert">{{ mutationError }}</p>
     <p v-else-if="notice" class="testimonial-notice" role="status">{{ notice }}</p>
+    <!-- Said once for the whole queue. Repeating an invariant sentence on every
+         row doubled the row height to say nothing new. -->
+    <p v-if="tabHint" class="testimonial-lede">{{ tabHint }}</p>
 
     <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite">
       <div><span class="app-spinner" /><h2>{{ t('testimonials.loading') }}</h2></div>
@@ -291,9 +363,8 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             </div>
           </div>
           <!-- Same shape as the library row: the quote keeps a full line to
-               itself, and the actions carry what they actually do. -->
+               itself, and the actions sit on their own. -->
           <div v-if="canWrite('testimonial:create')" class="candidate-action">
-            <p>{{ t('testimonials.requestHint') }}</p>
             <button
               type="button" class="quiet-button" :disabled="busyID === candidate.feedback_id"
               @click="dismiss(candidate)"
@@ -344,7 +415,6 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             v-if="canWrite('testimonial:update') && item.status === 'pending_review'"
             class="library-action"
           >
-            <p>{{ t('testimonials.approveHint') }}</p>
             <button
               type="button" class="app-button app-button--primary"
               :disabled="busyID === item.id" @click="approve(item)"
@@ -406,45 +476,82 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 
           <div v-if="editingWall?.id === wall.id" class="wall-editor">
             <div class="wall-column">
-              <p class="section-label">{{ t('testimonials.onThisWall') }}</p>
+              <p class="section-label">
+                {{ t('testimonials.onThisWall') }}
+                <span>{{ t('testimonials.selectionCount', { count: selected.length, max: wall.max_items }) }}</span>
+              </p>
               <p v-if="!selected.length" class="wall-hint">{{ t('testimonials.selectionEmpty') }}</p>
-              <ol v-else class="wall-selection">
-                <li v-for="(item, index) in selected" :key="item.id">
-                  <GripVertical :size="13" aria-hidden="true" />
-                  <span>{{ item.quote }}</span>
-                  <span class="wall-order">
-                    <button
-                      type="button" class="icon-button" :disabled="index === 0"
-                      :title="t('testimonials.moveUp')" @click="move(item.id, -1)"
-                    >↑</button>
-                    <button
-                      type="button" class="icon-button" :disabled="index === selected.length - 1"
-                      :title="t('testimonials.moveDown')" @click="move(item.id, 1)"
-                    >↓</button>
-                    <button
-                      type="button" class="icon-button" :title="t('testimonials.removeFromWall')"
-                      @click="remove(item.id)"
-                    ><X :size="13" /></button>
-                  </span>
-                </li>
-              </ol>
+              <template v-else>
+                <p class="wall-hint">{{ t('testimonials.reorderHint') }}</p>
+                <ol class="wall-selection">
+                  <li
+                    v-for="(item, index) in selected" :key="item.id" draggable="true"
+                    :class="{
+                      'is-dragging': draggingID === item.id,
+                      'is-target': dropTargetID === item.id,
+                      'is-overflow': index >= wall.max_items,
+                    }"
+                    @dragstart="startDrag(item.id, $event)" @dragover.prevent="dragOver(item.id)"
+                    @drop.prevent="drop(item.id)" @dragend="endDrag"
+                  >
+                    <span class="wall-handle">
+                      <GripVertical :size="12" aria-hidden="true" />
+                      <b>{{ index + 1 }}</b>
+                    </span>
+                    <div class="wall-item">
+                      <p>{{ item.quote }}</p>
+                      <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
+                    </div>
+                    <span class="wall-order">
+                      <button
+                        type="button" class="icon-button" :disabled="index === 0"
+                        :aria-label="t('testimonials.moveUp')" :title="t('testimonials.moveUp')"
+                        @click="move(item.id, -1)"
+                      ><ArrowUp :size="13" /></button>
+                      <button
+                        type="button" class="icon-button" :disabled="index === selected.length - 1"
+                        :aria-label="t('testimonials.moveDown')" :title="t('testimonials.moveDown')"
+                        @click="move(item.id, 1)"
+                      ><ArrowDown :size="13" /></button>
+                      <button
+                        type="button" class="icon-button"
+                        :aria-label="t('testimonials.removeFromWall')"
+                        :title="t('testimonials.removeFromWall')" @click="remove(item.id)"
+                      ><X :size="13" /></button>
+                    </span>
+                  </li>
+                </ol>
+                <!-- The wall has a cap, and the snapshot builder simply stops at
+                     it. Say so here rather than let the customer discover it as
+                     a missing card on their own site. -->
+                <p v-if="selected.length > wall.max_items" class="wall-warning">
+                  {{ t('testimonials.overWallLimit', { max: wall.max_items }) }}
+                </p>
+              </template>
             </div>
             <div class="wall-column">
               <p class="section-label">{{ t('testimonials.availableToAdd') }}</p>
               <p v-if="!unselected.length" class="wall-hint">{{ t('testimonials.nothingToAdd') }}</p>
               <ul v-else class="wall-available">
                 <li v-for="item in unselected" :key="item.id">
-                  <span>{{ item.quote }}</span>
-                  <button type="button" class="secondary-button" @click="add(item)">
-                    {{ t('testimonials.addToWall') }}
+                  <div class="wall-item">
+                    <p>{{ item.quote }}</p>
+                    <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
+                  </div>
+                  <button
+                    type="button" class="secondary-button"
+                    :aria-label="t('testimonials.addToWall')" @click="add(item)"
+                  >
+                    <Plus :size="13" /> {{ t('testimonials.addToWall') }}
                   </button>
                 </li>
               </ul>
             </div>
             <footer class="wall-editor-footer">
+              <p v-if="unsaved">{{ t('testimonials.unsavedSelection') }}</p>
               <button
                 type="button" class="app-button app-button--primary"
-                :disabled="busyID === wall.id" @click="saveSelection"
+                :disabled="busyID === wall.id || !unsaved" @click="saveSelection"
               >
                 {{ t('testimonials.saveSelection') }}
               </button>
@@ -513,7 +620,11 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 
 <style scoped>
 .testimonial-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.testimonial-tabs button { display: inline-flex; align-items: center; gap: 6px; }
 .testimonial-tabs button[aria-pressed='true'] { background: var(--rail-active); border-color: var(--teal-line); color: var(--ink); }
+.testimonial-tabs b { min-width: 15px; padding: 0 4px; background: var(--surface-soft); border-radius: 7px; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; line-height: 15px; text-align: center; }
+.testimonial-tabs button[aria-pressed='true'] b { background: var(--surface); color: var(--ink); }
+.testimonial-lede { margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .testimonial-alert,
 .testimonial-notice { margin: 0 0 12px; padding: 9px 12px; border-radius: 5px; font-size: 10px; }
 .testimonial-alert { background: var(--red-soft); border: 1px solid var(--red-line); color: var(--red); }
@@ -533,8 +644,6 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .library-main { grid-template-columns: 46px minmax(0, 1fr) 190px; }
 .candidate-action,
 .library-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 16px; background: var(--surface-soft); border-top: 1px solid var(--line); }
-.candidate-action p,
-.library-action p { margin: 0 auto 0 0; color: var(--muted); font-size: 9px; }
 .candidate-action .app-button,
 .candidate-action .quiet-button,
 .library-action .app-button { min-height: 30px; font-size: 10px; }
@@ -562,22 +671,35 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .wall-actions { display: flex; gap: 7px; }
 .wall-actions .app-button,
 .wall-actions .secondary-button { min-height: 32px; font-size: 10px; }
-.wall-editor { display: grid; gap: 14px; margin-top: 14px; padding-top: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border-top: 1px solid var(--line); }
+.wall-editor { display: grid; gap: 18px; margin-top: 14px; padding-top: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
 .wall-column { min-width: 0; }
+.wall-column .section-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.wall-column .section-label span { color: var(--muted); font-weight: 500; letter-spacing: 0; text-transform: none; }
 .wall-hint { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.wall-warning { margin: 7px 0 0; padding: 7px 9px; background: var(--amber-soft); border: 1px solid var(--amber-line); border-radius: 4px; color: var(--amber-ink); font-size: 9px; line-height: 1.5; }
 .wall-selection,
-.wall-available { display: grid; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
+.wall-available { display: grid; gap: 6px; margin: 7px 0 0; padding: 0; list-style: none; }
 .wall-selection li,
-.wall-available li { display: grid; align-items: center; gap: 8px; padding: 7px 9px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 4px; }
-.wall-selection li { grid-template-columns: 14px minmax(0, 1fr) auto; }
+.wall-available li { display: grid; align-items: center; gap: 9px; padding: 8px 10px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 5px; }
+.wall-selection li { grid-template-columns: auto minmax(0, 1fr) auto; cursor: grab; }
 .wall-available li { grid-template-columns: minmax(0, 1fr) auto; }
-.wall-selection li > span,
-.wall-available li > span { overflow: hidden; color: var(--ink-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.wall-selection li > svg { color: var(--muted); }
+/* The quote is how you tell one apart from another, so it wraps to two lines
+   rather than being clipped to a word and an ellipsis. */
+.wall-item { min-width: 0; }
+.wall-item p { display: -webkit-box; overflow: hidden; margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.wall-item small { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.wall-handle { display: flex; align-items: center; gap: 3px; color: var(--muted); }
+.wall-handle b { min-width: 13px; font-size: 10px; font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; }
+.wall-selection li.is-dragging { opacity: 0.45; cursor: grabbing; }
+.wall-selection li.is-target { border-color: var(--teal); box-shadow: 0 0 0 3px var(--accent-glow); }
+/* Past the wall's cap the snapshot builder stops, so these are dimmed to show
+   they are carried but not shown. */
+.wall-selection li.is-overflow { opacity: 0.55; }
 .wall-order { display: flex; gap: 2px; }
-.wall-order .icon-button { width: 24px; height: 24px; font-size: 10px; }
-.wall-available .secondary-button { min-height: 26px; padding: 0 9px; font-size: 9px; }
-.wall-editor-footer { display: flex; justify-content: flex-end; grid-column: 1 / -1; }
+.wall-order .icon-button { width: 26px; height: 26px; }
+.wall-available .secondary-button { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 10px; font-size: 9px; white-space: nowrap; }
+.wall-editor-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; grid-column: 1 / -1; }
+.wall-editor-footer p { margin: 0 auto 0 0; color: var(--amber-ink); font-size: 9px; font-weight: 700; }
 .wall-editor-footer .app-button { min-height: 32px; font-size: 10px; }
 .wall-embed { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .wall-embed .secondary-button { min-height: 30px; font-size: 9px; }
@@ -592,10 +714,8 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
   .library-main { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .library-main .rating-mark { justify-self: start; }
   .candidate-score { justify-items: start; text-align: left; }
-  /* The hint would push the buttons off the row at this width, so it takes a
-     line of its own rather than shrinking them. */
-  .candidate-action p,
-  .library-action p { flex: 1 0 100%; margin: 0; }
+  .candidate-action,
+  .library-action { justify-content: flex-start; }
   .wall-create { align-items: stretch; flex-direction: column; }
   .wall-head { align-items: flex-start; flex-direction: column; }
 }
