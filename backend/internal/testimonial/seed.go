@@ -42,7 +42,7 @@ type SeedTestimonial struct {
 func DemoFeedback() []SeedFeedback {
 	return []SeedFeedback{
 		{
-			PublicID: "fb_SEEDgood1", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDgd01", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
 			Text: "We rolled this out across three teams and it cut our feedback triage from 3 days " +
 				"to about 20 minutes per week. Support answered every question within the hour.",
 			Note: "strong: specific, warm, reachable author",
@@ -53,7 +53,7 @@ func DemoFeedback() []SeedFeedback {
 			},
 		},
 		{
-			PublicID: "fb_SEEDgood2", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDgd02", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
 			Text: "Onboarding a new engineer used to take a full afternoon of hand-holding. It is " +
 				"now under 20 minutes and nobody has asked me for help since we switched.",
 			Note: "strong: concrete before-and-after",
@@ -63,7 +63,7 @@ func DemoFeedback() []SeedFeedback {
 			},
 		},
 		{
-			PublicID: "fb_SEEDgood3", Rating: 4, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDgd03", Rating: 4, Status: "open", Moderation: "completed", Reachable: true,
 			Text: "Reduzimos a triagem de feedback de 3 dias para 20 minutos por semana, menos 90% " +
 				"do tempo, e a equipa respondeu a tudo em menos de uma hora.",
 			Note: "strong, in Portuguese: proves the specificity signal is language-neutral",
@@ -73,31 +73,31 @@ func DemoFeedback() []SeedFeedback {
 			},
 		},
 		{
-			PublicID: "fb_SEEDthin1", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDthin", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
 			Text: "Nice! Really good. We like it a lot, keep it up please and thank you.",
 			Note: "five stars and worthless: no specificity, so it ranks low rather than being refused",
 		},
 		{
-			PublicID: "fb_SEEDpii01", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDpii1", Rating: 5, Status: "open", Moderation: "completed", Reachable: true,
 			Flags: []string{"pii"},
 			Text: "Brilliant product, saved us 3 days a week. Call me on +351 900 000 000 or mail " +
 				"ana.marques@northwind.test if you want to talk about it.",
 			Note: "refused: glowing, and carries contact details",
 		},
 		{
-			PublicID: "fb_SEEDangry", Rating: 1, Status: "open", Moderation: "completed", Reachable: true,
+			PublicID: "fb_SEEDangr", Rating: 1, Status: "open", Moderation: "completed", Reachable: true,
 			Text: "Fantastic work losing our data for the third time this quarter. Truly world " +
 				"class. I have never been so impressed by anything in my entire career.",
 			Note: "refused: sarcasm that reads positive on tone alone",
 		},
 		{
-			PublicID: "fb_SEEDunmod", Rating: 5, Status: "open", Moderation: "pending", Reachable: true,
+			PublicID: "fb_SEEDunmd", Rating: 5, Status: "open", Moderation: "pending", Reachable: true,
 			Text: "This genuinely cut our onboarding from three days to twenty minutes for every " +
 				"single new team member we brought on this quarter.",
 			Note: "refused: would be strong, but has not completed moderation",
 		},
 		{
-			PublicID: "fb_SEEDspam1", Rating: 5, Status: "spam", Moderation: "completed", Reachable: false,
+			PublicID: "fb_SEEDspam", Rating: 5, Status: "spam", Moderation: "completed", Reachable: false,
 			Text: "Best tool ever, cut our costs by 90% in one week, everyone should buy it now.",
 			Note: "refused: marked spam",
 		},
@@ -131,7 +131,25 @@ func Seed(
 	corpus := DemoFeedback()
 	ids := make(map[string]string, len(corpus))
 
+	// An approval records who made it, and the schema enforces that the actor and
+	// the timestamp are set together. The seed therefore approves as a real
+	// member rather than inventing an anonymous one.
+	var approverID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM tenant_members
+		WHERE tenant_id = $1 AND status = 'active'
+		ORDER BY created_at LIMIT 1
+	`, tenantID).Scan(&approverID); err != nil {
+		return result, fmt.Errorf("seed needs an active member to approve as: %w", err)
+	}
+
 	for _, item := range corpus {
+		// text_moderation_flags is NOT NULL DEFAULT '{}', so a nil slice has to
+		// become an empty array rather than a null.
+		flags := item.Flags
+		if flags == nil {
+			flags = []string{}
+		}
 		var id string
 		err := query.QueryRow(ctx, `
 			INSERT INTO feedbacks (
@@ -148,7 +166,7 @@ func Seed(
 				text_moderation_flags = EXCLUDED.text_moderation_flags
 			RETURNING id
 		`, tenantID, projectID, item.PublicID, item.Rating, item.Text, item.Status,
-			item.Moderation, item.Flags, seedEmail(item), item.Reachable).Scan(&id)
+			item.Moderation, flags, seedEmail(item), item.Reachable).Scan(&id)
 		if err != nil {
 			return result, fmt.Errorf("seed feedback %s: %w", item.PublicID, err)
 		}
@@ -180,7 +198,7 @@ func Seed(
 			continue
 		}
 		testimonialID, err := seedTestimonial(ctx, query, store, tenantID, projectID,
-			ids[item.PublicID], item, now)
+			ids[item.PublicID], approverID, item, now)
 		if err != nil {
 			return result, err
 		}
@@ -247,7 +265,7 @@ func seedTestimonial(
 	ctx context.Context,
 	query db.Querier,
 	store Store,
-	tenantID, projectID, feedbackID string,
+	tenantID, projectID, feedbackID, approverID string,
 	item SeedFeedback,
 	now time.Time,
 ) (string, error) {
@@ -302,15 +320,8 @@ func seedTestimonial(
 	if err != nil {
 		return "", fmt.Errorf("seed submission: %w", err)
 	}
-	if err := store.ApproveTestimonial(ctx, query, tenantID, created.ID, "", now); err != nil {
-		// Approval records the acting member; the seed has none, so approve
-		// directly rather than inventing one.
-		if _, updateErr := query.Exec(ctx, `
-			UPDATE testimonials SET status = 'approved', approved_at = $3
-			WHERE tenant_id = $1 AND id = $2
-		`, tenantID, created.ID, now); updateErr != nil {
-			return "", fmt.Errorf("seed approval: %w", updateErr)
-		}
+	if err := store.ApproveTestimonial(ctx, query, tenantID, created.ID, approverID, now); err != nil {
+		return "", fmt.Errorf("seed approval: %w", err)
 	}
 	return created.ID, nil
 }
