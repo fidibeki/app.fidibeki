@@ -8,7 +8,9 @@ const serverCommand = process.env.CI
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
-  workers: process.env.CI ? 2 : undefined,
+  // GitHub's standard runner has four cores and the suite is API-mocked, so the
+  // browsers are the only real load. Two workers left half the runner idle.
+  workers: process.env.CI ? 4 : undefined,
   retries: 0,
   reporter: 'list',
   expect: {

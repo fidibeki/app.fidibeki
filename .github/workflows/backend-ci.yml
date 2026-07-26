@@ -23,8 +23,9 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Check formatting
         run: make format-check
-      - name: Run go vet
-        run: make lint
+      # go vet is not run separately: golangci-lint's standard set enables govet,
+      # so `make lint` repeated the same analysis for about 96 seconds. The
+      # Makefile target stays for local use.
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -39,11 +40,19 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - name: Run fast test suite
-        run: make test-short
+      # The short suite is not run first: `make coverage` runs every one of those
+      # tests again plus the integration tests they skip, so running both in the
+      # same sequential job cost about 150 seconds for no extra signal.
       - name: Run integration tests and enforce coverage
         run: make coverage
       - name: Validate Compose configuration
         run: docker compose -f infra/docker-compose.yml config --quiet
+      - uses: docker/setup-buildx-action@v3
       - name: Build API image
-        run: docker build -f backend/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          cache-from: type=gha,scope=backend-image
+          cache-to: type=gha,mode=max,scope=backend-image
