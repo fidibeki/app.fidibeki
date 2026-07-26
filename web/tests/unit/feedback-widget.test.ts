@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { loaderScriptURL, mountFeedbackWidget } from '../../utils/feedback-widget'
 
-const KEY = 'pk_live_GjFasO9215CNAax7LbWhiP'
+// Deliberately not the real project key. What is under test is the plumbing —
+// the URL, the attribute, the once-only guard — and none of it cares which key
+// it carries. A live credential sitting in a test is also the shape every secret
+// scanner is built to find, correctly.
+const KEY = 'pk_test_example'
 
 interface FakeScript {
   async: boolean
