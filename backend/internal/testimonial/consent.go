@@ -50,6 +50,13 @@ type AuthorDetails struct {
 	CompanyURL string `json:"company_url,omitempty"`
 	AvatarURL  string `json:"avatar_url,omitempty"`
 	VideoURL   string `json:"video_url,omitempty"`
+	PosterURL  string `json:"poster_url,omitempty"`
+	// The rendition's own shape, so the embed can hold the right box before a
+	// single byte of video has loaded. Without it a portrait recording either
+	// arrives into a landscape frame and gets letterboxed, or the card jumps
+	// when the real dimensions turn up.
+	VideoWidth  int `json:"video_width,omitempty"`
+	VideoHeight int `json:"video_height,omitempty"`
 }
 
 // Project drops every field the author did not consent to publish. The snapshot
@@ -70,6 +77,9 @@ func (d AuthorDetails) Project(scopes ConsentScopes) AuthorDetails {
 	}
 	if scopes.Video {
 		projected.VideoURL = d.VideoURL
+		projected.PosterURL = d.PosterURL
+		projected.VideoWidth = d.VideoWidth
+		projected.VideoHeight = d.VideoHeight
 	}
 	return projected
 }

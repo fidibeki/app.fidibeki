@@ -1,5 +1,5 @@
 import { SUPPORTED_SCHEMA_VERSION, isWallPayload } from './types'
-import type { TestimonialCard, WallPayload } from './types'
+import type { TestimonialAuthor, TestimonialCard, WallPayload } from './types'
 
 // Styles live inside the shadow root, so the host page cannot leak in and we
 // cannot leak out. Everything a customer might reasonably want to restyle is a
@@ -136,7 +136,14 @@ video {
   width: 100%;
   background: #000;
   border-radius: calc(var(--fw-radius) - 4px);
+  /* The fallback only applies when the payload carried no dimensions. Each card
+     sets its own ratio inline, so a recording made on a phone held upright is
+     shown upright rather than letterboxed into a shape it was never in. */
   aspect-ratio: 16 / 9;
+  /* A portrait clip is otherwise as tall as the card is wide, which on a
+     three-column wall pushes everything below it off the screen. */
+  max-height: 70vh;
+  object-fit: contain;
 }
 
 .tags {
@@ -193,10 +200,28 @@ function renderStars(rating: number | null | undefined): string {
   }${'☆'.repeat(5 - rounded)}</div>`
 }
 
+/**
+ * A video element sized to the recording rather than to an assumption.
+ *
+ * The dimensions come from the rendition the API actually serves, so the box is
+ * correct before a byte of video has loaded: no letterboxing of a portrait clip,
+ * and no jump when the real size arrives. A payload without them falls back to
+ * the stylesheet's 16:9, which is the old behaviour rather than a broken one.
+ */
+function renderVideo(source: string, poster: string, author: TestimonialAuthor): string {
+  const width = Number(author.video_width) || 0
+  const height = Number(author.video_height) || 0
+  const ratio = width > 0 && height > 0 ? ` style="aspect-ratio: ${width} / ${height}"` : ''
+  const still = poster ? ` poster="${escapeHTML(poster)}"` : ''
+  return `<video part="video" controls preload="none" playsinline` +
+    `${ratio}${still} src="${escapeHTML(source)}"></video>`
+}
+
 function renderCard(card: TestimonialCard, payload: WallPayload, origin: string): string {
   const author = card.author || {}
   const avatar = payload.show_avatar ? safeURL(author.avatar_url, origin) : ''
   const video = payload.show_video ? safeURL(author.video_url, origin) : ''
+  const poster = payload.show_video ? safeURL(author.poster_url, origin) : ''
   const companyURL = payload.show_company ? safeURL(author.company_url, origin) : ''
   const company = payload.show_company ? author.company : ''
 
@@ -213,7 +238,7 @@ function renderCard(card: TestimonialCard, payload: WallPayload, origin: string)
       <figure class="card" part="card">
         ${payload.show_rating ? renderStars(card.rating) : ''}
         ${card.headline ? `<p class="headline" part="headline">${escapeHTML(card.headline)}</p>` : ''}
-        ${video ? `<video part="video" controls preload="none" playsinline src="${escapeHTML(video)}"></video>` : ''}
+        ${video ? renderVideo(video, poster, author) : ''}
         <blockquote part="quote">${escapeHTML(card.quote)}</blockquote>
         ${card.tags?.length
           ? `<ul class="tags" part="tags">${card.tags.map(tag => `<li>${escapeHTML(tag)}</li>`).join('')}</ul>`

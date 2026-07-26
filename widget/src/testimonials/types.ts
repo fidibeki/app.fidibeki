@@ -11,6 +11,11 @@ export interface TestimonialAuthor {
   company_url?: string
   avatar_url?: string
   video_url?: string
+  poster_url?: string
+  /** The served rendition's own shape, so the card holds the right box before
+   *  the video loads. Absent on payloads written before video existed. */
+  video_width?: number
+  video_height?: number
 }
 
 export interface TestimonialCard {

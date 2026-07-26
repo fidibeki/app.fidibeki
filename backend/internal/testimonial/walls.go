@@ -544,6 +544,9 @@ type PublishableCard struct {
 	VideoReviewed bool     `json:"video_reviewed"`
 	AvatarURL     string   `json:"avatar_url,omitempty"`
 	VideoURL      string   `json:"video_url,omitempty"`
+	PosterURL     string   `json:"poster_url,omitempty"`
+	VideoWidth    int      `json:"video_width,omitempty"`
+	VideoHeight   int      `json:"video_height,omitempty"`
 	TagNames      []string `json:"tag_names,omitempty"`
 	Position      int      `json:"position"`
 }
@@ -563,6 +566,9 @@ func (Store) LoadWallCards(
 		       COALESCE(avatar.public_id, ''), COALESCE(avatar.content_hash, ''),
 		       COALESCE(video.public_id, ''), COALESCE(video.content_hash, ''),
 		       video.reviewed_at IS NOT NULL,
+		       -- The rendition's shape, not the source's: what the embed will
+		       -- actually play is what the box has to fit.
+		       COALESCE(rendition.width, 0), COALESCE(rendition.height, 0),
 		       COALESCE(bool_and(
 		           media.safety_status = 'safe' AND media.transcode_status = 'ready'
 		       ) FILTER (WHERE media.id IS NOT NULL), true),
@@ -577,6 +583,9 @@ func (Store) LoadWallCards(
 		LEFT JOIN testimonial_media AS video
 		       ON video.tenant_id = t.tenant_id AND video.testimonial_id = t.id
 		      AND video.role = 'video'
+		LEFT JOIN testimonial_media_renditions AS rendition
+		       ON rendition.tenant_id = video.tenant_id AND rendition.media_id = video.id
+		      AND rendition.kind = 'mp4_720p'
 		LEFT JOIN testimonial_tags AS link
 		       ON link.tenant_id = t.tenant_id AND link.testimonial_id = t.id
 		LEFT JOIN tags AS tag ON tag.tenant_id = link.tenant_id AND tag.id = link.tag_id
@@ -584,7 +593,8 @@ func (Store) LoadWallCards(
 		GROUP BY t.id, t.public_id, t.consented_text, t.quote, t.headline, t.author_name,
 		         t.author_role, t.author_company, t.author_company_url, t.rating, t.status,
 		         t.consent_state, t.consent_scopes, item.position, avatar.public_id,
-		         avatar.content_hash, video.public_id, video.content_hash, video.reviewed_at
+		         avatar.content_hash, video.public_id, video.content_hash, video.reviewed_at,
+		         rendition.width, rendition.height
 		ORDER BY item.position
 	`, tenantID, wallID)
 	if err != nil {
@@ -603,7 +613,7 @@ func (Store) LoadWallCards(
 			&author.name, &author.role, &author.company, &author.companyURL,
 			&card.Rating, &card.Status, &card.ConsentState, &scopes, &card.Position,
 			&avatarID, &avatarHash, &videoID, &videoHash, &card.VideoReviewed,
-			&card.MediaReady, &card.TagNames,
+			&card.VideoWidth, &card.VideoHeight, &card.MediaReady, &card.TagNames,
 		); err != nil {
 			return nil, fmt.Errorf("scan testimonial wall card: %w", err)
 		}
@@ -617,6 +627,7 @@ func (Store) LoadWallCards(
 		if videoID != "" && videoHash != "" {
 			card.HasVideo = true
 			card.VideoURL = MediaPath(videoID, videoHash, "mp4")
+			card.PosterURL = MediaPath(videoID, videoHash, "jpg")
 		}
 		cards = append(cards, card)
 	}
@@ -659,12 +670,15 @@ func BuildSnapshotPayload(wall Wall, cards []PublishableCard, now time.Time) Sna
 			continue
 		}
 		details := AuthorDetails{
-			Name:       card.Author.Name,
-			Role:       card.Author.Role,
-			Company:    card.Author.Company,
-			CompanyURL: card.Author.CompanyURL,
-			AvatarURL:  card.AvatarURL,
-			VideoURL:   card.VideoURL,
+			Name:        card.Author.Name,
+			Role:        card.Author.Role,
+			Company:     card.Author.Company,
+			CompanyURL:  card.Author.CompanyURL,
+			AvatarURL:   card.AvatarURL,
+			VideoURL:    card.VideoURL,
+			PosterURL:   card.PosterURL,
+			VideoWidth:  card.VideoWidth,
+			VideoHeight: card.VideoHeight,
 		}
 		rendered := SnapshotCard{
 			ID:     card.PublicID,
@@ -687,6 +701,9 @@ func BuildSnapshotPayload(wall Wall, cards []PublishableCard, now time.Time) Sna
 		}
 		if !wall.ShowVideo {
 			rendered.Author.VideoURL = ""
+			rendered.Author.PosterURL = ""
+			rendered.Author.VideoWidth = 0
+			rendered.Author.VideoHeight = 0
 		}
 		payload.Cards = append(payload.Cards, rendered)
 	}

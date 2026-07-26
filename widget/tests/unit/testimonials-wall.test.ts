@@ -131,6 +131,46 @@ describe('fidibeki-wall', () => {
     expect(element.shadowRoot!.querySelector('img.avatar')).toBeNull()
   })
 
+  // The shape the product promises. A portrait recording set in a 16:9 box is
+  // either letterboxed or cropped, and the customer chose to publish what this
+  // person actually sent.
+  it('holds each video in the shape it was recorded in', async () => {
+    respondWith(payload({
+      cards: [{
+        id: 'ts_portrait',
+        quote: 'Recorded on a phone held upright.',
+        author: {
+          name: 'Ana',
+          video_url: 'https://cdn.test/a.mp4',
+          poster_url: 'https://cdn.test/a.jpg',
+          video_width: 720,
+          video_height: 1280,
+        },
+      }],
+    }))
+    const element = await mount()
+    const video = element.shadowRoot!.querySelector('video')
+    expect(video?.getAttribute('style')).toContain('aspect-ratio: 720 / 1280')
+    // The still stands in before playback, so the card is not a black rectangle
+    // on someone else's marketing page.
+    expect(video?.getAttribute('poster')).toBe('https://cdn.test/a.jpg')
+  })
+
+  it('falls back to the stylesheet when a payload carries no dimensions', async () => {
+    respondWith(payload({
+      cards: [{
+        id: 'ts_old',
+        quote: 'Published before dimensions were recorded.',
+        author: { name: 'Ana', video_url: 'https://cdn.test/a.mp4' },
+      }],
+    }))
+    const element = await mount()
+    const video = element.shadowRoot!.querySelector('video')
+    expect(video).not.toBeNull()
+    expect(video?.getAttribute('style')).toBeNull()
+    expect(video?.getAttribute('poster')).toBeNull()
+  })
+
   it('does not autoplay video and does not preload it', async () => {
     respondWith(payload({
       cards: [{
