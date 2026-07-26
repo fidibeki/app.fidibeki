@@ -87,11 +87,18 @@ type Config struct {
 	AdminDBMaxConns           int32
 	S3AutoCreate              bool
 	SentryDSN                 string
-	AppVersion                string
-	LogLevel                  string
-	MigrationsPath            string
-	ReadinessTimeout          time.Duration
-	ShutdownTimeout           time.Duration
+	// Slack one-click install. All three are optional: without them the install endpoints
+	// report the deployment has no Slack app, and pasting a webhook URL still works.
+	// SlackRedirectURL must exactly match a redirect URL registered on the Slack app, and
+	// lives on the apex API host because tenants are on per-workspace subdomains.
+	SlackClientID     string
+	SlackClientSecret string
+	SlackRedirectURL  string
+	AppVersion        string
+	LogLevel          string
+	MigrationsPath    string
+	ReadinessTimeout  time.Duration
+	ShutdownTimeout   time.Duration
 }
 
 func Load() (Config, error) {
@@ -206,6 +213,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		AdminDBMaxConns:           int32(adminDBMaxConns),
 		S3AutoCreate:              s3AutoCreate,
 		SentryDSN:                 get("SENTRY_DSN", ""),
+		SlackClientID:             get("SLACK_CLIENT_ID", ""),
+		SlackClientSecret:         get("SLACK_CLIENT_SECRET", ""),
+		SlackRedirectURL:          get("SLACK_REDIRECT_URL", ""),
 		AppVersion:                get("APP_VERSION", "dev"),
 		LogLevel:                  get("LOG_LEVEL", "info"),
 		MigrationsPath:            get("MIGRATIONS_PATH", "../infra/migrations"),
@@ -334,6 +344,35 @@ func (c Config) validate() []error {
 		parsed, err := url.ParseRequestURI(c.WebPublicBaseURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("WEB_PUBLIC_BASE_URL must be an absolute URL"))
+		}
+	}
+	// Slack one-click install is all-or-nothing. A half-configured app would offer an
+	// install button that always fails at the callback, which is worse than not offering it.
+	slackSettings := map[string]string{
+		"SLACK_CLIENT_ID": c.SlackClientID, "SLACK_CLIENT_SECRET": c.SlackClientSecret,
+		"SLACK_REDIRECT_URL": c.SlackRedirectURL,
+	}
+	slackConfigured := 0
+	for _, value := range slackSettings {
+		if value != "" {
+			slackConfigured++
+		}
+	}
+	if slackConfigured > 0 && slackConfigured < len(slackSettings) {
+		for name, value := range slackSettings {
+			if value == "" {
+				validationErrors = append(validationErrors,
+					fmt.Errorf("%s is required when any SLACK_* setting is present", name))
+			}
+		}
+	}
+	if c.SlackRedirectURL != "" {
+		parsed, err := url.ParseRequestURI(c.SlackRedirectURL)
+		// Slack rejects a non-HTTPS redirect URL outright, so catch it here rather than at
+		// the end of a user's install attempt.
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("SLACK_REDIRECT_URL must be an absolute HTTPS URL"))
 		}
 	}
 	for name, value := range map[string]string{

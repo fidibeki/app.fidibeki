@@ -30,6 +30,8 @@ pnpm typecheck:marketing
 | `NUXT_PUBLIC_WIDGET_CONSENT_LOCALE` | `en` | Locale asserted in the widget consent grants; must be one of the widget rule's supported locales. |
 | `NUXT_PUBLIC_WIDGET_ANALYTICS_NOTICE_VERSION` | `2026-07` | Notice version asserted when the banner grants `widget_analytics` to the widget; must match the widget rule's customer_cmp analytics consent configuration. |
 | `NUXT_PUBLIC_WIDGET_REPLAY_NOTICE_VERSION` | `2026-07` | Notice version asserted when the banner grants `session_replay` to the widget; must match the widget rule's customer_cmp replay consent configuration. |
+| `NUXT_PUBLIC_STATUS_PAGE_URL` | `https://status.fidibeki.com` | Public status page. Used as the status badge's link target, and as the origin its live-status read goes to. |
+| `NUXT_PUBLIC_STATUS_PAGE_ID` | _(unset)_ | Status page id the badge reads live status for. No default and never committed: unset means the badge stays a plain link instead of showing a status it cannot verify. Find it in the status page's own `POST /status-page-api/overview/<id>` request. |
 
 The footer LinkedIn icon is an explicit placeholder — set `linkedInUrl` in
 `components/SiteFooter.vue` when a real profile exists.

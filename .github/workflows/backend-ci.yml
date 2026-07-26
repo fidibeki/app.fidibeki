@@ -3,7 +3,24 @@ name: Backend CI
 on:
   push:
     branches: [main]
+    # Twenty-eight of the last forty commits to main touched no Go code, and
+    # every one of them still paid for the integration suite and the image
+    # build. The Makefile is listed because CI drives it (`make format-check`,
+    # `make coverage`), and contracts/ because the Go tests read it. Duplicated
+    # across push and pull_request because Actions does not support YAML anchors.
+    paths:
+      - "backend/**"
+      - "contracts/**"
+      - "Makefile"
+      - "infra/docker-compose.yml"
+      - ".github/workflows/backend-ci.yml"
   pull_request:
+    paths:
+      - "backend/**"
+      - "contracts/**"
+      - "Makefile"
+      - "infra/docker-compose.yml"
+      - ".github/workflows/backend-ci.yml"
 
 permissions:
   contents: read
@@ -14,7 +31,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: starsling-ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -33,7 +50,7 @@ jobs:
           working-directory: backend
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: starsling-ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6

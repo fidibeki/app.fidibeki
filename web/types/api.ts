@@ -739,9 +739,19 @@ export interface SignupResponse {
   tenant: TenantSummary
 }
 
+/**
+ * Deployment-level facts, not workspace settings. They exist so the UI never offers an
+ * action this deployment cannot carry out.
+ */
+export interface DeploymentCapabilities {
+  /** False when no Slack app is configured, which hides the one-click install button. */
+  slack_one_click_install: boolean
+}
+
 export interface TenantConfiguration {
   tenant: TenantSummary
   plan: PlanDefinition
+  capabilities?: DeploymentCapabilities
 }
 
 export type SSOMode = 'disabled' | 'optional' | 'required'
@@ -1332,6 +1342,10 @@ export interface APIKey {
 }
 
 export type IntegrationKind = 'slack' | 'teams' | 'webhook'
+/** How a destination was obtained: pasted by hand, or granted through a one-click install. */
+export type IntegrationInstallSource = 'manual' | 'oauth'
+/** Outcome the Slack callback reports back on the settings URL. */
+export type SlackInstallResult = 'installed' | 'denied' | 'failed'
 export type IntegrationEvent = 'feedback.created' | 'issue.created' | 'issue.updated' | 'issue.resolved'
 export type IntegrationPrivacyField =
   | 'description'
@@ -1359,6 +1373,8 @@ export interface Integration {
     fidibeki_links_require_authentication: boolean
     fidibeki_links_access_controlled: boolean
   }
+  install_source: IntegrationInstallSource
+  slack_team_name?: string
   is_active: boolean
   created_at: string
   updated_at: string

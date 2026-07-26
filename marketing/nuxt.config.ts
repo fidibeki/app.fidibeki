@@ -64,6 +64,12 @@ export default defineNuxtConfig({
         process.env.NUXT_PUBLIC_WIDGET_ANALYTICS_NOTICE_VERSION || '2026-07',
       widgetReplayNoticeVersion:
         process.env.NUXT_PUBLIC_WIDGET_REPLAY_NOTICE_VERSION || '2026-07',
+      // Our own status page. The badge reads its public overview endpoint from
+      // the browser. The page id is supplied per deployment and never committed;
+      // unset it and the badge degrades to a plain link rather than showing a
+      // status it cannot verify, which is the safe way to be unconfigured.
+      statusPageUrl: process.env.NUXT_PUBLIC_STATUS_PAGE_URL || 'https://status.fidibeki.com',
+      statusPageId: process.env.NUXT_PUBLIC_STATUS_PAGE_ID || '',
     },
   },
   typescript: {

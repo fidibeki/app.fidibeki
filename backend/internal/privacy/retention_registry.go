@@ -420,6 +420,7 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionProvider, Name: "resend_transactional_email"},
 				retentionResource{Kind: RetentionProvider, Name: "email_capture_filesystem"},
 				retentionResource{Kind: RetentionProvider, Name: "slack_incoming_webhook"},
+				retentionResource{Kind: RetentionProvider, Name: "slack_oauth_install"},
 				retentionResource{Kind: RetentionProvider, Name: "microsoft_teams_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "customer_generic_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "jira_cloud_issue_tracker"},

@@ -264,11 +264,26 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 		pendingProvider(
 			"slack_incoming_webhook", "Slack incoming webhook", "chat_webhook",
 			GovernanceBoundaryCustomerConfiguredDestination,
-			"Deliver minimized operational notifications to a customer-configured Slack destination.",
+			"Deliver minimized operational notifications to a customer-configured Slack destination, "+
+				"reached either by a pasted webhook URL or by one granted through slack_oauth_install.",
 			[]string{"minimized operational notification fields per versioned per-destination allowlist"},
 			"backend/internal/integration/models.go (KindSlack)",
 			"a tenant-created integrations row with kind=slack, not a global environment variable",
 			GovernanceEnvironmentPerTenantConfig, "external_communications",
+		),
+		pendingProvider(
+			"slack_oauth_install", "Slack app install (OAuth)", "oauth_install",
+			GovernanceBoundaryCustomerConfiguredDestination,
+			"Exchange a one-time Slack authorization code for the channel webhook the workspace "+
+				"picked, and revoke that grant when the integration is removed. This is the install "+
+				"handshake only; notification content travels under slack_incoming_webhook.",
+			// The handshake carries the Fidibeki app credentials and Slack's own one-time code.
+			// No feedback, issue, or member data is part of any request or response.
+			[]string{"no personal data: app credentials and a single-use authorization code"},
+			"backend/internal/integration/slack_oauth.go (SlackOAuth.Exchange)",
+			"SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_REDIRECT_URL; absent values leave "+
+				"one-click install inactive and the pasted-URL path unaffected",
+			GovernanceEnvironmentOptionalNeverRequired, "external_communications",
 		),
 		pendingProvider(
 			"microsoft_teams_incoming_webhook", "Microsoft Teams incoming webhook", "chat_webhook",

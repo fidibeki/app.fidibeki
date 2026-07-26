@@ -155,6 +155,10 @@ const includeInReport = [
             Security reports follow their own path — see
             <NuxtLink to="/security">how Fidibeki is secured</NuxtLink> before you send one.
           </p>
+          <div class="expect-status">
+            <span class="expect-status-label">Before you write, check live status:</span>
+            <StatusPill variant="block" />
+          </div>
         </div>
       </div>
     </section>
@@ -318,6 +322,21 @@ const includeInReport = [
 
 .expect-note {
   margin-bottom: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.expect-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--line);
+}
+
+.expect-status-label {
   font-size: 0.88rem;
   color: var(--muted);
 }
