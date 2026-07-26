@@ -12,7 +12,7 @@ jobs:
       github.event.deployment_status.state == 'success' &&
       (github.event.deployment.environment == 'staging' ||
       endsWith(github.event.deployment.environment, ' / staging'))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 8
     environment: staging
     env:

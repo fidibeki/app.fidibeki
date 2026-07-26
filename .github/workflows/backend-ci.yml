@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -33,7 +33,7 @@ jobs:
           working-directory: backend
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -47,12 +47,11 @@ jobs:
         run: make coverage
       - name: Validate Compose configuration
         run: docker compose -f infra/docker-compose.yml config --quiet
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
       - name: Build API image
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: backend/Dockerfile
           push: false
-          cache-from: type=gha,scope=backend-image
-          cache-to: type=gha,mode=max,scope=backend-image
