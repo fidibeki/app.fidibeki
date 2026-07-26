@@ -362,6 +362,18 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
+	// Its own client rather than the outbox enqueuer, whose Enqueue speaks in
+	// outbox events. Transcoding is not a domain event; it is one job.
+	redisQueueOptions, err := asynq.ParseRedisURI(settings.RedisURL)
+	if err != nil {
+		return fmt.Errorf("parse queue Redis URL: %w", err)
+	}
+	transcodeQueue := asynq.NewClient(redisQueueOptions)
+	defer func() {
+		if err := transcodeQueue.Close(); err != nil {
+			logger.Warn("transcode queue close failed", "error", err)
+		}
+	}()
 	// The author answering a testimonial request is not a member and never will
 	// be, so the token is the only credential. Resolution runs on the admin pool
 	// because the workspace is unknown until the digest is matched; everything
@@ -369,7 +381,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	testimonialCollectOptions := testimonial.CollectHTTPOptions{
 		Store: testimonial.Store{}, Resolver: pools.Admin,
 		Begin: db.BeginFromPool(pools.App), Logger: logger,
-		MediaStore: testimonial.Store{}, Uploads: objectStorage,
+		MediaStore: testimonial.Store{}, Uploads: objectStorage, Transcodes: transcodeQueue,
 	}
 	testimonial.RegisterCollectRoutes(platformRoutes, testimonialCollectOptions)
 	testimonialRevokeOptions := testimonial.RevokeHTTPOptions{
@@ -909,9 +921,13 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
 		AttachmentVerificationHandler: verificationProcessor.Handler(),
-		IntegrationHandler:            integrationHandler.Handler(),
-		IssueTrackerHandler:           issueTrackerHandler.Handler(),
-		PrivacyExportHandler:          privacyExporter.Handler(),
+		TestimonialTranscodeHandler: testimonial.TranscodeHandler(testimonial.TranscodeOptions{
+			Store: testimonial.Store{}, Storage: objectStorage, Encoder: testimonial.FFmpeg{},
+			Begin: db.BeginFromPool(pools.App), Logger: logger,
+		}),
+		IntegrationHandler:   integrationHandler.Handler(),
+		IssueTrackerHandler:  issueTrackerHandler.Handler(),
+		PrivacyExportHandler: privacyExporter.Handler(),
 	})
 	if err != nil {
 		return err

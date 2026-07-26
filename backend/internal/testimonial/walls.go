@@ -290,6 +290,103 @@ func (Store) AttachRequestMedia(
 	return nil
 }
 
+// ClaimTranscode takes ownership of one upload, so two workers cannot encode
+// the same file twice.
+//
+// The claim is the status change itself: only a row still sitting in 'pending'
+// moves to 'processing', and only one statement can win that.
+func (Store) ClaimTranscode(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID string,
+	now time.Time,
+) (TranscodeWork, error) {
+	var work TranscodeWork
+	err := query.QueryRow(ctx, `
+		UPDATE testimonial_media
+		SET transcode_status = 'processing', transcode_attempts = transcode_attempts + 1,
+		    updated_at = $3
+		WHERE tenant_id = $1 AND public_id = $2
+		  AND transcode_status = 'pending' AND completed_at IS NOT NULL
+		RETURNING id, source_storage_key, content_type
+	`, tenantID, publicID, now).Scan(&work.MediaID, &work.StorageKey, &work.ContentType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TranscodeWork{}, ErrNotFound
+	}
+	if err != nil {
+		return TranscodeWork{}, fmt.Errorf("claim testimonial transcode: %w", err)
+	}
+	return work, nil
+}
+
+// CompleteTranscode records the derivatives and opens the asset for serving.
+//
+// Safety moves to 'safe' here on the strength of the probe having succeeded:
+// the bytes decode as video rather than being something wearing a video's name.
+// It is not a judgement about the content, which is what the separate review
+// gate is for and which no machine here pretends to make.
+func (Store) CompleteTranscode(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, contentHash string,
+	probed Probed,
+	renditions []RenditionValues,
+	now time.Time,
+) error {
+	var mediaID string
+	err := query.QueryRow(ctx, `
+		UPDATE testimonial_media
+		SET transcode_status = 'ready', safety_status = 'safe', content_hash = $3,
+		    width = $4, height = $5, duration_seconds = $6, transcode_error = NULL,
+		    updated_at = $7
+		WHERE tenant_id = $1 AND public_id = $2 AND transcode_status = 'processing'
+		RETURNING id
+	`, tenantID, publicID, contentHash, probed.Width, probed.Height,
+		probed.DurationSeconds, now).Scan(&mediaID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("complete testimonial transcode: %w", err)
+	}
+	for _, rendition := range renditions {
+		if _, err := query.Exec(ctx, `
+			INSERT INTO testimonial_media_renditions (
+				tenant_id, media_id, kind, storage_key, content_type, size_bytes,
+				width, height, content_hash
+			) VALUES ($1, $2, $3::testimonial_rendition_kind, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (tenant_id, media_id, kind) DO UPDATE SET
+				storage_key = EXCLUDED.storage_key, content_type = EXCLUDED.content_type,
+				size_bytes = EXCLUDED.size_bytes, width = EXCLUDED.width,
+				height = EXCLUDED.height, content_hash = EXCLUDED.content_hash
+		`, tenantID, mediaID, rendition.Kind, rendition.StorageKey, rendition.ContentType,
+			rendition.SizeBytes, rendition.Width, rendition.Height, rendition.ContentHash); err != nil {
+			return fmt.Errorf("store testimonial rendition: %w", err)
+		}
+	}
+	return nil
+}
+
+// FailTranscode records why an upload could not be used.
+//
+// The reason is kept so the backoffice can tell the customer something better
+// than "it did not work", and so the same file is not tried forever.
+func (Store) FailTranscode(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, reason string,
+	now time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE testimonial_media
+		SET transcode_status = 'failed', transcode_error = $3, updated_at = $4
+		WHERE tenant_id = $1 AND public_id = $2
+	`, tenantID, publicID, reason, now); err != nil {
+		return fmt.Errorf("fail testimonial transcode: %w", err)
+	}
+	return nil
+}
+
 // ResolveMediaTenant finds the workspace behind a public media path. Like the
 // wall and token resolvers, it runs on the admin pool before any tenant context
 // exists.

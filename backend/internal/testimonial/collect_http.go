@@ -30,6 +30,7 @@ type CollectHTTPOptions struct {
 	// video endpoints are not mounted at all, rather than mounted and failing.
 	MediaStore CollectMediaStore
 	Uploads    UploadSigner
+	Transcodes TranscodeEnqueuer
 	// Resolver runs on the admin pool: the token has to be traced to a workspace
 	// before a tenant context can exist.
 	Resolver db.Querier

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -154,6 +155,20 @@ func (h *CollectHTTPHandler) completeVideo(w http.ResponseWriter, r *http.Reques
 		}
 		h.writeFailure(w, r, err)
 		return
+	}
+	// Enqueued after the row is committed, so the worker cannot claim an upload
+	// the transaction has not finished recording.
+	if h.options.Transcodes != nil {
+		task, err := NewTranscodeTask(tenantID, strings.TrimSpace(submission.MediaID))
+		if err == nil {
+			if _, err = h.options.Transcodes.EnqueueContext(r.Context(), task); err != nil &&
+				h.options.Logger != nil {
+				// The author's upload succeeded; only the follow-up is late. A
+				// periodic sweep picks up anything left pending.
+				h.options.Logger.WarnContext(r.Context(), "enqueue testimonial transcode failed",
+					slog.String("error", err.Error()))
+			}
+		}
 	}
 	noStore(w)
 	w.WriteHeader(http.StatusNoContent)
