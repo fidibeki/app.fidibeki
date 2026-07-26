@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   sentry:
-    runs-on: ubuntu-latest
+    runs-on: starsling-ubuntu-24.04
     timeout-minutes: 8
     env:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -18,24 +18,56 @@ jobs:
       SENTRY_WEB_PROJECT: ${{ vars.SENTRY_WEB_PROJECT }}
       SENTRY_WIDGET_PROJECT: ${{ vars.SENTRY_WIDGET_PROJECT }}
     steps:
+      # Full history so `releases set-commits --auto` can actually associate
+      # commits, and so the frontend check below can diff against the previous
+      # commit on main.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # This workflow does two unrelated jobs: it marks a Sentry release for the
+      # API project, which every commit on main needs, and it builds the two
+      # frontends to upload their source maps, which only frontend commits need.
+      # A paths filter on the whole workflow would have dropped the API release
+      # marker for backend-only commits, so the gate goes on the builds instead.
+      - name: Check for frontend changes
+        id: frontend
+        run: |
+          if git diff --name-only HEAD^ HEAD \
+            | grep -qE '^(web/|widget/|contracts/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No frontend changes; skipping the widget and web builds." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: pnpm/action-setup@v4
+        if: steps.frontend.outputs.changed == 'true'
         with:
           version: 11.15.1
       - uses: actions/setup-node@v6
+        if: steps.frontend.outputs.changed == 'true'
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @fidibeki/widget build
-      - run: pnpm --filter @fidibeki/web build
-      - name: Create release and upload source maps
+      - if: steps.frontend.outputs.changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.frontend.outputs.changed == 'true'
+        run: pnpm --filter @fidibeki/widget build
+      - if: steps.frontend.outputs.changed == 'true'
+        run: pnpm --filter @fidibeki/web build
+      - name: Create Sentry release
         if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != ''
         run: |
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases new "$GITHUB_SHA" --project "$SENTRY_API_PROJECT"
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases set-commits "$GITHUB_SHA" --auto
+      - name: Upload frontend source maps
+        if: >-
+          steps.frontend.outputs.changed == 'true' &&
+          env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != ''
+        run: |
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps inject widget/dist/v1
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps upload --release "$GITHUB_SHA" --project "$SENTRY_WIDGET_PROJECT" widget/dist/v1
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps inject web/.output
           npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli sourcemaps upload --release "$GITHUB_SHA" --project "$SENTRY_WEB_PROJECT" web/.output
-          npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases finalize "$GITHUB_SHA"
+      - name: Finalize Sentry release
+        if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != ''
+        run: npm exec --yes --package=@sentry/cli@3.6.1 -- sentry-cli releases finalize "$GITHUB_SHA"

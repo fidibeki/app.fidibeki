@@ -16,6 +16,13 @@ type Store struct {
 	Cipher   *Cipher
 }
 
+// integrationColumns is the single projection every read and write returns, so the scan
+// order can only be wrong in one place.
+const integrationColumns = `id, tenant_id, kind, name, webhook_url, channel,
+	          custom_headers_ciphertext, webhook_secret_fingerprint, events,
+	          privacy_fields, privacy_profile_version, is_active, install_source,
+	          slack_team_name, created_at, updated_at`
+
 func (s Store) Create(ctx context.Context, query db.Querier, tenantID string, values CreateValues) (Integration, error) {
 	var headersCiphertext []byte
 	if len(values.CustomHeaders) > 0 {
@@ -46,9 +53,7 @@ func (s Store) Create(ctx context.Context, query db.Querier, tenantID string, va
 			id, tenant_id, kind, name, webhook_url, channel, custom_headers_ciphertext,
 			webhook_secret_ciphertext, webhook_secret_fingerprint, events, privacy_fields, is_active
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, tenant_id, kind, name, webhook_url, channel,
-		          custom_headers_ciphertext, webhook_secret_fingerprint, events,
-		          privacy_fields, privacy_profile_version, is_active, created_at, updated_at
+		RETURNING `+integrationColumns+`
 	`, values.ID, tenantID, values.Kind, values.Name, values.WebhookURL, values.Channel,
 		headersCiphertext, secretCiphertext, fingerprint, values.Events, values.PrivacyFields, values.Active))
 	if err != nil {
@@ -59,9 +64,7 @@ func (s Store) Create(ctx context.Context, query db.Querier, tenantID string, va
 
 func (s Store) List(ctx context.Context, query db.Querier, tenantID string) ([]Integration, error) {
 	rows, err := query.Query(ctx, `
-		SELECT id, tenant_id, kind, name, webhook_url, channel,
-		       custom_headers_ciphertext, webhook_secret_fingerprint, events,
-		       privacy_fields, privacy_profile_version, is_active, created_at, updated_at
+		SELECT `+integrationColumns+`
 		FROM integrations
 		WHERE tenant_id = $1
 		ORDER BY created_at, id
@@ -95,14 +98,98 @@ func (s Store) UpdatePrivacy(
 		UPDATE integrations
 		SET privacy_fields = $3, privacy_profile_version = $4, updated_at = now()
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, kind, name, webhook_url, channel,
-		          custom_headers_ciphertext, webhook_secret_fingerprint, events,
-		          privacy_fields, privacy_profile_version, is_active, created_at, updated_at
+		RETURNING `+integrationColumns+`
 	`, tenantID, integrationID, privacyFields, PrivacyProfileVersion))
 	if err != nil {
 		return Integration{}, fmt.Errorf("update integration privacy profile: %w", err)
 	}
 	return integration, nil
+}
+
+// UpsertSlackInstall persists a completed one-click install. Re-installing the same channel
+// updates the row already pointing at it rather than adding a second destination that would
+// double-post every notification — which is what the partial unique index enforces.
+//
+// The bot token's associated data is the (tenant, workspace, channel) it was issued for
+// rather than the surrogate row ID, so an upsert that keeps an existing row can still
+// decrypt what it wrote. The token is only ever used to revoke the install.
+func (s Store) UpsertSlackInstall(
+	ctx context.Context, query db.Querier, tenantID string, values SlackInstallValues,
+) (Integration, error) {
+	tokenCiphertext, err := s.Cipher.Encrypt(
+		[]byte(values.AccessToken), slackTokenAAD(tenantID, values.TeamID, values.ChannelID),
+	)
+	if err != nil {
+		return Integration{}, err
+	}
+	integration, _, err := s.scan(query.QueryRow(ctx, `
+		INSERT INTO integrations (
+			id, tenant_id, kind, name, webhook_url, channel, events, privacy_fields,
+			privacy_profile_version, is_active, install_source, slack_team_id,
+			slack_team_name, slack_channel_id, slack_access_token_ciphertext
+		) VALUES ($1, $2, 'slack', $3, $4, $5, $6, $7, $8, true, 'oauth', $9, $10, $11, $12)
+		ON CONFLICT (tenant_id, slack_team_id, slack_channel_id) WHERE install_source = 'oauth'
+		DO UPDATE SET
+			name = EXCLUDED.name,
+			webhook_url = EXCLUDED.webhook_url,
+			channel = EXCLUDED.channel,
+			events = EXCLUDED.events,
+			privacy_fields = EXCLUDED.privacy_fields,
+			slack_team_name = EXCLUDED.slack_team_name,
+			slack_access_token_ciphertext = EXCLUDED.slack_access_token_ciphertext,
+			is_active = true,
+			updated_at = now()
+		RETURNING `+integrationColumns+`
+	`, values.ID, tenantID, values.Name, values.WebhookURL, nullableText(values.Channel),
+		values.Events, values.PrivacyFields, PrivacyProfileVersion, values.TeamID,
+		nullableText(values.TeamName), values.ChannelID, tokenCiphertext))
+	if err != nil {
+		return Integration{}, fmt.Errorf("upsert slack install: %w", err)
+	}
+	return integration, nil
+}
+
+// SlackAccessToken returns the bot token for an OAuth-installed integration so uninstalling
+// can revoke it. A manually pasted integration has no token and yields an empty string
+// rather than an error.
+func (s Store) SlackAccessToken(
+	ctx context.Context, query db.Querier, tenantID, integrationID string,
+) (string, error) {
+	var ciphertext []byte
+	var teamID, channelID *string
+	err := query.QueryRow(ctx, `
+		SELECT slack_access_token_ciphertext, slack_team_id, slack_channel_id
+		FROM integrations
+		WHERE tenant_id = $1 AND id = $2 AND install_source = 'oauth'
+	`, tenantID, integrationID).Scan(&ciphertext, &teamID, &channelID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read slack access token: %w", err)
+	}
+	if len(ciphertext) == 0 || teamID == nil || channelID == nil {
+		return "", nil
+	}
+	plaintext, err := s.Cipher.Decrypt(ciphertext, slackTokenAAD(tenantID, *teamID, *channelID))
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+// nullableText maps an absent value to SQL NULL. integrations.channel and
+// integrations.slack_team_name both allow NULL but reject the empty string, so a Slack
+// response that omits a channel or workspace name must store nothing rather than "".
+func nullableText(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func slackTokenAAD(tenantID, teamID, channelID string) string {
+	return encryptionAAD(tenantID, teamID+"\x00"+channelID, "slack-access-token")
 }
 
 func (s Store) Delete(ctx context.Context, query db.Querier, tenantID, integrationID string) error {
@@ -128,8 +215,8 @@ func (s Store) scan(row scanner) (Integration, string, error) {
 		&integration.ID, &tenantID, &integration.Kind, &integration.Name,
 		&integration.WebhookURL, &integration.Channel, &headersCiphertext,
 		&integration.WebhookSecretFingerprint, &integration.Events, &integration.PrivacyFields,
-		&integration.PrivacyProfileVersion, &integration.Active,
-		&integration.CreatedAt, &integration.UpdatedAt,
+		&integration.PrivacyProfileVersion, &integration.Active, &integration.InstallSource,
+		&integration.SlackTeamName, &integration.CreatedAt, &integration.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Integration{}, "", ErrNotFound

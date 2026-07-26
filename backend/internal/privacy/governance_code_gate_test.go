@@ -75,6 +75,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 	"web/package.json": {
 		"dependencies:@lucide/vue":         {Class: dependencyApplication},
 		"dependencies:@nuxtjs/i18n":        {Class: dependencyApplication},
+		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:re2js":               {Class: dependencyApplication},
 		"dependencies:rrweb-player":        {Class: dependencyApplication},
@@ -86,6 +87,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 	},
 	"marketing/package.json": {
 		"dependencies:@lucide/vue":         {Class: dependencyApplication},
+		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:vue":                 {Class: dependencyApplication},
 		"devDependencies:@playwright/test": {Class: dependencyBuildTest},
@@ -103,9 +105,10 @@ var governedHTTPCallSites = map[string][]string{
 		"microsoft_teams_incoming_webhook",
 		"customer_generic_webhook",
 	},
-	"backend/internal/issuetracker/jira.go":   {"jira_cloud_issue_tracker"},
-	"backend/internal/issuetracker/linear.go": {"linear_issue_tracker"},
-	"backend/internal/samlsso/metadata.go":    {"customer_saml_identity_provider"},
+	"backend/internal/integration/slack_oauth.go": {"slack_oauth_install"},
+	"backend/internal/issuetracker/jira.go":       {"jira_cloud_issue_tracker"},
+	"backend/internal/issuetracker/linear.go":     {"linear_issue_tracker"},
+	"backend/internal/samlsso/metadata.go":        {"customer_saml_identity_provider"},
 }
 
 var governedProviderCodeSignals = map[string][]providerCodeSignal{
@@ -137,6 +140,10 @@ var governedProviderCodeSignals = map[string][]providerCodeSignal{
 	},
 	"slack_incoming_webhook": {
 		{Path: "backend/internal/integration/models.go", Contains: `KindSlack   Kind = "slack"`},
+	},
+	"slack_oauth_install": {
+		{Path: "backend/internal/integration/slack_oauth.go", Contains: "slack.com/api/oauth.v2.access"},
+		{Path: "backend/internal/integration/slack_oauth.go", Contains: "slack.com/api/auth.revoke"},
 	},
 	"microsoft_teams_incoming_webhook": {
 		{Path: "backend/internal/integration/models.go", Contains: `KindTeams   Kind = "teams"`},

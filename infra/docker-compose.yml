@@ -42,6 +42,13 @@ x-api-environment: &api-environment
   STRIPE_PRICE_SCALE_YEARLY: ${STRIPE_PRICE_SCALE_YEARLY:-}
   TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
   TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+  # Slack one-click install. Empty leaves the install button hidden and the manual
+  # webhook-URL path working. SLACK_REDIRECT_URL must be HTTPS and match a redirect URL
+  # registered on the Slack app exactly, so testing it locally needs a tunnel that
+  # rewrites the Host header to api.${BASE_DOMAIN}.
+  SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+  SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+  SLACK_REDIRECT_URL: ${SLACK_REDIRECT_URL:-}
   EMAIL_DRIVER: capture
   EMAIL_CAPTURE_DIR: /var/lib/fidibeki-emails
   EMAIL_QUEUE_CONCURRENCY: 20
