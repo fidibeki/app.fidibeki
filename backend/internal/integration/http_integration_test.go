@@ -675,7 +675,7 @@ func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slack
 	apex := chi.NewRouter()
 	RegisterSlackCallbackRoute(apex, SlackCallbackOptions{
 		Store: Store{Cipher: harness.cipher}, Slack: oauth,
-		Begin: db.BeginFromPool(harness.pools.App),
+		Begin:      db.BeginFromPool(harness.pools.App),
 		BaseDomain: "localhost", WebPublicBaseURL: "http://localhost",
 	})
 

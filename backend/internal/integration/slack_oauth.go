@@ -126,10 +126,10 @@ func (s SlackOAuth) Exchange(ctx context.Context, code string) (SlackInstallatio
 	form.Set("redirect_uri", s.RedirectURL)
 
 	var payload struct {
-		OK              bool   `json:"ok"`
-		Error           string `json:"error"`
-		AccessToken     string `json:"access_token"`
-		Team            struct {
+		OK          bool   `json:"ok"`
+		Error       string `json:"error"`
+		AccessToken string `json:"access_token"`
+		Team        struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"team"`

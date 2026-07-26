@@ -94,11 +94,11 @@ type Config struct {
 	SlackClientID     string
 	SlackClientSecret string
 	SlackRedirectURL  string
-	AppVersion                string
-	LogLevel                  string
-	MigrationsPath            string
-	ReadinessTimeout          time.Duration
-	ShutdownTimeout           time.Duration
+	AppVersion        string
+	LogLevel          string
+	MigrationsPath    string
+	ReadinessTimeout  time.Duration
+	ShutdownTimeout   time.Duration
 }
 
 func Load() (Config, error) {
