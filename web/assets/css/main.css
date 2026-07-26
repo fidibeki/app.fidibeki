@@ -222,6 +222,14 @@ svg {
   border-color: var(--line);
 }
 
+/* A destructive icon button shows what it is on hover, using the same palette
+   as .danger-button rather than a colour invented for the occasion. */
+.icon-button--danger:hover {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red-line);
+}
+
 .primary-button,
 .secondary-button,
 .quiet-button,

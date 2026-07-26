@@ -58,4 +58,14 @@ await build({
   outfile: 'dist/v1/loader.js',
 })
 
+// The testimonials embed is a separate one-line include from the feedback
+// widget: a customer publishing social proof on a marketing page should not
+// have to ship the feedback collector with it.
+await build({
+  ...shared,
+  entryPoints: ['src/testimonials/loader.ts'],
+  format: 'iife',
+  outfile: 'dist/v1/testimonials.js',
+})
+
 console.log(`widget entries: ${Object.values(manifest).map(value => basename(value)).join(', ')}`)

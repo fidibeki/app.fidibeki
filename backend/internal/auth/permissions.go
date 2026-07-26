@@ -31,11 +31,21 @@ const (
 	PermissionIntegrationRead   Permission = "integration:read"
 	PermissionIntegrationUpdate Permission = "integration:update"
 	PermissionIntegrationDelete Permission = "integration:delete"
-	PermissionBillingManage     Permission = "billing:manage"
-	PermissionBillingRead       Permission = "billing:read"
-	PermissionTenantUpdate      Permission = "tenant:update"
-	PermissionTenantRead        Permission = "tenant:read"
-	PermissionAuditRead         Permission = "audit:read"
+	PermissionTestimonialRead   Permission = "testimonial:read"
+	PermissionTestimonialCreate Permission = "testimonial:create"
+	PermissionTestimonialUpdate Permission = "testimonial:update"
+	PermissionTestimonialDelete Permission = "testimonial:delete"
+	// PermissionTestimonialPublish is deliberately separate from
+	// PermissionTestimonialUpdate. Staging a wall is an internal edit; publishing
+	// it puts a named individual's words, face and voice on the open internet
+	// from a Fidibeki domain, which is a different kind of decision and should be
+	// grantable to a different set of people.
+	PermissionTestimonialPublish Permission = "testimonial:publish"
+	PermissionBillingManage      Permission = "billing:manage"
+	PermissionBillingRead        Permission = "billing:read"
+	PermissionTenantUpdate       Permission = "tenant:update"
+	PermissionTenantRead         Permission = "tenant:read"
+	PermissionAuditRead          Permission = "audit:read"
 )
 
 const (
@@ -85,6 +95,8 @@ var AllTenantPermissions = []Permission{
 	PermissionMemberRead, PermissionMemberInvite, PermissionMemberUpdate, PermissionMemberRemove,
 	PermissionAPIKeyCreate, PermissionAPIKeyRead, PermissionAPIKeyDelete,
 	PermissionIntegrationCreate, PermissionIntegrationRead, PermissionIntegrationUpdate, PermissionIntegrationDelete,
+	PermissionTestimonialRead, PermissionTestimonialCreate, PermissionTestimonialUpdate,
+	PermissionTestimonialDelete, PermissionTestimonialPublish,
 	PermissionBillingManage, PermissionBillingRead, PermissionTenantUpdate, PermissionTenantRead,
 	PermissionAuditRead,
 }

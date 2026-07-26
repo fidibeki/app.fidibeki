@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev"],
+      "port": 3000,
+      "autoPort": false,
+      "url": "http://northwind.localhost:3000"
+    },
+    {
+      "name": "marketing",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "marketing", "run", "dev", "--", "--port", "3001"],
+      "port": 3001
+    }
+  ]
+}

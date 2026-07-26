@@ -751,7 +751,7 @@ useHead(() => ({
     <template v-else-if="data">
       <section class="project-config-band">
         <div><p class="app-eyebrow">{{ t('projects.detail.eyebrow') }}</p><h1>{{ data.project.name }}</h1><span>{{ plural('projects.detail.ruleCount', data.rules.length) }}</span></div>
-        <div class="project-embed"><Code2 :size="15" /><code>{{ embedCode }}</code><button :title="t('projects.detail.copyEmbed')" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
+        <div class="project-embed"><Code2 :size="15" /><AppCodeBlock :code="embedCode" language="html" inline /><button :title="t('projects.detail.copyEmbed')" @click="copyEmbed"><Check v-if="copied" :size="15" /><Clipboard v-else :size="15" /></button></div>
       </section>
       <section class="project-install-diagnostics" :aria-label="t('projects.diagnostics.label')">
         <header><span>{{ t('projects.diagnostics.title') }}</span><button type="button" :title="t('projects.diagnostics.refresh')" :aria-label="t('projects.diagnostics.refresh')" :disabled="diagnosticsRefreshing" @click="refreshDiagnostics"><RefreshCw :size="14" :class="{ spinning: diagnosticsRefreshing }" /></button></header>

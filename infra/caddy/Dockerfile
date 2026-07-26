@@ -15,3 +15,6 @@ FROM caddy:2.10.2-alpine
 
 COPY infra/Caddyfile /etc/caddy/Caddyfile
 COPY --from=widget-build /src/widget/dist /srv/widget
+# The mock customer site ships with the stack so the embed can be exercised
+# across a real origin boundary without standing anything else up.
+COPY infra/mocksite /srv/mocksite

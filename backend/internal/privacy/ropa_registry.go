@@ -450,6 +450,49 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			},
 		},
 		{
+			ActivityID: "testimonial_publication", Version: 1,
+			Label: "Testimonial collection and publication",
+			Purpose: "Invite a feedback author to expand their words into a testimonial, record the " +
+				"scope-by-scope consent they give, and publish the consented quote, identity and media " +
+				"on the customer's website from a Fidibeki-served endpoint.",
+			Role: RetentionRoleControllerProcessor,
+			// Third parties are listed deliberately: a video testimonial can show a
+			// colleague in the background or a screen behind the speaker, and the
+			// author's consent does not cover their likeness.
+			DataSubjects: []ROPADataSubjectClass{
+				ROPADataSubjectReporters, ROPADataSubjectTenantMembers, ROPADataSubjectThirdParties,
+			},
+			DataCategories: []ROPADataCategoryClass{
+				ROPADataCategoryIdentityContact, ROPADataCategoryContentCommunications,
+				ROPADataCategoryMediaEvidence, ROPADataCategoryConsentEvidence,
+			},
+			RetentionCategories: []string{"testimonials"},
+			SecurityControls: []string{
+				"Publication requires an author-granted consent scope per field; the snapshot builder projects through it",
+				"Displayed quote must match the consented wording exactly; any edit suspends consent until the author re-approves",
+				"Collection and revocation tokens are stored only as SHA-256 digests",
+				"Revocation marks affected snapshots stale and the public endpoint refuses to serve them",
+				"Publishing a wall requires the separate testimonial:publish permission",
+			},
+			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonControllerProcessor,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
+			DPIA: DPIAScreening{
+				Outcome: DPIAOutcomePending,
+				// Recording "no indicator" here would be untrue. This activity
+				// publishes identified individuals' names, faces and voices to the
+				// open internet, which is the definition of a disclosure, and the
+				// depicted-third-party case has no consent path at all. Whether that
+				// crosses the Article 35 threshold is a legal judgement, not an
+				// engineering one, so it is deferred rather than answered.
+				Reason: "Publication makes identified individuals' words, likeness and voice publicly " +
+					"available at internet scale from our own domain, and a video may depict third " +
+					"parties who gave no consent; cached copies also survive a withdrawal for a bounded " +
+					"period. These are risk indicators an engineer can name but not adjudicate, so the " +
+					"required/not-required decision is left to the privacy owner.",
+				Owner: governanceUnassigned,
+			},
+		},
+		{
 			ActivityID: "privacy_rights_operations", Version: 1,
 			Label:   "Privacy-rights operations",
 			Purpose: "Verify, execute, review, and evidence data-subject and member privacy-rights operations, including temporary export archives and reporter request access.",

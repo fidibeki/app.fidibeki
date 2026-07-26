@@ -4,6 +4,12 @@ const bannerText = 'privacy-friendly analytics'
 const umamiScript = 'script[data-website-id]'
 const widgetScript = 'script[data-fidibeki-key]'
 
+// The key is baked into the prerendered output, so this reads the same variable
+// the build read. There is no default: a checkout with nothing configured has no
+// widget to load, and asserting a literal here would put a live credential back
+// in the repository, which is where this test found one.
+const widgetKey = process.env.NUXT_PUBLIC_WIDGET_KEY || ''
+
 test('prerendered HTML ships no analytics, no widget, and no banner', async ({ request }) => {
   const html = await (await request.get('/')).text()
   // The runtime config mentions the URLs, but no script tag may load them.
@@ -32,11 +38,10 @@ test('banner shows on first visit and accept loads analytics and the widget pers
     'data-website-id',
     '1d518b00-2258-4884-bf69-63f789d6f11d',
   )
-  await expect(page.locator(widgetScript)).toHaveCount(1)
-  await expect(page.locator(widgetScript)).toHaveAttribute(
-    'data-fidibeki-key',
-    'pk_live_GjFasO9215CNAax7LbWhiP',
-  )
+  await expect(page.locator(widgetScript)).toHaveCount(widgetKey ? 1 : 0)
+  if (widgetKey) {
+    await expect(page.locator(widgetScript)).toHaveAttribute('data-fidibeki-key', widgetKey)
+  }
   // Accepting also records the consent reference this site forwards to the widget as its
   // customer_cmp consentId for widget analytics and session replay.
   await expect
@@ -46,7 +51,7 @@ test('banner shows on first visit and accept loads analytics and the widget pers
   await page.goto('/pricing')
   await expect(page.getByRole('complementary', { name: 'Privacy choices' })).toBeHidden()
   await expect(page.locator(umamiScript)).toHaveCount(1)
-  await expect(page.locator(widgetScript)).toHaveCount(1)
+  await expect(page.locator(widgetScript)).toHaveCount(widgetKey ? 1 : 0)
   await context.close()
 })
 

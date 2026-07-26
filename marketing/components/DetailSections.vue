@@ -12,7 +12,7 @@ defineProps<{ sections: DetailSection[] }>()
       <ul v-if="section.bullets">
         <li v-for="bullet in section.bullets" :key="bullet">{{ bullet }}</li>
       </ul>
-      <pre v-if="section.code"><code>{{ section.code.snippet }}</code></pre>
+      <CodeBlock v-if="section.code" :code="section.code.snippet" :language="section.code.language" />
     </section>
   </div>
 </template>

@@ -94,6 +94,45 @@ export const docs: DocEntry[] = [
       },
     ],
   },
+  {
+    slug: 'two-factor',
+    title: 'Turn on two factor authentication',
+    description:
+      'Enrol a TOTP authenticator on your own account, then require two factor across the workspace without locking anyone out.',
+    minutes: 5,
+    sections: [
+      {
+        heading: 'Enrol your own account',
+        body: 'Open Profile, then Security, and start enrolment. Fidibeki shows a QR code for any TOTP app — 1Password, Authy, Google Authenticator, your password manager — and asks for one code to confirm the clocks agree. Enrolment is not active until that code is accepted, so a mis-scanned code cannot lock you out.',
+        bullets: [
+          'The secret is shown as a QR code and as text, for devices that cannot scan',
+          'Confirming with a live code proves the authenticator works before it is trusted',
+          'From then on, signing in asks for a six digit code after your magic link',
+        ],
+      },
+      {
+        heading: 'Keep the recovery codes',
+        body: 'Confirming enrolment produces a set of single use recovery codes. They are shown once and stored only as hashes, so nobody at Fidibeki can read them back to you. Each one signs you in exactly once when the authenticator is not available. Regenerate them from the same screen if you use several or lose the list; regenerating invalidates the old set.',
+      },
+      {
+        heading: 'Require it for everyone',
+        body: 'An administrator with tenant:update can turn the workspace policy on under Settings, then Security. Members who have not enrolled are walked through it the next time they sign in, and can do nothing else until they have. A compliance view lists every member and whether they are enrolled, so you can see who is still pending before you switch it on.',
+        bullets: [
+          'Enrolment is a member action; requiring it is an organization one',
+          'Members mid-enrolment are held at the challenge, not signed out',
+          'The compliance view is a read on members, so it takes member:read',
+        ],
+      },
+      {
+        heading: 'What the policy refuses to do',
+        body: 'The policy will not accept a change that locks the workspace out of its own administration — requiring two factor when no administrator has enrolled is rejected rather than applied. If required SAML SSO is already on, Fidibeki does not ask for a second factor of its own: multi factor is your identity provider’s to enforce, and asking twice would only train people to click through it.',
+      },
+      {
+        heading: 'When someone loses their phone',
+        body: 'They can sign in with a recovery code and re-enrol. If the codes are gone too, an administrator with member:update resets that member’s enrolment from the member list. The reset clears only that person, leaving the workspace policy in force, and they are asked to enrol again on their next sign in.',
+      },
+    ],
+  },
 ]
 
 export const docSlugs = docs.map((doc) => doc.slug)

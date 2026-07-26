@@ -712,6 +712,8 @@ export interface PlanLimits {
 
 export interface PlanFeatures {
   ai: boolean
+  /** Rides with `ai`: without moderation the Suggested queue can never rank. */
+  testimonials: boolean
   session_replay: boolean
   slack: boolean
   video: boolean
@@ -1479,4 +1481,108 @@ export interface NotificationPreferencesResponse {
   categories: NotificationCategory[]
   supported_modes: Record<NotificationCategory, NotificationMode[]>
   deliveries: NotificationDelivery[]
+}
+
+export type TestimonialStatus = 'draft' | 'pending_review' | 'approved' | 'archived'
+export type TestimonialConsentState =
+  | 'pending' | 'granted' | 'pending_reconsent' | 'revoked' | 'expired'
+/** 'custom' is not an arrangement: the wall is rendered by the customer's own
+ *  code from the public JSON, and the screen offers them the endpoint instead of
+ *  a script tag. */
+export type TestimonialWallLayout =
+  | 'grid' | 'masonry' | 'carousel' | 'marquee' | 'list' | 'single' | 'custom'
+
+export interface TestimonialAuthor {
+  name?: string
+  role?: string
+  company?: string
+  company_url?: string
+  avatar_url?: string
+  video_url?: string
+}
+
+/** Which fields the author agreed to publish, each granted separately. */
+export interface TestimonialConsentScopes {
+  quote?: boolean
+  identity?: boolean
+  company?: boolean
+  avatar?: boolean
+  video?: boolean
+}
+
+export interface TestimonialCandidate {
+  feedback_id: string
+  project_id: string
+  public_id: string
+  text: string
+  rating: number | null
+  base_score: number
+  decayed_score: number
+  /** i18n keys naming the strongest contributors to the score. */
+  reasons: string[]
+  signals: Record<string, number>
+  suggested_excerpt: string | null
+  /** The reporter's own address, present only when they asked to be contacted. */
+  reporter_email: string | null
+  contact_permitted: boolean
+  created_at: string
+}
+
+export interface Testimonial {
+  id: string
+  public_id: string
+  project_id: string | null
+  source: 'feedback' | 'form' | 'manual'
+  /** The wording the author agreed to. Never edited. */
+  consented_text: string
+  /** What is displayed. Drifting from consented_text suspends consent. */
+  quote: string
+  headline: string | null
+  author: TestimonialAuthor
+  rating: number | null
+  status: TestimonialStatus
+  consent_state: TestimonialConsentState
+  consent_scopes: TestimonialConsentScopes
+  review_note: string | null
+  /** Null when there is no recording. */
+  video_status?: 'pending' | 'processing' | 'ready' | 'failed' | null
+  video_reviewed?: boolean | null
+  tag_ids: string[]
+  collected_at: string | null
+  approved_at: string | null
+  revoked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TestimonialWall {
+  id: string
+  public_id: string
+  project_id: string | null
+  name: string
+  slug: string
+  layout: TestimonialWallLayout
+  show_rating: boolean
+  show_avatar: boolean
+  show_company: boolean
+  show_video: boolean
+  max_items: number
+  allowed_origins: string[]
+  status: 'draft' | 'published'
+  item_count: number
+  /** Whether the selection differs from the copy that is live. */
+  has_unpublished_changes: boolean
+  published_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TestimonialPublishResult {
+  version: number
+  etag: string
+  published: number
+  /** Cards dropped because they were not publishable. Surfaced, never silent. */
+  skipped: number
+  public_id: string
+  published_at: string
 }

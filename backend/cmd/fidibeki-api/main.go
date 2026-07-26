@@ -46,6 +46,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
+	"github.com/acidiney/app.fidibeki/backend/internal/testimonial"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
@@ -361,6 +362,40 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
+	// Its own client rather than the outbox enqueuer, whose Enqueue speaks in
+	// outbox events. Transcoding is not a domain event; it is one job.
+	redisQueueOptions, err := asynq.ParseRedisURI(settings.RedisURL)
+	if err != nil {
+		return fmt.Errorf("parse queue Redis URL: %w", err)
+	}
+	transcodeQueue := asynq.NewClient(redisQueueOptions)
+	defer func() {
+		if err := transcodeQueue.Close(); err != nil {
+			logger.Warn("transcode queue close failed", "error", err)
+		}
+	}()
+	// The author answering a testimonial request is not a member and never will
+	// be, so the token is the only credential. Resolution runs on the admin pool
+	// because the workspace is unknown until the digest is matched; everything
+	// after that happens inside a transaction pinned to that tenant.
+	testimonialCollectOptions := testimonial.CollectHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Logger: logger,
+		MediaStore: testimonial.Store{}, Uploads: objectStorage, Transcodes: transcodeQueue,
+	}
+	testimonial.RegisterCollectRoutes(platformRoutes, testimonialCollectOptions)
+	testimonialRevokeOptions := testimonial.RevokeHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Logger: logger,
+	}
+	testimonial.RegisterRevokeRoutes(platformRoutes, testimonialRevokeOptions)
+	// The assets a published wall points at. Without this every avatar and video
+	// in a snapshot resolves to nothing on the customer's own website.
+	testimonialMediaOptions := testimonial.MediaHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Signer: objectStorage, Logger: logger,
+	}
+	testimonial.RegisterMediaRoutes(platformRoutes, testimonialMediaOptions)
 	membernotify.RegisterPublicRoutes(platformRoutes, membernotify.PublicHTTPOptions{
 		Store: membernotify.Store{}, Database: pools.Admin, Tokens: memberNotificationTokens,
 		Logger: logger,
@@ -445,6 +480,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: abuse.Store{}, JWT: jwtManager, Logger: logger,
 	})
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
+	testimonial.RegisterRoutes(tenantRoutes, testimonial.HTTPOptions{
+		Store: testimonial.Store{}, JWT: jwtManager, Logger: logger,
+	})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
 	})
@@ -479,6 +517,14 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})(tenantRoutes)
 	tenantRoot := chi.NewRouter()
 	issue.RegisterReporterProgressRoutes(tenantRoot, reporterProgressOptions)
+	// Also mounted on the tenant host: the collection page is served from the
+	// workspace domain the author was linked to, so a platform-only registration
+	// would answer 404 for every real visitor.
+	testimonial.RegisterCollectRoutes(tenantRoot, testimonialCollectOptions)
+	// Same reason: the withdrawal link points at the workspace host the author
+	// was given, so it has to answer there too.
+	testimonial.RegisterRevokeRoutes(tenantRoot, testimonialRevokeOptions)
+	testimonial.RegisterMediaRoutes(tenantRoot, testimonialMediaOptions)
 	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},
@@ -515,6 +561,21 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Limiter:           ratelimit.NewRedisLimiter(redisClient.Client()),
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
 	})
+	// The testimonials embed rides the widget host, which already carries the
+	// permissive CORS and long-lived asset caching an embed needs. The authorizer
+	// runs on the admin pool because it resolves a workspace before any tenant
+	// context exists; every read after that is inside a transaction that pins
+	// app.tenant_id, so row-level security still applies.
+	testimonial.RegisterPublicRoutes(widgetRoutes, testimonial.PublicHTTPOptions{
+		Store:      testimonial.Store{},
+		Authorizer: testimonial.PublicAuthorizer{Database: pools.Admin},
+		Begin:      db.BeginFromPool(pools.App),
+		Logger:     logger,
+	})
+	// The media paths live inside the payload the line above serves, so they have
+	// to answer on the same host. Mounting them anywhere else leaves an embed
+	// asking widget.* for a video and being told it does not exist.
+	testimonial.RegisterMediaRoutes(widgetRoutes, testimonialMediaOptions)
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: replay.Store{},
 		Storage: objectStorage, Scheduler: replayScheduler, Verifier: replayScheduler,
@@ -763,6 +824,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:  samlsso.MaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,
 	}
+	// Without this sweep every other part of the testimonial feature works and the
+	// Suggested queue is permanently empty: nothing else connects a feedback to a
+	// candidate row. It runs on the admin pool because it spans every workspace.
+	testimonialScoring := testimonial.ScoringMaintainer{
+		Store: testimonial.Store{}, Database: pools.Admin, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -858,9 +925,13 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
 		AttachmentVerificationHandler: verificationProcessor.Handler(),
-		IntegrationHandler:            integrationHandler.Handler(),
-		IssueTrackerHandler:           issueTrackerHandler.Handler(),
-		PrivacyExportHandler:          privacyExporter.Handler(),
+		TestimonialTranscodeHandler: testimonial.TranscodeHandler(testimonial.TranscodeOptions{
+			Store: testimonial.Store{}, Storage: objectStorage, Encoder: testimonial.FFmpeg{},
+			Begin: db.BeginFromPool(pools.App), Logger: logger,
+		}),
+		IntegrationHandler:   integrationHandler.Handler(),
+		IssueTrackerHandler:  issueTrackerHandler.Handler(),
+		PrivacyExportHandler: privacyExporter.Handler(),
 	})
 	if err != nil {
 		return err
@@ -883,6 +954,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()
@@ -898,13 +970,85 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	)
 }
 
+// runSeedTestimonials installs the demo corpus and prints the URLs to open.
+//
+// The corpus is deliberately mixed: seeding only glowing quotes would make the
+// Suggested queue look clever when it is doing nothing. Five of the eight must
+// be refused, each for a different reason, so the demo shows the gates working.
+func runSeedTestimonials(
+	ctx context.Context,
+	logger *slog.Logger,
+	settings config.Config,
+	args []string,
+) int {
+	projectPublicKey := ""
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--project-key" && index+1 < len(args) {
+			projectPublicKey = args[index+1]
+			index++
+			continue
+		}
+		logger.Error("unknown seed argument", "argument", args[index])
+		return 2
+	}
+
+	pools, err := db.OpenPools(
+		ctx, settings.DatabaseURLApp, settings.DatabaseURLAdmin,
+		settings.AppDBMaxConns, settings.AdminDBMaxConns,
+	)
+	if err != nil {
+		logger.Error("open database for testimonial seed", "error", err)
+		return 1
+	}
+	defer pools.Close()
+
+	var tenantID, projectID string
+	query := `SELECT tenant_id, id FROM projects ORDER BY created_at LIMIT 1`
+	queryArgs := []any{}
+	if projectPublicKey != "" {
+		query = `SELECT tenant_id, id FROM projects WHERE public_key = $1`
+		queryArgs = append(queryArgs, projectPublicKey)
+	}
+	if err := pools.Admin.QueryRow(ctx, query, queryArgs...).Scan(&tenantID, &projectID); err != nil {
+		logger.Error("no project to seed against; create one first", "error", err)
+		return 1
+	}
+
+	result, err := testimonial.Seed(ctx, pools.Admin, testimonial.Store{},
+		tenantID, projectID, time.Now().UTC())
+	if err != nil {
+		logger.Error("testimonial seed failed", "error", err)
+		return 1
+	}
+
+	logger.Info("testimonial demo seeded",
+		"feedback", result.FeedbackCount,
+		"suggested", result.Suggested,
+		"published", result.Published,
+		"wall", result.WallPublicID,
+	)
+	// Printed rather than logged: these are the two things an operator needs to
+	// paste somewhere, and they should survive any log formatting.
+	fmt.Printf("\nBackoffice:  http://<tenant>.localhost:8088/testimonials\n")
+	fmt.Printf("Mock site:   http://demo.localhost:8088/?wall=%s\n", result.WallPublicID)
+	fmt.Printf("Wall JSON:   http://widget.localhost:8088/v1/public/walls/%s\n\n", result.WallPublicID)
+	return 0
+}
+
 func runAdmin(
 	ctx context.Context,
 	logger *slog.Logger,
 	settings config.Config,
 	args []string,
 ) int {
-	if len(args) == 0 || args[0] != "bootstrap" {
+	if len(args) == 0 {
+		logger.Error("unknown admin command")
+		return 2
+	}
+	if args[0] == "seed-testimonials" {
+		return runSeedTestimonials(ctx, logger, settings, args[1:])
+	}
+	if args[0] != "bootstrap" {
 		logger.Error("unknown admin command")
 		return 2
 	}
