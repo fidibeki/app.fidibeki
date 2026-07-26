@@ -361,7 +361,7 @@ function createMockState() {
     }>,
     apiKeys: [] as Array<Record<string, unknown>>,
     integrations: [] as Array<Record<string, unknown>>,
-    destructiveDelayMs: 0,
+    destructiveHold: null as Promise<void> | null,
     destructiveRequests: [] as string[],
     privacyExports: [{
       id: 'privacy-export-1',
@@ -910,6 +910,20 @@ async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 }
 
+// Keeps every destructive request unanswered until the returned release runs, so
+// a test can assert the pending UI without racing the response. A fixed delay
+// cannot do that: a role-based lookup has to build the accessibility tree, and on
+// a loaded CI runner that alone outlasts any window short enough to be worth
+// waiting for.
+function holdDestructiveRequests(state: MockState) {
+  let release = () => {}
+  state.destructiveHold = new Promise<void>((resolve) => { release = resolve })
+  return () => {
+    state.destructiveHold = null
+    release()
+  }
+}
+
 async function installMockAPI(page: Page, state: MockState) {
   await page.route('https://downloads.example.test/**', route => route.fulfill({
     status: 200,
@@ -1133,7 +1147,7 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (projectRuleMatch && method === 'DELETE') {
       state.destructiveRequests.push(`rule:${projectRuleMatch[2]}`)
-      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      if (state.destructiveHold) await state.destructiveHold
       const index = state.widgetRules.findIndex(candidate =>
         candidate.project_id === projectRuleMatch[1] && candidate.id === projectRuleMatch[2])
       if (index >= 0) state.widgetRules.splice(index, 1)
@@ -1193,7 +1207,7 @@ async function installMockAPI(page: Page, state: MockState) {
     }
     if (projectMatch && method === 'DELETE') {
       state.destructiveRequests.push(`project:${projectMatch[1]}`)
-      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      if (state.destructiveHold) await state.destructiveHold
       const index = state.projects.findIndex(candidate => candidate.id === projectMatch[1])
       if (index >= 0) state.projects.splice(index, 1)
       return route.fulfill({ status: 204 })
@@ -2267,7 +2281,7 @@ async function installMockAPI(page: Page, state: MockState) {
     const apiKeyMatch = path.match(/^\/v1\/api-keys\/([^/]+)$/)
     if (apiKeyMatch && method === 'DELETE') {
       state.destructiveRequests.push(`key:${apiKeyMatch[1]}`)
-      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      if (state.destructiveHold) await state.destructiveHold
       const index = state.apiKeys.findIndex(key => key.id === apiKeyMatch[1])
       if (index >= 0) state.apiKeys.splice(index, 1)
       return route.fulfill({ status: 204 })
@@ -2303,7 +2317,7 @@ async function installMockAPI(page: Page, state: MockState) {
     const integrationMatch = path.match(/^\/v1\/integrations\/([^/]+)$/)
     if (integrationMatch && method === 'DELETE') {
       state.destructiveRequests.push(`integration:${integrationMatch[1]}`)
-      if (state.destructiveDelayMs) await new Promise(resolve => setTimeout(resolve, state.destructiveDelayMs))
+      if (state.destructiveHold) await state.destructiveHold
       const index = state.integrations.findIndex(integration => integration.id === integrationMatch[1])
       if (index >= 0) state.integrations.splice(index, 1)
       return route.fulfill({ status: 204 })
@@ -3720,7 +3734,7 @@ test('project settings submit a valid update', async ({ page }, testInfo) => {
 
 test('project deletion confirmation restores focus and guards the pending action', async ({ page }) => {
   const state = createMockState()
-  state.destructiveDelayMs = 250
+  const releaseDelete = holdDestructiveRequests(state)
   await authenticate(page, state)
   await openPrimary(page, 'Projects')
   await page.locator('.project-list').getByRole('link', { name: /Storefront/ }).click()
@@ -3747,6 +3761,8 @@ test('project deletion confirmation restores focus and guards the pending action
   await expect(confirm).toBeDisabled()
   await expect(confirm).toHaveText('Deleting…')
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+
+  releaseDelete()
   await expect(page).toHaveURL(/\/projects$/)
   expect(state.destructiveRequests).toEqual(['project:project-1'])
   expect(state.projects).toHaveLength(0)
