@@ -2,17 +2,18 @@
 //
 // Scoring lives here as a pure function over signals the feedback pipeline has
 // already computed. It performs no I/O and calls no model, so ranking is
-// deterministic, explainable to the customer, and exhaustively testable. The AI
-// pipeline enriches candidates with a suggested excerpt and tags, but ranking
-// never depends on it: a tenant whose AI budget is exhausted still gets a
-// usable Suggested queue.
+// deterministic, explainable to the customer, and exhaustively testable.
+//
+// Ranking quality degrades gracefully when optional AI signals are missing, but
+// safety does not degrade at all: text that has not completed moderation is
+// never suggested. Those are different properties and conflating them is how a
+// feedback containing an email address ends up on a customer's homepage.
 package testimonial
 
 import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 )
 
 // ScoreVersion identifies the current weighting. Bump it when weights or gates
@@ -60,11 +61,22 @@ const (
 const (
 	ReasonNotOpen             = "testimonials.ineligible.feedbackNotOpen"
 	ReasonModerationFlagged   = "testimonials.ineligible.moderationFlagged"
+	ReasonAwaitingModeration  = "testimonials.ineligible.awaitingModeration"
 	ReasonTextTooShort        = "testimonials.ineligible.textTooShort"
 	ReasonLowRating           = "testimonials.ineligible.lowRating"
 	ReasonAlreadyTestimonial  = "testimonials.ineligible.alreadyTestimonial"
 	ReasonDismissed           = "testimonials.ineligible.dismissed"
 	ReasonUnsupportedLanguage = "testimonials.ineligible.unsupportedLanguage"
+)
+
+// Moderation states mirror the processing_status enum on feedbacks.text_process_status
+// (migration 000016). Only ModerationCompleted means "we looked at this text".
+const (
+	ModerationPending    = "pending"
+	ModerationProcessing = "processing"
+	ModerationCompleted  = "completed"
+	ModerationFailed     = "failed"
+	ModerationSkipped    = "skipped"
 )
 
 // Weights sum to 0.98 before penalties; the result is clamped to [0,1] rather
@@ -94,9 +106,15 @@ var blockingFlags = map[string]struct{}{
 // fields distinguish "absent" from "zero": a nil SentimentScore means the AI
 // pipeline has not run, which is not the same as neutral sentiment measured.
 type Input struct {
-	Text             string
-	Rating           *int
-	FeedbackStatus   string
+	Text   string
+	Rating *int
+	// FeedbackStatus is the feedback_status enum value.
+	FeedbackStatus string
+	// ModerationStatus is feedbacks.text_process_status. It is required, and
+	// anything other than ModerationCompleted makes the candidate ineligible:
+	// an empty ModerationFlags slice is otherwise indistinguishable between
+	// "scanned, nothing found" and "never scanned".
+	ModerationStatus string
 	SentimentScore   *float64
 	ModerationFlags  []string
 	Actionability    string
@@ -196,6 +214,11 @@ func gate(in Input) []string {
 	if in.FeedbackStatus == "spam" || in.FeedbackStatus == "archived" {
 		reasons = append(reasons, ReasonNotOpen)
 	}
+	// Absence of evidence is not evidence of absence. Unmoderated text is
+	// never suggested, because the flags we gate on would be empty either way.
+	if in.ModerationStatus != ModerationCompleted {
+		reasons = append(reasons, ReasonAwaitingModeration)
+	}
 	for _, flag := range in.ModerationFlags {
 		if _, blocked := blockingFlags[strings.ToLower(strings.TrimSpace(flag))]; blocked {
 			reasons = append(reasons, ReasonModerationFlagged)
@@ -282,19 +305,28 @@ func lengthSignal(text string) float64 {
 var (
 	// A digit anywhere is the cheapest reliable marker of a concrete claim.
 	numberPattern = regexp.MustCompile(`\d`)
-	// Duration and comparison vocabulary in both languages this platform
-	// serves. English-only detection would quietly rank every Portuguese
-	// testimonial below every English one.
+	// Duration vocabulary in both languages this platform serves.
 	durationPattern = regexp.MustCompile(`(?i)\b(seconds?|minutes?|hours?|days?|weeks?|months?|years?|` +
 		`segundos?|minutos?|horas?|dias?|semanas?|m[êe]s|meses|anos?)\b`)
-	comparisonPattern = regexp.MustCompile(`(?i)\b(faster|slower|cheaper|better|worse|less|more|fewer|` +
-		`from|to|instead|reduced|saved|cut|doubled|halved|` +
-		`mais|menos|melhor|pior|r[áa]pido|reduzimos|reduziu|poupamos|poupou|passou|antes|depois|dobro|metade)\b`)
+	// Only verbs and comparatives that carry a measurable claim on their own.
+	//
+	// Bare "to", "from", "more", "less", "mais" and "menos" were tried and
+	// removed: they appear in most ordinary sentences, which turned this into
+	// a near-constant for English and a near-zero for Portuguese — biasing the
+	// ranking by language rather than by substance.
+	comparisonPattern = regexp.MustCompile(`(?i)\b(faster|slower|cheaper|quicker|halved|doubled|` +
+		`reduced|saved|shrank|eliminated|` +
+		`r[áa]pido|barato|reduzimos|reduziu|poupamos|poupou|cortamos|cortou|eliminamos|dobrou|metade)\b`)
+	// "from 3 days to 20 minutes" / "de 3 dias para 20 minutos" — a before-and-
+	// after pair of numbers is the strongest concrete claim a testimonial makes,
+	// and it is structural rather than lexical, so it behaves the same in both
+	// languages.
+	rangePattern = regexp.MustCompile(`(?i)\b(from|de)\b[^.!?]{0,60}?\d[^.!?]{0,60}?\b(to|para|até|ate)\b[^.!?]{0,60}?\d`)
 )
 
 // specificitySignal rewards claims a reader can picture. "It cut triage from 3
 // days to 20 minutes" is worth more than "we really like it", and the
-// difference is mostly numbers, units and comparisons.
+// difference is numbers, units and measurable comparisons — never filler words.
 func specificitySignal(text string) float64 {
 	markers := 0.0
 	if numberPattern.MatchString(text) {
@@ -309,7 +341,10 @@ func specificitySignal(text string) float64 {
 	if comparisonPattern.MatchString(text) {
 		markers++
 	}
-	return clamp(markers / 3.5)
+	if rangePattern.MatchString(text) {
+		markers++
+	}
+	return clamp(markers / 4.5)
 }
 
 // actionabilitySignal inverts the triage meaning on purpose: actionable
@@ -354,11 +389,4 @@ func clamp(value float64) float64 {
 	default:
 		return value
 	}
-}
-
-// TextRunes reports the trimmed rune count of a quote. Callers persisting
-// candidate signals use it so the stored length matches what scoring measured,
-// including for scripts where byte length and rune length diverge.
-func TextRunes(text string) int {
-	return len([]rune(strings.TrimFunc(text, unicode.IsSpace)))
 }

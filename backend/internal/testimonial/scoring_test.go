@@ -19,6 +19,7 @@ func glowing() Input {
 		Rating:           &rating,
 		FeedbackStatus:   "open",
 		SentimentScore:   &sentiment,
+		ModerationStatus: ModerationCompleted,
 		Actionability:    "not_actionable",
 		AuthorReachable:  true,
 		Language:         "en",
@@ -193,6 +194,52 @@ func TestScoreDetectsConcreteOutcomesInPortuguese(t *testing.T) {
 	}
 }
 
+// Vague praise must score zero specificity in every language we serve.
+//
+// The first implementation counted bare "to", "from", "more" and "less" as
+// comparison markers. Those words appear in most English sentences and in
+// far fewer Portuguese ones, so English fluff scored 0.286 while equivalent
+// Portuguese fluff scored 0.000 — a systematic ranking bias in favour of
+// English, in the exact signal that was supposed to be language-neutral.
+func TestScoreGivesVaguePraiseNoSpecificityInEitherLanguage(t *testing.T) {
+	t.Parallel()
+	vague := map[string]string{
+		"en plain":      "We really like this product and the team behind it is genuinely lovely.",
+		"en with to":    "We really like this product and it is lovely to deal with the team.",
+		"en with more":  "We like it more than the alternative and everyone here is very happy.",
+		"en with from":  "Everything we wanted from a tool, and the people are a pleasure as well.",
+		"pt plain":      "Gostamos mesmo deste produto e a equipa por tras dele e muito simpatica.",
+		"pt with mais":  "Gostamos mais deste produto do que do anterior e a equipa e simpatica.",
+		"pt with menos": "Menos complicado do que esperavamos e a equipa toda e realmente simpatica.",
+	}
+	for name, text := range vague {
+		in := glowing()
+		in.Text = text
+		if got := Score(in).Signals[SignalSpecificity]; got != 0 {
+			t.Errorf("%s: specificity = %v, want 0 for vague praise (%q)", name, got, text)
+		}
+	}
+}
+
+// The parity guarantee stated in the commit message, asserted rather than
+// claimed: the same concrete testimonial must score identically in both
+// languages.
+func TestScoreSpecificityIsLanguageNeutral(t *testing.T) {
+	t.Parallel()
+	english, portuguese := glowing(), glowing()
+	english.Text = "We cut triage from 3 days to 20 minutes, a 95% reduction, in the first week."
+	portuguese.Text = "Reduzimos a triagem de 3 dias para 20 minutos, menos 95%, na primeira semana."
+	englishSignal := Score(english).Signals[SignalSpecificity]
+	portugueseSignal := Score(portuguese).Signals[SignalSpecificity]
+	if englishSignal != portugueseSignal {
+		t.Fatalf("specificity: english = %v, portuguese = %v; equivalent quotes must score equally",
+			englishSignal, portugueseSignal)
+	}
+	if englishSignal == 0 {
+		t.Fatalf("specificity = 0 for two concrete quotes; the signal is not firing at all")
+	}
+}
+
 func TestScoreFavoursTheIdealLengthBand(t *testing.T) {
 	t.Parallel()
 	terse, ideal, rambling := glowing(), glowing(), glowing()
@@ -239,22 +286,46 @@ func TestScorePenalisesAmbivalentRatings(t *testing.T) {
 	}
 }
 
-// The AI pipeline may not have run, may be unavailable, or may have deferred on
-// budget. A candidate must still rank rather than vanish.
-func TestScoreDegradesGracefullyWithoutAISignals(t *testing.T) {
+// Ranking signals may be missing — the AI pipeline may have deferred on budget
+// or failed. A candidate must still rank on the deterministic signals rather
+// than vanish. This is only safe because moderation itself is gated separately.
+func TestScoreRanksWithoutOptionalAISignals(t *testing.T) {
 	t.Parallel()
 	in := glowing()
 	in.SentimentScore = nil
 	in.Actionability = ""
 	got := Score(in)
 	if got.Eligibility != Eligible {
-		t.Fatalf("eligibility = %q, want %q without AI signals", got.Eligibility, Eligible)
+		t.Fatalf("eligibility = %q, want %q without optional AI signals", got.Eligibility, Eligible)
 	}
 	if got.Signals[SignalSentiment] != 0.5 {
 		t.Errorf("sentiment signal = %v, want the neutral midpoint when unknown", got.Signals[SignalSentiment])
 	}
 	if got.BaseScore <= 0 {
-		t.Errorf("base score = %v, want a usable score without AI", got.BaseScore)
+		t.Errorf("base score = %v, want a usable score without optional AI signals", got.BaseScore)
+	}
+}
+
+// An empty ModerationFlags slice means one of two very different things: the
+// moderation pass ran and found nothing, or it never ran at all. Treating them
+// alike makes the PII gate silently inoperative — and it is inoperative exactly
+// where it matters, because feedbacks.text_process_status is set to 'skipped'
+// for every Starter-plan tenant (migration 000025), so their moderation flags
+// are permanently empty.
+func TestScoreRefusesToRankUnmoderatedText(t *testing.T) {
+	t.Parallel()
+	for _, status := range []string{ModerationPending, ModerationProcessing, ModerationFailed, ModerationSkipped, ""} {
+		in := glowing()
+		in.ModerationStatus = status
+		got := Score(in)
+		if got.Eligibility != Ineligible {
+			t.Errorf("moderation status %q: eligibility = %q, want %q — unmoderated text must never be suggested",
+				status, got.Eligibility, Ineligible)
+		}
+		if !slices.Contains(got.IneligibleReasons, ReasonAwaitingModeration) {
+			t.Errorf("moderation status %q: ineligible reasons = %#v, want to contain %q",
+				status, got.IneligibleReasons, ReasonAwaitingModeration)
+		}
 	}
 }
 
