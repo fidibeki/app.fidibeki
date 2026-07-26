@@ -82,6 +82,7 @@ type Config struct {
 	AIDailyLimit              int
 	AIProjectDailyLimit       int
 	AIReconcileEvery          time.Duration
+	DigestMembersPerRun       int
 	AppDBMaxConns             int32
 	AdminDBMaxConns           int32
 	S3AutoCreate              bool
@@ -132,6 +133,9 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		get("AI_PROJECT_DAILY_REQUEST_LIMIT", "2000"),
 	)
 	aiReconcileEvery, aiReconcileEveryErr := time.ParseDuration(get("AI_RECONCILE_INTERVAL", "5m"))
+	digestMembersPerRun, digestMembersPerRunErr := strconv.Atoi(
+		get("DIGEST_MEMBERS_PER_RUN", "200"),
+	)
 	trustedProxyCIDRs, trustedProxyCIDRsErr := parseCIDRs(get("TRUSTED_PROXY_CIDRS", ""))
 	s3Endpoint := get("S3_ENDPOINT", "")
 	jwtSecret := get("JWT_SECRET", "")
@@ -196,6 +200,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		GeminiRPM:                 geminiRPM,
 		AIDailyLimit:              aiDailyLimit,
 		AIProjectDailyLimit:       aiProjectDailyLimit,
+		DigestMembersPerRun:       digestMembersPerRun,
 		AIReconcileEvery:          aiReconcileEvery,
 		AppDBMaxConns:             int32(appDBMaxConns),
 		AdminDBMaxConns:           int32(adminDBMaxConns),
@@ -272,6 +277,10 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 	}
 	if aiReconcileEveryErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_RECONCILE_INTERVAL: %w", aiReconcileEveryErr))
+	}
+	if digestMembersPerRunErr != nil {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("DIGEST_MEMBERS_PER_RUN: %w", digestMembersPerRunErr))
 	}
 	if trustedProxyCIDRsErr != nil {
 		validationErrors = append(validationErrors, fmt.Errorf("TRUSTED_PROXY_CIDRS: %w", trustedProxyCIDRsErr))
@@ -448,6 +457,10 @@ func (c Config) validate() []error {
 	if c.AIReconcileEvery <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AI_RECONCILE_INTERVAL must be positive"))
 	}
+	if c.DigestMembersPerRun <= 0 {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("DIGEST_MEMBERS_PER_RUN must be positive"))
+	}
 	if c.Environment == "production" && c.GeminiAPIKey == "" {
 		validationErrors = append(validationErrors, fmt.Errorf("GEMINI_API_KEY is required in production"))
 	}
@@ -546,6 +559,7 @@ func (c Config) Redacted() map[string]any {
 		"ai_daily_limit":               c.AIDailyLimit,
 		"ai_project_daily_limit":       c.AIProjectDailyLimit,
 		"ai_reconcile_every":           c.AIReconcileEvery.String(),
+		"digest_members_per_run":       c.DigestMembersPerRun,
 		"sentry_dsn":                   "[REDACTED]",
 		"app_version":                  c.AppVersion,
 		"log_level":                    c.LogLevel,
