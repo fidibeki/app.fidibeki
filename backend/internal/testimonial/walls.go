@@ -188,13 +188,13 @@ func (Store) RemoveTestimonialFromWalls(
 // predicate needs, ready to be projected into a snapshot.
 type PublishableCard struct {
 	Testimonial
-	MediaReady    bool
-	HasVideo      bool
-	VideoReviewed bool
-	AvatarURL     string
-	VideoURL      string
-	TagNames      []string
-	Position      int
+	MediaReady    bool     `json:"media_ready"`
+	HasVideo      bool     `json:"has_video"`
+	VideoReviewed bool     `json:"video_reviewed"`
+	AvatarURL     string   `json:"avatar_url,omitempty"`
+	VideoURL      string   `json:"video_url,omitempty"`
+	TagNames      []string `json:"tag_names,omitempty"`
+	Position      int      `json:"position"`
 }
 
 // LoadWallCards reads wall membership in position order with the media state

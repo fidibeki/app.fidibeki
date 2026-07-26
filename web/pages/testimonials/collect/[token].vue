@@ -210,209 +210,36 @@ useHead(() => ({
 </template>
 
 <style scoped>
-.collect-page {
-  display: flex;
-  min-height: 100vh;
-  flex-direction: column;
-}
-
-.collect-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  min-height: 56px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 0 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-
-.app-page {
-  flex: 1 0 auto;
-}
-
-.collect-container {
-  max-width: 660px;
-  margin: 0 auto;
-}
-
-.collect-container .app-state {
-  min-height: 320px;
-}
-
-.collect-heading h1 {
-  max-width: 560px;
-  font-size: 26px;
-  line-height: 1.25;
-}
-
-.collect-heading .app-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.collect-heading > div > span {
-  display: block;
-  margin-top: 6px;
-  color: var(--muted);
-}
-
-.collect-form {
-  display: grid;
-  gap: 18px;
-  padding: 18px;
-}
-
+.collect-page { display: flex; min-height: 100vh; flex-direction: column; }
+.collect-topbar { position: sticky; top: 0; z-index: 10; display: flex; min-height: 56px; flex: 0 0 auto; align-items: center; justify-content: center; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.app-page { flex: 1 0 auto; }
+.collect-container { max-width: 620px; margin: 0 auto; }
+.collect-container .app-state { min-height: 300px; }
+.collect-heading h1 { max-width: 520px; font-size: 21px; line-height: 1.25; }
+.collect-heading .app-eyebrow { display: flex; align-items: center; gap: 5px; }
+.collect-heading > div > span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.collect-form { display: grid; gap: 14px; padding: 16px; }
 .collect-form > label,
-.collect-form fieldset label {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.collect-form textarea {
-  min-height: 130px;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.55;
-  resize: vertical;
-  text-transform: none;
-}
-
-.collect-form textarea:focus-visible {
-  border-color: var(--teal);
-  outline: 0;
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.collect-form fieldset {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.collect-form legend {
-  padding: 0 6px;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.collect-hint {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.5;
-  text-transform: none;
-}
-
-.collect-check {
-  display: flex !important;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--ink) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  text-transform: none !important;
-}
-
-.collect-check input {
-  margin-top: 2px;
-}
-
-.collect-notice {
-  margin: 0;
-  padding: 10px 12px;
-  background: var(--surface-soft);
-  border-radius: 5px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.collect-error {
-  margin: 0;
-  color: var(--red);
-  font-size: 12px;
-}
-
-.collect-form > button {
-  justify-self: end;
-}
-
-.collect-done {
-  display: grid;
-  justify-items: center;
-  gap: 10px;
-  padding: 40px 24px;
-  color: var(--green);
-  text-align: center;
-}
-
-.collect-done h1 {
-  color: var(--ink);
-  font-size: 22px;
-}
-
-.collect-done p {
-  max-width: 440px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.collect-revoke {
-  width: 100%;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-  text-align: left;
-}
-
-.collect-revoke pre {
-  margin: 8px 0 0;
-  padding: 10px;
-  overflow-x: auto;
-  background: var(--canvas);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.collect-footer {
-  flex: 0 0 auto;
-  padding: 18px;
-  color: var(--muted);
-  font-size: 10px;
-  text-align: center;
-  border-top: 1px solid var(--line);
-}
-
+.collect-form fieldset label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.collect-form textarea { min-height: 112px; padding: 9px 11px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); font: inherit; font-size: 11px; line-height: 1.55; resize: vertical; text-transform: none; }
+.collect-form textarea:focus-visible { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px var(--accent-glow); }
+.collect-form fieldset { display: grid; gap: 10px; margin: 0; padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--radius); }
+.collect-form legend { padding: 0 5px; color: var(--ink); font-size: 10px; font-weight: 750; }
+.collect-hint { color: var(--muted); font-size: 9px; font-weight: 400; line-height: 1.55; text-transform: none; }
+.collect-check { display: flex !important; align-items: flex-start; gap: 8px; color: var(--ink) !important; font-size: 11px !important; font-weight: 500 !important; text-transform: none !important; }
+.collect-check input { margin-top: 1px; }
+.collect-notice { margin: 0; padding: 9px 10px; background: var(--surface-soft); border-radius: 4px; color: var(--muted); font-size: 9px; line-height: 1.6; }
+.collect-error { margin: 0; color: var(--red); font-size: 10px; }
+.collect-form > button { justify-self: end; min-height: 34px; font-size: 10px; }
+.collect-done { display: grid; justify-items: center; gap: 8px; padding: 34px 20px; color: var(--green); text-align: center; }
+.collect-done h1 { color: var(--ink); font-size: 18px; }
+.collect-done p { max-width: 420px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.collect-revoke { width: 100%; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); text-align: left; }
+.collect-revoke p { max-width: none; margin: 4px 0 0; font-size: 10px; }
+.collect-revoke pre { margin: 7px 0 0; padding: 9px 10px; overflow-x: auto; background: var(--canvas); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.collect-footer { flex: 0 0 auto; padding: 16px; color: var(--muted); font-size: 9px; text-align: center; border-top: 1px solid var(--line); }
 @media (max-width: 600px) {
-  .collect-heading h1 {
-    font-size: 22px;
-  }
-
-  .collect-form > button {
-    width: 100%;
-    justify-self: stretch;
-  }
+  .collect-heading h1 { font-size: 18px; }
+  .collect-form > button { width: 100%; justify-self: stretch; }
 }
 </style>

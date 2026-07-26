@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, Copy, LayoutGrid, MessageSquareQuote, Sparkles, X } from '@lucide/vue'
+import {
+  AlertTriangle, Check, Copy, GripVertical, LayoutGrid, MessageSquareQuote, Sparkles, X,
+} from '@lucide/vue'
 import type {
   Testimonial, TestimonialCandidate, TestimonialPublishResult, TestimonialWall,
 } from '~/types/api'
@@ -9,6 +11,7 @@ const { canWrite } = useAuth()
 const { t } = useI18n()
 const { message: apiErrorMessage } = useLocalizedAPIError()
 const { plural } = useRegionalFormat()
+const runtime = useRuntimeConfig()
 
 type Tab = 'suggested' | 'library' | 'walls'
 const tab = ref<Tab>('suggested')
@@ -17,16 +20,17 @@ const notice = ref('')
 const busyID = ref('')
 const copiedID = ref('')
 
-// The request dialog. The recipient address is typed by the customer rather
-// than taken from the feedback record: that address was collected to send
-// updates about the feedback, not to ask for a testimonial.
 const requestFor = ref<TestimonialCandidate | null>(null)
 const requestEmail = ref('')
 const requestPrompt = ref('')
 const requestLink = ref('')
 
 const newWallName = ref('')
-const newWallSlug = ref('')
+// The wall being edited, and the ordered selection inside it. Membership is
+// explicit: the platform ranks candidates, but which testimonials go public and
+// in what order is the customer's decision, never inferred.
+const editingWall = ref<TestimonialWall | null>(null)
+const selection = ref<string[]>([])
 
 const { data, status, error, refresh } = await useAsyncData('testimonials', async () => {
   const [candidates, testimonials, walls] = await Promise.all([
@@ -44,11 +48,16 @@ const { data, status, error, refresh } = await useAsyncData('testimonials', asyn
 const candidates = computed(() => data.value?.candidates || [])
 const testimonials = computed(() => data.value?.testimonials || [])
 const walls = computed(() => data.value?.walls || [])
+/** Only an approved, consented testimonial can be put on a wall. */
+const publishable = computed(() => testimonials.value.filter(item =>
+  item.status === 'approved' && item.consent_state === 'granted'))
+const selected = computed(() => selection.value
+  .map(id => publishable.value.find(item => item.id === id))
+  .filter((item): item is Testimonial => Boolean(item)))
+const unselected = computed(() => publishable.value.filter(item => !selection.value.includes(item.id)))
 
-/** Reason keys come from the scoring engine so the score is never a bare number. */
 function reasonLabel(key: string) {
-  const short = key.replace('testimonials.reason.', '')
-  return t(`testimonials.reason.${short}`)
+  return t(`testimonials.reason.${key.replace('testimonials.reason.', '')}`)
 }
 
 function consentLabel(state: Testimonial['consent_state']) {
@@ -62,15 +71,28 @@ function consentLabel(state: Testimonial['consent_state']) {
   return t(keys[state])
 }
 
-/** Maps onto the existing status colours rather than introducing new ones. */
+/** New states map onto the existing status colours rather than adding any. */
 function consentPillClass(state: Testimonial['consent_state']) {
   if (state === 'granted') return 'status-ready'
   if (state === 'revoked' || state === 'expired') return 'status-rejected'
   return 'status-pending'
 }
 
+function statusLabel(value: Testimonial['status']) {
+  return t(`testimonials.status.${value}`)
+}
+
+function authorLine(item: Testimonial) {
+  return [item.author.name, item.author.role, item.author.company].filter(Boolean).join(' · ')
+}
+
+/**
+ * The embed host is configuration, not something to guess from the browser's
+ * origin: the assets live on a different host from the app, and a wrong guess
+ * hands the customer a script tag that resolves to nothing.
+ */
 function embedSnippet(wall: TestimonialWall) {
-  const host = window.location.origin.replace('//app.', '//widget.')
+  const host = String(runtime.public.widgetUrl || '')
   return `<script async src="${host}/v1/testimonials.js"><\/script>\n<fidibeki-wall wall="${wall.public_id}"><\/fidibeki-wall>`
 }
 
@@ -92,9 +114,8 @@ async function submitRequest() {
       `/v1/testimonial-candidates/${candidate.feedback_id}/request`,
       { method: 'POST', body: { recipient_email: requestEmail.value, prompt: requestPrompt.value || null } },
     )
-    // Shown once. The plaintext token is never stored, so it cannot be recovered.
+    // Shown once. The plaintext is never stored, so it cannot be recovered.
     requestLink.value = `${window.location.origin}/testimonials/collect/${created.token}`
-    notice.value = t('testimonials.requestCreated')
   } catch (requestError) {
     mutationError.value = apiErrorMessage(requestError, 'testimonials.requestFailed')
   } finally {
@@ -102,77 +123,95 @@ async function submitRequest() {
   }
 }
 
-async function dismiss(candidate: TestimonialCandidate) {
+async function run(id: string, work: () => Promise<void>, fallbackKey: string) {
   if (busyID.value) return
-  busyID.value = candidate.feedback_id
+  busyID.value = id
   mutationError.value = ''
   try {
-    await $apiFetch(`/v1/testimonial-candidates/${candidate.feedback_id}/dismiss`, { method: 'POST' })
+    await work()
     await refresh()
-  } catch (dismissError) {
-    mutationError.value = apiErrorMessage(dismissError, 'testimonials.dismissFailed')
+  } catch (failure) {
+    mutationError.value = apiErrorMessage(failure, fallbackKey)
   } finally {
     busyID.value = ''
   }
 }
 
-async function approve(item: Testimonial) {
-  if (busyID.value) return
-  busyID.value = item.id
-  mutationError.value = ''
-  try {
-    await $apiFetch(`/v1/testimonials/${item.id}/approve`, { method: 'POST' })
-    await refresh()
-  } catch (approveError) {
-    mutationError.value = apiErrorMessage(approveError, 'testimonials.approveFailed')
-  } finally {
-    busyID.value = ''
-  }
-}
+const dismiss = (candidate: TestimonialCandidate) => run(candidate.feedback_id, async () => {
+  await $apiFetch(`/v1/testimonial-candidates/${candidate.feedback_id}/dismiss`, { method: 'POST' })
+}, 'testimonials.dismissFailed')
 
-async function createWall() {
-  if (busyID.value || !newWallName.value.trim()) return
-  busyID.value = 'new-wall'
-  mutationError.value = ''
-  try {
-    await $apiFetch('/v1/testimonial-walls', {
-      method: 'POST',
-      body: { name: newWallName.value.trim(), slug: newWallSlug.value.trim() || slugify(newWallName.value) },
-    })
-    newWallName.value = ''
-    newWallSlug.value = ''
-    await refresh()
-  } catch (createError) {
-    mutationError.value = apiErrorMessage(createError, 'testimonials.wallCreateFailed')
-  } finally {
-    busyID.value = ''
-  }
-}
+const approve = (item: Testimonial) => run(item.id, async () => {
+  await $apiFetch(`/v1/testimonials/${item.id}/approve`, { method: 'POST' })
+}, 'testimonials.approveFailed')
 
-async function publish(wall: TestimonialWall) {
-  if (busyID.value) return
-  busyID.value = wall.id
+const createWall = () => run('new-wall', async () => {
+  const name = newWallName.value.trim()
+  if (!name) return
+  await $apiFetch('/v1/testimonial-walls', { method: 'POST', body: { name, slug: slugify(name) } })
+  newWallName.value = ''
+}, 'testimonials.wallCreateFailed')
+
+async function openWall(wall: TestimonialWall) {
+  editingWall.value = wall
   mutationError.value = ''
   try {
-    const result = await $apiFetch<TestimonialPublishResult>(
-      `/v1/testimonial-walls/${wall.id}/publish`, { method: 'POST' },
+    const detail = await $apiFetch<{ cards: Array<{ id: string, position: number }> }>(
+      `/v1/testimonial-walls/${wall.id}`,
     )
-    // Skipped cards are surfaced, never silent: the customer should know a
-    // testimonial did not go out and why they are one short.
-    notice.value = result.skipped > 0
-      ? t('testimonials.publishSkipped', { count: result.published, skipped: result.skipped })
-      : t('testimonials.publishSucceeded', { count: result.published })
-    await refresh()
-  } catch (publishError) {
-    mutationError.value = apiErrorMessage(publishError, 'testimonials.publishFailed')
-  } finally {
-    busyID.value = ''
+    selection.value = [...detail.cards]
+      .sort((left, right) => left.position - right.position)
+      .map(card => card.id)
+  } catch (failure) {
+    mutationError.value = apiErrorMessage(failure, 'testimonials.wallLoadFailed')
+    selection.value = []
   }
 }
+
+function add(item: Testimonial) {
+  if (!selection.value.includes(item.id)) selection.value = [...selection.value, item.id]
+}
+
+function remove(id: string) {
+  selection.value = selection.value.filter(value => value !== id)
+}
+
+function move(id: string, offset: number) {
+  const index = selection.value.indexOf(id)
+  const next = index + offset
+  if (index < 0 || next < 0 || next >= selection.value.length) return
+  const reordered = [...selection.value]
+  const [moved] = reordered.splice(index, 1)
+  reordered.splice(next, 0, moved)
+  selection.value = reordered
+}
+
+const saveSelection = () => {
+  const wall = editingWall.value
+  if (!wall) return Promise.resolve()
+  return run(wall.id, async () => {
+    await $apiFetch(`/v1/testimonial-walls/${wall.id}/items`, {
+      method: 'PUT',
+      body: { items: selection.value.map((id, position) => ({ testimonial_id: id, position, pinned: false })) },
+    })
+    notice.value = t('testimonials.selectionSaved')
+  }, 'testimonials.selectionFailed')
+}
+
+const publish = (wall: TestimonialWall) => run(wall.id, async () => {
+  const result = await $apiFetch<TestimonialPublishResult>(
+    `/v1/testimonial-walls/${wall.id}/publish`, { method: 'POST' },
+  )
+  // Skipped cards are surfaced, never silent: a customer who is one testimonial
+  // short should be told, not left to notice.
+  notice.value = result.skipped > 0
+    ? t('testimonials.publishSkipped', { count: result.published, skipped: result.skipped })
+    : t('testimonials.publishSucceeded', { count: result.published })
+}, 'testimonials.publishFailed')
 
 function slugify(value: string) {
   return value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'wall'
 }
 
 async function copy(text: string, id: string) {
@@ -181,7 +220,7 @@ async function copy(text: string, id: string) {
     copiedID.value = id
     setTimeout(() => { if (copiedID.value === id) copiedID.value = '' }, 2000)
   } catch {
-    // Clipboard access can be refused; the value is selectable either way.
+    // Clipboard access can be refused; the value stays selectable either way.
   }
 }
 
@@ -189,7 +228,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 </script>
 
 <template>
-  <div class="app-page testimonials-page">
+  <div class="app-page">
     <header class="app-page-head">
       <div>
         <p class="app-eyebrow">{{ t('testimonials.eyebrow') }}</p>
@@ -198,17 +237,18 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
       </div>
     </header>
 
-    <nav class="testimonials-tabs" :aria-label="t('testimonials.tabsLabel')">
+    <nav class="testimonial-tabs" :aria-label="t('testimonials.tabsLabel')">
       <button
         v-for="value in (['suggested', 'library', 'walls'] as Tab[])" :key="value"
-        type="button" class="filter-chip" :aria-pressed="tab === value" @click="tab = value"
+        type="button" class="filter-chip" :aria-pressed="tab === value"
+        @click="tab = value; editingWall = null"
       >
         {{ t(`testimonials.tab${value.charAt(0).toUpperCase()}${value.slice(1)}`) }}
       </button>
     </nav>
 
-    <p v-if="mutationError" class="testimonials-alert" role="alert">{{ mutationError }}</p>
-    <p v-else-if="notice" class="testimonials-notice" role="status">{{ notice }}</p>
+    <p v-if="mutationError" class="testimonial-alert" role="alert">{{ mutationError }}</p>
+    <p v-else-if="notice" class="testimonial-notice" role="status">{{ notice }}</p>
 
     <section v-if="status === 'pending'" class="app-surface app-state" aria-live="polite">
       <div><span class="app-spinner" /><h2>{{ t('testimonials.loading') }}</h2></div>
@@ -223,91 +263,88 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
     </section>
 
     <template v-else>
-      <!-- Suggested: the screen that has to feel smart, so the score always
-           carries the reasons that produced it. -->
-      <section v-if="tab === 'suggested'">
-        <div v-if="!candidates.length" class="app-surface app-state">
+      <!-- Suggested: the screen that has to feel smart, so every score arrives
+           with the reasons that produced it. -->
+      <section v-if="tab === 'suggested'" class="app-surface testimonial-list">
+        <div v-if="!candidates.length" class="app-state">
           <div>
             <Sparkles :size="25" />
             <h2>{{ t('testimonials.suggestedEmptyTitle') }}</h2>
             <p>{{ t('testimonials.suggestedEmptyDescription') }}</p>
           </div>
         </div>
-        <ul v-else class="candidate-list">
-          <li v-for="candidate in candidates" :key="candidate.feedback_id" class="app-surface candidate">
-            <div class="candidate-score">
-              <span class="metric-value">{{ Math.round(candidate.decayed_score * 100) }}</span>
-              <span class="section-label">{{ t('testimonials.score') }}</span>
+        <article v-for="candidate in candidates" :key="candidate.feedback_id" class="candidate-row">
+          <span class="candidate-score">
+            <b>{{ Math.round(candidate.decayed_score * 100) }}</b>
+            <small>{{ t('testimonials.score') }}</small>
+          </span>
+          <div class="candidate-body">
+            <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
+            <div class="candidate-reasons">
+              <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
             </div>
-            <div class="candidate-body">
-              <blockquote>{{ candidate.suggested_excerpt || candidate.text }}</blockquote>
-              <div class="candidate-reasons">
-                <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
-              </div>
-            </div>
-            <div class="candidate-actions">
-              <button
-                v-if="canWrite('testimonial:create')" type="button" class="app-button app-button--primary"
-                :disabled="busyID === candidate.feedback_id" @click="openRequest(candidate)"
-              >
-                {{ t('testimonials.requestAction') }}
-              </button>
-              <button
-                v-if="canWrite('testimonial:create')" type="button" class="quiet-button"
-                :disabled="busyID === candidate.feedback_id" @click="dismiss(candidate)"
-              >
-                <X :size="14" /> {{ t('testimonials.dismissAction') }}
-              </button>
-            </div>
-          </li>
-        </ul>
+          </div>
+          <div v-if="canWrite('testimonial:create')" class="candidate-actions">
+            <button
+              type="button" class="app-button app-button--primary"
+              :disabled="busyID === candidate.feedback_id" @click="openRequest(candidate)"
+            >
+              {{ t('testimonials.requestAction') }}
+            </button>
+            <button
+              type="button" class="quiet-button" :disabled="busyID === candidate.feedback_id"
+              @click="dismiss(candidate)"
+            >
+              <X :size="13" /> {{ t('testimonials.dismissAction') }}
+            </button>
+          </div>
+        </article>
       </section>
 
-      <section v-else-if="tab === 'library'">
-        <div v-if="!testimonials.length" class="app-surface app-state">
+      <section v-else-if="tab === 'library'" class="app-surface testimonial-list">
+        <div v-if="!testimonials.length" class="app-state">
           <div>
             <MessageSquareQuote :size="25" />
             <h2>{{ t('testimonials.libraryEmptyTitle') }}</h2>
             <p>{{ t('testimonials.libraryEmptyDescription') }}</p>
           </div>
         </div>
-        <ul v-else class="candidate-list">
-          <li v-for="item in testimonials" :key="item.id" class="app-surface candidate">
-            <div class="candidate-body">
-              <blockquote>{{ item.quote }}</blockquote>
-              <p v-if="item.author.name" class="candidate-author">
-                {{ item.author.name }}<template v-if="item.author.role"> · {{ item.author.role }}</template>
-              </p>
-              <!-- An edit that drifted from the consented wording is stated
-                   plainly, not left for the customer to discover at publish. -->
-              <p v-if="item.consent_state === 'pending_reconsent'" class="candidate-warning">
-                {{ t('testimonials.quoteEdited') }}
-              </p>
-              <div class="candidate-reasons">
-                <span class="status-pill" :class="`status-${item.status}`">{{ item.status }}</span>
-                <span class="status-pill" :class="consentPillClass(item.consent_state)">
-                  {{ consentLabel(item.consent_state) }}
-                </span>
-              </div>
-            </div>
-            <div class="candidate-actions">
-              <button
-                v-if="canWrite('testimonial:update') && item.status === 'pending_review'"
-                type="button" class="app-button app-button--primary"
-                :disabled="busyID === item.id" @click="approve(item)"
-              >
-                <Check :size="14" /> {{ t('testimonials.approve') }}
-              </button>
-            </div>
-          </li>
-        </ul>
+        <article v-for="item in testimonials" :key="item.id" class="library-row">
+          <div class="candidate-body">
+            <p>{{ item.quote }}</p>
+            <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
+            <!-- An edit that drifted from the consented wording is stated here,
+                 not discovered when publishing fails. -->
+            <small v-if="item.consent_state === 'pending_reconsent'" class="library-warning">
+              {{ t('testimonials.quoteEdited') }}
+            </small>
+          </div>
+          <div class="library-state">
+            <span class="status-pill" :class="`status-${item.status}`">{{ statusLabel(item.status) }}</span>
+            <span class="status-pill" :class="consentPillClass(item.consent_state)">
+              {{ consentLabel(item.consent_state) }}
+            </span>
+          </div>
+          <div class="candidate-actions">
+            <button
+              v-if="canWrite('testimonial:update') && item.status === 'pending_review'"
+              type="button" class="app-button app-button--primary"
+              :disabled="busyID === item.id" @click="approve(item)"
+            >
+              <Check :size="13" /> {{ t('testimonials.approve') }}
+            </button>
+          </div>
+        </article>
       </section>
 
       <section v-else>
-        <form v-if="canWrite('testimonial:create')" class="app-surface wall-form" @submit.prevent="createWall">
+        <form
+          v-if="canWrite('testimonial:create')" class="app-surface wall-create"
+          @submit.prevent="createWall"
+        >
           <label>
             {{ t('testimonials.wallNameLabel') }}
-            <input v-model="newWallName" class="field" maxlength="120" required />
+            <input v-model="newWallName" class="app-input" maxlength="120" required />
           </label>
           <button type="submit" class="app-button app-button--primary" :disabled="busyID === 'new-wall'">
             {{ t('testimonials.wallCreate') }}
@@ -321,29 +358,25 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             <p>{{ t('testimonials.wallsEmptyDescription') }}</p>
           </div>
         </div>
-        <ul v-else class="candidate-list">
-          <li v-for="wall in walls" :key="wall.id" class="app-surface candidate">
-            <div class="candidate-body">
-              <h2 class="wall-name">{{ wall.name }}</h2>
-              <div class="candidate-reasons">
-                <span class="status-pill" :class="wall.status === 'published' ? 'status-ready' : 'status-pending'">
-                  {{ wall.status === 'published' ? t('testimonials.published') : t('testimonials.draft') }}
-                </span>
-                <span class="tag">{{ plural('testimonials.wallItems', wall.item_count) }}</span>
-              </div>
-              <div v-if="wall.status === 'published'" class="wall-embed">
-                <p class="section-label">{{ t('testimonials.embedTitle') }}</p>
-                <p class="wall-embed-help">{{ t('testimonials.embedDescription') }}</p>
-                <pre>{{ embedSnippet(wall) }}</pre>
-                <button type="button" class="secondary-button" @click="copy(embedSnippet(wall), wall.id)">
-                  <Copy :size="14" />
-                  {{ copiedID === wall.id ? t('testimonials.copied') : t('testimonials.copyLink') }}
-                </button>
-              </div>
+
+        <section v-for="wall in walls" :key="wall.id" class="app-surface wall-card">
+          <header class="wall-head">
+            <div>
+              <b>{{ wall.name }}</b>
+              <span class="status-pill" :class="wall.status === 'published' ? 'status-ready' : 'status-pending'">
+                {{ wall.status === 'published' ? t('testimonials.published') : t('testimonials.draft') }}
+              </span>
+              <span class="tag">{{ plural('testimonials.wallItems', wall.item_count) }}</span>
             </div>
-            <div class="candidate-actions">
-              <!-- Publishing is a separate permission from editing, because it
-                   is the action that reaches the public internet. -->
+            <div class="wall-actions">
+              <button
+                v-if="canWrite('testimonial:update')" type="button" class="secondary-button"
+                @click="editingWall?.id === wall.id ? editingWall = null : openWall(wall)"
+              >
+                {{ editingWall?.id === wall.id ? t('testimonials.closeEditor') : t('testimonials.chooseItems') }}
+              </button>
+              <!-- Publishing is a separate grant from editing: it is the step
+                   that reaches the public internet. -->
               <button
                 v-if="canWrite('testimonial:publish')" type="button" class="app-button app-button--primary"
                 :disabled="busyID === wall.id" @click="publish(wall)"
@@ -351,8 +384,65 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
                 {{ t('testimonials.publish') }}
               </button>
             </div>
-          </li>
-        </ul>
+          </header>
+
+          <div v-if="editingWall?.id === wall.id" class="wall-editor">
+            <div class="wall-column">
+              <p class="section-label">{{ t('testimonials.onThisWall') }}</p>
+              <p v-if="!selected.length" class="wall-hint">{{ t('testimonials.selectionEmpty') }}</p>
+              <ol v-else class="wall-selection">
+                <li v-for="(item, index) in selected" :key="item.id">
+                  <GripVertical :size="13" aria-hidden="true" />
+                  <span>{{ item.quote }}</span>
+                  <span class="wall-order">
+                    <button
+                      type="button" class="icon-button" :disabled="index === 0"
+                      :title="t('testimonials.moveUp')" @click="move(item.id, -1)"
+                    >↑</button>
+                    <button
+                      type="button" class="icon-button" :disabled="index === selected.length - 1"
+                      :title="t('testimonials.moveDown')" @click="move(item.id, 1)"
+                    >↓</button>
+                    <button
+                      type="button" class="icon-button" :title="t('testimonials.removeFromWall')"
+                      @click="remove(item.id)"
+                    ><X :size="13" /></button>
+                  </span>
+                </li>
+              </ol>
+            </div>
+            <div class="wall-column">
+              <p class="section-label">{{ t('testimonials.availableToAdd') }}</p>
+              <p v-if="!unselected.length" class="wall-hint">{{ t('testimonials.nothingToAdd') }}</p>
+              <ul v-else class="wall-available">
+                <li v-for="item in unselected" :key="item.id">
+                  <span>{{ item.quote }}</span>
+                  <button type="button" class="secondary-button" @click="add(item)">
+                    {{ t('testimonials.addToWall') }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <footer class="wall-editor-footer">
+              <button
+                type="button" class="app-button app-button--primary"
+                :disabled="busyID === wall.id" @click="saveSelection"
+              >
+                {{ t('testimonials.saveSelection') }}
+              </button>
+            </footer>
+          </div>
+
+          <div v-if="wall.status === 'published'" class="wall-embed">
+            <p class="section-label">{{ t('testimonials.embedTitle') }}</p>
+            <p class="wall-hint">{{ t('testimonials.embedDescription') }}</p>
+            <pre>{{ embedSnippet(wall) }}</pre>
+            <button type="button" class="secondary-button" @click="copy(embedSnippet(wall), wall.id)">
+              <Copy :size="13" />
+              {{ copiedID === wall.id ? t('testimonials.copied') : t('testimonials.copyLink') }}
+            </button>
+          </div>
+        </section>
       </section>
     </template>
 
@@ -382,7 +472,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             <p class="section-label">{{ t('testimonials.requestCreated') }}</p>
             <pre>{{ requestLink }}</pre>
             <button type="button" class="secondary-button" @click="copy(requestLink, 'request')">
-              <Copy :size="14" />
+              <Copy :size="13" />
               {{ copiedID === 'request' ? t('testimonials.copied') : t('testimonials.copyLink') }}
             </button>
           </div>
@@ -404,175 +494,77 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 </template>
 
 <style scoped>
-.testimonials-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.testimonials-tabs button[aria-pressed='true'] {
-  background: var(--rail-active);
-  border-color: var(--teal-line);
-  color: var(--ink);
-}
-
-.testimonials-alert,
-.testimonials-notice {
-  margin: 0 0 14px;
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  font-size: 12px;
-}
-
-.testimonials-alert {
-  background: var(--red-soft);
-  border: 1px solid var(--red-line);
-  color: var(--red);
-}
-
-.testimonials-notice {
-  background: var(--green-soft);
-  border: 1px solid var(--green-line);
-  color: var(--green);
-}
-
-.candidate-list {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.candidate {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: start;
-  padding: 16px;
-}
-
-.candidate-score {
-  display: grid;
-  gap: 2px;
-  justify-items: center;
-  text-align: center;
-}
-
-.candidate-body {
-  min-width: 0;
-}
-
-.candidate blockquote {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.candidate-author {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.candidate-warning {
-  margin: 8px 0 0;
-  color: var(--amber-ink);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.candidate-reasons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.candidate-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.wall-name {
-  margin: 0;
-  font-size: 15px;
-}
-
-.wall-form {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  margin-bottom: 12px;
-  padding: 16px;
-}
-
-.wall-form label {
-  display: grid;
-  flex: 1 1 auto;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.wall-embed {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.wall-embed-help {
-  margin: 4px 0 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
+.testimonial-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.testimonial-tabs button[aria-pressed='true'] { background: var(--rail-active); border-color: var(--teal-line); color: var(--ink); }
+.testimonial-alert,
+.testimonial-notice { margin: 0 0 12px; padding: 9px 12px; border-radius: 5px; font-size: 10px; }
+.testimonial-alert { background: var(--red-soft); border: 1px solid var(--red-line); color: var(--red); }
+.testimonial-notice { background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green); }
+.testimonial-list { overflow: hidden; }
+.candidate-row,
+.library-row { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.candidate-row { grid-template-columns: 46px minmax(0, 1fr) auto; }
+.library-row { grid-template-columns: minmax(0, 1fr) 190px auto; }
+.candidate-row:last-child,
+.library-row:last-child { border-bottom: 0; }
+.candidate-row:hover,
+.library-row:hover { background: var(--surface-subtle); }
+.candidate-score { display: grid; justify-items: center; gap: 1px; text-align: center; }
+.candidate-score b { font-size: 15px; font-weight: 750; letter-spacing: 0; }
+.candidate-score small { color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
+.candidate-body { min-width: 0; }
+.candidate-body p { margin: 0; overflow-wrap: anywhere; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
+.candidate-body small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.library-warning { color: var(--amber-ink) !important; font-weight: 700; }
+.candidate-reasons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.candidate-reasons .tag { min-height: 20px; font-size: 9px; }
+.library-state { display: flex; flex-wrap: wrap; gap: 5px; }
+.library-state .status-pill { min-height: 20px; font-size: 9px; }
+.candidate-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.candidate-actions .app-button,
+.candidate-actions .quiet-button { min-height: 32px; font-size: 10px; }
+.wall-create { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; padding: 12px 16px; }
+.wall-create label { display: grid; flex: 1 1 auto; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.wall-card { margin-bottom: 12px; padding: 14px 16px; }
+.wall-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.wall-head > div { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.wall-head b { font-size: 12px; }
+.wall-head .status-pill,
+.wall-head .tag { min-height: 20px; font-size: 9px; }
+.wall-actions { display: flex; gap: 7px; }
+.wall-actions .app-button,
+.wall-actions .secondary-button { min-height: 32px; font-size: 10px; }
+.wall-editor { display: grid; gap: 14px; margin-top: 14px; padding-top: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border-top: 1px solid var(--line); }
+.wall-column { min-width: 0; }
+.wall-hint { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.wall-selection,
+.wall-available { display: grid; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
+.wall-selection li,
+.wall-available li { display: grid; align-items: center; gap: 8px; padding: 7px 9px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 4px; }
+.wall-selection li { grid-template-columns: 14px minmax(0, 1fr) auto; }
+.wall-available li { grid-template-columns: minmax(0, 1fr) auto; }
+.wall-selection li > span,
+.wall-available li > span { overflow: hidden; color: var(--ink-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.wall-selection li > svg { color: var(--muted); }
+.wall-order { display: flex; gap: 2px; }
+.wall-order .icon-button { width: 24px; height: 24px; font-size: 10px; }
+.wall-available .secondary-button { min-height: 26px; padding: 0 9px; font-size: 9px; }
+.wall-editor-footer { display: flex; justify-content: flex-end; grid-column: 1 / -1; }
+.wall-editor-footer .app-button { min-height: 32px; font-size: 10px; }
+.wall-embed { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.wall-embed .secondary-button { min-height: 30px; font-size: 9px; }
 .wall-embed pre,
-.request-link pre {
-  margin: 0 0 8px;
-  padding: 10px;
-  overflow-x: auto;
-  background: var(--canvas);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.request-help {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.request-prompt {
-  min-height: 90px;
-  padding: 10px 12px;
-  font: inherit;
-  font-size: 12px;
-  resize: vertical;
-}
-
-@media (max-width: 720px) {
-  .candidate {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .candidate-score {
-    justify-items: start;
-    text-align: left;
-  }
-
-  .wall-form {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.request-link pre { margin: 7px 0; padding: 9px 10px; overflow-x: auto; background: var(--canvas); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-help { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; text-transform: none; }
+.request-prompt { min-height: 76px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); font: inherit; font-size: 11px; line-height: 1.5; resize: vertical; text-transform: none; }
+.request-prompt:focus-visible { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px var(--accent-glow); }
+.request-link .secondary-button { min-height: 30px; font-size: 9px; }
+@media (max-width: 850px) {
+  .candidate-row,
+  .library-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .candidate-score { justify-items: start; text-align: left; }
+  .candidate-actions { flex-direction: row; }
+  .wall-create { align-items: stretch; flex-direction: column; }
+  .wall-head { align-items: flex-start; flex-direction: column; }
 }
 </style>

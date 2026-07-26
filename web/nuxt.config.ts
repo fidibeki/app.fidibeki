@@ -2,6 +2,12 @@ const developmentBaseDomain = process.env.NODE_ENV === 'development' ? 'localhos
 const baseDomain = process.env.NUXT_BASE_DOMAIN || developmentBaseDomain
 const publicBaseDomain = process.env.NUXT_PUBLIC_BASE_DOMAIN || developmentBaseDomain
 const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL || ''
+// Where the embeddable assets and the public wall endpoint are served from. It is
+// a separate host from the app, so it cannot be derived from the browser's own
+// origin: the customer copies this snippet onto their site, and guessing it wrong
+// hands them a script tag that resolves to nothing.
+const publicWidgetUrl = process.env.NUXT_PUBLIC_WIDGET_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://widget.localhost:8088' : '')
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-21',
@@ -68,6 +74,24 @@ export default defineNuxtConfig({
         'x-robots-tag': 'noindex, nofollow',
       },
     },
+    // The author-facing pages carry someone else's words and consent record, and
+    // must never be cached or indexed. Same treatment as /reporter and /privacy.
+    '/testimonials/collect/**': {
+      ssr: false,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex, nofollow',
+      },
+    },
+    '/testimonials/revoke/**': {
+      ssr: false,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex, nofollow',
+      },
+    },
     '/designs/**': { ssr: false },
   },
   runtimeConfig: {
@@ -81,6 +105,7 @@ export default defineNuxtConfig({
     public: {
       appUrl: publicAppUrl,
       baseDomain: publicBaseDomain,
+      widgetUrl: publicWidgetUrl,
       turnstileSiteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
     },
   },
