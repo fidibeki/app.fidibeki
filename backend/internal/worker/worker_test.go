@@ -28,6 +28,7 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 		LifecycleHandler:   handler,
 		ReplayMergeHandler: handler, ReplayVerificationHandler: handler,
 		IntegrationHandler:            handler,
+		IssueTrackerHandler:           handler,
 		AttachmentVerificationHandler: handler, PrivacyExportHandler: handler,
 	}
 	if worker, err := New(valid); err != nil || worker == nil {
@@ -96,6 +97,7 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		LifecycleHandler:   handler,
 		ReplayMergeHandler: handler, ReplayVerificationHandler: handler,
 		IntegrationHandler:            handler,
+		IssueTrackerHandler:           handler,
 		AttachmentVerificationHandler: handler, PrivacyExportHandler: handler,
 	})
 	if err != nil {

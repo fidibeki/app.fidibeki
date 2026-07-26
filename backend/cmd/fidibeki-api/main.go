@@ -27,6 +27,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/identity"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
+	"github.com/acidiney/app.fidibeki/backend/internal/issuetracker"
 	"github.com/acidiney/app.fidibeki/backend/internal/logging"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/observability"
@@ -413,6 +414,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
 	})
 	issue.RegisterRoutes(tenantRoutes, issue.HTTPOptions{Store: issue.Store{}, JWT: jwtManager})
+	issuetracker.RegisterRoutes(tenantRoutes, issuetracker.HTTPOptions{
+		Store: issuetracker.Store{Cipher: integrationCipher}, JWT: jwtManager,
+		Clients:           issuetracker.DefaultClientFactory(nil),
+		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
+	})
 	feedback.RegisterTenantRoutes(tenantRoutes, feedback.TenantHTTPOptions{
 		Store: feedback.Store{}, JWT: jwtManager,
 	})
@@ -619,6 +625,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 			email.LifecycleResolver{}, privacy.RecipientOutboxResolver{},
 			privacy.CaseCommunicationOutboxResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
+			issuetracker.OutboxResolver{Database: pools.Admin},
 		},
 		Enqueuer: outboxQueue, Logger: logger,
 	}
@@ -771,6 +778,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	issueTrackerHandler := issuetracker.AutoCreateHandler{
+		Store:   issuetracker.Store{Database: pools.Admin, Cipher: integrationCipher},
+		Clients: issuetracker.DefaultClientFactory(nil),
+	}
 	aiStore := aiprocessing.Store{
 		Database: pools.Admin, ProjectDailyLimit: settings.AIProjectDailyLimit,
 		Model:       settings.GeminiModel,
@@ -820,6 +831,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
 		AttachmentVerificationHandler: verificationProcessor.Handler(),
 		IntegrationHandler:            integrationHandler.Handler(),
+		IssueTrackerHandler:           issueTrackerHandler.Handler(),
 		PrivacyExportHandler:          privacyExporter.Handler(),
 	})
 	if err != nil {

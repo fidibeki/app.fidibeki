@@ -266,7 +266,10 @@ func retentionRegistry() []retentionDefinition {
 			Trigger: "Integration and domain-event delivery lifecycle.",
 			Action:  "Credential, outbox, attempt, and disclosure-ledger periods require approval.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
-			Resources: tables("delivery_logs", "integrations", "outbox_events"),
+			Resources: tables(
+				"delivery_logs", "integrations", "issue_external_links",
+				"issue_tracker_connections", "outbox_events",
+			),
 		},
 		{
 			Category: "privacy_rights", Label: "Privacy cases and rights-operation evidence",
@@ -395,6 +398,8 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionProvider, Name: "slack_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "microsoft_teams_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "customer_generic_webhook"},
+				retentionResource{Kind: RetentionProvider, Name: "jira_cloud_issue_tracker"},
+				retentionResource{Kind: RetentionProvider, Name: "linear_issue_tracker"},
 			),
 		},
 		{

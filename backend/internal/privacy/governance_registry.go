@@ -290,6 +290,28 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceEnvironmentPerTenantConfig, "external_communications",
 		),
 		pendingProvider(
+			"jira_cloud_issue_tracker", "Jira Cloud issue tracker", "issue_tracker",
+			GovernanceBoundaryCustomerConfiguredDestination,
+			"Create a copy of a Fidibeki issue in a customer-configured Jira project when the "+
+				"workspace has explicitly enabled the provider.",
+			[]string{"reviewer-confirmed issue title, description, and priority"},
+			"backend/internal/issuetracker/jira.go (JiraClient)",
+			"a tenant-created issue_tracker_connections row with provider=jira and is_enabled=true, "+
+				"not a global environment variable",
+			GovernanceEnvironmentPerTenantConfig, "external_communications",
+		),
+		pendingProvider(
+			"linear_issue_tracker", "Linear issue tracker", "issue_tracker",
+			GovernanceBoundaryCustomerConfiguredDestination,
+			"Create a copy of a Fidibeki issue in a customer-configured Linear team when the "+
+				"workspace has explicitly enabled the provider.",
+			[]string{"reviewer-confirmed issue title, description, and priority"},
+			"backend/internal/issuetracker/linear.go (LinearClient)",
+			"a tenant-created issue_tracker_connections row with provider=linear and is_enabled=true, "+
+				"not a global environment variable",
+			GovernanceEnvironmentPerTenantConfig, "external_communications",
+		),
+		pendingProvider(
 			"customer_saml_identity_provider", "Customer-configured SAML identity provider",
 			"identity_provider",
 			GovernanceBoundaryCustomerConfiguredDestination,

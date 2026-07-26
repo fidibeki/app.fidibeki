@@ -53,3 +53,9 @@ bcdd23b8ee43d4d439a84599148da1e3fc904972:backend/internal/config/config_test.go:
 # personal-data denylist rejects it.
 10b22f2b34435f4632d52ac8d9fef5deae51aee6:backend/internal/middleware/proxy_host_test.go:generic-api-key:53
 51b8842f4ede3a17b53c748808fdaf9284c9b4c2:widget/tests/unit/semantic-events.test.ts:jwt:58
+
+# The issue-tracker integration test briefly carried the same local-only AES test key the
+# integrations test uses. The working tree now derives it instead of writing a literal, so this
+# entry only covers the branch commit that still contains it and can be dropped once this branch
+# is squash-merged.
+d04c390777d6da05d60a62e1c01d43b0e03d7236:backend/internal/issuetracker/http_integration_test.go:generic-api-key:31
