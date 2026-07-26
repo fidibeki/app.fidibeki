@@ -265,15 +265,18 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
     <template v-else>
       <!-- Suggested: the screen that has to feel smart, so every score arrives
            with the reasons that produced it. -->
-      <section v-if="tab === 'suggested'" class="app-surface testimonial-list">
-        <div v-if="!candidates.length" class="app-state">
+      <section v-if="tab === 'suggested'" class="testimonial-list">
+        <div v-if="!candidates.length" class="app-surface app-state">
           <div>
             <Sparkles :size="25" />
             <h2>{{ t('testimonials.suggestedEmptyTitle') }}</h2>
             <p>{{ t('testimonials.suggestedEmptyDescription') }}</p>
           </div>
         </div>
-        <article v-for="candidate in candidates" :key="candidate.feedback_id" class="candidate-row">
+        <article
+          v-for="candidate in candidates" :key="candidate.feedback_id"
+          class="app-surface candidate-row"
+        >
           <div class="candidate-main">
             <span class="candidate-score">
               <b>{{ Math.round(candidate.decayed_score * 100) }}</b>
@@ -307,15 +310,15 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
         </article>
       </section>
 
-      <section v-else-if="tab === 'library'" class="app-surface testimonial-list">
-        <div v-if="!testimonials.length" class="app-state">
+      <section v-else-if="tab === 'library'" class="testimonial-list">
+        <div v-if="!testimonials.length" class="app-surface app-state">
           <div>
             <MessageSquareQuote :size="25" />
             <h2>{{ t('testimonials.libraryEmptyTitle') }}</h2>
             <p>{{ t('testimonials.libraryEmptyDescription') }}</p>
           </div>
         </div>
-        <article v-for="item in testimonials" :key="item.id" class="library-row">
+        <article v-for="item in testimonials" :key="item.id" class="app-surface library-row">
           <div class="library-main">
             <RatingMark :rating="item.rating" compact />
             <div class="candidate-body">
@@ -515,13 +518,13 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .testimonial-notice { margin: 0 0 12px; padding: 9px 12px; border-radius: 5px; font-size: 10px; }
 .testimonial-alert { background: var(--red-soft); border: 1px solid var(--red-line); color: var(--red); }
 .testimonial-notice { background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green); }
-.testimonial-list { overflow: hidden; }
+.testimonial-list { display: grid; gap: 12px; }
 /* Both lists share one shape: the quote gets a full line, and whatever can be
-   done to it sits on a second line that never competes with it for width. */
+   done to it sits on a second line that never competes with it for width. Each
+   item is its own card, so an action bar can only read as belonging to the
+   quote above it. */
 .candidate-row,
-.library-row { border-bottom: 1px solid var(--line); }
-.candidate-row:last-child,
-.library-row:last-child { border-bottom: 0; }
+.library-row { overflow: hidden; }
 .candidate-row:hover,
 .library-row:hover { background: var(--surface-subtle); }
 .candidate-main,
