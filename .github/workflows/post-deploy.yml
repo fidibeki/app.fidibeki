@@ -12,7 +12,7 @@ jobs:
       github.event.deployment_status.state == 'success' &&
       (github.event.deployment.environment == 'staging' ||
       endsWith(github.event.deployment.environment, ' / staging'))
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 8
     environment: staging
     env:

@@ -41,6 +41,9 @@ permissions:
 
 jobs:
   promote:
+    # Deliberately still GitHub-hosted while CI runs on WarpBuild: this is the
+    # only job that sees RAILWAY_PRODUCTION_TOKEN and pushes release tags, so the
+    # production deploy path stays off a second vendor's uptime and infrastructure.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
