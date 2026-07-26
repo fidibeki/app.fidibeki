@@ -139,6 +139,19 @@ function apiEndpoint(wall: TestimonialWall) {
 }
 
 /**
+ * The call rather than the bare URL.
+ *
+ * Someone who picked the custom layout is about to write this exact line, so
+ * showing it saves them a step and names the two fields they will reach for
+ * first. The copy button still yields just the endpoint, which is what goes
+ * into their own code.
+ */
+function apiSnippet(wall: TestimonialWall) {
+  return `const wall = await fetch('${apiEndpoint(wall)}')\n  .then(response => response.json())\n\n`
+    + `wall.cards.forEach(card => console.log(card.quote, card.author.name))`
+}
+
+/**
  * Every arrangement the embed can render, plus the one that means "don't".
  *
  * `sample` is how many placeholder cards the miniature draws — enough to show
@@ -773,7 +786,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           <div v-if="wall.status === 'published' && wall.layout === 'custom'" class="wall-embed">
             <p class="section-label">{{ t('testimonials.apiTitle') }}</p>
             <p class="wall-hint">{{ t('testimonials.apiDescription') }}</p>
-            <pre>GET {{ apiEndpoint(wall) }}</pre>
+            <AppCodeBlock :code="apiSnippet(wall)" language="js" />
             <p class="wall-hint">{{ t('testimonials.apiNote') }}</p>
             <button type="button" class="secondary-button" @click="copy(apiEndpoint(wall), wall.id)">
               <Copy :size="13" />
@@ -784,7 +797,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           <div v-else-if="wall.status === 'published'" class="wall-embed">
             <p class="section-label">{{ t('testimonials.embedTitle') }}</p>
             <p class="wall-hint">{{ t('testimonials.embedDescription') }}</p>
-            <pre>{{ embedSnippet(wall) }}</pre>
+            <AppCodeBlock :code="embedSnippet(wall)" language="html" />
             <button type="button" class="secondary-button" @click="copy(embedSnippet(wall), wall.id)">
               <Copy :size="13" />
               {{ copiedID === wall.id ? t('testimonials.copied') : t('testimonials.copyLink') }}
