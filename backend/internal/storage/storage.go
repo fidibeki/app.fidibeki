@@ -98,6 +98,28 @@ func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration)
 	return presigned.String(), nil
 }
 
+// PresignInline issues a URL for an asset meant to be rendered in place rather
+// than downloaded.
+//
+// PresignGet forces a zip download because everything it serves is an export.
+// A video or an avatar handed back with that disposition would land in the
+// downloads folder instead of playing in the page.
+func (s *Storage) PresignInline(
+	ctx context.Context,
+	key string,
+	contentType string,
+	ttl time.Duration,
+) (string, error) {
+	parameters := make(url.Values)
+	parameters.Set("response-content-type", contentType)
+	parameters.Set("response-content-disposition", "inline")
+	presigned, err := s.presignClient.PresignedGetObject(ctx, s.bucket, key, ttl, parameters)
+	if err != nil {
+		return "", fmt.Errorf("presign inline S3 asset: %w", err)
+	}
+	return presigned.String(), nil
+}
+
 func (s *Storage) PresignGet(
 	ctx context.Context,
 	key string,

@@ -190,6 +190,7 @@ func TestTestimonialLifecycle(t *testing.T) {
 	// Before revoking, while the testimonial is still publishable on every other
 	// count: footage of its own has to be watched before it goes out.
 	exerciseVideoReviewGate(ctx, t, env, store, wall, item, now)
+	exerciseMediaServing(ctx, t, env, store, server.URL, item, now)
 
 	// The author withdraws through the link they were given, not through anything
 	// the workspace does for them. The consent notice promises this page exists,
@@ -317,6 +318,138 @@ func exerciseVideoReviewGate(
 		}
 		if err := store.ReviewMedia(ctx, tx, env.tenantID, item.ID, env.memberID, now); !errors.Is(err, ErrNotFound) {
 			t.Errorf("review with no video = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// exerciseMediaServing covers the endpoint the snapshot's media paths point at.
+//
+// The conditions are re-checked per request rather than trusted from the
+// published payload, so the interesting case is the last one: an asset whose
+// consent has since been withdrawn must stop resolving even though the snapshot
+// that named it is unchanged.
+func exerciseMediaServing(
+	ctx context.Context,
+	t *testing.T,
+	env *testimonialEnvironment,
+	store Store,
+	base string,
+	item Testimonial,
+	now time.Time,
+) {
+	t.Helper()
+	const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	publicID, err := GeneratePublicID(PrefixMedia)
+	if err != nil {
+		t.Fatalf("generate media id: %v", err)
+	}
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		var mediaID string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO testimonial_media (
+				tenant_id, testimonial_id, public_id, role, source_storage_key, content_type,
+				size_bytes, width, height, safety_status, transcode_status, content_hash,
+				reviewed_at, reviewed_by
+			) VALUES ($1, $2, $3, 'video', 'uploads/clip.mov', 'video/quicktime', 8192, 1080, 1920,
+				'safe', 'ready', $4, $5, $6)
+			RETURNING id
+		`, env.tenantID, item.ID, publicID, hash, now, env.memberID).Scan(&mediaID); err != nil {
+			t.Fatalf("insert servable media: %v", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO testimonial_media_renditions (
+				tenant_id, media_id, kind, storage_key, content_type, size_bytes,
+				width, height, content_hash
+			) VALUES ($1, $2, 'mp4_720p', 'renditions/clip-720.mp4', 'video/mp4', 4096, 720, 1280, $3)
+		`, env.tenantID, mediaID, hash); err != nil {
+			t.Fatalf("insert rendition: %v", err)
+		}
+	})
+
+	assetURL := base + MediaPath(publicID, hash, "mp4")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	// This author consented to their words, name and company — never to video.
+	// Everything else about the asset is in order, and that is the point: the
+	// scope covering it is missing, so it does not serve.
+	withoutScope, err := client.Get(assetURL)
+	if err != nil {
+		t.Fatalf("fetch media without video consent: %v", err)
+	}
+	_ = withoutScope.Body.Close()
+	if withoutScope.StatusCode != http.StatusNotFound {
+		t.Fatalf("media without the video scope = %d, want 404", withoutScope.StatusCode)
+	}
+
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE testimonials SET consent_scopes = consent_scopes || '{"video":true}'::jsonb
+			WHERE tenant_id = $1 AND id = $2
+		`, env.tenantID, item.ID); err != nil {
+			t.Fatalf("grant video scope: %v", err)
+		}
+	})
+
+	response, err := client.Get(assetURL)
+	if err != nil {
+		t.Fatalf("fetch media: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusFound {
+		t.Fatalf("media status = %d, want 302", response.StatusCode)
+	}
+	if location := response.Header.Get("Location"); !strings.Contains(location, "renditions/clip-720.mp4") {
+		t.Errorf("redirect = %q, want the transcoded rendition, never the source upload", location)
+	}
+
+	// A wrong hash is a different asset, not this one with a typo.
+	wrong := base + MediaPath(publicID, strings.Repeat("c", 64), "mp4")
+	if got, _ := getJSON(t, wrong); got.StatusCode != http.StatusNotFound {
+		t.Errorf("mismatched content hash = %d, want 404", got.StatusCode)
+	}
+
+	// Withdrawal has to reach the footage, not only the words.
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if err := store.Revoke(ctx, tx, env.tenantID, item.ID, "", now); err != nil {
+			t.Fatalf("revoke for media check: %v", err)
+		}
+	})
+	afterRevoke, err := client.Get(assetURL)
+	if err != nil {
+		t.Fatalf("fetch media after revocation: %v", err)
+	}
+	_ = afterRevoke.Body.Close()
+	if afterRevoke.StatusCode != http.StatusNotFound {
+		t.Errorf("media after revocation = %d, want 404", afterRevoke.StatusCode)
+	}
+
+	// Put the world back, and prove the gate is evaluated per request rather
+	// than latched: the same URL resolves again once consent does.
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE testimonials SET consent_state = 'granted', revoked_at = NULL,
+			       revocation_reason = NULL
+			WHERE tenant_id = $1 AND id = $2
+		`, env.tenantID, item.ID); err != nil {
+			t.Fatalf("restore consent: %v", err)
+		}
+	})
+	restored, err := client.Get(assetURL)
+	if err != nil {
+		t.Fatalf("fetch media after restoring consent: %v", err)
+	}
+	_ = restored.Body.Close()
+	if restored.StatusCode != http.StatusFound {
+		t.Errorf("media after restoring consent = %d, want 302", restored.StatusCode)
+	}
+
+	// Leave no media behind: the sections after this one assert on wall contents.
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `DELETE FROM testimonial_media WHERE tenant_id = $1`,
+			env.tenantID); err != nil {
+			t.Fatalf("clear served media: %v", err)
 		}
 	})
 }
@@ -583,7 +716,19 @@ func (e *testimonialEnvironment) publicServer(t *testing.T) *httptest.Server {
 	RegisterRevokeRoutes(router, RevokeHTTPOptions{
 		Store: Store{}, Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
 	})
+	RegisterMediaRoutes(router, MediaHTTPOptions{
+		Store: Store{}, Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
+		Signer: stubSigner{},
+	})
 	return httptest.NewServer(router)
+}
+
+// stubSigner stands in for object storage. What is under test is which requests
+// reach a signature at all, not what the signature looks like.
+type stubSigner struct{}
+
+func (stubSigner) PresignInline(_ context.Context, key, contentType string, _ time.Duration) (string, error) {
+	return "https://storage.test/" + key + "?type=" + contentType, nil
 }
 
 func newTestimonialEnvironment(ctx context.Context, t *testing.T) *testimonialEnvironment {

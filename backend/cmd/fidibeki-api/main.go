@@ -376,6 +376,13 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin: db.BeginFromPool(pools.App), Logger: logger,
 	}
 	testimonial.RegisterRevokeRoutes(platformRoutes, testimonialRevokeOptions)
+	// The assets a published wall points at. Without this every avatar and video
+	// in a snapshot resolves to nothing on the customer's own website.
+	testimonialMediaOptions := testimonial.MediaHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Signer: objectStorage, Logger: logger,
+	}
+	testimonial.RegisterMediaRoutes(platformRoutes, testimonialMediaOptions)
 	membernotify.RegisterPublicRoutes(platformRoutes, membernotify.PublicHTTPOptions{
 		Store: membernotify.Store{}, Database: pools.Admin, Tokens: memberNotificationTokens,
 		Logger: logger,
@@ -504,6 +511,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	// Same reason: the withdrawal link points at the workspace host the author
 	// was given, so it has to answer there too.
 	testimonial.RegisterRevokeRoutes(tenantRoot, testimonialRevokeOptions)
+	testimonial.RegisterMediaRoutes(tenantRoot, testimonialMediaOptions)
 	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},

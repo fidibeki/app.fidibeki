@@ -203,6 +203,102 @@ func (Store) RemoveTestimonialFromWalls(
 	return nil
 }
 
+// ResolveMediaTenant finds the workspace behind a public media path. Like the
+// wall and token resolvers, it runs on the admin pool before any tenant context
+// exists.
+func (Store) ResolveMediaTenant(
+	ctx context.Context,
+	query db.Querier,
+	publicID string,
+) (string, error) {
+	var tenantID string
+	err := query.QueryRow(ctx, `
+		SELECT tenant_id FROM testimonial_media WHERE public_id = $1
+	`, publicID).Scan(&tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve testimonial media tenant: %w", err)
+	}
+	return tenantID, nil
+}
+
+// renditionForExtension maps a requested file extension to the derivative that
+// serves it. The source upload is never served: it is whatever the author's
+// phone produced, unscanned by the time it lands and unbounded in size.
+func renditionForExtension(role, extension string) (string, string, bool) {
+	switch {
+	case role == "video" && extension == "mp4":
+		return "mp4_720p", "video/mp4", true
+	case role == "video" && extension == "webm":
+		return "webm_720p", "video/webm", true
+	case role == "video" && extension == "jpg":
+		return "poster", "image/jpeg", true
+	case role == "video" && extension == "vtt":
+		return "captions_vtt", "text/vtt", true
+	case role == "avatar" && extension == "jpg":
+		return "thumbnail", "image/jpeg", true
+	default:
+		return "", "", false
+	}
+}
+
+// LoadPublishableMedia resolves an asset only while everything that made it
+// publishable still holds.
+//
+// The conditions are re-checked here rather than trusted from the snapshot,
+// because consent can be withdrawn between a wall being built and this image
+// being fetched — and an asset that outlived its consent is precisely the one
+// that must stop loading.
+func (Store) LoadPublishableMedia(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, contentHash, extension string,
+) (PublicMedia, error) {
+	var role string
+	if err := query.QueryRow(ctx, `
+		SELECT role::text FROM testimonial_media WHERE tenant_id = $1 AND public_id = $2
+	`, tenantID, publicID).Scan(&role); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PublicMedia{}, ErrNotFound
+		}
+		return PublicMedia{}, fmt.Errorf("load testimonial media role: %w", err)
+	}
+	kind, contentType, ok := renditionForExtension(role, extension)
+	if !ok {
+		return PublicMedia{}, ErrNotFound
+	}
+
+	var media PublicMedia
+	err := query.QueryRow(ctx, `
+		SELECT rendition.storage_key
+		FROM testimonial_media AS media
+		JOIN testimonials AS t
+		  ON t.tenant_id = media.tenant_id AND t.id = media.testimonial_id
+		JOIN testimonial_media_renditions AS rendition
+		  ON rendition.tenant_id = media.tenant_id AND rendition.media_id = media.id
+		 AND rendition.kind = $4::testimonial_rendition_kind
+		WHERE media.tenant_id = $1 AND media.public_id = $2 AND media.content_hash = $3
+		  AND media.safety_status = 'safe' AND media.transcode_status = 'ready'
+		  AND t.status = 'approved' AND t.consent_state = 'granted'
+		  -- The scope that covers this asset, not consent in general: someone who
+		  -- allowed their words and not their face has not allowed their face.
+		  AND COALESCE((t.consent_scopes ->> CASE media.role
+		      WHEN 'video' THEN 'video' ELSE 'avatar' END)::boolean, false)
+		  -- Footage additionally waits for someone to have watched it.
+		  AND (media.role <> 'video' OR media.reviewed_at IS NOT NULL)
+	`, tenantID, publicID, contentHash, kind).Scan(&media.StorageKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PublicMedia{}, ErrNotFound
+	}
+	if err != nil {
+		return PublicMedia{}, fmt.Errorf("load publishable testimonial media: %w", err)
+	}
+	media.ContentType = contentType
+	return media, nil
+}
+
 // ReviewMedia records that a member watched an asset and cleared it.
 //
 // It is deliberately separate from approving the testimonial. Approving the
