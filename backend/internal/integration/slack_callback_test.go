@@ -81,7 +81,9 @@ func TestSlackCallbackRedirectsToTheInstallingWorkspace(t *testing.T) {
 			doer: &stubDoer{},
 		},
 		{
-			name: "no code returned", query: "", wantResult: "denied", doer: &stubDoer{},
+			// Slack sends a code or an error. Neither is a malformed callback, not a choice
+			// the user made, so it must not be reported to them as a cancellation.
+			name: "no code and no error", query: "", wantResult: "failed", doer: &stubDoer{},
 		},
 		{
 			name: "slack rejected the exchange", query: "code=bad", wantResult: "failed",

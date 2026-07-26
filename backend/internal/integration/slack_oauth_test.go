@@ -290,6 +290,36 @@ func TestSlackRevokeTreatsAlreadyRevokedTokensAsSuccess(t *testing.T) {
 	}
 }
 
+// integrations.name has a one-character floor in the schema, so a Slack response with no
+// channel or workspace name must still produce a storable name rather than failing the
+// install on a database constraint.
+func TestSlackInstallNameFallsBackWhenSlackSendsNoNames(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		channelName string
+		teamName    string
+		channelID   string
+		want        string
+	}{
+		{name: "channel name preferred", channelName: "#feedback", teamName: "Acme", channelID: "C1", want: "#feedback"},
+		{name: "falls back to workspace", teamName: "Acme", channelID: "C1", want: "Acme"},
+		{name: "falls back to channel id", channelID: "C1", want: "C1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := firstNonEmpty(tt.channelName, tt.teamName, tt.channelID)
+			if got != tt.want {
+				t.Errorf("name = %q, want %q", got, tt.want)
+			}
+			if got == "" {
+				t.Error("name is empty, which the schema rejects")
+			}
+		})
+	}
+}
+
 func TestSlackWebhookURLValidation(t *testing.T) {
 	t.Parallel()
 	tests := map[string]bool{

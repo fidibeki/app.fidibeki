@@ -116,13 +116,17 @@ func (h *slackCallbackHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Slack reports a cancelled install as an error parameter, not an HTTP failure.
-	if slackError := query.Get("error"); slackError != "" {
+	if query.Get("error") != "" {
 		h.redirect(w, r, state, "denied")
 		return
 	}
 	code := query.Get("code")
 	if code == "" {
-		h.redirect(w, r, state, "denied")
+		// Slack sends a code or an error. Neither means the callback is malformed, which is
+		// a failure rather than a decision the user made.
+		h.options.Logger.WarnContext(r.Context(), "slack callback carried neither code nor error",
+			"tenant_id", state.TenantID)
+		h.redirect(w, r, state, "failed")
 		return
 	}
 
@@ -178,11 +182,10 @@ func (h *slackCallbackHandler) persist(
 		return errors.New("slack install tenant scope was not applied")
 	}
 
+	// integrations.name is NOT NULL with a 1-character floor, so fall back through everything
+	// Slack might have left blank rather than failing the install on a nameless channel.
 	channel := installation.ChannelName
-	name := channel
-	if name == "" {
-		name = installation.TeamName
-	}
+	name := firstNonEmpty(installation.ChannelName, installation.TeamName, installation.ChannelID)
 	integration, err := h.options.Store.UpsertSlackInstall(ctx, tx, state.TenantID, SlackInstallValues{
 		ID: uuid.NewString(), Name: truncateIntegrationText(name, 100),
 		WebhookURL: installation.WebhookURL, Channel: channel,
@@ -235,6 +238,15 @@ func (h *slackCallbackHandler) redirect(
 	query.Set("slack", result)
 	target.RawQuery = query.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // scheduleSlackRevoke reads the bot token while the row still exists, then arranges for the
