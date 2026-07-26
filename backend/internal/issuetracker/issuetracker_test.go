@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestValidateSiteURLAcceptsOnlyAJiraOrigin(t *testing.T) {
@@ -429,6 +434,247 @@ func TestAutoCreateIdempotencyKeyIsStablePerIssueAndProvider(t *testing.T) {
 	}
 	if key == AutoCreateIdempotencyKey("issue-2", ProviderJira) {
 		t.Fatal("two issues share one key")
+	}
+}
+
+func TestNewClientSelectsTheProviderImplementation(t *testing.T) {
+	t.Parallel()
+	jira, err := NewClient(ProviderJira, http.DefaultClient, "")
+	if err != nil {
+		t.Fatalf("NewClient(jira) error = %v", err)
+	}
+	if _, ok := jira.(JiraClient); !ok {
+		t.Fatalf("NewClient(jira) = %T", jira)
+	}
+	linear, err := NewClient(ProviderLinear, nil, "https://stub.test/graphql")
+	if err != nil {
+		t.Fatalf("NewClient(linear) error = %v", err)
+	}
+	client, ok := linear.(LinearClient)
+	if !ok || client.Endpoint != "https://stub.test/graphql" || client.HTTP == nil {
+		t.Fatalf("NewClient(linear) = %#v", linear)
+	}
+	if _, err := NewClient("asana", nil, ""); err == nil {
+		t.Fatal("expected an error for an unsupported provider")
+	}
+	factory := DefaultClientFactory(nil)
+	if _, err := factory(ProviderJira); err != nil {
+		t.Fatalf("DefaultClientFactory error = %v", err)
+	}
+	if _, err := factory("asana"); err == nil {
+		t.Fatal("expected the default factory to reject an unsupported provider")
+	}
+}
+
+func TestConfiguredRequiresAValidatedDestination(t *testing.T) {
+	t.Parallel()
+	validated := time.Unix(0, 0).UTC()
+	for _, testCase := range []struct {
+		name       string
+		connection Connection
+		want       bool
+	}{
+		{name: "jira complete", want: true, connection: Connection{
+			Provider: ProviderJira, DestinationID: "10000", IssueTypeID: "10001",
+			ValidatedAt: &validated,
+		}},
+		{name: "jira without an issue type", connection: Connection{
+			Provider: ProviderJira, DestinationID: "10000", ValidatedAt: &validated,
+		}},
+		{name: "linear complete", want: true, connection: Connection{
+			Provider: ProviderLinear, DestinationID: "team-1", ValidatedAt: &validated,
+		}},
+		{name: "never validated", connection: Connection{
+			Provider: ProviderLinear, DestinationID: "team-1",
+		}},
+		{name: "no destination", connection: Connection{
+			Provider: ProviderLinear, ValidatedAt: &validated,
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if got := testCase.connection.Configured(); got != testCase.want {
+				t.Fatalf("Configured() = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestTranslateLinkConflictSeparatesTheTwoUniqueConstraints(t *testing.T) {
+	t.Parallel()
+	violation := func(constraint string) error {
+		return &pgconn.PgError{Code: "23505", ConstraintName: constraint}
+	}
+	if err := translateLinkConflict(violation("issue_external_links_idempotency_key")); !errors.Is(err, ErrLinkInFlight) {
+		t.Fatalf("idempotency violation = %v, want ErrLinkInFlight", err)
+	}
+	if err := translateLinkConflict(violation("idx_issue_external_links_live")); !errors.Is(err, ErrLinkExists) {
+		t.Fatalf("live-link violation = %v, want ErrLinkExists", err)
+	}
+	if err := translateLinkConflict(violation("something_else")); !errors.Is(err, ErrLinkExists) {
+		t.Fatalf("unknown unique violation = %v, want ErrLinkExists", err)
+	}
+	other := translateLinkConflict(&pgconn.PgError{Code: "23503"})
+	if errors.Is(other, ErrLinkExists) || errors.Is(other, ErrLinkInFlight) {
+		t.Fatalf("non-unique violation = %v, want a wrapped error", other)
+	}
+}
+
+func TestStatusErrorMapsProviderStatusesToActionableCodes(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		status    int
+		wantCode  string
+		retryable bool
+	}{
+		{status: http.StatusUnauthorized, wantCode: ErrorCodeUnauthorized},
+		{status: http.StatusForbidden, wantCode: ErrorCodeForbidden},
+		{status: http.StatusNotFound, wantCode: ErrorCodeNotFound},
+		{status: http.StatusTooManyRequests, wantCode: ErrorCodeRateLimited, retryable: true},
+		{status: http.StatusBadGateway, wantCode: ErrorCodeUnavailable, retryable: true},
+		{status: http.StatusBadRequest, wantCode: ErrorCodeRejected},
+	} {
+		failure := statusError(testCase.status, "")
+		if failure.Code != testCase.wantCode || failure.Retryable != testCase.retryable {
+			t.Fatalf("statusError(%d) = %#v", testCase.status, failure)
+		}
+		if failure.Message == "" {
+			t.Fatalf("statusError(%d) produced no fallback message", testCase.status)
+		}
+	}
+	detailed := statusError(http.StatusUnauthorized, "Client must be authenticated")
+	if detailed.Message != "Client must be authenticated" {
+		t.Fatalf("provider detail was dropped: %#v", detailed)
+	}
+}
+
+func TestTruncateBoundsAProviderMessage(t *testing.T) {
+	t.Parallel()
+	if got := truncate("  spaced  ", 500); got != "spaced" {
+		t.Fatalf("truncate trimmed = %q", got)
+	}
+	long := strings.Repeat("x", 600)
+	if got := truncate(long, 500); len([]rune(got)) != 500 {
+		t.Fatalf("truncate length = %d, want 500", len([]rune(got)))
+	}
+}
+
+func TestLinearTransportDetailReadsNonGraphQLFailures(t *testing.T) {
+	t.Parallel()
+	if got := linearTransportDetail([]byte(`{"message":"too many requests"}`)); got != "too many requests" {
+		t.Fatalf("message body detail = %q", got)
+	}
+	body := []byte(`{"errors":[{"message":"first"},{"message":"second"}]}`)
+	if got := linearTransportDetail(body); got != "first; second" {
+		t.Fatalf("errors body detail = %q", got)
+	}
+	if got := linearTransportDetail([]byte("not json")); got != "" {
+		t.Fatalf("unparsable body detail = %q", got)
+	}
+}
+
+func TestLinearValidateLabelsTheAccountItResolves(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name      string
+		viewer    map[string]any
+		org       map[string]any
+		want      string
+		wantError bool
+	}{
+		{
+			name:   "organization and person",
+			viewer: map[string]any{"name": "Ops Bot"}, org: map[string]any{"name": "Acme"},
+			want: "Acme (Ops Bot)",
+		},
+		{
+			name:   "organization only",
+			viewer: map[string]any{}, org: map[string]any{"name": "Acme"}, want: "Acme",
+		},
+		{
+			name:   "person only, by email",
+			viewer: map[string]any{"email": "ops@acme.test"}, org: map[string]any{},
+			want: "ops@acme.test",
+		},
+		{name: "neither", viewer: map[string]any{}, org: map[string]any{}, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+					"viewer": testCase.viewer, "organization": testCase.org,
+				}})
+			}))
+			defer server.Close()
+			client := LinearClient{HTTP: server.Client(), Endpoint: server.URL}
+			account, err := client.Validate(context.Background(), Credentials{APIToken: "lin_api_key"})
+			if testCase.wantError {
+				if failure := providerFailure(t, err); failure.Code != ErrorCodeUnauthorized {
+					t.Fatalf("failure = %#v", failure)
+				}
+				return
+			}
+			if err != nil || account.Label != testCase.want {
+				t.Fatalf("Validate = %#v, error = %v", account, err)
+			}
+		})
+	}
+}
+
+func TestLinearRefusesToCreateWithoutATeam(t *testing.T) {
+	t.Parallel()
+	_, err := LinearClient{HTTP: http.DefaultClient}.CreateIssue(context.Background(),
+		Credentials{APIToken: "lin_api_key"}, CreateRequest{Title: "Broken"})
+	if failure := providerFailure(t, err); failure.Code != ErrorCodeNoDestination {
+		t.Fatalf("failure = %#v", failure)
+	}
+	_, err = LinearClient{HTTP: http.DefaultClient}.CreateIssue(context.Background(),
+		Credentials{}, CreateRequest{Title: "Broken", DestinationID: "team-1"})
+	if failure := providerFailure(t, err); failure.Code != ErrorCodeUnauthorized {
+		t.Fatalf("missing key failure = %#v", failure)
+	}
+}
+
+func TestJiraRefusesAMissingSite(t *testing.T) {
+	t.Parallel()
+	_, err := JiraClient{HTTP: http.DefaultClient}.Validate(context.Background(), Credentials{})
+	if failure := providerFailure(t, err); failure.Code != ErrorCodeRejected {
+		t.Fatalf("failure = %#v", failure)
+	}
+}
+
+func TestUnreachableProviderIsRetryable(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	endpoint := server.URL
+	server.Close()
+	client := LinearClient{HTTP: &http.Client{}, Endpoint: endpoint}
+	_, err := client.Validate(context.Background(), Credentials{APIToken: "lin_api_key"})
+	failure := providerFailure(t, err)
+	if failure.Code != ErrorCodeUnreachable || !failure.Retryable {
+		t.Fatalf("failure = %#v", failure)
+	}
+}
+
+func TestAutoCreateHandlerRejectsUnusableTasks(t *testing.T) {
+	t.Parallel()
+	handler := AutoCreateHandler{Clients: DefaultClientFactory(nil)}
+	for _, payload := range []string{
+		"not json",
+		`{"tenant_id":"","resource_id":"issue","destination_id":"jira"}`,
+		`{"tenant_id":"tenant","resource_id":"","destination_id":"jira"}`,
+		`{"tenant_id":"tenant","resource_id":"issue","destination_id":""}`,
+		`{"tenant_id":"tenant","resource_id":"issue","destination_id":"asana"}`,
+	} {
+		err := handler.Handler()(context.Background(), asynq.NewTask(TaskAutoCreate, []byte(payload)))
+		if !errors.Is(err, asynq.SkipRetry) {
+			t.Fatalf("payload %q error = %v, want SkipRetry", payload, err)
+		}
+	}
+	err := handler.Handler()(context.Background(), asynq.NewTask(TaskAutoCreate,
+		[]byte(`{"tenant_id":"tenant","resource_id":"issue","destination_id":"jira"}`)))
+	if err == nil || errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("missing database error = %v, want a retryable failure", err)
 	}
 }
 

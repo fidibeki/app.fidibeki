@@ -3,6 +3,7 @@ import {
   Archive,
   BarChart3,
   Bell,
+  BellRing,
   ChevronDown,
   CircleAlert,
   CreditCard,
@@ -147,6 +148,7 @@ watch(
         <div>
           <p><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
           <NuxtLink to="/profile"><UserRoundPen :size="15" /> {{ t('navigation.profile') }}</NuxtLink>
+          <NuxtLink to="/settings/notifications"><BellRing :size="15" /> {{ t('navigation.notificationPreferences') }}</NuxtLink>
           <NuxtLink v-if="can('billing:read') || can('billing:manage')" to="/billing"><CreditCard :size="15" /> {{ t('navigation.billing') }}</NuxtLink>
           <button type="button" :disabled="loggingOut" @click="logout"><LogOut :size="15" /> {{ t('navigation.signOut') }}</button>
         </div>

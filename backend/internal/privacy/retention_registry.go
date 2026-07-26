@@ -56,8 +56,9 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Approved deletion or anonymization policy is not yet implemented.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"api_keys", "projects", "tags", "tenant_deletions", "tenant_member_domains",
-				"tenant_members", "tenants", "widget_rule_target_conditions", "widget_rules",
+				"api_keys", "member_notification_preferences", "projects", "tags",
+				"tenant_deletions", "tenant_member_domains", "tenant_members", "tenants",
+				"widget_rule_target_conditions", "widget_rules",
 			),
 		},
 		{
@@ -268,7 +269,7 @@ func retentionRegistry() []retentionDefinition {
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
 				"delivery_logs", "integrations", "issue_external_links",
-				"issue_tracker_connections", "outbox_events",
+				"issue_tracker_connections", "member_digest_deliveries", "outbox_events",
 			),
 		},
 		{
