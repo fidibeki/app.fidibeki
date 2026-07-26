@@ -73,7 +73,12 @@ No new table. `integrations` gains OAuth provenance, nullable so every existing 
 - `store.go` — persist OAuth provenance; unchanged read path
 
 Config: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URL`. Absent → one-click path
-inactive, manual path unaffected, same posture as `SENTRY_DSN`.
+inactive, manual path unaffected, same posture as `SENTRY_DSN`. All three or none: a partial set
+is rejected at boot, because a half-configured app offers a button that can only fail.
+
+`/v1/config` gained a `capabilities` object reporting whether this deployment has a Slack app, so
+Settings can hide the button rather than offer an install that dies at the callback. Capabilities
+describe the installation, not the workspace, and carry no credential.
 
 ## Frontend
 
