@@ -64,6 +64,28 @@
   .hero-quote { max-width: 560px; margin-top: 32px; }
   footer { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; color: var(--muted); font-size: 13px; }
 </style>
+<script>
+  // The wall identifier comes from ?wall=, so `admin seed-testimonials` can print
+  // a URL that just works instead of asking anyone to edit this file. It is
+  // remembered afterwards, so following a link between these pages keeps it.
+  (function () {
+    var fromQuery = new URLSearchParams(location.search).get('wall')
+    if (fromQuery) try { localStorage.setItem('fidibeki-demo-wall', fromQuery) } catch (e) {}
+    var wall = fromQuery || (function () {
+      try { return localStorage.getItem('fidibeki-demo-wall') } catch (e) { return null }
+    })()
+    if (!wall) return
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('fidibeki-wall, fidibeki-testimonial').forEach(function (element) {
+        element.setAttribute('wall', wall)
+      })
+      document.querySelectorAll('[data-wall-id]').forEach(function (element) {
+        element.textContent = wall
+      })
+    })
+    window.FIDIBEKI_DEMO_WALL = wall
+  })()
+</script>
 </head>
 <body>
   <header>
@@ -83,14 +105,14 @@
 
       <!-- One quote under the hero: the commonest first integration. -->
       <div class="hero-quote">
-        <fidibeki-testimonial wall="WALL_PUBLIC_ID"></fidibeki-testimonial>
+        <fidibeki-testimonial></fidibeki-testimonial>
       </div>
     </div>
 
     <section>
       <h2>Loved by teams who hate process</h2>
       <p class="lede">Every quote below is a real piece of product feedback whose author agreed to publish it.</p>
-      <fidibeki-wall wall="WALL_PUBLIC_ID"></fidibeki-wall>
+      <fidibeki-wall></fidibeki-wall>
     </section>
   </main>
 

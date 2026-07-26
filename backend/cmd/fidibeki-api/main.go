@@ -929,13 +929,85 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	)
 }
 
+// runSeedTestimonials installs the demo corpus and prints the URLs to open.
+//
+// The corpus is deliberately mixed: seeding only glowing quotes would make the
+// Suggested queue look clever when it is doing nothing. Five of the eight must
+// be refused, each for a different reason, so the demo shows the gates working.
+func runSeedTestimonials(
+	ctx context.Context,
+	logger *slog.Logger,
+	settings config.Config,
+	args []string,
+) int {
+	projectPublicKey := ""
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--project-key" && index+1 < len(args) {
+			projectPublicKey = args[index+1]
+			index++
+			continue
+		}
+		logger.Error("unknown seed argument", "argument", args[index])
+		return 2
+	}
+
+	pools, err := db.OpenPools(
+		ctx, settings.DatabaseURLApp, settings.DatabaseURLAdmin,
+		settings.AppDBMaxConns, settings.AdminDBMaxConns,
+	)
+	if err != nil {
+		logger.Error("open database for testimonial seed", "error", err)
+		return 1
+	}
+	defer pools.Close()
+
+	var tenantID, projectID string
+	query := `SELECT tenant_id, id FROM projects ORDER BY created_at LIMIT 1`
+	queryArgs := []any{}
+	if projectPublicKey != "" {
+		query = `SELECT tenant_id, id FROM projects WHERE public_key = $1`
+		queryArgs = append(queryArgs, projectPublicKey)
+	}
+	if err := pools.Admin.QueryRow(ctx, query, queryArgs...).Scan(&tenantID, &projectID); err != nil {
+		logger.Error("no project to seed against; create one first", "error", err)
+		return 1
+	}
+
+	result, err := testimonial.Seed(ctx, pools.Admin, testimonial.Store{},
+		tenantID, projectID, time.Now().UTC())
+	if err != nil {
+		logger.Error("testimonial seed failed", "error", err)
+		return 1
+	}
+
+	logger.Info("testimonial demo seeded",
+		"feedback", result.FeedbackCount,
+		"suggested", result.Suggested,
+		"published", result.Published,
+		"wall", result.WallPublicID,
+	)
+	// Printed rather than logged: these are the two things an operator needs to
+	// paste somewhere, and they should survive any log formatting.
+	fmt.Printf("\nBackoffice:  http://<tenant>.localhost:8088/testimonials\n")
+	fmt.Printf("Mock site:   http://demo.localhost:8088/?wall=%s\n", result.WallPublicID)
+	fmt.Printf("Wall JSON:   http://widget.localhost:8088/v1/public/walls/%s\n\n", result.WallPublicID)
+	return 0
+}
+
 func runAdmin(
 	ctx context.Context,
 	logger *slog.Logger,
 	settings config.Config,
 	args []string,
 ) int {
-	if len(args) == 0 || args[0] != "bootstrap" {
+	if len(args) == 0 {
+		logger.Error("unknown admin command")
+		return 2
+	}
+	if args[0] == "seed-testimonials" {
+		return runSeedTestimonials(ctx, logger, settings, args[1:])
+	}
+	if args[0] != "bootstrap" {
 		logger.Error("unknown admin command")
 		return 2
 	}

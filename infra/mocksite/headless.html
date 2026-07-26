@@ -47,6 +47,28 @@
     border: 1px solid var(--line); border-radius: 8px; font-size: 12px;
   }
 </style>
+<script>
+  // The wall identifier comes from ?wall=, so `admin seed-testimonials` can print
+  // a URL that just works instead of asking anyone to edit this file. It is
+  // remembered afterwards, so following a link between these pages keeps it.
+  (function () {
+    var fromQuery = new URLSearchParams(location.search).get('wall')
+    if (fromQuery) try { localStorage.setItem('fidibeki-demo-wall', fromQuery) } catch (e) {}
+    var wall = fromQuery || (function () {
+      try { return localStorage.getItem('fidibeki-demo-wall') } catch (e) { return null }
+    })()
+    if (!wall) return
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('fidibeki-wall, fidibeki-testimonial').forEach(function (element) {
+        element.setAttribute('wall', wall)
+      })
+      document.querySelectorAll('[data-wall-id]').forEach(function (element) {
+        element.textContent = wall
+      })
+    })
+    window.FIDIBEKI_DEMO_WALL = wall
+  })()
+</script>
 </head>
 <body>
   <header>
@@ -77,16 +99,23 @@
   </main>
 
 <script>
-  const WALL = 'WALL_PUBLIC_ID'
+  const WALL = window.FIDIBEKI_DEMO_WALL || ''
   const ENDPOINT = `http://widget.localhost:8088/v1/public/walls/${WALL}`
-  document.getElementById('request').textContent = `GET ${ENDPOINT}`
+  // Without a wall there is nothing to fetch, and firing the request anyway
+  // would put a confusing 404 in the console of a page that is working fine.
+  if (!WALL) {
+    document.getElementById('request').textContent =
+      'No wall configured. Run: admin seed-testimonials, then open the printed URL.'
+  } else {
+    document.getElementById('request').textContent = `GET ${ENDPOINT}`
+  }
 
   function escapeHTML(value) {
     return String(value ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
-  fetch(ENDPOINT, { credentials: 'omit' })
+  if (WALL) fetch(ENDPOINT, { credentials: 'omit' })
     .then(response => response.ok ? response.json() : null)
     .then(payload => {
       if (!payload || !Array.isArray(payload.cards)) return

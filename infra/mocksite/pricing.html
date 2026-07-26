@@ -46,6 +46,28 @@
   */
   fidibeki-wall { display: block; margin-top: 24px; }
 </style>
+<script>
+  // The wall identifier comes from ?wall=, so `admin seed-testimonials` can print
+  // a URL that just works instead of asking anyone to edit this file. It is
+  // remembered afterwards, so following a link between these pages keeps it.
+  (function () {
+    var fromQuery = new URLSearchParams(location.search).get('wall')
+    if (fromQuery) try { localStorage.setItem('fidibeki-demo-wall', fromQuery) } catch (e) {}
+    var wall = fromQuery || (function () {
+      try { return localStorage.getItem('fidibeki-demo-wall') } catch (e) { return null }
+    })()
+    if (!wall) return
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('fidibeki-wall, fidibeki-testimonial').forEach(function (element) {
+        element.setAttribute('wall', wall)
+      })
+      document.querySelectorAll('[data-wall-id]').forEach(function (element) {
+        element.textContent = wall
+      })
+    })
+    window.FIDIBEKI_DEMO_WALL = wall
+  })()
+</script>
 </head>
 <body>
   <header>
@@ -69,7 +91,7 @@
 
     <section>
       <h2>What teams say once they have paid</h2>
-      <fidibeki-wall wall="WALL_PUBLIC_ID" layout="carousel"></fidibeki-wall>
+      <fidibeki-wall layout="carousel"></fidibeki-wall>
     </section>
   </main>
 </body>
