@@ -53,7 +53,9 @@ export default defineNuxtConfig({
         process.env.NUXT_PUBLIC_UMAMI_WEBSITE_ID || '1d518b00-2258-4884-bf69-63f789d6f11d',
       widgetScriptUrl:
         process.env.NUXT_PUBLIC_WIDGET_SCRIPT_URL || 'https://widget.fidibeki.com/v1/loader.js',
-      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || 'pk_live_GjFasO9215CNAax7LbWhiP',
+      // Supplied per deployment. Unset means the consent banner has no widget to
+      // load, which is the safe way to be wrong.
+      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || '',
       // The banner acts as this site's CMP for the widget, so these must mirror the widget
       // rule's consent configuration: customer_cmp mode with these exact notice versions and a
       // supported locale, otherwise the grants are refused and the widget collects nothing.

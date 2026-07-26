@@ -107,11 +107,11 @@ export default defineNuxtConfig({
       baseDomain: publicBaseDomain,
       widgetUrl: publicWidgetUrl,
       // Our own project key, so the backoffice runs the widget the same way a
-      // customer does. Public keys are meant to be in the page — the API checks
-      // the browser Origin against the project's allowed domains — and this is
-      // the same key the marketing site already ships. Blank it to switch the
-      // widget off for a deployment.
-      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || 'pk_live_GjFasO9215CNAax7LbWhiP',
+      // customer does. Supplied per deployment rather than defaulted here: the
+      // key ends up in every rendered page anyway, but a literal in the repo is
+      // a literal in the history, and this is not the file that should decide
+      // which project a given environment reports into. Unset means no widget.
+      widgetKey: process.env.NUXT_PUBLIC_WIDGET_KEY || '',
       turnstileSiteKey: process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '',
     },
   },
