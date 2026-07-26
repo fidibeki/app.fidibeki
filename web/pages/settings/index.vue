@@ -1321,7 +1321,9 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-events input { accent-color: var(--teal); }
 .settings-events { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 10px; margin: 15px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
 .settings-events legend { padding: 0 4px; }
-.settings-header-actions { display: flex; align-items: center; gap: 8px; }
+/* Two buttons in a header that is already tight on a phone: let them wrap, and keep them
+   right-aligned when they do so the stack reads as one column rather than a ragged step. */
+.settings-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .settings-slack-button { display: inline-flex; align-items: center; gap: 7px; }
 .settings-slack-button img { display: block; border-radius: 4px; }
 .settings-slack-intro { display: flex; align-items: flex-start; gap: 12px; padding: 2px 0 4px; }
