@@ -221,22 +221,69 @@ func TestScoreGivesVaguePraiseNoSpecificityInEitherLanguage(t *testing.T) {
 	}
 }
 
-// The parity guarantee stated in the commit message, asserted rather than
-// claimed: the same concrete testimonial must score identically in both
-// languages.
+// The parity guarantee, asserted across a range of shapes rather than claimed.
+//
+// The "de" of the Portuguese range pattern is a far commoner word than the
+// English "from", so parity has to be checked on sentences that merely contain
+// numbers as well as on genuine before-and-after claims — otherwise the fix for
+// the English bias just introduces a Portuguese one.
 func TestScoreSpecificityIsLanguageNeutral(t *testing.T) {
 	t.Parallel()
-	english, portuguese := glowing(), glowing()
-	english.Text = "We cut triage from 3 days to 20 minutes, a 95% reduction, in the first week."
-	portuguese.Text = "Reduzimos a triagem de 3 dias para 20 minutos, menos 95%, na primeira semana."
-	englishSignal := Score(english).Signals[SignalSpecificity]
-	portugueseSignal := Score(portuguese).Signals[SignalSpecificity]
-	if englishSignal != portugueseSignal {
-		t.Fatalf("specificity: english = %v, portuguese = %v; equivalent quotes must score equally",
-			englishSignal, portugueseSignal)
+	pairs := []struct {
+		name       string
+		english    string
+		portuguese string
+	}{
+		{
+			name:       "before and after claim",
+			english:    "Onboarding fell from 3 days to 20 minutes across every single team.",
+			portuguese: "O onboarding caiu de 3 dias para 20 minutos em todas as equipas.",
+		},
+		{
+			name:       "counts without a range",
+			english:    "There are 4 of us and we handle 300 reports a week without trouble.",
+			portuguese: "Somos 4 pessoas e tratamos de 300 relatorios por semana sem problemas.",
+		},
+		{
+			name:       "a bare number in vague praise",
+			english:    "We like 2 things about it and the support team is genuinely great.",
+			portuguese: "Gostamos de 2 coisas nele e a equipa de suporte e mesmo excelente.",
+		},
+		{
+			name:       "tool consolidation",
+			english:    "We moved from 2 tools to 1 and the team is happier about it now.",
+			portuguese: "Passamos de 2 ferramentas para 1 e a equipa esta mais contente agora.",
+		},
 	}
-	if englishSignal == 0 {
-		t.Fatalf("specificity = 0 for two concrete quotes; the signal is not firing at all")
+	for _, pair := range pairs {
+		t.Run(pair.name, func(t *testing.T) {
+			t.Parallel()
+			english, portuguese := glowing(), glowing()
+			english.Text, portuguese.Text = pair.english, pair.portuguese
+			englishSignal := Score(english).Signals[SignalSpecificity]
+			portugueseSignal := Score(portuguese).Signals[SignalSpecificity]
+			if englishSignal != portugueseSignal {
+				t.Fatalf("specificity: english = %v, portuguese = %v; equivalent quotes must score equally",
+					englishSignal, portugueseSignal)
+			}
+			if englishSignal == 0 {
+				t.Fatalf("specificity = 0 for a quote carrying real numbers; the signal is not firing")
+			}
+		})
+	}
+}
+
+// The range pattern must recognise a before-and-after pair and not fire on
+// sentences that merely contain two numbers.
+func TestScoreRecognisesBeforeAndAfterRanges(t *testing.T) {
+	t.Parallel()
+	ranged := "Onboarding fell from 3 days to 20 minutes across every single team."
+	counted := "There are 4 of us and we handle 300 reports a week without trouble."
+	if !rangePattern.MatchString(ranged) {
+		t.Errorf("range pattern did not match a genuine before-and-after claim: %q", ranged)
+	}
+	if rangePattern.MatchString(counted) {
+		t.Errorf("range pattern fired on a sentence with two unrelated numbers: %q", counted)
 	}
 }
 
