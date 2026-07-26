@@ -43,6 +43,20 @@
 		}
 	}
 
+	# A stand-in for a customer's marketing site, served from its own host so the
+	# testimonials embed crosses a genuine origin boundary. Serving it from the
+	# app host would let CORS and CORP pass by accident.
+	@mocksite host demo.localhost
+	handle @mocksite {
+		root * /srv/mocksite
+		header {
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+		}
+		try_files {path} {path}.html {path}/index.html
+		file_server
+	}
+
 	handle {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}

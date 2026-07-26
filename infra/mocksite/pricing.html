@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pricing — Northwind</title>
+<script async src="http://widget.localhost:8088/v1/testimonials.js"></script>
+<style>
+  :root {
+    --ink: #16211f; --muted: #6b7a76; --line: #e2e8e5;
+    --accent: #0f766e; --surface: #ffffff; --canvas: #f6f8f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
+      --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--canvas); color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 1080px; margin: 0 auto; padding: 20px 24px;
+  }
+  .brand { font-weight: 800; letter-spacing: -0.02em; }
+  nav a { margin-left: 20px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 24px 80px; }
+  h1 { margin: 48px 0 8px; font-size: 40px; letter-spacing: -0.03em; }
+  .lede { margin: 0 0 36px; color: var(--muted); }
+  .plans { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .plan {
+    padding: 22px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  .plan h3 { margin: 0 0 4px; font-size: 15px; }
+  .price { font-size: 30px; font-weight: 750; letter-spacing: -0.02em; }
+  .plan p { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+  section { padding: 56px 0 0; }
+  h2 { margin: 0 0 8px; font-size: 24px; letter-spacing: -0.02em; }
+  /*
+    A carousel next to the pricing table: this is the layout where autoplay and
+    motion preferences matter, so it is worth having a page that exercises it.
+  */
+  fidibeki-wall { display: block; margin-top: 24px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">Northwind</span>
+    <nav>
+      <a href="/">Product</a>
+      <a href="/pricing.html">Pricing</a>
+      <a href="/headless.html">Headless</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Simple pricing</h1>
+    <p class="lede">Every plan includes unlimited projects. Cancel whenever you like.</p>
+
+    <div class="plans">
+      <div class="plan"><h3>Solo</h3><div class="price">€0</div><p>For one person and a plan.</p></div>
+      <div class="plan"><h3>Team</h3><div class="price">€12</div><p>Per person, per month.</p></div>
+      <div class="plan"><h3>Company</h3><div class="price">€29</div><p>Per person, with SSO.</p></div>
+    </div>
+
+    <section>
+      <h2>What teams say once they have paid</h2>
+      <fidibeki-wall wall="WALL_PUBLIC_ID" layout="carousel"></fidibeki-wall>
+    </section>
+  </main>
+</body>
+</html>
