@@ -568,7 +568,8 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
                 {{ t('testimonials.republish') }}
               </button>
               <button
-                v-if="canWrite('testimonial:publish')" type="button" class="icon-button"
+                v-if="canWrite('testimonial:publish')" type="button"
+                class="icon-button icon-button--danger"
                 :disabled="busyID === wall.id" :aria-label="t('testimonials.wallDelete')"
                 :title="t('testimonials.wallDelete')" @click="deleteFor = wall"
               >
