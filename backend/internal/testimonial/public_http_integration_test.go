@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,12 +74,16 @@ func TestTestimonialLifecycle(t *testing.T) {
 
 	const consented = "We cut our triage time from 3 days to 20 minutes in the first week."
 	var item Testimonial
+	// Kept, because the whole point of the next section is that the author can
+	// use it. It is shown to them once and never stored in plaintext.
+	var revocationToken string
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
 		publicID, err := GeneratePublicID(PrefixTestimonial)
 		if err != nil {
 			t.Fatalf("generate public id: %v", err)
 		}
-		_, revocationHash, err := GenerateToken()
+		var revocationHash string
+		revocationToken, revocationHash, err = GenerateToken()
 		if err != nil {
 			t.Fatalf("generate revocation token: %v", err)
 		}
@@ -186,12 +191,37 @@ func TestTestimonialLifecycle(t *testing.T) {
 	// count: footage of its own has to be watched before it goes out.
 	exerciseVideoReviewGate(ctx, t, env, store, wall, item, now)
 
+	// The author withdraws through the link they were given, not through anything
+	// the workspace does for them. The consent notice promises this page exists,
+	// so the test opens it exactly as they would.
+	revokeURL := server.URL + "/v1/public/testimonial-revocations/" + revocationToken
+	preview, previewBody := getJSON(t, revokeURL)
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("open withdrawal link = %d, want 200 (%s)", preview.StatusCode, previewBody)
+	}
+	var view struct {
+		Testimonial RevokeView `json:"testimonial"`
+	}
+	if err := json.Unmarshal([]byte(previewBody), &view); err != nil {
+		t.Fatalf("decode withdrawal view: %v (%s)", err, previewBody)
+	}
+	if view.Testimonial.Quote != consented || view.Testimonial.Revoked {
+		t.Fatalf("withdrawal view = %#v, want their own words and not yet revoked", view.Testimonial)
+	}
+	if unknown, _ := getJSON(t, server.URL+"/v1/public/testimonial-revocations/not-a-token"); unknown.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown withdrawal token = %d, want 404", unknown.StatusCode)
+	}
+
 	// Revocation must take effect on the very next read, without any rebuild.
-	env.withTenant(ctx, t, func(tx pgx.Tx) {
-		if err := store.Revoke(ctx, tx, env.tenantID, item.ID, "author changed their mind", now); err != nil {
-			t.Fatalf("revoke: %v", err)
-		}
-	})
+	withdrawn, withdrawnBody := postJSON(t, revokeURL, `{"reason":"author changed their mind"}`)
+	if withdrawn.StatusCode != http.StatusOK {
+		t.Fatalf("withdraw = %d, want 200 (%s)", withdrawn.StatusCode, withdrawnBody)
+	}
+	// Clicking twice reassures rather than errors: someone returning to an old
+	// email should be told it is already withdrawn.
+	if again, _ := postJSON(t, revokeURL, `{}`); again.StatusCode != http.StatusOK {
+		t.Fatalf("second withdrawal = %d, want 200", again.StatusCode)
+	}
 	afterRevoke, revokedBody := getWall(t, server.URL, wall.PublicID, "")
 	if afterRevoke.StatusCode != http.StatusOK {
 		t.Fatalf("post-revocation status = %d, want 200 with an empty wall", afterRevoke.StatusCode)
@@ -454,6 +484,43 @@ func intPointer(value int) *int { return &value }
 
 func floatPointer(value float64) *float64 { return &value }
 
+// getJSON and postJSON drive the author-facing endpoints over a real socket, so
+// routing is exercised rather than assumed.
+func getJSON(t *testing.T, url string) (*http.Response, string) {
+	t.Helper()
+	return callJSON(t, http.MethodGet, url, "")
+}
+
+func postJSON(t *testing.T, url, body string) (*http.Response, string) {
+	t.Helper()
+	return callJSON(t, http.MethodPost, url, body)
+}
+
+func callJSON(t *testing.T, method, url, body string) (*http.Response, string) {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	request, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("call %s %s: %v", method, url, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	return response, string(payload)
+}
+
 func getWall(t *testing.T, base, publicID, etag string) (*http.Response, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, base+"/v1/public/walls/"+publicID, nil)
@@ -509,6 +576,12 @@ func (e *testimonialEnvironment) publicServer(t *testing.T) *httptest.Server {
 		Store:      Store{},
 		Authorizer: PublicAuthorizer{Database: e.pools.Admin},
 		Begin:      db.BeginFromPool(e.pools.App),
+	})
+	// Mounted on the same router the author's link reaches, rather than calling
+	// the handler directly: routing and middleware are where the last two fatal
+	// defects in this feature lived.
+	RegisterRevokeRoutes(router, RevokeHTTPOptions{
+		Store: Store{}, Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
 	})
 	return httptest.NewServer(router)
 }

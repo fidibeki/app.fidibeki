@@ -57,11 +57,17 @@ watch(request, (value) => {
   quote.value = value.proposed_quote || value.original_text || ''
 }, { immediate: true })
 
-// Built from the configured public app URL rather than window.location, so it
-// is identical whether this page rendered on the server or in the browser.
+// The configured public app URL, falling back to this page's own origin. The
+// author is told to keep this link, and a relative path is not something anyone
+// can keep — which is exactly what an unset appUrl used to produce. The fallback
+// is safe because this route is client-rendered, so there is no server pass to
+// disagree with.
 const runtime = useRuntimeConfig()
-const revocationLink = computed(() =>
-  `${runtime.public.appUrl || ''}/testimonials/revoke/${revocationToken.value}`)
+const revocationLink = computed(() => {
+  const origin = String(runtime.public.appUrl || '') ||
+    (import.meta.client ? window.location.origin : '')
+  return `${origin}/testimonials/revoke/${revocationToken.value}`
+})
 
 // An invitation to someone who never left feedback arrives with nothing behind
 // it, so the page cannot ask them to review words they never wrote.

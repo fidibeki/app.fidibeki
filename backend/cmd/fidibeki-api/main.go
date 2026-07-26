@@ -371,6 +371,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin: db.BeginFromPool(pools.App), Logger: logger,
 	}
 	testimonial.RegisterCollectRoutes(platformRoutes, testimonialCollectOptions)
+	testimonialRevokeOptions := testimonial.RevokeHTTPOptions{
+		Store: testimonial.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), Logger: logger,
+	}
+	testimonial.RegisterRevokeRoutes(platformRoutes, testimonialRevokeOptions)
 	membernotify.RegisterPublicRoutes(platformRoutes, membernotify.PublicHTTPOptions{
 		Store: membernotify.Store{}, Database: pools.Admin, Tokens: memberNotificationTokens,
 		Logger: logger,
@@ -496,6 +501,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	// workspace domain the author was linked to, so a platform-only registration
 	// would answer 404 for every real visitor.
 	testimonial.RegisterCollectRoutes(tenantRoot, testimonialCollectOptions)
+	// Same reason: the withdrawal link points at the workspace host the author
+	// was given, so it has to answer there too.
+	testimonial.RegisterRevokeRoutes(tenantRoot, testimonialRevokeOptions)
 	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},
