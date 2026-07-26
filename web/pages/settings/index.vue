@@ -1288,6 +1288,9 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-danger-icon { color: var(--red); }
 .settings-empty { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 8px; color: var(--muted); }
 .settings-empty h3 { margin: 0; color: var(--ink-soft); font-size: 12px; }
+/* The grid centres each child at its own width, so an unconstrained paragraph stretches the
+   full card and reads as left-aligned beside the centred icon and heading. */
+.settings-empty p { max-width: 46ch; margin: 0; font-size: 10px; line-height: 1.6; text-align: center; }
 .settings-modal { width: min(720px, 100%); max-height: min(88vh, 860px); overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-overlay); }
 .settings-modal > header { position: sticky; top: 0; z-index: 2; display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 10px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .settings-modal h2 { margin: 3px 0 0; font-size: 15px; }
