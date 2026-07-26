@@ -787,6 +787,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:  samlsso.MaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,
 	}
+	// Without this sweep every other part of the testimonial feature works and the
+	// Suggested queue is permanently empty: nothing else connects a feedback to a
+	// candidate row. It runs on the admin pool because it spans every workspace.
+	testimonialScoring := testimonial.ScoringMaintainer{
+		Store: testimonial.Store{}, Database: pools.Admin, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -907,6 +913,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()

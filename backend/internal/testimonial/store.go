@@ -637,3 +637,93 @@ func hashPayload(payload []byte) string {
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
 }
+
+// PendingScoringWork returns feedback that needs a candidate row: never scored,
+// or scored by an older version of the weighting.
+//
+// It joins the AI signals the engine reads, and the tenant's supported locales,
+// so scoring stays a pure function over data rather than reaching for the
+// database itself.
+func (Store) PendingScoringWork(
+	ctx context.Context,
+	query db.Querier,
+	scoreVersion int,
+	limit int,
+) ([]ScoringWork, error) {
+	rows, err := query.Query(ctx, `
+		SELECT feedback.tenant_id, feedback.project_id, feedback.id,
+		       COALESCE(feedback.text, ''), feedback.rating, feedback.status::text,
+		       feedback.text_process_status::text, feedback.text_sentiment_score,
+		       feedback.text_moderation_flags,
+		       (feedback.reporter_email IS NOT NULL AND feedback.notify_reporter),
+		       COALESCE(feedback.language, ''),
+		       COALESCE(project.default_locale, ''),
+		       EXISTS (
+		           SELECT 1 FROM testimonials AS existing
+		           WHERE existing.tenant_id = feedback.tenant_id
+		             AND existing.source_feedback_id = feedback.id
+		             AND existing.status <> 'archived'
+		       )
+		FROM feedbacks AS feedback
+		JOIN projects AS project
+		  ON project.tenant_id = feedback.tenant_id AND project.id = feedback.project_id
+		LEFT JOIN testimonial_candidates AS candidate
+		  ON candidate.tenant_id = feedback.tenant_id AND candidate.feedback_id = feedback.id
+		WHERE candidate.feedback_id IS NULL OR candidate.score_version < $1
+		ORDER BY feedback.created_at DESC
+		LIMIT $2
+	`, scoreVersion, limit)
+	if err != nil {
+		return nil, fmt.Errorf("load pending testimonial scoring work: %w", err)
+	}
+	defer rows.Close()
+
+	work := []ScoringWork{}
+	for rows.Next() {
+		var item ScoringWork
+		var sentiment *float64
+		var defaultLocale string
+		if err := rows.Scan(
+			&item.TenantID, &item.ProjectID, &item.FeedbackID, &item.Text, &item.Rating,
+			&item.FeedbackStatus, &item.ModerationStatus, &sentiment, &item.ModerationFlags,
+			&item.AuthorReachable, &item.Language, &defaultLocale, &item.HasTestimonial,
+		); err != nil {
+			return nil, fmt.Errorf("scan testimonial scoring work: %w", err)
+		}
+		item.SentimentScore = sentiment
+		if defaultLocale != "" {
+			item.SupportedLocales = []string{defaultLocale}
+		}
+		work = append(work, item)
+	}
+	return work, rows.Err()
+}
+
+// RefreshDecayedScores reapplies age decay to eligible candidates.
+//
+// Only eligible, undismissed rows are touched: an ineligible candidate carries
+// no score to decay, and a dismissed one will never be shown again, so both
+// would be wasted writes on every sweep.
+func (Store) RefreshDecayedScores(
+	ctx context.Context,
+	query db.Querier,
+	now time.Time,
+) (int64, error) {
+	tag, err := query.Exec(ctx, `
+		UPDATE testimonial_candidates AS candidate
+		SET decayed_score = GREATEST(0, LEAST(1,
+			candidate.base_score * exp(
+				-GREATEST(0, EXTRACT(EPOCH FROM ($1::timestamptz - feedback.created_at)) / 86400.0) / 90.0
+			)
+		))
+		FROM feedbacks AS feedback
+		WHERE feedback.tenant_id = candidate.tenant_id
+		  AND feedback.id = candidate.feedback_id
+		  AND candidate.eligibility = 'eligible'
+		  AND candidate.dismissed_at IS NULL
+	`, now)
+	if err != nil {
+		return 0, fmt.Errorf("refresh testimonial decayed scores: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
