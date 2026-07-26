@@ -263,6 +263,11 @@ test('pseudo-locale product surfaces remain responsive and preserve customer con
     if (path === '/v1/integrations' && request.method() === 'GET') {
       return json(route, { integrations: [] })
     }
+    // Settings loads its tabs in one Promise.all, so an unmocked route here fails
+    // the whole page rather than just the tracker card.
+    if (path === '/v1/issue-trackers' && request.method() === 'GET') {
+      return json(route, { issue_trackers: [] })
+    }
     if (path === '/v1/organization-profile' && request.method() === 'GET') {
       return json(route, {
         organization_profile: {
