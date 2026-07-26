@@ -51,7 +51,7 @@ const { can, canWrite, member: currentMember } = useAuth()
 const { t } = useI18n()
 const localizedError = useLocalizedAPIError()
 const { currency, date, integer, plural } = useRegionalFormat()
-const { success: showSuccessToast } = useAppToast()
+const { success: showSuccessToast, error: showErrorToast } = useAppToast()
 
 const tabIDs = ['workspace', 'members', 'security', 'sso', 'keys', 'integrations', 'health', 'privacy', 'audit'] as const
 type SettingsTab = typeof tabIDs[number]
@@ -100,7 +100,7 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
 
 const modal = ref<
   'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | 'integration-privacy'
-  | 'issue-tracker' | 'issue-tracker-destination' | null
+  | 'slack-install' | 'issue-tracker' | 'issue-tracker-destination' | null
 >(null)
 const pending = ref(false)
 const formError = ref('')
@@ -186,6 +186,7 @@ const modalTitle = computed(() => {
   if (modal.value === 'transfer') return t('admin.settings.modal.transferOwnership')
   if (modal.value === 'key') return t('admin.settings.modal.createKey')
   if (modal.value === 'integration-privacy') return t('admin.settings.modal.integrationPrivacy')
+  if (modal.value === 'slack-install') return t('admin.settings.modal.installSlack')
   if (modal.value === 'issue-tracker') return selectedTracker.value
     ? t('admin.settings.modal.replaceTrackerCredential')
     : t('admin.settings.modal.connectTracker')
@@ -198,6 +199,7 @@ const modalEyebrow = computed(() => {
   if (modal.value === 'transfer') return t('admin.settings.modal.workspaceOwner')
   if (modal.value === 'key') return t('admin.settings.modal.machineCredential')
   if (modal.value === 'integration-privacy') return t('admin.settings.modal.dataDisclosure')
+  if (modal.value === 'slack-install') return t('admin.settings.modal.oneClickInstall')
   if (modal.value === 'issue-tracker' || modal.value === 'issue-tracker-destination') {
     return t('admin.settings.modal.issueTracker')
   }
@@ -519,6 +521,56 @@ function openIntegration() {
   selectedIntegration.value = null
   modal.value = 'integration'
 }
+
+function openSlackInstall() {
+  if (!canWrite('integration:create')) return
+  formError.value = ''
+  integrationEvents.value = ['feedback.created']
+  integrationPrivacyFields.value = []
+  modal.value = 'slack-install'
+}
+
+// Hands off to Slack, which renders its own channel picker and sends the browser back to the
+// apex callback. The events and privacy fields chosen here are held server-side against the
+// state token, so the integration comes back already configured.
+async function startSlackInstall() {
+  if (!canWrite('integration:create') || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    const response = await $apiFetch<{ authorize_url: string }>('/v1/integrations/slack/install', {
+      method: 'POST',
+      body: {
+        events: integrationEvents.value,
+        privacy_fields: integrationPrivacyFields.value,
+      },
+    })
+    window.location.href = response.authorize_url
+  } catch (installError) {
+    formError.value = localizedError.message(installError, 'admin.settings.errors.slackInstall')
+    pending.value = false
+  }
+}
+
+// The callback returns to ?tab=integrations&slack=<result>. Report it once, then strip the
+// parameter so a refresh does not replay the message.
+const slackInstallResult = computed(() =>
+  typeof route.query.slack === 'string' ? route.query.slack : '',
+)
+
+watch(slackInstallResult, (result) => {
+  if (!result) return
+  if (result === 'installed') {
+    showSuccessToast(t('admin.settings.integrations.slack.installed'))
+  } else {
+    showErrorToast(t(result === 'denied'
+      ? 'admin.settings.integrations.slack.denied'
+      : 'admin.settings.integrations.slack.failed'))
+  }
+  const query = { ...route.query }
+  delete query.slack
+  void navigateTo({ path: route.path, query }, { replace: true })
+}, { immediate: true })
 
 function toggleEvent(event: IntegrationEvent) {
   integrationEvents.value = integrationEvents.value.includes(event)
@@ -983,13 +1035,13 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           <p v-if="trackerError" class="settings-form-error settings-tracker-error" role="alert">{{ trackerError }}</p>
         </section>
         <section class="app-surface settings-section">
-        <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></header>
+        <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><div class="settings-header-actions"><button v-if="canWrite('integration:create')" class="app-button settings-slack-button" @click="openSlackInstall"><img src="/brand/fidibeki-mark.svg" alt="" width="16" height="16" /> {{ t('admin.settings.integrations.slack.add') }}</button><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></div></header>
         <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.integrations.accessRequired') }}</h3></div>
         <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>{{ t('admin.settings.integrations.none') }}</h3></div>
         <div v-else class="settings-table settings-integrations">
           <div class="settings-row settings-row--head"><span>{{ t('admin.settings.integrations.columns.integration') }}</span><span>{{ t('admin.settings.integrations.columns.endpoint') }}</span><span>{{ t('admin.settings.integrations.columns.events') }}</span><span>{{ t('admin.settings.integrations.columns.status') }}</span><span /></div>
           <div v-for="integration in data.integrations" :key="integration.id" class="settings-row">
-            <span><b>{{ integration.name }}</b><small>{{ integration.kind }}</small></span>
+            <span><b>{{ integration.name }}</b><small>{{ integration.install_source === 'oauth' ? t('admin.settings.integrations.slack.installedVia', { workspace: integration.slack_team_name || 'Slack' }) : integration.kind }}</small></span>
             <code>{{ integration.webhook_url }}</code>
             <span>{{ t('admin.settings.integrations.subscribed', { count: integer(integration.events.length) }) }}</span>
             <span class="settings-state"><i /><span>{{ integration.is_active ? t('admin.common.active') : t('admin.common.paused') }}<small>{{ integration.privacy_fields?.length ? t('admin.settings.integrations.privacy.optionalCount', { count: integer(integration.privacy_fields.length) }) : t('admin.settings.integrations.privacy.minimum') }}</small></span></span>
@@ -1071,6 +1123,25 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
             <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           </template>
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? t('admin.common.connecting') : t('admin.settings.integrations.add') }}</button></footer>
+        </form>
+
+        <form v-else-if="modal === 'slack-install'" class="settings-slack-install" @submit.prevent="startSlackInstall">
+          <div class="settings-slack-intro">
+            <img src="/brand/fidibeki-mark.svg" alt="" width="44" height="44" />
+            <div><b>{{ t('admin.settings.integrations.slack.introTitle') }}</b><p>{{ t('admin.settings.integrations.slack.introBody') }}</p></div>
+          </div>
+          <fieldset class="settings-events"><legend>{{ t('admin.settings.integrations.events') }}</legend><label v-for="event in (['feedback.created', 'issue.created', 'issue.updated', 'issue.resolved'] as IntegrationEvent[])" :key="event"><input type="checkbox" :checked="integrationEvents.includes(event)" @change="toggleEvent(event)" />{{ eventLabel(event) }}</label></fieldset>
+          <section class="settings-disclosure-warning"><AlertTriangle :size="17" /><div><b>{{ t('admin.settings.integrations.privacy.destinationTitle') }}</b><p>{{ t('admin.settings.integrations.privacy.destinationWarning') }}</p></div></section>
+          <fieldset class="settings-privacy-fields">
+            <legend>{{ t('admin.settings.integrations.privacy.optionalFields') }}</legend>
+            <p>{{ t('admin.settings.integrations.privacy.minimumIncluded') }}</p>
+            <label v-for="field in privacyFieldOptions" :key="field">
+              <input type="checkbox" :checked="integrationPrivacyFields.includes(field)" @change="togglePrivacyField(field)" />
+              <span><b>{{ privacyFieldLabel(field) }}</b><small>{{ privacyFieldDescription(field) }}</small></span>
+            </label>
+          </fieldset>
+          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !integrationEvents.length">{{ pending ? t('admin.common.connecting') : t('admin.settings.integrations.slack.continue') }}</button></footer>
         </form>
 
         <form v-else-if="modal === 'issue-tracker'" @submit.prevent="connectIssueTracker">
@@ -1241,6 +1312,13 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-events input { accent-color: var(--teal); }
 .settings-events { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 10px; margin: 15px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
 .settings-events legend { padding: 0 4px; }
+.settings-header-actions { display: flex; align-items: center; gap: 8px; }
+.settings-slack-button { display: inline-flex; align-items: center; gap: 7px; }
+.settings-slack-button img { display: block; border-radius: 4px; }
+.settings-slack-intro { display: flex; align-items: flex-start; gap: 12px; padding: 2px 0 4px; }
+.settings-slack-intro img { flex: 0 0 auto; border-radius: 10px; }
+.settings-slack-intro b { display: block; font-size: 12px; }
+.settings-slack-intro p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
 .settings-disclosure-warning { display: flex; align-items: flex-start; gap: 9px; margin: 15px 0 0; padding: 11px 12px; background: var(--amber-soft); border: 1px solid var(--amber-line); border-radius: 5px; color: var(--amber-ink); }
 .settings-disclosure-warning svg { flex: 0 0 auto; margin-top: 1px; }
 .settings-disclosure-warning b { display: block; color: var(--amber-ink); font-size: 10px; }

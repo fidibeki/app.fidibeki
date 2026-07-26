@@ -75,6 +75,9 @@ for both services because configuration is validated before the command starts.
 | `AI_RECONCILE_INTERVAL` | no | Stalled-task reconciliation interval; default `5m`. |
 | `DIGEST_MEMBERS_PER_RUN` | no | Members processed per notification-digest pass, per cadence; default `200`. |
 | `SENTRY_DSN` | no | Backend Sentry DSN. Empty disables reporting. |
+| `SLACK_CLIENT_ID` | no | Slack app client ID for one-click install. |
+| `SLACK_CLIENT_SECRET` | no | Slack app client secret. |
+| `SLACK_REDIRECT_URL` | no | Install callback, e.g. `https://api.<BASE_DOMAIN>/v1/integrations/slack/callback`. Must match a redirect URL registered on the Slack app exactly, and must be HTTPS. |
 
 ### Browser upload CORS
 

@@ -610,6 +610,239 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if linkedID != nil || deliveryKey != "integration:"+created.Integration.ID {
 		t.Errorf("preserved delivery = integration %#v key %q", linkedID, deliveryKey)
 	}
+
+	verifySlackOneClickInstall(t, ctx, slackInstallHarness{
+		root: root, pools: pools, cipher: cipher, jwt: jwtManager,
+		tenantIDs: tenantIDs, memberIDs: memberIDs,
+		ownerToken: ownerToken, growthToken: growthToken, betaToken: betaToken,
+	})
+}
+
+type slackInstallHarness struct {
+	root      *pgx.Conn
+	pools     *db.Pools
+	cipher    *Cipher
+	jwt       *auth.JWTManager
+	tenantIDs map[string]string
+	memberIDs map[string]string
+
+	ownerToken  string
+	growthToken string
+	betaToken   string
+}
+
+// verifySlackOneClickInstall drives the whole round trip against the real schema: the
+// tenant-scoped install endpoint, then the apex callback, which runs outside the tenant
+// transaction middleware and has to scope itself from the state it consumes.
+func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slackInstallHarness) {
+	t.Helper()
+
+	const webhookURL = "https://hooks.slack.com/services/T-ACME/B-INSTALL/secret-path"
+	const accessToken = "xoxb-install-token"
+	channel, channelID := "#feedback", "C-FEEDBACK"
+	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/oauth.v2.access":
+			_, _ = fmt.Fprintf(w, `{"ok":true,"access_token":%q,"team":{"id":"T-ACME","name":"Acme HQ"},
+				"incoming_webhook":{"url":%q,"channel":%q,"channel_id":%q}}`,
+				accessToken, webhookURL, channel, channelID)
+		case "/api/auth.revoke":
+			_, _ = fmt.Fprint(w, `{"ok":true,"revoked":true}`)
+		default:
+			t.Errorf("unexpected Slack path %q", r.URL.Path)
+		}
+	}))
+	defer slackAPI.Close()
+
+	oauth := SlackOAuth{
+		ClientID: "client-id", ClientSecret: "client-secret",
+		RedirectURL: "https://api.localhost" + SlackCallbackPath,
+		Client:      rewritingDoer{base: slackAPI.URL, client: slackAPI.Client()},
+		States:      newFakeStateStore(),
+	}
+	routes := chi.NewRouter()
+	RegisterRoutes(routes, HTTPOptions{
+		Store: Store{Cipher: harness.cipher}, JWT: harness.jwt,
+		AllowInsecureURLs: true, Slack: oauth,
+	})
+	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: harness.pools.Admin},
+		Begin: db.BeginFromPool(harness.pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	})(routes)
+
+	// The callback lives on the apex host with no tenant middleware at all.
+	apex := chi.NewRouter()
+	RegisterSlackCallbackRoute(apex, SlackCallbackOptions{
+		Store: Store{Cipher: harness.cipher}, Slack: oauth,
+		Begin: db.BeginFromPool(harness.pools.App),
+		BaseDomain: "localhost", WebPublicBaseURL: "http://localhost",
+	})
+
+	install := func(slug, token string) *httptest.ResponseRecorder {
+		return integrationRequest(handler, slug, http.MethodPost, "/v1/integrations/slack/install",
+			`{"events":["feedback.created","issue.resolved"],"privacy_fields":["description"]}`, token)
+	}
+	callback := func(query string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "http://api.localhost"+SlackCallbackPath+query, nil)
+		request.Host = "api.localhost"
+		recorder := httptest.NewRecorder()
+		apex.ServeHTTP(recorder, request)
+		return recorder
+	}
+	beginInstall := func(t *testing.T, slug, token string) string {
+		t.Helper()
+		response := install(slug, token)
+		if response.Code != http.StatusOK {
+			t.Fatalf("install status = %d, body = %s", response.Code, response.Body.String())
+		}
+		var decoded struct {
+			AuthorizeURL string `json:"authorize_url"`
+		}
+		decodeIntegrationResponse(t, response, &decoded)
+		return mustQueryParam(t, decoded.AuthorizeURL, "state")
+	}
+
+	// The plan gate and RBAC apply to the install endpoint exactly as they do to a create.
+	if gated := install("growth", harness.growthToken); gated.Code != http.StatusPaymentRequired {
+		t.Errorf("growth install status = %d, want %d", gated.Code, http.StatusPaymentRequired)
+	}
+	// Permissions are read from the member row rather than the token, so denial has to be
+	// proven with a member that genuinely lacks integration:create.
+	var readerID string
+	if err := harness.root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'reader@acme.test', ARRAY['integration:read']) RETURNING id
+	`, harness.tenantIDs["acme"]).Scan(&readerID); err != nil {
+		t.Fatalf("create read-only member: %v", err)
+	}
+	readOnly, _, _ := harness.jwt.IssueTenant(
+		readerID, harness.tenantIDs["acme"], []string{string(auth.PermissionIntegrationRead)},
+	)
+	if denied := install("acme", readOnly); denied.Code != http.StatusForbidden {
+		t.Errorf("install without integration:create status = %d", denied.Code)
+	}
+	invalidEvents := integrationRequest(handler, "acme", http.MethodPost,
+		"/v1/integrations/slack/install", `{"events":[]}`, harness.ownerToken)
+	if invalidEvents.Code != http.StatusUnprocessableEntity {
+		t.Errorf("install without events status = %d", invalidEvents.Code)
+	}
+
+	// A complete install: the user never sees or supplies the webhook URL.
+	token := beginInstall(t, "acme", harness.ownerToken)
+	response := callback("?code=install-code&state=" + token)
+	if response.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, body = %s", response.Code, response.Body.String())
+	}
+	location := response.Header().Get("Location")
+	if !strings.HasPrefix(location, "http://acme.localhost/settings") ||
+		!strings.Contains(location, "slack=installed") {
+		t.Errorf("callback redirect = %q", location)
+	}
+
+	var storedID, storedURL, storedName, storedSource string
+	var storedChannel, storedTeam *string
+	var tokenCiphertext []byte
+	var storedEvents, storedPrivacy []string
+	if err := harness.root.QueryRow(ctx, `
+		SELECT id, webhook_url, name, install_source, channel, slack_team_name,
+		       slack_access_token_ciphertext, events::text[], privacy_fields
+		FROM integrations WHERE tenant_id = $1 AND install_source = 'oauth'
+	`, harness.tenantIDs["acme"]).Scan(&storedID, &storedURL, &storedName, &storedSource,
+		&storedChannel, &storedTeam, &tokenCiphertext, &storedEvents, &storedPrivacy); err != nil {
+		t.Fatalf("read installed integration: %v", err)
+	}
+	if storedURL != webhookURL || storedSource != string(InstallSourceOAuth) {
+		t.Errorf("stored install = %q / %q", storedURL, storedSource)
+	}
+	if storedChannel == nil || *storedChannel != channel || storedName != channel {
+		t.Errorf("stored channel = %v, name = %q", storedChannel, storedName)
+	}
+	if storedTeam == nil || *storedTeam != "Acme HQ" {
+		t.Errorf("stored team = %v", storedTeam)
+	}
+	// The events chosen before leaving for Slack survive the round trip in server-side state.
+	if len(storedEvents) != 2 || len(storedPrivacy) != 1 || storedPrivacy[0] != PrivacyFieldDescription {
+		t.Errorf("stored events = %v, privacy = %v", storedEvents, storedPrivacy)
+	}
+	if bytesContainAny(tokenCiphertext, accessToken) {
+		t.Error("slack bot token was stored in plaintext")
+	}
+
+	// Re-installing the same channel must update that destination, not add a second one
+	// that would double-post every notification.
+	secondToken := beginInstall(t, "acme", harness.ownerToken)
+	if again := callback("?code=install-code&state=" + secondToken); again.Code != http.StatusFound {
+		t.Fatalf("re-install status = %d", again.Code)
+	}
+	var installCount int
+	if err := harness.root.QueryRow(ctx, `
+		SELECT count(*) FROM integrations WHERE tenant_id = $1 AND install_source = 'oauth'
+	`, harness.tenantIDs["acme"]).Scan(&installCount); err != nil {
+		t.Fatalf("count installs: %v", err)
+	}
+	if installCount != 1 {
+		t.Errorf("installs after re-install = %d, want 1", installCount)
+	}
+
+	// A second channel in the same workspace is a genuinely separate destination.
+	channel, channelID = "#alerts", "C-ALERTS"
+	thirdToken := beginInstall(t, "acme", harness.ownerToken)
+	if other := callback("?code=install-code&state=" + thirdToken); other.Code != http.StatusFound {
+		t.Fatalf("second channel install status = %d", other.Code)
+	}
+	if err := harness.root.QueryRow(ctx, `
+		SELECT count(*) FROM integrations WHERE tenant_id = $1 AND install_source = 'oauth'
+	`, harness.tenantIDs["acme"]).Scan(&installCount); err != nil {
+		t.Fatalf("count installs: %v", err)
+	}
+	if installCount != 2 {
+		t.Errorf("installs after second channel = %d, want 2", installCount)
+	}
+
+	// An install started by another workspace lands in that workspace only. The callback
+	// derives the tenant from server-side state, so acme cannot be reached from beta's flow.
+	channel, channelID = "#beta-feed", "C-BETA"
+	betaToken := beginInstall(t, "beta", harness.betaToken)
+	if betaCallback := callback("?code=install-code&state=" + betaToken); betaCallback.Code != http.StatusFound {
+		t.Fatalf("beta install status = %d", betaCallback.Code)
+	}
+	var betaCount, acmeCount int
+	if err := harness.root.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE tenant_id = $1), count(*) FILTER (WHERE tenant_id = $2)
+		FROM integrations WHERE install_source = 'oauth'
+	`, harness.tenantIDs["beta"], harness.tenantIDs["acme"]).Scan(&betaCount, &acmeCount); err != nil {
+		t.Fatalf("count cross-tenant installs: %v", err)
+	}
+	if betaCount != 1 || acmeCount != 2 {
+		t.Errorf("beta installs = %d, acme installs = %d; want 1 and 2", betaCount, acmeCount)
+	}
+
+	// Removing an OAuth install revokes the token with Slack and drops the row.
+	removed := integrationRequest(handler, "acme", http.MethodDelete,
+		"/v1/integrations/"+storedID, "", harness.ownerToken)
+	if removed.Code != http.StatusNoContent {
+		t.Fatalf("delete install status = %d, body = %s", removed.Code, removed.Body.String())
+	}
+	var remaining int
+	if err := harness.root.QueryRow(ctx, `
+		SELECT count(*) FROM integrations WHERE tenant_id = $1 AND id = $2
+	`, harness.tenantIDs["acme"], storedID).Scan(&remaining); err != nil {
+		t.Fatalf("count after delete: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("rows after delete = %d, want 0", remaining)
+	}
+	var auditKinds []string
+	if err := harness.root.QueryRow(ctx, `
+		SELECT array_agg(kind ORDER BY kind) FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_type = $2
+	`, harness.tenantIDs["acme"], AuditResourceType).Scan(&auditKinds); err != nil {
+		t.Fatalf("read install audit: %v", err)
+	}
+	if !slices.Contains(auditKinds, AuditKindInstalled) || !slices.Contains(auditKinds, AuditKindUninstall) {
+		t.Errorf("audit kinds = %v, want install and uninstall recorded", auditKinds)
+	}
 }
 
 func createIntegrationThroughAPI(

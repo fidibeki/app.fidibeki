@@ -147,7 +147,8 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 				"google_gemini_api", "jira_cloud_issue_tracker", "linear_issue_tracker",
 				"microsoft_teams_incoming_webhook", "postgresql_runtime", "redis_asynq",
 				"resend_transactional_email", "s3_compatible_object_storage",
-				"sentry_error_telemetry", "slack_incoming_webhook", "stripe_billing_api",
+				"sentry_error_telemetry", "slack_incoming_webhook", "slack_oauth_install",
+				"stripe_billing_api",
 			},
 		},
 	}
