@@ -150,6 +150,30 @@ shown once, while secrets and custom headers are stored with AES-256-GCM under
 `INTEGRATION_ENCRYPTION_KEY`. Slack uses Block Kit and Teams uses MessageCard payloads. Every HTTP
 attempt is isolated, retried by Asynq, and recorded in `delivery_logs` without blocking feedback.
 
+The same tenants can connect Jira and Linear at `/v1/issue-trackers` to create an external issue
+from a Fidibeki issue. Both providers are disabled by default. An administrator with
+`integration:create` stores a credential with `PUT /v1/issue-trackers/{jira|linear}`, which is
+validated live before anything is written; `GET /v1/issue-trackers/{provider}/destinations` lists
+the Jira projects and issue types or the Linear teams and projects; and
+`PATCH /v1/issue-trackers/{provider}` selects a destination and switches the provider on, which is
+only accepted once the selection is verified against the provider. Credentials are encrypted with
+AES-256-GCM under `INTEGRATION_ENCRYPTION_KEY` and never leave the API.
+
+A provider that is enabled can also be switched to automatic creation with `auto_create`. Every
+`issue.created` outbox event then fans out one `issue-tracker:auto-create` task per opted-in
+provider, and the worker creates the copy in the background: the Fidibeki issue is never delayed
+or rolled back by a provider, a redelivered event converges on the same attempt, and a rejected
+credential is recorded for a member to fix and retry rather than retried for hours. Turning a
+provider off also stops automatic creation.
+
+Members with `issue:update` create the external copy with `POST /v1/issues/{issueID}/external`
+after reviewing the title, description, priority, and destination. The Fidibeki issue stays the
+source record: the attempt is written before the provider is called, an `idempotency_key` plus a
+partial unique index make a replayed or concurrent request converge on the same external issue, and
+a provider failure is stored with an actionable error and retried at
+`POST /v1/issues/{issueID}/external/{linkID}/retry`. Configuration changes appear in the
+workspace audit ledger and every creation attempt appears on the issue timeline.
+
 Project and widget configuration is available to authenticated tenant members under
 `/v1/projects` and `/v1/projects/{projectID}/widget-rules`. Project creation enforces the current
 plan's project limit. Allowed domains accept exact hosts and leading wildcards such as

@@ -8,6 +8,9 @@ import {
   Link2,
   MailCheck,
   Plus,
+  Power,
+  PowerOff,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
@@ -28,6 +31,9 @@ import type {
   IntegrationEvent,
   IntegrationKind,
   IntegrationPrivacyField,
+  IssueTrackerConnection,
+  IssueTrackerDestination,
+  IssueTrackerProvider,
   Member,
   MemberDomain,
   OrganizationProfile,
@@ -60,7 +66,7 @@ const activeTab = computed<SettingsTab>(() => {
 })
 
 const { data, status, error, refresh } = await useAsyncData('settings-data', async () => {
-  const [configuration, members, memberDomains, keys, integrations, projects] = await Promise.all([
+  const [configuration, members, memberDomains, keys, integrations, issueTrackers, projects] = await Promise.all([
     $apiFetch<TenantConfiguration>('/v1/config'),
     can('member:read')
       ? $apiFetch<{ members: Member[] }>('/v1/members')
@@ -74,6 +80,9 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
     can('integration:read')
       ? $apiFetch<{ integrations: Integration[] }>('/v1/integrations')
       : Promise.resolve({ integrations: [] }),
+    can('integration:read')
+      ? $apiFetch<{ issue_trackers: IssueTrackerConnection[] }>('/v1/issue-trackers')
+      : Promise.resolve({ issue_trackers: [] }),
     can('project:read')
       ? $apiFetch<{ projects: Project[] }>('/v1/projects')
       : Promise.resolve({ projects: [] }),
@@ -84,14 +93,19 @@ const { data, status, error, refresh } = await useAsyncData('settings-data', asy
     memberDomains: memberDomains.member_domains,
     keys: keys.api_keys,
     integrations: integrations.integrations,
+    issueTrackers: issueTrackers.issue_trackers,
     projects: projects.projects,
   }
 })
 
-const modal = ref<'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | 'integration-privacy' | null>(null)
+const modal = ref<
+  'member' | 'member-lifecycle' | 'transfer' | 'key' | 'integration' | 'integration-privacy'
+  | 'issue-tracker' | 'issue-tracker-destination' | null
+>(null)
 const pending = ref(false)
 const formError = ref('')
 const reporterAccessError = ref('')
+const trackerError = ref('')
 const appearanceFieldErrors = ref<Record<string, string>>({})
 const appearanceFormError = ref('')
 const memberEmailError = ref('')
@@ -127,9 +141,20 @@ const integrationPrivacyFields = ref<IntegrationPrivacyField[]>([])
 const selectedIntegration = ref<Integration | null>(null)
 const workspaceAppearance = ref<WidgetAppearanceOverrides>({})
 const revealedSecret = ref('')
+const issueTrackerProviders: IssueTrackerProvider[] = ['jira', 'linear']
+const trackerProvider = ref<IssueTrackerProvider>('jira')
+const trackerSiteURL = ref('')
+const trackerEmail = ref('')
+const trackerToken = ref('')
+const trackerDestinations = ref<IssueTrackerDestination[]>([])
+const trackerDestinationID = ref('')
+const trackerDetailID = ref('')
+const trackerAutoCreate = ref(false)
+const selectedTracker = ref<IssueTrackerConnection | null>(null)
 type DestructiveSettingAction =
   | { kind: 'key', resource: APIKey }
   | { kind: 'integration', resource: Integration }
+  | { kind: 'issue-tracker', resource: IssueTrackerConnection }
 const destructiveAction = ref<DestructiveSettingAction | null>(null)
 const destructivePending = ref(false)
 const destructiveError = ref('')
@@ -161,6 +186,10 @@ const modalTitle = computed(() => {
   if (modal.value === 'transfer') return t('admin.settings.modal.transferOwnership')
   if (modal.value === 'key') return t('admin.settings.modal.createKey')
   if (modal.value === 'integration-privacy') return t('admin.settings.modal.integrationPrivacy')
+  if (modal.value === 'issue-tracker') return selectedTracker.value
+    ? t('admin.settings.modal.replaceTrackerCredential')
+    : t('admin.settings.modal.connectTracker')
+  if (modal.value === 'issue-tracker-destination') return t('admin.settings.modal.trackerDestination')
   return t('admin.settings.modal.addIntegration')
 })
 const modalEyebrow = computed(() => {
@@ -169,24 +198,43 @@ const modalEyebrow = computed(() => {
   if (modal.value === 'transfer') return t('admin.settings.modal.workspaceOwner')
   if (modal.value === 'key') return t('admin.settings.modal.machineCredential')
   if (modal.value === 'integration-privacy') return t('admin.settings.modal.dataDisclosure')
+  if (modal.value === 'issue-tracker' || modal.value === 'issue-tracker-destination') {
+    return t('admin.settings.modal.issueTracker')
+  }
   return t('admin.settings.modal.deliveryEndpoint')
 })
 const destructiveTitle = computed(() => {
   const action = destructiveAction.value
   if (!action) return ''
-  return action.kind === 'key'
-    ? t('admin.settings.keys.revokeTitle', { name: action.resource.name })
-    : t('admin.settings.integrations.removeTitle', { name: action.resource.name })
+  if (action.kind === 'key') return t('admin.settings.keys.revokeTitle', { name: action.resource.name })
+  if (action.kind === 'issue-tracker') {
+    return t('admin.settings.issueTrackers.disconnectTitle', {
+      name: trackerLabel(action.resource.provider),
+    })
+  }
+  return t('admin.settings.integrations.removeTitle', { name: action.resource.name })
 })
-const destructiveDescription = computed(() => destructiveAction.value?.kind === 'key'
-  ? t('admin.settings.keys.revokeDescription')
-  : t('admin.settings.integrations.removeDescription'))
-const destructiveConfirmLabel = computed(() => destructiveAction.value?.kind === 'key'
-  ? t('admin.settings.keys.revoke')
-  : t('admin.settings.integrations.remove'))
-const destructivePendingLabel = computed(() => destructiveAction.value?.kind === 'key'
-  ? t('admin.settings.keys.revoking')
-  : t('admin.settings.integrations.removing'))
+const destructiveDescription = computed(() => {
+  if (destructiveAction.value?.kind === 'key') return t('admin.settings.keys.revokeDescription')
+  if (destructiveAction.value?.kind === 'issue-tracker') {
+    return t('admin.settings.issueTrackers.disconnectDescription')
+  }
+  return t('admin.settings.integrations.removeDescription')
+})
+const destructiveConfirmLabel = computed(() => {
+  if (destructiveAction.value?.kind === 'key') return t('admin.settings.keys.revoke')
+  if (destructiveAction.value?.kind === 'issue-tracker') {
+    return t('admin.settings.issueTrackers.disconnect')
+  }
+  return t('admin.settings.integrations.remove')
+})
+const destructivePendingLabel = computed(() => {
+  if (destructiveAction.value?.kind === 'key') return t('admin.settings.keys.revoking')
+  if (destructiveAction.value?.kind === 'issue-tracker') {
+    return t('admin.settings.issueTrackers.disconnecting')
+  }
+  return t('admin.settings.integrations.removing')
+})
 
 watch(data, (value) => {
   if (!value) return
@@ -540,6 +588,143 @@ async function saveIntegrationPrivacy() {
   }
 }
 
+function trackerLabel(provider: IssueTrackerProvider) {
+  return t(`admin.settings.issueTrackers.provider.${provider}`)
+}
+
+function trackerDestinationLabel(tracker: IssueTrackerConnection) {
+  if (!tracker.destination_id) return ''
+  const detail = tracker.provider === 'jira'
+    ? tracker.issue_type_name
+    : tracker.sub_destination_name
+  return detail ? `${tracker.destination_name} · ${detail}` : tracker.destination_name
+}
+
+function trackerReady(tracker: IssueTrackerConnection) {
+  return Boolean(tracker.destination_id)
+    && (tracker.provider !== 'jira' || Boolean(tracker.issue_type_id))
+}
+
+const trackerDetailOptions = computed(() => {
+  const chosen = trackerDestinations.value.find(entry => entry.id === trackerDestinationID.value)
+  return (trackerProvider.value === 'jira' ? chosen?.issue_types : chosen?.projects) || []
+})
+
+function openIssueTracker(tracker?: IssueTrackerConnection) {
+  if (!canWrite('integration:create')) return
+  formError.value = ''
+  selectedTracker.value = tracker || null
+  trackerProvider.value = tracker?.provider || 'jira'
+  trackerSiteURL.value = tracker?.site_url || ''
+  trackerEmail.value = ''
+  trackerToken.value = ''
+  modal.value = 'issue-tracker'
+}
+
+async function connectIssueTracker() {
+  if (!canWrite('integration:create') || pending.value) return
+  pending.value = true
+  formError.value = ''
+  let connected: IssueTrackerConnection | undefined
+  try {
+    const body = trackerProvider.value === 'jira'
+      ? { site_url: trackerSiteURL.value, email: trackerEmail.value, api_token: trackerToken.value }
+      : { api_token: trackerToken.value }
+    await $apiFetch(`/v1/issue-trackers/${trackerProvider.value}`, { method: 'PUT', body })
+    trackerToken.value = ''
+    await refresh()
+    connected = data.value?.issueTrackers.find(entry => entry.provider === trackerProvider.value)
+  } catch (connectError) {
+    formError.value = localizedError.message(connectError, 'admin.settings.errors.trackerConnect')
+  } finally {
+    pending.value = false
+  }
+  // A credential without a destination cannot create anything, so configuring it is the next
+  // step rather than a separate errand.
+  if (connected) await openIssueTrackerDestination(connected)
+}
+
+async function openIssueTrackerDestination(tracker: IssueTrackerConnection) {
+  if (!canWrite('integration:update')) return
+  formError.value = ''
+  selectedTracker.value = tracker
+  trackerProvider.value = tracker.provider
+  trackerDestinationID.value = tracker.destination_id
+  trackerDetailID.value = tracker.provider === 'jira'
+    ? tracker.issue_type_id
+    : tracker.sub_destination_id
+  trackerAutoCreate.value = tracker.auto_create
+  trackerDestinations.value = []
+  modal.value = 'issue-tracker-destination'
+  await loadTrackerDestinations()
+}
+
+async function loadTrackerDestinations() {
+  const tracker = selectedTracker.value
+  if (!tracker || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    const response = await $apiFetch<{ destinations: IssueTrackerDestination[] }>(
+      `/v1/issue-trackers/${tracker.provider}/destinations`,
+    )
+    trackerDestinations.value = response.destinations
+  } catch (loadError) {
+    formError.value = localizedError.message(loadError, 'admin.settings.errors.trackerDestinations')
+  } finally {
+    pending.value = false
+  }
+}
+
+async function saveIssueTrackerDestination() {
+  const tracker = selectedTracker.value
+  if (!tracker || !canWrite('integration:update') || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    await $apiFetch(`/v1/issue-trackers/${tracker.provider}`, {
+      method: 'PATCH',
+      body: {
+        ...(tracker.provider === 'jira'
+          ? { destination_id: trackerDestinationID.value, issue_type_id: trackerDetailID.value }
+          : { destination_id: trackerDestinationID.value, sub_destination_id: trackerDetailID.value }),
+        // Automatic creation can only be armed on an enabled provider, so it is only sent
+        // when the provider is already switched on.
+        ...(tracker.is_enabled ? { auto_create: trackerAutoCreate.value } : {}),
+      },
+    })
+    await refresh()
+    modal.value = null
+    selectedTracker.value = null
+  } catch (saveError) {
+    formError.value = localizedError.message(saveError, 'admin.settings.errors.trackerConfigure')
+  } finally {
+    pending.value = false
+  }
+}
+
+async function setIssueTrackerEnabled(tracker: IssueTrackerConnection, enabled: boolean) {
+  if (!canWrite('integration:update') || pending.value) return
+  pending.value = true
+  formError.value = ''
+  try {
+    await $apiFetch(`/v1/issue-trackers/${tracker.provider}`, {
+      method: 'PATCH', body: { is_enabled: enabled },
+    })
+    await refresh()
+  } catch (toggleError) {
+    trackerError.value = localizedError.message(toggleError, 'admin.settings.errors.trackerConfigure')
+  } finally {
+    pending.value = false
+  }
+}
+
+function deleteIssueTracker(tracker: IssueTrackerConnection) {
+  if (!canWrite('integration:delete')) return
+  destructiveError.value = ''
+  destructiveAction.value = { kind: 'issue-tracker', resource: tracker }
+}
+
 async function deleteIntegration(integration: Integration) {
   if (!canWrite('integration:delete')) return
   destructiveError.value = ''
@@ -562,7 +747,9 @@ async function confirmDestructiveAction() {
   try {
     const path = action.kind === 'key'
       ? `/v1/api-keys/${action.resource.id}`
-      : `/v1/integrations/${action.resource.id}`
+      : action.kind === 'issue-tracker'
+        ? `/v1/issue-trackers/${action.resource.provider}`
+        : `/v1/integrations/${action.resource.id}`
     await $apiFetch(path, { method: 'DELETE' })
     await refresh()
     destructiveAction.value = null
@@ -571,7 +758,9 @@ async function confirmDestructiveAction() {
       deleteError,
       action.kind === 'key'
         ? 'admin.settings.errors.keyRevoke'
-        : 'admin.settings.errors.integrationRemove',
+        : action.kind === 'issue-tracker'
+          ? 'admin.settings.errors.trackerDisconnect'
+          : 'admin.settings.errors.integrationRemove',
     )
   } finally {
     destructivePending.value = false
@@ -772,7 +961,28 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
         </div>
       </section>
 
-      <section v-else-if="activeTab === 'integrations'" class="app-surface settings-section">
+      <div v-else-if="activeTab === 'integrations'" class="settings-integrations-page">
+        <section class="app-surface settings-section">
+          <header><div><p class="app-eyebrow">{{ t('admin.settings.issueTrackers.eyebrow') }}</p><h2>{{ t('admin.settings.issueTrackers.title') }}</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIssueTracker()"><Plus :size="15" /> {{ t('admin.settings.issueTrackers.connect') }}</button></header>
+          <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.issueTrackers.accessRequired') }}</h3></div>
+          <div v-else-if="!data.issueTrackers.length" class="settings-empty"><Link2 :size="23" /><h3>{{ t('admin.settings.issueTrackers.none') }}</h3><p>{{ t('admin.settings.issueTrackers.description') }}</p></div>
+          <div v-else class="settings-table settings-trackers">
+            <div class="settings-row settings-row--head"><span>{{ t('admin.settings.issueTrackers.columns.tracker') }}</span><span>{{ t('admin.settings.issueTrackers.columns.destination') }}</span><span>{{ t('admin.settings.issueTrackers.columns.status') }}</span><span /></div>
+            <div v-for="tracker in data.issueTrackers" :key="tracker.id" class="settings-row" :data-muted="!tracker.is_enabled">
+              <span><b>{{ trackerLabel(tracker.provider) }}</b><small>{{ tracker.account_label }}</small></span>
+              <span><b>{{ trackerDestinationLabel(tracker) || t('admin.settings.issueTrackers.noDestination') }}</b><small v-if="tracker.last_error">{{ tracker.last_error }}</small></span>
+              <span class="settings-state"><i /><span>{{ tracker.is_enabled ? t('admin.common.enabled') : t('admin.common.disabled') }}<small>{{ tracker.auto_create ? t('admin.settings.issueTrackers.automatic') : t('admin.settings.issueTrackers.manual') }}</small></span></span>
+              <span class="settings-row-actions">
+                <button v-if="canWrite('integration:update')" class="app-icon-button" :title="t('admin.settings.issueTrackers.configure')" @click="openIssueTrackerDestination(tracker)"><SlidersHorizontal :size="16" /></button>
+                <button v-if="canWrite('integration:update') && tracker.is_enabled" class="app-icon-button" :title="t('admin.settings.issueTrackers.disable')" @click="setIssueTrackerEnabled(tracker, false)"><PowerOff :size="16" /></button>
+                <button v-else-if="canWrite('integration:update')" class="app-icon-button" :title="t('admin.settings.issueTrackers.enable')" :disabled="!trackerReady(tracker)" @click="setIssueTrackerEnabled(tracker, true)"><Power :size="16" /></button>
+                <button v-if="canWrite('integration:delete')" class="app-icon-button settings-danger-icon" :title="t('admin.settings.issueTrackers.disconnect')" @click="deleteIssueTracker(tracker)"><Trash2 :size="16" /></button>
+              </span>
+            </div>
+          </div>
+          <p v-if="trackerError" class="settings-form-error settings-tracker-error" role="alert">{{ trackerError }}</p>
+        </section>
+        <section class="app-surface settings-section">
         <header><div><p class="app-eyebrow">{{ t('admin.settings.integrations.eyebrow') }}</p><h2>{{ t('admin.settings.integrations.title') }}</h2></div><button v-if="canWrite('integration:create')" class="app-button app-button--primary" @click="openIntegration"><Plus :size="15" /> {{ t('admin.settings.integrations.add') }}</button></header>
         <div v-if="!can('integration:read')" class="settings-empty"><ShieldCheck :size="23" /><h3>{{ t('admin.settings.integrations.accessRequired') }}</h3></div>
         <div v-else-if="!data.integrations.length" class="settings-empty"><Link2 :size="23" /><h3>{{ t('admin.settings.integrations.none') }}</h3></div>
@@ -790,6 +1000,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           </div>
         </div>
       </section>
+      </div>
 
       <TwoFactorSecurity v-else-if="activeTab === 'security'" />
       <SingleSignOn v-else-if="activeTab === 'sso'" />
@@ -862,6 +1073,35 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           <footer><button class="app-button" type="button" @click="modal = null">{{ revealedSecret ? t('admin.common.done') : t('admin.common.cancel') }}</button><button v-if="!revealedSecret" class="app-button app-button--primary" type="submit" :disabled="pending || !integrationName || !integrationURL || !integrationEvents.length">{{ pending ? t('admin.common.connecting') : t('admin.settings.integrations.add') }}</button></footer>
         </form>
 
+        <form v-else-if="modal === 'issue-tracker'" @submit.prevent="connectIssueTracker">
+          <div class="settings-form-grid">
+            <label>{{ t('admin.settings.issueTrackers.form.provider') }}<select v-model="trackerProvider" class="app-select" :disabled="Boolean(selectedTracker)" autofocus><option v-for="provider in issueTrackerProviders" :key="provider" :value="provider">{{ trackerLabel(provider) }}</option></select></label>
+            <label v-if="trackerProvider === 'jira'">{{ t('admin.settings.issueTrackers.form.email') }}<input v-model.trim="trackerEmail" class="app-input" type="email" required /></label>
+            <label v-if="trackerProvider === 'jira'" class="wide">{{ t('admin.settings.issueTrackers.form.siteURL') }}<input v-model.trim="trackerSiteURL" class="app-input" type="url" required :placeholder="t('admin.settings.issueTrackers.form.sitePlaceholder')" /></label>
+            <label class="wide">{{ t('admin.settings.issueTrackers.form.apiToken') }}<input v-model.trim="trackerToken" class="app-input" type="password" autocomplete="off" required /></label>
+          </div>
+          <p class="settings-tracker-hint">{{ trackerProvider === 'jira' ? t('admin.settings.issueTrackers.form.jiraHint') : t('admin.settings.issueTrackers.form.linearHint') }}</p>
+          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
+          <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !trackerToken">{{ pending ? t('admin.common.connecting') : t('admin.settings.issueTrackers.connect') }}</button></footer>
+        </form>
+
+        <form v-else-if="modal === 'issue-tracker-destination'" @submit.prevent="saveIssueTrackerDestination">
+          <div class="settings-form-grid">
+            <label>{{ trackerProvider === 'jira' ? t('admin.settings.issueTrackers.form.project') : t('admin.settings.issueTrackers.form.team') }}<select v-model="trackerDestinationID" class="app-select" required autofocus @change="trackerDetailID = ''"><option value="">{{ trackerProvider === 'jira' ? t('admin.settings.issueTrackers.form.chooseProject') : t('admin.settings.issueTrackers.form.chooseTeam') }}</option><option v-for="destination in trackerDestinations" :key="destination.id" :value="destination.id">{{ destination.name }}</option></select></label>
+            <label>{{ trackerProvider === 'jira' ? t('admin.settings.issueTrackers.form.issueType') : t('admin.settings.issueTrackers.form.linearProject') }}<select v-model="trackerDetailID" class="app-select" :required="trackerProvider === 'jira'"><option value="">{{ trackerProvider === 'jira' ? t('admin.settings.issueTrackers.form.chooseIssueType') : t('admin.settings.issueTrackers.form.noProject') }}</option><option v-for="detail in trackerDetailOptions" :key="detail.id" :value="detail.id">{{ detail.name }}</option></select></label>
+          </div>
+          <fieldset v-if="selectedTracker?.is_enabled" class="settings-privacy-fields settings-tracker-automation">
+            <legend>{{ t('admin.settings.issueTrackers.form.automation') }}</legend>
+            <label>
+              <input v-model="trackerAutoCreate" type="checkbox" />
+              <span><b>{{ t('admin.settings.issueTrackers.form.autoCreate') }}</b><small>{{ t('admin.settings.issueTrackers.form.autoCreateHint') }}</small></span>
+            </label>
+          </fieldset>
+          <p class="settings-tracker-hint">{{ t('admin.settings.issueTrackers.form.destinationHint') }}</p>
+          <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
+          <footer><button class="app-button" type="button" @click="loadTrackerDestinations" :disabled="pending"><RefreshCw :size="14" /> {{ t('admin.settings.issueTrackers.form.reload') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !trackerDestinationID">{{ pending ? t('admin.common.saving') : t('admin.settings.issueTrackers.form.save') }}</button></footer>
+        </form>
+
         <form v-else class="settings-integration-privacy-form" @submit.prevent="saveIntegrationPrivacy">
           <section class="settings-disclosure-warning"><AlertTriangle :size="17" /><div><b>{{ t('admin.settings.integrations.privacy.destinationTitle') }}</b><p>{{ t('admin.settings.integrations.privacy.destinationWarning') }}</p></div></section>
           <fieldset class="settings-privacy-fields">
@@ -915,6 +1155,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-reporter-policy .settings-form-error { margin: 0 16px 14px; }
 .settings-widget-appearance > .settings-form-error { margin: 0 16px 16px; }
 .settings-members-page { display: grid; gap: 16px; }
+.settings-integrations-page { display: grid; gap: 16px; }
 .settings-section { overflow: hidden; }
 .settings-section > header { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
 .settings-section h2 { margin: 3px 0 0; font-size: 14px; }
@@ -951,6 +1192,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-members .settings-row { grid-template-columns: minmax(190px, 1.5fr) minmax(110px, .7fr) minmax(110px, .7fr) minmax(38px, auto); }
 .settings-keys .settings-row { grid-template-columns: minmax(190px, 1.3fr) minmax(160px, 1fr) 100px 100px 38px; }
 .settings-integrations .settings-row { grid-template-columns: minmax(170px, .8fr) minmax(220px, 1.4fr) 100px 110px 76px; }
+.settings-trackers .settings-row { grid-template-columns: minmax(170px, .9fr) minmax(220px, 1.4fr) 110px 114px; }
 .settings-row > span { min-width: 0; }
 .settings-row > span > b { display: block; color: var(--ink-soft); font-size: 11px; }
 .settings-row small, .settings-row code { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -987,6 +1229,12 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-action-subject small { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .settings-danger-button { background: var(--red-fill); color: var(--on-accent); border-color: var(--red-fill); }
 .settings-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.settings-tracker-hint { margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.settings-tracker-automation { margin: 15px 0 0; padding: 4px 12px 8px; border: 1px solid var(--line); border-radius: 5px; }
+.settings-tracker-automation legend { padding: 0 4px; color: var(--ink); font-size: 10px; font-weight: 800; }
+.settings-trackers .settings-state { align-items: flex-start; text-transform: none; }
+.settings-trackers .settings-state > i { margin-top: 3px; }
+.settings-tracker-error { margin: 0 16px 14px; }
 .settings-form-grid .wide { grid-column: 1 / -1; }
 .settings-events legend { padding: 0; color: var(--ink); font-size: 10px; font-weight: 800; }
 .settings-events label { display: flex; min-height: 26px; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; text-transform: capitalize; }

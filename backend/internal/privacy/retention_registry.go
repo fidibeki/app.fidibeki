@@ -268,7 +268,8 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Credential, outbox, attempt, and disclosure-ledger periods require approval.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"delivery_logs", "integrations", "member_digest_deliveries", "outbox_events",
+				"delivery_logs", "integrations", "issue_external_links",
+				"issue_tracker_connections", "member_digest_deliveries", "outbox_events",
 			),
 		},
 		{
@@ -398,6 +399,8 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionProvider, Name: "slack_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "microsoft_teams_incoming_webhook"},
 				retentionResource{Kind: RetentionProvider, Name: "customer_generic_webhook"},
+				retentionResource{Kind: RetentionProvider, Name: "jira_cloud_issue_tracker"},
+				retentionResource{Kind: RetentionProvider, Name: "linear_issue_tracker"},
 			),
 		},
 		{

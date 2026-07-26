@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { AlertTriangle, ArrowLeft, AtSign, Eye, EyeOff, GitMerge, MessageSquare, Pencil, RotateCcw, Send } from '@lucide/vue'
-import type { FeedbackPage, Issue, IssueActivity, IssueComment, IssueStatus, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
+import { AlertTriangle, ArrowLeft, AtSign, ExternalLink, Eye, EyeOff, GitMerge, MessageSquare, Pencil, RotateCcw, Send, X } from '@lucide/vue'
+import type { FeedbackPage, Issue, IssueActivity, IssueComment, IssueExternalLink, IssueExternalPage, IssueStatus, IssueTrackerConnection, IssueTrackerProvider, IssueUpdate, Member, TriagePriority, TriageTag } from '~/types/api'
+import {
+  creatableProviders,
+  externalDestinationLabel,
+  externalLinkFromError,
+  mergeExternalLink,
+} from '~/utils/issue-external'
 import {
   issueActivityChanges,
   issueActivityFeedbackCount,
@@ -42,11 +48,13 @@ const { data, status, error, refresh } = await useAsyncData(
       comments?: IssueComment[]
       activities?: IssueActivity[]
     }>(`/v1/issues/${issueID.value}`)
-    const [allIssues, feedbacks, tags, members] = await Promise.all([
+    const [allIssues, feedbacks, tags, members, external] = await Promise.all([
       can('issue:read') ? $apiFetch<{ issues: Issue[] }>('/v1/issues') : Promise.resolve({ issues: [] }),
       can('feedback:read') ? $apiFetch<FeedbackPage>(`/v1/feedbacks?q=${encodeURIComponent(issueResponse.issue.public_id)}&limit=20`) : Promise.resolve({ feedbacks: [], pagination: { has_more: false, limit: 20 } }),
       canWrite('issue:update') ? $apiFetch<{ tags: TriageTag[] }>('/v1/tags') : Promise.resolve({ tags: [] }),
       canWrite('issue:update') && can('member:read') ? $apiFetch<{ members: Member[] }>('/v1/members') : Promise.resolve({ members: [] }),
+      $apiFetch<IssueExternalPage>(`/v1/issues/${issueID.value}/external`)
+        .catch(() => ({ external_links: [], available_providers: [] } satisfies IssueExternalPage)),
     ])
     return {
       ...issueResponse,
@@ -58,6 +66,8 @@ const { data, status, error, refresh } = await useAsyncData(
       feedbacks: feedbacks.feedbacks,
       tags: tags.tags,
       members: members.members,
+      externalLinks: external.external_links,
+      externalProviders: external.available_providers,
     }
   },
   { watch: [issueID] },
@@ -212,6 +222,94 @@ async function undoMerge() {
   } finally { pending.value = false }
 }
 
+const externalPriorities = ['none', 'low', 'medium', 'high', 'urgent'] as const
+const externalDialog = ref<IssueTrackerConnection | null>(null)
+const externalDraft = reactive({ title: '', description: '', priority: 'none' })
+const externalKey = ref('')
+const externalError = ref('')
+const externalPending = ref(false)
+
+const creatableTrackers = computed(() => creatableProviders(
+  data.value?.externalProviders || [], data.value?.externalLinks || [],
+))
+
+function providerLabel(provider: IssueTrackerProvider) {
+  return t(`issues.detail.externalTracker.providers.${provider}`)
+}
+
+function openExternalDialog(connection: IssueTrackerConnection) {
+  if (!data.value) return
+  externalDraft.title = data.value.issue.title
+  externalDraft.description = data.value.issue.description
+  externalDraft.priority = data.value.issue.priority || 'none'
+  // The key is minted once per dialog so a double submit converges on one external issue.
+  externalKey.value = `issue-${issueID.value}-${Date.now().toString(36)}`
+  externalError.value = ''
+  externalDialog.value = connection
+}
+
+function applyExternalLink(link: IssueExternalLink) {
+  if (!data.value) return
+  data.value.externalLinks = mergeExternalLink(data.value.externalLinks, link)
+}
+
+async function createExternalIssue() {
+  const connection = externalDialog.value
+  if (!connection || !data.value || externalPending.value) return
+  externalPending.value = true
+  externalError.value = ''
+  try {
+    const response = await $apiFetch<{ external_link: IssueExternalLink }>(
+      `/v1/issues/${issueID.value}/external`,
+      {
+        method: 'POST',
+        body: {
+          provider: connection.provider,
+          title: externalDraft.title.trim(),
+          description: externalDraft.description.trim(),
+          priority: externalDraft.priority,
+          idempotency_key: externalKey.value,
+        },
+      },
+    )
+    applyExternalLink(response.external_link)
+    externalDialog.value = null
+    await refresh()
+  } catch (createError) {
+    // A rejected attempt is still persisted, so the panel shows the provider's own error and a
+    // retry control rather than leaving the member with a dead-end dialog.
+    const failed = externalLinkFromError(createError)
+    if (failed) {
+      applyExternalLink(failed)
+      externalDialog.value = null
+      mutationError.value = apiErrorMessage(createError, 'issues.detail.externalTracker.dialog.failed')
+    } else {
+      externalError.value = apiErrorMessage(createError, 'issues.detail.externalTracker.dialog.failed')
+    }
+  } finally {
+    externalPending.value = false
+  }
+}
+
+async function retryExternalIssue(link: IssueExternalLink) {
+  if (!canWrite('issue:update') || externalPending.value) return
+  externalPending.value = true
+  mutationError.value = ''
+  try {
+    const response = await $apiFetch<{ external_link: IssueExternalLink }>(
+      `/v1/issues/${issueID.value}/external/${link.id}/retry`, { method: 'POST' },
+    )
+    applyExternalLink(response.external_link)
+    await refresh()
+  } catch (retryError) {
+    const failed = externalLinkFromError(retryError)
+    if (failed) applyExternalLink(failed)
+    mutationError.value = apiErrorMessage(retryError, 'issues.detail.externalTracker.retryFailed')
+  } finally {
+    externalPending.value = false
+  }
+}
+
 function formatDate(value: string) {
   return dateTime(value)
 }
@@ -346,10 +444,60 @@ useHead(() => ({
             @toggle-tag="toggleIssueTag"
           />
           <section class="app-surface issue-facts"><h2>{{ t('issues.detail.facts.title') }}</h2><dl><div><dt>{{ t('issues.detail.facts.publicId') }}</dt><dd>{{ data.issue.public_id }}</dd></div><div><dt>{{ t('issues.detail.facts.reporter') }}</dt><dd>{{ data.issue.reporter_email || t('issues.detail.facts.anonymous') }}</dd></div><div><dt>{{ t('issues.detail.facts.reporterUpdates') }}</dt><dd>{{ data.issue.notify_reporter ? t('issues.detail.facts.enabled') : t('issues.detail.facts.disabled') }}</dd></div><div><dt>{{ t('issues.detail.facts.progressAccess') }}</dt><dd>{{ data.issue.reporter_access_revoked_at ? t('issues.detail.facts.revoked') : t('issues.detail.facts.enabled') }}</dd></div><div><dt>{{ t('issues.detail.facts.resolvedAt') }}</dt><dd>{{ data.issue.resolved_at ? formatDate(data.issue.resolved_at) : t('issues.detail.facts.notResolved') }}</dd></div></dl><button v-if="data.issue.reporter_email && data.issue.notify_reporter && canWrite('issue:update')" class="app-button issue-reporter-access" :disabled="pending" @click="setReporterAccess(Boolean(data.issue.reporter_access_revoked_at))"><Eye v-if="data.issue.reporter_access_revoked_at" :size="14" /><EyeOff v-else :size="14" />{{ data.issue.reporter_access_revoked_at ? t('issues.detail.facts.enableAccess') : t('issues.detail.facts.revokeAccess') }}</button></section>
+          <section v-if="creatableTrackers.length || data.externalLinks.length" class="app-surface issue-external">
+            <h2>{{ t('issues.detail.externalTracker.title') }}</h2>
+            <p>{{ t('issues.detail.externalTracker.description') }}</p>
+            <dl v-for="link in data.externalLinks" :key="link.id">
+              <div><dt>{{ providerLabel(link.provider) }}</dt><dd><span class="status-pill" :class="`status-${link.status === 'created' ? 'completed' : link.status}`">{{ t(`issues.detail.externalTracker.statuses.${link.status}`) }}</span></dd></div>
+              <div v-if="link.external_url"><dt>{{ t('issues.detail.externalTracker.issueLabel') }}</dt><dd><a :href="link.external_url" target="_blank" rel="noopener noreferrer">{{ link.external_key || link.external_id }}<ExternalLink :size="11" /></a></dd></div>
+              <div v-if="link.destination_name"><dt>{{ t('issues.detail.externalTracker.destination') }}</dt><dd>{{ link.destination_name }}</dd></div>
+              <div><dt>{{ t('issues.detail.externalTracker.attemptsLabel') }}</dt><dd>{{ integer(link.attempt_count) }}</dd></div>
+              <div v-if="link.last_error" class="issue-external-error"><dt>{{ t('issues.detail.externalTracker.errorLabel') }}</dt><dd>{{ link.last_error }}</dd></div>
+              <button v-if="link.status === 'failed' && canWrite('issue:update')" class="app-button" type="button" :disabled="externalPending" @click="retryExternalIssue(link)"><RotateCcw :size="14" /> {{ t('issues.detail.externalTracker.retry') }}</button>
+            </dl>
+            <button
+              v-for="connection in creatableTrackers"
+              :key="connection.id"
+              class="app-button"
+              type="button"
+              :disabled="!canWrite('issue:update') || externalPending"
+              @click="openExternalDialog(connection)"
+            >
+              <ExternalLink :size="14" /> {{ t('issues.detail.externalTracker.create', { provider: providerLabel(connection.provider) }) }}
+            </button>
+          </section>
           <section class="app-surface issue-merge"><h2>{{ t('issues.detail.merge.title') }}</h2><template v-if="data.issue.merged_into_id"><p>{{ t('issues.detail.merge.mergedNotice') }}</p><button class="app-button" :disabled="pending || !canWrite('issue:merge')" @click="undoMerge"><RotateCcw :size="14" /> {{ t('issues.detail.merge.undo') }}</button></template><template v-else><p>{{ t('issues.detail.merge.description') }}</p><select v-model="mergeTarget" class="app-select" :aria-label="t('issues.detail.merge.targetLabel')" :disabled="!canWrite('issue:merge')"><option value="">{{ t('issues.detail.merge.choose') }}</option><option v-for="candidate in mergeCandidates" :key="candidate.id" :value="candidate.id">{{ t('issues.detail.merge.option', { publicId: candidate.public_id, title: candidate.title }) }}</option></select><button class="app-button" :disabled="pending || !mergeTarget || !canWrite('issue:merge')" @click="mergeIssue"><GitMerge :size="14" /> {{ t('issues.detail.merge.submit') }}</button></template></section>
         </aside>
       </div>
     </template>
+
+    <AppDialog :open="Boolean(externalDialog)" aria-labelledby="external-issue-title" @close="externalDialog = null">
+      <form v-if="externalDialog" class="issue-external-modal app-modal" @submit.prevent="createExternalIssue">
+        <header>
+          <div>
+            <p class="app-eyebrow">{{ t('issues.detail.externalTracker.title') }}</p>
+            <h2 id="external-issue-title">{{ t('issues.detail.externalTracker.dialog.title', { provider: providerLabel(externalDialog.provider) }) }}</h2>
+          </div>
+          <button class="app-icon-button" type="button" :title="t('issues.detail.externalTracker.dialog.cancel')" @click="externalDialog = null"><X :size="18" /></button>
+        </header>
+        <div class="app-modal__body">
+          <p class="issue-external-note">{{ t('issues.detail.externalTracker.dialog.description') }}</p>
+          <label><span>{{ t('issues.detail.externalTracker.dialog.titleLabel') }}</span><input v-model="externalDraft.title" class="app-input" required maxlength="255" autofocus /></label>
+          <label><span>{{ t('issues.detail.externalTracker.dialog.descriptionLabel') }}</span><textarea v-model="externalDraft.description" class="app-input" rows="6" maxlength="10000" /></label>
+          <label><span>{{ t('issues.detail.externalTracker.dialog.priorityLabel') }}</span>
+            <select v-model="externalDraft.priority" class="app-select">
+              <option v-for="value in externalPriorities" :key="value" :value="value">{{ t(`issues.detail.externalTracker.priorities.${value}`) }}</option>
+            </select>
+          </label>
+          <p class="issue-external-note">{{ t('issues.detail.externalTracker.dialog.destinationLabel') }}: {{ externalDestinationLabel(externalDialog) }}</p>
+          <p v-if="externalError" class="issues-error" role="alert"><AlertTriangle :size="15" /> {{ externalError }}</p>
+        </div>
+        <footer>
+          <button class="app-button" type="button" :disabled="externalPending" @click="externalDialog = null">{{ t('issues.detail.externalTracker.dialog.cancel') }}</button>
+          <button class="app-button app-button--primary" type="submit" :disabled="externalPending || !externalDraft.title.trim()">{{ externalPending ? t('issues.detail.externalTracker.dialog.creating') : t('issues.detail.externalTracker.dialog.confirm') }}</button>
+        </footer>
+      </form>
+    </AppDialog>
   </div>
 </template>
 
@@ -421,6 +569,21 @@ useHead(() => ({
 .issue-facts dt { color: var(--muted); font-size: 9px; }
 .issue-facts dd { margin: 0; max-width: 170px; overflow-wrap: anywhere; font-size: 9px; text-align: right; }
 .issue-reporter-access { width: 100%; margin-top: 12px; }
+.issue-external { padding: 15px; }
+.issue-external p { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.issue-external dl { margin: 12px 0 0; }
+.issue-external dl + .app-button, .issue-external dl button { width: 100%; margin-top: 10px; }
+.issue-external dl div { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+.issue-external dt { color: var(--muted); font-size: 9px; }
+.issue-external dd { margin: 0; max-width: 170px; overflow-wrap: anywhere; font-size: 9px; text-align: right; }
+.issue-external dd a { display: inline-flex; align-items: center; gap: 4px; color: var(--teal); }
+.issue-external .issue-external-error dd { color: var(--red); }
+.issue-external > .app-button { width: 100%; margin-top: 10px; }
+.issue-external-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.issue-external-modal { width: min(560px, calc(100vw - 32px)); }
+.issue-external-modal label span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.issue-external-modal textarea { min-height: 130px; padding: 10px; resize: vertical; font: inherit; font-size: 11px; line-height: 1.5; }
+.issue-external + .issue-merge { margin-top: 0; }
 .issue-merge p { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .issue-merge select { width: 100%; margin-bottom: 8px; font-size: 9px; }
 .issue-merge button { width: 100%; }

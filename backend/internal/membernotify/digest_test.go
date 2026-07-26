@@ -360,3 +360,63 @@ func TestRunSurvivesFailuresAndStopsWithTheContext(t *testing.T) {
 		t.Fatal("the first pass did not record its failure")
 	}
 }
+
+// A digest that cannot be composed must leave its window retakeable rather than
+// consuming it silently, and must never reach the queue half-built.
+func TestSchedulerMarksUncomposableDigestsFailed(t *testing.T) {
+	t.Parallel()
+	source := &fakeSource{
+		candidates: map[string][]Candidate{CadenceImmediate: {digestCandidate()}},
+		sections:   mentionSections(),
+	}
+	queue := &fakeQueue{}
+	scheduler := testScheduler(t, source, queue)
+	// An unusable base URL cannot produce the workspace and opt-out links every
+	// digest carries.
+	scheduler.PublicBaseURL = "not-a-url"
+	if err := scheduler.Execute(context.Background()); err == nil {
+		t.Fatal("composing an unusable digest was reported as success")
+	}
+	if len(queue.messages) != 0 {
+		t.Fatalf("a half-composed digest reached the queue: %+v", queue.messages)
+	}
+	if len(source.failed) != 1 {
+		t.Fatalf("failures recorded = %v, want the window marked failed", source.failed)
+	}
+	if len(source.sent) != 0 {
+		t.Fatalf("an uncomposable window was marked sent: %v", source.sent)
+	}
+}
+
+// Without a token manager the footer cannot carry a signed opt-out, so the
+// digest must fail rather than ship an email with no way to turn it off.
+func TestSchedulerRefusesToSendWithoutAnOptOutLink(t *testing.T) {
+	t.Parallel()
+	source := &fakeSource{
+		candidates: map[string][]Candidate{CadenceImmediate: {digestCandidate()}},
+		sections:   mentionSections(),
+	}
+	queue := &fakeQueue{}
+	scheduler := testScheduler(t, source, queue)
+	scheduler.Tokens = nil
+	if err := scheduler.Execute(context.Background()); err == nil {
+		t.Fatal("a digest without an opt-out link was reported as success")
+	}
+	if len(queue.messages) != 0 {
+		t.Fatalf("a digest shipped without an opt-out link: %+v", queue.messages)
+	}
+	if len(source.failed) != 1 {
+		t.Fatalf("failures recorded = %v, want the window marked failed", source.failed)
+	}
+}
+
+func TestExecuteRequiresItsCollaborators(t *testing.T) {
+	t.Parallel()
+	if err := (Scheduler{}).Execute(context.Background()); err == nil {
+		t.Fatal("a scheduler with no queue or store reported success")
+	}
+	source := &fakeSource{candidates: map[string][]Candidate{}}
+	if err := (Scheduler{Store: source}).Execute(context.Background()); err == nil {
+		t.Fatal("a scheduler with no queue reported success")
+	}
+}

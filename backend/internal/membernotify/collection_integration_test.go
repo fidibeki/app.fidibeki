@@ -239,3 +239,101 @@ func seedFeedback(
 		t.Fatalf("create feedback: %v", err)
 	}
 }
+
+// Candidates decides who a pass even considers. It must read stored
+// preferences rather than defaults, follow workspace access, and skip members
+// who route nothing to the cadence being processed.
+func TestCandidatesRespectPreferencesAndWorkspaceAccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	database := digestTestDatabase(t, ctx)
+	active := seedWorkspace(t, ctx, database, "candidates")
+	suspended := seedWorkspace(t, ctx, database, "candidates-suspended")
+	if _, err := database.Exec(ctx, `
+		UPDATE tenants SET status = 'suspended' WHERE id = $1
+	`, suspended.TenantID); err != nil {
+		t.Fatalf("suspend workspace: %v", err)
+	}
+	store := membernotify.DigestStore{Database: database}
+
+	// Defaults route mentions to immediate, so an untouched member is a
+	// candidate for that cadence and not for the weekly one.
+	immediate, err := store.Candidates(ctx, membernotify.CadenceImmediate, 50)
+	if err != nil {
+		t.Fatalf("list immediate candidates: %v", err)
+	}
+	if !containsMember(immediate, active.MemberID) {
+		t.Fatal("a member on the default preferences is not an immediate candidate")
+	}
+	for _, candidate := range immediate {
+		if candidate.TenantID == suspended.TenantID {
+			t.Fatal("a suspended workspace produced a digest candidate")
+		}
+	}
+
+	// Storing preferences moves the member between cadences.
+	if _, err := database.Exec(ctx, `
+		INSERT INTO member_notification_preferences (
+			tenant_id, member_id, assignments, mentions, comments, issue_changes,
+			feedback_summary, digest_hour, digest_weekday
+		) VALUES ($1, $2, 'off', 'off', 'off', 'off', 'weekly', 17, 5)
+	`, active.TenantID, active.MemberID); err != nil {
+		t.Fatalf("store preferences: %v", err)
+	}
+	immediate, err = store.Candidates(ctx, membernotify.CadenceImmediate, 50)
+	if err != nil {
+		t.Fatalf("list immediate candidates: %v", err)
+	}
+	if containsMember(immediate, active.MemberID) {
+		t.Fatal("a member with nothing on the immediate cadence is still a candidate")
+	}
+	weekly, err := store.Candidates(ctx, membernotify.CadenceWeekly, 50)
+	if err != nil {
+		t.Fatalf("list weekly candidates: %v", err)
+	}
+	candidate, found := memberCandidate(weekly, active.MemberID)
+	if !found {
+		t.Fatal("the weekly summary member is not a weekly candidate")
+	}
+	if candidate.Preferences.FeedbackSummary != membernotify.ModeWeekly ||
+		candidate.Preferences.DigestHour != 17 || candidate.Preferences.DigestWeekday != 5 {
+		t.Fatalf("candidate carries defaults instead of the stored row: %+v", candidate.Preferences)
+	}
+	if candidate.Preferences.Timezone != "UTC" || !candidate.Cursor.IsZero() {
+		t.Fatalf("candidate timezone/cursor = %q/%v", candidate.Preferences.Timezone, candidate.Cursor)
+	}
+
+	// A deactivated member stops being considered at all.
+	if _, err := database.Exec(ctx, `
+		UPDATE tenant_members SET status = 'deactivated' WHERE tenant_id = $1 AND id = $2
+	`, active.TenantID, active.MemberID); err != nil {
+		t.Fatalf("deactivate member: %v", err)
+	}
+	weekly, err = store.Candidates(ctx, membernotify.CadenceWeekly, 50)
+	if err != nil {
+		t.Fatalf("list weekly candidates: %v", err)
+	}
+	if containsMember(weekly, active.MemberID) {
+		t.Fatal("a deactivated member is still a digest candidate")
+	}
+}
+
+func memberCandidate(
+	candidates []membernotify.Candidate,
+	memberID string,
+) (membernotify.Candidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.MemberID == memberID {
+			return candidate, true
+		}
+	}
+	return membernotify.Candidate{}, false
+}
+
+func containsMember(candidates []membernotify.Candidate, memberID string) bool {
+	_, found := memberCandidate(candidates, memberID)
+	return found
+}

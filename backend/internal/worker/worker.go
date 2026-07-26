@@ -10,6 +10,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
+	"github.com/acidiney/app.fidibeki/backend/internal/issuetracker"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
@@ -39,6 +40,7 @@ type Options struct {
 	ReplayVerificationHandler     asynq.HandlerFunc
 	AttachmentVerificationHandler asynq.HandlerFunc
 	IntegrationHandler            asynq.HandlerFunc
+	IssueTrackerHandler           asynq.HandlerFunc
 	PrivacyExportHandler          asynq.HandlerFunc
 }
 
@@ -74,7 +76,8 @@ func New(options Options) (*Worker, error) {
 		options.LifecycleHandler == nil ||
 		options.ReplayMergeHandler == nil || options.ReplayVerificationHandler == nil ||
 		options.AttachmentVerificationHandler == nil ||
-		options.IntegrationHandler == nil || options.PrivacyExportHandler == nil {
+		options.IntegrationHandler == nil || options.IssueTrackerHandler == nil ||
+		options.PrivacyExportHandler == nil {
 		return nil, fmt.Errorf("all domain and AI handlers are required")
 	}
 	if options.Logger == nil {
@@ -99,6 +102,7 @@ func New(options Options) (*Worker, error) {
 	domainMux := asynq.NewServeMux()
 	domainMux.HandleFunc(outbox.TaskFeedbackPipe, options.PipelineHandler)
 	domainMux.HandleFunc(integration.TaskDeliver, options.IntegrationHandler)
+	domainMux.HandleFunc(issuetracker.TaskAutoCreate, options.IssueTrackerHandler)
 	// Keep pre-upgrade domain-pool tasks runnable while new work uses isolated queues.
 	domainMux.HandleFunc(replay.TaskMerge, options.ReplayMergeHandler)
 	domainMux.HandleFunc(replay.TaskVerifyBatch, options.ReplayVerificationHandler)

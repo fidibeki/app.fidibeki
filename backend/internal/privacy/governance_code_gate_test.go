@@ -103,7 +103,9 @@ var governedHTTPCallSites = map[string][]string{
 		"microsoft_teams_incoming_webhook",
 		"customer_generic_webhook",
 	},
-	"backend/internal/samlsso/metadata.go": {"customer_saml_identity_provider"},
+	"backend/internal/issuetracker/jira.go":   {"jira_cloud_issue_tracker"},
+	"backend/internal/issuetracker/linear.go": {"linear_issue_tracker"},
+	"backend/internal/samlsso/metadata.go":    {"customer_saml_identity_provider"},
 }
 
 var governedProviderCodeSignals = map[string][]providerCodeSignal{
@@ -141,6 +143,14 @@ var governedProviderCodeSignals = map[string][]providerCodeSignal{
 	},
 	"customer_generic_webhook": {
 		{Path: "backend/internal/integration/models.go", Contains: `KindWebhook Kind = "webhook"`},
+	},
+	"jira_cloud_issue_tracker": {
+		{Path: "backend/internal/issuetracker/models.go", Contains: `ProviderJira   Provider = "jira"`},
+		{Path: "backend/internal/issuetracker/jira.go", Contains: "/rest/api/3/issue"},
+	},
+	"linear_issue_tracker": {
+		{Path: "backend/internal/issuetracker/models.go", Contains: `ProviderLinear Provider = "linear"`},
+		{Path: "backend/internal/issuetracker/linear.go", Contains: "api.linear.app/graphql"},
 	},
 	"customer_saml_identity_provider": {
 		{Path: "backend/internal/samlsso/metadata.go", Contains: "func (f MetadataFetcher) Fetch"},

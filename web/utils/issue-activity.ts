@@ -28,6 +28,8 @@ const summaryKeys: Record<string, string> = {
   'issue.merge_received': 'mergeReceived',
   'issue.unmerged': 'mergeRemoved',
   'issue.merge_removed': 'mergeRemoved',
+  'issue.external_issue_created': 'externalIssueCreated',
+  'issue.external_issue_failed': 'externalIssueFailed',
   'reporter.access_changed': 'reporterAccessChanged',
   'reporter.responded': 'reporterResponded',
   'reporter.notified': 'reporterNotified',

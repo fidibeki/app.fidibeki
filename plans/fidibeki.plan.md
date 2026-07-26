@@ -165,7 +165,7 @@ was removed from the staging test tenant.
     attachment metadata. Outbox event keys associate Issue creation and updates with the immutable
     activity actor without adding another delivery path.
 - [x] #27: add per-member, per-workspace notification preferences and windowed digest delivery.
-  - Migration `113` adds `member_notification_preferences` (assignments, mentions, comments,
+  - Migration `115` adds `member_notification_preferences` (assignments, mentions, comments,
     important Issue changes, and new-feedback summaries, plus digest hour and weekday) and the
     `member_digest_deliveries` ledger. Defaults are low-noise, and the new-feedback category has no
     immediate mode in either the API contract or the database CHECK, so one email per feedback
