@@ -369,7 +369,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             <div class="candidate-body">
               <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
               <div class="candidate-reasons">
-                <RatingMark :rating="candidate.rating" compact />
+                <RatingMark :rating="candidate.rating" stars compact />
                 <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
               </div>
             </div>
@@ -403,7 +403,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
         </div>
         <article v-for="item in testimonials" :key="item.id" class="app-surface library-row">
           <div class="library-main">
-            <RatingMark :rating="item.rating" compact />
+            <RatingMark :rating="item.rating" stars />
             <div class="candidate-body">
               <p>{{ item.quote }}</p>
               <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
@@ -666,7 +666,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .candidate-main,
 .library-main { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; }
 .candidate-main { grid-template-columns: 46px minmax(0, 1fr); }
-.library-main { grid-template-columns: 46px minmax(0, 1fr) 190px; }
+.library-main { grid-template-columns: 74px minmax(0, 1fr) 190px; }
 .candidate-action,
 .library-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 16px; background: var(--surface-soft); border-top: 1px solid var(--line); }
 .candidate-action .app-button,
@@ -681,8 +681,9 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .library-warning { color: var(--amber-ink) !important; font-weight: 700; }
 .candidate-reasons { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 7px; }
 .candidate-reasons .tag { min-height: 20px; font-size: 9px; }
-/* The shared rating badge, sized down to sit level with the reason chips. */
-.candidate-reasons .rating-mark { height: 20px; min-width: 30px; padding: 0 6px; font-size: 10px; line-height: 18px; }
+/* The stars sit level with the reason chips, with a little room after them so
+   they read as their own thing rather than a fourth chip. */
+.candidate-reasons .rating-stars { height: 20px; margin-right: 3px; }
 .library-state { display: flex; flex-wrap: wrap; gap: 5px; }
 .library-state .status-pill { min-height: 20px; font-size: 9px; }
 .wall-create { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; padding: 12px 16px; }
@@ -737,7 +738,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 @media (max-width: 850px) {
   .candidate-main,
   .library-main { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .library-main .rating-mark { justify-self: start; }
+  .library-main .rating-stars { justify-self: start; }
   .candidate-score { justify-items: start; text-align: left; }
   .candidate-action,
   .library-action { justify-content: flex-start; }
