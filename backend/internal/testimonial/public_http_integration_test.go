@@ -105,6 +105,12 @@ func TestTestimonialLifecycle(t *testing.T) {
 	if item.ConsentedText != item.Quote {
 		t.Fatal("submission must record the consented text as the displayed quote")
 	}
+	// The stars the author already gave with their feedback ride along without the
+	// caller having to remember them, because the rating is a fact about the
+	// source feedback rather than something the publication form collects again.
+	if item.Rating == nil || *item.Rating != 5 {
+		t.Errorf("rating = %v, want the source feedback's 5", item.Rating)
+	}
 
 	// A wall, published by the customer.
 	var wall Wall
@@ -157,6 +163,9 @@ func TestTestimonialLifecycle(t *testing.T) {
 	}
 	if payload.Cards[0].Author.Name != "Ana Marques" {
 		t.Fatalf("identity was consented but did not survive: %#v", payload.Cards[0].Author)
+	}
+	if payload.Cards[0].Rating == nil || *payload.Cards[0].Rating != 5 {
+		t.Errorf("served rating = %v, want the 5 stars the author gave", payload.Cards[0].Rating)
 	}
 	if response.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Error("the embed endpoint must be readable cross-origin")

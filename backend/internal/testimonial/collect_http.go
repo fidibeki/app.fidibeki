@@ -66,7 +66,11 @@ type CollectView struct {
 	Locale        *string     `json:"locale"`
 	OriginalText  string      `json:"original_text"`
 	ProposedQuote *string     `json:"proposed_quote"`
-	Submitted     bool        `json:"submitted"`
+	// Rating is the author's own stars, echoed back because they are published
+	// with the quote. Asking for permission to publish something without showing
+	// it is not asking.
+	Rating    *int `json:"rating"`
+	Submitted bool `json:"submitted"`
 }
 
 func (h *CollectHTTPHandler) load(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +87,8 @@ func (h *CollectHTTPHandler) load(w http.ResponseWriter, r *http.Request) {
 		if request.FeedbackID != nil {
 			var text *string
 			if err := query.QueryRow(r.Context(), `
-				SELECT text FROM feedbacks WHERE tenant_id = $1 AND id = $2
-			`, tenantID, *request.FeedbackID).Scan(&text); err != nil {
+				SELECT text, rating FROM feedbacks WHERE tenant_id = $1 AND id = $2
+			`, tenantID, *request.FeedbackID).Scan(&text, &view.Rating); err != nil {
 				return fmt.Errorf("load originating feedback: %w", err)
 			}
 			if text != nil {

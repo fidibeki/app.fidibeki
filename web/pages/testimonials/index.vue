@@ -281,6 +281,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           <div class="candidate-body">
             <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
             <div class="candidate-reasons">
+              <RatingMark :rating="candidate.rating" compact />
               <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
             </div>
           </div>
@@ -310,24 +311,33 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           </div>
         </div>
         <article v-for="item in testimonials" :key="item.id" class="library-row">
-          <div class="candidate-body">
-            <p>{{ item.quote }}</p>
-            <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
-            <!-- An edit that drifted from the consented wording is stated here,
-                 not discovered when publishing fails. -->
-            <small v-if="item.consent_state === 'pending_reconsent'" class="library-warning">
-              {{ t('testimonials.quoteEdited') }}
-            </small>
+          <div class="library-main">
+            <RatingMark :rating="item.rating" compact />
+            <div class="candidate-body">
+              <p>{{ item.quote }}</p>
+              <small v-if="authorLine(item)">{{ authorLine(item) }}</small>
+              <!-- An edit that drifted from the consented wording is stated here,
+                   not discovered when publishing fails. -->
+              <small v-if="item.consent_state === 'pending_reconsent'" class="library-warning">
+                {{ t('testimonials.quoteEdited') }}
+              </small>
+            </div>
+            <div class="library-state">
+              <span class="status-pill" :class="`status-${item.status}`">{{ statusLabel(item.status) }}</span>
+              <span class="status-pill" :class="consentPillClass(item.consent_state)">
+                {{ consentLabel(item.consent_state) }}
+              </span>
+            </div>
           </div>
-          <div class="library-state">
-            <span class="status-pill" :class="`status-${item.status}`">{{ statusLabel(item.status) }}</span>
-            <span class="status-pill" :class="consentPillClass(item.consent_state)">
-              {{ consentLabel(item.consent_state) }}
-            </span>
-          </div>
-          <div class="candidate-actions">
+          <!-- The action sits on its own row so the quote line keeps its shape,
+               and it carries the reason it exists: nothing reaches a wall until
+               someone here says so. -->
+          <div
+            v-if="canWrite('testimonial:update') && item.status === 'pending_review'"
+            class="library-action"
+          >
+            <p>{{ t('testimonials.approveHint') }}</p>
             <button
-              v-if="canWrite('testimonial:update') && item.status === 'pending_review'"
               type="button" class="app-button app-button--primary"
               :disabled="busyID === item.id" @click="approve(item)"
             >
@@ -502,13 +512,18 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .testimonial-notice { background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green); }
 .testimonial-list { overflow: hidden; }
 .candidate-row,
-.library-row { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.library-main { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; }
 .candidate-row { grid-template-columns: 46px minmax(0, 1fr) auto; }
-.library-row { grid-template-columns: minmax(0, 1fr) 190px auto; }
+.library-main { grid-template-columns: 46px minmax(0, 1fr) 190px; }
+.candidate-row,
+.library-row { border-bottom: 1px solid var(--line); }
 .candidate-row:last-child,
 .library-row:last-child { border-bottom: 0; }
 .candidate-row:hover,
 .library-row:hover { background: var(--surface-subtle); }
+.library-action { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 16px; background: var(--surface-soft); border-top: 1px solid var(--line); }
+.library-action p { margin: 0 auto 0 0; color: var(--muted); font-size: 9px; }
+.library-action .app-button { min-height: 30px; font-size: 10px; }
 .candidate-score { display: grid; justify-items: center; gap: 1px; text-align: center; }
 .candidate-score b { font-size: 15px; font-weight: 750; letter-spacing: 0; }
 .candidate-score small { color: var(--muted); font-size: 8px; font-weight: 750; text-transform: uppercase; }
@@ -516,8 +531,10 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .candidate-body p { margin: 0; overflow-wrap: anywhere; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
 .candidate-body small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
 .library-warning { color: var(--amber-ink) !important; font-weight: 700; }
-.candidate-reasons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.candidate-reasons { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 7px; }
 .candidate-reasons .tag { min-height: 20px; font-size: 9px; }
+/* The shared rating badge, sized down to sit level with the reason chips. */
+.candidate-reasons .rating-mark { height: 20px; min-width: 30px; padding: 0 6px; font-size: 10px; line-height: 18px; }
 .library-state { display: flex; flex-wrap: wrap; gap: 5px; }
 .library-state .status-pill { min-height: 20px; font-size: 9px; }
 .candidate-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
@@ -561,7 +578,8 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .request-link .secondary-button { min-height: 30px; font-size: 9px; }
 @media (max-width: 850px) {
   .candidate-row,
-  .library-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .library-main { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .library-main .rating-mark { justify-self: start; }
   .candidate-score { justify-items: start; text-align: left; }
   .candidate-actions { flex-direction: row; }
   .wall-create { align-items: stretch; flex-direction: column; }

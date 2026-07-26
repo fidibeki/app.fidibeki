@@ -9,6 +9,9 @@ interface CollectView {
   prompt: string | null
   original_text: string
   proposed_quote: string | null
+  /** The stars they already gave. Shown, not editable: it is a record of what
+   *  they said, not a field to restate at publication time. */
+  rating: number | null
   submitted: boolean
 }
 
@@ -59,6 +62,15 @@ watch(request, (value) => {
 const runtime = useRuntimeConfig()
 const revocationLink = computed(() =>
   `${runtime.public.appUrl || ''}/testimonials/revoke/${revocationToken.value}`)
+
+// Clamped rather than trusted: the score is rendered as a fixed row of five, so
+// a value outside the range would otherwise draw a broken one.
+const stars = computed(() => {
+  const value = request.value?.rating
+  if (!value || value < 1) return ''
+  const filled = Math.min(5, Math.round(value))
+  return '★'.repeat(filled) + '☆'.repeat(5 - filled)
+})
 
 const canSubmit = computed(() =>
   Boolean(quote.value.trim()) &&
@@ -167,6 +179,14 @@ useHead(() => ({
               <span class="collect-hint">{{ t('collectTestimonial.quoteHint') }}</span>
             </label>
 
+            <!-- Their own stars, stated because they are published alongside the
+                 words. Asking permission for something without showing it is not
+                 asking. -->
+            <p v-if="stars" class="collect-rating">
+              <span class="collect-stars" aria-hidden="true">{{ stars }}</span>
+              <span>{{ t('collectTestimonial.ratingNote', { rating: request.rating }) }}</span>
+            </p>
+
             <fieldset>
               <legend>{{ t('collectTestimonial.aboutYou') }}</legend>
               <label>{{ t('collectTestimonial.nameLabel') }}<input v-model="authorName" class="app-input" maxlength="120" /></label>
@@ -228,6 +248,8 @@ useHead(() => ({
 .collect-hint { color: var(--muted); font-size: 9px; font-weight: 400; line-height: 1.55; text-transform: none; }
 .collect-check { display: flex !important; align-items: flex-start; gap: 8px; color: var(--ink) !important; font-size: 11px !important; font-weight: 500 !important; text-transform: none !important; }
 .collect-check input { margin-top: 1px; }
+.collect-rating { display: flex; align-items: center; gap: 8px; margin: -6px 0 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.collect-stars { color: var(--amber-ink); font-size: 13px; letter-spacing: 1px; }
 .collect-notice { margin: 0; padding: 9px 10px; background: var(--surface-soft); border-radius: 4px; color: var(--muted); font-size: 9px; line-height: 1.6; }
 .collect-error { margin: 0; color: var(--red); font-size: 10px; }
 .collect-form > button { justify-self: end; min-height: 34px; font-size: 10px; }

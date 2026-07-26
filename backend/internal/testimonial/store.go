@@ -282,10 +282,13 @@ type SubmissionValues struct {
 	Quote      string
 	Headline   *string
 	Author     AuthorDetails
-	Rating     *int
-	Scopes     ConsentScopes
-	Locale     *string
-	Consent    ConsentEvidence
+	// Rating overrides the stars carried over from the source feedback. It is only
+	// needed for a submission that has no feedback behind it; leaving it nil is
+	// the normal case, not an omission.
+	Rating  *int
+	Scopes  ConsentScopes
+	Locale  *string
+	Consent ConsentEvidence
 }
 
 // ConsentEvidence is the auditable record that permission was given. It carries
@@ -329,7 +332,11 @@ func (s Store) SubmitCollection(
 			consent_notice_version, consent_controller_profile_version, consent_locale,
 			consent_granted_at, consent_evidence, revocation_token_hash, collected_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $12, $13, $14,
+			$1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, $12, $13,
+			-- The stars come from the feedback the author already gave. Deriving
+			-- them here rather than in the caller means no submission path can
+			-- silently publish a testimonial with no rating on it.
+			COALESCE($14, (SELECT rating FROM feedbacks WHERE tenant_id = $1 AND id = $5)),
 			'pending_review', 'granted', $15, $16, $17, $18, $19, $20, $21, $19
 		)
 		RETURNING id
