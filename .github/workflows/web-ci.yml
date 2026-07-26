@@ -22,6 +22,13 @@ on:
 permissions:
   contents: read
 
+# Without this, every superseded push ran the full ten-minute job to completion:
+# Web CI cancelled 1 run out of 45 while Backend CI, which already had a group,
+# cancelled 28 out of 54 over the same window.
+concurrency:
+  group: web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: starsling-ubuntu-24.04
