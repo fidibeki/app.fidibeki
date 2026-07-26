@@ -114,12 +114,17 @@ type Testimonial struct {
 	ConsentState  ConsentState  `json:"consent_state"`
 	Scopes        ConsentScopes `json:"consent_scopes"`
 	ReviewNote    *string       `json:"review_note"`
-	TagIDs        []string      `json:"tag_ids"`
-	CollectedAt   *time.Time    `json:"collected_at"`
-	ApprovedAt    *time.Time    `json:"approved_at"`
-	RevokedAt     *time.Time    `json:"revoked_at"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	// Nil when there is no recording. Present so the library can say what is
+	// holding a card back rather than showing an approved testimonial that
+	// silently refuses to publish.
+	VideoStatus   *string    `json:"video_status,omitempty"`
+	VideoReviewed *bool      `json:"video_reviewed,omitempty"`
+	TagIDs        []string   `json:"tag_ids"`
+	CollectedAt   *time.Time `json:"collected_at"`
+	ApprovedAt    *time.Time `json:"approved_at"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // QuoteIsConsented reports whether the displayed quote still matches what the

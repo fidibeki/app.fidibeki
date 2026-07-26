@@ -12,6 +12,7 @@ interface CollectView {
   /** The stars they already gave. Shown, not editable: it is a record of what
    *  they said, not a field to restate at publication time. */
   rating: number | null
+  video_allowed: boolean
   submitted: boolean
 }
 
@@ -32,6 +33,15 @@ const authorCompanyURL = ref('')
 const consentQuote = ref(true)
 const consentIdentity = ref(false)
 const consentCompany = ref(false)
+const consentVideo = ref(false)
+
+// The recording, if they choose to send one. It uploads as soon as it is picked
+// rather than on submit: a phone video takes a while, and asking someone to wait
+// after they have already pressed the last button reads as a broken page.
+const videoFile = ref<File | null>(null)
+const videoState = ref<'idle' | 'uploading' | 'done' | 'failed'>('idle')
+const videoError = ref('')
+const videoName = computed(() => videoFile.value?.name || '')
 const sending = ref(false)
 const submitError = ref('')
 const done = ref(false)
@@ -88,6 +98,44 @@ const canSubmit = computed(() =>
   (!consentIdentity.value || Boolean(authorName.value.trim())) &&
   !sending.value)
 
+/**
+ * Sends the recording straight to storage.
+ *
+ * Three steps, and the middle one does not touch our API at all: ask for a
+ * destination, PUT the bytes there, then tell us it arrived. The file never
+ * passes through the API, which is what keeps a slow mobile upload from holding
+ * a connection the rest of the workspace needs.
+ */
+async function uploadVideo(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  videoFile.value = file
+  videoState.value = 'uploading'
+  videoError.value = ''
+  try {
+    const created = await $apiFetch<{ upload_url: string, media_id: string, complete_token: string, headers: Record<string, string> }>(
+      `/v1/public/testimonial-requests/${encodeURIComponent(token.value)}/video`,
+      { method: 'POST', body: { content_type: file.type, size_bytes: file.size } },
+    )
+    const stored = await fetch(created.upload_url, {
+      method: 'PUT', body: file, headers: created.headers,
+    })
+    if (!stored.ok) throw new Error(`storage responded ${stored.status}`)
+    await $apiFetch(
+      `/v1/public/testimonial-requests/${encodeURIComponent(token.value)}/video/complete`,
+      { method: 'POST', body: { media_id: created.media_id, complete_token: created.complete_token } },
+    )
+    videoState.value = 'done'
+    // Sending a recording is not the same as agreeing to publish it, so the
+    // permission is asked for separately and starts unticked.
+    consentVideo.value = false
+  } catch (failure) {
+    videoState.value = 'failed'
+    videoFile.value = null
+    videoError.value = apiErrorMessage(failure, 'collectTestimonial.videoFailed')
+  }
+}
+
 async function submit() {
   if (!canSubmit.value) return
   sending.value = true
@@ -108,7 +156,7 @@ async function submit() {
             identity: consentIdentity.value,
             company: consentCompany.value,
             avatar: false,
-            video: false,
+            video: consentVideo.value && videoState.value === 'done',
           },
           notice_version: 'v1',
           locale: String(locale.value),
@@ -202,6 +250,25 @@ useHead(() => ({
               <span>{{ t('collectTestimonial.ratingNote', { rating: request.rating }) }}</span>
             </p>
 
+            <!-- Only where the workspace can accept one. Offering a field that
+                 would be refused after the file was chosen wastes the upload and
+                 the author's patience. -->
+            <fieldset v-if="request.video_allowed" class="collect-video">
+              <legend>{{ t('collectTestimonial.videoTitle') }}</legend>
+              <p class="collect-hint">{{ t('collectTestimonial.videoHint') }}</p>
+              <input
+                type="file" accept="video/mp4,video/quicktime,video/webm"
+                :disabled="videoState === 'uploading'" @change="uploadVideo"
+              />
+              <p v-if="videoState === 'uploading'" class="collect-hint" aria-live="polite">
+                <span class="app-spinner" /> {{ t('collectTestimonial.videoUploading') }}
+              </p>
+              <p v-else-if="videoState === 'done'" class="collect-video-ready" aria-live="polite">
+                {{ t('collectTestimonial.videoReady', { name: videoName }) }}
+              </p>
+              <p v-else-if="videoError" class="collect-error" role="alert">{{ videoError }}</p>
+            </fieldset>
+
             <fieldset>
               <legend>{{ t('collectTestimonial.aboutYou') }}</legend>
               <label>{{ t('collectTestimonial.nameLabel') }}<input v-model="authorName" class="app-input" maxlength="120" /></label>
@@ -224,6 +291,12 @@ useHead(() => ({
               <label class="collect-check">
                 <input v-model="consentCompany" type="checkbox" />
                 <span>{{ t('collectTestimonial.permitCompany') }}</span>
+              </label>
+              <!-- Only once a recording exists, and never pre-ticked: sending a
+                   video is not the same act as agreeing to publish one. -->
+              <label v-if="videoState === 'done'" class="collect-check">
+                <input v-model="consentVideo" type="checkbox" />
+                <span>{{ t('collectTestimonial.permitVideo') }}</span>
               </label>
               <!-- Stated before consent is given, not after: cached copies
                    genuinely outlive a withdrawal by a few minutes. -->
@@ -265,6 +338,9 @@ useHead(() => ({
 .collect-check input { margin-top: 1px; }
 .collect-rating { display: flex; align-items: center; gap: 8px; margin: -6px 0 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
 .collect-stars { color: var(--amber-ink); font-size: 13px; letter-spacing: 1px; }
+.collect-video input[type='file'] { color: var(--ink); font-size: 10px; }
+.collect-video .app-spinner { width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; }
+.collect-video-ready { margin: 0; color: var(--green); font-size: 10px; font-weight: 700; overflow-wrap: anywhere; }
 .collect-notice { margin: 0; padding: 9px 10px; background: var(--surface-soft); border-radius: 4px; color: var(--muted); font-size: 9px; line-height: 1.6; }
 .collect-error { margin: 0; color: var(--red); font-size: 10px; }
 .collect-form > button { justify-self: end; min-height: 34px; font-size: 10px; }

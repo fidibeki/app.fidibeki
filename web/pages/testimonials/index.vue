@@ -222,6 +222,20 @@ const approve = (item: Testimonial) => run(item.id, async () => {
   await $apiFetch(`/v1/testimonials/${item.id}/approve`, { method: 'POST' })
 }, 'testimonials.approveFailed')
 
+/**
+ * Approving the quote says someone read the words. Footage carries everything
+ * the words do and everything else that was in frame, so it is cleared
+ * separately — and a wall containing an unwatched recording will not publish.
+ */
+const reviewVideo = (item: Testimonial) => run(item.id, async () => {
+  await $apiFetch(`/v1/testimonials/${item.id}/video/review`, { method: 'POST' })
+}, 'testimonials.videoReviewFailed')
+
+/** Only worth offering once the recording exists and can actually be watched. */
+function awaitingVideoReview(item: Testimonial) {
+  return item.video_status === 'ready' && item.video_reviewed === false
+}
+
 const createWall = () => run('new-wall', async () => {
   const name = newWallName.value.trim()
   if (!name) return
@@ -497,6 +511,18 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
               :disabled="busyID === item.id" @click="approve(item)"
             >
               <Check :size="13" /> {{ t('testimonials.approve') }}
+            </button>
+          </div>
+          <!-- Separate from approving the quote, and separate from its row,
+               because it is the one action that asks someone to actually watch
+               something before a stranger's face goes on a website. -->
+          <div v-else-if="canWrite('testimonial:publish') && awaitingVideoReview(item)" class="library-action">
+            <p>{{ t('testimonials.videoAwaitingReview') }}</p>
+            <button
+              type="button" class="app-button app-button--primary"
+              :disabled="busyID === item.id" @click="reviewVideo(item)"
+            >
+              <Check :size="13" /> {{ t('testimonials.videoReview') }}
             </button>
           </div>
         </article>

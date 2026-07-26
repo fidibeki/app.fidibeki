@@ -1540,6 +1540,9 @@ export interface Testimonial {
   consent_state: TestimonialConsentState
   consent_scopes: TestimonialConsentScopes
   review_note: string | null
+  /** Null when there is no recording. */
+  video_status?: 'pending' | 'processing' | 'ready' | 'failed' | null
+  video_reviewed?: boolean | null
   tag_ids: string[]
   collected_at: string | null
   approved_at: string | null

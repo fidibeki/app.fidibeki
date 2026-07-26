@@ -78,8 +78,12 @@ type CollectView struct {
 	// Rating is the author's own stars, echoed back because they are published
 	// with the quote. Asking for permission to publish something without showing
 	// it is not asking.
-	Rating    *int `json:"rating"`
-	Submitted bool `json:"submitted"`
+	Rating *int `json:"rating"`
+	// Whether this workspace can accept a recording at all. The page asks rather
+	// than assuming, so a plan without video never shows a field that would be
+	// refused after the author had already chosen a file.
+	VideoAllowed bool `json:"video_allowed"`
+	Submitted    bool `json:"submitted"`
 }
 
 func (h *CollectHTTPHandler) load(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +94,7 @@ func (h *CollectHTTPHandler) load(w http.ResponseWriter, r *http.Request) {
 	view := CollectView{
 		Kind: request.Kind, Prompt: request.Prompt, Locale: request.Locale,
 		ProposedQuote: request.ProposedQuote,
+		VideoAllowed:  h.options.MediaStore != nil && h.videoAllowed(r.Context(), tenantID),
 		Submitted:     request.Status == RequestSubmitted,
 	}
 	if err := h.withTenant(r.Context(), tenantID, func(query db.Querier) error {

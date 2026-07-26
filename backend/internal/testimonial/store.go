@@ -444,8 +444,19 @@ func (Store) ListTestimonials(
 	limit int,
 ) ([]Testimonial, error) {
 	rows, err := query.Query(ctx, `
-		SELECT `+testimonialColumns+`
-		FROM testimonials
+		SELECT `+testimonialColumns+`, (
+			-- Enough for the library to say what is holding a card back. Without it
+			-- the screen shows an approved testimonial and no reason it will not
+			-- publish, and the reason is that nobody has watched the video.
+			SELECT video.transcode_status::text FROM testimonial_media AS video
+			WHERE video.tenant_id = t.tenant_id AND video.testimonial_id = t.id
+			  AND video.role = 'video'
+		), (
+			SELECT video.reviewed_at IS NOT NULL FROM testimonial_media AS video
+			WHERE video.tenant_id = t.tenant_id AND video.testimonial_id = t.id
+			  AND video.role = 'video'
+		)
+		FROM testimonials AS t
 		WHERE tenant_id = $1 AND ($2 = '' OR status = $2::testimonial_status)
 		ORDER BY created_at DESC
 		LIMIT $3
@@ -466,6 +477,7 @@ func (Store) ListTestimonials(
 			&author.role, &author.company, &author.companyURL, &item.Rating,
 			&item.Status, &item.ConsentState, &scopes, &item.ReviewNote, &item.CollectedAt,
 			&item.ApprovedAt, &item.RevokedAt, &item.CreatedAt, &item.UpdatedAt,
+			&item.VideoStatus, &item.VideoReviewed,
 		); err != nil {
 			return nil, fmt.Errorf("scan testimonial: %w", err)
 		}
