@@ -191,6 +191,7 @@ func TestTestimonialLifecycle(t *testing.T) {
 	// count: footage of its own has to be watched before it goes out.
 	exerciseVideoReviewGate(ctx, t, env, store, wall, item, now)
 	exerciseMediaServing(ctx, t, env, store, server.URL, item, now)
+	exerciseVideoUpload(ctx, t, env)
 
 	// The author withdraws through the link they were given, not through anything
 	// the workspace does for them. The consent notice promises this page exists,
@@ -318,6 +319,110 @@ func exerciseVideoReviewGate(
 		}
 		if err := store.ReviewMedia(ctx, tx, env.tenantID, item.ID, env.memberID, now); !errors.Is(err, ErrNotFound) {
 			t.Errorf("review with no video = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// exerciseVideoUpload covers the author's side: asking for somewhere to send a
+// recording, and confirming it arrived.
+func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvironment) {
+	t.Helper()
+	collect := env.collectServer(t)
+	defer collect.Close()
+
+	token, tokenHash, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
+	var request Request
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		request, err = Store{}.CreateRequest(ctx, tx, env.tenantID, RequestValues{
+			ProjectID: &env.projectID, Kind: RequestCollection, TokenHash: tokenHash,
+			RecipientEmail: "recorder@example.test", ExpiresAt: now.Add(24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("create request for upload: %v", err)
+		}
+	})
+	base := collect.URL + "/v1/public/testimonial-requests/" + token
+
+	// What the browser sends is checked before anything is reserved, so a
+	// mistyped type never leaves a half-made row behind.
+	if got, _ := postJSON(t, base+"/video", `{"content_type":"application/zip","size_bytes":10}`); got.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("non-video type = %d, want 422", got.StatusCode)
+	}
+	if got, _ := postJSON(t, base+"/video", `{"content_type":"video/mp4","size_bytes":999999999}`); got.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("oversized upload = %d, want 422", got.StatusCode)
+	}
+
+	created, body := postJSON(t, base+"/video", `{"content_type":"video/mp4","size_bytes":4096}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("request upload = %d, want 201 (%s)", created.StatusCode, body)
+	}
+	var upload struct {
+		MediaID       string `json:"media_id"`
+		UploadURL     string `json:"upload_url"`
+		CompleteToken string `json:"complete_token"`
+	}
+	if err := json.Unmarshal([]byte(body), &upload); err != nil {
+		t.Fatalf("decode upload: %v (%s)", err, body)
+	}
+	if upload.MediaID == "" || upload.UploadURL == "" || upload.CompleteToken == "" {
+		t.Fatalf("upload = %#v, want an id, a destination and a token", upload)
+	}
+
+	// A wrong token cannot confirm someone else's slot.
+	if got, _ := postJSON(t, base+"/video/complete",
+		`{"media_id":"`+upload.MediaID+`","complete_token":"wrong"}`); got.StatusCode != http.StatusNotFound {
+		t.Errorf("wrong complete token = %d, want 404", got.StatusCode)
+	}
+	if got, completeBody := postJSON(t, base+"/video/complete",
+		`{"media_id":"`+upload.MediaID+`","complete_token":"`+upload.CompleteToken+`"}`); got.StatusCode != http.StatusNoContent {
+		t.Fatalf("complete upload = %d, want 204 (%s)", got.StatusCode, completeBody)
+	}
+	// The token is consumed, so a replay cannot resurrect a replaced file.
+	if got, _ := postJSON(t, base+"/video/complete",
+		`{"media_id":"`+upload.MediaID+`","complete_token":"`+upload.CompleteToken+`"}`); got.StatusCode != http.StatusNotFound {
+		t.Errorf("replayed completion = %d, want 404", got.StatusCode)
+	}
+
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		var safety string
+		var completed *time.Time
+		if err := tx.QueryRow(ctx, `
+			SELECT safety_status::text, completed_at FROM testimonial_media
+			WHERE tenant_id = $1 AND public_id = $2
+		`, env.tenantID, upload.MediaID).Scan(&safety, &completed); err != nil {
+			t.Fatalf("read completed media: %v", err)
+		}
+		// Quarantined, never safe: nothing has looked at the file yet, and a
+		// status saying otherwise is how unscanned uploads reach people.
+		if safety != "quarantined" || completed == nil {
+			t.Errorf("after completion safety = %q, completed = %v; want quarantined and stamped",
+				safety, completed)
+		}
+	})
+
+	// Recording a second take replaces the first rather than leaving a wall to
+	// pick whichever the join found.
+	second, secondBody := postJSON(t, base+"/video", `{"content_type":"video/webm","size_bytes":2048}`)
+	if second.StatusCode != http.StatusCreated {
+		t.Fatalf("second take = %d (%s)", second.StatusCode, secondBody)
+	}
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		var count int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM testimonial_media WHERE tenant_id = $1 AND request_id = $2
+		`, env.tenantID, request.ID).Scan(&count); err != nil {
+			t.Fatalf("count media: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("media rows after a second take = %d, want 1", count)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM testimonial_media WHERE tenant_id = $1`,
+			env.tenantID); err != nil {
+			t.Fatalf("clear upload media: %v", err)
 		}
 	})
 }
@@ -729,6 +834,22 @@ type stubSigner struct{}
 
 func (stubSigner) PresignInline(_ context.Context, key, contentType string, _ time.Duration) (string, error) {
 	return "https://storage.test/" + key + "?type=" + contentType, nil
+}
+
+func (stubSigner) PresignPut(_ context.Context, key string, _ time.Duration) (string, error) {
+	return "https://storage.test/put/" + key, nil
+}
+
+// collectServer mounts the author-facing endpoints on a real router, because
+// routing and middleware are where this feature's fatal defects have lived.
+func (e *testimonialEnvironment) collectServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	router := chi.NewRouter()
+	RegisterCollectRoutes(router, CollectHTTPOptions{
+		Store: Store{}, MediaStore: Store{}, Uploads: stubSigner{},
+		Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
+	})
+	return httptest.NewServer(router)
 }
 
 func newTestimonialEnvironment(ctx context.Context, t *testing.T) *testimonialEnvironment {

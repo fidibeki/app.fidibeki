@@ -203,6 +203,93 @@ func (Store) RemoveTestimonialFromWalls(
 	return nil
 }
 
+// VideoUploadValues is a video the author is about to send us.
+type VideoUploadValues struct {
+	RequestID         string
+	PublicID          string
+	StorageKey        string
+	ContentType       string
+	SizeBytes         int64
+	CompleteTokenHash string
+}
+
+// CreateVideoUpload reserves a slot for one video against a collection request.
+//
+// Any earlier video for the same request is dropped first: someone who records
+// a second take means the second one, and keeping both would leave a wall
+// showing whichever the join happened to find.
+func (Store) CreateVideoUpload(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	values VideoUploadValues,
+) (string, error) {
+	if _, err := query.Exec(ctx, `
+		DELETE FROM testimonial_media
+		WHERE tenant_id = $1 AND request_id = $2 AND role = 'video'
+	`, tenantID, values.RequestID); err != nil {
+		return "", fmt.Errorf("clear previous testimonial video: %w", err)
+	}
+	var id string
+	if err := query.QueryRow(ctx, `
+		INSERT INTO testimonial_media (
+			tenant_id, request_id, public_id, role, source_storage_key, content_type,
+			size_bytes, safety_status, transcode_status, complete_token_hash
+		) VALUES ($1, $2, $3, 'video', $4, $5, $6, 'pending', 'pending', $7)
+		RETURNING id
+	`, tenantID, values.RequestID, values.PublicID, values.StorageKey, values.ContentType,
+		values.SizeBytes, values.CompleteTokenHash).Scan(&id); err != nil {
+		return "", fmt.Errorf("create testimonial video upload: %w", err)
+	}
+	return id, nil
+}
+
+// CompleteVideoUpload records that the bytes arrived.
+//
+// It lands in 'quarantined', not 'safe' — the same sequence attachments use.
+// Nothing has looked at the file yet, and a status that says otherwise before
+// the scanner has run is how unscanned uploads reach people.
+func (Store) CompleteVideoUpload(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, tokenHash string,
+	now time.Time,
+) error {
+	tag, err := query.Exec(ctx, `
+		UPDATE testimonial_media
+		SET complete_token_hash = NULL, completed_at = $4, safety_status = 'quarantined'
+		WHERE tenant_id = $1 AND public_id = $2 AND role = 'video'
+		  AND complete_token_hash = $3 AND completed_at IS NULL
+	`, tenantID, publicID, tokenHash, now)
+	if err != nil {
+		return fmt.Errorf("complete testimonial video upload: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AttachRequestMedia hands media collected against a request to the testimonial
+// the request produced.
+//
+// Media is uploaded before the testimonial row exists, because the author
+// records before they submit. Without this the footage would stay parented to a
+// closed request and never reach a wall.
+func (Store) AttachRequestMedia(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, requestID, testimonialID string,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE testimonial_media SET testimonial_id = $3
+		WHERE tenant_id = $1 AND request_id = $2 AND completed_at IS NOT NULL
+	`, tenantID, requestID, testimonialID); err != nil {
+		return fmt.Errorf("attach request media to testimonial: %w", err)
+	}
+	return nil
+}
+
 // ResolveMediaTenant finds the workspace behind a public media path. Like the
 // wall and token resolvers, it runs on the admin pool before any tenant context
 // exists.

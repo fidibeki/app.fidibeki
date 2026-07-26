@@ -391,6 +391,11 @@ func (s Store) SubmitCollection(
 	`, tenantID, values.RequestID, now, id); err != nil {
 		return Testimonial{}, fmt.Errorf("close testimonial request: %w", err)
 	}
+	// Anything the author uploaded belongs to the testimonial they just made, not
+	// to the request that is now closed.
+	if err := s.AttachRequestMedia(ctx, query, tenantID, values.RequestID, id); err != nil {
+		return Testimonial{}, err
+	}
 	return s.GetTestimonial(ctx, query, tenantID, id)
 }
 

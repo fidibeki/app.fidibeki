@@ -26,6 +26,10 @@ type CollectStore interface {
 // CollectHTTPOptions wires the public collection form.
 type CollectHTTPOptions struct {
 	Store CollectStore
+	// MediaStore and Uploads are only needed where video is offered. Left nil the
+	// video endpoints are not mounted at all, rather than mounted and failing.
+	MediaStore CollectMediaStore
+	Uploads    UploadSigner
 	// Resolver runs on the admin pool: the token has to be traced to a workspace
 	// before a tenant context can exist.
 	Resolver db.Querier
@@ -48,6 +52,10 @@ func RegisterCollectRoutes(router chi.Router, options CollectHTTPOptions) {
 	handler := &CollectHTTPHandler{options: options}
 	router.Get("/v1/public/testimonial-requests/{token}", handler.load)
 	router.Post("/v1/public/testimonial-requests/{token}", handler.submit)
+	if options.MediaStore != nil && options.Uploads != nil {
+		router.Post("/v1/public/testimonial-requests/{token}/video", handler.requestVideo)
+		router.Post("/v1/public/testimonial-requests/{token}/video/complete", handler.completeVideo)
+	}
 }
 
 func (h *CollectHTTPHandler) now() time.Time {

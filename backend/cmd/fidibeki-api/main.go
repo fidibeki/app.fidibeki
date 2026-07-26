@@ -369,6 +369,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	testimonialCollectOptions := testimonial.CollectHTTPOptions{
 		Store: testimonial.Store{}, Resolver: pools.Admin,
 		Begin: db.BeginFromPool(pools.App), Logger: logger,
+		MediaStore: testimonial.Store{}, Uploads: objectStorage,
 	}
 	testimonial.RegisterCollectRoutes(platformRoutes, testimonialCollectOptions)
 	testimonialRevokeOptions := testimonial.RevokeHTTPOptions{
