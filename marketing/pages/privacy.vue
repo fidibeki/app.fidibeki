@@ -94,12 +94,18 @@ useSiteMeta({
 
           <h2 id="controller">Who is the controller?</h2>
           <p>
-            For this marketing site and for Fidibeki account/workspace data, Fidibeki is the data
-            controller. For feedback collected through the widget on a customer’s product, the
-            customer is the controller and Fidibeki acts as a processor under that customer’s
-            instructions. If you submit feedback through a Fidibeki widget, the privacy notice of
-            the company operating that site is the first place to look for information about your
-            data.
+            Fidibeki is a service operated by ACIDINEY ALVARO CARVALHO SOARES DIAS, an independent
+            service provider established in Portugal, who acts as the data controller for the
+            Fidibeki website, accounts, and business administration data, except where Fidibeki
+            processes personal data on behalf of its customers as a processor. Fidibeki is the name
+            of the service, not a company or a separate legal entity. In this notice, “we”, “us”,
+            and “our” mean that operator.
+          </p>
+          <p>
+            For feedback collected through the widget on a customer’s product, the customer is the
+            controller and we act as a processor under that customer’s instructions. If you submit
+            feedback through a Fidibeki widget, the privacy notice of the company operating that
+            site is the first place to look for information about your data.
           </p>
 
           <h2 id="widget-collection">What the widget collects and refuses to</h2>
@@ -338,7 +344,9 @@ useSiteMeta({
           <p>
             For privacy questions, data-rights requests, or DPA inquiries, email us at
             <a href="mailto:privacy@fidibeki.com">privacy@fidibeki.com</a>. General support is
-            available at <a href="mailto:support@fidibeki.com">support@fidibeki.com</a>.
+            available at <a href="mailto:support@fidibeki.com">support@fidibeki.com</a>. Every
+            contact route, and the operator’s details, are on the
+            <NuxtLink to="/contact">contact page</NuxtLink>.
           </p>
         </div>
       </div>
