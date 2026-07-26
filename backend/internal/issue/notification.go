@@ -497,7 +497,7 @@ func reporterMessage(
 	if portalURL != "" {
 		action = &email.Link{Label: "View progress", URL: portalURL}
 	}
-	logoURL, err := email.BrandLogoURL(publicBaseURL, baseDomain)
+	logoURL, err := email.BrandLogoURL(publicBaseURL)
 	if err != nil {
 		return email.Message{}, err
 	}

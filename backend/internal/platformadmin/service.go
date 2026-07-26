@@ -27,7 +27,6 @@ type Service struct {
 	JWT           *auth.JWTManager
 	Email         email.Enqueuer
 	PublicBaseURL string
-	BaseDomain    string
 	AuthFrom      string
 	MagicLinkTTL  time.Duration
 	RefreshTTL    time.Duration
@@ -79,7 +78,7 @@ func (s Service) RequestMagicLink(ctx context.Context, rawEmail string) error {
 		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
 		return err
 	}
-	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL)
 	if err != nil {
 		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
 		return err

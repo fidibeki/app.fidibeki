@@ -243,8 +243,8 @@ func TestControllerNotificationLifecycleIsRestrictedIdempotentAndRetryable(t *te
 	sender := &notificationTestSender{providerID: "resend-initial"}
 	handler := ControllerNotificationHandler{
 		Store: store, Sender: sender, From: "Fidibeki <updates@fidibeki.com>",
-		PublicBaseURL: "https://api.staging.fidibeki.com", BaseDomain: "fidibeki.com",
-		Now: func() time.Time { return now.Add(time.Minute) },
+		PublicBaseURL: "https://api.staging.fidibeki.com",
+		Now:           func() time.Time { return now.Add(time.Minute) },
 	}
 	if err := handler.Handler()(ctx, asynq.NewTask(TaskControllerNotification, payload)); err != nil {
 		t.Fatalf("controller notification handler error = %v", err)
