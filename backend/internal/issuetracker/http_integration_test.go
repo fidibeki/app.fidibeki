@@ -592,6 +592,116 @@ func TestIssueTrackerLifecycle(t *testing.T) {
 	if automaticActivities != 1 {
 		t.Fatalf("automatic activity entries = %d, want 1", automaticActivities)
 	}
+	// A provider failure on the automatic path records an actionable error and asks Asynq to
+	// retry, without touching the Fidibeki issue.
+	var failingIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description)
+		VALUES ($1, $2, 'ACME-2026-0004', 'Filters reset', 'Filters reset when paging.')
+		RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&failingIssueID); err != nil {
+		t.Fatalf("create failing automatic issue: %v", err)
+	}
+	jira.failCreate = true
+	failingPayload := fmt.Sprintf(
+		`{"outbox_event_id":"22222222-2222-4222-8222-222222222222","tenant_id":%q,"resource_id":%q,"destination_id":"jira"}`,
+		tenantIDs["acme"], failingIssueID,
+	)
+	autoFailure := autoHandler.Handler()(ctx, asynq.NewTask(TaskAutoCreate, []byte(failingPayload)))
+	if autoFailure == nil {
+		t.Fatal("a retryable provider failure did not surface to the queue")
+	}
+	var autoFailStatus, autoFailError, connectionError string
+	if err := root.QueryRow(ctx, `
+		SELECT link.status::text, link.last_error, connection.last_error
+		FROM issue_external_links AS link
+		JOIN issue_tracker_connections AS connection
+		  ON connection.tenant_id = link.tenant_id AND connection.provider = link.provider
+		WHERE link.tenant_id = $1 AND link.issue_id = $2
+	`, tenantIDs["acme"], failingIssueID).Scan(&autoFailStatus, &autoFailError, &connectionError); err != nil {
+		t.Fatalf("read failed automatic link: %v", err)
+	}
+	if autoFailStatus != string(LinkStatusFailed) || autoFailError == "" || connectionError == "" {
+		t.Fatalf("failed automatic link = %s / %q, connection error = %q",
+			autoFailStatus, autoFailError, connectionError)
+	}
+	var failingIssueTitle string
+	if err := root.QueryRow(ctx, `
+		SELECT title FROM issues WHERE tenant_id = $1 AND id = $2
+	`, tenantIDs["acme"], failingIssueID).Scan(&failingIssueTitle); err != nil {
+		t.Fatalf("issue disappeared after an automatic failure: %v", err)
+	}
+	jira.failCreate = false
+
+	// A concurrent attempt that is still pending blocks a second one for the same issue.
+	var pendingIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description)
+		VALUES ($1, $2, 'ACME-2026-0005', 'Export times out', 'CSV export times out.')
+		RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&pendingIssueID); err != nil {
+		t.Fatalf("create pending-attempt issue: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO issue_external_links (
+			tenant_id, issue_id, provider, status, idempotency_key,
+			request_title, destination_id, attempt_count
+		) VALUES ($1, $2, 'jira', 'pending', 'in-flight-0001', 'Export times out', '10000', 1)
+	`, tenantIDs["acme"], pendingIssueID); err != nil {
+		t.Fatalf("insert in-flight attempt: %v", err)
+	}
+	inFlight := trackerRequest(handler, "acme", http.MethodPost,
+		"/v1/issues/"+pendingIssueID+"/external",
+		`{"provider":"jira","title":"Export times out"}`, ownerToken)
+	if inFlight.Code != http.StatusConflict {
+		t.Fatalf("in-flight create status = %d, body = %s", inFlight.Code, inFlight.Body.String())
+	}
+
+	// An idempotency key already spent on another issue is refused rather than silently reused.
+	var reuseIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description)
+		VALUES ($1, $2, 'ACME-2026-0006', 'Sorting is unstable', 'Sort order changes between loads.')
+		RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&reuseIssueID); err != nil {
+		t.Fatalf("create key-reuse issue: %v", err)
+	}
+	reused := trackerRequest(handler, "acme", http.MethodPost, "/v1/issues/"+reuseIssueID+"/external",
+		`{"provider":"jira","title":"Sorting is unstable","idempotency_key":"review-dialog-0001"}`,
+		ownerToken)
+	if reused.Code != http.StatusConflict {
+		t.Fatalf("reused key status = %d, body = %s", reused.Code, reused.Body.String())
+	}
+
+	// Malformed requests and unknown resources are refused before any provider call.
+	malformed := trackerRequest(handler, "acme", http.MethodPost,
+		"/v1/issues/"+reuseIssueID+"/external", `{"provider":`, ownerToken)
+	if malformed.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status = %d", malformed.Code)
+	}
+	trailing := trackerRequest(handler, "acme", http.MethodPost,
+		"/v1/issues/"+reuseIssueID+"/external",
+		`{"provider":"jira","title":"One"} {"provider":"jira","title":"Two"}`, ownerToken)
+	if trailing.Code != http.StatusBadRequest {
+		t.Fatalf("trailing JSON status = %d", trailing.Code)
+	}
+	unknownProvider := trackerRequest(handler, "acme", http.MethodGet,
+		"/v1/issue-trackers/asana/destinations", "", ownerToken)
+	if unknownProvider.Code != http.StatusNotFound {
+		t.Fatalf("unknown provider status = %d", unknownProvider.Code)
+	}
+	unknownIssue := trackerRequest(handler, "acme", http.MethodGet,
+		"/v1/issues/not-a-uuid/external", "", ownerToken)
+	if unknownIssue.Code != http.StatusNotFound {
+		t.Fatalf("non-UUID issue status = %d", unknownIssue.Code)
+	}
+	disconnectedDestinations := trackerRequest(handler, "acme", http.MethodGet,
+		"/v1/issue-trackers/linear/destinations", "", ownerToken)
+	if disconnectedDestinations.Code != http.StatusOK {
+		t.Fatalf("connected Linear destinations status = %d, body = %s",
+			disconnectedDestinations.Code, disconnectedDestinations.Body.String())
+	}
+
 	// Turning the provider off also stops automatic creation.
 	stopped := trackerRequest(handler, "acme", http.MethodPatch, "/v1/issue-trackers/jira",
 		`{"is_enabled":false}`, ownerToken)
@@ -631,7 +741,7 @@ func TestIssueTrackerLifecycle(t *testing.T) {
 	`, tenantIDs["acme"]).Scan(&remainingConnections, &remainingLinks); err != nil {
 		t.Fatalf("count after disconnect: %v", err)
 	}
-	if remainingConnections != 1 || remainingLinks != 4 {
+	if remainingConnections != 1 || remainingLinks != 6 {
 		t.Fatalf("after disconnect: %d connections, %d links", remainingConnections, remainingLinks)
 	}
 }

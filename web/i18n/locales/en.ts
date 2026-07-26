@@ -12,6 +12,7 @@ export const englishMessages = {
     feedback: 'Feedback',
     issues: 'Issues',
     notifications: 'Notifications',
+    notificationPreferences: 'Notification preferences',
     analytics: 'Analytics',
     projects: 'Projects',
     settings: 'Settings',

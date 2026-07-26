@@ -1436,3 +1436,47 @@ export interface BillingSummary {
   has_subscription: boolean
   deletion_requested_at?: string | null
 }
+
+export type NotificationCategory =
+  | 'assignments'
+  | 'mentions'
+  | 'comments'
+  | 'issue_changes'
+  | 'feedback_summary'
+
+export type NotificationMode = 'immediate' | 'daily' | 'weekly' | 'off'
+
+export type NotificationCadence = 'immediate' | 'daily' | 'weekly'
+
+export type NotificationDeliveryStatus = 'claimed' | 'sent' | 'suppressed' | 'failed'
+
+export interface NotificationPreferences {
+  assignments: NotificationMode
+  mentions: NotificationMode
+  comments: NotificationMode
+  issue_changes: NotificationMode
+  feedback_summary: NotificationMode
+  digest_hour: number
+  digest_weekday: number
+  timezone: string
+  timezone_source: 'member' | 'workspace' | 'default'
+  updated_at?: string | null
+}
+
+export interface NotificationDelivery {
+  cadence: NotificationCadence
+  status: NotificationDeliveryStatus
+  event_count: number
+  window_start: string
+  window_end: string
+  reason?: string | null
+  sent_at?: string | null
+  created_at: string
+}
+
+export interface NotificationPreferencesResponse {
+  notification_preferences: NotificationPreferences
+  categories: NotificationCategory[]
+  supported_modes: Record<NotificationCategory, NotificationMode[]>
+  deliveries: NotificationDelivery[]
+}
