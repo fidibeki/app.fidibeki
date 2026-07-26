@@ -712,6 +712,8 @@ export interface PlanLimits {
 
 export interface PlanFeatures {
   ai: boolean
+  /** Rides with `ai`: without moderation the Suggested queue can never rank. */
+  testimonials: boolean
   session_replay: boolean
   slack: boolean
   video: boolean

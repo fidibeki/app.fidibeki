@@ -23,6 +23,7 @@ import {
   X,
 } from '@lucide/vue'
 import { feedbackQueueFromQuery, type FeedbackQueueID } from '~/utils/feedback-queue'
+import type { TenantConfiguration } from '~/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +37,16 @@ const loggingOut = ref(false)
 const accountMenu = ref<HTMLDetailsElement | null>(null)
 const mobileMenuButton = ref<HTMLButtonElement | null>(null)
 const mobileNavCloseButton = ref<HTMLButtonElement | null>(null)
+
+// Which features the plan carries, read from the server rather than mapped from
+// the plan name here: a second copy of that mapping would drift from the one the
+// API enforces, and the rail would offer a screen the routes refuse.
+const { data: configuration } = await useAsyncData(
+  'workspace-plan',
+  () => $apiFetch<TenantConfiguration>('/v1/config'),
+  { server: false },
+)
+const planFeatures = computed(() => configuration.value?.plan.features)
 
 const showQueueRail = computed(() => can('feedback:read') && (route.path.startsWith('/feedback') || route.path === '/'))
 const workspaceHome = computed(() => firstAccessibleWorkspacePath(member.value?.permissions || []))
@@ -54,12 +65,18 @@ const primaryNavigation = [
   { labelKey: 'navigation.feedback', to: '/feedback', icon: Inbox, permissions: ['feedback:read'] },
   { labelKey: 'navigation.issues', to: '/issues', icon: LayoutList, permissions: ['issue:read'] },
   { labelKey: 'navigation.notifications', to: '/notifications', icon: Bell, permissions: ['issue:read'] },
-  { labelKey: 'navigation.testimonials', to: '/testimonials', icon: MessageSquareQuote, permissions: ['testimonial:read'] },
+  { labelKey: 'navigation.testimonials', to: '/testimonials', icon: MessageSquareQuote, permissions: ['testimonial:read'], feature: 'testimonials' as const },
   { labelKey: 'navigation.analytics', to: '/analytics', icon: BarChart3, permissions: ['project:read'] },
   { labelKey: 'navigation.projects', to: '/projects', icon: FolderKanban, permissions: ['project:read'] },
   { labelKey: 'navigation.settings', to: '/settings', icon: Settings, permissions: ['tenant:read'] },
 ]
-const availablePrimaryNavigation = computed(() => primaryNavigation.filter(item => item.permissions.every(can)))
+const availablePrimaryNavigation = computed(() => primaryNavigation.filter((item) => {
+  if (!item.permissions.every(can)) return false
+  const feature = 'feature' in item ? item.feature : undefined
+  // Until the plan is known, a gated item stays hidden. Showing it and taking it
+  // away a moment later is worse than showing it a moment late.
+  return !feature || planFeatures.value?.[feature] === true
+}))
 
 const queueNavigation: Array<{ id: FeedbackQueueID, labelKey: string, to: string, icon: typeof Inbox }> = [
   { id: 'open', labelKey: 'navigation.queues.open', to: '/feedback?status=open', icon: Inbox },

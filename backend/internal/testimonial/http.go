@@ -13,6 +13,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
@@ -51,6 +52,16 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	protected := []func(http.Handler) http.Handler{
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
+		// The plan gate sits on every backoffice route, not only on the screen
+		// that hides the tab. It deliberately does not sit on the public wall
+		// endpoint: a workspace that downgrades stops curating, but a wall it
+		// already published keeps serving rather than silently emptying a
+		// customer's website.
+		appmiddleware.RequirePlanLimit(appmiddleware.PlanLimitOptions{
+			Feature:    config.FeatureTestimonials,
+			UpgradeURL: "/v1/billing",
+			Logger:     options.Logger,
+		}),
 	}
 	read := append(protected, appmiddleware.RequirePermission(auth.PermissionTestimonialRead))
 	create := append(protected,

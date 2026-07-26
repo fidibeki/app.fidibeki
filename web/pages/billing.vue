@@ -20,7 +20,7 @@ const enterprisePlan: PlanDefinition = {
   yearly_price_cents: null,
   yearly_discount_percent: null,
   limits: { projects: -1, feedback_per_month: -1, users: -1, storage_days: -1 },
-  features: { ai: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: true },
+  features: { ai: true, testimonials: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: true },
 }
 
 const { data, status, error, refresh } = await useAsyncData(

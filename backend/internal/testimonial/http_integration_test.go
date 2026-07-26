@@ -513,6 +513,19 @@ func TestTestimonialAPI(t *testing.T) {
 		"/v1/testimonial-walls/00000000-0000-0000-0000-000000000000", "", fullToken); got.Code != http.StatusNotFound {
 		t.Fatalf("unknown wall = %d, want 404", got.Code)
 	}
+
+	// The plan gate is on the routes, not only on the screen that hides the tab.
+	// Testimonials ride with AI: without moderation the Suggested queue can never
+	// rank anything, so the whole workspace would be a permanently empty promise.
+	if _, err := env.root.Exec(ctx, `UPDATE tenants SET plan = 'starter' WHERE id = $1`,
+		env.tenantID); err != nil {
+		t.Fatalf("downgrade tenant: %v", err)
+	}
+	for _, path := range []string{"/v1/testimonial-candidates", "/v1/testimonials", "/v1/testimonial-walls"} {
+		if got := apiCall(handler, http.MethodGet, path, "", fullToken); got.Code != http.StatusPaymentRequired {
+			t.Errorf("%s on starter = %d, want 402 (%s)", path, got.Code, got.Body.String())
+		}
+	}
 }
 
 // TestimonialWallView mirrors the wall JSON the backoffice consumes, so a field
