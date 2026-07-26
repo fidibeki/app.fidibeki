@@ -492,6 +492,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})(tenantRoutes)
 	tenantRoot := chi.NewRouter()
 	issue.RegisterReporterProgressRoutes(tenantRoot, reporterProgressOptions)
+	// Also mounted on the tenant host: the collection page is served from the
+	// workspace domain the author was linked to, so a platform-only registration
+	// would answer 404 for every real visitor.
+	testimonial.RegisterCollectRoutes(tenantRoot, testimonialCollectOptions)
 	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},

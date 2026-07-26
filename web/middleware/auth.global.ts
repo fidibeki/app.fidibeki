@@ -11,7 +11,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
   const regional = useRegionalContext()
   if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' ||
     to.path === '/auth/verify' || to.path === '/auth/domain-verify' || to.path === '/auth/two-factor' ||
-    to.path.startsWith('/reporter/') || to.path.startsWith('/privacy/')) {
+    to.path.startsWith('/reporter/') || to.path.startsWith('/privacy/') ||
+    // The person answering a testimonial request is not a member and never will
+    // be, so these pages have to sit outside the session entirely. Their token
+    // is the credential, checked server-side.
+    to.path.startsWith('/testimonials/collect/') ||
+    to.path.startsWith('/testimonials/revoke/')) {
     await regional.apply()
     return
   }
