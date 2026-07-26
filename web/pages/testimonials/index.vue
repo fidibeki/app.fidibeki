@@ -171,9 +171,21 @@ async function run(id: string, work: () => Promise<void>, fallbackKey: string) {
   }
 }
 
-const dismiss = (candidate: TestimonialCandidate) => run(candidate.feedback_id, async () => {
-  await $apiFetch(`/v1/testimonial-candidates/${candidate.feedback_id}/dismiss`, { method: 'POST' })
-}, 'testimonials.dismissFailed')
+// Dismissing is permanent: the scoring sweep deliberately leaves dismissed_at
+// alone on re-score, and there is no endpoint to undo it. An action with no way
+// back asks first.
+const dismissFor = ref<TestimonialCandidate | null>(null)
+
+async function confirmDismiss() {
+  const candidate = dismissFor.value
+  if (!candidate) return
+  await run(candidate.feedback_id, async () => {
+    await $apiFetch(`/v1/testimonial-candidates/${candidate.feedback_id}/dismiss`, { method: 'POST' })
+  }, 'testimonials.dismissFailed')
+  // run() reports failure through mutationError, so the dialog stays open with
+  // the reason rather than closing as though it had worked.
+  if (!mutationError.value) dismissFor.value = null
+}
 
 const approve = (item: Testimonial) => run(item.id, async () => {
   await $apiFetch(`/v1/testimonials/${item.id}/approve`, { method: 'POST' })
@@ -367,7 +379,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           <div v-if="canWrite('testimonial:create')" class="candidate-action">
             <button
               type="button" class="quiet-button" :disabled="busyID === candidate.feedback_id"
-              @click="dismiss(candidate)"
+              @click="dismissFor = candidate"
             >
               <X :size="13" /> {{ t('testimonials.dismissAction') }}
             </button>
@@ -615,6 +627,19 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
         </footer>
       </section>
     </AppDialog>
+
+    <AppConfirmationDialog
+      :open="Boolean(dismissFor)"
+      :title="t('testimonials.dismissTitle')"
+      :description="t('testimonials.dismissDescription')"
+      :confirm-label="t('testimonials.dismissAction')"
+      :pending-label="t('testimonials.dismissPending')"
+      :cancel-label="t('testimonials.dismissKeep')"
+      :pending="Boolean(dismissFor) && busyID === dismissFor?.feedback_id"
+      :error="dismissFor ? mutationError : ''"
+      @cancel="dismissFor = null"
+      @confirm="confirmDismiss"
+    />
   </div>
 </template>
 
