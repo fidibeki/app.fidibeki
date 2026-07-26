@@ -99,6 +99,7 @@ export const footerGroups = [
       { label: 'Security', to: '/security' },
       { label: 'Privacy', to: '/privacy' },
       { label: 'Terms', to: '/tos' },
+      { label: 'DPA', to: '/dpa' },
     ],
   },
   {
@@ -127,5 +128,6 @@ export const marketingRoutes: string[] = [
   '/privacy',
   '/security',
   '/tos',
+  '/dpa',
   '/sign-up',
 ]

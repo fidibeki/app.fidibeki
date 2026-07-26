@@ -237,9 +237,10 @@ useSiteMeta({
 
           <h2 id="subprocessors">Subprocessors</h2>
           <p>
-            We use a limited set of subprocessors to run Fidibeki. Their roles, data categories, and
-            locations are recorded in our Data Processing Addendum, which is being finalized. The
-            current list includes:
+            We use a limited set of subprocessors to run Fidibeki. Their roles are recorded in our
+            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>, which also states openly which
+            provider-side facts — locations, legal entities, and transfer mechanisms — are not yet
+            verified. The current list includes:
           </p>
           <ul>
             <li><strong>Stripe</strong>. Payment processing;</li>
@@ -267,13 +268,16 @@ useSiteMeta({
           <h2 id="international-transfers">International transfers</h2>
           <p>
             Some subprocessors process data outside the country where you are located, including
-            outside the European Economic Area. Where this happens, we rely on approved transfer
-            safeguards such as Standard Contractual Clauses or adequacy decisions, and we document the
-            transfer impact for each provider.
+            outside the European Economic Area. A transfer like that needs an approved safeguard —
+            an adequacy decision, Standard Contractual Clauses, or another lawful route — together
+            with a transfer impact assessment.
           </p>
           <p>
-            We do not claim EU data residency for flows that do not actually support it. Specific
-            locations and transfer mechanisms are recorded in the DPA.
+            We are still verifying which mechanism applies to each provider, and we would rather say
+            so than imply coverage we have not confirmed. The
+            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink> lists this among the items that
+            are not yet settled. We do not claim EU data residency for flows that do not actually
+            support it.
           </p>
 
           <h2 id="cookies">Cookies and tracking on this site</h2>

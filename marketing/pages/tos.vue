@@ -121,9 +121,9 @@ useSiteMeta({
           <p>
             Two other documents form part of this contract: the
             <NuxtLink to="/privacy">privacy notice</NuxtLink>, which describes how personal data is
-            handled, and our Data Processing Addendum, which governs feedback collected through your
-            widget. Where a signed order form or DPA conflicts with these terms, that signed
-            document wins.
+            handled, and our <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>, which governs
+            feedback collected through your widget. Where a signed order form or DPA conflicts with
+            these terms, that signed document wins.
           </p>
           <p>
             If you do not accept these terms, do not use Fidibeki. Continuing to use a workspace
