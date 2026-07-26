@@ -56,7 +56,7 @@ func (Store) CreateWall(
 		values.MaxItems, origins, values.CreatedBy).
 		Scan(&wall.ID, &wall.PublicID, &wall.ProjectID, &wall.Name, &wall.Slug, &wall.Layout,
 			&themeRaw, &wall.ShowRating, &wall.ShowAvatar, &wall.ShowCompany, &wall.ShowVideo,
-			&wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt,
+			&wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt, &wall.HasUnpublishedChanges,
 			&wall.CreatedAt, &wall.UpdatedAt)
 	if err != nil {
 		return Wall{}, fmt.Errorf("create testimonial wall: %w", err)
@@ -89,7 +89,7 @@ func (Store) ListWalls(ctx context.Context, query db.Querier, tenantID string) (
 		var themeRaw []byte
 		if err := rows.Scan(&wall.ID, &wall.PublicID, &wall.ProjectID, &wall.Name, &wall.Slug,
 			&wall.Layout, &themeRaw, &wall.ShowRating, &wall.ShowAvatar, &wall.ShowCompany,
-			&wall.ShowVideo, &wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt,
+			&wall.ShowVideo, &wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt, &wall.HasUnpublishedChanges,
 			&wall.CreatedAt, &wall.UpdatedAt, &wall.ItemCount); err != nil {
 			return nil, fmt.Errorf("scan testimonial wall: %w", err)
 		}
@@ -110,7 +110,7 @@ func (Store) GetWall(ctx context.Context, query db.Querier, tenantID, id string)
 	`, tenantID, id).
 		Scan(&wall.ID, &wall.PublicID, &wall.ProjectID, &wall.Name, &wall.Slug, &wall.Layout,
 			&themeRaw, &wall.ShowRating, &wall.ShowAvatar, &wall.ShowCompany, &wall.ShowVideo,
-			&wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt,
+			&wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt, &wall.HasUnpublishedChanges,
 			&wall.CreatedAt, &wall.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Wall{}, ErrNotFound
@@ -149,6 +149,16 @@ func (Store) SetWallItems(
 			return fmt.Errorf("insert testimonial wall item: %w", err)
 		}
 	}
+	// Membership lives in another table, so without recording this here a wall
+	// whose selection changed is indistinguishable from one whose live copy is
+	// still current — and the screen would have to offer "Publish" forever, or
+	// never.
+	if _, err := query.Exec(ctx, `
+		UPDATE testimonial_walls SET has_unpublished_changes = true
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, wallID); err != nil {
+		return fmt.Errorf("mark testimonial wall changed: %w", err)
+	}
 	return nil
 }
 
@@ -180,6 +190,15 @@ func (Store) RemoveTestimonialFromWalls(
 		  AND item.position <> renumbered.position
 	`, tenantID); err != nil {
 		return fmt.Errorf("renumber testimonial wall items: %w", err)
+	}
+	// A wall that just lost a card is out of date with what is live, even though
+	// nobody edited it: the removal came from the author revoking or the
+	// testimonial being archived.
+	if _, err := query.Exec(ctx, `
+		UPDATE testimonial_walls SET has_unpublished_changes = true
+		WHERE tenant_id = $1 AND status = 'published'
+	`, tenantID); err != nil {
+		return fmt.Errorf("mark testimonial walls changed: %w", err)
 	}
 	return nil
 }
@@ -405,7 +424,8 @@ func (Store) PublishSnapshot(
 	}
 
 	if _, err := query.Exec(ctx, `
-		UPDATE testimonial_walls SET status = 'published', published_at = $3
+		UPDATE testimonial_walls
+		SET status = 'published', published_at = $3, has_unpublished_changes = false
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, wallID, now); err != nil {
 		return Snapshot{}, fmt.Errorf("mark wall published: %w", err)

@@ -1561,6 +1561,8 @@ export interface TestimonialWall {
   allowed_origins: string[]
   status: 'draft' | 'published'
   item_count: number
+  /** Whether the selection differs from the copy that is live. */
+  has_unpublished_changes: boolean
   published_at: string | null
   created_at: string
   updated_at: string

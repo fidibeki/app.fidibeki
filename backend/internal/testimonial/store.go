@@ -34,7 +34,8 @@ const testimonialColumns = `
 
 const wallColumns = `
 	id, public_id, project_id, name, slug, layout, theme, show_rating, show_avatar, show_company,
-	show_video, max_items, allowed_origins, status, published_at, created_at, updated_at
+	show_video, max_items, allowed_origins, status, published_at, has_unpublished_changes,
+	created_at, updated_at
 `
 
 // ListCandidates returns the Suggested queue: eligible, not dismissed, best

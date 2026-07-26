@@ -308,6 +308,11 @@ const saveSelection = () => {
   }, 'testimonials.selectionFailed')
 }
 
+/** A draft has never been published; a live wall may have drifted since. */
+function needsPublish(wall: TestimonialWall) {
+  return wall.status !== 'published' || wall.has_unpublished_changes
+}
+
 // Deleting a published wall takes it off the customer's site, so the dialog says
 // which of the two things is about to happen rather than one warning for both.
 const deleteFor = ref<TestimonialWall | null>(null)
@@ -526,6 +531,12 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
               <span class="status-pill" :class="wall.status === 'published' ? 'status-ready' : 'status-pending'">
                 {{ wall.status === 'published' ? t('testimonials.published') : t('testimonials.draft') }}
               </span>
+              <span
+                v-if="wall.status === 'published' && wall.has_unpublished_changes"
+                class="status-pill status-pending"
+              >
+                {{ t('testimonials.wallOutOfDate') }}
+              </span>
               <span class="tag">{{ plural('testimonials.wallItems', wall.item_count) }}</span>
             </div>
             <div class="wall-actions">
@@ -537,11 +548,24 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
               </button>
               <!-- Publishing is a separate grant from editing: it is the step
                    that reaches the public internet. -->
+              <!-- Publishing is only offered when there is something to publish.
+                   A permanent primary button on a live, current wall says the
+                   work is unfinished when it is not. -->
               <button
-                v-if="canWrite('testimonial:publish')" type="button" class="app-button app-button--primary"
+                v-if="canWrite('testimonial:publish') && needsPublish(wall)"
+                type="button" class="app-button app-button--primary"
                 :disabled="busyID === wall.id" @click="publish(wall)"
               >
-                {{ t('testimonials.publish') }}
+                {{ wall.status === 'published' ? t('testimonials.publishChanges') : t('testimonials.publish') }}
+              </button>
+              <!-- Still reachable when nothing is known to have changed: a quote
+                   edit or a video finishing review can stale a wall without
+                   touching it. Quiet, because it is rarely the thing to do. -->
+              <button
+                v-else-if="canWrite('testimonial:publish')" type="button" class="secondary-button"
+                :disabled="busyID === wall.id" @click="publish(wall)"
+              >
+                {{ t('testimonials.republish') }}
               </button>
               <button
                 v-if="canWrite('testimonial:publish')" type="button" class="icon-button"

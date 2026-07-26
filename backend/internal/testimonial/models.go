@@ -188,8 +188,11 @@ type Wall struct {
 	Status         WallStatus `json:"status"`
 	ItemCount      int        `json:"item_count"`
 	PublishedAt    *time.Time `json:"published_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// HasUnpublishedChanges is what lets the screen offer publishing only when
+	// there is something to publish, rather than permanently or never.
+	HasUnpublishedChanges bool      `json:"has_unpublished_changes"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // Theme is the customer's visual configuration, mirrored into the embed as CSS

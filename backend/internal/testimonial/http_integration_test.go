@@ -431,6 +431,21 @@ func TestTestimonialAPI(t *testing.T) {
 	if len(wallList.Walls) != 1 || wallList.Walls[0].Status != string(WallPublished) {
 		t.Fatalf("walls = %#v, want one published wall", wallList.Walls)
 	}
+	if wallList.Walls[0].HasUnpublishedChanges {
+		t.Errorf("a freshly published wall must not look edited since: %#v", wallList.Walls[0])
+	}
+
+	// Changing the selection after publishing has to be visible, otherwise the
+	// screen cannot tell a wall that is live and current from one whose live copy
+	// is out of date — and would have to offer publishing permanently, or never.
+	if got := apiCall(handler, http.MethodPut,
+		"/v1/testimonial-walls/"+wallResult.Wall.ID+"/items", itemsBody, fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("re-set items status = %d", got.Code)
+	}
+	decodeAPI(t, apiCall(handler, http.MethodGet, "/v1/testimonial-walls", "", fullToken), &wallList)
+	if !wallList.Walls[0].HasUnpublishedChanges {
+		t.Errorf("editing the selection left the wall looking up to date: %#v", wallList.Walls[0])
+	}
 
 	// Deleting a wall. It takes the same grant as publishing one, because
 	// removing a published wall is as much a change to what the public sees.
@@ -503,11 +518,12 @@ func TestTestimonialAPI(t *testing.T) {
 // TestimonialWallView mirrors the wall JSON the backoffice consumes, so a field
 // rename in the API surfaces here rather than in the browser.
 type TestimonialWallView struct {
-	ID        string `json:"id"`
-	PublicID  string `json:"public_id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	ItemCount int    `json:"item_count"`
+	ID                    string `json:"id"`
+	PublicID              string `json:"public_id"`
+	Name                  string `json:"name"`
+	Status                string `json:"status"`
+	ItemCount             int    `json:"item_count"`
+	HasUnpublishedChanges bool   `json:"has_unpublished_changes"`
 }
 
 // publicCall drives an unauthenticated endpoint over a real socket, so the
