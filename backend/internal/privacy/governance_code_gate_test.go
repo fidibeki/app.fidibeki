@@ -75,6 +75,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 	"web/package.json": {
 		"dependencies:@lucide/vue":         {Class: dependencyApplication},
 		"dependencies:@nuxtjs/i18n":        {Class: dependencyApplication},
+		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:re2js":               {Class: dependencyApplication},
 		"dependencies:rrweb-player":        {Class: dependencyApplication},
@@ -86,6 +87,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 	},
 	"marketing/package.json": {
 		"dependencies:@lucide/vue":         {Class: dependencyApplication},
+		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},
 		"dependencies:vue":                 {Class: dependencyApplication},
 		"devDependencies:@playwright/test": {Class: dependencyBuildTest},
