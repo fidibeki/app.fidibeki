@@ -19,6 +19,7 @@ const links = useAppLinks()
               <span v-if="index < loopStages.length - 1" aria-hidden="true" class="footer-loop-arrow">→</span>
             </template>
           </p>
+          <StatusPill class="footer-status" />
         </div>
 
         <nav
@@ -147,6 +148,10 @@ const links = useAppLinks()
   margin-top: 2.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--line);
+}
+
+.footer-status {
+  align-self: flex-start;
 }
 
 .footer-copyright {
