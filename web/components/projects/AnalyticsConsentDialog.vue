@@ -52,6 +52,16 @@ const diagnosticReady = computed(() =>
   ),
 )
 
+/** The call the customer's own consent manager has to make, filled in with the
+ *  notice version and locale they just chose. */
+const runtimeSnippet = computed(() => `fidibeki.analytics.grantConsent({
+  consentId: "cmp-reference",
+  purpose: "widget_analytics",
+  noticeVersion: "${draft.value.notice_version}",
+  locale: "${draft.value.supported_locales[0] || 'en'}",
+  source: "customer_cmp"
+})`)
+
 const diagnosticMessage = computed(() => {
   if (!props.ruleId) return t('projects.editor.analytics.consent.diagnosticSaveFirst')
   if (diagnosticPending.value) return t('projects.editor.analytics.consent.diagnosticChecking')
@@ -311,13 +321,7 @@ function confirm() {
 
           <div v-if="draft.mode === 'customer_cmp'" class="analytics-consent-runtime">
             <div><Code2 :size="16" /><p><b>{{ t('projects.editor.analytics.consent.runtimeTitle') }}</b><span>{{ t('projects.editor.analytics.consent.runtimeDescription') }}</span></p></div>
-            <pre>fidibeki.analytics.grantConsent({
-  consentId: "cmp-reference",
-  purpose: "widget_analytics",
-  noticeVersion: "{{ draft.notice_version }}",
-  locale: "{{ draft.supported_locales[0] || 'en' }}",
-  source: "customer_cmp"
-})</pre>
+            <AppCodeBlock :code="runtimeSnippet" language="js" />
           </div>
 
           <div class="analytics-consent-diagnostic-panel">

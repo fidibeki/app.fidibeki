@@ -79,32 +79,58 @@ export const integrations: IntegrationEntry[] = [
   {
     slug: 'jira',
     name: 'Jira',
-    status: 'planned',
-    tagline: 'Create Jira issues from Fidibeki feedback. Planned, not yet available.',
+    status: 'available',
+    tagline: 'Push a Fidibeki issue into a Jira project without leaving triage.',
     summary:
-      'When enabled, Fidibeki will create Jira issues from selected feedback or linked issues, keeping the original reporter context and a link back to Fidibeki.',
+      'Connect your Jira Cloud site with an API token, pick the project and issue type, and create Jira issues from Fidibeki issues, by hand or automatically. The external key comes back and stays linked to the report it came from.',
     icon: 'hash',
-    availability: 'Planned',
+    availability: 'All plans',
     sections: [
       {
-        heading: 'What we are considering',
-        body: 'Jira issue creation is on the roadmap. The goal is to let your team push a Fidibeki issue into a Jira project with the right reporter context, labels, and a two way link, without leaving the Fidibeki workflow.',
+        heading: 'Connect once, per workspace',
+        body: 'A workspace administrator supplies the Jira Cloud site URL, the account email, and an API token. Fidibeki validates them against your site before saving, so a wrong token fails at the point you can still fix it rather than the first time somebody tries to file an issue. Credentials are stored encrypted and never returned by the API.',
+        bullets: [
+          'Jira Cloud REST v3, against your own site URL',
+          'Credentials verified at connection time, not at first use',
+          'Available projects and issue types are read from your site',
+        ],
+      },
+      {
+        heading: 'By hand, or automatically',
+        body: 'From an issue, create the Jira counterpart and choose the project and issue type. Or switch automatic creation on and every new Fidibeki issue gets one, created in the background so triage never waits on Jira being slow. Either way the external key is stored against the issue, so the two stay connected.',
+      },
+      {
+        heading: 'When Jira says no',
+        body: 'Provider failures are translated into something a workspace administrator can act on — an expired token, a project that no longer exists, a rate limit — rather than a raw status code. Retryable failures are retried with backoff; the rest are surfaced with the reason.',
       },
     ],
   },
   {
     slug: 'linear',
     name: 'Linear',
-    status: 'planned',
-    tagline: 'Create Linear issues from Fidibeki feedback. Planned, not yet available.',
+    status: 'available',
+    tagline: 'Turn a Fidibeki issue into a Linear issue, with the report still attached.',
     summary:
-      'When enabled, Fidibeki will create Linear issues from selected feedback or linked issues, preserving context and linking back to the original report.',
+      'Connect Linear with an API key, choose the team, and create Linear issues from Fidibeki issues by hand or automatically. Priority carries across and the Linear identifier stays linked to the feedback behind it.',
     icon: 'hash',
-    availability: 'Planned',
+    availability: 'All plans',
     sections: [
       {
-        heading: 'What we are considering',
-        body: 'Linear issue creation is on the roadmap. The goal is to turn a Fidibeki issue into a Linear issue with the original reporter context, priority, and a link back to Fidibeki.',
+        heading: 'Connect once, per workspace',
+        body: 'A workspace administrator supplies a Linear API key. Fidibeki validates it before saving and reads back the teams it can file into, so the team picker offers what your key can actually reach rather than a list you have to type from memory.',
+        bullets: [
+          'Linear GraphQL API with your own API key',
+          'Key verified at connection time, not at first use',
+          'Teams are read from Linear rather than entered by hand',
+        ],
+      },
+      {
+        heading: 'By hand, or automatically',
+        body: 'Create the Linear issue from a Fidibeki issue and pick the team, or turn automatic creation on and let every new issue get one in the background. The Linear identifier is stored against the Fidibeki issue, so the report that motivated the work is one click away from the work.',
+      },
+      {
+        heading: 'When Linear says no',
+        body: 'Provider failures are translated into something a workspace administrator can act on — a revoked key, a team that no longer exists, a rate limit — rather than a raw status code. Retryable failures are retried with backoff; the rest are surfaced with the reason.',
       },
     ],
   },

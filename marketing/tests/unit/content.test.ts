@@ -63,6 +63,8 @@ describe('content integrity', () => {
     }
     const available = integrations.filter((entry) => entry.status === 'available')
     expect(available.map((entry) => entry.slug).sort()).toEqual([
+      'jira',
+      'linear',
       'microsoft-teams',
       'slack',
       'webhooks',
@@ -122,16 +124,21 @@ describe('content integrity', () => {
   })
 
   it('only claims available integrations that ship today', () => {
-    const forbidden = /\b(github|jira|linear|intercom|zapier|discord)\b/i
+    // Names we must not put an "available" badge on, because there is no
+    // provider behind them. Jira and Linear were on this list until the
+    // issuetracker package shipped both; the rest still have nothing.
+    const forbidden = /\b(github|intercom|zapier|discord)\b/i
     for (const integration of integrations) {
       if (integration.status === 'available') {
         expect(integration.name).not.toMatch(forbidden)
       }
     }
-    const allowedPlanned = new Set(['jira', 'linear'])
+    // Anything still wearing a "planned" badge has to be genuinely unbuilt.
+    // Leaving one on a shipped feature is the same failure in the other
+    // direction: work nobody knows they can use.
     for (const integration of integrations) {
       if (integration.status === 'planned') {
-        expect(['jira', 'linear', 'slack-actions']).toContain(integration.slug)
+        expect(['slack-actions']).toContain(integration.slug)
       }
     }
   })
