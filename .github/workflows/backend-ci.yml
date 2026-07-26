@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-arm64-2x
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
