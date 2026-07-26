@@ -818,6 +818,29 @@ func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slack
 		t.Errorf("beta installs = %d, acme installs = %d; want 1 and 2", betaCount, acmeCount)
 	}
 
+	// Slack can return a webhook with no channel or workspace name. integrations.channel and
+	// slack_team_name allow NULL but reject the empty string, so this must store nothing
+	// rather than "" — otherwise the install dies on a check constraint at the last step.
+	channel, channelID = "", "C-NAMELESS"
+	blankToken := beginInstall(t, "acme", harness.ownerToken)
+	if blank := callback("?code=install-code&state=" + blankToken); blank.Code != http.StatusFound {
+		t.Fatalf("nameless channel install status = %d", blank.Code)
+	}
+	var blankName string
+	var blankChannel *string
+	if err := harness.root.QueryRow(ctx, `
+		SELECT name, channel FROM integrations
+		WHERE tenant_id = $1 AND slack_channel_id = $2
+	`, harness.tenantIDs["acme"], "C-NAMELESS").Scan(&blankName, &blankChannel); err != nil {
+		t.Fatalf("read nameless install: %v", err)
+	}
+	if blankChannel != nil {
+		t.Errorf("channel = %q, want NULL", *blankChannel)
+	}
+	if blankName == "" {
+		t.Error("name is empty, which the schema rejects")
+	}
+
 	// Removing an OAuth install revokes the token with Slack and drops the row.
 	removed := integrationRequest(handler, "acme", http.MethodDelete,
 		"/v1/integrations/"+storedID, "", harness.ownerToken)

@@ -140,9 +140,9 @@ func (s Store) UpsertSlackInstall(
 			is_active = true,
 			updated_at = now()
 		RETURNING `+integrationColumns+`
-	`, values.ID, tenantID, values.Name, values.WebhookURL, values.Channel, values.Events,
-		values.PrivacyFields, PrivacyProfileVersion, values.TeamID, values.TeamName,
-		values.ChannelID, tokenCiphertext))
+	`, values.ID, tenantID, values.Name, values.WebhookURL, nullableText(values.Channel),
+		values.Events, values.PrivacyFields, PrivacyProfileVersion, values.TeamID,
+		nullableText(values.TeamName), values.ChannelID, tokenCiphertext))
 	if err != nil {
 		return Integration{}, fmt.Errorf("upsert slack install: %w", err)
 	}
@@ -176,6 +176,16 @@ func (s Store) SlackAccessToken(
 		return "", err
 	}
 	return string(plaintext), nil
+}
+
+// nullableText maps an absent value to SQL NULL. integrations.channel and
+// integrations.slack_team_name both allow NULL but reject the empty string, so a Slack
+// response that omits a channel or workspace name must store nothing rather than "".
+func nullableText(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func slackTokenAAD(tenantID, teamID, channelID string) string {
