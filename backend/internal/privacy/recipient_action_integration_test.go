@@ -112,8 +112,8 @@ func TestRecipientActionRequiresEvidenceAndTracksRetryDelivery(t *testing.T) {
 	failing := &recipientSender{err: errors.New("provider secret token must not persist")}
 	handler := RecipientHandler{
 		Store: store, Sender: failing, From: "Fidibeki <privacy@fidibeki.com>",
-		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
-		Now: func() time.Time { return now.Add(6 * time.Minute) },
+		PublicBaseURL: "https://api.fidibeki.com",
+		Now:           func() time.Time { return now.Add(6 * time.Minute) },
 	}
 	if err := handler.Handler()(ctx, recipientTask(t, firstEventID, tenantID, action.ID)); err == nil {
 		t.Fatal("failed recipient delivery error = nil")

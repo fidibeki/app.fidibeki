@@ -250,7 +250,7 @@ func (s Service) CancelDeletion(ctx context.Context, tenantID, memberID string) 
 }
 
 func (s Service) composeEmail(message email.Message, content email.Content) (email.Message, error) {
-	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL)
 	if err != nil {
 		return email.Message{}, err
 	}

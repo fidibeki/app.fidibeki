@@ -78,7 +78,6 @@ func TestControllerNotificationMessageIsMinimizedAndProviderIdempotent(t *testin
 	message, err := controllerNotificationMessage(notification, ControllerNotificationHandler{
 		From:          "Fidibeki <updates@fidibeki.com>",
 		PublicBaseURL: "https://api.staging.fidibeki.com",
-		BaseDomain:    "fidibeki.com",
 	})
 	if err != nil {
 		t.Fatalf("controllerNotificationMessage() error = %v", err)

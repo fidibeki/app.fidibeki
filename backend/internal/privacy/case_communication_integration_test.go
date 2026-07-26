@@ -127,8 +127,8 @@ func TestCaseCommunicationTracksStateDeliveryAndRetry(t *testing.T) {
 	failing := &recipientSender{err: errors.New("provider secret must not persist")}
 	handler := CaseCommunicationHandler{
 		Store: store, Sender: failing, From: "Fidibeki <privacy@fidibeki.com>",
-		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
-		Now: func() time.Time { return now.Add(5 * time.Minute) },
+		PublicBaseURL: "https://api.fidibeki.com",
+		Now:           func() time.Time { return now.Add(5 * time.Minute) },
 	}
 	if err := handler.Handler()(ctx, caseCommunicationTask(
 		t, eventID, tenantID, communication.ID,

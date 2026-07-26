@@ -221,7 +221,7 @@ func (h LifecycleHandler) recipients(ctx context.Context, event lifecycleEvent) 
 }
 
 func (h LifecycleHandler) message(event lifecycleEvent, recipient lifecycleRecipient) (Message, error) {
-	logoURL, err := BrandLogoURL(h.PublicBaseURL, h.BaseDomain)
+	logoURL, err := BrandLogoURL(h.PublicBaseURL)
 	if err != nil {
 		return Message{}, err
 	}

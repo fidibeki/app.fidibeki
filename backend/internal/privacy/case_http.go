@@ -784,7 +784,7 @@ func privacyCaseVerificationMessage(
 	if err != nil {
 		return email.Message{}, err
 	}
-	logoURL, err := email.BrandLogoURL(options.PublicBaseURL, options.BaseDomain)
+	logoURL, err := email.BrandLogoURL(options.PublicBaseURL)
 	if err != nil {
 		return email.Message{}, err
 	}

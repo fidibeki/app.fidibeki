@@ -178,7 +178,7 @@ func (s Scheduler) message(
 	total int,
 	deliveryID string,
 ) (email.Message, error) {
-	logoURL, err := email.BrandLogoURL(s.PublicBaseURL, s.BaseDomain)
+	logoURL, err := email.BrandLogoURL(s.PublicBaseURL)
 	if err != nil {
 		return email.Message{}, err
 	}
