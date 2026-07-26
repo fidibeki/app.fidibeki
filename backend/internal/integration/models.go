@@ -53,6 +53,16 @@ type DestinationCapabilities struct {
 	FidibekiLinksAccessControlled bool `json:"fidibeki_links_access_controlled"`
 }
 
+// InstallSource records how a destination was obtained. It exists so the UI can tell a
+// one-click install from a pasted URL, and so uninstall knows whether there is a token to
+// revoke.
+type InstallSource string
+
+const (
+	InstallSourceManual InstallSource = "manual"
+	InstallSourceOAuth  InstallSource = "oauth"
+)
+
 type Integration struct {
 	ID                       string                  `json:"id"`
 	Kind                     Kind                    `json:"kind"`
@@ -65,9 +75,31 @@ type Integration struct {
 	PrivacyFields            []string                `json:"privacy_fields"`
 	PrivacyProfileVersion    int                     `json:"privacy_profile_version"`
 	DestinationCapabilities  DestinationCapabilities `json:"destination_capabilities"`
+	InstallSource            InstallSource           `json:"install_source"`
+	SlackTeamName            *string                 `json:"slack_team_name,omitempty"`
 	Active                   bool                    `json:"is_active"`
 	CreatedAt                time.Time               `json:"created_at"`
 	UpdatedAt                time.Time               `json:"updated_at"`
+}
+
+// SlackInstallValues is one completed Slack install, ready to persist.
+type SlackInstallValues struct {
+	ID            string
+	Name          string
+	WebhookURL    string
+	Channel       string
+	TeamID        string
+	TeamName      string
+	ChannelID     string
+	AccessToken   string
+	Events        []string
+	PrivacyFields []string
+}
+
+// SlackInstallInput is the tenant-side request that starts an install.
+type SlackInstallInput struct {
+	Events        []string `json:"events"`
+	PrivacyFields []string `json:"privacy_fields"`
 }
 
 type CreateInput struct {

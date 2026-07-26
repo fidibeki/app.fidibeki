@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
@@ -20,6 +21,10 @@ type HTTPOptions struct {
 	Store             Store
 	JWT               *auth.JWTManager
 	AllowInsecureURLs bool
+	// Slack enables the one-click install path. Left zero, the endpoints report that the
+	// deployment has no Slack app and the manual path keeps working unchanged.
+	Slack  SlackOAuth
+	Logger *slog.Logger
 }
 
 type HTTPHandler struct {
@@ -27,6 +32,9 @@ type HTTPHandler struct {
 }
 
 func RegisterRoutes(router chi.Router, options HTTPOptions) {
+	if options.Logger == nil {
+		options.Logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	}
 	handler := &HTTPHandler{options: options}
 	protected := []func(http.Handler) http.Handler{
 		appmiddleware.RequireActive,
@@ -34,6 +42,8 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	}
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIntegrationCreate))...).
 		Post("/v1/integrations", handler.create)
+	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIntegrationCreate))...).
+		Post("/v1/integrations/slack/install", handler.slackInstall)
 	router.With(append(protected, appmiddleware.RequirePermission(auth.PermissionIntegrationRead))...).
 		Get("/v1/integrations", handler.list)
 	router.With(append(protected, appmiddleware.RequireWritable, appmiddleware.RequirePermission(auth.PermissionIntegrationUpdate))...).
@@ -131,8 +141,14 @@ func (h *HTTPHandler) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Read the token and queue the revoke before the row disappears; the Slack call itself
+	// runs after this transaction commits.
+	oauthInstall := h.scheduleSlackRevoke(r.Context(), query, resolved.ID, integrationID)
 	if err := h.options.Store.Delete(r.Context(), query, resolved.ID, integrationID); err != nil {
 		writeIntegrationError(w, err)
+		return
+	}
+	if oauthInstall && !h.auditSlackUninstall(w, r, query, resolved.ID, integrationID) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
