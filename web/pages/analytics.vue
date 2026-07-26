@@ -213,7 +213,7 @@ useHead(() => ({ title: t('analytics.pageTitle') }))
 </template>
 
 <style scoped>
-.analytics-page { max-width: 1540px; margin: 0 auto; }
+.analytics-page { margin: 0 auto; }
 .analytics-heading { margin-bottom: 16px; }
 .analytics-toolbar { display: grid; grid-template-columns: auto minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(220px, 1.4fr) 38px; align-items: end; gap: 10px; margin-bottom: 18px; padding: 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px; }
 .analytics-toolbar label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
