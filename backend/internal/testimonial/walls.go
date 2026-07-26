@@ -184,6 +184,29 @@ func (Store) RemoveTestimonialFromWalls(
 	return nil
 }
 
+// DeleteWall removes a wall and, by cascade, its items, snapshots and view
+// counters.
+//
+// Nothing is kept: a wall is a presentation of testimonials, never the record of
+// them. The testimonials themselves, and the consent behind each one, are
+// untouched.
+func (Store) DeleteWall(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, id string,
+) error {
+	tag, err := query.Exec(ctx, `
+		DELETE FROM testimonial_walls WHERE tenant_id = $1 AND id = $2
+	`, tenantID, id)
+	if err != nil {
+		return fmt.Errorf("delete testimonial wall: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // PublishableCard is a testimonial joined with everything the publishability
 // predicate needs, ready to be projected into a snapshot.
 type PublishableCard struct {

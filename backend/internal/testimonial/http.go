@@ -79,6 +79,9 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(read...).Get("/v1/testimonial-walls/{wallID}", handler.getWall)
 	router.With(update...).Put("/v1/testimonial-walls/{wallID}/items", handler.setWallItems)
 	router.With(publish...).Post("/v1/testimonial-walls/{wallID}/publish", handler.publishWall)
+	// Deletion takes the publish grant, not the update grant: removing a wall
+	// that is live changes what the public sees just as publishing it did.
+	router.With(publish...).Delete("/v1/testimonial-walls/{wallID}", handler.deleteWall)
 }
 
 func (h *HTTPHandler) now() time.Time {
@@ -571,6 +574,28 @@ func (h *HTTPHandler) publishWall(w http.ResponseWriter, r *http.Request) {
 		"public_id":    wall.PublicID,
 		"published_at": snapshot.PublishedAt,
 	})
+}
+
+// deleteWall removes a wall and everything that only existed to render it.
+//
+// The testimonials on it are untouched: a wall is a presentation, not the
+// record. If it was published, its snapshots go too, so the embed on the
+// customer's site stops resolving instead of serving a wall that no longer
+// exists.
+func (h *HTTPHandler) deleteWall(w http.ResponseWriter, r *http.Request) {
+	tenantID, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	id, ok := uuidParam(w, r, "wallID")
+	if !ok {
+		return
+	}
+	if err := h.options.Store.DeleteWall(r.Context(), query, tenantID, id); err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func boolOrDefault(value *bool, fallback bool) bool {

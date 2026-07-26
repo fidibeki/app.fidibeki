@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowDown, ArrowUp, Check, Copy, GripVertical, LayoutGrid, MessageSquareQuote,
-  Plus, Sparkles, X,
+  Plus, Sparkles, Trash2, X,
 } from '@lucide/vue'
 import type {
   Testimonial, TestimonialCandidate, TestimonialPublishResult, TestimonialWall,
@@ -308,6 +308,21 @@ const saveSelection = () => {
   }, 'testimonials.selectionFailed')
 }
 
+// Deleting a published wall takes it off the customer's site, so the dialog says
+// which of the two things is about to happen rather than one warning for both.
+const deleteFor = ref<TestimonialWall | null>(null)
+
+async function confirmDeleteWall() {
+  const wall = deleteFor.value
+  if (!wall) return
+  await run(wall.id, async () => {
+    await $apiFetch(`/v1/testimonial-walls/${wall.id}`, { method: 'DELETE' })
+    if (editingWall.value?.id === wall.id) editingWall.value = null
+    notice.value = t('testimonials.wallDeleted', { name: wall.name })
+  }, 'testimonials.wallDeleteFailed')
+  if (!mutationError.value) deleteFor.value = null
+}
+
 const publish = (wall: TestimonialWall) => run(wall.id, async () => {
   const result = await $apiFetch<TestimonialPublishResult>(
     `/v1/testimonial-walls/${wall.id}/publish`, { method: 'POST' },
@@ -528,6 +543,13 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
               >
                 {{ t('testimonials.publish') }}
               </button>
+              <button
+                v-if="canWrite('testimonial:publish')" type="button" class="icon-button"
+                :disabled="busyID === wall.id" :aria-label="t('testimonials.wallDelete')"
+                :title="t('testimonials.wallDelete')" @click="deleteFor = wall"
+              >
+                <Trash2 :size="14" />
+              </button>
             </div>
           </header>
 
@@ -684,6 +706,21 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
         </footer>
       </section>
     </AppDialog>
+
+    <AppConfirmationDialog
+      :open="Boolean(deleteFor)"
+      :title="t('testimonials.wallDeleteTitle', { name: deleteFor?.name })"
+      :description="deleteFor?.status === 'published'
+        ? t('testimonials.wallDeletePublished')
+        : t('testimonials.wallDeleteDraft')"
+      :confirm-label="t('testimonials.wallDelete')"
+      :pending-label="t('testimonials.wallDeletePending')"
+      :cancel-label="t('testimonials.dismissKeep')"
+      :pending="Boolean(deleteFor) && busyID === deleteFor?.id"
+      :error="deleteFor ? mutationError : ''"
+      @cancel="deleteFor = null"
+      @confirm="confirmDeleteWall"
+    />
 
     <AppConfirmationDialog
       :open="Boolean(dismissFor)"

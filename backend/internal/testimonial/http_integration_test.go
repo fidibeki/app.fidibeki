@@ -432,6 +432,48 @@ func TestTestimonialAPI(t *testing.T) {
 		t.Fatalf("walls = %#v, want one published wall", wallList.Walls)
 	}
 
+	// Deleting a wall. It takes the same grant as publishing one, because
+	// removing a published wall is as much a change to what the public sees.
+	spare := apiCall(handler, http.MethodPost, "/v1/testimonial-walls",
+		`{"name":"Spare","slug":"spare"}`, fullToken)
+	if spare.Code != http.StatusCreated {
+		t.Fatalf("create spare wall status = %d, body = %s", spare.Code, spare.Body.String())
+	}
+	var spareResult struct {
+		Wall TestimonialWallView `json:"wall"`
+	}
+	decodeAPI(t, spare, &spareResult)
+	if got := apiCall(handler, http.MethodDelete, "/v1/testimonial-walls/"+spareResult.Wall.ID,
+		"", editorToken); got.Code != http.StatusForbidden {
+		t.Fatalf("delete without publish grant = %d, want 403", got.Code)
+	}
+	if got := apiCall(handler, http.MethodDelete, "/v1/testimonial-walls/"+spareResult.Wall.ID,
+		"", fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("delete wall status = %d, body = %s", got.Code, got.Body.String())
+	}
+	if got := apiCall(handler, http.MethodDelete, "/v1/testimonial-walls/"+spareResult.Wall.ID,
+		"", fullToken); got.Code != http.StatusNotFound {
+		t.Fatalf("deleting twice = %d, want 404", got.Code)
+	}
+
+	// Deleting a published wall takes its snapshots with it, so the embed on the
+	// customer's site stops resolving rather than serving a wall that is gone.
+	if got := apiCall(handler, http.MethodDelete, "/v1/testimonial-walls/"+wallResult.Wall.ID,
+		"", fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("delete published wall status = %d, body = %s", got.Code, got.Body.String())
+	}
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		var remaining int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM testimonial_wall_snapshots WHERE wall_id = $1
+		`, wallResult.Wall.ID).Scan(&remaining); err != nil {
+			t.Fatalf("count snapshots: %v", err)
+		}
+		if remaining != 0 {
+			t.Errorf("snapshots left behind after deleting the wall: %d", remaining)
+		}
+	})
+
 	// A malformed body must be a 400, not a 500 from a nil dereference deeper in.
 	if got := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
 		`{"quote":`, fullToken); got.Code != http.StatusBadRequest {
