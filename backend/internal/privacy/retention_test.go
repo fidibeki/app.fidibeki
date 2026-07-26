@@ -29,11 +29,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 28 {
+		len(starter.Policies) != 29 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 8, Configurable: 3, ExternalControl: 4, DecisionRequired: 13,
+		Enforced: 8, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -95,8 +95,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 84 {
-		t.Fatalf("migration table count = %d, want 84", len(migrated))
+	if len(migrated) != 95 {
+		t.Fatalf("migration table count = %d, want 95", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(
