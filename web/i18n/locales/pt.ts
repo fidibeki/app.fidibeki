@@ -1398,6 +1398,7 @@ export const portugueseMessages = {
     copyLink: 'Copiar link',
     copied: 'Copiado',
     dismissFailed: 'Não foi possível descartar o candidato.',
+    requestHint: 'Pedir apenas solicita autorização ao autor — não publica nada.',
     approve: 'Aprovar',
     approveHint: 'Nada chega a um mural enquanto não o aprovar.',
     approveFailed: 'Não foi possível aprovar este testemunho.',

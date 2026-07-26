@@ -1399,6 +1399,7 @@ export const englishMessages = {
     copyLink: 'Copy link',
     copied: 'Copied',
     dismissFailed: 'The candidate could not be dismissed.',
+    requestHint: 'Requesting only asks the author for permission — it publishes nothing.',
     approve: 'Approve',
     approveHint: 'Nothing reaches a wall until you approve it.',
     approveFailed: 'This testimonial could not be approved.',

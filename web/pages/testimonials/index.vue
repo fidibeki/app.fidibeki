@@ -274,29 +274,34 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
           </div>
         </div>
         <article v-for="candidate in candidates" :key="candidate.feedback_id" class="candidate-row">
-          <span class="candidate-score">
-            <b>{{ Math.round(candidate.decayed_score * 100) }}</b>
-            <small>{{ t('testimonials.score') }}</small>
-          </span>
-          <div class="candidate-body">
-            <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
-            <div class="candidate-reasons">
-              <RatingMark :rating="candidate.rating" compact />
-              <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
+          <div class="candidate-main">
+            <span class="candidate-score">
+              <b>{{ Math.round(candidate.decayed_score * 100) }}</b>
+              <small>{{ t('testimonials.score') }}</small>
+            </span>
+            <div class="candidate-body">
+              <p>{{ candidate.suggested_excerpt || candidate.text }}</p>
+              <div class="candidate-reasons">
+                <RatingMark :rating="candidate.rating" compact />
+                <span v-for="reason in candidate.reasons" :key="reason" class="tag">{{ reasonLabel(reason) }}</span>
+              </div>
             </div>
           </div>
-          <div v-if="canWrite('testimonial:create')" class="candidate-actions">
-            <button
-              type="button" class="app-button app-button--primary"
-              :disabled="busyID === candidate.feedback_id" @click="openRequest(candidate)"
-            >
-              {{ t('testimonials.requestAction') }}
-            </button>
+          <!-- Same shape as the library row: the quote keeps a full line to
+               itself, and the actions carry what they actually do. -->
+          <div v-if="canWrite('testimonial:create')" class="candidate-action">
+            <p>{{ t('testimonials.requestHint') }}</p>
             <button
               type="button" class="quiet-button" :disabled="busyID === candidate.feedback_id"
               @click="dismiss(candidate)"
             >
               <X :size="13" /> {{ t('testimonials.dismissAction') }}
+            </button>
+            <button
+              type="button" class="app-button app-button--primary"
+              :disabled="busyID === candidate.feedback_id" @click="openRequest(candidate)"
+            >
+              {{ t('testimonials.requestAction') }}
             </button>
           </div>
         </article>
@@ -511,18 +516,24 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .testimonial-alert { background: var(--red-soft); border: 1px solid var(--red-line); color: var(--red); }
 .testimonial-notice { background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green); }
 .testimonial-list { overflow: hidden; }
-.candidate-row,
-.library-main { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; }
-.candidate-row { grid-template-columns: 46px minmax(0, 1fr) auto; }
-.library-main { grid-template-columns: 46px minmax(0, 1fr) 190px; }
+/* Both lists share one shape: the quote gets a full line, and whatever can be
+   done to it sits on a second line that never competes with it for width. */
 .candidate-row,
 .library-row { border-bottom: 1px solid var(--line); }
 .candidate-row:last-child,
 .library-row:last-child { border-bottom: 0; }
 .candidate-row:hover,
 .library-row:hover { background: var(--surface-subtle); }
-.library-action { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 16px; background: var(--surface-soft); border-top: 1px solid var(--line); }
+.candidate-main,
+.library-main { display: grid; min-height: 58px; align-items: center; gap: 14px; padding: 12px 16px; }
+.candidate-main { grid-template-columns: 46px minmax(0, 1fr); }
+.library-main { grid-template-columns: 46px minmax(0, 1fr) 190px; }
+.candidate-action,
+.library-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 16px; background: var(--surface-soft); border-top: 1px solid var(--line); }
+.candidate-action p,
 .library-action p { margin: 0 auto 0 0; color: var(--muted); font-size: 9px; }
+.candidate-action .app-button,
+.candidate-action .quiet-button,
 .library-action .app-button { min-height: 30px; font-size: 10px; }
 .candidate-score { display: grid; justify-items: center; gap: 1px; text-align: center; }
 .candidate-score b { font-size: 15px; font-weight: 750; letter-spacing: 0; }
@@ -537,9 +548,6 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .candidate-reasons .rating-mark { height: 20px; min-width: 30px; padding: 0 6px; font-size: 10px; line-height: 18px; }
 .library-state { display: flex; flex-wrap: wrap; gap: 5px; }
 .library-state .status-pill { min-height: 20px; font-size: 9px; }
-.candidate-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
-.candidate-actions .app-button,
-.candidate-actions .quiet-button { min-height: 32px; font-size: 10px; }
 .wall-create { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; padding: 12px 16px; }
 .wall-create label { display: grid; flex: 1 1 auto; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; }
 .wall-card { margin-bottom: 12px; padding: 14px 16px; }
@@ -577,11 +585,14 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .request-prompt:focus-visible { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px var(--accent-glow); }
 .request-link .secondary-button { min-height: 30px; font-size: 9px; }
 @media (max-width: 850px) {
-  .candidate-row,
+  .candidate-main,
   .library-main { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .library-main .rating-mark { justify-self: start; }
   .candidate-score { justify-items: start; text-align: left; }
-  .candidate-actions { flex-direction: row; }
+  /* The hint would push the buttons off the row at this width, so it takes a
+     line of its own rather than shrinking them. */
+  .candidate-action p,
+  .library-action p { flex: 1 0 100%; margin: 0; }
   .wall-create { align-items: stretch; flex-direction: column; }
   .wall-head { align-items: flex-start; flex-direction: column; }
 }
