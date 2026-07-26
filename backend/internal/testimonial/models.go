@@ -2,6 +2,7 @@ package testimonial
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -53,14 +54,20 @@ type WallLayout string
 const (
 	LayoutGrid     WallLayout = "grid"
 	LayoutCarousel WallLayout = "carousel"
+	LayoutMarquee  WallLayout = "marquee"
 	LayoutList     WallLayout = "list"
 	LayoutMasonry  WallLayout = "masonry"
 	LayoutSingle   WallLayout = "single"
+	// LayoutCustom means the customer renders the wall themselves from the
+	// public JSON. The embed still works — it falls back to the grid — but the
+	// backoffice hands them the endpoint rather than a script tag.
+	LayoutCustom WallLayout = "custom"
 )
 
 func (l WallLayout) Valid() bool {
 	switch l {
-	case LayoutGrid, LayoutCarousel, LayoutList, LayoutMasonry, LayoutSingle:
+	case LayoutGrid, LayoutCarousel, LayoutMarquee, LayoutList, LayoutMasonry,
+		LayoutSingle, LayoutCustom:
 		return true
 	}
 	return false
@@ -207,6 +214,30 @@ type Theme struct {
 	Radius     string `json:"radius,omitempty"`
 	FontFamily string `json:"font_family,omitempty"`
 	Mode       string `json:"mode,omitempty"`
+}
+
+// Invalid returns why the theme cannot be stored, or "" when it can.
+//
+// These values end up as CSS custom property values on a customer's own page.
+// The embed already escapes them, so this is not the thing standing between us
+// and injected CSS — it is here so a value that could only ever have been a
+// mistake is refused at the door instead of being published and then wondered
+// about.
+func (t Theme) Invalid() string {
+	for _, value := range []string{t.Accent, t.Radius, t.FontFamily} {
+		if len([]rune(value)) > 120 {
+			return "values must be at most 120 characters"
+		}
+		if strings.ContainsAny(value, ";{}<>") || strings.Contains(value, "/*") {
+			return "values must not contain CSS punctuation"
+		}
+	}
+	switch t.Mode {
+	case "", "auto", "light", "dark":
+	default:
+		return "mode must be auto, light or dark"
+	}
+	return ""
 }
 
 // WallItem is explicit membership: the platform suggests, the customer decides.

@@ -124,6 +124,58 @@ func (Store) GetWall(ctx context.Context, query db.Querier, tenantID, id string)
 	return wall, nil
 }
 
+// WallDesign is the presentation half of a wall: how the cards are arranged and
+// which of the author's details are shown. Membership is set separately.
+type WallDesign struct {
+	Layout      WallLayout
+	Theme       Theme
+	ShowRating  bool
+	ShowAvatar  bool
+	ShowCompany bool
+	ShowVideo   bool
+}
+
+// UpdateWallDesign changes how a published wall looks.
+//
+// It marks the wall as changed for the same reason SetWallItems does: the
+// layout, theme and toggles are copied into the snapshot at publish time, so
+// until the next publish the customer's site is still showing the old design.
+func (Store) UpdateWallDesign(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, id string,
+	design WallDesign,
+) (Wall, error) {
+	theme, err := json.Marshal(design.Theme)
+	if err != nil {
+		return Wall{}, fmt.Errorf("encode wall theme: %w", err)
+	}
+	var wall Wall
+	var themeRaw []byte
+	err = query.QueryRow(ctx, `
+		UPDATE testimonial_walls
+		SET layout = $3, theme = $4, show_rating = $5, show_avatar = $6, show_company = $7,
+		    show_video = $8, has_unpublished_changes = true
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING `+wallColumns,
+		tenantID, id, string(design.Layout), string(theme), design.ShowRating, design.ShowAvatar,
+		design.ShowCompany, design.ShowVideo).
+		Scan(&wall.ID, &wall.PublicID, &wall.ProjectID, &wall.Name, &wall.Slug, &wall.Layout,
+			&themeRaw, &wall.ShowRating, &wall.ShowAvatar, &wall.ShowCompany, &wall.ShowVideo,
+			&wall.MaxItems, &wall.AllowedOrigins, &wall.Status, &wall.PublishedAt, &wall.HasUnpublishedChanges,
+			&wall.CreatedAt, &wall.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Wall{}, ErrNotFound
+	}
+	if err != nil {
+		return Wall{}, fmt.Errorf("update testimonial wall design: %w", err)
+	}
+	if len(themeRaw) > 0 {
+		_ = json.Unmarshal(themeRaw, &wall.Theme)
+	}
+	return wall, nil
+}
+
 // SetWallItems replaces membership and ordering in one statement pair.
 //
 // Positions are renumbered from zero in the order supplied. The unique

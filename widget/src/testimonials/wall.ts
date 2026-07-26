@@ -39,6 +39,9 @@ const STYLES = `
   --fw-line: #22302a;
 }
 
+/* The grid is also what an unrecognised layout renders as, which is deliberate:
+   a wall set to "custom" still has a script tag on somebody's page, and that
+   page should degrade to a wall rather than to a blank space. */
 .wall {
   display: grid;
   gap: var(--fw-gap);
@@ -48,13 +51,31 @@ const STYLES = `
   list-style: none;
 }
 
-.wall[data-layout="list"],
-.wall[data-layout="single"] { grid-template-columns: minmax(0, 1fr); }
+/* Masonry is real column flow rather than a grid with staggered rows, because
+   the whole point is that a two-line quote does not reserve the height of a
+   ten-line one. */
+.wall[data-layout="masonry"] {
+  display: block;
+  column-width: 300px;
+  column-gap: var(--fw-gap);
+}
+
+.wall[data-layout="masonry"] > li {
+  break-inside: avoid;
+  margin: 0 0 var(--fw-gap);
+}
+
+.wall[data-layout="masonry"] .card { height: auto; }
 
 .wall[data-layout="carousel"] {
   display: flex;
+  /* Each card is as tall as what is in it. Stretched to match the tallest, a
+     one-line testimonial beside a video becomes a card that is mostly empty
+     space, and the strip reads as a row of gaps. */
+  align-items: flex-start;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
+  scroll-padding: 0 2px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -63,16 +84,147 @@ const STYLES = `
   scroll-snap-align: start;
 }
 
+/* Marquee: one row duplicated and translated by exactly its own width, which is
+   what makes the seam invisible. */
+.marquee {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+}
+
+.marquee__track {
+  display: flex;
+  gap: var(--fw-gap);
+  width: max-content;
+  animation: fw-marquee var(--fw-marquee-duration, 48s) linear infinite;
+}
+
+/* Content that moves on its own has to be stoppable. Hover covers the pointer,
+   focus-within covers the keyboard, and the container is focusable so there is
+   a way to reach it. */
+.marquee:hover .marquee__track,
+.marquee:focus-within .marquee__track { animation-play-state: paused; }
+
+.marquee:focus-visible { outline: 2px solid var(--fw-accent); outline-offset: 2px; }
+
+.wall[data-layout="marquee"] {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--fw-gap);
+  width: max-content;
+}
+
+.wall[data-layout="marquee"] > li { flex: 0 0 320px; }
+
+/* A row of cards is only as short as its tallest card, and an upright phone
+   recording is over 500px tall at this width — which would leave every quote
+   beside it stranded at the top of a band the height of a video player. Both
+   horizontal layouts are meant to be a strip on a page, so the footage is
+   bounded here and the row stays a strip. */
+.wall[data-layout="marquee"] video,
+.wall[data-layout="carousel"] video { max-height: 220px; }
+
+/* The track holds two lists separated by one gap, so a full cycle is half the
+   track plus half a gap. */
+@keyframes fw-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-50% - var(--fw-gap) / 2)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    overflow-x: auto;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .marquee__track { animation: none; }
+  .marquee__clone { display: none; }
+}
+
+.wall[data-layout="list"] { grid-template-columns: minmax(0, 1fr); }
+
+/* A list is one testimonial per row, so there is width to spare: the author
+   moves out beside the quote instead of sitting under it, which is what stops
+   this being a grid with one column. */
+@container (min-width: 560px) {
+  .wall[data-layout="list"] .card {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 22px;
+  }
+
+  .wall[data-layout="list"] figcaption {
+    order: -1;
+    flex: 0 0 168px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .wall[data-layout="list"] .avatar {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+}
+
+/* Spotlight drops the card chrome entirely: a pull quote under a hero is
+   typography, not a box. */
+.wall[data-layout="single"] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
+}
+
+.wall[data-layout="single"] .card {
+  align-items: center;
+  gap: 18px;
+  max-width: 680px;
+  height: auto;
+  margin: 0 auto;
+  padding: 4px 0;
+  background: none;
+  border: 0;
+  text-align: center;
+}
+
+.wall[data-layout="single"] .body { flex: 0 1 auto; align-items: center; }
+
+.wall[data-layout="single"] blockquote {
+  font-size: clamp(18px, 3.4cqi, 24px);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.wall[data-layout="single"] .headline { font-size: 17px; }
+
+.wall[data-layout="single"] video { max-width: 520px; }
+
 .card {
   display: flex;
   flex-direction: column;
   gap: 12px;
   box-sizing: border-box;
   height: 100%;
+  /* A figure carries a UA margin of 1em 40px. Left alone it eats 80px of every
+     card's width and stacks 40px on each side of the gap the layout asked for,
+     so two neighbouring cards sit 96px apart instead of 16. */
+  margin: 0;
   padding: 18px;
   background: var(--fw-surface);
   border: 1px solid var(--fw-line);
   border-radius: var(--fw-radius);
+}
+
+/* Everything that is not the author, kept together so a layout can move the
+   author relative to it without having to place each child by hand. */
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
 .headline {
@@ -153,6 +305,28 @@ video {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Attribution. It is a part() like everything else so a customer can move or
+   restyle it to sit with their own footer, rather than being stuck with ours in
+   the middle of their page. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--fw-muted);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.badge:hover,
+.badge:focus-visible { color: var(--fw-accent); }
+
+.badge svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
 }
 
 .tags li {
@@ -236,13 +410,15 @@ function renderCard(card: TestimonialCard, payload: WallPayload, origin: string)
   return `
     <li part="card-wrapper">
       <figure class="card" part="card">
-        ${payload.show_rating ? renderStars(card.rating) : ''}
-        ${card.headline ? `<p class="headline" part="headline">${escapeHTML(card.headline)}</p>` : ''}
-        ${video ? renderVideo(video, poster, author) : ''}
-        <blockquote part="quote">${escapeHTML(card.quote)}</blockquote>
-        ${card.tags?.length
-          ? `<ul class="tags" part="tags">${card.tags.map(tag => `<li>${escapeHTML(tag)}</li>`).join('')}</ul>`
-          : ''}
+        <div class="body" part="body">
+          ${payload.show_rating ? renderStars(card.rating) : ''}
+          ${card.headline ? `<p class="headline" part="headline">${escapeHTML(card.headline)}</p>` : ''}
+          ${video ? renderVideo(video, poster, author) : ''}
+          <blockquote part="quote">${escapeHTML(card.quote)}</blockquote>
+          ${card.tags?.length
+            ? `<ul class="tags" part="tags">${card.tags.map(tag => `<li>${escapeHTML(tag)}</li>`).join('')}</ul>`
+            : ''}
+        </div>
         <figcaption part="author">
           ${avatar ? `<img class="avatar" part="avatar" src="${escapeHTML(avatar)}" alt="" loading="lazy" width="36" height="36" />` : ''}
           <span class="who">
@@ -252,6 +428,51 @@ function renderCard(card: TestimonialCard, payload: WallPayload, origin: string)
         </figcaption>
       </figure>
     </li>
+  `
+}
+
+/**
+ * A marquee is the row duplicated and translated by exactly its own width, which
+ * is what makes the seam invisible.
+ *
+ * The copy is inert and hidden from assistive technology, so a screen reader
+ * announces each quote once rather than twice, and tabbing through the page does
+ * not land on the same company link two times.
+ *
+ * The duration scales with the card count so a wall of twenty does not race past
+ * at four times the speed of a wall of five.
+ */
+/** Where the badge points. Not configurable: it is the attribution. */
+const BADGE_HREF = 'https://fidibeki.com'
+
+/**
+ * "Proofed by Fidibeki", with the brand mark.
+ *
+ * The link is rel="noopener" but not nofollow: this is a visible, honest
+ * attribution on a wall the customer chose to publish, not a keyword stuffed
+ * into someone else's footer.
+ */
+function renderBadge(): string {
+  return `
+    <a class="badge" part="badge" href="${BADGE_HREF}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M28.036,91.512c-0.38,0-0.764-0.104-1.096-0.324c-0.708-0.467-1.048-1.332-0.844-2.155l3.552-14.353H15.872c-0.944,0-1.764-0.656-1.956-1.584L2,16.368c-0.116-0.556,0.004-1.132,0.34-1.588c0.332-0.456,0.84-0.752,1.404-0.813L91.828,4.5c0.607-0.072,1.22,0.156,1.648,0.592c0.428,0.436,0.631,1.056,0.547,1.66l-7.836,58.191c-0.136,0.992-0.979,1.736-1.983,1.736H61.216L29.256,91.1C28.892,91.376,28.464,91.512,28.036,91.512L28.036,91.512z" />
+      </svg>
+      Proofed by Fidibeki
+    </a>
+  `
+}
+
+function renderMarquee(items: string, count: number, label: string): string {
+  const seconds = Math.max(20, count * 7)
+  return `
+    <div class="marquee" part="wall" role="region" tabindex="0" aria-label="${label}"
+         style="--fw-marquee-duration: ${seconds}s">
+      <div class="marquee__track">
+        <ul class="wall" data-layout="marquee">${items}</ul>
+        <ul class="wall marquee__clone" data-layout="marquee" aria-hidden="true" inert>${items}</ul>
+      </div>
+    </div>
   `
 }
 
@@ -269,6 +490,10 @@ export class FidibekiWall extends HTMLElement {
 
   private root: ShadowRoot
   private loaded = ''
+  // The last payload, kept so a presentational change can repaint without
+  // asking the network for a wall it already has.
+  private payload: WallPayload | null = null
+  private origin = ''
 
   constructor() {
     super()
@@ -279,8 +504,23 @@ export class FidibekiWall extends HTMLElement {
     void this.load()
   }
 
-  attributeChangedCallback(): void {
-    if (this.isConnected) void this.load()
+  /**
+   * Only `wall`, `testimonial` and `host` name a different payload; `layout` and
+   * `theme` are a repaint of the one already held.
+   *
+   * Routing both through load() looks harmless and is not: load() returns early
+   * when the endpoint has not changed, so a page that flips `theme` with its own
+   * dark mode toggle would set the attribute, observe nothing happen, and have
+   * no way to tell that observedAttributes had listed an attribute the element
+   * declined to act on.
+   */
+  attributeChangedCallback(name: string): void {
+    if (!this.isConnected) return
+    if (name === 'wall' || name === 'testimonial' || name === 'host') {
+      void this.load()
+      return
+    }
+    if (this.payload) this.render(this.payload, this.origin)
   }
 
   private endpoint(): { url: string; origin: string } | null {
@@ -322,6 +562,8 @@ export class FidibekiWall extends HTMLElement {
         this.renderEmpty()
         return
       }
+      this.payload = payload
+      this.origin = endpoint.origin
       this.render(payload, endpoint.origin)
     } catch {
       this.renderEmpty()
@@ -329,6 +571,7 @@ export class FidibekiWall extends HTMLElement {
   }
 
   private renderEmpty(): void {
+    this.payload = null
     this.root.innerHTML = ''
   }
 
@@ -346,12 +589,18 @@ export class FidibekiWall extends HTMLElement {
       theme.font_family ? `--fw-font:${CSS.escape(theme.font_family)}` : '',
     ].filter(Boolean).join(';')
 
+    const label = escapeHTML(payload.name || 'Testimonials')
+    const items = cards.map(card => renderCard(card, payload, origin)).join('')
+    // A single card has nothing to scroll past, so it is rendered as a plain row
+    // rather than as an animation of one thing going round for ever.
+    const body = layout === 'marquee' && cards.length > 1
+      ? renderMarquee(items, cards.length, label)
+      : `<ul class="wall" part="wall" data-layout="${escapeHTML(layout)}" aria-label="${label}">${items}</ul>`
+
     this.root.innerHTML = `
       <style>${STYLES}${variables ? `:host{${variables}}` : ''}</style>
-      <ul class="wall" part="wall" data-layout="${escapeHTML(layout)}"
-          aria-label="${escapeHTML(payload.name || 'Testimonials')}">
-        ${cards.map(card => renderCard(card, payload, origin)).join('')}
-      </ul>
+      ${body}
+      ${renderBadge()}
     `
   }
 }

@@ -447,6 +447,8 @@ func TestTestimonialAPI(t *testing.T) {
 		t.Errorf("editing the selection left the wall looking up to date: %#v", wallList.Walls[0])
 	}
 
+	exerciseWallDesign(t, handler, wallResult.Wall.ID, fullToken)
+
 	// Deleting a wall. It takes the same grant as publishing one, because
 	// removing a published wall is as much a change to what the public sees.
 	spare := apiCall(handler, http.MethodPost, "/v1/testimonial-walls",
@@ -584,5 +586,94 @@ func decodeAPI(t *testing.T, response *httptest.ResponseRecorder, target any) {
 	t.Helper()
 	if err := json.Unmarshal(response.Body.Bytes(), target); err != nil {
 		t.Fatalf("decode response: %v (%s)", err, response.Body.String())
+	}
+}
+
+// exerciseWallDesign covers changing how a published wall looks.
+//
+// It runs against a wall that has just been published, because the property
+// worth protecting only exists in that state: the layout and the toggles are
+// copied into the snapshot, so until the next publish the customer's site is
+// still showing the old design. A design change that did not say so would leave
+// the screen with no reason to offer the publish button.
+func exerciseWallDesign(t *testing.T, handler http.Handler, wallID, token string) {
+	t.Helper()
+
+	// Publish first so the baseline is a wall that is live and current,
+	// whichever order the exercises above happened to leave things in.
+	if got := apiCall(handler, http.MethodPost,
+		"/v1/testimonial-walls/"+wallID+"/publish", "", token); got.Code != http.StatusOK {
+		t.Fatalf("publish before design status = %d, body = %s", got.Code, got.Body.String())
+	}
+	var before struct {
+		Wall Wall `json:"wall"`
+	}
+	decodeAPI(t, apiCall(handler, http.MethodGet, "/v1/testimonial-walls/"+wallID, "", token), &before)
+	if before.Wall.HasUnpublishedChanges {
+		t.Fatal("a wall that was just published must not already be stale")
+	}
+
+	// Every field is optional. Sending only the layout must not silently reset
+	// the toggles the customer set on another visit.
+	response := apiCall(handler, http.MethodPatch, "/v1/testimonial-walls/"+wallID+"/design",
+		`{"layout":"marquee"}`, token)
+	if response.Code != http.StatusOK {
+		t.Fatalf("design status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var updated struct {
+		Wall Wall `json:"wall"`
+	}
+	decodeAPI(t, response, &updated)
+	if updated.Wall.Layout != LayoutMarquee {
+		t.Fatalf("layout = %q, want marquee", updated.Wall.Layout)
+	}
+	if updated.Wall.ShowRating != before.Wall.ShowRating || updated.Wall.ShowVideo != before.Wall.ShowVideo {
+		t.Fatalf("toggles = %#v, want them left as they were", updated.Wall)
+	}
+	if !updated.Wall.HasUnpublishedChanges {
+		t.Fatal("changing the design must mark the wall as not yet live")
+	}
+
+	// Both values added after the first release have to survive the round trip
+	// through the enum, which is the half a Go-only test cannot prove.
+	for _, layout := range []WallLayout{LayoutMasonry, LayoutCustom, LayoutSingle} {
+		got := apiCall(handler, http.MethodPatch, "/v1/testimonial-walls/"+wallID+"/design",
+			`{"layout":"`+string(layout)+`"}`, token)
+		if got.Code != http.StatusOK {
+			t.Fatalf("layout %q status = %d, body = %s", layout, got.Code, got.Body.String())
+		}
+	}
+
+	toggled := apiCall(handler, http.MethodPatch, "/v1/testimonial-walls/"+wallID+"/design",
+		`{"show_video":false,"theme":{"accent":"#087f73","mode":"dark"}}`, token)
+	if toggled.Code != http.StatusOK {
+		t.Fatalf("toggle status = %d, body = %s", toggled.Code, toggled.Body.String())
+	}
+	decodeAPI(t, toggled, &updated)
+	if updated.Wall.ShowVideo {
+		t.Fatal("show_video must have been turned off")
+	}
+	if updated.Wall.Layout != LayoutSingle {
+		t.Fatalf("layout = %q, want the previous choice kept", updated.Wall.Layout)
+	}
+	if updated.Wall.Theme.Accent != "#087f73" || updated.Wall.Theme.Mode != "dark" {
+		t.Fatalf("theme = %#v, want the values that were sent", updated.Wall.Theme)
+	}
+
+	// These end up as CSS custom property values on the customer's own page.
+	for _, body := range []string{
+		`{"layout":"spiral"}`,
+		`{"theme":{"accent":"red; background: url(https://evil.test/x)"}}`,
+		`{"theme":{"mode":"sepia"}}`,
+	} {
+		if got := apiCall(handler, http.MethodPatch,
+			"/v1/testimonial-walls/"+wallID+"/design", body, token); got.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("design %s = %d, want 422", body, got.Code)
+		}
+	}
+
+	if got := apiCall(handler, http.MethodPatch,
+		"/v1/testimonial-walls/"+wallID+"/design", `{"layout":"grid"}`, ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous design change = %d, want 401", got.Code)
 	}
 }

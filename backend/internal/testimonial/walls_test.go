@@ -1,6 +1,7 @@
 package testimonial
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -211,13 +212,42 @@ func TestRequestUsable(t *testing.T) {
 
 func TestWallLayoutValid(t *testing.T) {
 	t.Parallel()
-	for _, layout := range []WallLayout{LayoutGrid, LayoutCarousel, LayoutList, LayoutMasonry, LayoutSingle} {
+	for _, layout := range []WallLayout{
+		LayoutGrid, LayoutCarousel, LayoutMarquee, LayoutList, LayoutMasonry,
+		LayoutSingle, LayoutCustom,
+	} {
 		if !layout.Valid() {
 			t.Errorf("%q must be a valid layout", layout)
 		}
 	}
 	if WallLayout("spiral").Valid() {
 		t.Error("an unknown layout must not validate")
+	}
+}
+
+func TestThemeInvalidRefusesWhatCannotBeACSSValue(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		theme Theme
+		want  bool
+	}{
+		{name: "empty", theme: Theme{}},
+		{name: "ordinary", theme: Theme{Accent: "#087f73", Radius: "10px", Mode: "dark"}},
+		{name: "font stack with quotes and commas", theme: Theme{FontFamily: `"Segoe UI", system-ui, sans-serif`}},
+		{name: "closes the declaration", theme: Theme{Accent: "red; background: url(x)"}, want: true},
+		{name: "opens a rule", theme: Theme{Radius: "10px} :host{display:none"}, want: true},
+		{name: "hides the rest in a comment", theme: Theme{Accent: "red /* trailing"}, want: true},
+		{name: "unknown mode", theme: Theme{Mode: "sepia"}, want: true},
+		{name: "far longer than any colour", theme: Theme{Accent: strings.Repeat("a", 121)}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := test.theme.Invalid() != ""; got != test.want {
+				t.Fatalf("Invalid() rejected = %t, want %t (reason %q)", got, test.want, test.theme.Invalid())
+			}
+		})
 	}
 }
 

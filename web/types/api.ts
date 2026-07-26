@@ -1486,7 +1486,11 @@ export interface NotificationPreferencesResponse {
 export type TestimonialStatus = 'draft' | 'pending_review' | 'approved' | 'archived'
 export type TestimonialConsentState =
   | 'pending' | 'granted' | 'pending_reconsent' | 'revoked' | 'expired'
-export type TestimonialWallLayout = 'grid' | 'carousel' | 'list' | 'masonry' | 'single'
+/** 'custom' is not an arrangement: the wall is rendered by the customer's own
+ *  code from the public JSON, and the screen offers them the endpoint instead of
+ *  a script tag. */
+export type TestimonialWallLayout =
+  | 'grid' | 'masonry' | 'carousel' | 'marquee' | 'list' | 'single' | 'custom'
 
 export interface TestimonialAuthor {
   name?: string

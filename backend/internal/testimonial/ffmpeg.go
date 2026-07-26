@@ -63,6 +63,15 @@ func (f FFmpeg) Probe(ctx context.Context, path string) (Probed, error) {
 	if err != nil {
 		return Probed{}, fmt.Errorf("probe testimonial video: %w", err)
 	}
+	return parseProbe(output)
+}
+
+// parseProbe reads ffprobe's JSON.
+//
+// Split from the call that produces it so the interesting half — what we do
+// with a file that has no video stream, or a duration ffprobe declined to
+// report — can be tested without a video file.
+func parseProbe(output []byte) (Probed, error) {
 	var parsed struct {
 		Streams []struct {
 			Width  int `json:"width"`
@@ -82,6 +91,8 @@ func (f FFmpeg) Probe(ctx context.Context, path string) (Probed, error) {
 		Width:  parsed.Streams[0].Width,
 		Height: parsed.Streams[0].Height,
 	}}
+	// A stream ffprobe cannot time is not a stream we refuse: the duration is
+	// advisory, and a zero here is better than failing an upload that plays.
 	if seconds, parseErr := strconv.ParseFloat(strings.TrimSpace(parsed.Format.Duration), 64); parseErr == nil {
 		probed.DurationSeconds = int(seconds)
 	}

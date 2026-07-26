@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import {
   AlertTriangle, ArrowDown, ArrowUp, Check, Copy, GripVertical, LayoutGrid, MessageSquareQuote,
-  Plus, Sparkles, Trash2, X,
+  Palette, Plus, Sparkles, Trash2, X,
 } from '@lucide/vue'
 import type {
   Testimonial, TestimonialCandidate, TestimonialPublishResult, TestimonialWall,
+  TestimonialWallLayout,
 } from '~/types/api'
 
 const { $apiFetch } = useNuxtApp()
@@ -129,6 +130,77 @@ function authorLine(item: Testimonial) {
 function embedSnippet(wall: TestimonialWall) {
   const host = String(runtime.public.widgetUrl || '')
   return `<script async src="${host}/v1/testimonials.js"><\/script>\n<fidibeki-wall wall="${wall.public_id}"><\/fidibeki-wall>`
+}
+
+/** The same payload the embed reads, for customers who would rather render it
+ *  themselves. */
+function apiEndpoint(wall: TestimonialWall) {
+  return `${String(runtime.public.widgetUrl || '')}/v1/public/walls/${wall.public_id}`
+}
+
+/**
+ * Every arrangement the embed can render, plus the one that means "don't".
+ *
+ * `sample` is how many placeholder cards the miniature draws — enough to show
+ * the shape, which for a carousel means one running off the edge and for a
+ * spotlight means exactly one.
+ */
+const layoutOptions: { id: TestimonialWallLayout, sample: number }[] = [
+  { id: 'grid', sample: 6 },
+  { id: 'masonry', sample: 6 },
+  { id: 'carousel', sample: 4 },
+  { id: 'marquee', sample: 4 },
+  { id: 'list', sample: 3 },
+  { id: 'single', sample: 1 },
+  { id: 'custom', sample: 0 },
+]
+
+// The design dialog edits a copy. Nothing reaches the wall until Save, so
+// clicking through the layouts to see what they look like costs nothing.
+const designFor = ref<TestimonialWall | null>(null)
+const draftDesign = ref({
+  layout: 'grid' as TestimonialWallLayout,
+  show_rating: true,
+  show_avatar: true,
+  show_company: true,
+  show_video: true,
+})
+const showToggles = ['rating', 'avatar', 'company', 'video'] as const
+
+function openDesign(wall: TestimonialWall) {
+  designFor.value = wall
+  draftDesign.value = {
+    layout: wall.layout,
+    show_rating: wall.show_rating,
+    show_avatar: wall.show_avatar,
+    show_company: wall.show_company,
+    show_video: wall.show_video,
+  }
+  mutationError.value = ''
+}
+
+const designChanged = computed(() => {
+  const wall = designFor.value
+  if (!wall) return false
+  const draft = draftDesign.value
+  return draft.layout !== wall.layout
+    || draft.show_rating !== wall.show_rating
+    || draft.show_avatar !== wall.show_avatar
+    || draft.show_company !== wall.show_company
+    || draft.show_video !== wall.show_video
+})
+
+async function saveDesign() {
+  const wall = designFor.value
+  if (!wall) return
+  await run(wall.id, async () => {
+    await $apiFetch(`/v1/testimonial-walls/${wall.id}/design`, {
+      method: 'PATCH',
+      body: draftDesign.value,
+    })
+    notice.value = t('testimonials.designSaved')
+  }, 'testimonials.designFailed')
+  if (!mutationError.value) designFor.value = null
 }
 
 function resetRequest() {
@@ -564,6 +636,7 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
                 {{ t('testimonials.wallOutOfDate') }}
               </span>
               <span class="tag">{{ plural('testimonials.wallItems', wall.item_count) }}</span>
+              <span class="tag tag--layout">{{ t(`testimonials.layout.${wall.layout}`) }}</span>
             </div>
             <div class="wall-actions">
               <button
@@ -571,6 +644,12 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
                 @click="editingWall?.id === wall.id ? editingWall = null : openWall(wall)"
               >
                 {{ editingWall?.id === wall.id ? t('testimonials.closeEditor') : t('testimonials.chooseItems') }}
+              </button>
+              <button
+                v-if="canWrite('testimonial:update')" type="button" class="secondary-button"
+                @click="openDesign(wall)"
+              >
+                <Palette :size="13" /> {{ t('testimonials.design') }}
               </button>
               <!-- Publishing is a separate grant from editing: it is the step
                    that reaches the public internet. -->
@@ -688,7 +767,21 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             </footer>
           </div>
 
-          <div v-if="wall.status === 'published'" class="wall-embed">
+          <!-- A wall built by the customer's own code has no script tag to
+               paste, so it is handed the endpoint instead. Offering both would
+               be offering one of them wrongly. -->
+          <div v-if="wall.status === 'published' && wall.layout === 'custom'" class="wall-embed">
+            <p class="section-label">{{ t('testimonials.apiTitle') }}</p>
+            <p class="wall-hint">{{ t('testimonials.apiDescription') }}</p>
+            <pre>GET {{ apiEndpoint(wall) }}</pre>
+            <p class="wall-hint">{{ t('testimonials.apiNote') }}</p>
+            <button type="button" class="secondary-button" @click="copy(apiEndpoint(wall), wall.id)">
+              <Copy :size="13" />
+              {{ copiedID === wall.id ? t('testimonials.copied') : t('testimonials.apiCopy') }}
+            </button>
+          </div>
+
+          <div v-else-if="wall.status === 'published'" class="wall-embed">
             <p class="section-label">{{ t('testimonials.embedTitle') }}</p>
             <p class="wall-hint">{{ t('testimonials.embedDescription') }}</p>
             <pre>{{ embedSnippet(wall) }}</pre>
@@ -753,6 +846,71 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             :disabled="!canSubmitRequest" @click="submitRequest"
           >
             {{ t('testimonials.requestSubmit') }}
+          </button>
+        </footer>
+      </section>
+    </AppDialog>
+
+    <AppDialog
+      :open="Boolean(designFor)" aria-labelledby="wall-design-title"
+      @close="designFor = null"
+    >
+      <section class="app-modal app-modal--wide">
+        <header>
+          <div>
+            <p class="app-eyebrow">{{ designFor?.name }}</p>
+            <h2 id="wall-design-title">{{ t('testimonials.designTitle') }}</h2>
+          </div>
+          <button class="app-icon-button" type="button" @click="designFor = null"><X :size="18" /></button>
+        </header>
+        <div class="app-modal__body">
+          <p class="request-help">{{ t('testimonials.designDescription') }}</p>
+
+          <!-- Each option draws the arrangement it is offering rather than an
+               icon standing for it: the difference between a grid and a mosaic
+               is a picture, and a name for it is a guess. -->
+          <div class="layout-grid" role="radiogroup" :aria-label="t('testimonials.designTitle')">
+            <button
+              v-for="option in layoutOptions" :key="option.id" type="button" role="radio"
+              class="layout-option" :aria-checked="draftDesign.layout === option.id"
+              :class="{ 'is-selected': draftDesign.layout === option.id }"
+              @click="draftDesign.layout = option.id"
+            >
+              <span class="layout-preview" :class="`layout-preview--${option.id}`" aria-hidden="true">
+                <template v-if="option.sample">
+                  <i v-for="index in option.sample" :key="index"><b /><em /><em /></i>
+                </template>
+                <code v-else>{ "cards": [ … ] }</code>
+              </span>
+              <span class="layout-name">
+                {{ t(`testimonials.layout.${option.id}`) }}
+                <Check v-if="draftDesign.layout === option.id" :size="12" />
+              </span>
+              <span class="layout-hint">{{ t(`testimonials.layout.${option.id}Hint`) }}</span>
+            </button>
+          </div>
+
+          <!-- The author granted each of these separately. Turning one off never
+               publishes more than they agreed to, only less. -->
+          <fieldset class="design-toggles">
+            <legend class="section-label">{{ t('testimonials.designShows') }}</legend>
+            <label v-for="field in showToggles" :key="field">
+              <input v-model="draftDesign[`show_${field}`]" type="checkbox" />
+              {{ t(`testimonials.show.${field}`) }}
+            </label>
+          </fieldset>
+
+          <p v-if="mutationError && designFor" class="testimonial-alert">{{ mutationError }}</p>
+        </div>
+        <footer>
+          <button type="button" class="app-button" @click="designFor = null">
+            {{ t('testimonials.requestCancel') }}
+          </button>
+          <button
+            type="button" class="app-button app-button--primary"
+            :disabled="!designChanged || busyID === designFor?.id" @click="saveDesign"
+          >
+            {{ t('testimonials.designSave') }}
           </button>
         </footer>
       </section>
@@ -876,6 +1034,70 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
 .wall-embed .secondary-button { min-height: 30px; font-size: 9px; }
 .wall-embed pre,
 .request-link pre { margin: 7px 0; padding: 9px 10px; overflow-x: auto; background: var(--canvas); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tag--layout { color: var(--muted); }
+/* Seven arrangements side by side need more than 580px to be comparable, which
+   is the whole job this dialog does. */
+.app-modal--wide { width: min(880px, calc(100vw - 40px)); }
+.layout-grid { display: grid; gap: 9px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.layout-option { display: grid; gap: 6px; padding: 9px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; text-align: left; }
+.layout-option:hover { background: var(--surface-subtle); border-color: var(--line-strong); }
+.layout-option:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--accent-glow); }
+.layout-option.is-selected { border-color: var(--teal); box-shadow: 0 0 0 3px var(--accent-glow); }
+.layout-name { display: flex; align-items: center; gap: 5px; color: var(--ink); font-size: 10px; font-weight: 750; }
+.layout-name svg { color: var(--teal); }
+.layout-hint { color: var(--muted); font-size: 9px; line-height: 1.45; }
+/* The miniature is the arrangement itself, drawn at a twentieth of the size:
+   placeholder cards with a face and two lines of text, laid out by the same
+   rules the embed uses. An icon here would be a name for the layout, and the
+   customer already has the name. */
+.layout-preview { display: block; height: 88px; padding: 7px; overflow: hidden; background: var(--canvas); border: 1px solid var(--line); border-radius: 4px; }
+.layout-preview i { display: block; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: 2px; }
+.layout-preview b { display: block; width: 7px; height: 7px; margin-bottom: 4px; background: var(--teal); border-radius: 50%; }
+.layout-preview em { display: block; height: 2px; margin-bottom: 3px; background: var(--line-strong); border-radius: 1px; }
+.layout-preview em:last-child { width: 62%; margin-bottom: 0; }
+.layout-preview--grid { display: grid; gap: 5px; grid-template-columns: repeat(3, 1fr); align-content: start; }
+/* Natural heights are the entire difference from a grid, so the miniature has
+   to show cards of different heights or it is a picture of a grid.
+   The cards are drawn tighter here than in the other previews so two of them
+   stack inside the frame: a definite height on a multicol box makes the browser
+   fragment sideways into overflow columns instead, which lands six one-card
+   columns in a row and draws exactly the grid this has to be told apart from. */
+.layout-preview--masonry { columns: 3; column-gap: 5px; }
+.layout-preview--masonry i { padding: 3px 4px; margin-bottom: 5px; break-inside: avoid; }
+.layout-preview--masonry b { width: 6px; height: 6px; margin-bottom: 3px; }
+.layout-preview--masonry em { margin-bottom: 2px; }
+.layout-preview--masonry i:nth-child(2) { padding-bottom: 12px; }
+.layout-preview--masonry i:nth-child(4) { padding-bottom: 16px; }
+.layout-preview--masonry i:nth-child(5) { padding-bottom: 8px; }
+/* Cards running off the right edge, which is what a carousel looks like before
+   anyone has swiped it. */
+.layout-preview--carousel { display: flex; gap: 5px; align-items: start; }
+.layout-preview--carousel i { flex: 0 0 44%; }
+/* Cut at both ends and faded, because a marquee has no beginning on screen. */
+.layout-preview--marquee { display: flex; gap: 5px; align-items: start; -webkit-mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent); mask-image: linear-gradient(90deg, transparent, #000 20%, #000 80%, transparent); }
+.layout-preview--marquee i { flex: 0 0 42%; }
+.layout-preview--marquee i:first-child { margin-left: -16%; }
+/* The author sits beside the quote rather than under it — the one thing that
+   makes a list something other than a grid one column wide. */
+.layout-preview--list { display: grid; gap: 5px; align-content: start; }
+.layout-preview--list i { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.layout-preview--list b { margin: 0; }
+.layout-preview--list em { flex: 1 1 auto; margin: 0; }
+.layout-preview--list em:last-child { width: auto; flex-basis: 100%; }
+/* No card, no border: a pull quote is typography. The lines are heavier than
+   everywhere else because that is the point of the layout — one quote, set
+   large — and drawn at card weight it reads as an empty box. */
+.layout-preview--single { display: grid; place-items: center; }
+.layout-preview--single i { width: 84%; padding: 0; background: none; border: 0; text-align: center; }
+.layout-preview--single b { width: 10px; height: 10px; margin: 0 auto 8px; }
+.layout-preview--single em { height: 5px; margin-bottom: 6px; border-radius: 2px; background: var(--ink-soft); }
+.layout-preview--single em:last-child { width: 58%; margin: 0 auto; }
+.layout-preview--custom { display: grid; place-items: center; }
+.layout-preview--custom code { color: var(--muted); font-size: 10px; }
+.design-toggles { display: flex; flex-wrap: wrap; gap: 7px 16px; margin: 0; padding: 11px 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
+.design-toggles legend { padding: 0 0 3px; float: left; width: 100%; }
+.design-toggles label { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 500; text-transform: none; }
+.design-toggles input { width: 13px; height: 13px; accent-color: var(--teal); }
 .request-help { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; text-transform: none; }
 .request-recipient { display: grid; gap: 3px; padding: 9px 11px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 5px; }
 .request-recipient b { overflow-wrap: anywhere; color: var(--ink); font-size: 11px; }

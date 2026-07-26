@@ -100,6 +100,7 @@ describe('pricing data mirrors the backend plan catalog', () => {
     it(`matches ${plan.id} feature flags`, () => {
       const flags: Record<keyof typeof plan.features, RegExp> = {
         ai: /AI:\s*true/,
+        testimonials: /Testimonials:\s*true/,
         sessionReplay: /Replay:\s*true/,
         slack: /Slack:\s*true/,
         video: /Video:\s*true/,

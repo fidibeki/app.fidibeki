@@ -105,7 +105,7 @@ var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanGrowth: {
 		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(999),
 		YearlyPriceCents: intPointer(10308), YearlyDiscountPercent: intPointer(14),
-		Limits:   PlanLimits{Projects: 4, FeedbackPerMonth: 2500, Users: 3, StorageDays: 90},
+		Limits: PlanLimits{Projects: 4, FeedbackPerMonth: 2500, Users: 3, StorageDays: 90},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Audio: true, DOMCapture: true,
 		},
@@ -113,7 +113,7 @@ var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanScale: {
 		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(2799),
 		YearlyPriceCents: intPointer(28884), YearlyDiscountPercent: intPointer(14),
-		Limits:   PlanLimits{Projects: 10, FeedbackPerMonth: 10000, Users: 10, StorageDays: 365},
+		Limits: PlanLimits{Projects: 10, FeedbackPerMonth: 10000, Users: 10, StorageDays: 365},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Slack: true, Video: true, Audio: true,
 			DOMCapture: true,

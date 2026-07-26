@@ -34,7 +34,18 @@ export interface WallTheme {
   mode?: 'auto' | 'light' | 'dark'
 }
 
-export type WallLayout = 'grid' | 'carousel' | 'list' | 'masonry' | 'single'
+// 'custom' means the customer renders the wall from this payload themselves.
+// The embed still honours it — it falls back to the grid — because a wall that
+// went custom while a script tag was still on the page should degrade to a wall,
+// not to a blank space.
+export type WallLayout =
+  | 'grid'
+  | 'masonry'
+  | 'carousel'
+  | 'marquee'
+  | 'list'
+  | 'single'
+  | 'custom'
 
 export interface WallPayload {
   schema_version: number

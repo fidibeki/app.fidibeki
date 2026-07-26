@@ -65,6 +65,7 @@ export interface PlanEntry {
   }
   features: {
     ai: boolean
+    testimonials: boolean
     sessionReplay: boolean
     slack: boolean
     video: boolean

@@ -96,6 +96,7 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.With(read...).Get("/v1/testimonial-walls", handler.listWalls)
 	router.With(create...).Post("/v1/testimonial-walls", handler.createWall)
 	router.With(read...).Get("/v1/testimonial-walls/{wallID}", handler.getWall)
+	router.With(update...).Patch("/v1/testimonial-walls/{wallID}/design", handler.updateWallDesign)
 	router.With(update...).Put("/v1/testimonial-walls/{wallID}/items", handler.setWallItems)
 	router.With(publish...).Post("/v1/testimonial-walls/{wallID}/publish", handler.publishWall)
 	// Deletion takes the publish grant, not the update grant: removing a wall
@@ -450,6 +451,9 @@ func (h *HTTPHandler) createWall(w http.ResponseWriter, r *http.Request) {
 	if !request.Layout.Valid() {
 		fields["layout"] = "is not a supported layout"
 	}
+	if reason := request.Theme.Invalid(); reason != "" {
+		fields["theme"] = reason
+	}
 	if request.MaxItems == 0 {
 		request.MaxItems = 24
 	}
@@ -508,6 +512,77 @@ func (h *HTTPHandler) getWall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{"wall": wall, "cards": cards})
+}
+
+// updateWallDesign changes the arrangement and the visible author details.
+//
+// Every field is optional and absent means unchanged, so the design picker can
+// send a layout alone without having to first read back and resend the toggles
+// it is not touching.
+func (h *HTTPHandler) updateWallDesign(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Layout      *WallLayout `json:"layout"`
+		Theme       *Theme      `json:"theme"`
+		ShowRating  *bool       `json:"show_rating"`
+		ShowAvatar  *bool       `json:"show_avatar"`
+		ShowCompany *bool       `json:"show_company"`
+		ShowVideo   *bool       `json:"show_video"`
+	}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	fields := map[string]string{}
+	if request.Layout != nil && !request.Layout.Valid() {
+		fields["layout"] = "is not a supported layout"
+	}
+	if request.Theme != nil {
+		if reason := request.Theme.Invalid(); reason != "" {
+			fields["theme"] = reason
+		}
+	}
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "design is invalid", fields)
+		return
+	}
+
+	tenantID, query, ok := requestState(w, r)
+	if !ok {
+		return
+	}
+	id, ok := uuidParam(w, r, "wallID")
+	if !ok {
+		return
+	}
+	current, err := h.options.Store.GetWall(r.Context(), query, tenantID, id)
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	design := WallDesign{
+		Layout:      current.Layout,
+		Theme:       current.Theme,
+		ShowRating:  current.ShowRating,
+		ShowAvatar:  current.ShowAvatar,
+		ShowCompany: current.ShowCompany,
+		ShowVideo:   current.ShowVideo,
+	}
+	if request.Layout != nil {
+		design.Layout = *request.Layout
+	}
+	if request.Theme != nil {
+		design.Theme = *request.Theme
+	}
+	design.ShowRating = boolOrDefault(request.ShowRating, design.ShowRating)
+	design.ShowAvatar = boolOrDefault(request.ShowAvatar, design.ShowAvatar)
+	design.ShowCompany = boolOrDefault(request.ShowCompany, design.ShowCompany)
+	design.ShowVideo = boolOrDefault(request.ShowVideo, design.ShowVideo)
+
+	wall, err := h.options.Store.UpdateWallDesign(r.Context(), query, tenantID, id, design)
+	if err != nil {
+		h.writeStoreError(w, r, err)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{"wall": wall})
 }
 
 func (h *HTTPHandler) setWallItems(w http.ResponseWriter, r *http.Request) {
