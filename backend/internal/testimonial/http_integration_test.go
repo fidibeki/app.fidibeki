@@ -332,6 +332,83 @@ func TestTestimonialAPI(t *testing.T) {
 	if dismissed.Code != http.StatusNoContent {
 		t.Fatalf("dismiss status = %d, body = %s", dismissed.Code, dismissed.Body.String())
 	}
+
+	// Tagging reuses the workspace catalogue that feedback and issues share.
+	var tagID string
+	env.withTenant(ctx, t, func(tx pgx.Tx) {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO tags (tenant_id, name, color) VALUES ($1, 'launch', '#2B63C6') RETURNING id
+		`, env.tenantID).Scan(&tagID); err != nil {
+			t.Fatalf("create tag: %v", err)
+		}
+	})
+	if got := apiCall(handler, http.MethodPut, "/v1/testimonials/"+item.ID+"/tags",
+		`{"tag_ids":["`+tagID+`"]}`, fullToken); got.Code != http.StatusNoContent {
+		t.Fatalf("set tags status = %d, body = %s", got.Code, got.Body.String())
+	}
+	if got := apiCall(handler, http.MethodPut, "/v1/testimonials/"+item.ID+"/tags",
+		`{"tag_ids":["not-a-uuid"]}`, fullToken); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed tag id = %d, want 422", got.Code)
+	}
+	tagged := apiCall(handler, http.MethodGet, "/v1/testimonials/"+item.ID, "", fullToken)
+	if tagged.Code != http.StatusOK {
+		t.Fatalf("get testimonial status = %d", tagged.Code)
+	}
+	var taggedDetail struct {
+		Testimonial      Testimonial `json:"testimonial"`
+		QuoteIsConsented bool        `json:"quote_is_consented"`
+	}
+	decodeAPI(t, tagged, &taggedDetail)
+	if len(taggedDetail.Testimonial.TagIDs) != 1 || !taggedDetail.QuoteIsConsented {
+		t.Fatalf("testimonial detail = %#v (consented=%t)", taggedDetail.Testimonial, taggedDetail.QuoteIsConsented)
+	}
+
+	walls := apiCall(handler, http.MethodGet, "/v1/testimonial-walls", "", fullToken)
+	if walls.Code != http.StatusOK {
+		t.Fatalf("list walls status = %d", walls.Code)
+	}
+	var wallList struct {
+		Walls []TestimonialWallView `json:"walls"`
+	}
+	decodeAPI(t, walls, &wallList)
+	if len(wallList.Walls) != 1 || wallList.Walls[0].Status != string(WallPublished) {
+		t.Fatalf("walls = %#v, want one published wall", wallList.Walls)
+	}
+
+	// A malformed body must be a 400, not a 500 from a nil dereference deeper in.
+	if got := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
+		`{"quote":`, fullToken); got.Code != http.StatusBadRequest {
+		t.Fatalf("malformed JSON = %d, want 400", got.Code)
+	}
+	// An unknown field is refused rather than silently ignored, so a client
+	// typo never looks like a successful save.
+	if got := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
+		`{"quotes":"typo"}`, fullToken); got.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field = %d, want 400", got.Code)
+	}
+	if got := apiCall(handler, http.MethodPatch, "/v1/testimonials/"+item.ID,
+		`{"quote":"   "}`, fullToken); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("blank quote = %d, want 422", got.Code)
+	}
+	// Approving something already approved is a conflict, not a silent success.
+	if got := apiCall(handler, http.MethodPost, "/v1/testimonials/"+item.ID+"/approve",
+		"", fullToken); got.Code != http.StatusConflict {
+		t.Fatalf("re-approve = %d, want 409", got.Code)
+	}
+	if got := apiCall(handler, http.MethodGet,
+		"/v1/testimonial-walls/00000000-0000-0000-0000-000000000000", "", fullToken); got.Code != http.StatusNotFound {
+		t.Fatalf("unknown wall = %d, want 404", got.Code)
+	}
+}
+
+// TestimonialWallView mirrors the wall JSON the backoffice consumes, so a field
+// rename in the API surfaces here rather than in the browser.
+type TestimonialWallView struct {
+	ID        string `json:"id"`
+	PublicID  string `json:"public_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	ItemCount int    `json:"item_count"`
 }
 
 // publicCall drives an unauthenticated endpoint over a real socket, so the
