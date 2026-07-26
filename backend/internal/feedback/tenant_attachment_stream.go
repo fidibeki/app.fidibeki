@@ -98,6 +98,10 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
 		return
 	}
+	if errors.Is(err, appmiddleware.ErrTenantTwoFactorRequired) {
+		appmiddleware.WriteTwoFactorEnrollmentRequired(w)
+		return
+	}
 	if errors.Is(err, appmiddleware.ErrTenantCredentialForbidden) {
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "tenant access denied", nil)
 		return

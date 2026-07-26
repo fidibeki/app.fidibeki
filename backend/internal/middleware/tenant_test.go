@@ -379,6 +379,8 @@ type fakeTransaction struct {
 	rollbackCalls     int
 	configuredTenant  string
 	memberAuthVersion int
+	twoFactorRequired bool
+	twoFactorEnrolled bool
 }
 
 func (f *fakeTransaction) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -393,6 +395,7 @@ func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any)
 	if strings.Contains(query, "FROM tenant_members") {
 		return fakeMemberAuthRow{
 			permissions: []string{"project:read"}, status: "active", version: f.memberAuthVersion,
+			twoFactorRequired: f.twoFactorRequired, twoFactorEnrolled: f.twoFactorEnrolled,
 		}
 	}
 	if !strings.Contains(query, "set_config") || len(args) != 1 {
@@ -406,24 +409,30 @@ func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any)
 }
 
 type fakeMemberAuthRow struct {
-	permissions []string
-	status      string
-	version     int
+	permissions       []string
+	status            string
+	version           int
+	twoFactorRequired bool
+	twoFactorEnrolled bool
 }
 
 func (r fakeMemberAuthRow) Scan(destinations ...any) error {
-	if len(destinations) != 3 {
+	if len(destinations) != 5 {
 		return errors.New("unexpected member auth scan destination count")
 	}
 	permissions, permissionsOK := destinations[0].(*[]string)
 	status, statusOK := destinations[1].(*string)
 	version, versionOK := destinations[2].(*int)
-	if !permissionsOK || !statusOK || !versionOK {
+	required, requiredOK := destinations[3].(*bool)
+	enrolled, enrolledOK := destinations[4].(*bool)
+	if !permissionsOK || !statusOK || !versionOK || !requiredOK || !enrolledOK {
 		return errors.New("unexpected member auth scan destination type")
 	}
 	*permissions = append([]string(nil), r.permissions...)
 	*status = r.status
 	*version = r.version
+	*required = r.twoFactorRequired
+	*enrolled = r.twoFactorEnrolled
 	return nil
 }
 

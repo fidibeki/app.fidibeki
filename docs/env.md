@@ -17,6 +17,7 @@ for both services because configuration is validated before the command starts.
 | `HTTP_ADDRESS` | no | Explicit listen address; overrides `PORT`. |
 | `BASE_DOMAIN` | yes | Root host without scheme, for example `fidibeki.com`. |
 | `PUBLIC_BASE_URL` | yes | Public API origin, for example `https://api.fidibeki.com`. |
+| `WEB_PUBLIC_BASE_URL` | no | Browser-facing origin used to derive tenant URLs (SAML entity ID, assertion consumer, post-login redirects). Defaults to `PUBLIC_BASE_URL`; set it when the web tier answers on a different scheme or port, as it does in local development. |
 | `READINESS_TIMEOUT` | no | Per-request readiness budget; default `2s`. |
 | `SHUTDOWN_TIMEOUT` | no | Graceful shutdown budget; default `10s`. |
 | `DATABASE_URL_APP` | yes | Runtime URL with the `fidibeki_app` username and password. `migrate up` applies these credentials to the RLS-constrained role. |
@@ -38,6 +39,7 @@ for both services because configuration is validated before the command starts.
 | `INTERNAL_PROXY_SECRET` | staging/prod | Shared secret used to authenticate tenant host forwarding from Nuxt. At least 32 random characters. |
 | `TRUSTED_PROXY_CIDRS` | no | Comma-separated ingress proxy networks allowed to supply `X-Forwarded-For`; empty trusts none. |
 | `INTEGRATION_ENCRYPTION_KEY` | yes | Base64 encoding of exactly 32 random bytes. |
+| `TWO_FACTOR_ENCRYPTION_KEY` | yes | Base64 encoding of exactly 32 random bytes, different from `INTEGRATION_ENCRYPTION_KEY`. Encrypts member TOTP secrets at rest; rotating it invalidates every enrolment, so members must re-enrol. |
 | `AUTH_ACCESS_TOKEN_TTL` | no | Access-token lifetime; default `10m`. |
 | `AUTH_MAGIC_LINK_TTL` | no | Magic-link lifetime; default `10m`. |
 | `AUTH_REFRESH_TOKEN_TTL` | no | Refresh lifetime; default `720h`. |

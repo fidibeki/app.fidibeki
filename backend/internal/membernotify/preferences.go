@@ -63,7 +63,7 @@ var MandatoryClasses = []string{
 // supportedModes constrains each category to the modes that make sense for it.
 // New feedback is summarized only: without ModeImmediate, "one email per feedback
 // submission" is unreachable by configuration, not merely off by default. The
-// database CHECK constraints in migration 000111 mirror this map.
+// database CHECK constraints in migration 000113 mirror this map.
 var supportedModes = map[string][]string{
 	CategoryAssignments:     {ModeImmediate, ModeDaily, ModeWeekly, ModeOff},
 	CategoryMentions:        {ModeImmediate, ModeDaily, ModeWeekly, ModeOff},

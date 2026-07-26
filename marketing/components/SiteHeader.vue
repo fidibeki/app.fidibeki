@@ -134,33 +134,50 @@ function isActive(to: string) {
    the transition stays smooth. */
 .header-shell {
   --header-ease: cubic-bezier(0.33, 1, 0.68, 1);
+  position: relative;
   margin-inline: auto;
   max-width: 100%;
   border: 1px solid transparent;
   border-radius: 16px;
   background: transparent;
   transform: translateY(0);
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
   will-change: transform;
   transition:
     max-width 380ms var(--header-ease),
     transform 380ms var(--header-ease),
     border-color 380ms var(--header-ease),
-    background-color 380ms var(--header-ease),
-    backdrop-filter 380ms var(--header-ease),
-    -webkit-backdrop-filter 380ms var(--header-ease),
     box-shadow 380ms var(--header-ease);
 }
 
-.site-header.scrolled .header-shell {
-  max-width: min(75rem, calc(100% - 2rem));
-  transform: translateY(0.75rem);
-  border-color: var(--line);
+/* The frosted fill sits on its own layer purely so the blur radius can stay
+   fixed at 16px and fade in with opacity. Animating backdrop-filter from
+   blur(0px) to blur(16px) made the compositor re-blur the backdrop at a new
+   radius every frame, which is what made the collapse stutter; a constant
+   radius is blurred once and then cross-faded. Keeping blur(0px) on the base
+   state was costly too — it is not the same as no filter, so the browser held
+   a backdrop root alive even parked at the top of the page. */
+.header-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--canvas) 88%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  opacity: 0;
+  transition: opacity 380ms var(--header-ease);
+}
+
+.site-header.scrolled .header-shell {
+  max-width: min(93%, calc(100% - 2rem));
+  transform: translateY(0.75rem);
+  border-color: var(--line);
   box-shadow: var(--shadow-card);
+}
+
+.site-header.scrolled .header-shell::before {
+  opacity: 1;
 }
 
 .header-inner {

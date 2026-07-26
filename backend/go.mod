@@ -6,6 +6,8 @@ toolchain go1.25.12
 
 require (
 	github.com/Eyevinn/mp4ff v0.54.0
+	github.com/beevik/etree v1.6.0
+	github.com/crewjam/saml v0.5.1
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-redis/redis_rate/v10 v10.0.1
@@ -15,8 +17,10 @@ require (
 	github.com/hibiken/asynq v0.26.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
+	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/redis/go-redis/v9 v9.21.0
+	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/stripe/stripe-go/v85 v85.2.0
 	github.com/svix/svix-webhooks v1.98.0
 	github.com/testcontainers/testcontainers-go v0.43.0
@@ -63,6 +67,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect

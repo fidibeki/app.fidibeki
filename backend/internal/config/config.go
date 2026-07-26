@@ -21,10 +21,16 @@ import (
 type LookupEnv func(string) (string, bool)
 
 type Config struct {
-	Environment               string
-	HTTPAddress               string
-	BaseDomain                string
-	PublicBaseURL             string
+	Environment   string
+	HTTPAddress   string
+	BaseDomain    string
+	PublicBaseURL string
+	// WebPublicBaseURL supplies the scheme and port of the browser-facing tier
+	// when it differs from the API's own public URL, which it does in local
+	// development. Every tenant-facing browser URL — SAML entity ID, assertion
+	// consumer, and login redirects — is derived from it, so no deployment URL
+	// is ever hardcoded. Defaults to PublicBaseURL.
+	WebPublicBaseURL          string
 	DatabaseURLApp            string
 	DatabaseURLAdmin          string
 	DatabaseURLDirect         string
@@ -42,6 +48,7 @@ type Config struct {
 	InternalProxySecret       string
 	TrustedProxyCIDRs         []netip.Prefix
 	IntegrationEncryptionKey  string
+	TwoFactorEncryptionKey    string
 	StripeSecretKey           string
 	StripeWebhookSecret       string
 	StripePriceStarter        string
@@ -142,6 +149,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		HTTPAddress:               get("HTTP_ADDRESS", httpAddress),
 		BaseDomain:                get("BASE_DOMAIN", ""),
 		PublicBaseURL:             get("PUBLIC_BASE_URL", ""),
+		WebPublicBaseURL:          get("WEB_PUBLIC_BASE_URL", get("PUBLIC_BASE_URL", "")),
 		DatabaseURLApp:            get("DATABASE_URL_APP", ""),
 		DatabaseURLAdmin:          get("DATABASE_URL_ADMIN", ""),
 		DatabaseURLDirect:         get("DATABASE_URL_DIRECT", ""),
@@ -159,6 +167,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		InternalProxySecret:       get("INTERNAL_PROXY_SECRET", ""),
 		TrustedProxyCIDRs:         trustedProxyCIDRs,
 		IntegrationEncryptionKey:  get("INTEGRATION_ENCRYPTION_KEY", ""),
+		TwoFactorEncryptionKey:    get("TWO_FACTOR_ENCRYPTION_KEY", ""),
 		StripeSecretKey:           get("STRIPE_SECRET_KEY", ""),
 		StripeWebhookSecret:       get("STRIPE_WEBHOOK_SECRET", ""),
 		StripePriceStarter:        get("STRIPE_PRICE_STARTER", ""),
@@ -300,6 +309,7 @@ func (c Config) validate() []error {
 		"S3_SECRET_KEY":              c.S3SecretKey,
 		"JWT_SECRET":                 c.JWTSecret,
 		"INTEGRATION_ENCRYPTION_KEY": c.IntegrationEncryptionKey,
+		"TWO_FACTOR_ENCRYPTION_KEY":  c.TwoFactorEncryptionKey,
 	}
 	for name, value := range required {
 		if value == "" {
@@ -318,6 +328,12 @@ func (c Config) validate() []error {
 		parsed, err := url.ParseRequestURI(c.PublicBaseURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("PUBLIC_BASE_URL must be an absolute URL"))
+		}
+	}
+	if c.WebPublicBaseURL != "" {
+		parsed, err := url.ParseRequestURI(c.WebPublicBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			validationErrors = append(validationErrors, fmt.Errorf("WEB_PUBLIC_BASE_URL must be an absolute URL"))
 		}
 	}
 	for name, value := range map[string]string{
@@ -357,6 +373,17 @@ func (c Config) validate() []error {
 			validationErrors = append(validationErrors,
 				fmt.Errorf("INTEGRATION_ENCRYPTION_KEY must be base64 encoding of exactly 32 bytes"))
 		}
+	}
+	if c.TwoFactorEncryptionKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(c.TwoFactorEncryptionKey)
+		if err != nil || len(decoded) != 32 {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must be base64 encoding of exactly 32 bytes"))
+		}
+	}
+	if c.TwoFactorEncryptionKey != "" && c.TwoFactorEncryptionKey == c.IntegrationEncryptionKey {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must differ from INTEGRATION_ENCRYPTION_KEY"))
 	}
 	if c.AccessTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be positive"))
@@ -481,6 +508,7 @@ func (c Config) Redacted() map[string]any {
 		"http_address":                 c.HTTPAddress,
 		"base_domain":                  c.BaseDomain,
 		"public_base_url":              c.PublicBaseURL,
+		"web_public_base_url":          c.WebPublicBaseURL,
 		"database_url_app":             "[REDACTED]",
 		"database_url_admin":           "[REDACTED]",
 		"database_url_direct":          "[REDACTED]",

@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 111
+	const latestMigrationVersion = 113
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2518,6 +2518,29 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, []string{supportManagerID, limitedPlatformAdminID}); err != nil {
 		t.Fatalf("delete platform support permission fixtures: %v", err)
 	}
+	var twoFactorTablesProtected bool
+	if err := root.QueryRow(ctx, `
+		SELECT bool_and(relrowsecurity AND relforcerowsecurity)
+		FROM pg_class
+		WHERE oid = ANY(ARRAY[
+			'tenant_member_totp'::regclass,
+			'tenant_member_recovery_codes'::regclass
+		])
+	`).Scan(&twoFactorTablesProtected); err != nil || !twoFactorTablesProtected {
+		t.Fatalf("two-factor credential RLS protected = %t, error = %v", twoFactorTablesProtected, err)
+	}
+	// The application role may switch the policy but must never be able to
+	// rewrite ownership, plan, or billing columns on the same table.
+	var canUpdatePolicy, canUpdatePlan bool
+	if err := root.QueryRow(ctx, `
+		SELECT has_column_privilege('fidibeki_app', 'tenants', 'two_factor_policy', 'UPDATE'),
+		       has_column_privilege('fidibeki_app', 'tenants', 'plan', 'UPDATE')
+	`).Scan(&canUpdatePolicy, &canUpdatePlan); err != nil || !canUpdatePolicy || canUpdatePlan {
+		t.Fatalf(
+			"two-factor policy grants: policy = %t, plan = %t, error = %v; want true, false",
+			canUpdatePolicy, canUpdatePlan, err,
+		)
+	}
 	var recipientTablesProtected bool
 	if err := root.QueryRow(ctx, `
 		SELECT bool_and(relrowsecurity AND relforcerowsecurity)
@@ -2711,9 +2734,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var retentionHealthRows int
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
 		t.Fatalf(
-			"retention health row count = %d, error = %v, want 11",
+			"retention health row count = %d, error = %v, want 12",
 			retentionHealthRows, err,
 		)
 	}
@@ -2732,6 +2755,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		"abuse_diagnostics":          {category: "abuse_diagnostics", interval: 3600},
 		"ai_budget_ledgers":          {category: "ai_processing", interval: 86400},
 		"identity_asset_deletions":   {category: "identity_assets", interval: 60},
+		"saml_auth_artifacts":        {category: "auth_magic_links", interval: 3600},
 	}
 	retentionSeedRows, err := root.Query(ctx, `
 		SELECT operation_key, category, expected_interval_seconds,
@@ -2854,9 +2878,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
 		t.Fatalf(
-			"retention health rows after 108 replay = %d, error = %v, want 11",
+			"retention health rows after 108 replay = %d, error = %v, want 12",
 			retentionHealthRows, err,
 		)
 	}
@@ -2877,9 +2901,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 11 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
 		t.Fatalf(
-			"retention health rows after down/up = %d, error = %v, want 11",
+			"retention health rows after down/up = %d, error = %v, want 12",
 			retentionHealthRows, err,
 		)
 	}

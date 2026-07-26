@@ -39,12 +39,14 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
+	"github.com/acidiney/app.fidibeki/backend/internal/samlsso"
 	"github.com/acidiney/app.fidibeki/backend/internal/server"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
 	jobworker "github.com/acidiney/app.fidibeki/backend/internal/worker"
@@ -159,6 +161,10 @@ func runMigrations(logger *slog.Logger, settings config.Config, args []string) i
 
 func serve(ctx context.Context, logger *slog.Logger, settings config.Config) error {
 	integrationCipher, err := integration.NewCipher(settings.IntegrationEncryptionKey)
+	if err != nil {
+		return err
+	}
+	twoFactorCipher, err := twofactor.NewCipher(settings.TwoFactorEncryptionKey)
 	if err != nil {
 		return err
 	}
@@ -398,6 +404,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	billing.RegisterTenantRoutes(tenantRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	tenantmember.RegisterRoutes(tenantRoutes, tenantmember.HTTPOptions{
 		Service: tenantService, Store: tenantStore, JWT: jwtManager, Email: emailQueue,
+		TwoFactor: tenantmember.TwoFactorService{Store: tenantStore, Cipher: twoFactorCipher},
+		Limiter:   publicLimiter, TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})
@@ -439,6 +447,19 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})
 	aiprocessing.RegisterRoutes(tenantRoutes, aiprocessing.HTTPOptions{
 		Store: aiprocessing.Store{}, JWT: jwtManager, Scheduler: aiScheduler,
+	})
+	samlEndpoints := samlsso.Endpoints{
+		WebBaseURL: settings.WebPublicBaseURL, BaseDomain: settings.BaseDomain,
+	}
+	samlStore := samlsso.Store{Cipher: integrationCipher}
+	samlsso.RegisterRoutes(tenantRoutes, samlsso.HTTPOptions{
+		Service: samlsso.Service{
+			Store: samlStore, MagicLinks: tenantStore, Endpoints: samlEndpoints,
+			Fetcher: samlsso.MetadataFetcher{
+				AllowInsecure: settings.Environment == "local" || settings.Environment == "test",
+			},
+		},
+		Store: samlStore, JWT: jwtManager, Logger: logger,
 	})
 	tenantapi.RegisterRoutes(tenantRoutes)
 	tenantRoutes.NotFound(func(w http.ResponseWriter, _ *http.Request) {
@@ -731,6 +752,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store:  platformadmin.MaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,
 	}
+	samlAuthRetention := samlsso.Maintainer{
+		Store:  samlsso.MaintenanceStore{Database: pools.Admin},
+		Health: retentionHealth, Logger: logger,
+	}
 
 	var sender email.Sender
 	switch settings.EmailDriver {
@@ -845,6 +870,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()

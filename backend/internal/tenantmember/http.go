@@ -8,15 +8,18 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/go-chi/chi/v5"
@@ -26,13 +29,16 @@ import (
 const tenantRefreshCookie = "fidibeki_tenant_refresh"
 
 type HTTPOptions struct {
-	Service       Service
-	Store         Store
-	JWT           *auth.JWTManager
-	Email         email.Enqueuer
-	SecureCookies bool
-	RefreshTTL    time.Duration
-	Logger        *slog.Logger
+	Service           Service
+	TwoFactor         TwoFactorService
+	Store             Store
+	JWT               *auth.JWTManager
+	Email             email.Enqueuer
+	Limiter           ratelimit.Limiter
+	TrustedProxyCIDRs []netip.Prefix
+	SecureCookies     bool
+	RefreshTTL        time.Duration
+	Logger            *slog.Logger
 }
 
 type HTTPHandler struct {
@@ -49,6 +55,7 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 	router.Post("/auth/member-domains/verify", handler.verifyMemberDomain)
 	router.Post("/auth/refresh", handler.refresh)
 	router.Post("/auth/logout", handler.logout)
+	registerTwoFactorRoutes(router, handler, options)
 
 	protected := []func(http.Handler) http.Handler{
 		appmiddleware.RequireActive,
@@ -237,10 +244,33 @@ func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Resolved before issuing the link so the break-glass use is recorded in the
+	// same transaction that grants it: an owner sign-in that bypasses Required
+	// SSO is never possible without a matching audit row.
+	member, breakGlass, err := h.options.Service.BreakGlassLogin(r.Context(), query, resolved, request.Email)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	message, err := h.options.Service.RequestMagicLink(r.Context(), query, resolved, request.Email)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if breakGlass {
+		if err := accessaudit.Record(r.Context(), query, accessaudit.RecordInput{
+			TenantID: resolved.ID, Kind: "sso.break_glass_login_requested",
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: member.ID},
+			ResourceType: accessaudit.ResourceSSOConfiguration, ResourceID: resolved.ID,
+			Action: "break_glass", Outcome: accessaudit.OutcomeSuccess,
+			Data: map[string]any{"reason": "workspace_owner_recovery"},
+		}); err != nil {
+			h.options.Logger.ErrorContext(
+				r.Context(), "SSO break-glass audit failed", "error", err, "tenant_id", resolved.ID,
+			)
+			api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+			return
+		}
 	}
 	if message != nil && !appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
 		return h.options.Email.Enqueue(ctx, *message)
@@ -595,9 +625,26 @@ func (h *HTTPHandler) clearCookie(w http.ResponseWriter) {
 }
 
 func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Tenant) {
-	api.WriteJSON(w, http.StatusOK, map[string]any{
+	// A session that still owes its two-factor challenge is answered with the
+	// requirement alone: no access token, no member, and no workspace metadata
+	// until the challenge succeeds.
+	if tokens.Requirement == TwoFactorRequirementChallenge {
+		api.WriteJSON(w, http.StatusOK, map[string]any{
+			"two_factor": map[string]string{"status": tokens.Requirement},
+		})
+		return
+	}
+	payload := map[string]any{
 		"access_token": tokens.AccessToken, "token_type": "Bearer",
 		"expires_in": int(time.Until(tokens.ExpiresAt).Seconds()), "member": tokens.Member,
+		// SAML-authenticated sessions delegate multi-factor assurance to the
+		// identity provider, so the client must be able to tell them apart
+		// from local ones without inspecting the credential. The identity
+		// provider's subject stays server-side.
+		"authentication": map[string]any{
+			"method":        tokens.Security.AuthenticationMethod,
+			"idp_entity_id": tokens.Security.SAMLIdPEntityID,
+		},
 		"tenant": map[string]any{
 			"id": resolved.ID, "name": resolved.Name, "slug": resolved.Slug,
 			"plan": resolved.Plan, "status": resolved.Status, "trial_ends_at": resolved.TrialEndsAt,
@@ -614,7 +661,11 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 			"terms_url":               resolved.TermsURL,
 			"logo_version":            resolved.LogoVersion,
 		},
-	})
+	}
+	if tokens.Requirement != TwoFactorRequirementNone {
+		payload["two_factor"] = map[string]string{"status": tokens.Requirement}
+	}
+	api.WriteJSON(w, http.StatusOK, payload)
 }
 
 func writeError(w http.ResponseWriter, err error) {
@@ -622,6 +673,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrMagicLinkInvalid), errors.Is(err, ErrRefreshInvalid),
 		errors.Is(err, ErrRefreshExpired), errors.Is(err, ErrRefreshReuse):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)
+	case errors.Is(err, ErrLocalLoginDisabled):
+		api.WriteError(w, http.StatusForbidden, api.CodeSSORequired,
+			"this workspace requires single sign-on", nil)
 	case errors.Is(err, ErrMemberExists):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member already exists", nil)
 	case errors.Is(err, ErrMemberDomainAlreadyVerified):
@@ -648,6 +702,21 @@ func writeError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "member status is invalid", nil)
 	case errors.Is(err, ErrMemberActorInvalid):
 		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "active member authentication is required", nil)
+	case errors.Is(err, ErrTwoFactorCodeInvalid):
+		api.WriteError(w, http.StatusUnauthorized, api.CodeTwoFactorInvalid, "two-factor code is invalid", nil)
+	case errors.Is(err, ErrTwoFactorNotEnrolled):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "two-factor authentication is not enrolled", nil)
+	case errors.Is(err, ErrTwoFactorAlreadyEnrolled):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "two-factor authentication is already enrolled", nil)
+	case errors.Is(err, ErrTwoFactorChallengeNotPending):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "no two-factor challenge is pending", nil)
+	case errors.Is(err, ErrTwoFactorPolicyBlocked):
+		api.WriteError(w, http.StatusConflict, api.CodeTwoFactorPolicyBlocked, "two-factor policy blocks this change", nil)
+	case errors.Is(err, ErrTwoFactorManagedByIdP):
+		api.WriteError(w, http.StatusConflict, api.CodeTwoFactorManagedByIdP,
+			"multi-factor authentication is managed by your identity provider", nil)
+	case errors.Is(err, ErrTwoFactorPolicyInvalid):
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "two-factor policy is invalid", nil)
 	case strings.Contains(err.Error(), "email is invalid"):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "email is invalid", nil)
 	default:

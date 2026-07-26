@@ -34,6 +34,12 @@ type Claims struct {
 	// so it cannot be forged by a caller; middleware.AuthenticateTenantCredential
 	// sets it fresh on every request based on which credential branch matched.
 	IsAPIKey bool `json:"-"`
+	// TwoFactorRequired and TwoFactorEnrolled describe the workspace policy and
+	// the member's enrolment as of this request. Like IsAPIKey they are read
+	// from the database on every request and never signed into the token, so a
+	// stale or forged token cannot claim compliance.
+	TwoFactorRequired bool `json:"-"`
+	TwoFactorEnrolled bool `json:"-"`
 	jwt.RegisteredClaims
 }
 

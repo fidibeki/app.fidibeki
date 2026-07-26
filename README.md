@@ -71,9 +71,38 @@ to the Asynq monitor at `http://api.localhost:8088/admin/queues/` and the read-o
 privacy-incident workspace at `http://api.localhost:8088/admin/operations/privacy-incidents`;
 merely previewing the email link does not consume its one-time token.
 
+Organizations can authenticate members through their own SAML 2.0 identity provider. SSO is
+per organization and disabled by default. Administrators with `tenant:update` configure it under
+`/v1/sso/saml` and in **Settings → Single sign-on**; the identity provider uses
+`https://<tenant>.<base-domain>/auth/sso/saml/metadata` and `.../acs`, both derived from
+`WEB_PUBLIC_BASE_URL` (default `PUBLIC_BASE_URL`) and `BASE_DOMAIN`. Required mode is refused
+until a test sign-in has succeeded and a signing certificate is currently valid, the workspace
+owner keeps an audited break-glass link, and SAML sessions are marked `authentication_method =
+saml` so they never receive a Fidibeki TOTP challenge. Required mode also disables the workspace
+two-factor control without deleting any existing enrolment. See
+[docs/saml-sso.md](docs/saml-sso.md) for setup, certificate rotation, and outage recovery.
+
 Authenticated platform administrators manage tenants under `/admin/tenants`. Authenticated tenant
 members can invite and manage members under `/auth/invite` and `/v1/members`; every route enforces
 its explicit permission and the tenant ID embedded in the JWT.
+
+Each organization sets a Fidibeki-managed two-factor policy of `optional` (the default) or
+`required` at `/v1/security/two-factor/policy`. Members enrol a TOTP authenticator at
+`/v1/security/two-factor/enroll` and `/v1/security/two-factor/confirm`, which returns ten one-time
+recovery codes exactly once; secrets are stored AES-256-GCM encrypted under
+`TWO_FACTOR_ENCRYPTION_KEY` and recovery codes only as SHA-256 hashes. An enrolled member's
+`/auth/verify` and `/auth/refresh` return `two_factor.status` instead of an access token until
+`POST /auth/2fa/challenge` accepts a code from the same refresh cookie. Under a required policy an
+unenrolled member is refused every workspace route with `403 two_factor_enrollment_required` — there
+is no grace period — while the enrolment routes stay reachable. Requiring the policy is refused
+unless the acting administrator is enrolled and still holds unused recovery codes, so the workspace
+always keeps one recoverable administrator. Administrators see enrolment status at
+`/v1/security/two-factor/compliance` and can reset a member at
+`/v1/members/{memberID}/two-factor/reset`, which revokes that member's sessions and forces
+re-enrolment; they can never read a secret or a recovery code. SAML sessions record
+`authentication_method = 'saml'` and are never challenged, because their assurance is delegated to
+the identity provider. Policy changes, enrolment, removal, recovery-code use, failed challenges, and
+administrative resets are recorded in `tenant_access_events`.
 
 Self-service signup is `POST http://api.localhost:8088/v1/signup`. It creates a 14-day trial and
 the first tenant admin, then queues a fragment-based magic link. Production and staging require

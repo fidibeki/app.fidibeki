@@ -21,6 +21,7 @@ const (
 	OperationAbuseDiagnostics        Operation = "abuse_diagnostics"
 	OperationAIBudgetLedgers         Operation = "ai_budget_ledgers"
 	OperationIdentityAssetDeletions  Operation = "identity_asset_deletions"
+	OperationSAMLAuthArtifacts       Operation = "saml_auth_artifacts"
 )
 
 // Migrations 105 and 109 seed exactly one retention_maintenance_status row
@@ -37,6 +38,7 @@ var operationCategories = map[Operation]string{
 	OperationAbuseDiagnostics:        "abuse_diagnostics",
 	OperationAIBudgetLedgers:         "ai_processing",
 	OperationIdentityAssetDeletions:  "identity_assets",
+	OperationSAMLAuthArtifacts:       "auth_magic_links",
 }
 
 type Result string

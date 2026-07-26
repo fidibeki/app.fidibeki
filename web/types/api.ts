@@ -83,12 +83,37 @@ export interface OrganizationProfile {
   logo_version?: string | null
 }
 
+export type TwoFactorPolicyMode = 'optional' | 'required'
+export type TwoFactorRequirement = 'challenge_required' | 'enrollment_required'
+
+export interface TwoFactorRequirementResponse {
+  status: TwoFactorRequirement
+}
+
+/**
+ * A session that still owes its two-factor challenge is answered with the
+ * requirement alone: no access token and no workspace metadata.
+ */
 export interface AuthResponse {
   access_token: string
   token_type: 'Bearer'
   expires_in: number
   member: Member
   tenant: TenantSummary
+  two_factor?: TwoFactorRequirementResponse
+}
+
+export type AuthOrTwoFactorResponse = AuthResponse | { two_factor: TwoFactorRequirementResponse }
+
+export function twoFactorRequirement(
+  response: AuthOrTwoFactorResponse | null | undefined,
+): TwoFactorRequirement | null {
+  const status = response && 'two_factor' in response ? response.two_factor?.status : null
+  return status === 'challenge_required' || status === 'enrollment_required' ? status : null
+}
+
+export function isAuthResponse(response: AuthOrTwoFactorResponse): response is AuthResponse {
+  return typeof (response as AuthResponse).access_token === 'string'
 }
 
 export interface AuthSession {
@@ -96,6 +121,37 @@ export interface AuthSession {
   expiresAt: number | null
   member: Member | null
   tenant: TenantSummary | null
+}
+
+export interface TwoFactorStatus {
+  policy: TwoFactorPolicyMode
+  enrolled: boolean
+  confirmed_at?: string | null
+  recovery_codes_remaining: number
+  can_remove: boolean
+  authentication_method: 'local' | 'saml'
+}
+
+export interface TwoFactorEnrollment {
+  secret: string
+  provisioning_uri: string
+  qr_code_svg: string
+}
+
+export interface TwoFactorPolicy {
+  policy: TwoFactorPolicyMode
+  updated_at?: string | null
+  updated_by?: string | null
+  /** Required single sign-on has delegated multi-factor assurance to the IdP. */
+  managed_by_idp: boolean
+}
+
+export interface TwoFactorCompliance {
+  member_id: string
+  email: string
+  name?: string | null
+  enrolled: boolean
+  confirmed_at?: string | null
 }
 
 export interface APIErrorBody {
@@ -684,6 +740,62 @@ export interface SignupResponse {
 export interface TenantConfiguration {
   tenant: TenantSummary
   plan: PlanDefinition
+}
+
+export type SSOMode = 'disabled' | 'optional' | 'required'
+
+/** Organization-level SSO policy the login page reads before any session exists. */
+export interface SSOPolicy {
+  mode: SSOMode
+  start_url?: string
+  local_login_enabled: boolean
+  break_glass_available: boolean
+}
+
+export interface SAMLCertificate {
+  id: string
+  certificate: string
+  fingerprint: string
+  subject: string
+  not_before: string
+  not_after: string
+  created_at: string
+}
+
+export interface SAMLConfiguration {
+  mode: SSOMode
+  idp_entity_id: string
+  idp_sso_url: string
+  idp_metadata_url?: string
+  email_domains: string[]
+  allow_idp_initiated: boolean
+  sp_certificate: string
+  last_tested_at?: string
+  last_test_error?: string
+  last_successful_login_at?: string
+  created_at: string
+  updated_at: string
+  updated_by_member_id?: string
+  certificates: SAMLCertificate[]
+}
+
+/** The service-provider values an administrator copies into their IdP. */
+export interface SAMLServiceProvider {
+  entity_id: string
+  acs_url: string
+  metadata_url: string
+  start_url: string
+  certificate: string
+}
+
+export type SAMLWarning = 'no_valid_certificate' | 'certificate_expiring' | 'mfa_managed_by_idp'
+
+export interface SAMLSettings {
+  configured: boolean
+  sso: SAMLConfiguration | null
+  service_provider: SAMLServiceProvider
+  can_require?: boolean
+  warnings?: SAMLWarning[]
 }
 
 export type PrivacyJobKind = 'workspace_export' | 'reporter_export' | 'reporter_anonymize'

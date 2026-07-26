@@ -48,6 +48,12 @@ export default defineEventHandler(async (event) => {
         'x-fidibeki-proxy-host': proxyHost,
         'x-fidibeki-proxy-secret': proxySecret,
       },
+      // A redirect from the API is addressed to the browser, not to this proxy.
+      // Single sign-on depends on it: the SAML start endpoint answers with a
+      // redirect to the organization's identity provider, and following it here
+      // would serve the provider's login page from this origin, where its form
+      // would post back to us instead of to the provider.
+      fetchOptions: { redirect: 'manual' },
     })
   } catch {
     return unavailable(event, 'API upstream is unavailable')
