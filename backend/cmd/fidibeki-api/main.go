@@ -572,6 +572,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin:      db.BeginFromPool(pools.App),
 		Logger:     logger,
 	})
+	// The media paths live inside the payload the line above serves, so they have
+	// to answer on the same host. Mounting them anywhere else leaves an embed
+	// asking widget.* for a video and being told it does not exist.
+	testimonial.RegisterMediaRoutes(widgetRoutes, testimonialMediaOptions)
 	replay.RegisterPublicRoutes(widgetRoutes, replay.HTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App), Store: replay.Store{},
 		Storage: objectStorage, Scheduler: replayScheduler, Verifier: replayScheduler,
