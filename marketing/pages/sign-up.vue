@@ -41,6 +41,11 @@ const included = [
           <a :href="links.signUp" class="btn btn-primary btn-large auth-cta">
             Continue to sign up <ExternalLink :size="16" aria-hidden="true" />
           </a>
+          <p class="auth-legal">
+            By creating a workspace you agree to our
+            <NuxtLink to="/tos">Terms of Service</NuxtLink> and
+            <NuxtLink to="/privacy">Privacy notice</NuxtLink>.
+          </p>
           <p class="auth-alt">
             Already have a workspace?
             <a :href="links.signIn">Sign in</a>
@@ -112,6 +117,13 @@ const included = [
 
 .auth-cta {
   margin-top: 1.4rem;
+}
+
+.auth-legal {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .auth-alt {
