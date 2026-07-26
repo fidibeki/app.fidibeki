@@ -38,10 +38,15 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
+      # Matches web-ci.yml: installing pnpm through npm leaves setup-node with no
+      # pnpm store to cache, so every run re-downloaded the whole dependency set.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: npm install --global pnpm@11.15.1
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @fidibeki/widget typecheck
       - run: pnpm --filter @fidibeki/widget build
