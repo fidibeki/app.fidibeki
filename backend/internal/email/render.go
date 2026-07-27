@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-const logoPath = "/brand/fidibeki-color.png"
-
 type Content struct {
 	Preheader     string
 	Heading       string
@@ -84,21 +82,15 @@ func Render(content Content) (string, string, error) {
 	return textBody, htmlBody.String(), nil
 }
 
-func BrandLogoURL(publicBaseURL, baseDomain string) (string, error) {
+// BrandLogoURL points at the API's own copy of the wordmark. It keeps the host
+// it is given rather than deriving a friendlier one, because the API is the only
+// tier guaranteed to answer for BrandLogoPath in every environment.
+func BrandLogoURL(publicBaseURL string) (string, error) {
 	base, err := url.Parse(strings.TrimSpace(publicBaseURL))
 	if err != nil || !base.IsAbs() || base.Host == "" {
 		return "", errors.New("public base URL is invalid")
 	}
-	host := strings.TrimSpace(baseDomain)
-	if host == "" {
-		host = base.Hostname()
-		host = strings.TrimPrefix(host, "api.")
-	}
-	if port := base.Port(); port != "" {
-		host += ":" + port
-	}
-	base.Host = host
-	base.Path = logoPath
+	base.Path = BrandLogoPath
 	base.RawPath = ""
 	base.RawQuery = ""
 	base.Fragment = ""
@@ -166,13 +158,13 @@ func renderText(content Content) string {
 
 var transactionalTemplate = template.Must(template.New("transactional").Parse(`<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Heading}}</title></head>
-<body style="margin:0;background:#f4f5f4;color:#161a17;font-family:Arial,Helvetica,sans-serif;">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>{{.Heading}}</title></head>
+<body style="margin:0;background:#f4f5f4;color:#161a17;font-family:Arial,Helvetica,sans-serif;color-scheme:light;supported-color-schemes:light;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{{.Preheader}}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f4;padding:24px 12px;"><tr><td align="center">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #dfe3df;">
 <tr><td style="padding:24px 28px 18px;border-bottom:1px solid #e8ebe8;">
-<img src="{{.LogoURL}}" width="111" height="28" alt="Fidibeki" style="display:block;border:0;width:111px;height:28px;font-size:16px;line-height:28px;font-weight:bold;color:#161a17;">
+<img src="{{.LogoURL}}" width="111" alt="Fidibeki" style="display:block;border:0;width:111px;max-width:111px;height:auto;font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:28px;font-weight:bold;color:#161a17;text-decoration:none;">
 </td></tr>
 <tr><td style="padding:28px;">
 {{if .Workspace}}<p style="margin:0 0 10px;color:#55705f;font-size:13px;line-height:20px;font-weight:bold;">{{.Workspace}}</p>{{end}}

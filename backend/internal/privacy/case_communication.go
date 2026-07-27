@@ -548,7 +548,6 @@ type CaseCommunicationHandler struct {
 	Sender        email.Sender
 	From          string
 	PublicBaseURL string
-	BaseDomain    string
 	Now           func() time.Time
 }
 
@@ -788,7 +787,7 @@ func caseCommunicationMessage(
 	notification CaseCommunicationNotification,
 	handler CaseCommunicationHandler,
 ) (email.Message, error) {
-	logoURL, err := email.BrandLogoURL(handler.PublicBaseURL, handler.BaseDomain)
+	logoURL, err := email.BrandLogoURL(handler.PublicBaseURL)
 	if err != nil {
 		return email.Message{}, err
 	}

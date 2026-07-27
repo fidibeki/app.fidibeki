@@ -298,9 +298,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
-		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
-		AuthFrom:     settings.ResendAuthFrom,
-		MagicLinkTTL: settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
+		PublicBaseURL: settings.PublicBaseURL,
+		AuthFrom:      settings.ResendAuthFrom,
+		MagicLinkTTL:  settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
 	}
 	billingStore := billing.Store{Database: pools.Admin}
 	billingProvider := billing.NewStripeProvider(settings.StripeSecretKey, settings.StripeWebhookSecret)
@@ -335,7 +335,25 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 			return err
 		}
 	}
+	// Slack matches a redirect URL's host and port exactly, and tenants live on per-workspace
+	// subdomains, so the install callback lands on the one fixed apex API host and carries the
+	// tenant in server-side state instead of in the host.
+	slackOAuth := integration.SlackOAuth{
+		ClientID: settings.SlackClientID, ClientSecret: settings.SlackClientSecret,
+		RedirectURL: settings.SlackRedirectURL,
+		States:      integration.RedisInstallStateStore{Client: redisClient.Client()},
+	}
 	platformRoutes := chi.NewRouter()
+	// Transactional mail addresses its header logo to the API host, so the API has
+	// to answer for it. Anything else — the marketing site, the app — owns the apex
+	// in one environment and not the other, and the header quietly degrades to alt
+	// text wherever the guess is wrong.
+	email.RegisterBrandLogoRoute(platformRoutes)
+	integration.RegisterSlackCallbackRoute(platformRoutes, integration.SlackCallbackOptions{
+		Store: integration.Store{Cipher: integrationCipher}, Slack: slackOAuth,
+		Begin: db.BeginFromPool(pools.App), BaseDomain: settings.BaseDomain,
+		WebPublicBaseURL: settings.WebPublicBaseURL, Logger: logger,
+	})
 	monitorRedis, err := asynq.ParseRedisURI(settings.RedisURL)
 	if err != nil {
 		return fmt.Errorf("configure queue monitor: %w", err)
@@ -463,6 +481,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	integration.RegisterRoutes(tenantRoutes, integration.HTTPOptions{
 		Store: integration.Store{Cipher: integrationCipher}, JWT: jwtManager,
 		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
+		Slack:             slackOAuth, Logger: logger,
 	})
 	issue.RegisterRoutes(tenantRoutes, issue.HTTPOptions{Store: issue.Store{}, JWT: jwtManager})
 	issuetracker.RegisterRoutes(tenantRoutes, issuetracker.HTTPOptions{
@@ -505,7 +524,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		},
 		Store: samlStore, JWT: jwtManager, Logger: logger,
 	})
-	tenantapi.RegisterRoutes(tenantRoutes)
+	tenantapi.RegisterRoutes(tenantRoutes, tenantapi.Capabilities{
+		SlackOneClickInstall: slackOAuth.Configured(),
+	})
 	tenantRoutes.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
 	})
@@ -852,16 +873,15 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	recipientHandler := privacy.RecipientHandler{
 		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
-		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		PublicBaseURL: settings.PublicBaseURL,
 	}
 	caseCommunicationHandler := privacy.CaseCommunicationHandler{
 		Store: privacyStore, Sender: sender, From: settings.ResendAuthFrom,
-		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		PublicBaseURL: settings.PublicBaseURL,
 	}
 	controllerNotificationHandler := breachregister.ControllerNotificationHandler{
 		Store: breachregister.Store{Database: pools.Admin}, Sender: sender,
 		From: settings.ResendAuthFrom, PublicBaseURL: settings.PublicBaseURL,
-		BaseDomain: settings.BaseDomain,
 	}
 	lifecycleHandler := email.LifecycleHandler{
 		Database: pools.Admin, Sender: sender,

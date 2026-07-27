@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 124
+	const latestMigrationVersion = 126
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2518,6 +2518,111 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, []string{supportManagerID, limitedPlatformAdminID}); err != nil {
 		t.Fatalf("delete platform support permission fixtures: %v", err)
 	}
+
+	// Migration 000126 backfills testimonial:* permissions onto existing
+	// active members who were created before the testimonials feature landed.
+	// Insert a legacy active member without any testimonial permissions, then
+	// roll back and reapply 126 to verify the full set was appended and the
+	// authorization version was bumped so existing sessions are invalidated.
+	var testimonialBackfillTenantID, testimonialBackfillMemberID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Testimonial backfill', 'testimonial-backfill', 'scale', 'active')
+		RETURNING id
+	`).Scan(&testimonialBackfillTenantID); err != nil {
+		t.Fatalf("create testimonial backfill tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, status, authorization_version)
+		VALUES ($1, 'owner@testimonial-backfill.test',
+		        ARRAY['project:read', 'feedback:read', 'tenant:read'], 'active', 3)
+		RETURNING id
+	`, testimonialBackfillTenantID).Scan(&testimonialBackfillMemberID); err != nil {
+		t.Fatalf("create testimonial backfill member: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions, status)
+		VALUES ($1, 'deactivated@testimonial-backfill.test',
+		        ARRAY['project:read'], 'deactivated')
+	`, testimonialBackfillTenantID); err != nil {
+		t.Fatalf("create deactivated testimonial backfill member: %v", err)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back testimonial permission backfill: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply testimonial permission backfill: %v", err)
+	}
+	var backfillRead, backfillCreate, backfillUpdate, backfillDelete, backfillPublish bool
+	var backfillAuthorizationVersion int
+	if err := root.QueryRow(ctx, `
+		SELECT 'testimonial:read' = ANY(permissions),
+		       'testimonial:create' = ANY(permissions),
+		       'testimonial:update' = ANY(permissions),
+		       'testimonial:delete' = ANY(permissions),
+		       'testimonial:publish' = ANY(permissions),
+		       authorization_version
+		FROM tenant_members
+		WHERE id = $1
+	`, testimonialBackfillMemberID).Scan(
+		&backfillRead, &backfillCreate, &backfillUpdate, &backfillDelete, &backfillPublish,
+		&backfillAuthorizationVersion,
+	); err != nil {
+		t.Fatalf("read backfilled testimonial member: %v", err)
+	}
+	if !backfillRead || !backfillCreate || !backfillUpdate || !backfillDelete || !backfillPublish {
+		t.Fatalf(
+			"backfilled testimonial permissions = read:%t create:%t update:%t delete:%t publish:%t, want all true",
+			backfillRead, backfillCreate, backfillUpdate, backfillDelete, backfillPublish,
+		)
+	}
+	if backfillAuthorizationVersion != 5 {
+		t.Fatalf("backfilled authorization version = %d, want 5", backfillAuthorizationVersion)
+	}
+	var deactivatedTestimonialCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_members
+		WHERE tenant_id = $1 AND status = 'deactivated'
+		  AND 'testimonial:read' = ANY(permissions)
+	`, testimonialBackfillTenantID).Scan(&deactivatedTestimonialCount); err != nil ||
+		deactivatedTestimonialCount != 0 {
+		t.Fatalf(
+			"deactivated member testimonial permission count = %d, error = %v, want 0",
+			deactivatedTestimonialCount, err,
+		)
+	}
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back testimonial permission backfill again: %v", err)
+	}
+	var rolledBackRead, rolledBackCreate bool
+	var rolledBackAuthorizationVersion int
+	if err := root.QueryRow(ctx, `
+		SELECT 'testimonial:read' = ANY(permissions),
+		       'testimonial:create' = ANY(permissions),
+		       authorization_version
+		FROM tenant_members
+		WHERE id = $1
+	`, testimonialBackfillMemberID).Scan(
+		&rolledBackRead, &rolledBackCreate, &rolledBackAuthorizationVersion,
+	); err != nil {
+		t.Fatalf("read rolled-back testimonial member: %v", err)
+	}
+	if rolledBackRead || rolledBackCreate {
+		t.Fatalf(
+			"rolled-back testimonial permissions = read:%t create:%t, want false/false",
+			rolledBackRead, rolledBackCreate,
+		)
+	}
+	if rolledBackAuthorizationVersion != 6 {
+		t.Fatalf("rolled-back authorization version = %d, want 6", rolledBackAuthorizationVersion)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply testimonial permission backfill after rollback: %v", err)
+	}
+	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
+		t.Fatalf("delete testimonial backfill fixtures: %v", err)
+	}
+
 	var twoFactorTablesProtected bool
 	if err := root.QueryRow(ctx, `
 		SELECT bool_and(relrowsecurity AND relforcerowsecurity)

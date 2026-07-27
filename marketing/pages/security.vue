@@ -195,9 +195,12 @@ const widgetPoints = [
 
           <h2 id="incident-response">Incident response and disclosure</h2>
           <p>
-            We maintain an incident response runbook. For personal data breaches, we intend to
-            notify affected customer/controllers without undue delay under the approved DPA once the
-            breach workflow is complete. To report a security issue or vulnerability, email us at
+            We maintain an incident response runbook and an internal breach register that records
+            incident facts, assessments, chronology, and containment behind a platform-administration
+            boundary. For personal data breaches, we notify affected customer/controllers without
+            undue delay, and what we owe you is set out in the
+            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>. To report a security issue or
+            vulnerability, email us at
             <a href="mailto:security@fidibeki.com">security@fidibeki.com</a>. Please include a
             proof of concept and do not test against customer workspaces or production data.
           </p>

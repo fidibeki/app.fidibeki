@@ -149,7 +149,7 @@ func (d Dunning) Execute(ctx context.Context) error {
 			joined = errors.Join(joined, err)
 			continue
 		}
-		logoURL, err := email.BrandLogoURL(d.PublicBaseURL, d.BaseDomain)
+		logoURL, err := email.BrandLogoURL(d.PublicBaseURL)
 		if err != nil {
 			joined = errors.Join(joined, err)
 			continue

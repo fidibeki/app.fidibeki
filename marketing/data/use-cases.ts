@@ -25,7 +25,7 @@ export const useCases: UseCaseEntry[] = [
     slug: 'feature-requests',
     name: 'Feature request triage',
     audience: 'Product teams',
-    tagline: 'See real demand, not duplicate requests.',
+    tagline: 'See real demand instead of twenty duplicate requests.',
     summary:
       'Collect requests in-product. On eligible plans, AI can clean and score reports that enter the pipeline, link duplicates to one issue, and close the loop with requesters who opted in when you ship.',
     icon: 'lightbulb',

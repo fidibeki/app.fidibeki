@@ -183,7 +183,6 @@ func TestCaseCommunicationRecipientsEvidenceAndMessages(t *testing.T) {
 			CaseCommunicationHandler{
 				From:          "Fidibeki <privacy@fidibeki.com>",
 				PublicBaseURL: "https://api.fidibeki.com",
-				BaseDomain:    "fidibeki.com",
 			},
 		)
 		if err != nil || !strings.Contains(message.Text, test.label) ||

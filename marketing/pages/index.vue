@@ -2,13 +2,14 @@
 import { ArrowRight } from '@lucide/vue'
 import { features } from '~/data/features'
 import { availableIntegrations } from '~/data/integrations'
-import { useCases } from '~/data/use-cases'
-import { plans, formatPrice, trialDays } from '~/data/pricing'
+import { formatPrice, plans, trialDays } from '~/data/pricing'
 import { customers, siteDescription, siteName } from '~/data/site'
+import { useCases } from '~/data/use-cases'
 
 const links = useAppLinks()
 const config = useRuntimeConfig()
 const siteUrl = config.public.siteUrl.replace(/\/$/, '')
+const widgetTestimonialsKey = config.public.widgetTestimonialsKey
 
 useSiteMeta({
   title: 'Product feedback that finishes the job',
@@ -59,6 +60,16 @@ const trustPoints = [
     body: 'Attachments are verified for size and type, and only files verified by signature ever become visible or eligible for AI.',
   },
 ]
+
+useHead({
+  script: [
+    {
+      src: 'https://widget.fidibeki.com/v1/testimonials.js',
+      async: true,
+      defer: true,
+    },
+  ],
+})
 </script>
 
 <template>
@@ -256,6 +267,18 @@ const trustPoints = [
         <p class="pricing-teaser-link">
           <NuxtLink to="/pricing" class="btn btn-ghost">Compare all plans <ArrowRight :size="15" aria-hidden="true" /></NuxtLink>
         </p>
+      </div>
+    </section>
+
+    <section v-if="widgetTestimonialsKey" class="section" aria-labelledby="testimonials-heading">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Testimonials</p>
+          <h2 id="testimonials-heading">What customers say about Fidibeki</h2>
+        </div>
+        <div class="testimonial-widget">
+          <fidibeki-wall :wall="widgetTestimonialsKey" />
+        </div>
       </div>
     </section>
 
