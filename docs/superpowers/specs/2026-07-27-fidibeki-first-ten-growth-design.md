@@ -99,6 +99,19 @@ Each prospect record must contain only the minimum business information needed t
 
 No purchased contact list, personal email address, tracking pixel, hidden tracking link, attachment, or bulk-send import is allowed in the first pilot.
 
+### Jurisdiction gate
+
+Country is a qualification field, not an afterthought. A public address is not universal permission to send marketing email.
+
+- **United States:** a commercial email must use accurate routing information and subject line, clearly identify the message as an advertisement, include Fidibeki's valid physical postal address, provide a working opt-out method, and honor opt-outs within 10 business days. The initial US pilot can use only corporate/business contact routes and every message must carry the complete compliance footer.
+- **United Kingdom:** a generic address of a verified corporate subscriber can be considered only after a documented UK GDPR lawful-basis and transparency review, an identity disclosure, and a valid opt-out route. Do not use a personal business email or sole-trader address without the applicable consent/soft-opt-in basis.
+- **Germany:** no unsolicited marketing email is permitted without prior express consent, except for the narrow existing-customer exception. Do not send a cold email to a German prospect merely because an address is public.
+- **Other Europe:** do not infer a rule from a neighbouring country. Research and record the local rule before drafting an outreach route; if the basis is unclear, do not email.
+
+This operating policy is deliberately conservative and is not legal advice. It turns the launch experiment toward compliant US corporate outreach and consented/warm European routes, rather than treating all of Europe as an emailable cold-list market.
+
+**Primary reference points:** [FTC CAN-SPAM compliance guide](https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business), [ICO B2B marketing guidance](https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/business-to-business-marketing/), and [Germany UWG § 7](https://www.gesetze-im-internet.de/uwg_2004/__7.html). Recheck before each new market because regulator guidance and local law can change.
+
 ### Sequence
 
 The sequence has at most four messages over approximately 12 days:
