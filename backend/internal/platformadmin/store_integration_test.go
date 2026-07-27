@@ -378,9 +378,16 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 	record.Name = "Acme Updated"
 	record.Status = tenant.StatusActive
 	record.TrialEndsAt = nil
-	updated, err := store.UpdateTenant(ctx, record)
+	updated, err := store.UpdateTenant(ctx, record, admin.ID)
 	if err != nil || updated.Name != "Acme Updated" || updated.Status != tenant.StatusActive {
 		t.Fatalf("UpdateTenant() = %#v, %v", updated, err)
+	}
+	var updateAuditActor string
+	if err := connection.QueryRow(ctx, `
+		SELECT actor_platform_admin_id::text FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'workspace.updated'
+	`, record.ID).Scan(&updateAuditActor); err != nil || updateAuditActor != admin.ID {
+		t.Fatalf("workspace update audit actor = %q, error = %v", updateAuditActor, err)
 	}
 	records, err := store.ListTenants(ctx)
 	if err != nil || len(records) != 1 {

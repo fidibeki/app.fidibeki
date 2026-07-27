@@ -470,7 +470,66 @@ func (s Store) GetBackofficeTenant(ctx context.Context, tenantID string) (Backof
 	if trialEndsAt.Valid {
 		detail.Tenant.TrialEndsAt = &trialEndsAt.Time
 	}
+	var owner BackofficeTenantMember
+	var ownerName pgtype.Text
+	var ownerLastLogin pgtype.Timestamptz
+	err = s.Database.QueryRow(ctx, `SELECT m.id, m.email::text, m.name, m.status::text, m.last_login_at FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id AND m.id=t.owner_member_id WHERE t.id=$1`, tenantID).Scan(&owner.ID, &owner.Email, &ownerName, &owner.Status, &ownerLastLogin)
+	if err == nil {
+		if ownerName.Valid {
+			owner.Name = &ownerName.String
+		}
+		if ownerLastLogin.Valid {
+			owner.LastLoginAt = &ownerLastLogin.Time
+		}
+		detail.Owner = &owner
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return BackofficeTenantDetail{}, fmt.Errorf("get backoffice tenant owner: %w", err)
+	}
 	return detail, nil
+}
+
+func (s Store) ListBackofficeRecoveryCandidates(ctx context.Context, tenantID string, params BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
+	var createdAt, memberID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeTenantCursor(params.Cursor)
+		if err != nil {
+			return BackofficeRecoveryCandidatePage{}, err
+		}
+		createdAt, memberID = cursor.CreatedAt, cursor.ID
+	}
+	rows, err := s.Database.Query(ctx, `SELECT m.id,m.email::text,m.name,m.status::text,m.last_login_at,m.created_at FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.tenant_id=$1 AND m.status='active' AND m.last_login_at IS NOT NULL AND m.id IS DISTINCT FROM t.owner_member_id AND ($2::timestamptz IS NULL OR (m.created_at,m.id)<($2::timestamptz,$3::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT $4`, tenantID, createdAt, memberID, params.Limit+1)
+	if err != nil {
+		return BackofficeRecoveryCandidatePage{}, fmt.Errorf("list recovery candidates: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeRecoveryCandidatePage{Members: make([]BackofficeTenantMember, 0, params.Limit)}
+	cursors := make([]backofficeTenantCursor, 0, params.Limit+1)
+	for rows.Next() {
+		var member BackofficeTenantMember
+		var name pgtype.Text
+		var login, created pgtype.Timestamptz
+		if err := rows.Scan(&member.ID, &member.Email, &name, &member.Status, &login, &created); err != nil {
+			return BackofficeRecoveryCandidatePage{}, fmt.Errorf("scan recovery candidate: %w", err)
+		}
+		if name.Valid {
+			member.Name = &name.String
+		}
+		member.LastLoginAt = &login.Time
+		page.Members = append(page.Members, member)
+		cursors = append(cursors, backofficeTenantCursor{CreatedAt: created.Time, ID: member.ID})
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeRecoveryCandidatePage{}, fmt.Errorf("iterate recovery candidates: %w", err)
+	}
+	if len(page.Members) > params.Limit {
+		cursor, err := encodeBackofficeTenantCursor(cursors[params.Limit-1])
+		if err != nil {
+			return BackofficeRecoveryCandidatePage{}, err
+		}
+		page.NextCursor = cursor
+		page.Members = page.Members[:params.Limit]
+	}
+	return page, nil
 }
 
 type backofficeAccessEventCursor struct {
@@ -809,8 +868,13 @@ func (s Store) ListTenants(ctx context.Context) ([]TenantRecord, error) {
 	return records, nil
 }
 
-func (s Store) UpdateTenant(ctx context.Context, input TenantRecord) (TenantRecord, error) {
-	record, err := scanTenant(s.Database.QueryRow(ctx, `
+func (s Store) UpdateTenant(ctx context.Context, input TenantRecord, actorPlatformAdminID string) (TenantRecord, error) {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return TenantRecord{}, fmt.Errorf("begin workspace update: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	record, err := scanTenant(tx.QueryRow(ctx, `
 		UPDATE tenants
 		SET name = $2, slug = $3, plan = $4, status = $5, billing_email = $6, trial_ends_at = $7
 		WHERE id = $1
@@ -824,6 +888,15 @@ func (s Store) UpdateTenant(ctx context.Context, input TenantRecord) (TenantReco
 	}
 	if err != nil {
 		return TenantRecord{}, fmt.Errorf("update tenant: %w", err)
+	}
+	if err := insertPlatformAccessEvent(ctx, tx, input.ID, "workspace.updated", actorPlatformAdminID, nil, map[string]any{
+		"plan":   record.Plan,
+		"status": record.Status,
+	}); err != nil {
+		return TenantRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TenantRecord{}, fmt.Errorf("commit workspace update: %w", err)
 	}
 	return record, nil
 }

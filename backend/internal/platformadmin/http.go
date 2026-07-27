@@ -18,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/billing"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ type TenantStore interface {
 	CreateTenant(context.Context, CreateTenantParams) (TenantRecord, error)
 	GetTenant(context.Context, string) (TenantRecord, error)
 	ListTenants(context.Context) ([]TenantRecord, error)
-	UpdateTenant(context.Context, TenantRecord) (TenantRecord, error)
+	UpdateTenant(context.Context, TenantRecord, string) (TenantRecord, error)
 	DeleteTenant(context.Context, string) error
 	RecoverOwnership(context.Context, RecoverOwnershipParams) error
 }
@@ -42,6 +43,7 @@ type BackofficeStore interface {
 	Overview(context.Context) (BackofficeOverview, error)
 	ListBackofficeTenants(context.Context, BackofficeTenantListParams) (BackofficeTenantPage, error)
 	GetBackofficeTenant(context.Context, string) (BackofficeTenantDetail, error)
+	ListBackofficeRecoveryCandidates(context.Context, string, BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error)
 	ListBackofficeAccessEvents(context.Context, string, BackofficeAccessEventListParams) (BackofficeAccessEventPage, error)
 }
 
@@ -54,6 +56,7 @@ type HTTPOptions struct {
 	RefreshTTL    time.Duration
 	Now           func() time.Time
 	Deleter       TenantDeleter
+	LoginLimiter  ratelimit.Limiter
 	Logger        *slog.Logger
 }
 
@@ -83,6 +86,8 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 		Get("/admin/backoffice/tenants", handler.backofficeTenants)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
 		Get("/admin/backoffice/tenants/{tenantID}", handler.backofficeTenant)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantUpdate)).
+		Get("/admin/backoffice/tenants/{tenantID}/recovery-candidates", handler.backofficeRecoveryCandidates)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
 		Get("/admin/backoffice/tenants/{tenantID}/access-events", handler.backofficeAccessEvents)
 
@@ -105,11 +110,11 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
-	h.requestLogin(w, r, h.options.Auth.RequestMagicLink)
+	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, nil)
 }
 
 func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
-	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink)
+	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink, h.options.LoginLimiter)
 }
 
 func (h *HTTPHandler) backofficeOverview(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +167,45 @@ func (h *HTTPHandler) backofficeTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) backofficeRecoveryCandidates(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	params, err := parseBackofficeRecoveryCandidateListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
+	}
+	page, err := h.options.Backoffice.ListBackofficeRecoveryCandidates(r.Context(), tenantID, params)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseBackofficeRecoveryCandidateListParams(r *http.Request) (BackofficeRecoveryCandidateListParams, error) {
+	params := BackofficeRecoveryCandidateListParams{Limit: 25, Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeRecoveryCandidateListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeTenantCursor(params.Cursor); err != nil {
+			return BackofficeRecoveryCandidateListParams{}, err
+		}
+	}
+	return params, nil
 }
 
 func (h *HTTPHandler) backofficeAccessEvents(w http.ResponseWriter, r *http.Request) {
@@ -255,12 +299,25 @@ func (h *HTTPHandler) requestLogin(
 	w http.ResponseWriter,
 	r *http.Request,
 	requestMagicLink func(context.Context, string) error,
+	limiter ratelimit.Limiter,
 ) {
 	var request struct {
 		Email string `json:"email"`
 	}
 	if !decodeRequest(w, r, &request) {
 		return
+	}
+	if limiter != nil {
+		key := "platform-backoffice-login:" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
+		decision, err := limiter.Allow(r.Context(), key, ratelimit.Window{Limit: 5, Period: 15 * time.Minute})
+		if err != nil {
+			api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+			return
+		}
+		if !decision.Allowed {
+			api.WriteError(w, http.StatusTooManyRequests, api.CodeRateLimitExceeded, "rate limit exceeded", nil)
+			return
+		}
 	}
 	if err := requestMagicLink(r.Context(), request.Email); err != nil {
 		if strings.Contains(err.Error(), "email is invalid") {
@@ -494,7 +551,12 @@ func (h *HTTPHandler) updateTenant(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
 		return
 	}
-	record, err := h.options.Tenants.UpdateTenant(r.Context(), current)
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	record, err := h.options.Tenants.UpdateTenant(r.Context(), current, claims.Subject)
 	if err != nil {
 		writeTenantError(w, err)
 		return

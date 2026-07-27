@@ -359,6 +359,12 @@ func (c Config) validate() []error {
 				fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an absolute origin without a path, query, or fragment"))
 		}
 	}
+	if c.Environment == "staging" || c.Environment == "production" {
+		parsed, err := url.ParseRequestURI(c.PlatformBackofficeURL)
+		if c.PlatformBackofficeURL == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			validationErrors = append(validationErrors, fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an HTTPS origin in %s", c.Environment))
+		}
+	}
 	// Slack one-click install is all-or-nothing. A half-configured app would offer an
 	// install button that always fails at the callback, which is worse than not offering it.
 	slackSettings := map[string]string{

@@ -114,10 +114,32 @@ type BackofficeTenantListParams struct {
 }
 
 type BackofficeTenantDetail struct {
-	Tenant        TenantRecord `json:"tenant"`
-	MemberCount   int64        `json:"member_count"`
-	ProjectCount  int64        `json:"project_count"`
-	FeedbackCount int64        `json:"feedback_count"`
+	Tenant        TenantRecord            `json:"tenant"`
+	MemberCount   int64                   `json:"member_count"`
+	ProjectCount  int64                   `json:"project_count"`
+	FeedbackCount int64                   `json:"feedback_count"`
+	Owner         *BackofficeTenantMember `json:"owner,omitempty"`
+}
+
+// BackofficeTenantMember is the minimum identity projection needed to verify
+// and recover workspace ownership. It intentionally omits permissions,
+// sessions, authentication factors, and other credential material.
+type BackofficeTenantMember struct {
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	Name        *string    `json:"name,omitempty"`
+	Status      string     `json:"status"`
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+}
+
+type BackofficeRecoveryCandidatePage struct {
+	Members    []BackofficeTenantMember `json:"members"`
+	NextCursor string                   `json:"next_cursor,omitempty"`
+}
+
+type BackofficeRecoveryCandidateListParams struct {
+	Limit  int
+	Cursor string
 }
 
 // BackofficeAccessEvent intentionally excludes the ledger's JSON data column:

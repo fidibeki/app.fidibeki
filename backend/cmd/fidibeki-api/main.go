@@ -324,7 +324,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: billingStore, Provider: billingProvider, Storage: objectStorage, Logger: logger,
 	}
 	platformHandler := platformadmin.NewHTTPHandler(platformadmin.HTTPOptions{
-		Auth: adminAuth, Tenants: adminStore, Backoffice: adminStore, JWT: jwtManager, Deleter: deletionExecutor,
+		Auth: adminAuth, Tenants: adminStore, Backoffice: adminStore, JWT: jwtManager, Deleter: deletionExecutor, LoginLimiter: publicLimiter,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})

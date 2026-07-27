@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
@@ -127,6 +128,20 @@ func TestBackofficeLoginIsNonEnumeratingAndUsesConfiguredVerificationOrigin(t *t
 	}
 	if len(unknownQueue.messages) != 0 {
 		t.Errorf("unknown admin queued %d messages", len(unknownQueue.messages))
+	}
+}
+
+func TestBackofficeLoginRateLimitsBeforeAdminLookup(t *testing.T) {
+	t.Parallel()
+	limiter := &platformLoginLimiter{decision: ratelimit.Decision{Allowed: false, Limit: 5}}
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth:         Service{Store: &fakeAuthStore{}, Email: &captureEnqueuer{}, BackofficeURL: "https://admin.fidibeki.com"},
+		LoginLimiter: limiter,
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`)))
+	if recorder.Code != http.StatusTooManyRequests || limiter.key == "" {
+		t.Fatalf("rate limited login = %d, key = %q", recorder.Code, limiter.key)
 	}
 }
 
@@ -615,6 +630,16 @@ type fakeBackofficeStore struct {
 	err              error
 }
 
+type platformLoginLimiter struct {
+	decision ratelimit.Decision
+	key      string
+}
+
+func (l *platformLoginLimiter) Allow(_ context.Context, key string, _ ratelimit.Window) (ratelimit.Decision, error) {
+	l.key = key
+	return l.decision, nil
+}
+
 func (s *fakeBackofficeStore) Overview(context.Context) (BackofficeOverview, error) {
 	return s.overview, s.err
 }
@@ -627,6 +652,9 @@ func (s *fakeBackofficeStore) ListBackofficeTenants(_ context.Context, params Ba
 func (s *fakeBackofficeStore) GetBackofficeTenant(_ context.Context, _ string) (BackofficeTenantDetail, error) {
 	s.detailCalled = true
 	return s.detail, s.err
+}
+func (s *fakeBackofficeStore) ListBackofficeRecoveryCandidates(_ context.Context, _ string, _ BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
+	return BackofficeRecoveryCandidatePage{}, s.err
 }
 func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
 	s.auditCalled = true
@@ -653,7 +681,7 @@ func (s *fakeTenantStore) ListTenants(context.Context) ([]TenantRecord, error) {
 	return []TenantRecord{s.record}, nil
 }
 
-func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord) (TenantRecord, error) {
+func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord, _ string) (TenantRecord, error) {
 	s.updated = input
 	return input, nil
 }
