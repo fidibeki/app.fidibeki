@@ -1,13 +1,15 @@
 # First Fidibeki Outreach Cohort
 
 **Date:** 2026-07-27
-**Status:** Research complete — no message sent
+**Status:** Superseded as the primary cohort — retained for selective Africa/Angola partnership research; no message sent
 **Owner:** Inês, CMO
 **Governing policy:** [First Ten Growth Design](../docs/superpowers/specs/2026-07-27-fidibeki-first-ten-growth-design.md)
 
 ## Purpose
 
 This is a deliberately small, evidence-backed starting cohort. It is not a bulk list. Every contact below is a business address published by the organisation itself; no personal addresses, purchased data, or inferred email patterns are included.
+
+The market decision changed after this list was prepared: Europe and the United States are now the primary outbound focus. Africa, particularly Angola, has higher USD/EUR payment friction and is therefore limited to exceptional, well-qualified opportunities or partnership exploration. The replacement primary cohort is maintained separately; this document is preserved so its research trail is not lost.
 
 The cohort contains two motions:
 
@@ -112,7 +114,7 @@ No message may be sent until it has an individual draft, a recorded personalisat
 - **Research source:** https://roso-it.com/
 - **Status:** Partnership draft; keep Portugal direct-marketing requirements in the pre-send review.
 
-## Prioritised starting order
+## Historical priority order — no longer the primary sending order
 
 1. AASED — partnership discovery
 2. C Software & Solutions — partnership discovery

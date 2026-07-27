@@ -11,6 +11,12 @@ Fidibeki has launched. The immediate commercial goal is 10 paid subscriptions; t
 
 The north-star metric is **paid subscriptions**, not traffic, impressions, opens, demos, or trial starts.
 
+## Market focus and payment fit
+
+Primary outbound markets are **Europe and the United States**. Build the first repeatable motion where a USD or EUR subscription is a normal purchasing path and where the target can reasonably evaluate and pay for Fidibeki without a separate payment work-around.
+
+Africa, especially Angola, is not a primary cold-outreach market in this phase. It remains an occasional opportunity for a well-matched partner or customer, but it must not consume meaningful prospecting capacity until payment friction is understood and solved for that customer. This is a commercial-fit decision, not a judgement about the quality of the market.
+
 ## Product and positioning
 
 Fidibeki is an in-product feedback loop for web software:
@@ -72,7 +78,7 @@ No paid campaign is introduced until this motion shows reliable paid conversion 
 
 | Channel | Role | First-month operating target |
 | --- | --- | --- |
-| Targeted cold email | Create relevant conversations with the ICP | 100 manually qualified companies; 10–15 first touches per weekday after sender readiness |
+| Targeted cold email | Create relevant conversations with the ICP in Europe and the US | 100 manually qualified companies; 10–15 first touches per weekday after sender readiness |
 | Founder/community visibility | Make the category wedge familiar and earn warm replies | Two useful posts and 15 substantive comments per week |
 | Agency/referral partners | Reach multiple suitable SaaS teams through a trusted intermediary | Ten carefully selected partner conversations |
 | Customer proof | Improve conversion with real outcomes | One activation interview for every customer who goes live |
