@@ -1,6 +1,12 @@
 import type { FunnelEvent } from "./analytics";
 import { resolveAccentForeground } from "./appearance";
 import {
+  resolveTheme,
+  subscribeToHostDataTheme,
+  subscribeToSystemTheme,
+  type ResolvedTheme,
+} from "./theme-resolver";
+import {
   resolveWidgetLocalizationForPage,
   type ResolvedWidgetLocalization,
   type WidgetSystemCopy,
@@ -54,6 +60,10 @@ interface MountOptions {
   onClosed?(): void;
   target?: HTMLElement;
   hostID?: string;
+  // Priority 1 source for the theme: the `theme` attribute on the custom
+  // element. Passed by the loader when mounting via `<fidibeki-widget>`; `null`
+  // when the widget is mounted imperatively from a `<script>` tag.
+  themeAttribute?: string | null;
 }
 
 interface RatingModule {
@@ -132,11 +142,26 @@ export function mountWidget(options: MountOptions): () => void {
   const structured =
     options.rule.presentation !== undefined &&
     (options.rule.response_blocks?.length ?? 0) > 0;
+  const serverTheme = appearance?.theme ?? options.rule.theme;
+  let resolvedTheme = resolveTheme({
+    elementAttr: options.themeAttribute ?? null,
+    fallback: serverTheme,
+  });
+  const applyStyles = () => {
+    shadow.querySelector("style")!.textContent = styles(
+      accent,
+      accentForeground,
+      side,
+      resolvedTheme,
+      appearance?.surface_color,
+      appearance?.text_color,
+    );
+  };
   shadow.innerHTML = `<style>${styles(
     accent,
     accentForeground,
     side,
-    appearance?.theme ?? options.rule.theme,
+    resolvedTheme,
     appearance?.surface_color,
     appearance?.text_color,
   )}</style>${markup(
@@ -222,6 +247,21 @@ export function mountWidget(options: MountOptions): () => void {
   let submissionAnalytics: Omit<FunnelEvent, "event_type"> | null = null;
   const clientFeedbackID = randomID();
   const cleanups: Array<() => void> = [];
+  // Re-resolve and re-apply the theme when the OS or the host page changes its
+  // active colour while the panel is mounted. Without this, a widget rendered
+  // in light stays light even if the user switches their system to dark.
+  const handleThemeChange = () => {
+    const next = resolveTheme({
+      elementAttr: options.themeAttribute ?? null,
+      fallback: serverTheme,
+    });
+    if (next !== resolvedTheme) {
+      resolvedTheme = next;
+      applyStyles();
+    }
+  };
+  cleanups.push(subscribeToSystemTheme(handleThemeChange));
+  cleanups.push(subscribeToHostDataTheme(handleThemeChange));
   const responseControls = structured
     ? createResponseControls(optional, options.rule, localization)
     : null;
@@ -1271,12 +1311,11 @@ function styles(
   accent: string,
   accentForeground: string,
   side: "left" | "right",
-  theme: WidgetRule["theme"],
+  theme: ResolvedTheme,
   surface?: string,
   text?: string,
 ): string {
   const dark = theme === "dark";
-  const automatic = theme === "auto" && !surface && !text;
   const exposedRadius = side === "left" ? "0 10px 10px 0" : "10px 0 0 10px";
   return `:host{--fb-accent:${accent};--fb-on-accent:${accentForeground};--fb-bg:${surface ?? (dark ? "#171918" : "#fff")};--fb-fg:${text ?? (dark ? "#f5f7f6" : "#171a19")};--fb-muted:${dark ? "#aeb8b4" : "#63706b"};--fb-line:${dark ? "#3b413e" : "#d9dfdc"};all:initial;display:block;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
   [hidden]{display:none!important}.launcher{position:fixed;z-index:2147483000;bottom:20px;${side}:20px;min-height:44px;padding:0 16px;border:1px solid var(--fb-accent);border-radius:6px;background:var(--fb-accent);color:var(--fb-on-accent);font:700 13px/1 sans-serif;letter-spacing:0;box-shadow:0 10px 28px rgba(0,0,0,.18);cursor:pointer}.launcher:focus,.launcher:focus-visible{outline:3px solid var(--fb-on-accent);outline-offset:-5px}
@@ -1291,7 +1330,6 @@ function styles(
   .privacy-choice{padding:12px 0;border-bottom:1px solid var(--fb-line)}.privacy-choice:last-child{border-bottom:0}.privacy-choice h4{margin:0 0 6px;font:650 13px/1.3 sans-serif}.privacy-choice p{margin:0 0 9px;font:400 12px/1.45 sans-serif;color:var(--fb-muted)}.privacy-choice a{color:var(--fb-accent)}.privacy-choice .privacy-meta{font:400 11px/1.4 sans-serif}
   .privacy-status{margin:10px 0 0;font:500 11px/1.4 sans-serif;color:var(--fb-muted)}
   @media(max-width:700px){.panel .body{flex-direction:column}.panel .privacy-column{flex:none;border-left:0;border-top:1px solid var(--fb-line);padding-top:12px}}
-  ${automatic ? "@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}" : ""}
   @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:auto;${side}:12px}
   .launcher.edge-tab{top:auto;bottom:30%;left:auto;right:auto;${side}:0;transform:none;width:auto;max-width:128px;min-width:44px;min-height:44px;max-height:none;padding:10px 14px;border-radius:${exposedRadius};white-space:normal;line-height:1.25;overflow:visible}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`;

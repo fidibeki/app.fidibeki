@@ -1,5 +1,11 @@
 import { resolveAccentForeground } from "./appearance";
 import {
+  resolveTheme,
+  subscribeToHostDataTheme,
+  subscribeToSystemTheme,
+  type ResolvedTheme,
+} from "./theme-resolver";
+import {
   resolveWidgetLocalizationForPage,
   type ResolvedWidgetLocalization,
 } from "./localization";
@@ -15,6 +21,9 @@ export interface PrivacyControlsOptions {
   // Called when the control removes itself because there is nothing left to withdraw, so the
   // loader can drop its bookkeeping and mount a fresh control if consent is granted again.
   onRemoved?(): void;
+  // Priority 1 source for the theme: the `theme` attribute on the custom
+  // element. `null` when mounted imperatively from a `<script>` tag.
+  themeAttribute?: string | null;
 }
 
 // The standing withdrawal path for every moment the feedback panel is not on the page: before its
@@ -60,11 +69,26 @@ export function mountPrivacyControls(
   host.dataset.fidibekiPrivacyControls = "";
   host.dataset.fidibekiBlock = "";
   const shadow = host.attachShadow({ mode: "open" });
+  const serverTheme = appearance?.theme ?? options.rule.theme;
+  let resolvedTheme = resolveTheme({
+    elementAttr: options.themeAttribute ?? null,
+    fallback: serverTheme,
+  });
+  const applyStyles = () => {
+    shadow.querySelector("style")!.textContent = styles(
+      accent,
+      accentForeground,
+      side,
+      resolvedTheme,
+      appearance?.surface_color,
+      appearance?.text_color,
+    );
+  };
   shadow.innerHTML = `<style>${styles(
     accent,
     accentForeground,
     side,
-    appearance?.theme ?? options.rule.theme,
+    resolvedTheme,
     appearance?.surface_color,
     appearance?.text_color,
   )}</style>
@@ -90,6 +114,20 @@ export function mountPrivacyControls(
   const status = required<HTMLElement>(shadow, "[data-privacy-status]");
   const cleanups: Array<() => void> = [];
   let withdrawing = 0;
+  // Re-resolve and re-apply the theme when the OS or the host page changes its
+  // active colour while the control is mounted.
+  const handleThemeChange = () => {
+    const next = resolveTheme({
+      elementAttr: options.themeAttribute ?? null,
+      fallback: serverTheme,
+    });
+    if (next !== resolvedTheme) {
+      resolvedTheme = next;
+      applyStyles();
+    }
+  };
+  cleanups.push(subscribeToSystemTheme(handleThemeChange));
+  cleanups.push(subscribeToHostDataTheme(handleThemeChange));
 
   const render = (keepStatus = false) => {
     const choices = options.choices();
@@ -193,12 +231,11 @@ function styles(
   accent: string,
   accentForeground: string,
   side: "left" | "right",
-  theme: WidgetRule["theme"],
+  theme: ResolvedTheme,
   surface?: string,
   text?: string,
 ): string {
   const dark = theme === "dark";
-  const automatic = theme === "auto" && !surface && !text;
   const exposedRadius = side === "left" ? "0 10px 10px 0" : "10px 0 0 10px";
   return `:host{--fb-accent:${accent};--fb-on-accent:${accentForeground};--fb-bg:${surface ?? (dark ? "#171918" : "#fff")};--fb-fg:${text ?? (dark ? "#f5f7f6" : "#171a19")};--fb-muted:${dark ? "#aeb8b4" : "#63706b"};--fb-line:${dark ? "#3b413e" : "#d9dfdc"};all:initial;display:block;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--fb-fg)}
   [hidden]{display:none!important}
@@ -211,7 +248,6 @@ function styles(
   .privacy-choice{padding:12px 0;border-bottom:1px solid var(--fb-line)}.privacy-choice:last-child{border-bottom:0}.privacy-choice h4{margin:0 0 6px;font:650 13px/1.3 sans-serif}.privacy-choice p{margin:0 0 9px;font:400 12px/1.45 sans-serif;color:var(--fb-muted)}.privacy-choice a{color:var(--fb-accent)}.privacy-choice .privacy-meta{font:400 11px/1.4 sans-serif}
   .secondary{width:100%;min-height:38px;padding:0 12px;border:1px solid var(--fb-line);border-radius:5px;background:transparent;color:var(--fb-fg);font:700 13px/1 sans-serif;letter-spacing:0;cursor:pointer}.secondary:hover{border-color:var(--fb-accent)}.secondary:disabled{opacity:.6;cursor:wait}
   .privacy-status{flex:none;margin:0;padding:8px 20px 16px;font:500 11px/1.4 sans-serif;color:var(--fb-muted)}
-  ${automatic ? "@media(prefers-color-scheme:dark){:host{--fb-bg:#171918;--fb-fg:#f5f7f6;--fb-muted:#aeb8b4;--fb-line:#3b413e}}" : ""}
   @media(max-width:480px){.panel{bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:auto;${side}:12px}
   .launcher.edge-tab{top:auto;bottom:30%;left:auto;right:auto;${side}:0;transform:none;width:auto;max-width:128px;min-width:44px;min-height:44px;max-height:none;padding:10px 14px;border-radius:${exposedRadius};white-space:normal;line-height:1.25;overflow:visible}}
   @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`;
