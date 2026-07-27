@@ -25,7 +25,7 @@ var (
 	ErrDeletionNotPending  = errors.New("tenant deletion is not pending")
 	ErrProviderUnavailable = errors.New("billing provider is unavailable")
 	ErrInvalidWebhook      = errors.New("invalid billing webhook")
-	ErrSubscriptionItems   = errors.New("Stripe subscription must contain exactly one priced item")
+	ErrSubscriptionItems   = errors.New("stripe subscription must contain exactly one priced item")
 )
 
 type BillingInterval string
