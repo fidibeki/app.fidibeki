@@ -42,6 +42,8 @@ The working ICP for the first cohort is product-led B2B SaaS companies with:
 
 The first outreach list excludes companies without a meaningful web product, large procurement-led enterprises, agencies that only build marketing sites, and individuals whose relevant business email is not publicly presented.
 
+Outbound qualification also requires a plausible **Growth** or **Scale** fit. Growth is the primary target because a small team can use AI-assisted analysis, session replay, and richer attachments; Scale is appropriate when the team needs Slack, Teams, or webhook delivery. Starter remains a valuable self-serve entry plan, but is not the primary target of time-intensive, founder-led outreach.
+
 ## Commercial approach
 
 ### First ten: Founding Feedback Loop
