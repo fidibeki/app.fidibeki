@@ -98,21 +98,21 @@ type PlanDefinition struct {
 // the effective discount at or above the advertised YearlyDiscountPercent.
 var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanStarter: {
-		Plan: tenant.PlanStarter, MonthlyPriceCents: intPointer(499),
-		YearlyPriceCents: intPointer(5568), YearlyDiscountPercent: intPointer(7),
+		Plan: tenant.PlanStarter, MonthlyPriceCents: intPointer(999),
+		YearlyPriceCents: intPointer(11148), YearlyDiscountPercent: intPointer(7),
 		Limits: PlanLimits{Projects: 1, FeedbackPerMonth: 500, Users: 1, StorageDays: 30},
 	},
 	tenant.PlanGrowth: {
-		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(999),
-		YearlyPriceCents: intPointer(10308), YearlyDiscountPercent: intPointer(14),
+		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(2999),
+		YearlyPriceCents: intPointer(30948), YearlyDiscountPercent: intPointer(14),
 		Limits: PlanLimits{Projects: 4, FeedbackPerMonth: 2500, Users: 3, StorageDays: 90},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Audio: true, DOMCapture: true,
 		},
 	},
 	tenant.PlanScale: {
-		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(2799),
-		YearlyPriceCents: intPointer(28884), YearlyDiscountPercent: intPointer(14),
+		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(6799),
+		YearlyPriceCents: intPointer(70164), YearlyDiscountPercent: intPointer(14),
 		Limits: PlanLimits{Projects: 10, FeedbackPerMonth: 10000, Users: 10, StorageDays: 365},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Slack: true, Video: true, Audio: true,

@@ -34,6 +34,37 @@ func TestPlanDefinitionsMatchProductLimits(t *testing.T) {
 	}
 }
 
+func TestPlanDefinitionsMatchAdvertisedPrices(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		plan     tenant.Plan
+		monthly  int
+		yearly   int
+		discount int
+	}{
+		{tenant.PlanStarter, 999, 11148, 7},
+		{tenant.PlanGrowth, 2999, 30948, 14},
+		{tenant.PlanScale, 6799, 70164, 14},
+	}
+
+	for _, tt := range tests {
+		definition, exists := config.PlanFor(tt.plan)
+		if !exists {
+			t.Fatalf("PlanFor(%q) does not exist", tt.plan)
+		}
+		if definition.MonthlyPriceCents == nil || *definition.MonthlyPriceCents != tt.monthly {
+			t.Errorf("PlanFor(%q).MonthlyPriceCents = %v, want %d", tt.plan, definition.MonthlyPriceCents, tt.monthly)
+		}
+		if definition.YearlyPriceCents == nil || *definition.YearlyPriceCents != tt.yearly {
+			t.Errorf("PlanFor(%q).YearlyPriceCents = %v, want %d", tt.plan, definition.YearlyPriceCents, tt.yearly)
+		}
+		if definition.YearlyDiscountPercent == nil || *definition.YearlyDiscountPercent != tt.discount {
+			t.Errorf("PlanFor(%q).YearlyDiscountPercent = %v, want %d", tt.plan, definition.YearlyDiscountPercent, tt.discount)
+		}
+	}
+}
+
 func TestSelfServicePlansAreStableAndExcludeEnterprise(t *testing.T) {
 	t.Parallel()
 

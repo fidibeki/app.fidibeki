@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Check, Minus } from '@lucide/vue'
 import {
-  plans,
-  formatPrice,
   formatLimit,
+  formatPrice,
   planComparisonRows,
+  plans,
   trialDays,
 } from '~/data/pricing'
 import { siteName } from '~/data/site'
@@ -15,7 +15,7 @@ const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 
 useSiteMeta({
   title: 'Pricing',
-  description: `Fidibeki plans from ${formatPrice(499)}/month with a ${trialDays}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.`,
+  description: `Fidibeki plans from ${formatPrice(999)}/month with a ${trialDays}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.`,
   path: '/pricing',
   breadcrumbs: [
     { name: 'Home', path: '/' },
