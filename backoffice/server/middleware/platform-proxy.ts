@@ -1,4 +1,4 @@
-import { getRequestURL, proxyRequest, setResponseStatus, type H3Event } from 'h3'
+import { getRequestIP, getRequestURL, proxyRequest, setResponseStatus, type H3Event } from 'h3'
 import { isBackofficeProxyPath } from '../utils/proxy-path'
 
 function unavailable(event: H3Event) {
@@ -23,6 +23,7 @@ export default defineEventHandler(async (event) => {
         // would let an admin browser target a tenant host through the API proxy.
         'x-fidibeki-proxy-host': `api.${config.baseDomain}`,
         'x-fidibeki-proxy-secret': String(config.internalProxySecret),
+		'x-fidibeki-backoffice-client-ip': getRequestIP(event, { xForwardedFor: true }) || '',
       },
       fetchOptions: { redirect: 'manual' },
     })

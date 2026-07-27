@@ -110,11 +110,11 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
-	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, h.options.LoginLimiter)
+	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, h.options.LoginLimiter, false)
 }
 
 func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
-	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink, h.options.LoginLimiter)
+	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink, h.options.LoginLimiter, true)
 }
 
 func (h *HTTPHandler) backofficeOverview(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +300,7 @@ func (h *HTTPHandler) requestLogin(
 	r *http.Request,
 	requestMagicLink func(context.Context, string) error,
 	limiter ratelimit.Limiter,
+	backoffice bool,
 ) {
 	var request struct {
 		Email string `json:"email"`
@@ -308,7 +309,11 @@ func (h *HTTPHandler) requestLogin(
 		return
 	}
 	if limiter != nil {
-		key := "platform-login:" + clientIP(r.RemoteAddr) + ":" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
+		ip := clientIP(r.RemoteAddr)
+		if backoffice {
+			ip = strings.TrimSpace(r.Header.Get("X-Fidibeki-Backoffice-Client-IP"))
+		}
+		key := "platform-login:" + ip + ":" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
 		decision, err := limiter.Allow(r.Context(), key, ratelimit.Window{Limit: 5, Period: 15 * time.Minute})
 		if err != nil {
 			api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
