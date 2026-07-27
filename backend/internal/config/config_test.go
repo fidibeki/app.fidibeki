@@ -102,6 +102,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"HTTP_ADDRESS":               ":8080",
 		"BASE_DOMAIN":                "fidibeki.localhost",
 		"PUBLIC_BASE_URL":            "http://api.fidibeki.localhost:8088",
+		"PLATFORM_BACKOFFICE_URL":    "http://admin.fidibeki.localhost:3001",
 		"DATABASE_URL_APP":           "postgres://fidibeki_app:app@localhost/fidibeki",
 		"DATABASE_URL_ADMIN":         "postgres://fidibeki_admin:admin@localhost/fidibeki",
 		"DATABASE_URL_DIRECT":        "postgres://fidibeki_admin:admin@localhost/fidibeki",
@@ -130,6 +131,9 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.BaseDomain != "fidibeki.localhost" {
 		t.Errorf("BaseDomain = %q, want fidibeki.localhost", got.BaseDomain)
+	}
+	if got.PlatformBackofficeURL != "http://admin.fidibeki.localhost:3001" {
+		t.Errorf("PlatformBackofficeURL = %q", got.PlatformBackofficeURL)
 	}
 	if got.ReadinessTimeout.String() != "2s" {
 		t.Errorf("ReadinessTimeout = %s, want 2s", got.ReadinessTimeout)

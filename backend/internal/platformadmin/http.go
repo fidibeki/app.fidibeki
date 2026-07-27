@@ -67,6 +67,7 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 	router.Post("/admin/auth/verify", handler.verify)
 	router.Post("/admin/auth/refresh", handler.refresh)
 	router.Post("/admin/auth/logout", handler.logout)
+	router.Post("/admin/backoffice/auth/login", handler.backofficeLogin)
 
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantCreate)).
 		Post("/admin/tenants", handler.createTenant)
@@ -87,13 +88,25 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
+	h.requestLogin(w, r, h.options.Auth.RequestMagicLink)
+}
+
+func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
+	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink)
+}
+
+func (h *HTTPHandler) requestLogin(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestMagicLink func(context.Context, string) error,
+) {
 	var request struct {
 		Email string `json:"email"`
 	}
 	if !decodeRequest(w, r, &request) {
 		return
 	}
-	if err := h.options.Auth.RequestMagicLink(r.Context(), request.Email); err != nil {
+	if err := requestMagicLink(r.Context(), request.Email); err != nil {
 		if strings.Contains(err.Error(), "email is invalid") {
 			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "email is invalid", nil)
 			return

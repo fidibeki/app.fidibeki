@@ -298,9 +298,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
-		PublicBaseURL: settings.PublicBaseURL,
-		AuthFrom:      settings.ResendAuthFrom,
-		MagicLinkTTL:  settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
+		PublicBaseURL: settings.PublicBaseURL, BackofficeURL: settings.PlatformBackofficeURL,
+		AuthFrom:     settings.ResendAuthFrom,
+		MagicLinkTTL: settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
 	}
 	billingStore := billing.Store{Database: pools.Admin}
 	billingProvider := billing.NewStripeProvider(settings.StripeSecretKey, settings.StripeWebhookSecret)

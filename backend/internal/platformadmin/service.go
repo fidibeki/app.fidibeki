@@ -27,6 +27,10 @@ type Service struct {
 	JWT           *auth.JWTManager
 	Email         email.Enqueuer
 	PublicBaseURL string
+	// BackofficeURL is the exact browser origin that may receive a platform
+	// administrator magic-link verification. It is deployment configuration,
+	// never request input, so a login request cannot create an open redirect.
+	BackofficeURL string
 	AuthFrom      string
 	MagicLinkTTL  time.Duration
 	RefreshTTL    time.Duration
@@ -55,6 +59,22 @@ func (s Service) magicLinkTTL() time.Duration {
 }
 
 func (s Service) RequestMagicLink(ctx context.Context, rawEmail string) error {
+	return s.requestMagicLink(ctx, rawEmail, s.magicLinkURL)
+}
+
+// RequestBackofficeMagicLink sends the same non-enumerating platform-admin
+// magic link as RequestMagicLink, but verifies it through the separately
+// deployed backoffice browser origin. The existing admin routes retain their
+// current API-origin behavior.
+func (s Service) RequestBackofficeMagicLink(ctx context.Context, rawEmail string) error {
+	return s.requestMagicLink(ctx, rawEmail, s.backofficeMagicLinkURL)
+}
+
+func (s Service) requestMagicLink(
+	ctx context.Context,
+	rawEmail string,
+	linkURL func(string) (string, error),
+) error {
 	emailAddress, err := normalizedEmail(rawEmail)
 	if err != nil {
 		return err
@@ -73,7 +93,7 @@ func (s Service) RequestMagicLink(ctx context.Context, rawEmail string) error {
 	if err := s.Store.CreateMagicLink(ctx, admin, tokenHash, s.now().Add(s.magicLinkTTL())); err != nil {
 		return err
 	}
-	link, err := s.magicLinkURL(rawToken)
+	link, err := linkURL(rawToken)
 	if err != nil {
 		_ = s.Store.DeleteMagicLink(ctx, tokenHash)
 		return err
@@ -174,6 +194,26 @@ func (s Service) magicLinkURL(token string) (string, error) {
 		return "", fmt.Errorf("public base URL is invalid")
 	}
 	base.Path = "/admin/auth/verify"
+	query := base.Query()
+	query.Set("token", token)
+	base.RawQuery = query.Encode()
+	return base.String(), nil
+}
+
+func (s Service) backofficeMagicLinkURL(token string) (string, error) {
+	return backofficeMagicLinkURL(s.BackofficeURL, token)
+}
+
+func backofficeMagicLinkURL(origin string, token string) (string, error) {
+	base, err := url.Parse(origin)
+	if err != nil || !base.IsAbs() || base.Host == "" {
+		return "", fmt.Errorf("magic link origin is invalid")
+	}
+	if base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") {
+		return "", fmt.Errorf("magic link origin must not contain a path, query, or fragment")
+	}
+	base.Path = "/auth/verify"
+	base.RawPath = ""
 	query := base.Query()
 	query.Set("token", token)
 	base.RawQuery = query.Encode()

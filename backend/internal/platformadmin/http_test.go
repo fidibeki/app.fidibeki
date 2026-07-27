@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,61 @@ func TestLoginDoesNotRevealWhetherAdminExists(t *testing.T) {
 	))
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestBackofficeLoginIsNonEnumeratingAndUsesConfiguredVerificationOrigin(t *testing.T) {
+	t.Parallel()
+
+	queue := &captureEnqueuer{}
+	known := NewHTTPHandler(HTTPOptions{Auth: Service{
+		Store: &fakeAuthStore{admin: Admin{ID: "admin-id", Email: "admin@example.com"}},
+		Email: queue, PublicBaseURL: "https://api.fidibeki.com",
+		BackofficeURL: "https://admin.fidibeki.com",
+		AuthFrom:      "Fidibeki <auth@fidibeki.com>",
+	}})
+	knownResponse := httptest.NewRecorder()
+	known.ServeHTTP(knownResponse, httptest.NewRequest(
+		http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`),
+	))
+	if knownResponse.Code != http.StatusAccepted {
+		t.Fatalf("known status = %d, body = %s", knownResponse.Code, knownResponse.Body.String())
+	}
+	if len(queue.messages) != 1 {
+		t.Fatalf("known queued messages = %d, want 1", len(queue.messages))
+	}
+	var verificationURL *url.URL
+	for _, field := range strings.Fields(queue.messages[0].Text) {
+		candidate, err := url.Parse(field)
+		if err == nil && candidate.Query().Get("token") != "" {
+			verificationURL = candidate
+			break
+		}
+	}
+	if verificationURL == nil {
+		t.Fatalf("backoffice verification link missing from email: %s", queue.messages[0].Text)
+	}
+	if verificationURL.Scheme != "https" || verificationURL.Host != "admin.fidibeki.com" ||
+		verificationURL.Path != "/auth/verify" || verificationURL.Query().Get("redirect_uri") != "" {
+		t.Errorf("verification URL = %s", verificationURL)
+	}
+
+	unknownQueue := &captureEnqueuer{}
+	unknown := NewHTTPHandler(HTTPOptions{Auth: Service{
+		Store: &fakeAuthStore{findErr: ErrAdminNotFound}, Email: unknownQueue,
+		PublicBaseURL: "https://api.fidibeki.com", BackofficeURL: "https://admin.fidibeki.com",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>",
+	}})
+	unknownResponse := httptest.NewRecorder()
+	unknown.ServeHTTP(unknownResponse, httptest.NewRequest(
+		http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"missing@example.com"}`),
+	))
+	if unknownResponse.Code != knownResponse.Code || unknownResponse.Body.String() != knownResponse.Body.String() {
+		t.Errorf("unknown response = %d %s; known response = %d %s",
+			unknownResponse.Code, unknownResponse.Body.String(), knownResponse.Code, knownResponse.Body.String())
+	}
+	if len(unknownQueue.messages) != 0 {
+		t.Errorf("unknown admin queued %d messages", len(unknownQueue.messages))
 	}
 }
 
