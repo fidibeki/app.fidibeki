@@ -2,6 +2,7 @@ packages:
   - widget
   - web
   - marketing
+  - backoffice
 supportedArchitectures:
   os:
     - darwin

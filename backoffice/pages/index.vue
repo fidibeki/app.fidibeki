@@ -1,0 +1,6 @@
+<script setup lang="ts">
+type Overview={workspace_count:number;active_workspace_count:number;trial_workspace_count:number;suspended_workspace_count:number;trials_ending_soon_count:number}
+const {$platformApi}=useNuxtApp();const {data,error}=await useAsyncData('overview',()=> $platformApi<{overview:Overview}>('/admin/backoffice/overview'),{server:false})
+const cards=computed(()=>data.value?[['Workspaces',data.value.overview.workspace_count],['Active',data.value.overview.active_workspace_count],['Trials',data.value.overview.trial_workspace_count],['Trials ending',data.value.overview.trials_ending_soon_count]]:[])
+</script>
+<template><section><p class="eyebrow">Operations overview</p><h1 class="title">The platform,<br>at a glance.</h1><p v-if="error" class="error">The overview is temporarily unavailable.</p><div class="metrics"><article v-for="card in cards" :key="card[0]" class="metric"><b>{{ card[1] }}</b><span>{{ card[0] }}</span></article></div><section class="panel"><p class="eyebrow">Operating principle</p><h2>Observe first. Change deliberately.</h2><p class="muted">Workspace actions stay behind explicit permissions, audit events, and confirmation steps.</p></section></section></template>
