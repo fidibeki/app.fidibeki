@@ -448,4 +448,21 @@ describe('fidibeki-wall', () => {
     document.documentElement.setAttribute('data-theme', 'dark')
     // No assertion needed — the test passes if no error is thrown
   })
+
+  it('honours data-theme="dark" set directly on the element', async () => {
+    lightSystem()
+    document.documentElement.removeAttribute('data-theme')
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount({ 'data-theme': 'dark' })
+    expect(element.getAttribute('data-fb-theme')).toBe('dark')
+  })
+
+  it('excludes the element from the dark media query when theme="light" is set', async () => {
+    darkSystem()
+    document.documentElement.removeAttribute('data-theme')
+    respondWith(payload({ theme: { mode: 'auto' } }))
+    const element = await mount({ theme: 'light' })
+    // Priority 1: theme="light" wins over system dark
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+  })
 })
