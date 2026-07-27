@@ -138,6 +138,18 @@ The email must:
 
 Inês genuinely investigates the project before writing. If no relevant, truthful connection to Fidibeki can be found, that contact is not sent an email. Relevance is more valuable than list size.
 
+### Human-note standard
+
+The note must read like a co-founder writing to another person, not a SaaS landing page compressed into an email. Keep the body under 90 words and use the recipient's own plain-language product description where possible.
+
+- Start with one real observation, not a title or stock compliment.
+- Ask one natural question; do not force a meeting CTA.
+- Explain Fidibeki only if the question earns that explanation, in everyday language.
+- Do not use generic phrases such as “in-product loop”, “capture context”, “friction”, “what happens next”, “worth exploring”, or “would that be useful” unless the recipient itself uses that language and the phrase is necessary.
+- If the message feels polished, abstract, or salesy when read aloud, cut it and write it again from the actual observation.
+
+The three first pilot messages were sent before this stricter standard. They are not templates for future sends or follow-ups.
+
 ### Sender safety and deliverability
 
 Before production outreach, the sender domain must have working SPF, DKIM, and DMARC, and all messages must use SMTP with STARTTLS. Sender volume starts at 10–15 new first touches per weekday and increases only after bounce, deferral, and complaint signals remain healthy.
