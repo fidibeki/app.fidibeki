@@ -205,4 +205,3 @@ Run widget unit, typecheck, build, and Chromium E2E suites; backend replay tests
 formatting, and vet; then the repository CI. Deploy only the widget, API, and worker components
 required by the changed capture/verification path to staging and validate a newly recorded replay
 there before closing issue #108.
-

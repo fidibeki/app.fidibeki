@@ -42,18 +42,17 @@
 
 ## Acceptance
 
-- [ ] A newly captured replay reconstructs useful layout, spacing, colors, borders, and basic
+- [x] A newly captured replay reconstructs useful layout, spacing, colors, borders, and basic
       typography instead of raw document flow.
-- [ ] Text and inputs remain masked; raw class/style/CSS/URL/attribute/canvas/font/media identity
+- [x] Text and inputs remain masked; raw class/style/CSS/URL/attribute/canvas/font/media identity
       does not occur in stored events.
-- [ ] Widget and backend agree on the canonical presentation contract through shared fixtures.
-- [ ] Invalid presentation causes backend batch rejection and never falls back to raw data.
-- [ ] Full snapshots, added nodes, and class/inline-style attribute mutations preserve current safe
+- [x] Widget and backend agree on the canonical presentation contract through shared fixtures.
+- [x] Invalid presentation causes backend batch rejection and never falls back to raw data.
+- [x] Full snapshots, added nodes, and class/inline-style attribute mutations preserve current safe
       presentation.
-- [ ] Browser capture-to-replay proof passes at desktop and mobile fixture sizes and includes a
+- [x] Browser capture-to-replay proof passes at desktop and mobile fixture sizes and includes a
       nonblank pixel assertion.
-- [ ] Existing privacy-version-two sessions remain playable; old degraded sessions are explicitly
+- [x] Existing privacy-version-two sessions remain playable; old degraded sessions are explicitly
       documented as unrecoverable.
 - [ ] Focused and full widget/backend suites, CI, and staging validation pass.
 - [ ] No production deployment or infrastructure change is performed.
-
