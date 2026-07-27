@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 126
+	const latestMigrationVersion = 127
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2547,11 +2547,11 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("create deactivated testimonial backfill member: %v", err)
 	}
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back testimonial permission backfill: %v", err)
+	if err := migrator.Steps(-2); err != nil {
+		t.Fatalf("roll back backoffice indexes and testimonial permission backfill: %v", err)
 	}
-	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("reapply testimonial permission backfill: %v", err)
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("reapply testimonial permission backfill and backoffice indexes: %v", err)
 	}
 	var backfillRead, backfillCreate, backfillUpdate, backfillDelete, backfillPublish bool
 	var backfillAuthorizationVersion int
@@ -2591,8 +2591,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			deactivatedTestimonialCount, err,
 		)
 	}
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back testimonial permission backfill again: %v", err)
+	if err := migrator.Steps(-2); err != nil {
+		t.Fatalf("roll back backoffice indexes and testimonial permission backfill again: %v", err)
 	}
 	var rolledBackRead, rolledBackCreate bool
 	var rolledBackAuthorizationVersion int
@@ -2616,8 +2616,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if rolledBackAuthorizationVersion != 6 {
 		t.Fatalf("rolled-back authorization version = %d, want 6", rolledBackAuthorizationVersion)
 	}
-	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("reapply testimonial permission backfill after rollback: %v", err)
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("reapply testimonial permission backfill and backoffice indexes after rollback: %v", err)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("delete testimonial backfill fixtures: %v", err)
