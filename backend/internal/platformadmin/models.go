@@ -66,3 +66,22 @@ type RecoverOwnershipParams struct {
 	VerificationReference string
 	Reason                string
 }
+
+// BackofficeOverview contains aggregate operational counts only. It must stay
+// free of administrator, member, session, and credential data because it is
+// rendered on the first authenticated screen of the platform console.
+type BackofficeOverview struct {
+	WorkspaceCount          int64                 `json:"workspace_count"`
+	ActiveWorkspaceCount    int64                 `json:"active_workspace_count"`
+	TrialWorkspaceCount     int64                 `json:"trial_workspace_count"`
+	SuspendedWorkspaceCount int64                 `json:"suspended_workspace_count"`
+	CancelledWorkspaceCount int64                 `json:"cancelled_workspace_count"`
+	TrialsEndingSoonCount   int64                 `json:"trials_ending_soon_count"`
+	RecentWorkspaceCount    int64                 `json:"recent_workspace_count"`
+	Plans                   []BackofficePlanCount `json:"plans"`
+}
+
+type BackofficePlanCount struct {
+	Plan           tenant.Plan `json:"plan"`
+	WorkspaceCount int64       `json:"workspace_count"`
+}

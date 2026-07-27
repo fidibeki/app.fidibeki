@@ -130,6 +130,51 @@ func TestBackofficeLoginIsNonEnumeratingAndUsesConfiguredVerificationOrigin(t *t
 	}
 }
 
+func TestBackofficeOverviewRequiresPlatformReadPermission(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{overview: BackofficeOverview{
+		WorkspaceCount: 12, ActiveWorkspaceCount: 7, TrialWorkspaceCount: 3,
+		SuspendedWorkspaceCount: 1, CancelledWorkspaceCount: 1,
+		TrialsEndingSoonCount: 2, RecentWorkspaceCount: 4,
+		Plans: []BackofficePlanCount{{Plan: tenant.PlanGrowth, WorkspaceCount: 5}},
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated status = %d", unauthenticated.Code)
+	}
+
+	wrongPermission, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantCreate),
+	})
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+wrongPermission)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Errorf("forbidden status = %d, body = %s", forbidden.Code, forbidden.Body.String())
+	}
+
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+	})
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("allowed status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+	if !strings.Contains(allowed.Body.String(), `"workspace_count":12`) ||
+		strings.Contains(allowed.Body.String(), "admin@example.com") {
+		t.Errorf("overview body = %s", allowed.Body.String())
+	}
+}
+
 func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
 	t.Parallel()
 
@@ -468,6 +513,15 @@ type fakeTenantStore struct {
 	deleteErr  error
 	recovered  RecoverOwnershipParams
 	recoverErr error
+}
+
+type fakeBackofficeStore struct {
+	overview BackofficeOverview
+	err      error
+}
+
+func (s *fakeBackofficeStore) Overview(context.Context) (BackofficeOverview, error) {
+	return s.overview, s.err
 }
 
 func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {

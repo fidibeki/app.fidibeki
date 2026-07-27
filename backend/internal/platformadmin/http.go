@@ -37,9 +37,14 @@ type TenantStore interface {
 	RecoverOwnership(context.Context, RecoverOwnershipParams) error
 }
 
+type BackofficeStore interface {
+	Overview(context.Context) (BackofficeOverview, error)
+}
+
 type HTTPOptions struct {
 	Auth          Service
 	Tenants       TenantStore
+	Backoffice    BackofficeStore
 	JWT           *auth.JWTManager
 	SecureCookies bool
 	RefreshTTL    time.Duration
@@ -68,6 +73,8 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 	router.Post("/admin/auth/refresh", handler.refresh)
 	router.Post("/admin/auth/logout", handler.logout)
 	router.Post("/admin/backoffice/auth/login", handler.backofficeLogin)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/overview", handler.backofficeOverview)
 
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantCreate)).
 		Post("/admin/tenants", handler.createTenant)
@@ -93,6 +100,19 @@ func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
 	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink)
+}
+
+func (h *HTTPHandler) backofficeOverview(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	overview, err := h.options.Backoffice.Overview(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]BackofficeOverview{"overview": overview})
 }
 
 func (h *HTTPHandler) requestLogin(

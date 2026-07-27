@@ -324,6 +324,58 @@ func (s Store) BootstrapAdmin(ctx context.Context, email string, permissions []s
 	return admin, nil
 }
 
+// Overview returns bounded aggregate counts for the platform console. The
+// query deliberately remains on the admin pool and does not join member,
+// feedback, session, or attachment tables: the dashboard needs capacity
+// signals, not personal or content data.
+func (s Store) Overview(ctx context.Context) (BackofficeOverview, error) {
+	now := s.now()
+	var overview BackofficeOverview
+	if err := s.Database.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status = 'active'),
+			COUNT(*) FILTER (WHERE status = 'trial'),
+			COUNT(*) FILTER (WHERE status = 'suspended'),
+			COUNT(*) FILTER (WHERE status = 'cancelled'),
+			COUNT(*) FILTER (WHERE status = 'trial' AND trial_ends_at > $1 AND trial_ends_at <= $2),
+			COUNT(*) FILTER (WHERE created_at >= $3)
+		FROM tenants
+	`, now, now.Add(7*24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
+		&overview.WorkspaceCount,
+		&overview.ActiveWorkspaceCount,
+		&overview.TrialWorkspaceCount,
+		&overview.SuspendedWorkspaceCount,
+		&overview.CancelledWorkspaceCount,
+		&overview.TrialsEndingSoonCount,
+		&overview.RecentWorkspaceCount,
+	); err != nil {
+		return BackofficeOverview{}, fmt.Errorf("backoffice overview totals: %w", err)
+	}
+
+	rows, err := s.Database.Query(ctx, `
+		SELECT plan, COUNT(*)
+		FROM tenants
+		GROUP BY plan
+		ORDER BY plan ASC
+	`)
+	if err != nil {
+		return BackofficeOverview{}, fmt.Errorf("backoffice overview plans: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var count BackofficePlanCount
+		if err := rows.Scan(&count.Plan, &count.WorkspaceCount); err != nil {
+			return BackofficeOverview{}, fmt.Errorf("scan backoffice overview plan: %w", err)
+		}
+		overview.Plans = append(overview.Plans, count)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeOverview{}, fmt.Errorf("iterate backoffice overview plans: %w", err)
+	}
+	return overview, nil
+}
+
 func (s Store) CreateTenant(ctx context.Context, input CreateTenantParams) (TenantRecord, error) {
 	tx, err := s.Database.Begin(ctx)
 	if err != nil {
