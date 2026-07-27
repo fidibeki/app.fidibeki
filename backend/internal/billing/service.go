@@ -28,6 +28,7 @@ type Service struct {
 type ServiceStore interface {
 	Signup(context.Context, SignupInput) (SignupResult, error)
 	Get(context.Context, string) (Tenant, error)
+	CountBillableSeats(context.Context, string) (int, error)
 	SaveCustomer(context.Context, string, string) (string, error)
 	FindByStripeReference(context.Context, string, string) (Tenant, error)
 	ApplyEvent(context.Context, EventSignal, Subscription, tenant.Plan, BillingInterval) (bool, error)
@@ -140,9 +141,14 @@ func (s Service) Checkout(
 		value := *current.TrialEndsAt
 		stripeTrialEnd = &value
 	}
+	quantity, err := s.Store.CountBillableSeats(ctx, tenantID)
+	if err != nil {
+		return "", err
+	}
 	return s.Provider.CreateCheckout(ctx, CheckoutInput{
 		CustomerID: customerID, PriceID: priceID, TenantID: current.ID,
 		TrialEnd: stripeTrialEnd, SuccessURL: successURL, CancelURL: cancelURL,
+		Quantity: int64(max(1, quantity)),
 	})
 }
 

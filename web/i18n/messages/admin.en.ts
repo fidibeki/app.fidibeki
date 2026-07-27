@@ -542,7 +542,7 @@ export const adminMessages = {
     noSubscription: 'No subscription',
     portal: 'Billing portal',
     current: 'Current',
-    perMonth: ' / month',
+    perMonth: ' / seat / month',
     billedMonthly: 'Monthly',
     billedYearly: 'Yearly',
     yearlySave: 'Save {percent}%',

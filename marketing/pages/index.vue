@@ -260,7 +260,7 @@ useHead({
           <div v-for="(plan, index) in plans" :key="plan.id" v-reveal="index * 70" class="pricing-teaser-item">
             <span class="pricing-teaser-name">{{ plan.name }}</span>
             <span class="pricing-teaser-price">
-              {{ formatPrice(plan.monthlyPriceCents) }}<span v-if="plan.monthlyPriceCents !== null" class="pricing-teaser-period">/mo</span>
+              {{ formatPrice(plan.monthlyPriceCents) }}<span v-if="plan.monthlyPriceCents !== null" class="pricing-teaser-period">/seat/mo</span>
             </span>
           </div>
         </div>

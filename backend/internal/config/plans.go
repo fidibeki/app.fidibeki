@@ -84,11 +84,24 @@ func (f PlanFeatures) Enabled(feature Feature) bool {
 	}
 }
 
+type PricingModel string
+
+const (
+	PricingModelPerSeat PricingModel = "per_seat"
+	PricingModelCustom  PricingModel = "custom"
+)
+
+type PriceUnit string
+
+const PriceUnitSeat PriceUnit = "seat"
+
 type PlanDefinition struct {
 	Plan                  tenant.Plan  `json:"plan"`
 	MonthlyPriceCents     *int         `json:"monthly_price_cents"`
 	YearlyPriceCents      *int         `json:"yearly_price_cents"`
 	YearlyDiscountPercent *int         `json:"yearly_discount_percent"`
+	PricingModel          PricingModel `json:"pricing_model"`
+	PriceUnit             PriceUnit    `json:"price_unit,omitempty"`
 	Limits                PlanLimits   `json:"limits"`
 	Features              PlanFeatures `json:"features"`
 }
@@ -100,11 +113,13 @@ var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanStarter: {
 		Plan: tenant.PlanStarter, MonthlyPriceCents: intPointer(999),
 		YearlyPriceCents: intPointer(11148), YearlyDiscountPercent: intPointer(7),
+		PricingModel: PricingModelPerSeat, PriceUnit: PriceUnitSeat,
 		Limits: PlanLimits{Projects: 1, FeedbackPerMonth: 500, Users: 1, StorageDays: 30},
 	},
 	tenant.PlanGrowth: {
 		Plan: tenant.PlanGrowth, MonthlyPriceCents: intPointer(2999),
 		YearlyPriceCents: intPointer(30948), YearlyDiscountPercent: intPointer(14),
+		PricingModel: PricingModelPerSeat, PriceUnit: PriceUnitSeat,
 		Limits: PlanLimits{Projects: 4, FeedbackPerMonth: 2500, Users: 3, StorageDays: 90},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Audio: true, DOMCapture: true,
@@ -113,6 +128,7 @@ var planDefinitions = map[tenant.Plan]PlanDefinition{
 	tenant.PlanScale: {
 		Plan: tenant.PlanScale, MonthlyPriceCents: intPointer(6799),
 		YearlyPriceCents: intPointer(70164), YearlyDiscountPercent: intPointer(14),
+		PricingModel: PricingModelPerSeat, PriceUnit: PriceUnitSeat,
 		Limits: PlanLimits{Projects: 10, FeedbackPerMonth: 10000, Users: 10, StorageDays: 365},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Slack: true, Video: true, Audio: true,
@@ -120,7 +136,7 @@ var planDefinitions = map[tenant.Plan]PlanDefinition{
 		},
 	},
 	tenant.PlanEnterprise: {
-		Plan:   tenant.PlanEnterprise,
+		Plan: tenant.PlanEnterprise, PricingModel: PricingModelCustom,
 		Limits: PlanLimits{Projects: -1, FeedbackPerMonth: -1, Users: -1, StorageDays: -1},
 		Features: PlanFeatures{
 			AI: true, Testimonials: true, Replay: true, Slack: true, Video: true, Audio: true, DOMCapture: true, CustomDomain: true,

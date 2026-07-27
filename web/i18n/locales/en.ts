@@ -177,7 +177,7 @@ export const englishMessages = {
       loadingPlans: 'Loading plans',
       plansUnavailable: 'Plans are unavailable.',
       retryPlans: 'Retry loading plans',
-      monthly: '/mo',
+      monthly: '/seat/month',
       projectLimit: 'one project | {count} projects',
       feedbackLimit: '{count} feedback/mo',
       challengeUnavailable: 'Security verification could not be loaded. Please try again.',

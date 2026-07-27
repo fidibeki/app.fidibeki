@@ -48,10 +48,12 @@ func (s Store) Signup(ctx context.Context, input SignupInput) (SignupResult, err
 	err = tx.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug, plan, status, billing_email, trial_ends_at)
 		VALUES ($1, $2, $3, 'trial', $4, $5)
-		RETURNING id, name, slug, plan, status, billing_email, trial_ends_at
+		RETURNING id, name, slug, plan, status, billing_email, trial_ends_at,
+		          billing_model, billing_seat_quantity
 	`, input.Name, input.Slug, input.Plan, input.Email, trialEnd).Scan(
 		&result.Tenant.ID, &result.Tenant.Name, &result.Tenant.Slug, &result.Tenant.Plan,
 		&result.Tenant.Status, &result.Tenant.BillingEmail, &result.Tenant.TrialEndsAt,
+		&result.Tenant.BillingModel, &result.Tenant.BillingSeatQuantity,
 	)
 	if isUniqueViolation(err) {
 		return SignupResult{}, ErrSlugConflict
@@ -114,6 +116,18 @@ func (s Store) SaveCustomer(ctx context.Context, tenantID, customerID string) (s
 		return "", fmt.Errorf("save Stripe customer: %w", err)
 	}
 	return stored, nil
+}
+
+func (s Store) CountBillableSeats(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	if err := s.Database.QueryRow(ctx, `
+		SELECT GREATEST(1, count(*))::integer
+		FROM tenant_members
+		WHERE tenant_id = $1 AND status <> 'removed'
+	`, tenantID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count billable seats: %w", err)
+	}
+	return count, nil
 }
 
 func (s Store) ApplyEvent(
@@ -466,7 +480,9 @@ const tenantSelect = `
 	SELECT id, name, slug, plan, pending_plan, COALESCE(billing_interval, ''), status,
 	       COALESCE(billing_email::text, ''),
 	       COALESCE(stripe_customer_id, ''), COALESCE(stripe_subscription_id, ''), trial_ends_at,
-	       deletion_requested_at, deletion_requested_by_member_id
+	       deletion_requested_at, deletion_requested_by_member_id,
+	       billing_model, billing_seat_quantity, billing_seat_sync_attempted_at,
+	       billing_seat_synced_at, COALESCE(billing_seat_sync_error, '')
 	FROM tenants`
 
 type rowScanner interface{ Scan(...any) error }
@@ -475,12 +491,13 @@ func scanTenant(row rowScanner) (Tenant, error) {
 	var result Tenant
 	var pending pgtype.Text
 	var interval string
-	var trial, deletion pgtype.Timestamptz
+	var trial, deletion, syncAttempted, synced pgtype.Timestamptz
 	var requester pgtype.UUID
 	err := row.Scan(
 		&result.ID, &result.Name, &result.Slug, &result.Plan, &pending, &interval, &result.Status,
 		&result.BillingEmail, &result.StripeCustomerID, &result.StripeSubscriptionID,
-		&trial, &deletion, &requester,
+		&trial, &deletion, &requester, &result.BillingModel, &result.BillingSeatQuantity,
+		&syncAttempted, &synced, &result.BillingSeatSyncError,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tenant{}, ErrNotFound
@@ -502,6 +519,12 @@ func scanTenant(row rowScanner) (Tenant, error) {
 	if requester.Valid {
 		value := requester.String()
 		result.DeletionRequestedByMemberID = &value
+	}
+	if syncAttempted.Valid {
+		result.BillingSeatSyncAttemptedAt = &syncAttempted.Time
+	}
+	if synced.Valid {
+		result.BillingSeatSyncedAt = &synced.Time
 	}
 	return result, nil
 }

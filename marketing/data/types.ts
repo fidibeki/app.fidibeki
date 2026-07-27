@@ -55,6 +55,8 @@ export interface PlanEntry {
   monthlyPriceCents: number | null
   yearlyPriceCents: number | null
   yearlyDiscountPercent: number | null
+  pricingModel: 'per_seat' | 'custom'
+  priceUnit: 'seat' | null
   blurb: string
   selfServe: boolean
   limits: {

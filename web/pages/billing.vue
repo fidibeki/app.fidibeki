@@ -19,6 +19,8 @@ const enterprisePlan: PlanDefinition = {
   monthly_price_cents: null,
   yearly_price_cents: null,
   yearly_discount_percent: null,
+  pricing_model: 'custom',
+  price_unit: null,
   limits: { projects: -1, feedback_per_month: -1, users: -1, storage_days: -1 },
   features: { ai: true, testimonials: true, session_replay: true, slack: true, video: true, audio: true, dom_capture: true, custom_domain: true },
 }

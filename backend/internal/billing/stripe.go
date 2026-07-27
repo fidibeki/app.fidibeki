@@ -42,7 +42,7 @@ func (p *StripeProvider) CreateCheckout(ctx context.Context, input CheckoutInput
 		CancelURL:         stripe.String(input.CancelURL),
 		ClientReferenceID: stripe.String(input.TenantID),
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
-			Price: stripe.String(input.PriceID), Quantity: stripe.Int64(1),
+			Price: stripe.String(input.PriceID), Quantity: stripe.Int64(max(1, input.Quantity)),
 		}},
 		SubscriptionData: &stripe.CheckoutSessionCreateSubscriptionDataParams{
 			Metadata: map[string]string{"tenant_id": input.TenantID},

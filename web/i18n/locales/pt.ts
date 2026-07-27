@@ -177,7 +177,7 @@ export const portugueseMessages = {
       loadingPlans: 'A carregar planos',
       plansUnavailable: 'Os planos estão indisponíveis.',
       retryPlans: 'Voltar a carregar os planos',
-      monthly: '/mês',
+      monthly: '/membro/mês',
       projectLimit: 'um projeto | {count} projetos',
       feedbackLimit: '{count} feedback/mês',
       challengeUnavailable: 'Não foi possível carregar a verificação de segurança. Tente novamente.',

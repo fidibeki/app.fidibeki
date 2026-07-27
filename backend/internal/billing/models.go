@@ -34,6 +34,13 @@ const (
 	IntervalYearly  BillingInterval = "yearly"
 )
 
+type BillingModel string
+
+const (
+	BillingModelLegacyFlat BillingModel = "legacy_flat"
+	BillingModelPerSeat    BillingModel = "per_seat"
+)
+
 type Tenant struct {
 	ID                          string
 	Name                        string
@@ -45,6 +52,11 @@ type Tenant struct {
 	BillingEmail                string
 	StripeCustomerID            string
 	StripeSubscriptionID        string
+	BillingModel                BillingModel
+	BillingSeatQuantity         int
+	BillingSeatSyncAttemptedAt  *time.Time
+	BillingSeatSyncedAt         *time.Time
+	BillingSeatSyncError        string
 	TrialEndsAt                 *time.Time
 	DeletionRequestedAt         *time.Time
 	DeletionRequestedByMemberID *string
@@ -86,6 +98,7 @@ type CheckoutInput struct {
 	TrialEnd   *time.Time
 	SuccessURL string
 	CancelURL  string
+	Quantity   int64
 }
 
 type CustomerInput struct {

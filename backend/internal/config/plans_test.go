@@ -83,6 +83,12 @@ func TestSelfServicePlansAreStableAndExcludeEnterprise(t *testing.T) {
 		if plan.YearlyPriceCents == nil {
 			t.Errorf("SelfServicePlans()[%d].YearlyPriceCents = nil", index)
 		}
+		if plan.PricingModel != config.PricingModelPerSeat || plan.PriceUnit != config.PriceUnitSeat {
+			t.Errorf(
+				"SelfServicePlans()[%d] pricing = %q/%q, want per_seat/seat",
+				index, plan.PricingModel, plan.PriceUnit,
+			)
+		}
 	}
 }
 

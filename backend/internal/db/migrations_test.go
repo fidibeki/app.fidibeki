@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 126
+	const latestMigrationVersion = 127
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -92,6 +92,106 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			)
 		}
 	}
+
+	// Migration 000127 turns the published amounts into per-seat prices without
+	// silently repricing subscriptions that existed before deployment.
+	if err := migrateToVersion(migrator, 126); err != nil {
+		t.Fatalf("roll back per-seat billing migration: %v", err)
+	}
+	var legacyBillingTenantID, perSeatTrialTenantID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (
+			name, slug, plan, status, stripe_subscription_id, billing_interval
+		) VALUES (
+			'Legacy billing', 'legacy-billing', 'growth', 'active', 'sub_legacy_billing', 'monthly'
+		) RETURNING id
+	`).Scan(&legacyBillingTenantID); err != nil {
+		t.Fatalf("create legacy billing tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status, trial_ends_at)
+		VALUES (
+			'Per-seat trial', 'per-seat-trial', 'growth', 'trial', now() + interval '7 days'
+		) RETURNING id
+	`).Scan(&perSeatTrialTenantID); err != nil {
+		t.Fatalf("create per-seat trial tenant: %v", err)
+	}
+	for _, fixture := range []struct {
+		tenantID string
+		email    string
+		status   string
+	}{
+		{legacyBillingTenantID, "owner@legacy-billing.test", "active"},
+		{legacyBillingTenantID, "teammate@legacy-billing.test", "active"},
+		{perSeatTrialTenantID, "owner@per-seat-trial.test", "active"},
+		{perSeatTrialTenantID, "retained@per-seat-trial.test", "deactivated"},
+		{perSeatTrialTenantID, "removed@per-seat-trial.test", "removed"},
+	} {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO tenant_members (tenant_id, email, status)
+			VALUES ($1, $2, $3)
+		`, fixture.tenantID, fixture.email, fixture.status); err != nil {
+			t.Fatalf("create billing member %s: %v", fixture.email, err)
+		}
+	}
+	assertSeatBillingMigration := func(stage string) {
+		t.Helper()
+		var legacyModel string
+		var legacyQuantity int
+		if err := root.QueryRow(ctx, `
+			SELECT billing_model, billing_seat_quantity
+			FROM tenants WHERE id = $1
+		`, legacyBillingTenantID).Scan(&legacyModel, &legacyQuantity); err != nil {
+			t.Fatalf("%s: read legacy billing model: %v", stage, err)
+		}
+		if legacyModel != "legacy_flat" || legacyQuantity != 1 {
+			t.Fatalf(
+				"%s: legacy billing = %s/%d, want legacy_flat/1",
+				stage, legacyModel, legacyQuantity,
+			)
+		}
+		var trialModel string
+		var trialQuantity int
+		if err := root.QueryRow(ctx, `
+			SELECT billing_model, billing_seat_quantity
+			FROM tenants WHERE id = $1
+		`, perSeatTrialTenantID).Scan(&trialModel, &trialQuantity); err != nil {
+			t.Fatalf("%s: read trial billing model: %v", stage, err)
+		}
+		if trialModel != "per_seat" || trialQuantity != 2 {
+			t.Fatalf(
+				"%s: trial billing = %s/%d, want per_seat/2",
+				stage, trialModel, trialQuantity,
+			)
+		}
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply per-seat billing migration: %v", err)
+	}
+	assertSeatBillingMigration("first up")
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("roll back per-seat billing migration after verification: %v", err)
+	}
+	var preservedBillingMembers int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_members
+		WHERE tenant_id = ANY($1::uuid[])
+	`, []string{legacyBillingTenantID, perSeatTrialTenantID}).Scan(&preservedBillingMembers); err != nil {
+		t.Fatalf("count members after per-seat rollback: %v", err)
+	}
+	if preservedBillingMembers != 5 {
+		t.Fatalf("members after per-seat rollback = %d, want 5", preservedBillingMembers)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("reapply per-seat billing migration: %v", err)
+	}
+	assertSeatBillingMigration("second up")
+	if _, err := root.Exec(ctx, `
+		DELETE FROM tenants WHERE id = ANY($1::uuid[])
+	`, []string{legacyBillingTenantID, perSeatTrialTenantID}); err != nil {
+		t.Fatalf("remove per-seat billing migration fixtures: %v", err)
+	}
+
 	if err := migrateToVersion(migrator, 59); err != nil {
 		t.Fatalf("roll back workspace ownership migration: %v", err)
 	}
@@ -2547,7 +2647,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("create deactivated testimonial backfill member: %v", err)
 	}
-	if err := migrator.Steps(-1); err != nil {
+	if err := migrateToVersion(migrator, 125); err != nil {
 		t.Fatalf("roll back testimonial permission backfill: %v", err)
 	}
 	if err := migrator.Steps(1); err != nil {
@@ -2621,6 +2721,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("delete testimonial backfill fixtures: %v", err)
+	}
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
+		t.Fatalf("migrate back to latest after testimonial permission backfill: %v", err)
 	}
 
 	var twoFactorTablesProtected bool

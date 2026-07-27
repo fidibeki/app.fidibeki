@@ -86,6 +86,18 @@ describe('pricing data mirrors the backend plan catalog', () => {
       }
     })
 
+    it(`matches ${plan.id} pricing model and unit`, () => {
+      if (plan.pricingModel === 'custom') {
+        expect(block).toContain('PricingModel: PricingModelCustom')
+        expect(block).not.toContain('PriceUnit: PriceUnitSeat')
+        expect(plan.priceUnit).toBeNull()
+        return
+      }
+      expect(block).toContain('PricingModel: PricingModelPerSeat')
+      expect(block).toContain('PriceUnit: PriceUnitSeat')
+      expect(plan.priceUnit).toBe('seat')
+    })
+
     it(`matches ${plan.id} limits`, () => {
       expect(extractInt(block, /Projects:\s*(-?\d+)/, 'projects')).toBe(plan.limits.projects)
       expect(extractInt(block, /FeedbackPerMonth:\s*(-?\d+)/, 'feedback per month')).toBe(

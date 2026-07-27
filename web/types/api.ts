@@ -727,6 +727,8 @@ export interface PlanDefinition {
   monthly_price_cents?: number | null
   yearly_price_cents?: number | null
   yearly_discount_percent?: number | null
+  pricing_model?: 'per_seat' | 'custom'
+  price_unit?: 'seat' | null
   limits: PlanLimits
   features: PlanFeatures
 }

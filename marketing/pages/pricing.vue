@@ -15,7 +15,7 @@ const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 
 useSiteMeta({
   title: 'Pricing',
-  description: `Fidibeki plans from ${formatPrice(999)}/month with a ${trialDays}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.`,
+  description: `Fidibeki plans from ${formatPrice(999)} per seat each month with a ${trialDays}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.`,
   path: '/pricing',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -37,6 +37,16 @@ useSiteMeta({
           price: (plan.monthlyPriceCents! / 100).toFixed(2),
           priceCurrency: 'USD',
           url: `${siteUrl}/pricing`,
+          priceSpecification: {
+            '@type': 'UnitPriceSpecification',
+            price: (plan.monthlyPriceCents! / 100).toFixed(2),
+            priceCurrency: 'USD',
+            referenceQuantity: {
+              '@type': 'QuantitativeValue',
+              value: 1,
+              unitText: 'seat',
+            },
+          },
         })),
     },
   ],
@@ -68,6 +78,11 @@ function comparisonValue(plan: (typeof plans)[number], key: (typeof planComparis
 
 const faq = [
   {
+    question: 'What counts as a seat?',
+    answer:
+      'Each active or deactivated workspace member uses one seat. Removing a member frees the seat; a pending invitation does not use one.',
+  },
+  {
     question: 'How does the free trial work?',
     answer: `Every new workspace starts with a ${trialDays}-day free trial. No credit card is required to sign up. You pick a plan when the trial ends.`,
   },
@@ -94,7 +109,7 @@ const faq = [
     <PageHero
       eyebrow="Pricing"
       :title="`Simple plans, ${trialDays}-day free trial`"
-      lede="Start free, no credit card. Upgrade once the workflow proves its value. Prices shown are monthly; yearly billing is discounted."
+      lede="Start free, no credit card. Self-service prices are per workspace seat; yearly billing is discounted."
     >
       <template #breadcrumbs>
         <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Pricing', path: '/pricing' }]" />
@@ -117,7 +132,7 @@ const faq = [
             <p class="plan-blurb">{{ plan.blurb }}</p>
             <p class="plan-price">
               <span class="plan-amount">{{ formatPrice(plan.monthlyPriceCents) }}</span>
-              <span v-if="plan.monthlyPriceCents !== null" class="plan-period">/month</span>
+              <span v-if="plan.monthlyPriceCents !== null" class="plan-period">/seat/month</span>
             </p>
             <p v-if="plan.yearlyDiscountPercent" class="plan-yearly">
               Save {{ plan.yearlyDiscountPercent }}% with yearly billing
@@ -149,7 +164,7 @@ const faq = [
           </div>
         </div>
         <p class="plans-note">
-          All prices in USD. Plan limits and feature availability are enforced by the product. What you see here is exactly what the billing system uses.
+          All prices in USD per workspace seat. Plan limits and feature availability are enforced by the product. What you see here is exactly what the billing system uses.
         </p>
       </div>
     </section>

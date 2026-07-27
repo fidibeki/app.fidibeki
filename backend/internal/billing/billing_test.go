@@ -174,10 +174,13 @@ func TestStripeProviderAdapter(t *testing.T) {
 	}
 	checkoutURL, err := provider.CreateCheckout(ctx, CheckoutInput{
 		CustomerID: customerID, PriceID: "price_growth", TenantID: "tenant", TrialEnd: &trialEnd,
-		SuccessURL: "https://app.test/success", CancelURL: "https://app.test/cancel",
+		SuccessURL: "https://app.test/success", CancelURL: "https://app.test/cancel", Quantity: 3,
 	})
 	if err != nil || checkoutURL != "https://checkout.stripe.test/session" {
 		t.Fatalf("CreateCheckout() = %q, %v", checkoutURL, err)
+	}
+	if backend.checkoutQuantity != 3 {
+		t.Fatalf("checkout quantity = %d, want 3", backend.checkoutQuantity)
 	}
 	portalURL, err := provider.CreatePortal(ctx, customerID, "https://app.test/billing")
 	if err != nil || portalURL != "https://billing.stripe.test/session" {
@@ -246,6 +249,8 @@ func TestPlatformHTTPRoutesAndErrors(t *testing.T) {
 	plansResponse := httptest.NewRecorder()
 	router.ServeHTTP(plansResponse, plansRequest)
 	if plansResponse.Code != http.StatusOK || !strings.Contains(plansResponse.Body.String(), `"plan":"growth"`) ||
+		!strings.Contains(plansResponse.Body.String(), `"pricing_model":"per_seat"`) ||
+		!strings.Contains(plansResponse.Body.String(), `"price_unit":"seat"`) ||
 		strings.Contains(plansResponse.Body.String(), `"plan":"enterprise"`) {
 		t.Fatalf("plans response = %d %s", plansResponse.Code, plansResponse.Body.String())
 	}
@@ -297,7 +302,7 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 	store := &serviceStoreStub{tenant: Tenant{
 		ID: "tenant-id", Name: "Acme", Slug: "acme", Plan: tenant.PlanGrowth,
 		Status: tenant.StatusTrial, BillingEmail: "owner@acme.test", TrialEndsAt: &trialEnd,
-	}}
+	}, billableSeats: 3}
 	provider := &providerStub{subscription: Subscription{
 		ID: "sub_1", CustomerID: "cus_1", PriceID: "price_scale", Status: "active",
 	}}
@@ -331,7 +336,7 @@ func TestServiceSignupCheckoutPortalAndWebhook(t *testing.T) {
 		t.Fatalf("Checkout() = %q, %v", checkoutURL, err)
 	}
 	if provider.customerInput.TenantID != "tenant-id" || provider.checkoutInput.TrialEnd == nil ||
-		provider.checkoutInput.PriceID != "price_scale" {
+		provider.checkoutInput.PriceID != "price_scale" || provider.checkoutInput.Quantity != 3 {
 		t.Fatalf("provider inputs = customer %#v checkout %#v", provider.customerInput, provider.checkoutInput)
 	}
 	if _, err := service.Checkout(context.Background(), "tenant-id", tenant.PlanScale, IntervalYearly); err != nil {
@@ -593,6 +598,7 @@ type serviceStoreStub struct {
 	saveCustomerCalls    int
 	requestDeletionCalls int
 	cancelDeletionCalls  int
+	billableSeats        int
 }
 
 func (s *serviceStoreStub) Signup(_ context.Context, input SignupInput) (SignupResult, error) {
@@ -602,6 +608,9 @@ func (s *serviceStoreStub) Signup(_ context.Context, input SignupInput) (SignupR
 func (s *serviceStoreStub) Get(context.Context, string) (Tenant, error) {
 	s.getCalls++
 	return s.tenant, s.getErr
+}
+func (s *serviceStoreStub) CountBillableSeats(context.Context, string) (int, error) {
+	return s.billableSeats, s.getErr
 }
 func (s *serviceStoreStub) SaveCustomer(_ context.Context, _, customer string) (string, error) {
 	s.saveCustomerCalls++
@@ -676,12 +685,13 @@ func (p *providerStub) VerifyEvent([]byte, string) (EventSignal, error) {
 }
 
 type stripeBackendStub struct {
-	paths    []string
-	trialEnd int64
-	err      error
+	paths            []string
+	trialEnd         int64
+	err              error
+	checkoutQuantity int64
 }
 
-func (b *stripeBackendStub) Call(_ string, path, _ string, _ stripe.ParamsContainer, value stripe.LastResponseSetter) error {
+func (b *stripeBackendStub) Call(_ string, path, _ string, params stripe.ParamsContainer, value stripe.LastResponseSetter) error {
 	b.paths = append(b.paths, path)
 	if b.err != nil {
 		return b.err
@@ -690,6 +700,10 @@ func (b *stripeBackendStub) Call(_ string, path, _ string, _ stripe.ParamsContai
 	case *stripe.Customer:
 		target.ID = "cus_test"
 	case *stripe.CheckoutSession:
+		if checkout, ok := params.(*stripe.CheckoutSessionCreateParams); ok &&
+			len(checkout.LineItems) == 1 && checkout.LineItems[0].Quantity != nil {
+			b.checkoutQuantity = *checkout.LineItems[0].Quantity
+		}
 		target.ID = "cs_test"
 		target.URL = "https://checkout.stripe.test/session"
 	case *stripe.BillingPortalSession:
