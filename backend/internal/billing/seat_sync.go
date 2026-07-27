@@ -13,6 +13,7 @@ const seatSyncFailureMessage = "Seat quantity could not be synchronized with Str
 type SeatSyncCandidate struct {
 	TenantID          string
 	SubscriptionID    string
+	StateKey          string
 	ConfirmedQuantity int
 	DesiredQuantity   int
 }
@@ -66,9 +67,9 @@ func (reconciler SeatReconciler) reconcile(
 	desired := max(1, candidate.DesiredQuantity)
 	if remote.Quantity != desired {
 		key := fmt.Sprintf(
-			"seat-sync:%s:%d:%d",
+			"seat-sync:%s:%s:%d",
 			candidate.TenantID,
-			remote.Quantity,
+			candidate.StateKey,
 			desired,
 		)
 		if err := reconciler.Provider.UpdateSubscriptionQuantity(

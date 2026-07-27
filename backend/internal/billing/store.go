@@ -135,7 +135,20 @@ func (s Store) ListSeatSyncCandidates(ctx context.Context, limit int) ([]SeatSyn
 		limit = 100
 	}
 	rows, err := s.Database.Query(ctx, `
-		SELECT tenant.id, tenant.stripe_subscription_id, tenant.billing_seat_quantity,
+		SELECT tenant.id, tenant.stripe_subscription_id,
+		       md5(
+		           tenant.stripe_subscription_id || ':' ||
+		           COALESCE(
+		               extract(epoch FROM tenant.billing_seat_synced_at)::text,
+		               'never'
+		           ) || ':' ||
+		           COALESCE(
+		               string_agg(member.id::text, ',' ORDER BY member.id)
+		                   FILTER (WHERE member.status <> 'removed'),
+		               ''
+		           )
+		       ) AS state_key,
+		       tenant.billing_seat_quantity,
 		       GREATEST(
 		           1,
 		           count(member.id) FILTER (WHERE member.status <> 'removed')
@@ -164,6 +177,7 @@ func (s Store) ListSeatSyncCandidates(ctx context.Context, limit int) ([]SeatSyn
 		if err := rows.Scan(
 			&candidate.TenantID,
 			&candidate.SubscriptionID,
+			&candidate.StateKey,
 			&candidate.ConfirmedQuantity,
 			&candidate.DesiredQuantity,
 		); err != nil {
@@ -183,7 +197,7 @@ func (s Store) RecordSeatSyncSuccess(
 	subscriptionID string,
 	quantity int,
 ) error {
-	if _, err := s.Database.Exec(ctx, `
+	result, err := s.Database.Exec(ctx, `
 		UPDATE tenants
 		SET billing_seat_quantity = $3,
 		    billing_seat_sync_attempted_at = $4,
@@ -192,8 +206,12 @@ func (s Store) RecordSeatSyncSuccess(
 		WHERE id = $1
 		  AND stripe_subscription_id = $2
 		  AND billing_model = 'per_seat'
-	`, tenantID, subscriptionID, max(1, quantity), s.now()); err != nil {
+	`, tenantID, subscriptionID, max(1, quantity), s.now())
+	if err != nil {
 		return fmt.Errorf("record seat synchronization success: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("record seat synchronization success: subscription changed")
 	}
 	return nil
 }
@@ -210,15 +228,19 @@ func (s Store) RecordSeatSyncFailure(
 	if message == "" {
 		message = "Seat quantity could not be synchronized with Stripe."
 	}
-	if _, err := s.Database.Exec(ctx, `
+	result, err := s.Database.Exec(ctx, `
 		UPDATE tenants
 		SET billing_seat_sync_attempted_at = $3,
 		    billing_seat_sync_error = $4
 		WHERE id = $1
 		  AND stripe_subscription_id = $2
 		  AND billing_model = 'per_seat'
-	`, tenantID, subscriptionID, s.now(), message); err != nil {
+	`, tenantID, subscriptionID, s.now(), message)
+	if err != nil {
 		return fmt.Errorf("record seat synchronization failure: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("record seat synchronization failure: subscription changed")
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ func TestSeatReconcilerConvergesProviderQuantity(t *testing.T) {
 	store := &seatSyncStoreStub{candidates: []SeatSyncCandidate{{
 		TenantID:          "tenant-1",
 		SubscriptionID:    "sub-1",
+		StateKey:          "membership-v1",
 		ConfirmedQuantity: 1,
 		DesiredQuantity:   3,
 	}}}
@@ -22,7 +23,7 @@ func TestSeatReconcilerConvergesProviderQuantity(t *testing.T) {
 		t.Fatalf("ReconcileOnce() error = %v", err)
 	}
 	if provider.updatedItemID != "si-1" || provider.updatedQuantity != 3 ||
-		provider.updateKey != "seat-sync:tenant-1:1:3" {
+		provider.updateKey != "seat-sync:tenant-1:membership-v1:3" {
 		t.Fatalf(
 			"provider update = item %q quantity %d key %q",
 			provider.updatedItemID,
@@ -42,6 +43,7 @@ func TestSeatReconcilerAcceptsAlreadyConvergedRemoteState(t *testing.T) {
 	store := &seatSyncStoreStub{candidates: []SeatSyncCandidate{{
 		TenantID:          "tenant-1",
 		SubscriptionID:    "sub-1",
+		StateKey:          "membership-v1",
 		ConfirmedQuantity: 1,
 		DesiredQuantity:   3,
 	}}}
@@ -64,7 +66,8 @@ func TestSeatReconcilerAcceptsAlreadyConvergedRemoteState(t *testing.T) {
 func TestSeatReconcilerPersistsSafeFailureAndContinues(t *testing.T) {
 	want := errors.New("Stripe unavailable")
 	store := &seatSyncStoreStub{candidates: []SeatSyncCandidate{{
-		TenantID: "tenant-1", SubscriptionID: "sub-1", DesiredQuantity: 2,
+		TenantID: "tenant-1", SubscriptionID: "sub-1",
+		StateKey: "membership-v1", DesiredQuantity: 2,
 	}}}
 	provider := &providerStub{err: want}
 
@@ -78,6 +81,28 @@ func TestSeatReconcilerPersistsSafeFailureAndContinues(t *testing.T) {
 	}
 	if store.succeededQuantity != 0 {
 		t.Fatalf("recorded success = %d", store.succeededQuantity)
+	}
+}
+
+func TestSeatReconcilerUsesAStateSpecificIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	keys := make([]string, 0, 2)
+	for _, stateKey := range []string{"membership-v1", "membership-v2"} {
+		store := &seatSyncStoreStub{candidates: []SeatSyncCandidate{{
+			TenantID: "tenant-1", SubscriptionID: "sub-1",
+			StateKey: stateKey, DesiredQuantity: 3,
+		}}}
+		provider := &providerStub{subscription: Subscription{
+			ID: "sub-1", ItemID: "si-1", Quantity: 1,
+		}}
+		if err := (SeatReconciler{Store: store, Provider: provider}).
+			ReconcileOnce(context.Background()); err != nil {
+			t.Fatalf("ReconcileOnce(%s) error = %v", stateKey, err)
+		}
+		keys = append(keys, provider.updateKey)
+	}
+	if keys[0] == keys[1] {
+		t.Fatalf("idempotency keys = %q and %q, want distinct operations", keys[0], keys[1])
 	}
 }
 

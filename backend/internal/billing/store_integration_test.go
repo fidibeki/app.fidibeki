@@ -169,10 +169,12 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	}
 	seatCandidates, err := store.ListSeatSyncCandidates(ctx, 100)
 	if err != nil || len(seatCandidates) != 1 ||
+		seatCandidates[0].StateKey == "" ||
 		seatCandidates[0].ConfirmedQuantity != 1 ||
 		seatCandidates[0].DesiredQuantity != 2 {
 		t.Fatalf("seat candidates after add = %#v, %v", seatCandidates, err)
 	}
+	initialStateKey := seatCandidates[0].StateKey
 	if err := store.RecordSeatSyncFailure(
 		ctx,
 		loaded.ID,
@@ -186,6 +188,18 @@ func TestStoreBillingLifecycle(t *testing.T) {
 		loaded.BillingSeatSyncAttemptedAt == nil {
 		t.Fatalf("tenant after seat failure = %#v", loaded)
 	}
+	if candidates, err := store.ListSeatSyncCandidates(ctx, 100); err != nil ||
+		len(candidates) != 1 || candidates[0].StateKey != initialStateKey {
+		t.Fatalf("seat candidates after retryable failure = %#v, %v", candidates, err)
+	}
+	if err := store.RecordSeatSyncSuccess(ctx, loaded.ID, "sub_stale", 2); err == nil {
+		t.Fatal("RecordSeatSyncSuccess(stale subscription) error = nil")
+	}
+	if err := store.RecordSeatSyncFailure(
+		ctx, loaded.ID, "sub_stale", "must not land",
+	); err == nil {
+		t.Fatal("RecordSeatSyncFailure(stale subscription) error = nil")
+	}
 	if err := store.RecordSeatSyncSuccess(ctx, loaded.ID, "sub_1", 2); err != nil {
 		t.Fatalf("RecordSeatSyncSuccess(2) error = %v", err)
 	}
@@ -198,7 +212,8 @@ func TestStoreBillingLifecycle(t *testing.T) {
 		t.Fatalf("remove seat synchronization member: %v", err)
 	}
 	if candidates, err := store.ListSeatSyncCandidates(ctx, 100); err != nil ||
-		len(candidates) != 1 || candidates[0].DesiredQuantity != 1 {
+		len(candidates) != 1 || candidates[0].DesiredQuantity != 1 ||
+		candidates[0].StateKey == initialStateKey {
 		t.Fatalf("seat candidates after removal = %#v, %v", candidates, err)
 	}
 	if _, err := pool.Exec(ctx, `
