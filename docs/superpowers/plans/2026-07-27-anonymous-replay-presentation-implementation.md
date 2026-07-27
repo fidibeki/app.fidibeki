@@ -54,5 +54,5 @@
       nonblank pixel assertion.
 - [x] Existing privacy-version-two sessions remain playable; old degraded sessions are explicitly
       documented as unrecoverable.
-- [ ] Focused and full widget/backend suites, CI, and staging validation pass.
-- [ ] No production deployment or infrastructure change is performed.
+- [x] Focused and full widget/backend suites, CI, and staging validation pass.
+- [x] No production deployment or infrastructure change is performed.
