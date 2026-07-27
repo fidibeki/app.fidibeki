@@ -8,6 +8,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/seatlimit"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -425,6 +426,12 @@ func (Store) ResolveMember(
 		return EligibleMember{}, ErrMemberNotEligible
 	} else if err != nil {
 		return EligibleMember{}, fmt.Errorf("find SAML invitation: %w", err)
+	}
+	if err := seatlimit.EnsureAvailable(ctx, query, tenantID); err != nil {
+		if errors.Is(err, seatlimit.ErrAtCapacity) {
+			return EligibleMember{}, ErrPlanMemberLimit
+		}
+		return EligibleMember{}, err
 	}
 	if err := query.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, permissions)

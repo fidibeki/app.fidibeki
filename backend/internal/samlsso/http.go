@@ -481,6 +481,8 @@ func assertionFailureReason(err error) string {
 		return "request_not_correlated"
 	case errors.Is(err, ErrMemberNotEligible):
 		return "member_not_eligible"
+	case errors.Is(err, ErrPlanMemberLimit):
+		return "plan_limit_exceeded"
 	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrSSODisabled):
 		return "sso_unavailable"
 	case errors.Is(err, ErrAssertionInvalid):
@@ -517,6 +519,9 @@ func (h *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 		errors.Is(err, ErrAssertionReplayed), errors.Is(err, ErrRequestNotFound):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated,
 			"single sign-on failed", nil)
+	case errors.Is(err, ErrPlanMemberLimit):
+		api.WriteError(w, http.StatusPaymentRequired, api.CodePlanLimitExceeded,
+			"workspace member limit reached", nil)
 	default:
 		h.options.Logger.ErrorContext(r.Context(), "SAML request failed", "error", err)
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)

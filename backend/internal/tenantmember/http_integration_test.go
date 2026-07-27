@@ -341,6 +341,44 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		t.Fatalf("new viewer regional preferences = %v/%v, want inherit",
 			viewerSession.Member.Locale, viewerSession.Member.Timezone)
 	}
+	staleCapacityToken := "stale-capacity-invitation"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_magic_links (
+			tenant_id, email, invited_permissions, token_hash, expires_at
+		) VALUES ($1, 'stale-capacity@acme.test', ARRAY['project:read'], $2, $3)
+	`, tenantID, auth.HashToken(staleCapacityToken), now.Add(time.Hour)); err != nil {
+		t.Fatalf("create stale capacity invitation: %v", err)
+	}
+	var capacityFillerID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'capacity-filler@acme.test', '{}') RETURNING id
+	`, tenantID).Scan(&capacityFillerID); err != nil {
+		t.Fatalf("fill growth member capacity: %v", err)
+	}
+	staleCapacityActivation := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+staleCapacityToken+`"}`, "", nil,
+	)
+	if staleCapacityActivation.Code != http.StatusPaymentRequired ||
+		!strings.Contains(staleCapacityActivation.Body.String(), `"code":"plan_limit_exceeded"`) {
+		t.Fatalf("stale capacity activation status = %d, body = %s",
+			staleCapacityActivation.Code, staleCapacityActivation.Body.String())
+	}
+	var staleCapacityConsumedAt *time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT consumed_at FROM tenant_magic_links
+		WHERE tenant_id = $1 AND token_hash = $2
+	`, tenantID, auth.HashToken(staleCapacityToken)).Scan(&staleCapacityConsumedAt); err != nil ||
+		staleCapacityConsumedAt != nil {
+		t.Fatalf("stale capacity invitation consumed_at = %v, error = %v",
+			staleCapacityConsumedAt, err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenant_members SET status = 'removed' WHERE tenant_id = $1 AND id = $2
+	`, tenantID, capacityFillerID); err != nil {
+		t.Fatalf("release capacity filler: %v", err)
+	}
 
 	members := performTenantRequest(handler, http.MethodGet, "/v1/members", "", ownerSession.AccessToken, nil)
 	if members.Code != http.StatusOK || !strings.Contains(members.Body.String(), "viewer@acme.test") ||
@@ -720,6 +758,66 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	)
 	if removed.Code != http.StatusOK || !strings.Contains(removed.Body.String(), `"status":"removed"`) {
 		t.Fatalf("remove member status = %d, body = %s", removed.Code, removed.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenant_members SET status = 'removed' WHERE tenant_id = $1 AND id = $2
+	`, tenantID, unverifiedMemberID); err != nil {
+		t.Fatalf("release unverified ownership target seat: %v", err)
+	}
+	concurrentTokens := []string{"concurrent-capacity-a", "concurrent-capacity-b"}
+	concurrentEmails := []string{"concurrent-a@acme.test", "concurrent-b@acme.test"}
+	for index, token := range concurrentTokens {
+		if _, err := root.Exec(ctx, `
+			INSERT INTO tenant_magic_links (
+				tenant_id, email, invited_permissions, token_hash, expires_at
+			) VALUES ($1, $2, ARRAY['project:read'], $3, $4)
+		`, tenantID, concurrentEmails[index], auth.HashToken(token), now.Add(time.Hour)); err != nil {
+			t.Fatalf("create concurrent capacity invitation %d: %v", index, err)
+		}
+	}
+	type concurrentActivation struct {
+		status int
+		body   string
+	}
+	concurrentResults := make(chan concurrentActivation, len(concurrentTokens))
+	for _, token := range concurrentTokens {
+		token := token
+		go func() {
+			response := performTenantRequest(
+				handler, http.MethodPost, "/auth/verify",
+				`{"token":"`+token+`"}`, "", nil,
+			)
+			concurrentResults <- concurrentActivation{
+				status: response.Code,
+				body:   response.Body.String(),
+			}
+		}()
+	}
+	var accepted, capacityRejected int
+	for range concurrentTokens {
+		result := <-concurrentResults
+		switch {
+		case result.status == http.StatusOK:
+			accepted++
+		case result.status == http.StatusPaymentRequired &&
+			strings.Contains(result.body, `"code":"plan_limit_exceeded"`):
+			capacityRejected++
+		default:
+			t.Fatalf("concurrent capacity activation status = %d, body = %s",
+				result.status, result.body)
+		}
+	}
+	if accepted != 1 || capacityRejected != 1 {
+		t.Fatalf("concurrent capacity activations accepted/rejected = %d/%d, want 1/1",
+			accepted, capacityRejected)
+	}
+	var billableMembers int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_members
+		WHERE tenant_id = $1 AND status <> 'removed'
+	`, tenantID).Scan(&billableMembers); err != nil || billableMembers != 3 {
+		t.Fatalf("billable members after concurrent activation = %d, error = %v, want 3",
+			billableMembers, err)
 	}
 	var accessAuditKinds []string
 	rows, err := pools.Admin.Query(ctx, `

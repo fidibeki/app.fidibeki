@@ -271,6 +271,43 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 		})
 	})
 
+	t.Run("an outstanding invitation cannot exceed current member capacity", func(t *testing.T) {
+		var fillerID string
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if err := harness.members.CreateMagicLink(
+				ctx, query, acme.id, nil, "capacity@acme.test", []string{"feedback:read"},
+				strings.Repeat("c", 64), time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink(capacity invitation) error = %v", err)
+			}
+			if err := harness.root.QueryRow(ctx, `
+				INSERT INTO tenant_members (tenant_id, email, permissions)
+				VALUES ($1, 'capacity-filler@acme.test', '{}') RETURNING id
+			`, acme.id).Scan(&fillerID); err != nil {
+				t.Fatalf("fill growth member capacity: %v", err)
+			}
+			requestID := harness.startLogin(ctx, t, query, acme, PurposeLogin)
+			if _, err := harness.service.ConsumeAssertion(
+				ctx, query, acme.resolved,
+				acme.idp.response(t, harness.assertion(t, acme, requestID, "capacity@acme.test")),
+			); !errors.Is(err, ErrPlanMemberLimit) {
+				t.Fatalf("ConsumeAssertion(capacity) error = %v, want ErrPlanMemberLimit", err)
+			}
+			var created int
+			if err := query.QueryRow(ctx, `
+				SELECT count(*) FROM tenant_members
+				WHERE tenant_id = $1 AND email = 'capacity@acme.test'
+			`, acme.id).Scan(&created); err != nil || created != 0 {
+				t.Fatalf("capacity invitation created members = %d, error = %v", created, err)
+			}
+		})
+		if _, err := harness.root.Exec(ctx, `
+			UPDATE tenant_members SET status = 'removed' WHERE tenant_id = $1 AND id = $2
+		`, acme.id, fillerID); err != nil {
+			t.Fatalf("release SAML capacity filler: %v", err)
+		}
+	})
+
 	t.Run("required mode closes local login except for the owner", func(t *testing.T) {
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
 			requestID := harness.startLogin(ctx, t, query, acme, PurposeTest)

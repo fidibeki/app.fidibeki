@@ -36,12 +36,12 @@ Update pricing and signup surfaces so every self-service price is explicitly per
 
 ### Acceptance criteria
 
-- [ ] Existing subscribed tenants migrate to `legacy_flat` at quantity one.
-- [ ] Existing trials and future signups use `per_seat`.
-- [ ] The catalog exposes per-seat pricing metadata without removing existing fields.
-- [ ] Checkout quantity equals the current non-removed member count with a minimum of one.
-- [ ] Marketing, structured offers, and signup render a per-seat unit.
-- [ ] Migration, catalog, checkout, parity, and responsive browser tests pass.
+- [x] Existing subscribed tenants migrate to `legacy_flat` at quantity one.
+- [x] Existing trials and future signups use `per_seat`.
+- [x] The catalog exposes per-seat pricing metadata without removing existing fields.
+- [x] Checkout quantity equals the current non-removed member count with a minimum of one.
+- [x] Marketing, structured offers, and signup render a per-seat unit.
+- [x] Migration, catalog, checkout, parity, and responsive browser tests pass.
 
 ---
 
@@ -58,13 +58,13 @@ billable seats, confirmed seats, recurring estimate, and synchronization state i
 
 ### Acceptance criteria
 
-- [ ] Subscription retrieval rejects missing or ambiguous line items.
-- [ ] Webhooks persist the Stripe-confirmed quantity idempotently.
-- [ ] The worker converges add/remove mismatches and retries provider failures.
-- [ ] Legacy subscriptions are excluded from automatic updates.
-- [ ] A membership change during reconciliation remains detectable on the next pass.
-- [ ] Billing distinguishes billable, syncing, failed, confirmed, and legacy states.
-- [ ] Provider, store, worker, API, UI, and responsive browser tests pass.
+- [x] Subscription retrieval rejects missing or ambiguous line items.
+- [x] Webhooks persist the Stripe-confirmed quantity idempotently.
+- [x] The worker converges add/remove mismatches and retries provider failures.
+- [x] Legacy subscriptions are excluded from automatic updates.
+- [x] A membership change during reconciliation remains detectable on the next pass.
+- [x] Billing distinguishes billable, syncing, failed, confirmed, and legacy states.
+- [x] Provider, store, worker, API, UI, and responsive browser tests pass.
 
 ---
 
@@ -81,12 +81,12 @@ explicit about seat retention and release.
 
 ### Acceptance criteria
 
-- [ ] Pending invitations remain unbilled and do not reserve capacity.
-- [ ] Local invitation acceptance fails atomically when the plan is full.
-- [ ] SAML invitation acceptance follows the same limit and locking rule.
-- [ ] Concurrent acceptances cannot create more non-removed members than the plan allows.
-- [ ] Deactivation is described as retaining a seat; removal is described as freeing one.
-- [ ] Backend, web, and end-to-end regression tests pass.
+- [x] Pending invitations remain unbilled and do not reserve capacity.
+- [x] Local invitation acceptance fails atomically when the plan is full.
+- [x] SAML invitation acceptance follows the same limit and locking rule.
+- [x] Concurrent acceptances cannot create more non-removed members than the plan allows.
+- [x] Deactivation is described as retaining a seat; removal is described as freeing one.
+- [x] Backend, web, and end-to-end regression tests pass.
 
 ---
 

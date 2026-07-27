@@ -678,6 +678,9 @@ func writeError(w http.ResponseWriter, err error) {
 			"this workspace requires single sign-on", nil)
 	case errors.Is(err, ErrMemberExists):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member already exists", nil)
+	case errors.Is(err, ErrPlanMemberLimit):
+		api.WriteError(w, http.StatusPaymentRequired, api.CodePlanLimitExceeded,
+			"workspace member limit reached", nil)
 	case errors.Is(err, ErrMemberDomainAlreadyVerified):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "member domain is already verified", nil)
 	case errors.Is(err, ErrMemberDomainNotVerified):

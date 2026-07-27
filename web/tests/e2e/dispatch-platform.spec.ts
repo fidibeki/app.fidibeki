@@ -9055,6 +9055,7 @@ test("settings manages non-owner member lifecycle", async ({
   await expect(dialog).toContainText(
     "every active session will end immediately",
   );
+  await expect(dialog).toContainText("Deactivation retains the billed seat");
   await dialog.getByRole("button", { name: "Deactivate member" }).click();
 
   memberRow = page
@@ -9074,7 +9075,9 @@ test("settings manages non-owner member lifecycle", async ({
   await expect(memberRow.getByText("Active", { exact: true })).toBeVisible();
   await memberRow.getByTitle("Remove member").click();
   dialog = page.getByRole("dialog", { name: "Remove member" });
-  await expect(dialog).toContainText("Removal is permanent");
+  await expect(dialog).toContainText(
+    "Removal is permanent and frees the billed seat",
+  );
   await capture(
     page,
     testInfo,

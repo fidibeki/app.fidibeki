@@ -25,6 +25,7 @@ func TestWorkspaceProtectionErrorsHaveStableHTTPContracts(t *testing.T) {
 		{name: "already removed", err: ErrMemberAlreadyRemoved, status: http.StatusConflict, code: "member_already_removed"},
 		{name: "invalid status", err: ErrMemberStatusInvalid, status: http.StatusUnprocessableEntity, code: "validation_error"},
 		{name: "invalid actor", err: ErrMemberActorInvalid, status: http.StatusForbidden, code: "forbidden"},
+		{name: "member limit", err: ErrPlanMemberLimit, status: http.StatusPaymentRequired, code: "plan_limit_exceeded"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

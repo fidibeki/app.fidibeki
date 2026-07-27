@@ -68,6 +68,7 @@ describe('single sign-on failure messages', () => {
   it('maps known failure codes to their own message', () => {
     expect(ssoErrorMessageKey('assertion_replayed')).toBe('auth.login.ssoError.assertion_replayed')
     expect(ssoErrorMessageKey('member_not_eligible')).toBe('auth.login.ssoError.member_not_eligible')
+    expect(ssoErrorMessageKey('plan_limit_exceeded')).toBe('auth.login.ssoError.plan_limit_exceeded')
   })
 
   it('falls back to the generic message for an unrecognized code', () => {

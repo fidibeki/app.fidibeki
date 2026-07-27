@@ -146,6 +146,7 @@ export const portugueseMessages = {
         assertion_replayed: 'Esta resposta de acesso já foi utilizada. Inicie a sessão novamente.',
         request_not_correlated: 'Esta resposta não corresponde a nenhum pedido pendente. Inicie a sessão novamente.',
         member_not_eligible: 'Esta identidade não pertence a este workspace. Peça um convite a um administrador.',
+        plan_limit_exceeded: 'Este workspace atingiu o limite de membros. Peça a um administrador para alterar o plano ou libertar um lugar.',
         sso_unavailable: 'O single sign-on não está disponível para este workspace.',
         start_failed: 'Não foi possível iniciar o single sign-on para este workspace.',
         malformed_response: 'O seu fornecedor de identidade enviou uma resposta que a Fidibeki não conseguiu ler.',

@@ -23,6 +23,7 @@ var (
 	ErrMemberAlreadyRemoved         = errors.New("tenant member is already removed")
 	ErrMemberStatusInvalid          = errors.New("tenant member status is invalid")
 	ErrMemberActorInvalid           = errors.New("active tenant member actor is required")
+	ErrPlanMemberLimit              = errors.New("workspace member limit reached")
 	ErrLocalLoginDisabled           = errors.New("local login is disabled by the organization's single sign-on policy")
 	ErrTwoFactorNotEnrolled         = errors.New("tenant member is not enrolled in two-factor authentication")
 	ErrTwoFactorAlreadyEnrolled     = errors.New("tenant member is already enrolled in two-factor authentication")

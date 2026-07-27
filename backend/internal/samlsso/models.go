@@ -46,6 +46,9 @@ var (
 	// invited member of this organization. SAML never enrols a member, and
 	// never links an identity across organizations on a matching email alone.
 	ErrMemberNotEligible = errors.New("no eligible workspace member for this identity")
+	// ErrPlanMemberLimit means a valid invitation could not be accepted because
+	// the workspace has no member capacity under its current plan.
+	ErrPlanMemberLimit = errors.New("workspace member limit reached")
 	// ErrRequestNotFound means the response referenced no live AuthnRequest.
 	ErrRequestNotFound = errors.New("SAML request correlation failed")
 	// ErrValidation carries field-level configuration errors.

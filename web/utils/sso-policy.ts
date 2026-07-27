@@ -51,6 +51,7 @@ const ssoErrorCodes = new Set([
   'assertion_replayed',
   'request_not_correlated',
   'member_not_eligible',
+  'plan_limit_exceeded',
   'sso_unavailable',
   'start_failed',
   'malformed_response',

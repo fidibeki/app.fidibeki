@@ -146,6 +146,7 @@ export const englishMessages = {
         assertion_replayed: 'This sign-in response was already used. Start the sign-in again.',
         request_not_correlated: 'This sign-in response did not match a pending request. Start the sign-in again.',
         member_not_eligible: 'This identity is not a member of this workspace. Ask an administrator for an invitation.',
+        plan_limit_exceeded: 'This workspace has reached its member limit. Ask an administrator to change the plan or free a seat.',
         sso_unavailable: 'Single sign-on is not available for this workspace.',
         start_failed: 'Single sign-on could not be started for this workspace.',
         malformed_response: 'Your identity provider sent a response Fidibeki could not read.',

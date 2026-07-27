@@ -64,6 +64,10 @@ func TestWriteErrorHasStableHTTPContracts(t *testing.T) {
 			status: http.StatusUnauthorized, code: "unauthenticated",
 		},
 		{
+			name: "member limit", err: ErrPlanMemberLimit,
+			status: http.StatusPaymentRequired, code: "plan_limit_exceeded",
+		},
+		{
 			name: "invalid assertion", err: ErrAssertionInvalid,
 			status: http.StatusUnauthorized, code: "unauthenticated",
 		},
@@ -116,6 +120,7 @@ func TestAssertionFailureReasonIsCoarse(t *testing.T) {
 		"assertion_replayed":     ErrAssertionReplayed,
 		"request_not_correlated": ErrRequestNotFound,
 		"member_not_eligible":    ErrMemberNotEligible,
+		"plan_limit_exceeded":    ErrPlanMemberLimit,
 		"sso_unavailable":        ErrNotConfigured,
 		"assertion_invalid":      ErrAssertionInvalid,
 		"sso_failed":             errors.New("unexpected"),

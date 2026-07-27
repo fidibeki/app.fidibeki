@@ -9,6 +9,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/seatlimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -372,6 +373,12 @@ func (s Store) ConsumeMagicLink(
 		}
 		if !allowed {
 			return Member{}, SessionSecurity{}, ErrMemberDomainNotVerified
+		}
+		if err := seatlimit.EnsureAvailable(ctx, query, tenantID); err != nil {
+			if errors.Is(err, seatlimit.ErrAtCapacity) {
+				return Member{}, SessionSecurity{}, ErrPlanMemberLimit
+			}
+			return Member{}, SessionSecurity{}, err
 		}
 		member, err = scanMember(query.QueryRow(ctx, `
 			INSERT INTO tenant_members (tenant_id, email, permissions)
