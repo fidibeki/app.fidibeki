@@ -2,11 +2,17 @@ import { record } from 'rrweb'
 import { startReplayCapture } from '../../src/modules/replay'
 import { rule } from './fixtures'
 
+const { mirrorGetNodeMock } = vi.hoisted(() => ({
+  mirrorGetNodeMock: vi.fn<(id: number) => Node | null>(),
+}))
+
 vi.mock('rrweb', () => {
   const mockedRecord = vi.fn(() => vi.fn()) as ReturnType<typeof vi.fn> & {
     addCustomEvent: ReturnType<typeof vi.fn>
+    mirror: { getNode: typeof mirrorGetNodeMock }
   }
   mockedRecord.addCustomEvent = vi.fn()
+  mockedRecord.mirror = { getNode: mirrorGetNodeMock }
   return { record: mockedRecord }
 })
 
@@ -15,6 +21,7 @@ const recordMock = vi.mocked(record)
 describe('rrweb replay capture', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mirrorGetNodeMock.mockReset()
     window.history.replaceState({}, '', '/checkout')
   })
 
@@ -231,6 +238,11 @@ describe('rrweb replay capture', () => {
     const capture = await startReplayCapture({
       rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'), consentToken: 'consent-token',
     })
+    const live = document.createElement('img')
+    live.className = 'avatar-jane'
+    live.style.cssText = 'display:block;width:80px;height:80px;background-color:rgb(20, 30, 40)'
+    document.body.append(live)
+    mirrorGetNodeMock.mockImplementation(id => id === 9 ? live : null)
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
     emit({
       type: 2, timestamp: 1,
@@ -238,7 +250,7 @@ describe('rrweb replay capture', () => {
         node: {
           type: 0,
           childNodes: [{
-            type: 2, tagName: 'img',
+            type: 2, id: 9, tagName: 'img',
             attributes: {
               id: 'reporter-avatar', src: 'https://cdn.example.com/avatars/jane.doe@example.com.jpg',
               alt: 'Jane Doe', title: 'Jane Doe', 'data-reporter-email': 'jane.doe@example.com', class: 'avatar',
@@ -255,6 +267,10 @@ describe('rrweb replay capture', () => {
       expect(serialized).not.toContain(sentinel)
     }
     expect(serialized).not.toContain('avatar')
+    expect(serialized).toContain('display:block')
+    expect(serialized).toContain('width:80px')
+    expect(serialized).toContain('height:80px')
+    expect(serialized).toContain('background-color:rgb(20, 30, 40)')
   })
 
   it('suppresses canvas frames even when a legacy rule requests capture', async () => {

@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
 import type { WidgetConfiguration, WidgetPresentation, WidgetRule } from '../../src/types'
+
+const rrwebBrowserBundle = fileURLToPath(
+  new URL('../../node_modules/rrweb/umd/rrweb.min.js', import.meta.url),
+)
 
 const browserRule: WidgetRule = {
   id: 'rule-browser', name: 'Checkout', priority: 10,
@@ -1997,7 +2002,8 @@ for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
   }))
 
   await page.goto('/sample.html?email=SENTINEL-QUERY-jane.doe%40example.com&token=SENTINEL-QUERY-TOKEN#SENTINEL-HASH-fragment')
-  await page.waitForTimeout(300)
+  await expect.poll(() => sessionRequests.length).toBeGreaterThan(0)
+  await page.waitForTimeout(100)
   await page.evaluate(() => {
     history.pushState(
       {},
@@ -2022,6 +2028,258 @@ for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
   }
   // The explicit safe-text opt-in still lets known-non-identifying static text through.
   expect(serializedBatches).toContain(safeTextMarker)
+  })
+}
+
+for (const viewport of [
+  { name: 'desktop', width: 1280, height: 800 },
+  { name: 'mobile', width: 390, height: 844 },
+] as const) {
+  test(`anonymous replay preserves safe computed presentation at ${viewport.name} size`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    const replayRule = customerReplayRule({
+      ...browserRule, replay_mode: 'full', replay_sampling_rate: 0,
+    })
+    const baseConfiguration = browserConfiguration(replayRule)
+    const configuration: WidgetConfiguration = {
+      ...baseConfiguration,
+      features: { ...baseConfiguration.features, session_replay: true },
+    }
+    const identitySentinels = [
+      'private-layout-jane',
+      'jane@example.com',
+      'https://example.com/avatar/jane',
+      'PRIVATE-STYLESHEET-JANE',
+    ]
+
+    await seedActiveReplayConsent(page)
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        const style = document.createElement('style')
+        style.textContent = `
+          /* PRIVATE-STYLESHEET-JANE */
+          body { background: rgb(238, 242, 239); }
+          main.private-layout-jane {
+            width: min(640px, calc(100% - 32px));
+            margin: 40px auto;
+          }
+          article.private-layout-jane {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            box-sizing: border-box;
+            width: 100%;
+            padding: 24px 30px;
+            border: 2px solid rgb(20, 125, 100);
+            border-radius: 8px;
+            background-color: rgb(250, 252, 251);
+            color: rgb(23, 32, 29);
+            --reporter-email: "jane@example.com";
+            background-image: url("https://example.com/avatar/jane");
+          }
+          article.private-layout-jane button {
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            font-style: normal;
+          }
+        `
+        document.head.append(style)
+        const main = document.querySelector('main')
+        const article = document.querySelector('article')
+        main?.classList.add('private-layout-jane')
+        article?.classList.add('private-layout-jane')
+        article?.setAttribute('data-reporter-email', 'jane@example.com')
+      }, { once: true })
+    })
+
+    const uploadedBatches: Array<{ bytes: number; events: unknown[] }> = []
+    let sessionCreated = false
+    await page.route('**/v1/widget/config*', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(configuration),
+    }))
+    await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+    await page.route('**/v1/replay/sessions?*', route => {
+      sessionCreated = true
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'presentation-session', session_id: 'presentation-session',
+          rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000,
+        }),
+      })
+    })
+    await page.route('**/v1/replay/sessions/presentation-session/batches?*', async route => {
+      const request = route.request().postDataJSON() as { batch_index: number }
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          presigned_url: `http://127.0.0.1:4173/presentation-upload/${request.batch_index}`,
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          complete_token: `presentation-token-${request.batch_index}`,
+        }),
+      })
+    })
+    await page.route('**/presentation-upload/*', async route => {
+      const body = route.request().postDataBuffer()
+      if (!body) throw new Error('presentation replay upload did not contain a body')
+      uploadedBatches.push({
+        bytes: body.byteLength,
+        events: JSON.parse(body.toString()) as unknown[],
+      })
+      await route.fulfill({ status: 200 })
+    })
+    await page.route(
+      '**/v1/replay/sessions/presentation-session/batches/*/complete?*',
+      route => route.fulfill({ status: 204 }),
+    )
+    await page.route(
+      '**/v1/replay/sessions/presentation-session/finalize?*',
+      route => route.fulfill({ status: 202, contentType: 'application/json', body: '{}' }),
+    )
+
+    await page.goto('/sample.html')
+    await expect.poll(() => sessionCreated).toBe(true)
+    await page.waitForTimeout(100)
+    const original = await page.evaluate(() => {
+      const main = document.querySelector('main')
+      const article = document.querySelector('article')
+      if (!main || !article) throw new Error('presentation fixture is missing')
+      const mainRect = main.getBoundingClientRect()
+      const articleRect = article.getBoundingClientRect()
+      const style = getComputedStyle(article)
+      const buttonStyle = getComputedStyle(article.querySelector('button')!)
+      return {
+        mainX: mainRect.x,
+        articleX: articleRect.x,
+        articleWidth: articleRect.width,
+        display: style.display,
+        paddingTop: style.paddingTop,
+        paddingRight: style.paddingRight,
+        borderRightWidth: style.borderRightWidth,
+        borderRadius: style.borderTopRightRadius,
+        backgroundColor: style.backgroundColor,
+        color: style.color,
+        buttonPaddingLeft: buttonStyle.paddingLeft,
+        buttonBorderStyle: buttonStyle.borderLeftStyle,
+        buttonBorderRadius: buttonStyle.borderTopLeftRadius,
+        buttonBackgroundColor: buttonStyle.backgroundColor,
+      }
+    })
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+    await expect.poll(() => uploadedBatches.length).toBeGreaterThan(0)
+
+    const events = uploadedBatches.flatMap(batch => batch.events)
+    const serialized = JSON.stringify(events)
+    for (const sentinel of identitySentinels) expect(serialized).not.toContain(sentinel)
+    expect(serialized).not.toContain('background-image')
+    expect(serialized).toContain('"style":"')
+    expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
+    expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(512 * 1024)
+
+    await page.addScriptTag({ path: rrwebBrowserBundle })
+    await page.evaluate((capturedEvents) => {
+      const root = document.createElement('div')
+      root.id = 'replay-presentation-proof'
+      root.style.cssText = 'position:absolute;left:0;top:0;background:white;z-index:2147483647'
+      document.body.append(root)
+      const rrweb = (window as typeof window & {
+        rrweb: {
+          Replayer: new (
+            events: unknown[],
+            options: { root: Element; showWarning: boolean; showDebug: boolean },
+          ) => { play(offset?: number): void }
+        }
+      }).rrweb
+      const replayer = new rrweb.Replayer(capturedEvents, {
+        root,
+        showWarning: false,
+        showDebug: false,
+      })
+      replayer.play(0)
+    }, events)
+
+    await expect.poll(() => page.evaluate(() => {
+      const iframe = document.querySelector<HTMLIFrameElement>('#replay-presentation-proof iframe')
+      return iframe?.contentDocument?.querySelectorAll('article').length ?? 0
+    })).toBe(1)
+    const replayed = await page.evaluate(() => {
+      const iframe = document.querySelector<HTMLIFrameElement>('#replay-presentation-proof iframe')
+      const replayDocument = iframe?.contentDocument
+      const main = replayDocument?.querySelector('main')
+      const article = replayDocument?.querySelector('article')
+      if (!main || !article) throw new Error('replayed presentation fixture is missing')
+      const mainRect = main.getBoundingClientRect()
+      const articleRect = article.getBoundingClientRect()
+      const style = getComputedStyle(article)
+      const buttonStyle = getComputedStyle(article.querySelector('button')!)
+      return {
+        mainX: mainRect.x,
+        articleX: articleRect.x,
+        articleWidth: articleRect.width,
+        display: style.display,
+        paddingTop: style.paddingTop,
+        paddingRight: style.paddingRight,
+        borderRightWidth: style.borderRightWidth,
+        borderRadius: style.borderTopRightRadius,
+        backgroundColor: style.backgroundColor,
+        color: style.color,
+        buttonPaddingLeft: buttonStyle.paddingLeft,
+        buttonBorderStyle: buttonStyle.borderLeftStyle,
+        buttonBorderRadius: buttonStyle.borderTopLeftRadius,
+        buttonBackgroundColor: buttonStyle.backgroundColor,
+      }
+    })
+
+    expect(Math.abs(replayed.mainX - original.mainX)).toBeLessThan(2)
+    expect(Math.abs(replayed.articleX - original.articleX)).toBeLessThan(2)
+    expect(Math.abs(replayed.articleWidth - original.articleWidth)).toBeLessThan(2)
+    expect(replayed).toMatchObject({
+      display: original.display,
+      paddingTop: original.paddingTop,
+      paddingRight: original.paddingRight,
+      borderRightWidth: original.borderRightWidth,
+      borderRadius: original.borderRadius,
+      backgroundColor: original.backgroundColor,
+      color: original.color,
+      buttonPaddingLeft: original.buttonPaddingLeft,
+      buttonBorderStyle: original.buttonBorderStyle,
+      buttonBorderRadius: original.buttonBorderRadius,
+      buttonBackgroundColor: original.buttonBackgroundColor,
+    })
+
+    const iframeScreenshot = await page
+      .locator('#replay-presentation-proof iframe')
+      .screenshot({ animations: 'disabled' })
+    const nonBackgroundPixels = await page.evaluate(async dataURL => {
+      const image = new Image()
+      image.src = dataURL
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('2D context unavailable')
+      context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      let count = 0
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (
+          (pixels[offset + 3] ?? 0) > 0 &&
+          (
+            (pixels[offset] ?? 255) < 245 ||
+            (pixels[offset + 1] ?? 255) < 245 ||
+            (pixels[offset + 2] ?? 255) < 245
+          )
+        ) count++
+      }
+      return count
+    }, `data:image/png;base64,${iframeScreenshot.toString('base64')}`)
+    expect(nonBackgroundPixels).toBeGreaterThan(1_000)
   })
 }
 

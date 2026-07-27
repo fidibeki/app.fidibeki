@@ -45,3 +45,45 @@ func TestReplayEventContract(t *testing.T) {
 		t.Fatalf("decodeVerifiedBatch() rejects the contract batch: %v", err)
 	}
 }
+
+func TestReplayPresentationContract(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../../contracts/replay-presentation.json")
+	if err != nil {
+		t.Fatalf("read replay presentation contract: %v", err)
+	}
+	var contract struct {
+		Valid []struct {
+			Name  string `json:"name"`
+			Style string `json:"style"`
+		} `json:"valid"`
+		Invalid []struct {
+			Name  string `json:"name"`
+			Style string `json:"style"`
+		} `json:"invalid"`
+	}
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatalf("decode replay presentation contract: %v", err)
+	}
+	if len(contract.Valid) == 0 || len(contract.Invalid) == 0 {
+		t.Fatal("replay presentation contract needs valid and invalid cases")
+	}
+	for _, entry := range contract.Valid {
+		if !validReplayPresentationStyle(entry.Style) {
+			t.Errorf("validator rejects valid presentation %q: %q", entry.Name, entry.Style)
+		}
+	}
+	for _, entry := range contract.Invalid {
+		if validReplayPresentationStyle(entry.Style) {
+			t.Errorf("validator accepts invalid presentation %q: %q", entry.Name, entry.Style)
+		}
+	}
+	if validReplayPresentationStyle(
+		"grid-template-columns:" + strings.Repeat("1px ", 70),
+	) {
+		t.Error("validator accepts an oversized presentation value")
+	}
+	if validReplayPresentationStyle(strings.Repeat("x", maximumReplayPresentationStyleBytes+1)) {
+		t.Error("validator accepts an oversized presentation style")
+	}
+}

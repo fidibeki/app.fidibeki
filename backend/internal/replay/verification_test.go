@@ -102,7 +102,8 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 		{
 			name: "masked snapshot with explicit safe text",
 			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":0,"id":1,"childNodes":[` +
-				`{"type":2,"id":2,"tagName":"div","attributes":{},"childNodes":[{"type":3,"id":3,"textContent":"**** ***"}]},` +
+				`{"type":2,"id":2,"tagName":"div","attributes":{"style":"display:grid;width:320px;background-color:rgb(255, 255, 255)"},` +
+				`"childNodes":[{"type":3,"id":3,"textContent":"**** ***"}]},` +
 				`{"type":2,"id":4,"tagName":"span","attributes":{"data-fidibeki-safe-text":""},` +
 				`"childNodes":[{"type":3,"id":5,"textContent":"Powered by Fidibeki"}]}]}}}`,
 			valid: true,
@@ -121,10 +122,10 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			name: "masked mutation",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
 				`"adds":[{"parentId":1,"nextId":null,"node":{"type":2,"id":2,"tagName":"div",` +
-				`"attributes":{"data-fidibeki-safe-text":""}}}],` +
+				`"attributes":{"data-fidibeki-safe-text":"","style":"display:flex;column-gap:10px"}}}],` +
 				`"removes":[{"parentId":1,"id":3}],` +
 				`"texts":[{"id":4,"value":"****"}],` +
-				`"attributes":[{"id":2,"attributes":{"data-fidibeki-safe-text":null}}],` +
+				`"attributes":[{"id":2,"attributes":{"data-fidibeki-safe-text":null,"style":"display:grid"}}],` +
 				`"isAttachIframe":false}}`,
 			valid: true,
 		},
@@ -220,6 +221,10 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 		{
 			name:  "identity attribute",
 			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":2,"id":1,"tagName":"img","attributes":{"alt":"Jane Doe"}}}}`,
+		},
+		{
+			name:  "unsafe presentation URL",
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":2,"id":1,"tagName":"div","attributes":{"style":"background-color:url(https://example.com/jane)"}}}}`,
 		},
 		{
 			name:  "invalid tag name",

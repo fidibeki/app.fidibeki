@@ -103,7 +103,11 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     // Interactions inside blocked regions arrive with mirror id -1 and cannot replay;
     // dropping them is expected policy, not a sanitization failure worth reporting.
     if (isUnserializedReplayEvent(event)) return
-    const sanitized = sanitizeReplayEvent(event, location.target)
+    const sanitized = sanitizeReplayEvent(
+      event,
+      location.target,
+      id => record.mirror.getNode(id),
+    )
     if (sanitized === null) {
       options.onError?.(new Error('replay event failed anonymity sanitization and was dropped'))
       return
