@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: warp-ubuntu-latest-x64-2x
+    runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
