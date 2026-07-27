@@ -1,6 +1,7 @@
 package testimonial
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -31,10 +33,15 @@ const (
 
 // HTTPOptions wires the backoffice routes.
 type HTTPOptions struct {
-	Store  Store
-	JWT    *auth.JWTManager
-	Logger *slog.Logger
-	Now    func() time.Time
+	Store            Store
+	JWT              *auth.JWTManager
+	Email            email.Enqueuer
+	PublicBaseURL    string
+	WebPublicBaseURL string
+	BaseDomain       string
+	From             string
+	Logger           *slog.Logger
+	Now              func() time.Time
 }
 
 // HTTPHandler serves the tenant-facing testimonial API.
@@ -207,8 +214,13 @@ func (h *HTTPHandler) requestTestimonial(w http.ResponseWriter, r *http.Request)
 		h.writeStoreError(w, r, err)
 		return
 	}
+	if err := h.enqueueRequestEmail(r.Context(), created, token); err != nil {
+		h.writeRequestEmailError(w, r, created.ID, err)
+		return
+	}
 	// The plaintext token is returned exactly once, for the message the customer
-	// sends. It is never stored and cannot be recovered.
+	// can use as a fallback. PostgreSQL stores only its hash; the queued email
+	// carries the collection URL until the worker processes it.
 	api.WriteJSON(w, http.StatusCreated, map[string]any{
 		"request": created,
 		"token":   token,
@@ -272,7 +284,66 @@ func (h *HTTPHandler) inviteTestimonial(w http.ResponseWriter, r *http.Request) 
 		h.writeStoreError(w, r, err)
 		return
 	}
+	if err := h.enqueueRequestEmail(r.Context(), created, token); err != nil {
+		h.writeRequestEmailError(w, r, created.ID, err)
+		return
+	}
 	api.WriteJSON(w, http.StatusCreated, map[string]any{"request": created, "token": token})
+}
+
+func (h *HTTPHandler) enqueueRequestEmail(
+	ctx context.Context,
+	request Request,
+	token string,
+) error {
+	if h.options.Email == nil {
+		return errors.New("testimonial email queue is not configured")
+	}
+	resolved, ok := appmiddleware.TenantFromContext(ctx)
+	if !ok {
+		return errors.New("testimonial request tenant is unavailable")
+	}
+	message, err := composeRequestMessage(requestMessageInput{
+		From:             h.options.From,
+		To:               request.RecipientEmail,
+		TenantName:       resolved.Name,
+		TenantSlug:       resolved.Slug,
+		Token:            token,
+		Prompt:           request.Prompt,
+		Locale:           request.Locale,
+		ExpiresAt:        request.ExpiresAt,
+		RequestID:        request.ID,
+		PublicBaseURL:    h.options.PublicBaseURL,
+		WebPublicBaseURL: h.options.WebPublicBaseURL,
+		BaseDomain:       h.options.BaseDomain,
+	})
+	if err != nil {
+		return err
+	}
+	return h.options.Email.Enqueue(ctx, message)
+}
+
+func (h *HTTPHandler) writeRequestEmailError(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestID string,
+	err error,
+) {
+	if h.options.Logger != nil {
+		h.options.Logger.ErrorContext(
+			r.Context(),
+			"testimonial request email enqueue failed",
+			"request_id", requestID,
+			"error", err,
+		)
+	}
+	api.WriteError(
+		w,
+		http.StatusServiceUnavailable,
+		api.CodeServiceUnavailable,
+		"testimonial request could not be sent",
+		nil,
+	)
 }
 
 // validEmail is a shape check, not a deliverability check: the address is only

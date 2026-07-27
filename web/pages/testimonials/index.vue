@@ -10,7 +10,7 @@ import type {
 
 const { $apiFetch } = useNuxtApp()
 const { canWrite } = useAuth()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const { message: apiErrorMessage } = useLocalizedAPIError()
 const { plural } = useRegionalFormat()
 const runtime = useRuntimeConfig()
@@ -243,6 +243,9 @@ function closeRequest() {
 }
 
 const requestOpen = computed(() => Boolean(requestFor.value) || inviting.value)
+const requestRecipient = computed(() => inviting.value
+  ? requestEmail.value.trim()
+  : requestFor.value?.reporter_email || '')
 const canSubmitRequest = computed(() => !busyID.value &&
   (!inviting.value || requestEmail.value.includes('@')))
 
@@ -258,13 +261,21 @@ async function submitRequest() {
     const created = candidate
       ? await $apiFetch<{ token: string }>(
         `/v1/testimonial-candidates/${candidate.feedback_id}/request`,
-        { method: 'POST', body: { prompt: requestPrompt.value || null } },
+        {
+          method: 'POST',
+          body: { prompt: requestPrompt.value || null, locale: locale.value },
+        },
       )
       : await $apiFetch<{ token: string }>('/v1/testimonial-requests', {
         method: 'POST',
-        body: { recipient_email: requestEmail.value.trim(), prompt: requestPrompt.value || null },
+        body: {
+          recipient_email: requestEmail.value.trim(),
+          prompt: requestPrompt.value || null,
+          locale: locale.value,
+        },
       })
-    // Shown once. The plaintext is never stored, so it cannot be recovered.
+    // The email is queued by the successful API call. The API returns the token
+    // once so this dialog can also offer a manual sharing link.
     requestLink.value = `${window.location.origin}/testimonials/collect/${created.token}`
   } catch (requestError) {
     mutationError.value = apiErrorMessage(requestError, 'testimonials.requestFailed')
@@ -842,7 +853,9 @@ useHead(() => ({ title: t('testimonials.pageTitle') }))
             <textarea v-model="requestPrompt" class="request-prompt" maxlength="2000" />
           </label>
           <div v-if="requestLink" class="request-link">
-            <p class="section-label">{{ t('testimonials.requestCreated') }}</p>
+            <p class="section-label">
+              {{ t('testimonials.requestCreated', { email: requestRecipient }) }}
+            </p>
             <pre>{{ requestLink }}</pre>
             <button type="button" class="secondary-button" @click="copy(requestLink, 'request')">
               <Copy :size="13" />

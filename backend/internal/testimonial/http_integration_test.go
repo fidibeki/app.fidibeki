@@ -3,6 +3,7 @@ package testimonial
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
@@ -58,11 +60,18 @@ func TestTestimonialAPI(t *testing.T) {
 		string(auth.PermissionTestimonialUpdate),
 	})
 
+	emailQueue := &captureTestimonialEmailQueue{}
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{
-		Store: Store{}, JWT: jwtManager,
-		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
-		Now:    func() time.Time { return now },
+		Store:            Store{},
+		JWT:              jwtManager,
+		Email:            emailQueue,
+		PublicBaseURL:    "https://api.fidibeki.test",
+		WebPublicBaseURL: "https://fidibeki.test",
+		BaseDomain:       "fidibeki.test",
+		From:             "Fidibeki <auth@fidibeki.test>",
+		Logger:           slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Now:              func() time.Time { return now },
 	})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: env.pools.Admin},
@@ -128,13 +137,26 @@ func TestTestimonialAPI(t *testing.T) {
 	}
 	decodeAPI(t, requested, &created)
 	if created.Token == "" {
-		t.Fatal("the plaintext token must be returned once, for the message the customer sends")
+		t.Fatal("the plaintext token must be returned once as a manual fallback")
 	}
 	// An address in the body is ignored rather than honoured: the endpoint is not
 	// a way to send a workspace-branded invitation to an arbitrary inbox.
 	if created.Request.RecipientEmail != "reporter@example.test" {
 		t.Errorf("recipient = %q, want the address on the feedback record",
 			created.Request.RecipientEmail)
+	}
+	if created.Request.SentAt == nil || !created.Request.SentAt.Equal(now) {
+		t.Errorf("sent_at = %v, want queue acceptance time %s", created.Request.SentAt, now)
+	}
+	if len(emailQueue.messages) != 1 {
+		t.Fatalf("queued messages = %d, want one", len(emailQueue.messages))
+	}
+	requestMessage := emailQueue.messages[0]
+	if requestMessage.To != "reporter@example.test" ||
+		!strings.Contains(requestMessage.Text,
+			"https://acme.fidibeki.test/testimonials/collect/"+created.Token) ||
+		!strings.Contains(requestMessage.Text, "Would you be happy for us to publish this?") {
+		t.Errorf("queued request message = %#v", requestMessage)
 	}
 
 	// A feedback with no reporter address, or whose reporter did not agree to be
@@ -162,7 +184,8 @@ func TestTestimonialAPI(t *testing.T) {
 	// different justification: there is no record to draw an address from, so the
 	// customer supplies one out of a relationship only they have.
 	invited := apiCall(handler, http.MethodPost, "/v1/testimonial-requests",
-		`{"recipient_email":"customer@example.test","prompt":"Would you write a line for us?"}`,
+		`{"recipient_email":"customer@example.test","prompt":"Would you write a line for us?",`+
+			`"locale":"pt-PT"}`,
 		fullToken)
 	if invited.Code != http.StatusCreated {
 		t.Fatalf("invite status = %d, body = %s", invited.Code, invited.Body.String())
@@ -178,10 +201,42 @@ func TestTestimonialAPI(t *testing.T) {
 	if invite.Request.RecipientEmail != "customer@example.test" {
 		t.Errorf("invite recipient = %q, want the supplied address", invite.Request.RecipientEmail)
 	}
+	if invite.Request.SentAt == nil || !invite.Request.SentAt.Equal(now) {
+		t.Errorf("invite sent_at = %v, want queue acceptance time %s", invite.Request.SentAt, now)
+	}
+	if len(emailQueue.messages) != 2 {
+		t.Fatalf("queued messages = %d, want two", len(emailQueue.messages))
+	}
+	inviteMessage := emailQueue.messages[1]
+	if inviteMessage.To != "customer@example.test" ||
+		inviteMessage.Subject != "Acme pediu o seu testemunho" ||
+		!strings.Contains(inviteMessage.Text,
+			"https://acme.fidibeki.test/testimonials/collect/"+invite.Token) ||
+		!strings.Contains(inviteMessage.Text, "Would you write a line for us?") {
+		t.Errorf("queued invite message = %#v", inviteMessage)
+	}
 	badInvite := apiCall(handler, http.MethodPost, "/v1/testimonial-requests",
 		`{"recipient_email":"not-an-address"}`, fullToken)
 	if badInvite.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid invite status = %d, want 422", badInvite.Code)
+	}
+
+	emailQueue.err = errors.New("redis unavailable")
+	failedInvite := apiCall(handler, http.MethodPost, "/v1/testimonial-requests",
+		`{"recipient_email":"retry@example.test"}`, fullToken)
+	emailQueue.err = nil
+	if failedInvite.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed enqueue status = %d, want 503 (%s)",
+			failedInvite.Code, failedInvite.Body.String())
+	}
+	var requestCount int
+	if err := env.root.QueryRow(ctx, `
+		SELECT count(*) FROM testimonial_requests WHERE tenant_id = $1
+	`, env.tenantID).Scan(&requestCount); err != nil {
+		t.Fatalf("count requests after failed enqueue: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requests after failed enqueue = %d, want 2", requestCount)
 	}
 	// What we stored must be the digest, never the token itself.
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
@@ -587,6 +642,19 @@ func decodeAPI(t *testing.T, response *httptest.ResponseRecorder, target any) {
 	if err := json.Unmarshal(response.Body.Bytes(), target); err != nil {
 		t.Fatalf("decode response: %v (%s)", err, response.Body.String())
 	}
+}
+
+type captureTestimonialEmailQueue struct {
+	messages []email.Message
+	err      error
+}
+
+func (q *captureTestimonialEmailQueue) Enqueue(_ context.Context, message email.Message) error {
+	if q.err != nil {
+		return q.err
+	}
+	q.messages = append(q.messages, message)
+	return nil
 }
 
 // exerciseWallDesign covers changing how a published wall looks.

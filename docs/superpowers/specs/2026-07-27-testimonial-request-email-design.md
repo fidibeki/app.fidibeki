@@ -22,9 +22,9 @@ link visible as confirmation and a manual fallback.
 - `sent_at` means accepted by the durable email queue. The timestamp is committed
   only when enqueue succeeds; a queue error makes the surrounding tenant
   transaction roll back.
-- The plaintext token remains return-once and is never stored. The queued email
-  necessarily contains the collection URL, while PostgreSQL retains only the
-  token hash.
+- The plaintext token remains return-once through the API. PostgreSQL retains
+  only its hash; the durable email task necessarily carries the collection URL
+  until the worker delivers or exhausts that task.
 - The browser-facing collection URL is built with `tenant.PublicURL` from
   `WEB_PUBLIC_BASE_URL`, `BASE_DOMAIN`, and the resolved tenant slug. No
   environment hostname is hardcoded.

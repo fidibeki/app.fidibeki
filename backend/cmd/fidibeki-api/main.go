@@ -500,7 +500,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})
 	triage.RegisterRoutes(tenantRoutes, triage.HTTPOptions{Store: triage.Store{}, JWT: jwtManager})
 	testimonial.RegisterRoutes(tenantRoutes, testimonial.HTTPOptions{
-		Store: testimonial.Store{}, JWT: jwtManager, Logger: logger,
+		Store: testimonial.Store{}, JWT: jwtManager, Email: emailQueue,
+		PublicBaseURL: settings.PublicBaseURL, WebPublicBaseURL: settings.WebPublicBaseURL,
+		BaseDomain: settings.BaseDomain, From: settings.ResendAuthFrom, Logger: logger,
 	})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
 		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
