@@ -102,6 +102,21 @@ The sequence has at most four messages over approximately 12 days:
 
 Every message contains one low-friction question, no feature dump, no false urgency, and no fabricated familiarity. No message is sent until its individual personalisation is supported by the prospect record.
 
+### Human research and writing standard
+
+Every cold email is written as a thoughtful note from Inês, not as a template with fields swapped in. Before drafting it, Inês researches the prospect's public product surface, messaging, changelog or release activity where available, and the specific user-feedback path relevant to the recipient's role. The research must produce one truthful observation that naturally connects to the problem Fidibeki may solve.
+
+The email must:
+
+- lead with the prospect's world rather than Fidibeki's feature list;
+- use plain, conversational language and vary naturally between recipients;
+- be short enough to read as a personal note;
+- state only observations that can be supported by the public research record;
+- avoid invented use of the product, fake familiarity, generic praise, and AI-sounding phrases;
+- be read aloud once before send; if it sounds templated or promotional, it is rewritten.
+
+Inês genuinely investigates the project before writing. If no relevant, truthful connection to Fidibeki can be found, that contact is not sent an email. Relevance is more valuable than list size.
+
 ### Sender safety and deliverability
 
 Before production outreach, the sender domain must have working SPF, DKIM, and DMARC, and all messages must use SMTP with STARTTLS. Sender volume starts at 10–15 new first touches per weekday and increases only after bounce, deferral, and complaint signals remain healthy.
