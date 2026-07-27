@@ -92,7 +92,8 @@ func TestStoreBillingLifecycle(t *testing.T) {
 
 	trialEnd := now.Add(7 * 24 * time.Hour)
 	subscription := Subscription{
-		ID: "sub_1", CustomerID: "cus_1", PriceID: "price_growth", Status: "trialing", TrialEndsAt: &trialEnd,
+		ID: "sub_1", CustomerID: "cus_1", PriceID: "price_growth", ItemID: "si_growth",
+		Quantity: 1, Status: "trialing", TrialEndsAt: &trialEnd,
 	}
 	processed, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth, IntervalMonthly)
 	if err != nil || !processed {
@@ -100,7 +101,8 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	}
 	loaded, _ = store.Get(ctx, loaded.ID)
 	if loaded.Plan != tenant.PlanScale || loaded.PendingPlan == nil || *loaded.PendingPlan != tenant.PlanGrowth ||
-		loaded.StripeSubscriptionID != "sub_1" || loaded.BillingInterval != "" {
+		loaded.StripeSubscriptionID != "sub_1" || loaded.BillingInterval != "" ||
+		loaded.BillingSeatQuantity != 1 {
 		t.Fatalf("tenant after downgrade = %#v", loaded)
 	}
 	if duplicate, err := store.ApplyEvent(ctx, EventSignal{ID: "evt_updated", Type: "customer.subscription.updated"}, subscription, tenant.PlanGrowth, IntervalMonthly); err != nil || duplicate {
@@ -155,6 +157,68 @@ func TestStoreBillingLifecycle(t *testing.T) {
 	found, err := store.FindByStripeReference(ctx, "cus_1", "")
 	if err != nil || found.ID != loaded.ID {
 		t.Fatalf("FindByStripeReference() = %#v, %v", found, err)
+	}
+
+	var teammateID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email)
+		VALUES ($1, 'teammate@acme.test')
+		RETURNING id
+	`, loaded.ID).Scan(&teammateID); err != nil {
+		t.Fatalf("create seat synchronization member: %v", err)
+	}
+	seatCandidates, err := store.ListSeatSyncCandidates(ctx, 100)
+	if err != nil || len(seatCandidates) != 1 ||
+		seatCandidates[0].ConfirmedQuantity != 1 ||
+		seatCandidates[0].DesiredQuantity != 2 {
+		t.Fatalf("seat candidates after add = %#v, %v", seatCandidates, err)
+	}
+	if err := store.RecordSeatSyncFailure(
+		ctx,
+		loaded.ID,
+		"sub_1",
+		"safe synchronization error",
+	); err != nil {
+		t.Fatalf("RecordSeatSyncFailure() error = %v", err)
+	}
+	loaded, _ = store.Get(ctx, loaded.ID)
+	if loaded.BillingSeatSyncError != "safe synchronization error" ||
+		loaded.BillingSeatSyncAttemptedAt == nil {
+		t.Fatalf("tenant after seat failure = %#v", loaded)
+	}
+	if err := store.RecordSeatSyncSuccess(ctx, loaded.ID, "sub_1", 2); err != nil {
+		t.Fatalf("RecordSeatSyncSuccess(2) error = %v", err)
+	}
+	if candidates, err := store.ListSeatSyncCandidates(ctx, 100); err != nil || len(candidates) != 0 {
+		t.Fatalf("seat candidates after success = %#v, %v", candidates, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE tenant_members SET status = 'removed' WHERE id = $1
+	`, teammateID); err != nil {
+		t.Fatalf("remove seat synchronization member: %v", err)
+	}
+	if candidates, err := store.ListSeatSyncCandidates(ctx, 100); err != nil ||
+		len(candidates) != 1 || candidates[0].DesiredQuantity != 1 {
+		t.Fatalf("seat candidates after removal = %#v, %v", candidates, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE tenants SET billing_model = 'legacy_flat' WHERE id = $1
+	`, loaded.ID); err != nil {
+		t.Fatalf("mark legacy billing fixture: %v", err)
+	}
+	if candidates, err := store.ListSeatSyncCandidates(ctx, 100); err != nil || len(candidates) != 0 {
+		t.Fatalf("legacy seat candidates = %#v, %v", candidates, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE tenants SET billing_model = 'per_seat' WHERE id = $1
+	`, loaded.ID); err != nil {
+		t.Fatalf("restore per-seat billing fixture: %v", err)
+	}
+	if err := store.RecordSeatSyncSuccess(ctx, loaded.ID, "sub_1", 1); err != nil {
+		t.Fatalf("RecordSeatSyncSuccess(1) error = %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM tenant_members WHERE id = $1`, teammateID); err != nil {
+		t.Fatalf("delete seat synchronization member fixture: %v", err)
 	}
 
 	if _, err := store.RequestDeletion(ctx, loaded.ID, signup.MemberID, "wrong"); !errors.Is(err, ErrConfirmation) {
@@ -319,7 +383,12 @@ func testTenantBillingHTTP(t *testing.T, pool *pgxpool.Pool, store Store, curren
 	if got := request(http.MethodGet, "/v1/billing", "", false); got.Code != http.StatusUnauthorized {
 		t.Fatalf("GET billing without auth status = %d", got.Code)
 	}
-	if got := request(http.MethodGet, "/v1/billing", "", true); got.Code != http.StatusOK {
+	if got := request(http.MethodGet, "/v1/billing", "", true); got.Code != http.StatusOK ||
+		!strings.Contains(got.Body.String(), `"billing_model":"per_seat"`) ||
+		!strings.Contains(got.Body.String(), `"billable_seats":1`) ||
+		!strings.Contains(got.Body.String(), `"confirmed_seats":1`) ||
+		!strings.Contains(got.Body.String(), `"seat_sync_status":"not_subscribed"`) ||
+		!strings.Contains(got.Body.String(), `"estimated_total_cents":6799`) {
 		t.Fatalf("GET billing status = %d body = %s", got.Code, got.Body.String())
 	}
 	if got := request(http.MethodPost, "/v1/billing/checkout", `{"plan":"growth"}`, true); got.Code != http.StatusOK {

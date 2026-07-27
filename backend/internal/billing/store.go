@@ -130,6 +130,99 @@ func (s Store) CountBillableSeats(ctx context.Context, tenantID string) (int, er
 	return count, nil
 }
 
+func (s Store) ListSeatSyncCandidates(ctx context.Context, limit int) ([]SeatSyncCandidate, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.Database.Query(ctx, `
+		SELECT tenant.id, tenant.stripe_subscription_id, tenant.billing_seat_quantity,
+		       GREATEST(
+		           1,
+		           count(member.id) FILTER (WHERE member.status <> 'removed')
+		       )::integer AS desired_quantity
+		FROM tenants AS tenant
+		LEFT JOIN tenant_members AS member ON member.tenant_id = tenant.id
+		WHERE tenant.billing_model = 'per_seat'
+		  AND tenant.stripe_subscription_id IS NOT NULL
+		  AND tenant.status IN ('active', 'trial')
+		  AND tenant.deletion_requested_at IS NULL
+		GROUP BY tenant.id
+		HAVING tenant.billing_seat_quantity <> GREATEST(
+		    1,
+		    count(member.id) FILTER (WHERE member.status <> 'removed')
+		)::integer
+		ORDER BY tenant.billing_seat_sync_attempted_at ASC NULLS FIRST, tenant.id
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list seat synchronization candidates: %w", err)
+	}
+	defer rows.Close()
+	candidates := make([]SeatSyncCandidate, 0, limit)
+	for rows.Next() {
+		var candidate SeatSyncCandidate
+		if err := rows.Scan(
+			&candidate.TenantID,
+			&candidate.SubscriptionID,
+			&candidate.ConfirmedQuantity,
+			&candidate.DesiredQuantity,
+		); err != nil {
+			return nil, fmt.Errorf("scan seat synchronization candidate: %w", err)
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate seat synchronization candidates: %w", err)
+	}
+	return candidates, nil
+}
+
+func (s Store) RecordSeatSyncSuccess(
+	ctx context.Context,
+	tenantID string,
+	subscriptionID string,
+	quantity int,
+) error {
+	if _, err := s.Database.Exec(ctx, `
+		UPDATE tenants
+		SET billing_seat_quantity = $3,
+		    billing_seat_sync_attempted_at = $4,
+		    billing_seat_synced_at = $4,
+		    billing_seat_sync_error = NULL
+		WHERE id = $1
+		  AND stripe_subscription_id = $2
+		  AND billing_model = 'per_seat'
+	`, tenantID, subscriptionID, max(1, quantity), s.now()); err != nil {
+		return fmt.Errorf("record seat synchronization success: %w", err)
+	}
+	return nil
+}
+
+func (s Store) RecordSeatSyncFailure(
+	ctx context.Context,
+	tenantID string,
+	subscriptionID string,
+	message string,
+) error {
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	if message == "" {
+		message = "Seat quantity could not be synchronized with Stripe."
+	}
+	if _, err := s.Database.Exec(ctx, `
+		UPDATE tenants
+		SET billing_seat_sync_attempted_at = $3,
+		    billing_seat_sync_error = $4
+		WHERE id = $1
+		  AND stripe_subscription_id = $2
+		  AND billing_model = 'per_seat'
+	`, tenantID, subscriptionID, s.now(), message); err != nil {
+		return fmt.Errorf("record seat synchronization failure: %w", err)
+	}
+	return nil
+}
+
 func (s Store) ApplyEvent(
 	ctx context.Context,
 	event EventSignal,
@@ -200,19 +293,31 @@ func (s Store) ApplyEvent(
 			pending = nil
 		}
 	}
+	seatQuantity := current.BillingSeatQuantity
+	if current.BillingModel == BillingModelPerSeat {
+		seatQuantity = max(1, subscription.Quantity)
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE tenants
 		SET stripe_customer_id = $2, stripe_subscription_id = $3,
-		    plan = $4, pending_plan = $5, billing_interval = $6, status = $7, trial_ends_at = $8
+		    plan = $4, pending_plan = $5, billing_interval = $6, status = $7, trial_ends_at = $8,
+		    billing_seat_quantity = $9,
+		    billing_seat_sync_attempted_at = CASE
+		        WHEN billing_model = 'per_seat' THEN $10 ELSE billing_seat_sync_attempted_at END,
+		    billing_seat_synced_at = CASE
+		        WHEN billing_model = 'per_seat' THEN $10 ELSE billing_seat_synced_at END,
+		    billing_seat_sync_error = CASE
+		        WHEN billing_model = 'per_seat' THEN NULL ELSE billing_seat_sync_error END
 		WHERE id = $1
 	`, current.ID, subscription.CustomerID, subscription.ID, plan, pending, intervalValue(interval),
-		status, subscription.TrialEndsAt); err != nil {
+		status, subscription.TrialEndsAt, seatQuantity, s.now()); err != nil {
 		return false, fmt.Errorf("apply Stripe event: %w", err)
 	}
 	materialChange := current.Status != status || current.Plan != plan ||
 		current.StripeSubscriptionID != subscription.ID ||
 		current.BillingInterval != interval ||
-		planValue(current.PendingPlan) != planValue(pending)
+		planValue(current.PendingPlan) != planValue(pending) ||
+		current.BillingSeatQuantity != seatQuantity
 	if materialChange {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO outbox_events (
@@ -225,14 +330,16 @@ func (s Store) ApplyEvent(
 					'previous_plan', $6::text, 'plan', $7::text,
 					'previous_pending_plan', $8::text, 'pending_plan', $9::text,
 					'previous_billing_interval', $10::text, 'billing_interval', $11::text,
-					'previous_subscription_id', $12::text, 'subscription_id', $13::text
+					'previous_subscription_id', $12::text, 'subscription_id', $13::text,
+					'previous_seat_quantity', $14::integer, 'seat_quantity', $15::integer
 				)
 			)
 			ON CONFLICT (event, resource_type, resource_id, event_key) DO NOTHING
 		`, current.ID, event.ID, event.Type, current.Status, status, current.Plan, plan,
 			planValue(current.PendingPlan), planValue(pending),
 			string(current.BillingInterval), string(interval),
-			current.StripeSubscriptionID, subscription.ID); err != nil {
+			current.StripeSubscriptionID, subscription.ID,
+			current.BillingSeatQuantity, seatQuantity); err != nil {
 			return false, fmt.Errorf("record billing lifecycle event: %w", err)
 		}
 	}

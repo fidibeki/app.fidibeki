@@ -25,6 +25,7 @@ var (
 	ErrDeletionNotPending  = errors.New("tenant deletion is not pending")
 	ErrProviderUnavailable = errors.New("billing provider is unavailable")
 	ErrInvalidWebhook      = errors.New("invalid billing webhook")
+	ErrSubscriptionItems   = errors.New("Stripe subscription must contain exactly one priced item")
 )
 
 type BillingInterval string
@@ -79,6 +80,8 @@ type Subscription struct {
 	ID                string
 	CustomerID        string
 	PriceID           string
+	ItemID            string
+	Quantity          int
 	Status            string
 	TrialEndsAt       *time.Time
 	CancelAtPeriodEnd bool
@@ -112,6 +115,7 @@ type Provider interface {
 	CreateCheckout(context.Context, CheckoutInput) (string, error)
 	CreatePortal(context.Context, string, string) (string, error)
 	RetrieveSubscription(context.Context, string) (Subscription, error)
+	UpdateSubscriptionQuantity(context.Context, string, int, string) error
 	CancelSubscription(context.Context, string) error
 	VerifyEvent([]byte, string) (EventSignal, error)
 }

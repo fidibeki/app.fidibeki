@@ -709,6 +709,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 		AuthFrom: settings.ResendAuthFrom, Logger: logger,
 	}
+	seatReconciler := billing.SeatReconciler{
+		Store: billingStore, Provider: billingProvider, Logger: logger,
+	}
 	memberDigestTokens, err := auth.NewJWTManager(
 		settings.JWTSecret, platformadmin.DefaultIssuer, settings.ReporterTokenTTL,
 	)
@@ -960,7 +963,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 17)
+	backgroundDone := make(chan error, 20)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
@@ -979,6 +982,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
+	go func() { backgroundDone <- seatReconciler.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()
 	workerErr := worker.Run(workerCtx)
 	cancel()
@@ -988,7 +992,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
 		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone,
+		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
+		<-backgroundDone,
 	)
 }
 

@@ -63,6 +63,25 @@ function statusLabel(value: string) {
   return t(`admin.statuses.${value}`)
 }
 
+function seatStatusLabel(value?: BillingSummary['seat_sync_status']) {
+  const key = {
+    legacy: 'seatStatusLegacy',
+    not_subscribed: 'seatStatusNotSubscribed',
+    syncing: 'seatStatusSyncing',
+    failed: 'seatStatusFailed',
+    synced: 'seatStatusSynced',
+  }[value || 'not_subscribed']
+  return t(`admin.billing.${key}`)
+}
+
+function seatEstimate(summary: BillingSummary) {
+  if (summary.estimated_total_cents == null) return ''
+  const key = summary.billing_interval === 'yearly'
+    ? 'admin.billing.seatEstimateYearly'
+    : 'admin.billing.seatEstimateMonthly'
+  return t(key, { price: currency(summary.estimated_total_cents / 100, 'EUR') })
+}
+
 function planPrice(cents: number) {
   return currency(cents / 100, 'EUR')
 }
@@ -168,6 +187,7 @@ useHead(() => ({ title: t('admin.billing.pageTitle') }))
         <div><p class="app-eyebrow">{{ t('admin.billing.currentPlan') }}</p><h2>{{ planLabel(billing.plan) }}</h2><span v-if="billing.pending_plan">{{ t('admin.billing.changesNextPeriod', { plan: planLabel(billing.pending_plan) }) }}</span><span v-else>{{ statusLabel(billing.status) }}<template v-if="billing.billing_interval"> · {{ intervalLabel(billing.billing_interval) }}</template></span></div>
         <div><p class="app-eyebrow">{{ t('admin.billing.trial') }}</p><h2>{{ trialDays == null ? t('admin.billing.notActive') : plural('admin.common.days', trialDays, { count: trialDays }) }}</h2><span>{{ billing.trial_ends_at ? date(billing.trial_ends_at) : t('admin.billing.noTrialEnd') }}</span></div>
         <div><p class="app-eyebrow">{{ t('admin.billing.paymentAccount') }}</p><h2>{{ billing.has_customer ? t('admin.billing.connected') : t('admin.billing.notCreated') }}</h2><span>{{ billing.has_subscription ? t('admin.billing.subscriptionActive') : t('admin.billing.noSubscription') }}</span></div>
+        <div><p class="app-eyebrow">{{ t('admin.billing.seats') }}</p><h2>{{ plural('admin.billing.seatCount', billing.billable_seats || 1, { count: billing.billable_seats || 1 }) }}</h2><span>{{ seatStatusLabel(billing.seat_sync_status) }}<template v-if="seatEstimate(billing)"> · {{ seatEstimate(billing) }}</template></span></div>
         <button v-if="canWrite('billing:manage')" class="app-button" :disabled="pendingAction === 'portal'" @click="openPortal"><CreditCard :size="15" />{{ pendingAction === 'portal' ? t('admin.common.opening') : t('admin.billing.portal') }}<ArrowUpRight :size="13" /></button>
       </section>
 

@@ -63,6 +63,8 @@ const planCatalog = [
     monthly_price_cents: 999,
     yearly_price_cents: 11148,
     yearly_discount_percent: 7,
+    pricing_model: "per_seat",
+    price_unit: "seat",
     limits: {
       projects: 1,
       feedback_per_month: 500,
@@ -84,6 +86,8 @@ const planCatalog = [
     monthly_price_cents: 2999,
     yearly_price_cents: 30948,
     yearly_discount_percent: 14,
+    pricing_model: "per_seat",
+    price_unit: "seat",
     limits: {
       projects: 4,
       feedback_per_month: 2500,
@@ -105,6 +109,8 @@ const planCatalog = [
     monthly_price_cents: 6799,
     yearly_price_cents: 70164,
     yearly_discount_percent: 14,
+    pricing_model: "per_seat",
+    price_unit: "seat",
     limits: {
       projects: 10,
       feedback_per_month: 10000,
@@ -3515,7 +3521,10 @@ async function installMockAPI(page: Page, state: MockState) {
       return route.fulfill({ status: 204 });
     }
 
-    if (path === "/v1/billing" && method === "GET")
+    if (path === "/v1/billing" && method === "GET") {
+      const activePlan = planCatalog.find(
+        (candidate) => candidate.plan === state.tenant.plan,
+      );
       return json(route, {
         billing: {
           plan: state.tenant.plan,
@@ -3524,9 +3533,16 @@ async function installMockAPI(page: Page, state: MockState) {
           trial_ends_at: state.tenant.trial_ends_at,
           has_customer: false,
           has_subscription: false,
+          billing_model: "per_seat",
+          billable_seats: 1,
+          confirmed_seats: 1,
+          seat_sync_status: "not_subscribed",
+          unit_price_cents: activePlan?.monthly_price_cents || null,
+          estimated_total_cents: activePlan?.monthly_price_cents || null,
           deletion_requested_at: state.billingDeletionRequestedAt,
         },
       });
+    }
     if (path === "/v1/billing/delete-account" && method === "POST") {
       state.billingDeletionRequestedAt = now;
       state.tenant.deletion_requested_at = now;
@@ -4051,7 +4067,7 @@ test("starter plan shows unavailable features and euro-denominated prices", asyn
   await authenticate(page, state);
   await openPrimary(page, "Settings");
 
-  await expect(page.getByText("€9.99 / month")).toBeVisible();
+  await expect(page.getByText("€9.99 / seat / month")).toBeVisible();
   const aiFeature = page
     .locator(".settings-features li")
     .filter({ hasText: /^ai$/i });
@@ -4065,7 +4081,10 @@ test("starter plan shows unavailable features and euro-denominated prices", asyn
   ).toBeVisible();
   await expect(
     page.locator(".billing-plan").filter({ hasText: "Starter" }),
-  ).toContainText("€9.99");
+  ).toContainText("€9.99 / seat / month");
+  await expect(page.getByText("1 seat", { exact: true })).toBeVisible();
+  await expect(page.getByText("Starts when you subscribe")).toBeVisible();
+  await expect(page.getByText("€9.99 estimated each month")).toBeVisible();
   await expect(page.locator(".billing-plans")).not.toContainText("$");
   await capture(page, testInfo, "billing-euro-catalog");
 

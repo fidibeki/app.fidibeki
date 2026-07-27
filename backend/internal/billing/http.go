@@ -112,18 +112,64 @@ func (h *HTTPHandler) getBilling(w http.ResponseWriter, r *http.Request) {
 		writeBillingError(w, err)
 		return
 	}
+	billableSeats, err := h.options.Service.Store.CountBillableSeats(r.Context(), resolved.ID)
+	if err != nil {
+		writeBillingError(w, err)
+		return
+	}
+	billableSeats = max(1, billableSeats)
 	var interval *BillingInterval
 	if current.BillingInterval != "" {
 		interval = &current.BillingInterval
 	}
+	model := current.BillingModel
+	if model == "" {
+		model = BillingModelPerSeat
+	}
+	confirmedSeats := max(1, current.BillingSeatQuantity)
+	seatSyncStatus := "synced"
+	switch {
+	case model == BillingModelLegacyFlat:
+		seatSyncStatus = "legacy"
+	case current.StripeSubscriptionID == "":
+		seatSyncStatus = "not_subscribed"
+	case current.BillingSeatSyncError != "":
+		seatSyncStatus = "failed"
+	case confirmedSeats != billableSeats:
+		seatSyncStatus = "syncing"
+	}
+	var unitPriceCents, estimatedTotalCents *int
+	if definition, exists := config.PlanFor(current.Plan); exists {
+		unitPriceCents = definition.MonthlyPriceCents
+		if current.BillingInterval == IntervalYearly {
+			unitPriceCents = definition.YearlyPriceCents
+		}
+		if unitPriceCents != nil {
+			quantity := billableSeats
+			if model == BillingModelLegacyFlat {
+				quantity = 1
+			}
+			total := *unitPriceCents * quantity
+			estimatedTotalCents = &total
+		}
+	}
 	api.WriteJSON(w, http.StatusOK, map[string]any{
 		"billing": map[string]any{
 			"plan": current.Plan, "pending_plan": current.PendingPlan, "status": current.Status,
-			"billing_interval":      interval,
-			"trial_ends_at":         current.TrialEndsAt,
-			"has_customer":          current.StripeCustomerID != "",
-			"has_subscription":      current.StripeSubscriptionID != "",
-			"deletion_requested_at": current.DeletionRequestedAt,
+			"billing_interval":       interval,
+			"trial_ends_at":          current.TrialEndsAt,
+			"has_customer":           current.StripeCustomerID != "",
+			"has_subscription":       current.StripeSubscriptionID != "",
+			"deletion_requested_at":  current.DeletionRequestedAt,
+			"billing_model":          model,
+			"billable_seats":         billableSeats,
+			"confirmed_seats":        confirmedSeats,
+			"seat_sync_status":       seatSyncStatus,
+			"seat_sync_attempted_at": current.BillingSeatSyncAttemptedAt,
+			"seat_synced_at":         current.BillingSeatSyncedAt,
+			"seat_sync_error":        current.BillingSeatSyncError != "",
+			"unit_price_cents":       unitPriceCents,
+			"estimated_total_cents":  estimatedTotalCents,
 		},
 	})
 }

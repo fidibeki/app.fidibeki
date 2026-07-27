@@ -79,14 +79,40 @@ func (p *StripeProvider) RetrieveSubscription(ctx context.Context, subscriptionI
 	if remote.Customer != nil {
 		result.CustomerID = remote.Customer.ID
 	}
-	if remote.Items != nil && len(remote.Items.Data) > 0 && remote.Items.Data[0].Price != nil {
-		result.PriceID = remote.Items.Data[0].Price.ID
+	if remote.Items == nil || remote.Items.HasMore || len(remote.Items.Data) != 1 ||
+		remote.Items.Data[0] == nil || remote.Items.Data[0].ID == "" ||
+		remote.Items.Data[0].Price == nil || remote.Items.Data[0].Price.ID == "" ||
+		remote.Items.Data[0].Quantity < 1 {
+		return Subscription{}, ErrSubscriptionItems
 	}
+	result.ItemID = remote.Items.Data[0].ID
+	result.PriceID = remote.Items.Data[0].Price.ID
+	result.Quantity = int(remote.Items.Data[0].Quantity)
 	if remote.TrialEnd > 0 {
 		trialEnd := time.Unix(remote.TrialEnd, 0).UTC()
 		result.TrialEndsAt = &trialEnd
 	}
 	return result, nil
+}
+
+func (p *StripeProvider) UpdateSubscriptionQuantity(
+	ctx context.Context,
+	itemID string,
+	quantity int,
+	idempotencyKey string,
+) error {
+	if itemID == "" || quantity < 1 || idempotencyKey == "" {
+		return ErrSubscriptionItems
+	}
+	params := &stripe.SubscriptionItemUpdateParams{
+		Quantity:          stripe.Int64(int64(quantity)),
+		ProrationBehavior: stripe.String("create_prorations"),
+	}
+	params.SetIdempotencyKey(idempotencyKey)
+	if _, err := p.client.V1SubscriptionItems.Update(ctx, itemID, params); err != nil {
+		return fmt.Errorf("update Stripe subscription item quantity: %w", err)
+	}
+	return nil
 }
 
 func (p *StripeProvider) CancelSubscription(ctx context.Context, subscriptionID string) error {
@@ -163,6 +189,9 @@ func (UnavailableProvider) CreatePortal(context.Context, string, string) (string
 }
 func (UnavailableProvider) RetrieveSubscription(context.Context, string) (Subscription, error) {
 	return Subscription{}, ErrProviderUnavailable
+}
+func (UnavailableProvider) UpdateSubscriptionQuantity(context.Context, string, int, string) error {
+	return ErrProviderUnavailable
 }
 func (UnavailableProvider) CancelSubscription(context.Context, string) error {
 	return ErrProviderUnavailable

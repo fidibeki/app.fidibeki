@@ -188,13 +188,22 @@ func TestStripeProviderAdapter(t *testing.T) {
 	}
 	subscription, err := provider.RetrieveSubscription(ctx, "sub_test")
 	if err != nil || subscription.ID != "sub_test" || subscription.CustomerID != "cus_test" ||
-		subscription.PriceID != "price_growth" || subscription.TrialEndsAt == nil {
+		subscription.PriceID != "price_growth" || subscription.ItemID != "si_growth" ||
+		subscription.Quantity != 3 || subscription.TrialEndsAt == nil {
 		t.Fatalf("RetrieveSubscription() = %#v, %v", subscription, err)
+	}
+	if err := provider.UpdateSubscriptionQuantity(ctx, subscription.ItemID, 4, "seat-sync:tenant:3:4"); err != nil {
+		t.Fatalf("UpdateSubscriptionQuantity() error = %v", err)
+	}
+	if backend.updatedItemID != "si_growth" || backend.updatedQuantity != 4 ||
+		backend.prorationBehavior != "create_prorations" ||
+		backend.idempotencyKey != "seat-sync:tenant:3:4" {
+		t.Fatalf("subscription update = %#v", backend)
 	}
 	if err := provider.CancelSubscription(ctx, "sub_test"); err != nil {
 		t.Fatalf("CancelSubscription() error = %v", err)
 	}
-	if len(backend.paths) != 5 {
+	if len(backend.paths) != 6 {
 		t.Fatalf("Stripe calls = %v", backend.paths)
 	}
 	if _, ok := NewStripeProvider("sk_test", "whsec_test").(*StripeProvider); !ok {
@@ -213,6 +222,9 @@ func TestStripeProviderAdapter(t *testing.T) {
 	}
 	if _, err := provider.RetrieveSubscription(ctx, "sub"); err == nil {
 		t.Fatal("RetrieveSubscription(error) error = nil")
+	}
+	if err := provider.UpdateSubscriptionQuantity(ctx, "si", 2, "key"); err == nil {
+		t.Fatal("UpdateSubscriptionQuantity(error) error = nil")
 	}
 	if err := provider.CancelSubscription(ctx, "sub"); err == nil {
 		t.Fatal("CancelSubscription(error) error = nil")
@@ -645,6 +657,9 @@ type providerStub struct {
 	checkoutInput       CheckoutInput
 	subscription        Subscription
 	cancelled           string
+	updatedItemID       string
+	updatedQuantity     int
+	updateKey           string
 	verifyErr           error
 	err                 error
 	signal              EventSignal
@@ -670,6 +685,15 @@ func (p *providerStub) CreatePortal(context.Context, string, string) (string, er
 func (p *providerStub) RetrieveSubscription(context.Context, string) (Subscription, error) {
 	return p.subscription, p.err
 }
+func (p *providerStub) UpdateSubscriptionQuantity(
+	_ context.Context,
+	itemID string,
+	quantity int,
+	key string,
+) error {
+	p.updatedItemID, p.updatedQuantity, p.updateKey = itemID, quantity, key
+	return p.err
+}
 func (p *providerStub) CancelSubscription(_ context.Context, id string) error {
 	p.cancelled = id
 	return p.err
@@ -685,10 +709,14 @@ func (p *providerStub) VerifyEvent([]byte, string) (EventSignal, error) {
 }
 
 type stripeBackendStub struct {
-	paths            []string
-	trialEnd         int64
-	err              error
-	checkoutQuantity int64
+	paths             []string
+	trialEnd          int64
+	err               error
+	checkoutQuantity  int64
+	updatedItemID     string
+	updatedQuantity   int64
+	prorationBehavior string
+	idempotencyKey    string
 }
 
 func (b *stripeBackendStub) Call(_ string, path, _ string, params stripe.ParamsContainer, value stripe.LastResponseSetter) error {
@@ -712,9 +740,26 @@ func (b *stripeBackendStub) Call(_ string, path, _ string, params stripe.ParamsC
 	case *stripe.Subscription:
 		target.ID = "sub_test"
 		target.Customer = &stripe.Customer{ID: "cus_test"}
-		target.Items = &stripe.SubscriptionItemList{Data: []*stripe.SubscriptionItem{{Price: &stripe.Price{ID: "price_growth"}}}}
+		target.Items = &stripe.SubscriptionItemList{Data: []*stripe.SubscriptionItem{{
+			ID: "si_growth", Price: &stripe.Price{ID: "price_growth"}, Quantity: 3,
+		}}}
 		target.Status = stripe.SubscriptionStatusTrialing
 		target.TrialEnd = b.trialEnd
+	case *stripe.SubscriptionItem:
+		update, ok := params.(*stripe.SubscriptionItemUpdateParams)
+		if ok {
+			b.updatedItemID = strings.TrimPrefix(path, "/v1/subscription_items/")
+			if update.Quantity != nil {
+				b.updatedQuantity = *update.Quantity
+			}
+			if update.ProrationBehavior != nil {
+				b.prorationBehavior = *update.ProrationBehavior
+			}
+			if update.IdempotencyKey != nil {
+				b.idempotencyKey = *update.IdempotencyKey
+			}
+		}
+		target.ID = b.updatedItemID
 	}
 	return nil
 }

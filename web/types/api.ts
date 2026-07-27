@@ -1454,6 +1454,15 @@ export interface BillingSummary {
   trial_ends_at?: string | null
   has_customer: boolean
   has_subscription: boolean
+  billing_model?: 'legacy_flat' | 'per_seat'
+  billable_seats?: number
+  confirmed_seats?: number
+  seat_sync_status?: 'legacy' | 'not_subscribed' | 'syncing' | 'failed' | 'synced'
+  seat_sync_attempted_at?: string | null
+  seat_synced_at?: string | null
+  seat_sync_error?: boolean
+  unit_price_cents?: number | null
+  estimated_total_cents?: number | null
   deletion_requested_at?: string | null
 }
 
