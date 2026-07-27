@@ -40,6 +40,11 @@ export default defineNuxtConfig({
       failOnError: true,
     },
   },
+  vue: {
+    compilerOptions: {
+      isCustomElement: (tag) => tag === 'fidibeki-wall',
+    },
+  },
   runtimeConfig: {
     public: {
       siteUrl,
