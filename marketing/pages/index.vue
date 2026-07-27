@@ -9,7 +9,7 @@ import { useCases } from '~/data/use-cases'
 const links = useAppLinks()
 const config = useRuntimeConfig()
 const siteUrl = config.public.siteUrl.replace(/\/$/, '')
-const widgetKey = config.public.widgetKey
+const widgetTestimonialsKey = config.public.widgetTestimonialsKey
 
 useSiteMeta({
   title: 'Product feedback that finishes the job',
@@ -270,14 +270,14 @@ useHead({
       </div>
     </section>
 
-    <section v-if="widgetKey" class="section" aria-labelledby="testimonials-heading">
+    <section v-if="widgetTestimonialsKey" class="section" aria-labelledby="testimonials-heading">
       <div class="container">
         <div class="section-head">
           <p class="eyebrow">Testimonials</p>
           <h2 id="testimonials-heading">What customers say about Fidibeki</h2>
         </div>
         <div class="testimonial-widget">
-          <fidibeki-wall :wall="widgetKey" />
+          <fidibeki-wall :wall="widgetTestimonialsKey" />
         </div>
       </div>
     </section>
