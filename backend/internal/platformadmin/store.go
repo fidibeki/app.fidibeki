@@ -2,6 +2,7 @@ package platformadmin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -374,6 +376,96 @@ func (s Store) Overview(ctx context.Context) (BackofficeOverview, error) {
 		return BackofficeOverview{}, fmt.Errorf("iterate backoffice overview plans: %w", err)
 	}
 	return overview, nil
+}
+
+type backofficeTenantCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+// ListBackofficeTenants uses a keyset cursor rather than offsets so inserts
+// cannot shift a later page into duplicates or gaps while an operator works.
+func (s Store) ListBackofficeTenants(
+	ctx context.Context,
+	params BackofficeTenantListParams,
+) (BackofficeTenantPage, error) {
+	var cursorCreatedAt any
+	var cursorID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeTenantCursor(params.Cursor)
+		if err != nil {
+			return BackofficeTenantPage{}, err
+		}
+		cursorCreatedAt = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
+	rows, err := s.Database.Query(ctx, `
+		SELECT id, name, slug, plan, status, trial_ends_at, created_at, updated_at
+		FROM tenants
+		WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR slug ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR status = $2::tenant_status)
+		  AND ($3 = '' OR plan = $3::tenant_plan)
+		  AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid))
+		ORDER BY created_at DESC, id DESC
+		LIMIT $6
+	`, params.Query, string(params.Status), string(params.Plan), cursorCreatedAt, cursorID, params.Limit+1)
+	if err != nil {
+		return BackofficeTenantPage{}, fmt.Errorf("list backoffice tenants: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeTenantPage{Tenants: make([]BackofficeTenantSummary, 0, params.Limit)}
+	for rows.Next() {
+		var record BackofficeTenantSummary
+		var trialEndsAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&record.ID, &record.Name, &record.Slug, &record.Plan, &record.Status,
+			&trialEndsAt, &record.CreatedAt, &record.UpdatedAt,
+		); err != nil {
+			return BackofficeTenantPage{}, fmt.Errorf("scan backoffice tenant: %w", err)
+		}
+		if trialEndsAt.Valid {
+			record.TrialEndsAt = &trialEndsAt.Time
+		}
+		page.Tenants = append(page.Tenants, record)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeTenantPage{}, fmt.Errorf("iterate backoffice tenants: %w", err)
+	}
+	if len(page.Tenants) > params.Limit {
+		last := page.Tenants[params.Limit-1]
+		nextCursor, err := encodeBackofficeTenantCursor(backofficeTenantCursor{
+			CreatedAt: last.CreatedAt, ID: last.ID,
+		})
+		if err != nil {
+			return BackofficeTenantPage{}, err
+		}
+		page.NextCursor = nextCursor
+		page.Tenants = page.Tenants[:params.Limit]
+	}
+	return page, nil
+}
+
+func encodeBackofficeTenantCursor(cursor backofficeTenantCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode backoffice tenant cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeBackofficeTenantCursor(value string) (backofficeTenantCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(payload) == 0 || len(payload) > 512 {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	var cursor backofficeTenantCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.CreatedAt.IsZero() {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	if _, err := uuid.Parse(cursor.ID); err != nil {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func (s Store) CreateTenant(ctx context.Context, input CreateTenantParams) (TenantRecord, error) {

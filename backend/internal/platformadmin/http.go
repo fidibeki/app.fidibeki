@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ type TenantStore interface {
 
 type BackofficeStore interface {
 	Overview(context.Context) (BackofficeOverview, error)
+	ListBackofficeTenants(context.Context, BackofficeTenantListParams) (BackofficeTenantPage, error)
 }
 
 type HTTPOptions struct {
@@ -75,6 +77,8 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 	router.Post("/admin/backoffice/auth/login", handler.backofficeLogin)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
 		Get("/admin/backoffice/overview", handler.backofficeOverview)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants", handler.backofficeTenants)
 
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantCreate)).
 		Post("/admin/tenants", handler.createTenant)
@@ -113,6 +117,63 @@ func (h *HTTPHandler) backofficeOverview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]BackofficeOverview{"overview": overview})
+}
+
+func (h *HTTPHandler) backofficeTenants(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	params, err := parseBackofficeTenantListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
+	}
+	page, err := h.options.Backoffice.ListBackofficeTenants(r.Context(), params)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseBackofficeTenantListParams(r *http.Request) (BackofficeTenantListParams, error) {
+	query := r.URL.Query()
+	params := BackofficeTenantListParams{
+		Query:  strings.TrimSpace(query.Get("q")),
+		Cursor: strings.TrimSpace(query.Get("cursor")),
+		Limit:  25,
+	}
+	if len(params.Query) > 120 {
+		return BackofficeTenantListParams{}, errors.New("q must not exceed 120 characters")
+	}
+	if rawLimit := query.Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeTenantListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if rawStatus := strings.TrimSpace(query.Get("status")); rawStatus != "" {
+		params.Status = tenant.Status(rawStatus)
+		switch params.Status {
+		case tenant.StatusActive, tenant.StatusTrial, tenant.StatusSuspended, tenant.StatusCancelled:
+		default:
+			return BackofficeTenantListParams{}, errors.New("status is invalid")
+		}
+	}
+	if rawPlan := strings.TrimSpace(query.Get("plan")); rawPlan != "" {
+		params.Plan = tenant.Plan(rawPlan)
+		if _, exists := config.PlanFor(params.Plan); !exists {
+			return BackofficeTenantListParams{}, errors.New("plan is invalid")
+		}
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeTenantCursor(params.Cursor); err != nil {
+			return BackofficeTenantListParams{}, err
+		}
+	}
+	return params, nil
 }
 
 func (h *HTTPHandler) requestLogin(

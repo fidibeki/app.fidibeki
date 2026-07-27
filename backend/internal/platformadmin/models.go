@@ -85,3 +85,30 @@ type BackofficePlanCount struct {
 	Plan           tenant.Plan `json:"plan"`
 	WorkspaceCount int64       `json:"workspace_count"`
 }
+
+// BackofficeTenantSummary intentionally excludes billing and owner email. The
+// directory is a high-volume operational surface; contact information belongs
+// to the separately authorized workspace-detail projection.
+type BackofficeTenantSummary struct {
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Slug        string        `json:"slug"`
+	Plan        tenant.Plan   `json:"plan"`
+	Status      tenant.Status `json:"status"`
+	TrialEndsAt *time.Time    `json:"trial_ends_at,omitempty"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+type BackofficeTenantPage struct {
+	Tenants    []BackofficeTenantSummary `json:"tenants"`
+	NextCursor string                    `json:"next_cursor,omitempty"`
+}
+
+type BackofficeTenantListParams struct {
+	Query  string
+	Status tenant.Status
+	Plan   tenant.Plan
+	Limit  int
+	Cursor string
+}

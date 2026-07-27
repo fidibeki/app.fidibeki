@@ -175,6 +175,46 @@ func TestBackofficeOverviewRequiresPlatformReadPermission(t *testing.T) {
 	}
 }
 
+func TestBackofficeTenantDirectoryValidatesFiltersAndReturnsCursorPage(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+	})
+	createdAt := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeBackofficeStore{tenantPage: BackofficeTenantPage{
+		Tenants: []BackofficeTenantSummary{{
+			ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Name: "Acme", Slug: "acme",
+			Plan: tenant.PlanGrowth, Status: tenant.StatusActive, CreatedAt: createdAt, UpdatedAt: createdAt,
+		}},
+		NextCursor: "opaque-next-cursor",
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	invalid := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants?status=unknown", nil)
+	invalidRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalid, invalidRequest)
+	if invalid.Code != http.StatusUnprocessableEntity || store.tenantListCalled {
+		t.Fatalf("invalid filter status = %d, called = %t, body = %s", invalid.Code, store.tenantListCalled, invalid.Body.String())
+	}
+
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet,
+		"/admin/backoffice/tenants?q=acme&status=active&plan=growth&limit=1", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("allowed status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+	if store.tenantList.Query != "acme" || store.tenantList.Status != tenant.StatusActive ||
+		store.tenantList.Plan != tenant.PlanGrowth || store.tenantList.Limit != 1 ||
+		!strings.Contains(allowed.Body.String(), `"next_cursor":"opaque-next-cursor"`) {
+		t.Errorf("list params = %#v, body = %s", store.tenantList, allowed.Body.String())
+	}
+}
+
 func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
 	t.Parallel()
 
@@ -516,12 +556,21 @@ type fakeTenantStore struct {
 }
 
 type fakeBackofficeStore struct {
-	overview BackofficeOverview
-	err      error
+	overview         BackofficeOverview
+	tenantPage       BackofficeTenantPage
+	tenantList       BackofficeTenantListParams
+	tenantListCalled bool
+	err              error
 }
 
 func (s *fakeBackofficeStore) Overview(context.Context) (BackofficeOverview, error) {
 	return s.overview, s.err
+}
+
+func (s *fakeBackofficeStore) ListBackofficeTenants(_ context.Context, params BackofficeTenantListParams) (BackofficeTenantPage, error) {
+	s.tenantListCalled = true
+	s.tenantList = params
+	return s.tenantPage, s.err
 }
 
 func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {
