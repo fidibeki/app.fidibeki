@@ -9,7 +9,7 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 ## FidelicAI
 
 **To:** `hello@fidelic.ai`  
-**Subject:** `after an agent ships`
+**Subject:** `After an agent ships`
 
 > Hi FidelicAI team,
 >
@@ -18,11 +18,13 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 > I’m asking because we’re building Fidibeki around that handoff from “this didn’t work” to a product decision.
 >
 > Inês
+> Co-founder, Fidibeki
+> https://fidibeki.com
 
 ## Kanso Labs
 
 **To:** `hello@kansohq.com`  
-**Subject:** `after launch`
+**Subject:** `After launch`
 
 > Hi Kanso team,
 >
@@ -31,11 +33,13 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 > We’re building Fidibeki for the messy reports that arrive once real people start using a product.
 >
 > Inês
+> Co-founder, Fidibeki
+> https://fidibeki.com
 
 ## Overflow Labs
 
 **To:** `hello@overflowlabs.org`  
-**Subject:** `once it is live`
+**Subject:** `Once it is live`
 
 > Hi Overflow team,
 >
@@ -44,11 +48,13 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 > We’re working on Fidibeki for that part.
 >
 > Inês
+> Co-founder, Fidibeki
+> https://fidibeki.com
 
 ## PivotStack
 
 **To:** `hello@pivotstack.io`  
-**Subject:** `after handover`
+**Subject:** `After handover`
 
 > Hi PivotStack team,
 >
@@ -57,6 +63,8 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 > We’re building Fidibeki to make that conversation less of a game of telephone.
 >
 > Inês
+> Co-founder, Fidibeki
+> https://fidibeki.com
 
 ## Quality gate
 

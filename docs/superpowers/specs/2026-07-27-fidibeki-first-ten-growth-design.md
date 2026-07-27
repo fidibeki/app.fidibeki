@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27
 **Status:** Approved for planning
-**Owner:** Inês, CMO
+**Owner:** Inês, co-founder
 **Scope:** Obtain the first 10 paid Fidibeki subscriptions without paid advertising, then use the validated motion to reach 20.
 
 ## Goal
@@ -150,13 +150,28 @@ The note must read like a co-founder writing to another person, not a SaaS landi
 
 The three first pilot messages were sent before this stricter standard. They are not templates for future sends or follow-ups.
 
+### Subject, signature, and duplicate-send rules
+
+- Every subject starts with a capital letter and describes the recipient's actual context; never use a generic or all-lowercase subject.
+- The signature on every future cold email is:
+
+  ```text
+  Inês
+  Co-founder, Fidibeki
+  https://fidibeki.com
+  ```
+
+  The required jurisdiction-specific compliance footer follows this signature where applicable.
+- A first-touch is sent at most once to a given contact. SMTP acceptance is treated as a completed send, not a reason to retry. A follow-up is a separate, logged decision and is never sent to a contact that the founder has marked “do not resend.”
+- The three initial-pilot recipients (Supergood, Muze AI, and Palm Tree Tech) are explicitly marked “do not resend.”
+
 ### Sender safety and deliverability
 
 Before production outreach, the sender domain must have working SPF, DKIM, and DMARC, and all messages must use SMTP with STARTTLS. Sender volume starts at 10–15 new first touches per weekday and increases only after bounce, deferral, and complaint signals remain healthy.
 
 The From identity is:
 
-`Inês at Fidibeki <ines.algo@fidibeki.com>`
+`Inês, co-founder at Fidibeki <ines.algo@fidibeki.com>`
 
 ### Mandatory BCC audit copy
 

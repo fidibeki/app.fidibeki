@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27
 **Status:** Research only — no messages drafted or sent
-**Owner:** Inês, CMO
+**Owner:** Inês, co-founder
 **Prerequisite:** Review the first US pilot's delivery, reply, and suppression signals before considering any send.
 
 ## Purpose
