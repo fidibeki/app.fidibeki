@@ -40,4 +40,3 @@ CREATE INDEX idx_tenants_per_seat_subscriptions
     ON tenants (id)
     WHERE billing_model = 'per_seat'
       AND stripe_subscription_id IS NOT NULL;
-
