@@ -112,3 +112,26 @@ type BackofficeTenantListParams struct {
 	Limit  int
 	Cursor string
 }
+
+type BackofficeTenantDetail struct {
+	Tenant        TenantRecord `json:"tenant"`
+	MemberCount   int64        `json:"member_count"`
+	ProjectCount  int64        `json:"project_count"`
+	FeedbackCount int64        `json:"feedback_count"`
+}
+
+// BackofficeAccessEvent intentionally excludes the ledger's JSON data column:
+// event data can be useful evidence but may contain personal information and is
+// not required for platform-level operational triage.
+type BackofficeAccessEvent struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	ActorType string    `json:"actor_type"`
+	Action    *string   `json:"action,omitempty"`
+	Outcome   *string   `json:"outcome,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type BackofficeAccessEventPage struct {
+	Events []BackofficeAccessEvent `json:"events"`
+}

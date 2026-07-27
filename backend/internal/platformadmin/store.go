@@ -445,6 +445,65 @@ func (s Store) ListBackofficeTenants(
 	return page, nil
 }
 
+func (s Store) GetBackofficeTenant(ctx context.Context, tenantID string) (BackofficeTenantDetail, error) {
+	var detail BackofficeTenantDetail
+	var billingEmail pgtype.Text
+	var trialEndsAt pgtype.Timestamptz
+	err := s.Database.QueryRow(ctx, `
+		SELECT t.id, t.name, t.slug, t.plan, t.status, t.billing_email, t.trial_ends_at, t.created_at, t.updated_at,
+		       (SELECT count(*) FROM tenant_members WHERE tenant_id = t.id),
+		       (SELECT count(*) FROM projects WHERE tenant_id = t.id),
+		       (SELECT count(*) FROM feedbacks WHERE tenant_id = t.id)
+		FROM tenants AS t WHERE t.id = $1
+	`, tenantID).Scan(&detail.Tenant.ID, &detail.Tenant.Name, &detail.Tenant.Slug, &detail.Tenant.Plan, &detail.Tenant.Status,
+		&billingEmail, &trialEndsAt, &detail.Tenant.CreatedAt, &detail.Tenant.UpdatedAt,
+		&detail.MemberCount, &detail.ProjectCount, &detail.FeedbackCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BackofficeTenantDetail{}, ErrTenantNotFound
+	}
+	if err != nil {
+		return BackofficeTenantDetail{}, fmt.Errorf("get backoffice tenant: %w", err)
+	}
+	if billingEmail.Valid {
+		detail.Tenant.BillingEmail = &billingEmail.String
+	}
+	if trialEndsAt.Valid {
+		detail.Tenant.TrialEndsAt = &trialEndsAt.Time
+	}
+	return detail, nil
+}
+
+func (s Store) ListBackofficeAccessEvents(ctx context.Context, tenantID string, limit int) (BackofficeAccessEventPage, error) {
+	rows, err := s.Database.Query(ctx, `
+		SELECT id, kind, actor_type, action, outcome, created_at
+		FROM tenant_access_events WHERE tenant_id = $1
+		ORDER BY created_at DESC, id DESC LIMIT $2
+	`, tenantID, limit)
+	if err != nil {
+		return BackofficeAccessEventPage{}, fmt.Errorf("list backoffice access events: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeAccessEventPage{Events: make([]BackofficeAccessEvent, 0, limit)}
+	for rows.Next() {
+		var event BackofficeAccessEvent
+		var action, outcome pgtype.Text
+		if err := rows.Scan(&event.ID, &event.Kind, &event.ActorType, &action, &outcome, &event.CreatedAt); err != nil {
+			return BackofficeAccessEventPage{}, fmt.Errorf("scan backoffice access event: %w", err)
+		}
+		if action.Valid {
+			event.Action = &action.String
+		}
+		if outcome.Valid {
+			event.Outcome = &outcome.String
+		}
+		page.Events = append(page.Events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeAccessEventPage{}, fmt.Errorf("iterate backoffice access events: %w", err)
+	}
+	return page, nil
+}
+
 func encodeBackofficeTenantCursor(cursor backofficeTenantCursor) (string, error) {
 	payload, err := json.Marshal(cursor)
 	if err != nil {

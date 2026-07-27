@@ -215,6 +215,44 @@ func TestBackofficeTenantDirectoryValidatesFiltersAndReturnsCursorPage(t *testin
 	}
 }
 
+func TestBackofficeTenantDetailAndAuditRequireReadPermissionAndRejectInvalidIDs(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{detail: BackofficeTenantDetail{
+		Tenant:      TenantRecord{ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Name: "Acme", Slug: "acme"},
+		MemberCount: 4, ProjectCount: 2, FeedbackCount: 9,
+	}, auditPage: BackofficeAccessEventPage{Events: []BackofficeAccessEvent{{
+		ID: "27a8e82a-8347-45e6-8f35-b0cc4114a75c", Kind: "ownership.provisioned", ActorType: "platform_admin",
+	}}}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantRead)})
+	invalid := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/not-a-uuid", nil)
+	invalidRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalid, invalidRequest)
+	if invalid.Code != http.StatusUnprocessableEntity || store.detailCalled {
+		t.Fatalf("invalid detail status = %d, called = %t", invalid.Code, store.detailCalled)
+	}
+
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || !strings.Contains(allowed.Body.String(), `"feedback_count":9`) || strings.Contains(allowed.Body.String(), "token") {
+		t.Fatalf("detail status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+
+	audit := httptest.NewRecorder()
+	auditRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/access-events?limit=10", nil)
+	auditRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(audit, auditRequest)
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), `"ownership.provisioned"`) {
+		t.Fatalf("audit status = %d, body = %s", audit.Code, audit.Body.String())
+	}
+}
+
 func TestVerifySetsStrictHTTPOnlyRefreshCookie(t *testing.T) {
 	t.Parallel()
 
@@ -560,6 +598,9 @@ type fakeBackofficeStore struct {
 	tenantPage       BackofficeTenantPage
 	tenantList       BackofficeTenantListParams
 	tenantListCalled bool
+	detail           BackofficeTenantDetail
+	detailCalled     bool
+	auditPage        BackofficeAccessEventPage
 	err              error
 }
 
@@ -571,6 +612,13 @@ func (s *fakeBackofficeStore) ListBackofficeTenants(_ context.Context, params Ba
 	s.tenantListCalled = true
 	s.tenantList = params
 	return s.tenantPage, s.err
+}
+func (s *fakeBackofficeStore) GetBackofficeTenant(_ context.Context, _ string) (BackofficeTenantDetail, error) {
+	s.detailCalled = true
+	return s.detail, s.err
+}
+func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, _ int) (BackofficeAccessEventPage, error) {
+	return s.auditPage, s.err
 }
 
 func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {

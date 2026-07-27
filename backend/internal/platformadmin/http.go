@@ -41,6 +41,8 @@ type TenantStore interface {
 type BackofficeStore interface {
 	Overview(context.Context) (BackofficeOverview, error)
 	ListBackofficeTenants(context.Context, BackofficeTenantListParams) (BackofficeTenantPage, error)
+	GetBackofficeTenant(context.Context, string) (BackofficeTenantDetail, error)
+	ListBackofficeAccessEvents(context.Context, string, int) (BackofficeAccessEventPage, error)
 }
 
 type HTTPOptions struct {
@@ -79,6 +81,10 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 		Get("/admin/backoffice/overview", handler.backofficeOverview)
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
 		Get("/admin/backoffice/tenants", handler.backofficeTenants)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants/{tenantID}", handler.backofficeTenant)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants/{tenantID}/access-events", handler.backofficeAccessEvents)
 
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantCreate)).
 		Post("/admin/tenants", handler.createTenant)
@@ -135,6 +141,62 @@ func (h *HTTPHandler) backofficeTenants(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func (h *HTTPHandler) backofficeTenant(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	detail, err := h.options.Backoffice.GetBackofficeTenant(r.Context(), tenantID)
+	if errors.Is(err, ErrTenantNotFound) {
+		writeTenantError(w, err)
+		return
+	}
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) backofficeAccessEvents(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	limit := 25
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "limit must be between 1 and 100", nil)
+			return
+		}
+		limit = parsed
+	}
+	page, err := h.options.Backoffice.ListBackofficeAccessEvents(r.Context(), tenantID, limit)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func backofficeTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := chi.URLParam(r, "tenantID")
+	if _, err := uuid.Parse(id); err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "tenant ID is invalid", nil)
+		return "", false
+	}
+	return id, true
 }
 
 func parseBackofficeTenantListParams(r *http.Request) (BackofficeTenantListParams, error) {
