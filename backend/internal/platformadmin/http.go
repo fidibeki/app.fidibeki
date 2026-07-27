@@ -42,7 +42,7 @@ type BackofficeStore interface {
 	Overview(context.Context) (BackofficeOverview, error)
 	ListBackofficeTenants(context.Context, BackofficeTenantListParams) (BackofficeTenantPage, error)
 	GetBackofficeTenant(context.Context, string) (BackofficeTenantDetail, error)
-	ListBackofficeAccessEvents(context.Context, string, int) (BackofficeAccessEventPage, error)
+	ListBackofficeAccessEvents(context.Context, string, BackofficeAccessEventListParams) (BackofficeAccessEventPage, error)
 }
 
 type HTTPOptions struct {
@@ -173,21 +173,34 @@ func (h *HTTPHandler) backofficeAccessEvents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	limit := 25
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 100 {
-			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "limit must be between 1 and 100", nil)
-			return
-		}
-		limit = parsed
+	params, err := parseBackofficeAccessEventListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
 	}
-	page, err := h.options.Backoffice.ListBackofficeAccessEvents(r.Context(), tenantID, limit)
+	page, err := h.options.Backoffice.ListBackofficeAccessEvents(r.Context(), tenantID, params)
 	if err != nil {
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 		return
 	}
 	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseBackofficeAccessEventListParams(r *http.Request) (BackofficeAccessEventListParams, error) {
+	params := BackofficeAccessEventListParams{Limit: 25, Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeAccessEventListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeAccessEventCursor(params.Cursor); err != nil {
+			return BackofficeAccessEventListParams{}, err
+		}
+	}
+	return params, nil
 }
 
 func backofficeTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {

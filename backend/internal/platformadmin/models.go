@@ -133,5 +133,11 @@ type BackofficeAccessEvent struct {
 }
 
 type BackofficeAccessEventPage struct {
-	Events []BackofficeAccessEvent `json:"events"`
+	Events     []BackofficeAccessEvent `json:"events"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+}
+
+type BackofficeAccessEventListParams struct {
+	Limit  int
+	Cursor string
 }

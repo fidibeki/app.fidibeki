@@ -449,6 +449,30 @@ func TestStoreBackofficeOverviewAndKeysetDirectory(t *testing.T) {
 	if _, err := store.ListBackofficeTenants(ctx, BackofficeTenantListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
 		t.Fatal("invalid cursor error = nil")
 	}
+
+	var newestID string
+	if err := database.QueryRow(ctx, `SELECT id FROM tenants WHERE slug = 'newest-acme'`).Scan(&newestID); err != nil {
+		t.Fatalf("find audit tenant: %v", err)
+	}
+	for index, createdAt := range []time.Time{now, now.Add(-time.Minute)} {
+		if _, err := database.Exec(ctx, `
+			INSERT INTO tenant_access_events (tenant_id, kind, data, created_at)
+			VALUES ($1, $2, '{"private":"not in projection"}'::jsonb, $3)
+		`, newestID, "workspace.audit_"+string(rune('a'+index)), createdAt); err != nil {
+			t.Fatalf("seed audit event %d: %v", index, err)
+		}
+	}
+	firstAudit, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1})
+	if err != nil || len(firstAudit.Events) != 1 || firstAudit.NextCursor == "" || firstAudit.Events[0].Kind != "workspace.audit_a" {
+		t.Fatalf("first audit page = %#v, error = %v", firstAudit, err)
+	}
+	secondAudit, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1, Cursor: firstAudit.NextCursor})
+	if err != nil || len(secondAudit.Events) != 1 || secondAudit.NextCursor != "" || secondAudit.Events[0].Kind != "workspace.audit_b" {
+		t.Fatalf("second audit page = %#v, error = %v", secondAudit, err)
+	}
+	if _, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
+		t.Fatal("invalid audit cursor error = nil")
+	}
 }
 
 func platformMigrationsPath(t *testing.T) string {

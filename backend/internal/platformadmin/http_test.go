@@ -236,6 +236,15 @@ func TestBackofficeTenantDetailAndAuditRequireReadPermissionAndRejectInvalidIDs(
 		t.Fatalf("invalid detail status = %d, called = %t", invalid.Code, store.detailCalled)
 	}
 
+	invalidCursor := httptest.NewRecorder()
+	invalidCursorRequest := httptest.NewRequest(http.MethodGet,
+		"/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/access-events?cursor=not-a-cursor", nil)
+	invalidCursorRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalidCursor, invalidCursorRequest)
+	if invalidCursor.Code != http.StatusUnprocessableEntity || store.auditCalled {
+		t.Fatalf("invalid audit cursor status = %d, called = %t", invalidCursor.Code, store.auditCalled)
+	}
+
 	allowed := httptest.NewRecorder()
 	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c", nil)
 	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
@@ -601,6 +610,8 @@ type fakeBackofficeStore struct {
 	detail           BackofficeTenantDetail
 	detailCalled     bool
 	auditPage        BackofficeAccessEventPage
+	auditParams      BackofficeAccessEventListParams
+	auditCalled      bool
 	err              error
 }
 
@@ -617,7 +628,9 @@ func (s *fakeBackofficeStore) GetBackofficeTenant(_ context.Context, _ string) (
 	s.detailCalled = true
 	return s.detail, s.err
 }
-func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, _ int) (BackofficeAccessEventPage, error) {
+func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
+	s.auditCalled = true
+	s.auditParams = params
 	return s.auditPage, s.err
 }
 

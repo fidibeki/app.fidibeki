@@ -473,17 +473,35 @@ func (s Store) GetBackofficeTenant(ctx context.Context, tenantID string) (Backof
 	return detail, nil
 }
 
-func (s Store) ListBackofficeAccessEvents(ctx context.Context, tenantID string, limit int) (BackofficeAccessEventPage, error) {
+type backofficeAccessEventCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+// ListBackofficeAccessEvents paginates the metadata-only ledger with a
+// keyset cursor. The event JSON data column is deliberately never selected.
+func (s Store) ListBackofficeAccessEvents(ctx context.Context, tenantID string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
+	var cursorCreatedAt any
+	var cursorID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeAccessEventCursor(params.Cursor)
+		if err != nil {
+			return BackofficeAccessEventPage{}, err
+		}
+		cursorCreatedAt, cursorID = cursor.CreatedAt, cursor.ID
+	}
 	rows, err := s.Database.Query(ctx, `
 		SELECT id, kind, actor_type, action, outcome, created_at
-		FROM tenant_access_events WHERE tenant_id = $1
-		ORDER BY created_at DESC, id DESC LIMIT $2
-	`, tenantID, limit)
+		FROM tenant_access_events
+		WHERE tenant_id = $1
+		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::uuid))
+		ORDER BY created_at DESC, id DESC LIMIT $4
+	`, tenantID, cursorCreatedAt, cursorID, params.Limit+1)
 	if err != nil {
 		return BackofficeAccessEventPage{}, fmt.Errorf("list backoffice access events: %w", err)
 	}
 	defer rows.Close()
-	page := BackofficeAccessEventPage{Events: make([]BackofficeAccessEvent, 0, limit)}
+	page := BackofficeAccessEventPage{Events: make([]BackofficeAccessEvent, 0, params.Limit)}
 	for rows.Next() {
 		var event BackofficeAccessEvent
 		var action, outcome pgtype.Text
@@ -501,7 +519,39 @@ func (s Store) ListBackofficeAccessEvents(ctx context.Context, tenantID string, 
 	if err := rows.Err(); err != nil {
 		return BackofficeAccessEventPage{}, fmt.Errorf("iterate backoffice access events: %w", err)
 	}
+	if len(page.Events) > params.Limit {
+		last := page.Events[params.Limit-1]
+		nextCursor, err := encodeBackofficeAccessEventCursor(backofficeAccessEventCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		if err != nil {
+			return BackofficeAccessEventPage{}, err
+		}
+		page.NextCursor = nextCursor
+		page.Events = page.Events[:params.Limit]
+	}
 	return page, nil
+}
+
+func encodeBackofficeAccessEventCursor(cursor backofficeAccessEventCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode backoffice access event cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeBackofficeAccessEventCursor(value string) (backofficeAccessEventCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(payload) == 0 || len(payload) > 512 {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	var cursor backofficeAccessEventCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.CreatedAt.IsZero() {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	if _, err := uuid.Parse(cursor.ID); err != nil {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func encodeBackofficeTenantCursor(cursor backofficeTenantCursor) (string, error) {
