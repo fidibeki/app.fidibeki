@@ -327,14 +327,14 @@ func exerciseVideoReviewGate(
 // recording, and confirming it arrived.
 func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvironment) {
 	t.Helper()
-	collect := env.collectServer(t)
+	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
+	collect := env.collectServer(t, now)
 	defer collect.Close()
 
 	token, tokenHash, err := GenerateToken()
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
-	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
 	var request Request
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
 		request, err = Store{}.CreateRequest(ctx, tx, env.tenantID, RequestValues{
@@ -842,12 +842,13 @@ func (stubSigner) PresignPut(_ context.Context, key string, _ time.Duration) (st
 
 // collectServer mounts the author-facing endpoints on a real router, because
 // routing and middleware are where this feature's fatal defects have lived.
-func (e *testimonialEnvironment) collectServer(t *testing.T) *httptest.Server {
+func (e *testimonialEnvironment) collectServer(t *testing.T, now time.Time) *httptest.Server {
 	t.Helper()
 	router := chi.NewRouter()
 	RegisterCollectRoutes(router, CollectHTTPOptions{
 		Store: Store{}, MediaStore: Store{}, Uploads: stubSigner{},
 		Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
+		Now: func() time.Time { return now },
 	})
 	return httptest.NewServer(router)
 }
