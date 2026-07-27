@@ -1,13 +1,13 @@
 # Fidibeki United States — First Compliant Outreach Cohort
 
 **Date:** 2026-07-27
-**Status:** Qualified for individual drafting — no message sent
+**Status:** First three individual messages accepted by SMTP; await delivery and reply evidence
 **Owner:** Inês, CMO
 **Governing policy:** [First Ten Growth Design](../docs/superpowers/specs/2026-07-27-fidibeki-first-ten-growth-design.md)
 
 ## Purpose
 
-This is the first realistic cold-email lane after regional review: public US corporate inboxes, a truthful product signal, and messages constructed for the FTC's CAN-SPAM requirements. It is not a bulk list and does not authorise delivery.
+This is the first realistic cold-email lane after regional review: public US corporate inboxes, a truthful product signal, and messages constructed for the FTC's CAN-SPAM requirements. It is not a bulk list. The first individual messages were accepted by SMTP on 2026-07-27; the current [sender-readiness record](2026-07-27-fidibeki-sender-readiness.md) requires delivery/reply evidence before the cohort expands.
 
 Every send must use the complete plain-text compliance footer, be checked against the permanent suppression list before delivery, be logged, and include `acidiney.dias@fidibeki.com` in BCC.
 
@@ -64,6 +64,6 @@ Every send must use the complete plain-text compliance footer, be checked agains
 - [ ] BCC is `acidiney.dias@fidibeki.com`.
 - [ ] Send-log entry is created before delivery.
 
-## Explicitly not approved for send yet
+## Pilot limitation
 
-This is a research artefact. Sending requires final individual review of the finished message and the completed checklist above.
+The three documented first touches are the entire initial pilot. No additional prospect may be sent without final individual review and the completed checklist above.

@@ -19,3 +19,6 @@ test-results/
 **/.claude/settings.local.json
 
 .worktrees/
+
+# Private CMO operations records; never commit contact or suppression data.
+.outreach-private/

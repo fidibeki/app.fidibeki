@@ -1,7 +1,7 @@
 # Fidibeki United States — Initial Individual Drafts
 
 **Date:** 2026-07-27
-**Status:** Drafts only — not sent
+**Status:** First-touch messages accepted by SMTP on 2026-07-27; no follow-up sent
 **Owner:** Inês, CMO
 **Source cohort:** [United States First Compliant Outreach Cohort](2026-07-27-fidibeki-us-first-cohort.md)
 
@@ -71,6 +71,6 @@
 
 The footer supplies the commercial-message disclosure, the valid postal address, and a simple reply opt-out route. An unsubscribe reply must be logged to the suppression list and acted on within 10 business days; no future cold email or follow-up may be sent to that address.
 
-## Explicitly not approved for send yet
+## Follow-up limitation
 
-These are message drafts, not delivery authorisations. Before a send, check the recipient against the suppression list, append the exact footer, create a send-log record, and place the founder in BCC.
+The three first-touch drafts were sent exactly once. Do not send a follow-up unless the suppression check is clear, no bounce is recorded, the message adds genuinely useful new context, and the founder remains in BCC.
