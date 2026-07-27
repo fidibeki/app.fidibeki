@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: starsling-ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-2x
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -50,7 +50,7 @@ jobs:
           working-directory: backend
 
   test:
-    runs-on: starsling-ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-2x
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6

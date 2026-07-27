@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: starsling-ubuntu-24.04
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
