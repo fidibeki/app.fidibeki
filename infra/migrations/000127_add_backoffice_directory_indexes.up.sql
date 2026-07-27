@@ -14,3 +14,7 @@ CREATE INDEX idx_tenants_backoffice_name_trgm
 
 CREATE INDEX idx_tenants_backoffice_slug_trgm
     ON tenants USING gin ((slug::text) gin_trgm_ops);
+
+CREATE INDEX idx_tenant_members_backoffice_recovery_candidates
+    ON tenant_members (tenant_id, created_at DESC, id DESC)
+    WHERE status = 'active' AND last_login_at IS NOT NULL;

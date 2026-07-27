@@ -110,7 +110,7 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
-	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, nil)
+	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, h.options.LoginLimiter)
 }
 
 func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +308,7 @@ func (h *HTTPHandler) requestLogin(
 		return
 	}
 	if limiter != nil {
-		key := "platform-backoffice-login:" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
+		key := "platform-login:" + clientIP(r.RemoteAddr) + ":" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
 		decision, err := limiter.Allow(r.Context(), key, ratelimit.Window{Limit: 5, Period: 15 * time.Minute})
 		if err != nil {
 			api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
