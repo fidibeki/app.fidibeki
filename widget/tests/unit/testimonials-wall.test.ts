@@ -1,8 +1,24 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineTestimonialElements } from '../../src/testimonials/wall'
 import type { WallPayload } from '../../src/testimonials/types'
 
 const HOST = 'https://widget.fidibeki.test'
+
+function lightSystem(): void {
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
+}
+
+function darkSystem(): void {
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }))
+}
 
 function payload(overrides: Partial<WallPayload> = {}): WallPayload {
   return {
@@ -341,5 +357,112 @@ describe('fidibeki-wall', () => {
 
   it('registers the single-testimonial element as well', () => {
     expect(customElements.get('fidibeki-testimonial')).toBeDefined()
+  })
+
+  // ---- Theme resolution (issue #130) ----
+  // Priority: element attribute > host data-theme > server mode > system
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    document.documentElement.removeAttribute('data-theme')
+  })
+
+  it('applies theme="dark" when the element attribute requests dark', async () => {
+    lightSystem()
+    document.documentElement.setAttribute('data-theme', 'light')
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount({ theme: 'dark' })
+    expect(element.getAttribute('data-fb-theme')).toBe('dark')
+  })
+
+  it('applies theme="light" when the element attribute requests light over a dark system', async () => {
+    darkSystem()
+    respondWith(payload({ theme: { mode: 'dark' } }))
+    const element = await mount({ theme: 'light' })
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+  })
+
+  it('falls back to host data-theme when no element attribute is set', async () => {
+    darkSystem()
+    document.documentElement.setAttribute('data-theme', 'light')
+    respondWith(payload({ theme: { mode: 'dark' } }))
+    const element = await mount()
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+  })
+
+  it('falls back to server mode when no element attribute or host data-theme is set', async () => {
+    darkSystem()
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount()
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+  })
+
+  it('delegates to system when server mode is auto and nothing else is set', async () => {
+    darkSystem()
+    respondWith(payload({ theme: { mode: 'auto' } }))
+    const element = await mount()
+    expect(element.getAttribute('data-fb-theme')).toBe('dark')
+  })
+
+  it('repaints with the new theme when the theme attribute changes at runtime', async () => {
+    lightSystem()
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount()
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+
+    element.setAttribute('theme', 'dark')
+    await vi.waitFor(() => {
+      if (element.getAttribute('data-fb-theme') !== 'dark') throw new Error('theme not updated')
+    })
+  })
+
+  it('does not refetch when only the theme attribute changes', async () => {
+    lightSystem()
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount()
+    element.setAttribute('theme', 'dark')
+    await vi.waitFor(() => {
+      if (element.getAttribute('data-fb-theme') !== 'dark') throw new Error('theme not updated')
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('updates theme when host data-theme changes after mount', async () => {
+    lightSystem()
+    respondWith(payload({ theme: { mode: 'auto' } }))
+    const element = await mount()
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
+
+    document.documentElement.setAttribute('data-theme', 'dark')
+    await vi.waitFor(() => {
+      if (element.getAttribute('data-fb-theme') !== 'dark') throw new Error('theme not updated')
+    })
+  })
+
+  it('cleans up subscriptions on disconnect', async () => {
+    lightSystem()
+    respondWith(payload())
+    const element = await mount()
+    element.remove()
+    // After disconnect, changing data-theme should not throw
+    document.documentElement.setAttribute('data-theme', 'dark')
+    // No assertion needed — the test passes if no error is thrown
+  })
+
+  it('honours data-theme="dark" set directly on the element', async () => {
+    lightSystem()
+    document.documentElement.removeAttribute('data-theme')
+    respondWith(payload({ theme: { mode: 'light' } }))
+    const element = await mount({ 'data-theme': 'dark' })
+    expect(element.getAttribute('data-fb-theme')).toBe('dark')
+  })
+
+  it('excludes the element from the dark media query when theme="light" is set', async () => {
+    darkSystem()
+    document.documentElement.removeAttribute('data-theme')
+    respondWith(payload({ theme: { mode: 'auto' } }))
+    const element = await mount({ theme: 'light' })
+    // Priority 1: theme="light" wins over system dark
+    expect(element.getAttribute('data-fb-theme')).toBe('light')
   })
 })

@@ -8,7 +8,11 @@ import (
 )
 
 const (
-	DefaultPosition         = "bottom-right"
+	DefaultPosition = "bottom-right"
+	// DefaultTheme is "auto": the widget resolves the active theme via the
+	// priority order — custom element attribute > host data-theme > system
+	// (prefers-color-scheme). An explicit "light" or "dark" here wins over
+	// the system only when the custom element and host data-theme are absent.
 	DefaultTheme            = "auto"
 	DefaultAccent           = "#087f73"
 	DefaultAccentForeground = "#ffffff"

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -12,6 +12,11 @@
 
   The only Fidibeki-specific lines on this page are the script tag and the
   <fidibeki-wall> element. That is the whole integration.
+
+  Theme priority (issue #130):
+    1. theme attribute on the custom element (e.g. <fidibeki-wall theme="dark">)
+    2. data-theme on <html> (set below and toggled by the button in the header)
+    3. system prefers-color-scheme (fallback)
 -->
 <script async src="http://widget.localhost:8088/v1/testimonials.js"></script>
 <style>
@@ -24,10 +29,14 @@
     --canvas: #f6f8f7;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
       --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
     }
+  }
+  :root[data-theme="dark"] {
+    --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
+    --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
   }
   * { box-sizing: border-box; }
   body {
@@ -45,8 +54,15 @@
     padding: 20px 24px;
   }
   .brand { font-weight: 800; letter-spacing: -0.02em; }
-  nav a { margin-left: 20px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  nav { display: flex; align-items: center; gap: 20px; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
   nav a:hover { color: var(--ink); }
+  .theme-toggle {
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); color: var(--ink); font-size: 13px;
+    cursor: pointer; font-weight: 600;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
   main { max-width: 1080px; margin: 0 auto; padding: 0 24px 80px; }
   .hero { padding: 64px 0 40px; max-width: 640px; }
   h1 { margin: 0 0 16px; font-size: clamp(32px, 5vw, 52px); line-height: 1.08; letter-spacing: -0.03em; }
@@ -94,6 +110,7 @@
       <a href="/">Product</a>
       <a href="/pricing.html">Pricing</a>
       <a href="/headless.html">Headless</a>
+      <button class="theme-toggle" id="theme-toggle" type="button">Dark</button>
     </nav>
   </header>
 
@@ -103,9 +120,12 @@
       <p>Plan, track and ship without the ceremony. Northwind is the tracker your team forgets it is using.</p>
       <a class="cta" href="#">Start free</a>
 
-      <!-- One quote under the hero: the commonest first integration. -->
+      <!-- One quote under the hero: the commonest first integration.
+           theme="dark" demonstrates priority 1 — the element attribute wins
+           over the page's data-theme and the system. Remove it to let the
+           wall follow the page toggle. -->
       <div class="hero-quote">
-        <fidibeki-testimonial></fidibeki-testimonial>
+        <fidibeki-testimonial theme="dark"></fidibeki-testimonial>
       </div>
     </div>
 
@@ -119,5 +139,23 @@
   <footer>
     Northwind is a fictional company used to test the Fidibeki testimonials embed.
   </footer>
+  <script>
+    // Theme toggle: flips data-theme on <html>, which the widgets read as
+    // priority 2. The testimonials wall re-resolves and re-applies automatically.
+    (function () {
+      var root = document.documentElement;
+      var button = document.getElementById('theme-toggle');
+      if (!button) return;
+      function label() {
+        button.textContent = root.getAttribute('data-theme') === 'dark' ? 'Light' : 'Dark';
+      }
+      label();
+      button.addEventListener('click', function () {
+        var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        label();
+      });
+    })();
+  </script>
 </body>
 </html>

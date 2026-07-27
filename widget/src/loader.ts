@@ -53,6 +53,9 @@ interface WidgetModule {
     onClosed(): void
     target?: HTMLElement
     hostID?: string
+    // Priority 1 source for the theme: the `theme` attribute on the custom
+    // element. `null` when the widget is mounted from a `<script>` tag.
+    themeAttribute?: string | null
   }): WidgetUnmount
 }
 
@@ -556,6 +559,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         privacy,
         onClosed: releaseFeedbackWidget,
         target, hostID,
+        themeAttribute: target.getAttribute('theme'),
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
         submissionAnalytics: () => recordSubmissionAnalytics(rule),
@@ -819,7 +823,7 @@ function installExplicitMounting(
   ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
   if (customElements.get('fidibeki-widget')) return
   customElements.define('fidibeki-widget', class extends HTMLElement {
-    static observedAttributes = ['rule']
+    static observedAttributes = ['rule', 'theme']
     private scheduledMount = 0
     connectedCallback() { this.scheduleMount() }
     disconnectedCallback() { unmount(this) }

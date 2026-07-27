@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theme priority test — Fidibeki</title>
+<style>
+  :root {
+    --ink: #16211f; --muted: #6b7a76; --line: #e2e8e5;
+    --accent: #0f766e; --surface: #ffffff; --canvas: #f6f8f7;
+  }
+  :root[data-theme="dark"] {
+    --ink: #edf3f1; --muted: #9aaba6; --line: #223029;
+    --accent: #4fd1c5; --surface: #111917; --canvas: #0b1210;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--canvas); color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  .controls { display: flex; gap: 12px; margin-bottom: 24px; }
+  .controls button {
+    padding: 8px 16px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); color: var(--ink); font-size: 14px;
+    cursor: pointer; font-weight: 600;
+  }
+  .controls button:hover { border-color: var(--accent); }
+  .controls .active { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .card {
+    padding: 20px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 15px; color: var(--muted); }
+  .result { font-size: 14px; font-family: monospace; margin-top: 8px; padding: 8px;
+    background: rgba(0,0,0,0.04); border-radius: 4px; word-break: break-all; }
+  :root[data-theme="dark"] .result { background: rgba(255,255,255,0.06); }
+  fidibeki-wall, fidibeki-testimonial { display: block; margin-top: 16px; }
+</style>
+<script async src="/v1/testimonials.js"></script>
+</head>
+<body>
+  <h1>Theme Priority Test (Issue #130)</h1>
+  <p>Priority: element attribute &gt; host <code>data-theme</code> &gt; system</p>
+
+  <div class="controls">
+    <button id="btn-light" class="active" type="button">data-theme=light</button>
+    <button id="btn-dark" type="button">data-theme=dark</button>
+    <button id="btn-none" type="button">no data-theme</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>1. Wall with theme="dark" (priority 1)</h3>
+      <p>Should stay dark regardless of the page toggle.</p>
+      <fidibeki-wall id="wall-fixed" wall="wl_demo" theme="dark" host="http://127.0.0.1:4174"></fidibeki-wall>
+      <div class="result" id="result-fixed"></div>
+    </div>
+    <div class="card">
+      <h3>2. Wall without theme attr (follows page)</h3>
+      <p>Should follow the <code>data-theme</code> toggle (priority 2).</p>
+      <fidibeki-wall id="wall-auto" wall="wl_demo" host="http://127.0.0.1:4174"></fidibeki-wall>
+      <div class="result" id="result-auto"></div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var buttons = {
+        light: document.getElementById('btn-light'),
+        dark: document.getElementById('btn-dark'),
+        none: document.getElementById('btn-none')
+      };
+
+      function setActive(name) {
+        for (var key in buttons) {
+          buttons[key].classList.toggle('active', key === name);
+        }
+      }
+
+      function updateResults() {
+        var fixed = document.getElementById('wall-fixed');
+        var auto = document.getElementById('wall-auto');
+        var rf = document.getElementById('result-fixed');
+        var ra = document.getElementById('result-auto');
+        rf.textContent = 'data-fb-theme=' + (fixed.getAttribute('data-fb-theme') || '(none)') +
+          ' | theme attr=' + (fixed.getAttribute('theme') || '(none)');
+        ra.textContent = 'data-fb-theme=' + (auto.getAttribute('data-fb-theme') || '(none)') +
+          ' | html data-theme=' + (root.getAttribute('data-theme') || '(none)');
+      }
+
+      buttons.light.addEventListener('click', function () {
+        root.setAttribute('data-theme', 'light'); setActive('light');
+      });
+      buttons.dark.addEventListener('click', function () {
+        root.setAttribute('data-theme', 'dark'); setActive('dark');
+      });
+      buttons.none.addEventListener('click', function () {
+        root.removeAttribute('data-theme'); setActive('none');
+      });
+
+      // Update results periodically to reflect live changes
+      setInterval(updateResults, 500);
+      window.updateResults = updateResults;
+    })();
+  </script>
+</body>
+</html>

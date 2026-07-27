@@ -1,3 +1,4 @@
+import { applyHostTheme, resolveTheme, subscribeToHostDataTheme, subscribeToSystemTheme } from '../theme-resolver'
 import { SUPPORTED_SCHEMA_VERSION, isWallPayload } from './types'
 import type { TestimonialAuthor, TestimonialCard, WallPayload } from './types'
 
@@ -24,7 +25,7 @@ const STYLES = `
 :host([hidden]) { display: none; }
 
 @media (prefers-color-scheme: dark) {
-  :host(:not([theme="light"])) {
+  :host(:not([data-fb-theme="light"]):not([theme="light"]):not([data-theme="light"])) {
     --fw-surface: #121a17;
     --fw-ink: #eef4f1;
     --fw-muted: #93a7a0;
@@ -32,7 +33,9 @@ const STYLES = `
   }
 }
 
-:host([theme="dark"]) {
+:host([data-fb-theme="dark"]),
+:host([theme="dark"]),
+:host([data-theme="dark"]) {
   --fw-surface: #121a17;
   --fw-ink: #eef4f1;
   --fw-muted: #93a7a0;
@@ -494,6 +497,8 @@ export class FidibekiWall extends HTMLElement {
   // asking the network for a wall it already has.
   private payload: WallPayload | null = null
   private origin = ''
+  // Cleanups for the live theme subscriptions (system + host data-theme).
+  private themeCleanups: Array<() => void> = []
 
   constructor() {
     super()
@@ -502,6 +507,21 @@ export class FidibekiWall extends HTMLElement {
 
   connectedCallback(): void {
     void this.load()
+    // Re-resolve and re-apply the theme when the OS or the host page changes its
+    // active colour while the wall is connected. The CSS already has
+    // `:host([theme="dark"])` and `:host([theme="light"])`, so applying the
+    // attribute is enough — no innerHTML rewrite needed.
+    const handleThemeChange = () => {
+      if (!this.payload) return
+      this.applyTheme()
+    }
+    this.themeCleanups.push(subscribeToSystemTheme(handleThemeChange))
+    this.themeCleanups.push(subscribeToHostDataTheme(handleThemeChange))
+  }
+
+  disconnectedCallback(): void {
+    for (const cleanup of this.themeCleanups) cleanup()
+    this.themeCleanups = []
   }
 
   /**
@@ -602,6 +622,29 @@ export class FidibekiWall extends HTMLElement {
       ${body}
       ${renderBadge()}
     `
+    this.applyTheme()
+  }
+
+  /**
+   * Resolves the theme via the priority order (custom element attribute >
+   * host `data-theme` > server `payload.theme.mode` > system) and applies it to
+   * the host as `theme="light"|"dark"`, which the CSS selectors
+   * `:host([theme="dark"])` and `:host([theme="light"])` already honour.
+   *
+   * Guards against the feedback loop: setting `theme` triggers
+   * `attributeChangedCallback`, which re-renders, which would call
+   * `applyTheme` again. The guard skips the write when the resolved value
+   * matches the attribute already on the host.
+   */
+  private applyTheme(): void {
+    const fallback = this.payload?.theme?.mode ?? 'auto'
+    const resolved = resolveTheme({
+      elementAttr: this.getAttribute('theme'),
+      host: this,
+      fallback,
+    })
+    if (this.getAttribute('data-fb-theme') === resolved) return
+    applyHostTheme(this, resolved)
   }
 }
 
