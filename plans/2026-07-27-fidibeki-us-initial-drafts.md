@@ -65,11 +65,11 @@
 
 **Why this is individual:** Palm Tree Tech publicly describes an audit-to-ship-to-operate engagement. The note asks about an optional post-launch workflow; it does not claim to replace its delivery work.
 
-## Compliance footer — append unchanged to every US commercial send
+## Concise compliance footer — append unchanged to every future US commercial send
 
-> This is a commercial message from Fidibeki. Fidibeki is operated by ACIDINEY ALVARO CARVALHO SOARES DIAS, Travessa Quinta do Casal 18, 3810-928 Aveiro, Portugal. To stop receiving these messages, reply with “unsubscribe”.
+> Fidibeki · Commercial email · Travessa Quinta do Casal 18, 3810-928 Aveiro, Portugal · To opt out, reply “unsubscribe”.
 
-The footer supplies the commercial-message disclosure, the valid postal address, and a simple reply opt-out route. An unsubscribe reply must be logged to the suppression list and acted on within 10 business days; no future cold email or follow-up may be sent to that address.
+The shorter footer still supplies the commercial-message disclosure, valid postal address, and simple reply opt-out route required for US commercial email. It applies only to future sends; the three already-sent messages cannot be changed. An unsubscribe reply must be logged to the suppression list and acted on within 10 business days; no future cold email or follow-up may be sent to that address.
 
 ## Follow-up limitation
 
