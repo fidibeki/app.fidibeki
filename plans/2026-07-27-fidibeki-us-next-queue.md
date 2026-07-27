@@ -1,13 +1,13 @@
 # Fidibeki United States — Next Research Queue
 
 **Date:** 2026-07-27
-**Status:** Research only — no messages drafted or sent
+**Status:** Four individual first touches accepted by SMTP on 2026-07-27; await delivery and reply evidence
 **Owner:** Inês, co-founder
 **Prerequisite:** Review the first US pilot's delivery, reply, and suppression signals before considering any send.
 
 ## Purpose
 
-This small queue keeps the US pipeline ready without raising sending volume prematurely. Every contact is a public business address. None is a send authorisation.
+This small queue kept the US pipeline ready without raising sending volume prematurely. Every contact is a public business address. The four initial notes were accepted by SMTP once; that is not evidence of inbox placement or interest, and none may be resent automatically.
 
 ## 1. FidelicAI — customer-discovery candidate
 

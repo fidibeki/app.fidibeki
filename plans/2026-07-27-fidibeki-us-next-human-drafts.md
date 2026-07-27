@@ -1,10 +1,10 @@
 # Fidibeki United States — Next Human Drafts
 
-**Status:** Drafts only — not sent
+**Status:** Four individual first touches accepted by SMTP on 2026-07-27; no follow-ups sent
 **Owner:** Inês, co-founder
 **Source queue:** [United States Next Research Queue](2026-07-27-fidibeki-us-next-queue.md)
 
-These are notes, not a mail merge. Each begins with something the recipient actually says about its work, asks one question, and avoids a product pitch unless the question earns it. The US compliance footer, BCC, suppression check, and send log remain mandatory if one is ever sent.
+These are notes, not a mail merge. Each begins with something the recipient actually says about its work, asks one question, and avoids a product pitch unless the question earns it. Each was sent once with the US compliance footer, mandatory founder BCC, suppression check, and private send-log record. SMTP acceptance is not proof of inbox placement or interest; do not resend or send an automatic follow-up.
 
 ## FidelicAI
 
@@ -13,9 +13,9 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 
 > Hi FidelicAI team,
 >
-> I was reading about the agents you put inside Slack and Teams for small businesses. Once a customer is using one day to day, where do the rough edges they hit usually end up?
+> I came across the agents you put inside Slack and Teams for small businesses. When a customer says an answer was wrong or something did not work as expected, does that reach the people improving the agent, or a support queue first?
 >
-> I’m asking because we’re building Fidibeki around that handoff from “this didn’t work” to a product decision.
+> We are building Fidibeki because that handoff gets messy surprisingly quickly. I was curious how you handle it today.
 >
 > Inês
 > Co-founder, Fidibeki
@@ -28,9 +28,9 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 
 > Hi Kanso team,
 >
-> You talk about taking founder products from idea to launch. After one goes live, what do you normally give the client for handling feedback from their users?
+> I was reading about how you take founder products from idea to launch. Once one is live, do you stay involved when users start reporting bugs and rough edges, or does that move fully back to the client team?
 >
-> We’re building Fidibeki for the messy reports that arrive once real people start using a product.
+> We are building Fidibeki for that post-launch moment. I would genuinely like to know how you usually handle the handover.
 >
 > Inês
 > Co-founder, Fidibeki
@@ -43,9 +43,9 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 
 > Hi Overflow team,
 >
-> You help SaaS teams get AI features into production, then hand the work back to their engineers. Once customers start using a new feature, how does their feedback get back to the people who built it?
+> I saw that you take AI features from prototype to something a SaaS team can run, then hand the work back to their engineers. After that handover, how do you normally find out what real users are getting stuck on?
 >
-> We’re working on Fidibeki for that part.
+> We are building Fidibeki for the gap between “something broke” and the team knowing what to do with the report. Curious how you approach it.
 >
 > Inês
 > Co-founder, Fidibeki
@@ -58,9 +58,9 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 
 > Hi PivotStack team,
 >
-> I saw you build custom systems for operators, rather than handing them a generic SaaS template. When one of those systems is live, where do user-reported problems go first?
+> The part of your site about building custom systems for operators caught my attention. Once one of those systems is live, do issues from users come back to your team, to the operator, or both?
 >
-> We’re building Fidibeki to make that conversation less of a game of telephone.
+> We built Fidibeki for the point where those reports start losing the useful context. I would love to know what that looks like in your projects.
 >
 > Inês
 > Co-founder, Fidibeki
@@ -69,3 +69,9 @@ These are notes, not a mail merge. Each begins with something the recipient actu
 ## Quality gate
 
 Do not send a draft that cannot be defended sentence by sentence against the source queue. A real reply or “not for us” is a better result than a polite meeting request produced by generic copy.
+
+## Delivery footer
+
+Every delivered US note appends the following after the signature:
+
+> Fidibeki · Commercial email · Travessa Quinta do Casal 18, 3810-928 Aveiro, Portugal · To opt out, reply “unsubscribe”.
