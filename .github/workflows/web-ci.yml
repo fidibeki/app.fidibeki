@@ -57,7 +57,7 @@ jobs:
   # requests only when something that could actually break the image changed --
   # a plain web/ edit is already covered by the verify job's build.
   image:
-    runs-on: starsling-ubuntu-24.04
+    runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
