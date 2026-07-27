@@ -159,17 +159,17 @@ describe('readHostDataTheme', () => {
 })
 
 describe('applyHostTheme', () => {
-  it('sets the theme attribute on the host element', () => {
+  it('sets the data-fb-theme attribute on the host element', () => {
     const host = document.createElement('div')
     applyHostTheme(host, 'dark')
-    expect(host.getAttribute('theme')).toBe('dark')
+    expect(host.getAttribute('data-fb-theme')).toBe('dark')
   })
 
-  it('overwrites a previous theme attribute', () => {
+  it('overwrites a previous data-fb-theme attribute', () => {
     const host = document.createElement('div')
-    host.setAttribute('theme', 'dark')
+    host.setAttribute('data-fb-theme', 'dark')
     applyHostTheme(host, 'light')
-    expect(host.getAttribute('theme')).toBe('light')
+    expect(host.getAttribute('data-fb-theme')).toBe('light')
   })
 })
 

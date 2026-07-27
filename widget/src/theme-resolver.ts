@@ -47,10 +47,12 @@ export function resolveTheme(options: ResolveThemeOptions): ResolvedTheme {
   return systemTheme()
 }
 
-/** Sets `theme="light"` | `theme="dark"` on `host` so existing CSS selectors
- *  like `:host([theme="dark"])` keep working without a rewrite. */
+/** Sets the resolved theme on `host` via a private attribute
+ *  (`data-fb-theme="light"` | `"dark"`) so the user-set `theme` attribute is
+ *  preserved for future re-resolutions. The CSS should target
+ *  `:host([data-fb-theme="dark"])` etc. */
 export function applyHostTheme(host: HTMLElement, resolved: ResolvedTheme): void {
-  host.setAttribute('theme', resolved)
+  host.setAttribute('data-fb-theme', resolved)
 }
 
 /** Reads `data-theme` from the closest ancestor carrying it, falling back to

@@ -25,7 +25,7 @@ const STYLES = `
 :host([hidden]) { display: none; }
 
 @media (prefers-color-scheme: dark) {
-  :host(:not([theme="light"])) {
+  :host(:not([data-fb-theme="light"])) {
     --fw-surface: #121a17;
     --fw-ink: #eef4f1;
     --fw-muted: #93a7a0;
@@ -33,7 +33,7 @@ const STYLES = `
   }
 }
 
-:host([theme="dark"]) {
+:host([data-fb-theme="dark"]) {
   --fw-surface: #121a17;
   --fw-ink: #eef4f1;
   --fw-muted: #93a7a0;
@@ -640,7 +640,7 @@ export class FidibekiWall extends HTMLElement {
       elementAttr: this.getAttribute('theme'),
       fallback,
     })
-    if (this.getAttribute('theme') === resolved) return
+    if (this.getAttribute('data-fb-theme') === resolved) return
     applyHostTheme(this, resolved)
   }
 }
