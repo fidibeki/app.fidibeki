@@ -17,3 +17,5 @@ playwright-report/
 test-results/
 
 **/.claude/settings.local.json
+
+.worktrees/
