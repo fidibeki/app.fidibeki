@@ -92,8 +92,9 @@ explicit about seat retention and release.
 
 ## Completion Gate
 
-- [ ] Backend full suite, web tests/typecheck, marketing tests/typecheck, and migration checks pass.
+- [x] Backend full suite, web tests/typecheck, marketing tests/typecheck, and migration checks pass.
 - [ ] Independent review finds no correctness, billing, security, or compatibility blocker.
-- [ ] Main is integrated without unrelated workspace changes.
-- [ ] CI and staging API/worker/web health are green.
+- [ ] The pull request is reviewed and explicitly approved before any merge to `main`.
+- [ ] Pull-request CI is green.
+- [ ] After an approved merge, staging API/worker/web health are green.
 - [ ] Staging browser and Stripe test-mode evidence is attached to #131 before closure.

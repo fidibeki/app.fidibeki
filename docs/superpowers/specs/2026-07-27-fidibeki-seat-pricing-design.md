@@ -81,9 +81,11 @@ The worker periodically selects per-seat subscriptions where:
 `provider-confirmed quantity != max(1, current billable members)`
 
 For each mismatch it updates the single Stripe subscription item and records success or a bounded
-error message. The update uses an idempotency key derived from tenant, previous quantity, and
-desired quantity. A membership change during a provider call is safe: the applied remote quantity
-is recorded, the next scan observes any new mismatch, and convergence continues.
+error message. The update uses an idempotency key derived from the tenant, the durable set of
+billable member IDs, the last provider confirmation, and the desired quantity. A retry of one
+logical operation therefore reuses its key, while a later transition to the same numeric quantity
+receives a new key. A membership change during a provider call is safe: the applied remote
+quantity is recorded, the next scan observes any new mismatch, and convergence continues.
 
 This source-derived reconciliation is preferred for the first slice over a second event queue:
 
