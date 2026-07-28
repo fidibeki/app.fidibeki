@@ -61,6 +61,20 @@ func TestReporterVerificationMessageUsesTenantURLAndRotatedIdempotency(t *testin
 	}
 }
 
+func TestPrivacyCaseURLUsesConfiguredSecureDeploymentOrigin(t *testing.T) {
+	t.Parallel()
+	got, err := privacyCaseURL(
+		"https://api.fidibeki.com", "fidibeki.com", "acme", "case-token",
+	)
+	if err != nil {
+		t.Fatalf("privacyCaseURL() error = %v", err)
+	}
+	const want = "https://acme.fidibeki.com/privacy/cases/case-token"
+	if got != want {
+		t.Fatalf("privacyCaseURL() = %q, want %q", got, want)
+	}
+}
+
 type reporterLimiterStub struct {
 	decision ratelimit.Decision
 	err      error

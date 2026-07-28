@@ -2,6 +2,23 @@ package tenantmember
 
 import "testing"
 
+func TestTokenURLUsesConfiguredSecureDeploymentOrigin(t *testing.T) {
+	t.Parallel()
+	service := Service{
+		PublicBaseURL: "https://api.fidibeki.com",
+		BaseDomain:    "fidibeki.com",
+	}
+
+	got, err := service.tokenURL("acme", "/auth/verify", "secret-token")
+	if err != nil {
+		t.Fatalf("tokenURL() error = %v", err)
+	}
+	const want = "https://acme.fidibeki.com/auth/verify#token=secret-token"
+	if got != want {
+		t.Fatalf("tokenURL() = %q, want %q", got, want)
+	}
+}
+
 func TestMemberEmailDomainUsesNormalizedEmailDomain(t *testing.T) {
 	for _, test := range []struct {
 		name  string

@@ -339,16 +339,14 @@ func (c Config) validate() []error {
 	if strings.Contains(c.BaseDomain, "://") || strings.Contains(c.BaseDomain, "/") {
 		validationErrors = append(validationErrors, fmt.Errorf("BASE_DOMAIN must be a hostname without scheme or path"))
 	}
-	if c.PublicBaseURL != "" {
-		parsed, err := url.ParseRequestURI(c.PublicBaseURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("PUBLIC_BASE_URL must be an absolute URL"))
+	for name, value := range map[string]string{
+		"PUBLIC_BASE_URL": c.PublicBaseURL, "WEB_PUBLIC_BASE_URL": c.WebPublicBaseURL,
+	} {
+		if value == "" {
+			continue
 		}
-	}
-	if c.WebPublicBaseURL != "" {
-		parsed, err := url.ParseRequestURI(c.WebPublicBaseURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("WEB_PUBLIC_BASE_URL must be an absolute URL"))
+		if err := validateEnvironmentHTTPURL(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
 		}
 	}
 	if c.PlatformBackofficeURL != "" {
@@ -412,7 +410,7 @@ func (c Config) validate() []error {
 		if value == "" {
 			continue
 		}
-		if err := validateStorageEndpoint(value, c.Environment); err != nil {
+		if err := validateEnvironmentHTTPURL(value, c.Environment); err != nil {
 			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
 		}
 	}
@@ -569,10 +567,13 @@ func (c Config) validate() []error {
 	return validationErrors
 }
 
-func validateStorageEndpoint(value, environment string) error {
+func validateEnvironmentHTTPURL(value, environment string) error {
 	parsed, err := url.ParseRequestURI(value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return errors.New("must be an absolute URL")
+	}
+	if parsed.User != nil {
+		return errors.New("must not include credentials")
 	}
 	if strings.EqualFold(parsed.Scheme, "https") {
 		return nil

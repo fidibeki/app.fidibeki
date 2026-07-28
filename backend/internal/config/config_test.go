@@ -232,7 +232,7 @@ func TestConfigurationRequiresSecureStorageEndpointsOutsideLocalAndTest(t *testi
 			for _, scheme := range []string{"http", "https"} {
 				t.Run(environment+"/"+name+"/"+scheme, func(t *testing.T) {
 					t.Parallel()
-					values := validStorageEnvironmentValues(environment)
+					values := validEnvironmentValues(environment)
 					values[name] = scheme + "://storage.fidibeki.test"
 					_, err := config.FromLookup(func(name string) (string, bool) {
 						value, exists := values[name]
@@ -255,7 +255,65 @@ func TestConfigurationRequiresSecureStorageEndpointsOutsideLocalAndTest(t *testi
 	}
 }
 
-func validStorageEnvironmentValues(environment string) map[string]string {
+func TestConfigurationRequiresSecurePublicURLsOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"PUBLIC_BASE_URL", "WEB_PUBLIC_BASE_URL"} {
+			for _, scheme := range []string{"http", "https"} {
+				t.Run(environment+"/"+name+"/"+scheme, func(t *testing.T) {
+					t.Parallel()
+					values := validEnvironmentValues(environment)
+					values[name] = scheme + "://api.fidibeki.test"
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					insecureAllowed := environment == "local" || environment == "test"
+					if scheme == "http" && !insecureAllowed {
+						want := name + " must use HTTPS in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want URL accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConfigurationRejectsUnsafePublicURLs(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "embedded credentials", value: "https://user:secret@api.fidibeki.test", want: "must not include credentials"},
+		{name: "unsupported scheme", value: "ftp://api.fidibeki.test", want: "must use HTTP or HTTPS"},
+	} {
+		for _, setting := range []string{"PUBLIC_BASE_URL", "WEB_PUBLIC_BASE_URL"} {
+			t.Run(setting+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				values := validEnvironmentValues("staging")
+				values[setting] = test.value
+				_, err := config.FromLookup(func(name string) (string, bool) {
+					value, exists := values[name]
+					return value, exists
+				})
+				want := setting + " " + test.want
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("FromLookup() error = %v, want %q", err, want)
+				}
+			})
+		}
+	}
+}
+
+func validEnvironmentValues(environment string) map[string]string {
 	return map[string]string{
 		"APP_ENV":                     environment,
 		"BASE_DOMAIN":                 "fidibeki.test",
