@@ -71,3 +71,9 @@ d04c390777d6da05d60a62e1c01d43b0e03d7236:backend/internal/issuetracker/http_inte
 # carries only the final tree, so it never enters main's history. Redundant
 # once claude/feedback-testimonial-design-9836b7 is deleted from the remote.
 adcb7561e0f709b7162ede6e56ca7e7c7da1c45b:web/tests/unit/feedback-widget.test.ts:generic-api-key:4
+
+# Mobile capture (#136): deterministic API-key-shaped fixtures used to prove
+# issuer permission boundaries. They are synthetic, exist only in the
+# PostgreSQL integration test, and cannot authenticate against any environment.
+a1655ab591016fdc3a2eeb59717d250eaaedfcc1:backend/internal/mobilecapture/http_integration_test.go:generic-api-key:130
+a1655ab591016fdc3a2eeb59717d250eaaedfcc1:backend/internal/mobilecapture/http_integration_test.go:generic-api-key:142
