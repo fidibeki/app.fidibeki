@@ -371,6 +371,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	platformRoutes.With(appmiddleware.RequirePlatformAdminCookie(
 		jwtManager, platformadmin.PlatformQueueAccessCookie, auth.PermissionPlatformTenantRead,
 	)).Mount(queuemonitor.RootPath, queueMonitor)
+	// The Nuxt backoffice consumes this read-only JSON representation. The
+	// browser-only legacy monitor above remains mounted at its existing path.
+	platformRoutes.With(appmiddleware.RequirePlatformAdmin(
+		jwtManager, auth.PermissionPlatformTenantRead,
+	)).Get("/admin/backoffice/queues", queueMonitor.ServeBackofficeJSON)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,

@@ -4,11 +4,13 @@ const exactPaths = new Set([
   '/admin/auth/refresh',
   '/admin/auth/logout',
   '/admin/backoffice/auth/login',
+  '/admin/breach-incidents',
   '/admin/tenants',
 ])
 
 const prefixes = [
   '/admin/backoffice/',
+  '/admin/breach-incidents/',
   '/admin/tenants/',
   '/admin/queues/',
   '/admin/operations/',

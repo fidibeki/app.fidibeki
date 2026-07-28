@@ -1,6 +1,7 @@
 package queuemonitor
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -83,38 +84,69 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeBackofficeJSON provides the same read-only operational snapshot as the
+// legacy HTML monitor. It deliberately has no command surface: queue retries,
+// deletion, and replay remain unavailable from the platform console.
+// Authentication is applied by the platform router that mounts this method.
+func (h *Handler) ServeBackofficeJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	page, err := h.dashboard(strings.TrimSpace(r.URL.Query().Get("queue")))
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if r.Method != http.MethodHead {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "service_unavailable", "message": "Queue data is temporarily unavailable."},
+			})
+		}
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"dashboard": page})
+}
+
 type queueRow struct {
-	Name      string
-	Pending   int
-	Active    int
-	Scheduled int
-	Retry     int
-	Archived  int
-	Failed    int
-	Latency   string
-	Selected  bool
+	Name      string `json:"name"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+	Failed    int    `json:"failed"`
+	Latency   string `json:"latency"`
+	Selected  bool   `json:"selected"`
 }
 
 type taskRow struct {
-	ID            string
-	Type          string
-	State         string
-	Retries       string
-	LastError     string
-	NextProcessAt string
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	State         string `json:"state"`
+	Retries       string `json:"retries"`
+	LastError     string `json:"last_error"`
+	NextProcessAt string `json:"next_process_at"`
 }
 
 type dashboardPage struct {
-	Queues            []queueRow
-	Tasks             []taskRow
-	SelectedQueue     string
-	RefreshedAt       string
-	TotalPending      int
-	TotalActive       int
-	TotalRetry        int
-	TotalFailed       int
-	SelectedTaskCount int
-	Error             string
+	Queues            []queueRow `json:"queues"`
+	Tasks             []taskRow  `json:"tasks"`
+	SelectedQueue     string     `json:"selected_queue"`
+	RefreshedAt       string     `json:"refreshed_at"`
+	TotalPending      int        `json:"total_pending"`
+	TotalActive       int        `json:"total_active"`
+	TotalRetry        int        `json:"total_retry"`
+	TotalFailed       int        `json:"total_failed"`
+	SelectedTaskCount int        `json:"selected_task_count"`
+	Error             string     `json:"error,omitempty"`
 }
 
 func (h *Handler) dashboard(requestedQueue string) (dashboardPage, error) {

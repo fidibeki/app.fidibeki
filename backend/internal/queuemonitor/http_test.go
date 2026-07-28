@@ -1,6 +1,7 @@
 package queuemonitor_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,39 @@ func TestQueueMonitorReportsInspectorFailureWithoutDetails(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/queues/", nil))
 	if recorder.Code != http.StatusServiceUnavailable || strings.Contains(recorder.Body.String(), "secret") {
 		t.Errorf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestQueueMonitorExposesReadOnlyDashboardJSON(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 21, 15, 0, 0, 0, time.UTC)
+	handler := queuemonitor.NewWithInspector(&fakeInspector{
+		queues: []string{"email"},
+		info:   &asynq.QueueInfo{Queue: "email", Pending: 3, Active: 1, Latency: 2 * time.Second},
+		retry:  []*asynq.TaskInfo{{ID: "task-1", Type: "email.send", Retried: 1, MaxRetry: 5, NextProcessAt: now.Add(time.Minute)}},
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeBackofficeJSON(recorder, httptest.NewRequest(http.MethodGet, "/admin/backoffice/queues?queue=email", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Errorf("Content-Type = %q", contentType)
+	}
+	var response struct {
+		Dashboard struct {
+			SelectedQueue string `json:"selected_queue"`
+			TotalPending  int    `json:"total_pending"`
+			Tasks         []struct {
+				Type string `json:"type"`
+			} `json:"tasks"`
+		} `json:"dashboard"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Dashboard.SelectedQueue != "email" || response.Dashboard.TotalPending != 3 || len(response.Dashboard.Tasks) != 1 || response.Dashboard.Tasks[0].Type != "email.send" {
+		t.Errorf("dashboard = %#v", response.Dashboard)
 	}
 }
 
