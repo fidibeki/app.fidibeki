@@ -25,6 +25,11 @@ import (
 // rotation is a deliberate act rather than a surprise expiry.
 const spCertificateLifetime = 5 * 365 * 24 * time.Hour
 
+const (
+	samlProtocolNamespace = "urn:oasis:names:tc:SAML:2.0:protocol"
+	maxSAMLRequestIDBytes = 128
+)
+
 // Attribute names identity providers use for the email claim, in preference
 // order. Okta, Entra ID, Google Workspace, and OneLogin between them emit all
 // of these.
@@ -195,6 +200,30 @@ func PossibleRequestIDs(liveRequestIDs []string, allowIDPInitiated bool) []strin
 		possible = append(possible, "")
 	}
 	return possible
+}
+
+// ResponseInResponseTo extracts the untrusted correlation candidate from the
+// protocol Response envelope. The original bytes still go through the SAML
+// library's signature and assertion validation before this value can be used.
+func ResponseInResponseTo(encodedResponse string) (string, error) {
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encodedResponse))
+	if err != nil {
+		return "", fmt.Errorf("%w: response is not valid base64", ErrAssertionInvalid)
+	}
+	var envelope struct {
+		XMLName      xml.Name
+		InResponseTo string `xml:"InResponseTo,attr"`
+	}
+	if err := xml.Unmarshal(decoded, &envelope); err != nil {
+		return "", fmt.Errorf("%w: response envelope is not valid XML", ErrAssertionInvalid)
+	}
+	if envelope.XMLName.Space != samlProtocolNamespace || envelope.XMLName.Local != "Response" {
+		return "", fmt.Errorf("%w: response envelope has an invalid root element", ErrAssertionInvalid)
+	}
+	if len(envelope.InResponseTo) > maxSAMLRequestIDBytes {
+		return "", fmt.Errorf("%w: response correlation identifier is too long", ErrAssertionInvalid)
+	}
+	return envelope.InResponseTo, nil
 }
 
 // ParseResponse validates an encoded SAML Response and projects the small,

@@ -61,8 +61,8 @@ The global `LiveAuthRequestIDs` query and its newest-50 window are removed.
 ## Public Start Guard
 
 Add a small `StartGuard` contract to the SAML HTTP handler. Its production
-implementation uses the existing abuse evaluator and HMAC keyring with one
-fail-closed policy:
+implementation uses the existing abuse evaluator and HMAC keyring with two
+sequential fail-closed policies:
 
 | Scope | Limit | Window |
 | --- | ---: | ---: |
@@ -73,6 +73,10 @@ The network key uses `httpx.ClientIPFromRequest`, so forwarding headers are
 honored only for configured trusted proxies. A fixed internal project scope
 keeps the existing network-bucket key contract intact. Raw tenant IDs and IP
 addresses are HMAC-digested before they reach Redis.
+
+The network policy runs first. A network-rejected request does not consume the
+tenant-wide budget, so one noisy client cannot exhaust the allowance for every
+other network merely by continuing to send already-rejected requests.
 
 The guard runs after tenant resolution but before `StartLogin`, so a denial or
 Redis failure creates no authentication-request row. Both cases redirect to the

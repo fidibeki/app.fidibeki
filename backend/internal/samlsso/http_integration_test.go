@@ -3,8 +3,10 @@ package samlsso
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -37,8 +39,11 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 		t.Fatalf("create JWT manager: %v", err)
 	}
 	routes := chi.NewRouter()
+	startGuard := &samlStartGuardStub{decision: StartDecision{Allowed: true}}
 	RegisterRoutes(routes, HTTPOptions{
 		Service: harness.service, Store: harness.store, JWT: jwtManager, Logger: discardLogger(),
+		StartGuard:        startGuard,
+		TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 	})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: harness.pools.Admin},
@@ -257,6 +262,71 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("the public start guard fails closed before storing a request", func(t *testing.T) {
+		before := harness.authRequestCount(ctx, t, acme)
+		for _, test := range []struct {
+			name     string
+			decision StartDecision
+			err      error
+		}{
+			{name: "rate limited", decision: StartDecision{Reason: ReasonSAMLStartRateLimited}},
+			{name: "limiter unavailable", decision: StartDecision{Unavailable: true}, err: errors.New("redis unavailable")},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				startGuard.decision = test.decision
+				startGuard.err = test.err
+				calls := startGuard.calls
+				response := samlRequest(handler, http.MethodGet, StartPath, "", "")
+				if response.Code != http.StatusSeeOther ||
+					!strings.Contains(response.Header().Get("Location"), "sso_error=sso_unavailable") {
+					t.Fatalf("response = %d %q", response.Code, response.Header().Get("Location"))
+				}
+				if got := harness.authRequestCount(ctx, t, acme); got != before {
+					t.Fatalf("auth requests = %d, want unchanged %d", got, before)
+				}
+				if startGuard.calls != calls+1 {
+					t.Fatalf("guard calls = %d, want %d", startGuard.calls, calls+1)
+				}
+			})
+		}
+		startGuard.decision = StartDecision{Allowed: true}
+		startGuard.err = nil
+	})
+
+	t.Run("a missing public start guard fails closed", func(t *testing.T) {
+		unguardedRoutes := chi.NewRouter()
+		RegisterRoutes(unguardedRoutes, HTTPOptions{
+			Service: harness.service, Store: harness.store, JWT: jwtManager, Logger: discardLogger(),
+		})
+		unguarded := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+			BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: harness.pools.Admin},
+			Begin: db.BeginFromPool(harness.pools.App), Logger: discardLogger(),
+		})(unguardedRoutes)
+		before := harness.authRequestCount(ctx, t, acme)
+		response := samlRequest(unguarded, http.MethodGet, StartPath, "", "")
+		if response.Code != http.StatusSeeOther ||
+			!strings.Contains(response.Header().Get("Location"), "sso_error=sso_unavailable") {
+			t.Fatalf("response = %d %q", response.Code, response.Header().Get("Location"))
+		}
+		if got := harness.authRequestCount(ctx, t, acme); got != before {
+			t.Fatalf("auth requests = %d, want unchanged %d", got, before)
+		}
+	})
+
+	t.Run("the start guard uses only forwarding data from a trusted proxy", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://globex.localhost"+StartPath, nil)
+		request.RemoteAddr = "10.0.0.5:43123"
+		request.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.4")
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body)
+		}
+		if startGuard.attempt.Network != "198.51.100.7" {
+			t.Fatalf("guard network = %q, want trusted client address", startGuard.attempt.Network)
+		}
+	})
+
 	// The identity provider posts here from its own origin, so a rejection must
 	// return the browser to the login page rather than answer with JSON.
 	t.Run("a rejected assertion returns the browser to the login page", func(t *testing.T) {
@@ -356,4 +426,20 @@ func samlRequest(
 	}
 	handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+type samlStartGuardStub struct {
+	decision StartDecision
+	err      error
+	attempt  StartAttempt
+	calls    int
+}
+
+func (guard *samlStartGuardStub) Allow(
+	_ context.Context,
+	attempt StartAttempt,
+) (StartDecision, error) {
+	guard.calls++
+	guard.attempt = attempt
+	return guard.decision, guard.err
 }

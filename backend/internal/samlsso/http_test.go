@@ -80,6 +80,10 @@ func TestWriteErrorHasStableHTTPContracts(t *testing.T) {
 			status: http.StatusUnauthorized, code: "unauthenticated",
 		},
 		{
+			name: "request capacity", err: ErrAuthRequestCapacity,
+			status: http.StatusServiceUnavailable, code: "service_unavailable",
+		},
+		{
 			name: "unexpected", err: errors.New("boom"),
 			status: http.StatusInternalServerError, code: "internal_error",
 		},

@@ -1127,11 +1127,16 @@ func (h *samlHarness) startLogin(
 	); err != nil {
 		t.Fatalf("StartLogin(%s) error = %v", purpose, err)
 	}
-	ids, err := h.store.LiveAuthRequestIDs(ctx, query, workspace.id, time.Now())
-	if err != nil || len(ids) == 0 {
-		t.Fatalf("LiveAuthRequestIDs() = %v, %v", ids, err)
+	var requestID string
+	if err := query.QueryRow(ctx, `
+		SELECT id FROM tenant_saml_auth_requests
+		WHERE tenant_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, workspace.id).Scan(&requestID); err != nil {
+		t.Fatalf("load started SAML request: %v", err)
 	}
-	return ids[0]
+	return requestID
 }
 
 func (h *samlHarness) setLifecycle(

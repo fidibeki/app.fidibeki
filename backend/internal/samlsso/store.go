@@ -22,6 +22,8 @@ type Store struct {
 	Cipher Cipher
 }
 
+const maxOutstandingAuthRequests = 128
+
 // EligibleMember is the identity a validated assertion is allowed to sign in
 // as. SAML never creates a member from an assertion alone.
 type EligibleMember struct {
@@ -311,11 +313,34 @@ func (Store) Delete(ctx context.Context, query db.Querier, tenantID string) erro
 	return nil
 }
 
-// CreateAuthRequest records an issued AuthnRequest so the eventual response can
-// be correlated back to it.
+// CreateAuthRequest atomically reserves bounded correlation capacity and records
+// an issued AuthnRequest. It must run inside the caller's tenant transaction so
+// the advisory lock covers the count and insert together.
 func (Store) CreateAuthRequest(
-	ctx context.Context, query db.Querier, request AuthRequest,
+	ctx context.Context, query db.Querier, request AuthRequest, now time.Time,
 ) error {
+	lockKey := "fidibeki:saml-auth-request:" + request.TenantID
+	if _, err := query.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey,
+	); err != nil {
+		return fmt.Errorf("lock SAML authentication request capacity: %w", err)
+	}
+	if _, err := query.Exec(ctx, `
+		DELETE FROM tenant_saml_auth_requests
+		WHERE tenant_id = $1 AND expires_at <= $2
+	`, request.TenantID, now); err != nil {
+		return fmt.Errorf("clear expired SAML authentication requests: %w", err)
+	}
+	var outstanding int
+	if err := query.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_saml_auth_requests
+		WHERE tenant_id = $1 AND consumed_at IS NULL AND expires_at > $2
+	`, request.TenantID, now).Scan(&outstanding); err != nil {
+		return fmt.Errorf("count live SAML authentication requests: %w", err)
+	}
+	if outstanding >= maxOutstandingAuthRequests {
+		return ErrAuthRequestCapacity
+	}
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_saml_auth_requests (
 			id, tenant_id, purpose, relay_state, return_to, actor_member_id, expires_at
@@ -328,33 +353,23 @@ func (Store) CreateAuthRequest(
 	return nil
 }
 
-// LiveAuthRequestIDs lists this tenant's unconsumed, unexpired request IDs.
-// Only these — never an arbitrary InResponseTo — can satisfy correlation.
-func (Store) LiveAuthRequestIDs(
-	ctx context.Context, query db.Querier, tenantID string, now time.Time,
-) ([]string, error) {
-	rows, err := query.Query(ctx, `
-		SELECT id FROM tenant_saml_auth_requests
-		WHERE tenant_id = $1 AND consumed_at IS NULL AND expires_at > $2
-		ORDER BY created_at DESC
-		LIMIT 50
-	`, tenantID, now)
-	if err != nil {
-		return nil, fmt.Errorf("list live SAML requests: %w", err)
+// IsAuthRequestLive checks one untrusted response candidate against the
+// tenant-scoped correlation ledger. It never widens validation to other live
+// requests.
+func (Store) IsAuthRequestLive(
+	ctx context.Context, query db.Querier, tenantID, requestID string, now time.Time,
+) (bool, error) {
+	var live bool
+	if err := query.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tenant_saml_auth_requests
+			WHERE tenant_id = $1 AND id = $2
+			  AND consumed_at IS NULL AND expires_at > $3
+		)
+	`, tenantID, requestID, now).Scan(&live); err != nil {
+		return false, fmt.Errorf("check live SAML request: %w", err)
 	}
-	defer rows.Close()
-	ids := make([]string, 0, 8)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan live SAML request: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list live SAML requests: %w", err)
-	}
-	return ids, nil
+	return live, nil
 }
 
 // ConsumeAuthRequest marks a correlated request used. The conditional UPDATE

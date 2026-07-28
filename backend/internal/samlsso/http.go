@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
@@ -23,10 +25,12 @@ import (
 const maxACSBodyBytes = 1 << 20
 
 type HTTPOptions struct {
-	Service Service
-	Store   Store
-	JWT     *auth.JWTManager
-	Logger  *slog.Logger
+	Service           Service
+	Store             Store
+	JWT               *auth.JWTManager
+	Logger            *slog.Logger
+	StartGuard        StartGuard
+	TrustedProxyCIDRs []netip.Prefix
 }
 
 type HTTPHandler struct{ options HTTPOptions }
@@ -103,12 +107,31 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.options.StartGuard == nil {
+		h.redirectFailure(w, r, resolved, "sso_unavailable", ErrStartGuardUnavailable)
+		return
+	}
+	decision, guardErr := h.options.StartGuard.Allow(r.Context(), StartAttempt{
+		TenantID: resolved.ID,
+		Network:  httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
+	})
+	if guardErr != nil || !decision.Allowed {
+		cause := guardErr
+		if cause == nil {
+			cause = ErrStartRateLimited
+			if decision.Unavailable {
+				cause = ErrStartGuardUnavailable
+			}
+		}
+		h.redirectFailure(w, r, resolved, "sso_unavailable", cause)
+		return
+	}
 	redirectURL, err := h.options.Service.StartLogin(
 		r.Context(), query, resolved, PurposeLogin, r.URL.Query().Get("return_to"), "",
 	)
 	if err != nil {
 		reason := "start_failed"
-		if errors.Is(err, tenant.ErrInactive) {
+		if errors.Is(err, tenant.ErrInactive) || errors.Is(err, ErrAuthRequestCapacity) {
 			reason = "sso_unavailable"
 		}
 		h.redirectFailure(w, r, resolved, reason, err)
@@ -526,6 +549,8 @@ func (h *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 			"the last signing certificate cannot be removed while SSO is enabled", nil)
 	case errors.Is(err, ErrCertificateNotFound):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "signing certificate not found", nil)
+	case errors.Is(err, ErrAuthRequestCapacity):
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 	case errors.Is(err, ErrMemberNotEligible), errors.Is(err, ErrAssertionInvalid),
 		errors.Is(err, ErrAssertionReplayed), errors.Is(err, ErrRequestNotFound):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated,

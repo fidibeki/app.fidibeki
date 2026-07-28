@@ -359,7 +359,8 @@ func (s Service) StartLogin(
 	returnTo string,
 	actorMemberID string,
 ) (string, error) {
-	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+	now := s.now()
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, now); err != nil {
 		return "", err
 	}
 	provider, configuration, err := s.provider(ctx, query, resolved)
@@ -378,12 +379,12 @@ func (s Service) StartLogin(
 	request := AuthRequest{
 		ID: requestID, TenantID: resolved.ID, Purpose: purpose,
 		ReturnTo:  safeReturnTo(returnTo),
-		ExpiresAt: s.now().Add(s.requestTTL()),
+		ExpiresAt: now.Add(s.requestTTL()),
 	}
 	if actorMemberID != "" {
 		request.ActorMemberID = &actorMemberID
 	}
-	if err := s.Store.CreateAuthRequest(ctx, query, request); err != nil {
+	if err := s.Store.CreateAuthRequest(ctx, query, request, now); err != nil {
 		return "", err
 	}
 	return redirectURL, nil
@@ -421,9 +422,19 @@ func (s Service) ConsumeAssertion(
 	if err != nil {
 		return Outcome{}, err
 	}
-	liveIDs, err := s.Store.LiveAuthRequestIDs(ctx, query, resolved.ID, now)
+	candidate, err := ResponseInResponseTo(encodedResponse)
 	if err != nil {
 		return Outcome{}, err
+	}
+	var liveIDs []string
+	if candidate != "" {
+		live, err := s.Store.IsAuthRequestLive(ctx, query, resolved.ID, candidate, now)
+		if err != nil {
+			return Outcome{}, err
+		}
+		if live {
+			liveIDs = []string{candidate}
+		}
 	}
 	identity, err := provider.ParseResponse(
 		encodedResponse, PossibleRequestIDs(liveIDs, configuration.AllowIDPInitiated),
