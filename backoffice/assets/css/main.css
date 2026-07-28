@@ -179,7 +179,6 @@
 .queue-link:hover { text-decoration: underline; }
 .queue-link--selected { color: var(--ink); cursor: default; text-decoration: none !important; }
 .form, form.panel, .action-panel { display: grid; gap: 14px; }
-.settings-form, .action-panel { max-width: 720px; }
 .filter-form {
   display: grid;
   grid-template-columns: minmax(220px, 1.7fr) minmax(150px, .85fr) minmax(150px, .85fr) max-content;

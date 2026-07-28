@@ -6,19 +6,19 @@ type Task = { id: string; type: string; state: string; retries: string; last_err
 type Dashboard = { queues: Queue[]; tasks: Task[]; selected_queue: string; refreshed_at: string; total_pending: number; total_active: number; total_retry: number; total_failed: number; selected_task_count: number }
 
 const route = useRoute()
-const router = useRouter()
 const { $platformApi } = useNuxtApp()
 const { session } = usePlatformAuth()
 const mayRetryTasks = computed(() => canRunQueueTasks(session.value.admin?.permissions))
-const selectedQueue = computed(() => typeof route.query.queue === 'string' ? route.query.queue : '')
+const selectedQueue = ref(typeof route.query.queue === 'string' ? route.query.queue : '')
 const request = computed(() => selectedQueue.value ? `/admin/backoffice/queues?queue=${encodeURIComponent(selectedQueue.value)}` : '/admin/backoffice/queues')
 const { data, error, pending, refresh } = await useAsyncData('queue-dashboard', () => $platformApi<{ dashboard: Dashboard }>(request.value), { server: false, watch: [request] })
 const retryingTaskID = ref('')
 const retryError = ref('')
 
-async function selectQueue(queue: string) {
+function selectQueue(queue: string) {
   if (queue === data.value?.dashboard.selected_queue) return
-  await router.replace({ query: { queue } })
+  selectedQueue.value = queue
+  if (import.meta.client) window.history.replaceState(window.history.state, '', `${route.path}?queue=${encodeURIComponent(queue)}`)
 }
 
 function statusTone(state: string) {
