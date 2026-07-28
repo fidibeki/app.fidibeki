@@ -13,6 +13,8 @@ on:
       - "contracts/**"
       - "Makefile"
       - "infra/docker-compose.yml"
+      - "scripts/check_compose_loopback.py"
+      - "scripts/test_check_compose_loopback.py"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
@@ -20,6 +22,8 @@ on:
       - "contracts/**"
       - "Makefile"
       - "infra/docker-compose.yml"
+      - "scripts/check_compose_loopback.py"
+      - "scripts/test_check_compose_loopback.py"
       - ".github/workflows/backend-ci.yml"
 
 permissions:
@@ -62,8 +66,8 @@ jobs:
       # same sequential job cost about 150 seconds for no extra signal.
       - name: Run integration tests and enforce coverage
         run: make coverage
-      - name: Validate Compose configuration
-        run: docker compose -f infra/docker-compose.yml config --quiet
+      - name: Validate Compose security policy
+        run: make compose-security-check
       - uses: docker/setup-buildx-action@v3
       - name: Build API image
         uses: docker/build-push-action@v6

@@ -88,7 +88,11 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "5433:5432"
+      - name: postgres-local
+        target: 5432
+        published: "5433"
+        host_ip: 127.0.0.1
+        protocol: tcp
 
   pgbouncer:
     image: edoburu/pgbouncer:v1.25.2-p0
@@ -104,7 +108,11 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "6432:6432"
+      - name: pgbouncer-local
+        target: 6432
+        published: "6432"
+        host_ip: 127.0.0.1
+        protocol: tcp
 
   redis:
     image: redis:7.4-alpine
@@ -117,7 +125,11 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "6380:6379"
+      - name: redis-local
+        target: 6379
+        published: "6380"
+        host_ip: 127.0.0.1
+        protocol: tcp
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -133,8 +145,16 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - name: minio-api-local
+        target: 9000
+        published: "9000"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - name: minio-console-local
+        target: 9001
+        published: "9001"
+        host_ip: 127.0.0.1
+        protocol: tcp
 
   migrations:
     build:

@@ -1,4 +1,4 @@
-.PHONY: test test-short coverage format-check lint vulncheck governance-check migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
+.PHONY: test test-short coverage format-check lint vulncheck governance-check compose-security-check migrate-up migrate-down widget-build widget-test widget-e2e dev down logs
 
 test:
 	cd backend && go test ./...
@@ -31,6 +31,10 @@ governance-check:
 
 vulncheck:
 	cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+compose-security-check:
+	python3 scripts/test_check_compose_loopback.py
+	python3 scripts/check_compose_loopback.py
 
 migrate-up:
 	cd backend && go run ./cmd/fidibeki-api migrate up
