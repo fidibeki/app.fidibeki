@@ -39,9 +39,11 @@ already manages members, billing, and privacy settings).
    - **Metadata URL** — Fidibeki fetches and parses it. The fetch is HTTPS-only
      outside local development, refuses private, loopback, and link-local
      destinations, does not follow redirects, and is size- and time-bounded.
-   - **Metadata XML** — paste the document.
+     The SSO endpoint declared inside the metadata must always use HTTPS.
+   - **Metadata XML** — paste the document. Its SSO endpoint must use HTTPS.
    - **Manual** — entity ID, HTTP-Redirect single sign-on URL, and a signing
-     certificate in PEM or base64.
+     certificate in PEM or base64. The single sign-on URL must be an absolute
+     HTTPS URL without embedded credentials.
 4. Optionally list **verified email domains**. When set, only those domains may
    be asserted. Workspace membership is always required regardless.
 5. Run a **test sign-in**. This uses the same flow members will use and creates
@@ -137,6 +139,13 @@ certificate, and re-run the test sign-in.
 Set the mode to **Optional** as the owner. Members can then sign in with
 Fidibeki links until the provider is back, at which point Required can be
 restored — the successful-test marker survives a mode change.
+
+### Insecure identity provider endpoint
+
+Fidibeki does not issue an AuthnRequest or browser redirect when a legacy stored
+configuration points to a non-HTTPS identity provider endpoint. The workspace
+owner must use break-glass sign-in, replace the endpoint under **Settings →
+Single sign-on**, and run the test sign-in again before restoring Required mode.
 
 ### Total lockout
 

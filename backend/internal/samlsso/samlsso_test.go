@@ -230,6 +230,25 @@ func TestNormalizeEmailDomains(t *testing.T) {
 	}
 }
 
+func TestValidateIdPURLRequiresHTTPSWithoutEmbeddedCredentials(t *testing.T) {
+	t.Parallel()
+	if err := validateIdPURL("https://idp.example/sso"); err != nil {
+		t.Fatalf("validateIdPURL(HTTPS) error = %v", err)
+	}
+	for _, value := range []string{
+		"http://idp.example/sso",
+		"ftp://idp.example/sso",
+		"https://user:password@idp.example/sso",
+		"https:idp.example/sso",
+		"/sso",
+		"",
+	} {
+		if err := validateIdPURL(value); err == nil {
+			t.Errorf("validateIdPURL(%q) error = nil, want rejection", value)
+		}
+	}
+}
+
 // The API fetches an administrator-supplied URL, so the destination is treated
 // as attacker-influenced.
 func TestMetadataFetcherRefusesUnsafeDestinations(t *testing.T) {
@@ -401,6 +420,31 @@ func TestParseIdPMetadataExtractsTheRedirectEndpointAndSigningCertificates(t *te
 	}
 	if details.Certificates[0].Fingerprint != certificate.Fingerprint {
 		t.Errorf("Fingerprint = %q, want %q", details.Certificates[0].Fingerprint, certificate.Fingerprint)
+	}
+}
+
+func TestParseIdPMetadataRejectsAnInsecureRedirectEndpoint(t *testing.T) {
+	t.Parallel()
+	idp := newTestIdP(t, "https://idp.test/entity")
+	certificate := idp.storedCertificate(t)
+	document := `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.test/entity">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>` + certificate.Certificate + `</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                         Location="http://idp.test/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`
+
+	_, err := ParseIdPMetadata([]byte(document), time.Now())
+	var validation ValidationError
+	if !errors.As(err, &validation) ||
+		validation.Fields["idp_sso_url"] != "single sign-on URL must use HTTPS" {
+		t.Fatalf("ParseIdPMetadata() error = %#v, want idp_sso_url HTTPS validation", err)
 	}
 }
 

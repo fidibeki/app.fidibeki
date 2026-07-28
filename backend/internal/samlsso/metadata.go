@@ -90,6 +90,11 @@ func ParseIdPMetadata(document []byte, now time.Time) (IdPDetails, error) {
 	fields := map[string]string{}
 	if details.SSOURL == "" {
 		fields["idp_sso_url"] = "metadata has no HTTP-Redirect single sign-on endpoint"
+	} else {
+		details.SSOURL = strings.TrimSpace(details.SSOURL)
+		if err := validateIdPURL(details.SSOURL); err != nil {
+			fields["idp_sso_url"] = err.Error()
+		}
 	}
 	if len(details.Certificates) == 0 {
 		fields["idp_certificate"] = "metadata has no usable signing certificate"
