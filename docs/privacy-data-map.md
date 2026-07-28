@@ -9,8 +9,8 @@ customer-facing claims.
 
 ## Executable Retention Registry
 
-`GET /v1/privacy/retention` is backed by registry version 1. Its 27 lifecycle categories cover
-every one of the 72 PostgreSQL tables created by current migrations exactly once, plus the known
+`GET /v1/privacy/retention` is backed by registry version 1. Its 30 lifecycle categories cover
+every one of the 96 PostgreSQL tables created by current migrations exactly once, plus the known
 object-prefix, queue, browser-key, and provider boundaries. Automated validation rejects duplicate
 resources and rejects `enforced` or `configurable` claims without a bounded lifecycle and a real
 implementation reference.
@@ -42,7 +42,7 @@ as healthy.
 
 ## Records Of Processing Activities (ROPA) And DPIA Screening
 
-`backend/internal/privacy/ropa_registry.go` groups the retention registry's 27 categories into 19
+`backend/internal/privacy/ropa_registry.go` groups the retention registry's 30 categories into 19
 code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
 more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
 validated against, the retention registry rather than hand-duplicated), data-subject (including a
