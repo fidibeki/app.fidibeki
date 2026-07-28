@@ -653,7 +653,93 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		"metadata":{"url":"https://example.com/checkout","viewport_width":390,"viewport_height":844}
 	}`, ruleID)
 	limiterFailure := errors.New("redis unavailable")
-	degraded := feedbackHandler(HTTPOptions{
+	failureKeyring, err := abuse.NewKeyring(strings.Repeat("f", 32), "")
+	if err != nil {
+		t.Fatalf("create feedback limiter keyring: %v", err)
+	}
+	var feedbackBeforeLimiterFailure, outboxBeforeLimiterFailure int
+	if err := root.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM feedbacks WHERE project_id = $1),
+			(SELECT count(*) FROM outbox_events WHERE tenant_id = $2)
+	`, projectID, tenantID).Scan(
+		&feedbackBeforeLimiterFailure, &outboxBeforeLimiterFailure,
+	); err != nil {
+		t.Fatalf("count rows before feedback limiter failure: %v", err)
+	}
+	presignedBeforeLimiterFailure := len(storageClient.presignedKeys)
+	diagnosticsBeforeLimiterFailure := len(diagnostics.events)
+	unavailableSubmission := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Now: func() time.Time { return now },
+		Abuse: abuse.Evaluator{
+			Limiter: staticLimiter{err: limiterFailure}, Keyring: failureKeyring,
+		},
+		Diagnostics: diagnostics,
+	})
+	unavailableSubmissionResponse := performFeedbackRequest(
+		unavailableSubmission, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedBody, publicKey, "https://example.com",
+	)
+	if unavailableSubmissionResponse.Code != http.StatusServiceUnavailable ||
+		unavailableSubmissionResponse.Header().Get("Retry-After") != "5" ||
+		!strings.Contains(
+			unavailableSubmissionResponse.Body.String(),
+			`"reason":"submission_rate_limited"`,
+		) ||
+		strings.Contains(unavailableSubmissionResponse.Body.String(), limiterFailure.Error()) {
+		t.Fatalf("unavailable submission response status=%d headers=%#v body=%s",
+			unavailableSubmissionResponse.Code, unavailableSubmissionResponse.Header(),
+			unavailableSubmissionResponse.Body.String())
+	}
+	var feedbackAfterLimiterFailure, outboxAfterLimiterFailure int
+	if err := root.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM feedbacks WHERE project_id = $1),
+			(SELECT count(*) FROM outbox_events WHERE tenant_id = $2)
+	`, projectID, tenantID).Scan(
+		&feedbackAfterLimiterFailure, &outboxAfterLimiterFailure,
+	); err != nil {
+		t.Fatalf("count rows after feedback limiter failure: %v", err)
+	}
+	if feedbackAfterLimiterFailure != feedbackBeforeLimiterFailure ||
+		outboxAfterLimiterFailure != outboxBeforeLimiterFailure ||
+		len(storageClient.presignedKeys) != presignedBeforeLimiterFailure {
+		t.Fatalf(
+			"limiter failure side effects = feedback %d->%d outbox %d->%d presigns %d->%d",
+			feedbackBeforeLimiterFailure, feedbackAfterLimiterFailure,
+			outboxBeforeLimiterFailure, outboxAfterLimiterFailure,
+			presignedBeforeLimiterFailure, len(storageClient.presignedKeys),
+		)
+	}
+	if len(diagnostics.events) != diagnosticsBeforeLimiterFailure+1 ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure].Category != abuse.CategoryRateLimit ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure].Reason !=
+			abuse.SubmissionPolicy.Name+"_unavailable" {
+		t.Fatalf("unavailable limiter diagnostics = %#v", diagnostics.events)
+	}
+	missingLimiterSubmission := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Now: func() time.Time { return now },
+		Abuse: abuse.Evaluator{
+			Keyring: failureKeyring,
+		},
+		Diagnostics: diagnostics,
+	})
+	missingLimiterResponse := performFeedbackRequest(
+		missingLimiterSubmission, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedBody, publicKey, "https://example.com",
+	)
+	if missingLimiterResponse.Code != http.StatusServiceUnavailable ||
+		missingLimiterResponse.Header().Get("Retry-After") != "5" ||
+		len(diagnostics.events) != diagnosticsBeforeLimiterFailure+2 ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure+1].Reason !=
+			abuse.SubmissionPolicy.Name+"_unavailable" {
+		t.Fatalf("missing limiter response=%d/%s diagnostics=%#v",
+			missingLimiterResponse.Code, missingLimiterResponse.Body.String(), diagnostics.events)
+	}
+
+	degradedAttachments := feedbackHandler(HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
 		Storage: storageClient, Now: func() time.Time { return now },
 		Abuse: abuseEvaluatorFunc(func(
@@ -663,9 +749,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		) (abuse.Decision, error) {
 			switch policy.Name {
 			case abuse.SubmissionPolicy.Name:
-				return abuse.Decision{
-					Allowed: true, Unavailable: true, Reason: policy.Reason,
-				}, limiterFailure
+				return abuse.Decision{Allowed: true, Reason: policy.Reason}, nil
 			case abuse.AttachmentGrantPolicy.Name:
 				return abuse.Decision{
 					Allowed: false, Unavailable: true, Reason: policy.Reason,
@@ -677,7 +761,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		Diagnostics: diagnostics,
 	})
 	degradedResponse := performFeedbackRequest(
-		degraded, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedAttachments, http.MethodPost, "/v1/feedback?key="+publicKey,
 		degradedBody, publicKey, "https://example.com",
 	)
 	if degradedResponse.Code != http.StatusCreated {

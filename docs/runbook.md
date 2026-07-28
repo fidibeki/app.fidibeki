@@ -128,3 +128,18 @@ notification commands.
 8. Never recover ownership with direct SQL, temporarily disable RLS, or edit `owner_member_id` alone.
    If the endpoint refuses the operation, preserve its denial audit and escalate the underlying data
    inconsistency for an application fix.
+
+## 12. Rate limiter unavailable
+
+1. Distinguish healthy rejection from dependency failure: `submission_rate_limited` with `429` is a
+   caller budget rejection; `feedback-submission_unavailable` with `503` is a Redis/limiter incident.
+2. Check Redis readiness, latency, saturation, authentication, and network errors. Correlate the
+   structured `abuse policy unavailable` warning by `policy`, `reason`, and `failure_mode`.
+3. Alert on any feedback-submission unavailability in two consecutive five-minute windows, and page
+   immediately when more than one project is affected.
+4. Do not switch feedback, attachment, replay, or API-key controls to fail open. Restore the limiter
+   and confirm a valid feedback request succeeds while a forced exhausted budget still returns `429`
+   with `Retry-After`.
+5. Confirm rejected outage requests created no feedback, outbox event, attachment, or upload grant.
+   Review the complete failure-mode matrix in
+   [`rate-limit-failure-modes.md`](rate-limit-failure-modes.md).

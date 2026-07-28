@@ -609,14 +609,16 @@ func (h *HTTPHandler) enforceAbusePolicy(
 		},
 		Cost: cost,
 	})
-	if err != nil {
+	if err != nil || decision.Unavailable {
+		unavailableReason := policy.Name + "_unavailable"
 		h.logger.WarnContext(r.Context(), "abuse policy unavailable",
-			"error", err, "policy", policy.Name, "fail_open", decision.Allowed)
+			"error", err, "policy", policy.Name, "reason", unavailableReason,
+			"failure_mode", policy.FailureMode)
 		if decision.Allowed {
 			return decision, true
 		}
 		h.recordDiagnostic(
-			r.Context(), configuration, abuse.CategoryRateLimit, policy.Name+"_unavailable",
+			r.Context(), configuration, abuse.CategoryRateLimit, unavailableReason,
 		)
 		if degradeOnUnavailable {
 			return decision, false
