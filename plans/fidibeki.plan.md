@@ -251,6 +251,17 @@ was removed from the staging test tenant.
       `docs/superpowers/specs/2026-07-28-fidibeki-mobile-capture-design.md`.
     - Implementation plan:
       `docs/superpowers/plans/2026-07-28-fidibeki-mobile-capture-implementation.md`.
+  - [x] Consolidate the overlapping email-feedback issues #132 and #113.
+    - #113 is the canonical post-transaction invitation story. The reference from #132 is
+      preserved there, and #132 is closed as a duplicate. Direct reply/MIME ingestion is explicitly
+      outside the first slice.
+  - [ ] After #136, implement #113 as an opt-in, server-to-server Email Feedback Campaign.
+    - Rating links only preselect a public form; GET never records Feedback. Explicit POST creates
+      one independent email-source Feedback and never an Issue or Testimonial automatically.
+    - Reuse API-key authentication, transactional email/outbox delivery, controller profiles,
+      suppression, and data-rights foundations. Add a least-privilege invitation permission,
+      idempotent external event key, scanner-safe opaque form token, solicitation-specific privacy
+      purpose/retention, and explicit opt-out before delivery.
   - [x] Confirm Phase 0 issues #8-#12 are closed and retain passing regression coverage.
   - [x] Complete Feedback UI and widget contact issues #15, #17, #18, and #20.
     - Sentiment now uses one threshold-tested semantic badge with exact-score disclosure; status
