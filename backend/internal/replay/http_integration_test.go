@@ -1057,6 +1057,119 @@ func TestReplayHTTPFlow(t *testing.T) {
 			t.Fatalf("replay consent diagnostic leaked %q: %s", forbidden, diagnostic.Body.String())
 		}
 	}
+	controlAPIKey := "fk_live_" + strings.Repeat("C", 32)
+	if _, err := root.Exec(ctx, `
+		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions)
+		VALUES (
+			$1, 'Replay controller', $2, 'fk_live_CCCC...',
+			ARRAY['session:read', 'session:delete', 'widget_rule:read']
+		)
+	`, tenantID, auth.HashToken(controlAPIKey)); err != nil {
+		t.Fatalf("create replay control-plane API key: %v", err)
+	}
+	removedBeforeStatusDenials := len(storageClient.removedKeys)
+	expiredTrial := now.Add(-time.Hour)
+	statusTests := []struct {
+		name      string
+		status    string
+		trialEnds *time.Time
+	}{
+		{name: "suspended", status: "suspended"},
+		{name: "cancelled", status: "cancelled"},
+		{name: "expired trial", status: "trial", trialEnds: &expiredTrial},
+	}
+	for _, testCase := range statusTests {
+		t.Run("control plane rejects "+testCase.name, func(t *testing.T) {
+			if _, err := root.Exec(ctx, `
+				UPDATE tenants
+				SET status = $2, trial_ends_at = $3, deletion_requested_at = NULL
+				WHERE id = $1
+			`, tenantID, testCase.status, testCase.trialEnds); err != nil {
+				t.Fatalf("set tenant status: %v", err)
+			}
+			requests := []struct {
+				name   string
+				method string
+				path   string
+				token  string
+			}{
+				{
+					name: "JWT metadata", method: http.MethodGet,
+					path: "/v1/sessions/" + createResponse.ID, token: accessToken,
+				},
+				{
+					name: "API key diagnostic", method: http.MethodGet,
+					path: diagnosticPath, token: controlAPIKey,
+				},
+				{
+					name: "API key deletion", method: http.MethodDelete,
+					path: "/v1/sessions/" + createResponse.ID, token: controlAPIKey,
+				},
+			}
+			for _, request := range requests {
+				response := tenantReplayRequest(
+					tenantHandler, request.method, request.path, request.token,
+				)
+				if response.Code != http.StatusForbidden ||
+					!strings.Contains(response.Body.String(), `"code":"tenant_suspended"`) {
+					t.Errorf("%s response = %d/%s, want tenant_suspended",
+						request.name, response.Code, response.Body.String())
+				}
+			}
+			var sessionExists bool
+			if err := root.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND id = $2)
+			`, tenantID, createResponse.ID).Scan(&sessionExists); err != nil {
+				t.Fatalf("check replay after status denial: %v", err)
+			}
+			if !sessionExists || len(storageClient.removedKeys) != removedBeforeStatusDenials {
+				t.Fatalf("status denial changed replay: exists=%t removed=%#v",
+					sessionExists, storageClient.removedKeys)
+			}
+		})
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'suspended', trial_ends_at = NULL, deletion_requested_at = $2
+		WHERE id = $1
+	`, tenantID, now); err != nil {
+		t.Fatalf("enter replay deletion grace: %v", err)
+	}
+	deletionGraceMetadata := tenantReplayRequest(
+		tenantHandler, http.MethodGet, "/v1/sessions/"+createResponse.ID, accessToken,
+	)
+	deletionGraceDiagnostic := tenantReplayRequest(
+		tenantHandler, http.MethodGet, diagnosticPath, controlAPIKey,
+	)
+	deletionGraceDelete := tenantReplayRequest(
+		tenantHandler, http.MethodDelete, "/v1/sessions/"+createResponse.ID, controlAPIKey,
+	)
+	if deletionGraceMetadata.Code != http.StatusOK ||
+		deletionGraceDiagnostic.Code != http.StatusOK ||
+		deletionGraceDelete.Code != http.StatusForbidden ||
+		strings.Contains(deletionGraceDelete.Body.String(), `"code":"tenant_suspended"`) {
+		t.Fatalf("deletion-grace replay policy = metadata:%d diagnostic:%d delete:%d/%s",
+			deletionGraceMetadata.Code, deletionGraceDiagnostic.Code,
+			deletionGraceDelete.Code, deletionGraceDelete.Body.String())
+	}
+	var deletionGraceSessionExists bool
+	if err := root.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM sessions WHERE tenant_id = $1 AND id = $2)
+	`, tenantID, createResponse.ID).Scan(&deletionGraceSessionExists); err != nil {
+		t.Fatalf("check replay during deletion grace: %v", err)
+	}
+	if !deletionGraceSessionExists ||
+		len(storageClient.removedKeys) != removedBeforeStatusDenials {
+		t.Fatalf("deletion-grace denial changed replay: exists=%t removed=%#v",
+			deletionGraceSessionExists, storageClient.removedKeys)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'active', trial_ends_at = NULL, deletion_requested_at = NULL
+		WHERE id = $1
+	`, tenantID); err != nil {
+		t.Fatalf("restore active replay tenant: %v", err)
+	}
 	invalidMetadata := tenantReplayRequest(tenantHandler, http.MethodGet, "/v1/sessions/not-a-uuid", accessToken)
 	if invalidMetadata.Code != http.StatusNotFound {
 		t.Errorf("invalid metadata status = %d", invalidMetadata.Code)

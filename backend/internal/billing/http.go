@@ -36,6 +36,10 @@ func (h *HTTPHandler) plans(w http.ResponseWriter, _ *http.Request) {
 
 func RegisterTenantRoutes(router chi.Router, options HTTPOptions) {
 	handler := &HTTPHandler{options: options}
+	// Billing deliberately omits RequireActive: a suspended or expired
+	// workspace must still be able to inspect billing and recover service.
+	// RequireWritable keeps deletion-grace workspaces read-only except for the
+	// explicit cancel-deletion action below.
 	read := []func(http.Handler) http.Handler{
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequireAnyPermission(auth.PermissionBillingRead, auth.PermissionBillingManage),

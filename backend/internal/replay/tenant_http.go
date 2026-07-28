@@ -48,10 +48,12 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 	}
 	handler := &TenantHTTPHandler{options: options, logger: logger}
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionRead),
 	).Get("/v1/sessions/{sessionID}", handler.getSession)
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionWidgetRuleRead),
 	).Get(
@@ -59,6 +61,7 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		handler.getConsentDiagnostic,
 	)
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireWritable,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionDelete),
