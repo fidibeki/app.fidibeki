@@ -298,9 +298,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
-		PublicBaseURL: settings.PublicBaseURL,
-		AuthFrom:      settings.ResendAuthFrom,
-		MagicLinkTTL:  settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
+		PublicBaseURL: settings.PublicBaseURL, BackofficeURL: settings.PlatformBackofficeURL,
+		AuthFrom:     settings.ResendAuthFrom,
+		MagicLinkTTL: settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
 	}
 	billingStore := billing.Store{Database: pools.Admin}
 	billingProvider := billing.NewStripeProvider(settings.StripeSecretKey, settings.StripeWebhookSecret)
@@ -324,9 +324,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: billingStore, Provider: billingProvider, Storage: objectStorage, Logger: logger,
 	}
 	platformHandler := platformadmin.NewHTTPHandler(platformadmin.HTTPOptions{
-		Auth: adminAuth, Tenants: adminStore, JWT: jwtManager, Deleter: deletionExecutor,
-		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
-		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
+		Auth: adminAuth, Tenants: adminStore, Backoffice: adminStore, JWT: jwtManager, Deleter: deletionExecutor, LoginLimiter: publicLimiter,
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+		SecureCookies:     settings.Environment != "local" && settings.Environment != "test",
+		RefreshTTL:        settings.RefreshTokenTTL, Logger: logger,
 	})
 	var resendVerifier issue.WebhookVerifier
 	if settings.ResendWebhookSecret != "" {
@@ -370,6 +371,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	platformRoutes.With(appmiddleware.RequirePlatformAdminCookie(
 		jwtManager, platformadmin.PlatformQueueAccessCookie, auth.PermissionPlatformTenantRead,
 	)).Mount(queuemonitor.RootPath, queueMonitor)
+	queueMonitor.SetRetryAuditor(adminStore)
+	// The Nuxt backoffice consumes this read-only JSON representation. The
+	// browser-only legacy monitor above remains mounted at its existing path.
+	queueMonitor.RegisterBackofficeRoutes(platformRoutes, jwtManager)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,

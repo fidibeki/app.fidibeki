@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27
 **Status:** Approved for planning
-**Owner:** Inês, CMO
+**Owner:** Inês, co-founder
 **Scope:** Obtain the first 10 paid Fidibeki subscriptions without paid advertising, then use the validated motion to reach 20.
 
 ## Goal
@@ -99,6 +99,19 @@ Each prospect record must contain only the minimum business information needed t
 
 No purchased contact list, personal email address, tracking pixel, hidden tracking link, attachment, or bulk-send import is allowed in the first pilot.
 
+### Jurisdiction gate
+
+Country is a qualification field, not an afterthought. A public address is not universal permission to send marketing email.
+
+- **United States:** a commercial email must use accurate routing information and subject line, clearly identify the message as an advertisement, include Fidibeki's valid physical postal address, provide a working opt-out method, and honor opt-outs within 10 business days. The initial US pilot can use only corporate/business contact routes and every message must carry the complete compliance footer.
+- **United Kingdom:** a generic address of a verified corporate subscriber can be considered only after a documented UK GDPR lawful-basis and transparency review, an identity disclosure, and a valid opt-out route. Do not use a personal business email or sole-trader address without the applicable consent/soft-opt-in basis.
+- **Germany:** no unsolicited marketing email is permitted without prior express consent, except for the narrow existing-customer exception. Do not send a cold email to a German prospect merely because an address is public.
+- **Other Europe:** do not infer a rule from a neighbouring country. Research and record the local rule before drafting an outreach route; if the basis is unclear, do not email.
+
+This operating policy is deliberately conservative and is not legal advice. It turns the launch experiment toward compliant US corporate outreach and consented/warm European routes, rather than treating all of Europe as an emailable cold-list market.
+
+**Primary reference points:** [FTC CAN-SPAM compliance guide](https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business), [ICO B2B marketing guidance](https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/business-to-business-marketing/), and [Germany UWG § 7](https://www.gesetze-im-internet.de/uwg_2004/__7.html). Recheck before each new market because regulator guidance and local law can change.
+
 ### Sequence
 
 The sequence has at most four messages over approximately 12 days:
@@ -125,13 +138,40 @@ The email must:
 
 Inês genuinely investigates the project before writing. If no relevant, truthful connection to Fidibeki can be found, that contact is not sent an email. Relevance is more valuable than list size.
 
+### Human-note standard
+
+The note must read like a co-founder writing to another person, not a SaaS landing page compressed into an email. Keep the body under 90 words and use the recipient's own plain-language product description where possible.
+
+- Start with one real observation, not a title or stock compliment.
+- Ask one natural question; do not force a meeting CTA.
+- Explain Fidibeki only if the question earns that explanation, in everyday language.
+- Do not use generic phrases such as “in-product loop”, “capture context”, “friction”, “what happens next”, “worth exploring”, or “would that be useful” unless the recipient itself uses that language and the phrase is necessary.
+- If the message feels polished, abstract, or salesy when read aloud, cut it and write it again from the actual observation.
+
+The three first pilot messages were sent before this stricter standard. They are not templates for future sends or follow-ups.
+
+### Subject, signature, and duplicate-send rules
+
+- Every subject starts with a capital letter and describes the recipient's actual context; never use a generic or all-lowercase subject.
+- The signature on every future cold email is:
+
+  ```text
+  Inês
+  Co-founder, Fidibeki
+  https://fidibeki.com
+  ```
+
+  The required jurisdiction-specific compliance footer follows this signature where applicable.
+- A first-touch is sent at most once to a given contact. SMTP acceptance is treated as a completed send, not a reason to retry. A follow-up is a separate, logged decision and is never sent to a contact that the founder has marked “do not resend.”
+- The three initial-pilot recipients (Supergood, Muze AI, and Palm Tree Tech) are explicitly marked “do not resend.”
+
 ### Sender safety and deliverability
 
 Before production outreach, the sender domain must have working SPF, DKIM, and DMARC, and all messages must use SMTP with STARTTLS. Sender volume starts at 10–15 new first touches per weekday and increases only after bounce, deferral, and complaint signals remain healthy.
 
 The From identity is:
 
-`Inês at Fidibeki <ines.algo@fidibeki.com>`
+`Inês, co-founder at Fidibeki <ines.algo@fidibeki.com>`
 
 ### Mandatory BCC audit copy
 

@@ -1,6 +1,9 @@
 package queuemonitor
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -8,11 +11,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
 
 const RootPath = "/admin/queues"
+
+var (
+	ErrTaskNotRetryable      = errors.New("queue task is not retryable")
+	ErrRetryAuditUnavailable = errors.New("queue retry audit is unavailable")
+)
 
 type Inspector interface {
 	Queues() ([]string, error)
@@ -22,12 +34,23 @@ type Inspector interface {
 	ListScheduledTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	ListRetryTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	ListArchivedTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
+	GetTaskInfo(string, string) (*asynq.TaskInfo, error)
+	RunTask(string, string) error
+}
+
+// RetryAuditor records the operator's requested task retry before the task is
+// moved in Redis. Redis and PostgreSQL cannot share a transaction, so an audit
+// failure deliberately prevents the command rather than creating an unaudited
+// operational action.
+type RetryAuditor interface {
+	RecordQueueTaskRetry(context.Context, string, string, string) error
 }
 
 type Handler struct {
 	inspector Inspector
 	close     func() error
 	now       func() time.Time
+	auditor   RetryAuditor
 }
 
 func New(redisOption asynq.RedisConnOpt) (*Handler, error) {
@@ -44,6 +67,78 @@ func New(redisOption asynq.RedisConnOpt) (*Handler, error) {
 
 func NewWithInspector(inspector Inspector) *Handler {
 	return &Handler{inspector: inspector, close: func() error { return nil }, now: time.Now}
+}
+
+func (h *Handler) SetRetryAuditor(auditor RetryAuditor) { h.auditor = auditor }
+
+// RegisterBackofficeRoutes mounts the read-only queue snapshot and the
+// separately authorized retry command used by the platform console.
+func (h *Handler) RegisterBackofficeRoutes(router chi.Router, jwt *auth.JWTManager) {
+	router.With(appmiddleware.RequirePlatformAdmin(
+		jwt, auth.PermissionPlatformTenantRead,
+	)).Get("/admin/backoffice/queues", h.ServeBackofficeJSON)
+	router.With(appmiddleware.RequirePlatformAdmin(
+		jwt, auth.PermissionPlatformQueueRun,
+	)).Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", h.RetryBackofficeTask)
+}
+
+// RetryTask moves one retry-state task to pending for immediate processing.
+// The caller is responsible for authenticating the platform administrator;
+// this method verifies the task state and makes the audit durable before the
+// non-transactional Redis mutation.
+func (h *Handler) RetryTask(ctx context.Context, actorID, queue, taskID string) error {
+	queue = strings.TrimSpace(queue)
+	taskID = strings.TrimSpace(taskID)
+	if queue == "" || taskID == "" {
+		return ErrTaskNotRetryable
+	}
+	task, err := h.inspector.GetTaskInfo(queue, taskID)
+	if err != nil {
+		return err
+	}
+	if task == nil || task.State != asynq.TaskStateRetry {
+		return ErrTaskNotRetryable
+	}
+	if h.auditor == nil {
+		return ErrRetryAuditUnavailable
+	}
+	if err := h.auditor.RecordQueueTaskRetry(ctx, actorID, queue, taskID); err != nil {
+		return fmt.Errorf("record queue retry audit: %w", err)
+	}
+	if err := h.inspector.RunTask(queue, taskID); err != nil {
+		return fmt.Errorf("run retry task: %w", err)
+	}
+	return nil
+}
+
+// RetryBackofficeTask is the authenticated command endpoint for one task in
+// the retry state. Its router is responsible for requiring
+// platform:queue:run; the handler additionally requires the claims context so
+// a missing authentication wrapper cannot produce an anonymous audit event.
+func (h *Handler) RetryBackofficeTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		api.WriteError(w, http.StatusMethodNotAllowed, api.CodeBadRequest, "method not allowed", nil)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	err := h.RetryTask(r.Context(), claims.Subject, chi.URLParam(r, "queue"), chi.URLParam(r, "taskID"))
+	switch {
+	case err == nil:
+		api.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	case errors.Is(err, ErrTaskNotRetryable):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "task is not in retry state", nil)
+	case errors.Is(err, ErrRetryAuditUnavailable):
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "queue retry is temporarily unavailable", nil)
+	case errors.Is(err, asynq.ErrTaskNotFound), errors.Is(err, asynq.ErrQueueNotFound):
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "queue task not found", nil)
+	default:
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "queue retry is temporarily unavailable", nil)
+	}
 }
 
 func (h *Handler) Close() error {
@@ -83,38 +178,69 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeBackofficeJSON provides the same read-only operational snapshot as the
+// legacy HTML monitor. It deliberately has no command surface: queue retries,
+// deletion, and replay remain unavailable from the platform console.
+// Authentication is applied by the platform router that mounts this method.
+func (h *Handler) ServeBackofficeJSON(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	page, err := h.dashboard(strings.TrimSpace(r.URL.Query().Get("queue")))
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if r.Method != http.MethodHead {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "service_unavailable", "message": "Queue data is temporarily unavailable."},
+			})
+		}
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"dashboard": page})
+}
+
 type queueRow struct {
-	Name      string
-	Pending   int
-	Active    int
-	Scheduled int
-	Retry     int
-	Archived  int
-	Failed    int
-	Latency   string
-	Selected  bool
+	Name      string `json:"name"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Scheduled int    `json:"scheduled"`
+	Retry     int    `json:"retry"`
+	Archived  int    `json:"archived"`
+	Failed    int    `json:"failed"`
+	Latency   string `json:"latency"`
+	Selected  bool   `json:"selected"`
 }
 
 type taskRow struct {
-	ID            string
-	Type          string
-	State         string
-	Retries       string
-	LastError     string
-	NextProcessAt string
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	State         string `json:"state"`
+	Retries       string `json:"retries"`
+	LastError     string `json:"last_error"`
+	NextProcessAt string `json:"next_process_at"`
 }
 
 type dashboardPage struct {
-	Queues            []queueRow
-	Tasks             []taskRow
-	SelectedQueue     string
-	RefreshedAt       string
-	TotalPending      int
-	TotalActive       int
-	TotalRetry        int
-	TotalFailed       int
-	SelectedTaskCount int
-	Error             string
+	Queues            []queueRow `json:"queues"`
+	Tasks             []taskRow  `json:"tasks"`
+	SelectedQueue     string     `json:"selected_queue"`
+	RefreshedAt       string     `json:"refreshed_at"`
+	TotalPending      int        `json:"total_pending"`
+	TotalActive       int        `json:"total_active"`
+	TotalRetry        int        `json:"total_retry"`
+	TotalFailed       int        `json:"total_failed"`
+	SelectedTaskCount int        `json:"selected_task_count"`
+	Error             string     `json:"error,omitempty"`
 }
 
 func (h *Handler) dashboard(requestedQueue string) (dashboardPage, error) {

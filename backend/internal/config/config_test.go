@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -102,6 +103,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"HTTP_ADDRESS":               ":8080",
 		"BASE_DOMAIN":                "fidibeki.localhost",
 		"PUBLIC_BASE_URL":            "http://api.fidibeki.localhost:8088",
+		"PLATFORM_BACKOFFICE_URL":    "http://admin.fidibeki.localhost:3001",
 		"DATABASE_URL_APP":           "postgres://fidibeki_app:app@localhost/fidibeki",
 		"DATABASE_URL_ADMIN":         "postgres://fidibeki_admin:admin@localhost/fidibeki",
 		"DATABASE_URL_DIRECT":        "postgres://fidibeki_admin:admin@localhost/fidibeki",
@@ -130,6 +132,9 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.BaseDomain != "fidibeki.localhost" {
 		t.Errorf("BaseDomain = %q, want fidibeki.localhost", got.BaseDomain)
+	}
+	if got.PlatformBackofficeURL != "http://admin.fidibeki.localhost:3001" {
+		t.Errorf("PlatformBackofficeURL = %q", got.PlatformBackofficeURL)
 	}
 	if got.ReadinessTimeout.String() != "2s" {
 		t.Errorf("ReadinessTimeout = %s, want 2s", got.ReadinessTimeout)
@@ -194,6 +199,29 @@ func TestConfigurationUsesPlatformPortWhenAddressIsUnset(t *testing.T) {
 	}
 	if got.HTTPAddress != ":9091" {
 		t.Errorf("HTTPAddress = %q, want :9091", got.HTTPAddress)
+	}
+}
+
+func TestConfigurationRequiresSecureBackofficeOriginOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{
+		"APP_ENV": "staging", "BASE_DOMAIN": "fidibeki.test", "PUBLIC_BASE_URL": "https://api.fidibeki.test",
+		"DATABASE_URL_APP": "postgres://app:app@localhost/fidibeki", "DATABASE_URL_ADMIN": "postgres://admin:admin@localhost/fidibeki", "DATABASE_URL_DIRECT": "postgres://admin:admin@localhost/fidibeki",
+		"REDIS_URL": "redis://localhost:6379/0", "S3_ENDPOINT": "https://storage.fidibeki.test", "S3_BUCKET": "fidibeki", "S3_ACCESS_KEY": "key", "S3_SECRET_KEY": "secret",
+		"JWT_SECRET": strings.Repeat("fixture-", 5), "INTEGRATION_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("i", 32))), "TWO_FACTOR_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("t", 32))),
+		"INTERNAL_PROXY_SECRET": strings.Repeat("proxy-", 6), "STRIPE_SECRET_KEY": "fixture", "STRIPE_WEBHOOK_SECRET": "fixture", "STRIPE_PRICE_STARTER": "fixture", "STRIPE_PRICE_GROWTH": "fixture", "STRIPE_PRICE_SCALE": "fixture", "STRIPE_PRICE_STARTER_YEARLY": "fixture", "STRIPE_PRICE_GROWTH_YEARLY": "fixture", "STRIPE_PRICE_SCALE_YEARLY": "fixture", "TURNSTILE_SECRET_KEY": "fixture", "TURNSTILE_SITE_KEY": "fixture",
+	}
+	lookup := func(name string) (string, bool) { value, ok := values[name]; return value, ok }
+	if _, err := config.FromLookup(lookup); err == nil || !strings.Contains(err.Error(), "PLATFORM_BACKOFFICE_URL must be an HTTPS origin") {
+		t.Fatalf("missing backoffice origin error = %v", err)
+	}
+	values["PLATFORM_BACKOFFICE_URL"] = "http://admin.fidibeki.test"
+	if _, err := config.FromLookup(lookup); err == nil || !strings.Contains(err.Error(), "PLATFORM_BACKOFFICE_URL must be an HTTPS origin") {
+		t.Fatalf("insecure backoffice origin error = %v", err)
+	}
+	values["PLATFORM_BACKOFFICE_URL"] = "https://admin.fidibeki.test"
+	if _, err := config.FromLookup(lookup); err != nil {
+		t.Fatalf("secure backoffice origin error = %v", err)
 	}
 }
 

@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 127
+	const latestMigrationVersion = 128
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2547,8 +2547,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("create deactivated testimonial backfill member: %v", err)
 	}
-	if err := migrator.Steps(-2); err != nil {
-		t.Fatalf("roll back testimonial permission backfill: %v", err)
+	if err := migrator.Steps(-3); err != nil {
+		t.Fatalf("roll back migrations after testimonial permission backfill: %v", err)
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply testimonial permission backfill: %v", err)
@@ -2622,8 +2622,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("delete testimonial backfill fixtures: %v", err)
 	}
-	if err := migrator.Steps(1); err != nil {
-		t.Fatalf("restore latest migration after testimonial permission backfill test: %v", err)
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("restore latest migrations after testimonial permission backfill test: %v", err)
 	}
 
 	var twoFactorTablesProtected bool

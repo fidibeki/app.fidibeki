@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/billing"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
@@ -71,6 +76,309 @@ func TestLoginDoesNotRevealWhetherAdminExists(t *testing.T) {
 	))
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestBackofficeLoginIsNonEnumeratingAndUsesConfiguredVerificationOrigin(t *testing.T) {
+	t.Parallel()
+
+	queue := &captureEnqueuer{}
+	known := NewHTTPHandler(HTTPOptions{Auth: Service{
+		Store: &fakeAuthStore{admin: Admin{ID: "admin-id", Email: "admin@example.com"}},
+		Email: queue, PublicBaseURL: "https://api.fidibeki.com",
+		BackofficeURL: "https://admin.fidibeki.com",
+		AuthFrom:      "Fidibeki <auth@fidibeki.com>",
+	}})
+	knownResponse := httptest.NewRecorder()
+	known.ServeHTTP(knownResponse, httptest.NewRequest(
+		http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`),
+	))
+	if knownResponse.Code != http.StatusAccepted {
+		t.Fatalf("known status = %d, body = %s", knownResponse.Code, knownResponse.Body.String())
+	}
+	if len(queue.messages) != 1 {
+		t.Fatalf("known queued messages = %d, want 1", len(queue.messages))
+	}
+	var verificationURL *url.URL
+	for _, field := range strings.Fields(queue.messages[0].Text) {
+		candidate, err := url.Parse(field)
+		if err == nil && candidate.Query().Get("token") != "" {
+			verificationURL = candidate
+			break
+		}
+	}
+	if verificationURL == nil {
+		t.Fatalf("backoffice verification link missing from email: %s", queue.messages[0].Text)
+	}
+	if verificationURL.Scheme != "https" || verificationURL.Host != "admin.fidibeki.com" ||
+		verificationURL.Path != "/auth/verify" || verificationURL.Query().Get("redirect_uri") != "" {
+		t.Errorf("verification URL = %s", verificationURL)
+	}
+
+	unknownQueue := &captureEnqueuer{}
+	unknown := NewHTTPHandler(HTTPOptions{Auth: Service{
+		Store: &fakeAuthStore{findErr: ErrAdminNotFound}, Email: unknownQueue,
+		PublicBaseURL: "https://api.fidibeki.com", BackofficeURL: "https://admin.fidibeki.com",
+		AuthFrom: "Fidibeki <auth@fidibeki.com>",
+	}})
+	unknownResponse := httptest.NewRecorder()
+	unknown.ServeHTTP(unknownResponse, httptest.NewRequest(
+		http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"missing@example.com"}`),
+	))
+	if unknownResponse.Code != knownResponse.Code || unknownResponse.Body.String() != knownResponse.Body.String() {
+		t.Errorf("unknown response = %d %s; known response = %d %s",
+			unknownResponse.Code, unknownResponse.Body.String(), knownResponse.Code, knownResponse.Body.String())
+	}
+	if len(unknownQueue.messages) != 0 {
+		t.Errorf("unknown admin queued %d messages", len(unknownQueue.messages))
+	}
+}
+
+func TestBackofficeLoginRateLimitsBeforeAdminLookup(t *testing.T) {
+	t.Parallel()
+	limiter := &platformLoginLimiter{decision: ratelimit.Decision{Allowed: false, Limit: 5}}
+	platformHandler := NewHTTPHandler(HTTPOptions{
+		Auth:         Service{Store: &fakeAuthStore{}, Email: &captureEnqueuer{}, BackofficeURL: "https://admin.fidibeki.com"},
+		LoginLimiter: limiter,
+	})
+	handler := appmiddleware.TrustedProxyHost("test-proxy-secret")(platformHandler)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	request.Header.Set(appmiddleware.ProxyHostHeader, "api.fidibeki.test")
+	request.Header.Set(appmiddleware.ProxySecretHeader, "test-proxy-secret")
+	request.Header.Set(appmiddleware.BackofficeClientIPHeader, "203.0.113.5")
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusTooManyRequests || limiter.key == "" {
+		t.Fatalf("rate limited login = %d, key = %q", recorder.Code, limiter.key)
+	}
+	if !strings.Contains(limiter.key, "platform-login:203.0.113.5:") {
+		t.Errorf("login limiter key = %q, want authenticated proxy client address", limiter.key)
+	}
+
+	limiter.key = ""
+	untrusted := httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	untrusted.RemoteAddr = "198.51.100.8:1234"
+	untrusted.Header.Set(appmiddleware.BackofficeClientIPHeader, "203.0.113.5")
+	handler.ServeHTTP(httptest.NewRecorder(), untrusted)
+	if !strings.Contains(limiter.key, "platform-login:198.51.100.8:") {
+		t.Errorf("untrusted header influenced login limiter key = %q", limiter.key)
+	}
+}
+
+func TestPlatformLoginRateLimiterOnlyTrustsConfiguredProxyPeers(t *testing.T) {
+	t.Parallel()
+
+	limiter := &platformLoginLimiter{decision: ratelimit.Decision{Allowed: false, Limit: 5}}
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth: Service{Store: &fakeAuthStore{}, Email: &captureEnqueuer{}}, LoginLimiter: limiter,
+		TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+	})
+	trustedPeer := httptest.NewRequest(http.MethodPost, "/admin/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	trustedPeer.RemoteAddr = "10.0.0.4:443"
+	trustedPeer.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.2")
+	handler.ServeHTTP(httptest.NewRecorder(), trustedPeer)
+	if !strings.Contains(limiter.key, "platform-login:203.0.113.5:") {
+		t.Errorf("trusted proxy limiter key = %q", limiter.key)
+	}
+
+	limiter.key = ""
+	untrustedPeer := httptest.NewRequest(http.MethodPost, "/admin/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	untrustedPeer.RemoteAddr = "198.51.100.8:443"
+	untrustedPeer.Header.Set("X-Forwarded-For", "203.0.113.5")
+	handler.ServeHTTP(httptest.NewRecorder(), untrustedPeer)
+	if !strings.Contains(limiter.key, "platform-login:198.51.100.8:") {
+		t.Errorf("untrusted forwarding header influenced limiter key = %q", limiter.key)
+	}
+}
+
+func TestBackofficeOverviewRequiresPlatformReadPermission(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{overview: BackofficeOverview{
+		WorkspaceCount: 12, ActiveWorkspaceCount: 7, TrialWorkspaceCount: 3,
+		SuspendedWorkspaceCount: 1, CancelledWorkspaceCount: 1,
+		TrialsEndingSoonCount: 2, RecentWorkspaceCount: 4,
+		Plans: []BackofficePlanCount{{Plan: tenant.PlanGrowth, WorkspaceCount: 5}},
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated status = %d", unauthenticated.Code)
+	}
+
+	wrongPermission, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantCreate),
+	})
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+wrongPermission)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden {
+		t.Errorf("forbidden status = %d, body = %s", forbidden.Code, forbidden.Body.String())
+	}
+
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+	})
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/overview", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("allowed status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+	if !strings.Contains(allowed.Body.String(), `"workspace_count":12`) ||
+		strings.Contains(allowed.Body.String(), "admin@example.com") {
+		t.Errorf("overview body = %s", allowed.Body.String())
+	}
+}
+
+func TestBackofficeReadRoutesFailClosedWithoutDirectoryStore(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+		string(auth.PermissionPlatformTenantUpdate),
+	})
+	handler := NewHTTPHandler(HTTPOptions{JWT: jwtManager})
+	tenantID := "d0f62b82-8347-45e6-8f35-b0cc4114a75c"
+
+	for _, path := range []string{
+		"/admin/backoffice/overview",
+		"/admin/backoffice/tenants",
+		"/admin/backoffice/tenants/" + tenantID,
+		"/admin/backoffice/tenants/" + tenantID + "/recovery-candidates",
+		"/admin/backoffice/tenants/" + tenantID + "/access-events",
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusServiceUnavailable ||
+			!strings.Contains(response.Body.String(), `"code":"service_unavailable"`) {
+			t.Errorf("GET %s status = %d body = %s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestBackofficeTenantDirectoryValidatesFiltersAndReturnsCursorPage(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+	})
+	createdAt := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	store := &fakeBackofficeStore{tenantPage: BackofficeTenantPage{
+		Tenants: []BackofficeTenantSummary{{
+			ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Name: "Acme", Slug: "acme",
+			Plan: tenant.PlanGrowth, Status: tenant.StatusActive, CreatedAt: createdAt, UpdatedAt: createdAt,
+		}},
+		NextCursor: "opaque-next-cursor",
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	invalid := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants?status=unknown", nil)
+	invalidRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalid, invalidRequest)
+	if invalid.Code != http.StatusUnprocessableEntity || store.tenantListCalled {
+		t.Fatalf("invalid filter status = %d, called = %t, body = %s", invalid.Code, store.tenantListCalled, invalid.Body.String())
+	}
+
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet,
+		"/admin/backoffice/tenants?q=acme&status=active&plan=growth&limit=1", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("allowed status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+	if store.tenantList.Query != "acme" || store.tenantList.Status != tenant.StatusActive ||
+		store.tenantList.Plan != tenant.PlanGrowth || store.tenantList.Limit != 1 ||
+		!strings.Contains(allowed.Body.String(), `"next_cursor":"opaque-next-cursor"`) {
+		t.Errorf("list params = %#v, body = %s", store.tenantList, allowed.Body.String())
+	}
+}
+
+func TestBackofficeTenantDetailAndAuditRequireReadPermissionAndRejectInvalidIDs(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{detail: BackofficeTenantDetail{
+		Tenant:      TenantRecord{ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Name: "Acme", Slug: "acme"},
+		MemberCount: 4, ProjectCount: 2, FeedbackCount: 9,
+	}, auditPage: BackofficeAccessEventPage{Events: []BackofficeAccessEvent{{
+		ID: "27a8e82a-8347-45e6-8f35-b0cc4114a75c", Kind: "ownership.provisioned", ActorType: "platform_admin",
+	}}}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantRead)})
+	invalid := httptest.NewRecorder()
+	invalidRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/not-a-uuid", nil)
+	invalidRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalid, invalidRequest)
+	if invalid.Code != http.StatusUnprocessableEntity || store.detailCalled {
+		t.Fatalf("invalid detail status = %d, called = %t", invalid.Code, store.detailCalled)
+	}
+
+	invalidCursor := httptest.NewRecorder()
+	invalidCursorRequest := httptest.NewRequest(http.MethodGet,
+		"/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/access-events?cursor=not-a-cursor", nil)
+	invalidCursorRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(invalidCursor, invalidCursorRequest)
+	if invalidCursor.Code != http.StatusUnprocessableEntity || store.auditCalled {
+		t.Fatalf("invalid audit cursor status = %d, called = %t", invalidCursor.Code, store.auditCalled)
+	}
+
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || !strings.Contains(allowed.Body.String(), `"feedback_count":9`) || strings.Contains(allowed.Body.String(), "token") {
+		t.Fatalf("detail status = %d, body = %s", allowed.Code, allowed.Body.String())
+	}
+
+	audit := httptest.NewRecorder()
+	auditRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/access-events?limit=10", nil)
+	auditRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(audit, auditRequest)
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), `"ownership.provisioned"`) {
+		t.Fatalf("audit status = %d, body = %s", audit.Code, audit.Body.String())
+	}
+}
+
+func TestBackofficeRecoveryCandidatesRequireUpdatePermissionAndUseCursor(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{recoveryPage: BackofficeRecoveryCandidatePage{
+		Members:    []BackofficeTenantMember{{ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Email: "owner-candidate@example.com", Status: "active"}},
+		NextCursor: "next-recovery-page",
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantRead)})
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/recovery-candidates", nil)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden || store.recoveryCalled {
+		t.Fatalf("read-only recovery candidate status = %d, called = %t", forbidden.Code, store.recoveryCalled)
+	}
+
+	updateToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantUpdate)})
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/recovery-candidates?limit=10", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+updateToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || store.recoveryParams.Limit != 10 || !strings.Contains(allowed.Body.String(), "next-recovery-page") {
+		t.Fatalf("recovery candidate status = %d, params = %#v, body = %s", allowed.Code, store.recoveryParams, allowed.Body.String())
 	}
 }
 
@@ -272,6 +580,43 @@ func TestTenantManagementMapsDomainErrors(t *testing.T) {
 	}
 }
 
+func TestTenantDeletionUsesAuditedForceDeleter(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantDelete),
+	})
+
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "deleted", status: http.StatusNoContent},
+		{name: "missing", err: billing.ErrNotFound, status: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			deleter := &fakeTenantDeleter{err: test.err}
+			handler := NewHTTPHandler(HTTPOptions{Deleter: deleter, JWT: jwtManager})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodDelete, "/admin/tenants/tenant-id", nil)
+			request.Header.Set("Authorization", "Bearer "+accessToken)
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d body = %s, want %d", response.Code, response.Body.String(), test.status)
+			}
+			if deleter.tenantID != "tenant-id" || deleter.actorID != "admin-id" {
+				t.Fatalf("force-delete call = tenant %q actor %q", deleter.tenantID, deleter.actorID)
+			}
+		})
+	}
+}
+
 func TestPlatformAdminRecoveryRequiresEvidenceAndPassesActor(t *testing.T) {
 	t.Parallel()
 
@@ -414,6 +759,62 @@ type fakeTenantStore struct {
 	recoverErr error
 }
 
+type fakeTenantDeleter struct {
+	tenantID string
+	actorID  string
+	err      error
+}
+
+type fakeBackofficeStore struct {
+	overview         BackofficeOverview
+	tenantPage       BackofficeTenantPage
+	tenantList       BackofficeTenantListParams
+	tenantListCalled bool
+	detail           BackofficeTenantDetail
+	detailCalled     bool
+	auditPage        BackofficeAccessEventPage
+	auditParams      BackofficeAccessEventListParams
+	auditCalled      bool
+	recoveryPage     BackofficeRecoveryCandidatePage
+	recoveryParams   BackofficeRecoveryCandidateListParams
+	recoveryCalled   bool
+	err              error
+}
+
+type platformLoginLimiter struct {
+	decision ratelimit.Decision
+	key      string
+}
+
+func (l *platformLoginLimiter) Allow(_ context.Context, key string, _ ratelimit.Window) (ratelimit.Decision, error) {
+	l.key = key
+	return l.decision, nil
+}
+
+func (s *fakeBackofficeStore) Overview(context.Context) (BackofficeOverview, error) {
+	return s.overview, s.err
+}
+
+func (s *fakeBackofficeStore) ListBackofficeTenants(_ context.Context, params BackofficeTenantListParams) (BackofficeTenantPage, error) {
+	s.tenantListCalled = true
+	s.tenantList = params
+	return s.tenantPage, s.err
+}
+func (s *fakeBackofficeStore) GetBackofficeTenant(_ context.Context, _ string) (BackofficeTenantDetail, error) {
+	s.detailCalled = true
+	return s.detail, s.err
+}
+func (s *fakeBackofficeStore) ListBackofficeRecoveryCandidates(_ context.Context, _ string, params BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
+	s.recoveryCalled = true
+	s.recoveryParams = params
+	return s.recoveryPage, s.err
+}
+func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
+	s.auditCalled = true
+	s.auditParams = params
+	return s.auditPage, s.err
+}
+
 func (s *fakeTenantStore) CreateTenant(_ context.Context, input CreateTenantParams) (TenantRecord, error) {
 	s.created = input
 	if s.createErr != nil {
@@ -433,7 +834,7 @@ func (s *fakeTenantStore) ListTenants(context.Context) ([]TenantRecord, error) {
 	return []TenantRecord{s.record}, nil
 }
 
-func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord) (TenantRecord, error) {
+func (s *fakeTenantStore) UpdateTenant(_ context.Context, input TenantRecord, _ string) (TenantRecord, error) {
 	s.updated = input
 	return input, nil
 }
@@ -446,4 +847,10 @@ func (s *fakeTenantStore) DeleteTenant(_ context.Context, id string) error {
 func (s *fakeTenantStore) RecoverOwnership(_ context.Context, input RecoverOwnershipParams) error {
 	s.recovered = input
 	return s.recoverErr
+}
+
+func (d *fakeTenantDeleter) ForceDelete(_ context.Context, tenantID, actorID string) error {
+	d.tenantID = tenantID
+	d.actorID = actorID
+	return d.err
 }

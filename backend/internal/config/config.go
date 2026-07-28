@@ -30,7 +30,11 @@ type Config struct {
 	// development. Every tenant-facing browser URL — SAML entity ID, assertion
 	// consumer, and login redirects — is derived from it, so no deployment URL
 	// is ever hardcoded. Defaults to PublicBaseURL.
-	WebPublicBaseURL          string
+	WebPublicBaseURL string
+	// PlatformBackofficeURL is the exact browser origin for the separately
+	// deployed platform-administration application. It is intentionally not
+	// derived from PublicBaseURL: API and backoffice origins are distinct.
+	PlatformBackofficeURL     string
 	DatabaseURLApp            string
 	DatabaseURLAdmin          string
 	DatabaseURLDirect         string
@@ -157,6 +161,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		BaseDomain:                get("BASE_DOMAIN", ""),
 		PublicBaseURL:             get("PUBLIC_BASE_URL", ""),
 		WebPublicBaseURL:          get("WEB_PUBLIC_BASE_URL", get("PUBLIC_BASE_URL", "")),
+		PlatformBackofficeURL:     get("PLATFORM_BACKOFFICE_URL", ""),
 		DatabaseURLApp:            get("DATABASE_URL_APP", ""),
 		DatabaseURLAdmin:          get("DATABASE_URL_ADMIN", ""),
 		DatabaseURLDirect:         get("DATABASE_URL_DIRECT", ""),
@@ -344,6 +349,20 @@ func (c Config) validate() []error {
 		parsed, err := url.ParseRequestURI(c.WebPublicBaseURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("WEB_PUBLIC_BASE_URL must be an absolute URL"))
+		}
+	}
+	if c.PlatformBackofficeURL != "" {
+		parsed, err := url.ParseRequestURI(c.PlatformBackofficeURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
+			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an absolute origin without a path, query, or fragment"))
+		}
+	}
+	if c.Environment == "staging" || c.Environment == "production" {
+		parsed, err := url.ParseRequestURI(c.PlatformBackofficeURL)
+		if c.PlatformBackofficeURL == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			validationErrors = append(validationErrors, fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an HTTPS origin in %s", c.Environment))
 		}
 	}
 	// Slack one-click install is all-or-nothing. A half-configured app would offer an
@@ -548,6 +567,7 @@ func (c Config) Redacted() map[string]any {
 		"base_domain":                  c.BaseDomain,
 		"public_base_url":              c.PublicBaseURL,
 		"web_public_base_url":          c.WebPublicBaseURL,
+		"platform_backoffice_url":      c.PlatformBackofficeURL,
 		"database_url_app":             "[REDACTED]",
 		"database_url_admin":           "[REDACTED]",
 		"database_url_direct":          "[REDACTED]",

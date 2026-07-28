@@ -119,16 +119,18 @@ Store `SENTRY_AUTH_TOKEN` and `RAILWAY_PRODUCTION_TOKEN` as GitHub secrets. Stor
 non-secret identifiers and URLs as GitHub environment or repository variables:
 
 - `SENTRY_ORG`, `SENTRY_API_PROJECT`, `SENTRY_WEB_PROJECT`, `SENTRY_WIDGET_PROJECT`
-- `STAGING_API_URL`, `STAGING_TENANT_URL`, `PRODUCTION_API_URL`
+- `STAGING_API_URL`, `STAGING_TENANT_URL`, `PRODUCTION_API_URL`, `PRODUCTION_BACKOFFICE_URL`
 - `RAILWAY_PROJECT_ID`, `RAILWAY_API_SERVICE`, `RAILWAY_WORKER_SERVICE`,
-  `RAILWAY_WEB_SERVICE`, `RAILWAY_WIDGET_SERVICE`
+  `RAILWAY_BACKOFFICE_SERVICE`, `RAILWAY_WEB_SERVICE`, `RAILWAY_WIDGET_SERVICE`
 
 Use `/railway.json` for the API service, `/railway.worker.json` for the worker,
-`/railway.web.json` for Nuxt, and `/railway.widget.json` for Caddy. Enable Railway GitHub
+`/railway.backoffice.json` for the platform console, `/railway.web.json` for tenant Nuxt,
+and `/railway.widget.json` for Caddy. Enable Railway GitHub
 autodeploy on `main` only in staging and enable **Wait for CI**. Production deployment is the
 manually dispatched GitHub `Promote Production` workflow and requires typing `fidibeki.com`. The
 workflow takes a `ref` input (default `main`; pin the SHA or tag that staging validated) and a
-`services` input (`all`, `backend` = api+worker, or a single service) for partial promotions. Every
+`services` input (`all`, `backend` = api+worker, or a single service, including `backoffice`) for
+partial promotions. Every
 promotion writes a GitHub Deployment record, so the deployed-version history lives in the
 repository's **Environments → production** tab. A `release` input (`patch`/`minor`/`major`, or
 `none` to skip) makes a successful promotion tag the promoted commit with the next semver version

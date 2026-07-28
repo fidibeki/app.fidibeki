@@ -24,7 +24,7 @@ The cohort is research, not a sending queue. Each prospect needs an individual d
 - **Truthful opening angle:** Ask how recurring product feedback found in support conversations currently reaches the product/engineering decision process when the original report needs product context. Do not imply that Glassdesk has a problem or that its support workflow is inadequate.
 - **Caution:** This is a discovery conversation, not a claim that Fidibeki replaces customer support or their product. The public mailbox may be shared; address the note to the team, not a guessed individual.
 - **Research source:** https://glass-desk.com/
-- **Status:** Worth one individually reviewed draft after suppression and Germany/EU direct-marketing checks.
+- **Status:** Do not cold email. Germany's unsolicited-email rule requires prior express consent outside a narrow existing-customer exception. Retain only as a possible consented, inbound, or warm-introduction prospect.
 
 ## 2. Wedece — referral-partner candidate (Europe/US-facing)
 
@@ -36,7 +36,7 @@ The cohort is research, not a sending queue. Each prospect needs an individual d
 - **Truthful opening angle:** Ask whether Wedece already gives selected post-launch SaaS clients a structured way to bring end-user issue and feature reports—with useful context—back to the build team. Offer a short look at Fidibeki only if the answer is relevant.
 - **Caution:** Do not position Fidibeki as a replacement for its product-support or delivery work; ask about an optional post-launch layer for its clients.
 - **Research source:** https://wedece.com/
-- **Status:** Worth one individually reviewed partnership draft after suppression and contact-location review.
+- **Status:** Do not cold email until the legal entity/contact country and applicable local electronic-marketing basis are confirmed. A +48 telephone number is not enough evidence to infer an email rule.
 
 ## 3. SolarFleet — later customer-discovery candidate (United Kingdom)
 
@@ -55,6 +55,7 @@ The cohort is research, not a sending queue. Each prospect needs an individual d
 - Feedback, roadmap, and changelog vendors are excluded as direct customer prospects because they overlap Fidibeki's category.
 - Larger procurement-led companies are not part of this initial test.
 - Africa/Angola is not in this primary cohort because USD/EUR payment friction makes commercial fit less certain. Such prospects remain exceptional, not volume targets.
+- Germany is excluded from unsolicited cold-email sending without prior express consent. Other European countries remain country-by-country qualification work, not bulk-email territory.
 
 ## Pre-send checklist
 

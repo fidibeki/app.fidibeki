@@ -22,6 +22,7 @@ on:
           - backend
           - api
           - worker
+          - backoffice
           - web
           - widget
       release:
@@ -52,9 +53,11 @@ jobs:
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       API_SERVICE: ${{ vars.RAILWAY_API_SERVICE }}
       WORKER_SERVICE: ${{ vars.RAILWAY_WORKER_SERVICE }}
+      BACKOFFICE_SERVICE: ${{ vars.RAILWAY_BACKOFFICE_SERVICE }}
       WEB_SERVICE: ${{ vars.RAILWAY_WEB_SERVICE }}
       WIDGET_SERVICE: ${{ vars.RAILWAY_WIDGET_SERVICE }}
       PRODUCTION_API_URL: ${{ vars.PRODUCTION_API_URL }}
+      PRODUCTION_BACKOFFICE_URL: ${{ vars.PRODUCTION_BACKOFFICE_URL }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Confirm production target
@@ -72,9 +75,9 @@ jobs:
         run: |
           sha=$(git rev-parse HEAD)
           case "$SERVICES" in
-            all) targets="api worker web widget" ;;
+            all) targets="api worker backoffice web widget" ;;
             backend) targets="api worker" ;;
-            api|worker|web|widget) targets="$SERVICES" ;;
+            api|worker|backoffice|web|widget) targets="$SERVICES" ;;
             *) echo "Unknown services selection: $SERVICES" >&2; exit 1 ;;
           esac
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -112,6 +115,7 @@ jobs:
             case "$target" in
               api) service="$API_SERVICE" ;;
               worker) service="$WORKER_SERVICE" ;;
+              backoffice) service="$BACKOFFICE_SERVICE" ;;
               web) service="$WEB_SERVICE" ;;
               widget) service="$WIDGET_SERVICE" ;;
             esac
@@ -120,7 +124,14 @@ jobs:
             echo "::endgroup::"
           done
       - name: Verify production readiness
-        run: curl --fail --show-error --retry 12 --retry-delay 10 "$PRODUCTION_API_URL/readyz"
+        env:
+          TARGETS: ${{ steps.resolve.outputs.targets }}
+        run: |
+          curl --fail --show-error --retry 12 --retry-delay 10 "$PRODUCTION_API_URL/readyz"
+          if [[ " $TARGETS " == *" backoffice "* ]]; then
+            curl --fail --show-error --retry 12 --retry-delay 10 \
+              "$PRODUCTION_BACKOFFICE_URL/backoffice-healthz"
+          fi
       - name: Record deployment result
         if: always() && steps.deployment.outputs.id != ''
         env:
