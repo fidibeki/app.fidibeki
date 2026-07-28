@@ -151,6 +151,29 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("manual configuration rejects an insecure identity provider endpoint", func(t *testing.T) {
+		body, err := json.Marshal(map[string]any{
+			"idp_entity_id": acme.idp.entityID,
+			"idp_sso_url":   "http://idp.test/sso",
+			"certificates":  []string{acme.idp.storedCertificate(t).Certificate},
+		})
+		if err != nil {
+			t.Fatalf("encode request: %v", err)
+		}
+		response := samlRequest(handler, http.MethodPut, "/v1/sso/saml", string(body), adminToken)
+		if response.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(response.Body.String(), `"idp_sso_url"`) ||
+			!strings.Contains(response.Body.String(), "must use HTTPS") {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+		}
+
+		stored := samlRequest(handler, http.MethodGet, "/v1/sso/saml", "", adminToken)
+		if stored.Code != http.StatusOK ||
+			strings.Contains(stored.Body.String(), `"idp_sso_url":"http://idp.test/sso"`) {
+			t.Fatalf("stored configuration after rejection = %d/%s", stored.Code, stored.Body.String())
+		}
+	})
+
 	t.Run("invalid configuration is rejected field by field", func(t *testing.T) {
 		response := samlRequest(handler, http.MethodPut, "/v1/sso/saml",
 			`{"idp_entity_id":"https://idp.test","idp_sso_url":"not a url","certificates":["nonsense"]}`,

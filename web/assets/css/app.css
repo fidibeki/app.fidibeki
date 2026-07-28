@@ -148,12 +148,19 @@
   color: var(--ink);
 }
 
+.app-topbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .app-trial-status {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 7px;
-  margin-left: auto;
   color: var(--ink-soft);
   font-size: 11px;
   font-weight: 650;
@@ -725,10 +732,6 @@
 
   .app-global-search {
     width: min(420px, 48vw);
-  }
-
-  .app-trial-status {
-    margin-left: auto;
   }
 }
 

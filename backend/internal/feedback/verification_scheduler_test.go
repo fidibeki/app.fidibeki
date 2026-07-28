@@ -123,6 +123,13 @@ func TestVerificationQueueUsesStableTaskContract(t *testing.T) {
 	if _, err := OpenVerificationQueue("http://not-redis"); err == nil {
 		t.Fatal("OpenVerificationQueue() error = nil")
 	}
+	secureQueue, err := OpenVerificationQueue("rediss://redis.fidibeki.test:6380/0")
+	if err != nil {
+		t.Fatalf("OpenVerificationQueue(secure URL) error = %v", err)
+	}
+	if err := secureQueue.Close(); err != nil {
+		t.Fatalf("secure queue Close() error = %v", err)
+	}
 }
 
 func TestVerificationSchedulerRunReconcilesBeforeCanceledShutdown(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/issuetracker"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/testimonial"
 	"github.com/hibiken/asynq"
@@ -20,6 +21,8 @@ import (
 
 type Options struct {
 	RedisURL                      string
+	RedisCACert                   string
+	EmailTaskAuthenticator        email.TaskAuthenticator
 	EmailConcurrency              int
 	AIConcurrency                 int
 	DomainConcurrency             int
@@ -87,12 +90,14 @@ func New(options Options) (*Worker, error) {
 	if options.Logger == nil {
 		return nil, fmt.Errorf("worker logger is required")
 	}
-	redisOptions, err := asynq.ParseRedisURI(options.RedisURL)
+	redisOptions, err := redisconn.AsynqOptions(options.RedisURL, options.RedisCACert)
 	if err != nil {
 		return nil, fmt.Errorf("parse worker Redis URL: %w", err)
 	}
 	emailMux := asynq.NewServeMux()
-	if err := email.RegisterHandlers(emailMux, options.Sender); err != nil {
+	if err := email.RegisterHandlers(
+		emailMux, options.Sender, options.EmailTaskAuthenticator,
+	); err != nil {
 		return nil, err
 	}
 	emailMux.HandleFunc(issue.TaskReporterNotify, options.ReporterHandler)

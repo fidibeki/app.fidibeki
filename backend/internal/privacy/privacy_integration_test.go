@@ -23,6 +23,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appemail "github.com/acidiney/app.fidibeki/backend/internal/email"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -246,7 +247,7 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost",
 		From: "Fidibeki <auth@fidibeki.com>", Now: func() time.Time { return now },
 	})
-	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	transactionalHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost",
 		Resolver: tenant.ResolverFunc(func(_ context.Context, slug string) (tenant.Tenant, error) {
 			if slug != "http-privacy" {
@@ -259,6 +260,13 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		}),
 		Begin: db.BeginFromPool(database), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})(routes)
+	handler := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{
+			Limiter: reporterLimiterStub{decision: ratelimit.Decision{
+				Allowed: true, Limit: 1000, Remaining: 999,
+			}},
+		},
+	)(transactionalHandler)
 
 	createdResponse := privacyHTTPRequest(handler, ownerToken, http.MethodPost, "/v1/privacy/exports")
 	if createdResponse.Code != http.StatusAccepted {

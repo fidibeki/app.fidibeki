@@ -23,6 +23,8 @@ import (
 )
 
 const maximumBodySize int64 = 64 << 10
+const limiterUnavailableRetryAfterSeconds = 5
+const limiterUnavailableReason = "widget-analytics_unavailable"
 
 type EventStore interface {
 	InsertEvents(rctx context.Context, query db.Querier, events []EventValues) (IngestResult, error)
@@ -322,9 +324,24 @@ func (h *PublicHTTPHandler) allow(w http.ResponseWriter, r *http.Request, projec
 	for range cost {
 		decision, err := h.options.Limiter.Allow(r.Context(), key, window)
 		if err != nil {
-			h.logger.WarnContext(r.Context(), "widget analytics rate limiter unavailable; allowing request", "error", err)
+			h.logger.WarnContext(
+				r.Context(),
+				"widget analytics rate limiter unavailable",
+				"error", err,
+				"project_id", projectID,
+				"reason", limiterUnavailableReason,
+				"failure_mode", "closed",
+			)
 			w.Header().Set("X-RateLimit-Remaining", "unknown")
-			return true
+			w.Header().Set("Retry-After", strconv.Itoa(limiterUnavailableRetryAfterSeconds))
+			api.WriteError(
+				w,
+				http.StatusServiceUnavailable,
+				api.CodeServiceUnavailable,
+				"service unavailable",
+				nil,
+			)
+			return false
 		}
 		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
 		if !decision.Allowed {

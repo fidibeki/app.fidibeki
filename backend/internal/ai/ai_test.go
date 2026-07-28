@@ -468,6 +468,13 @@ func TestQueueBuildsDeterministicTypedTasks(t *testing.T) {
 	if _, err := OpenQueue("://bad"); err == nil {
 		t.Error("OpenQueue(invalid URL) error = nil")
 	}
+	secureQueue, err := OpenQueue("rediss://redis.fidibeki.test:6380/0")
+	if err != nil {
+		t.Fatalf("OpenQueue(secure URL) error = %v", err)
+	}
+	if err := secureQueue.Close(); err != nil {
+		t.Fatalf("secure queue Close() error = %v", err)
+	}
 }
 
 func TestTaskDecoderRejectsMalformedPayload(t *testing.T) {

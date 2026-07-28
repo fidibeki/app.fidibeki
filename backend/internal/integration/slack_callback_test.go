@@ -86,7 +86,9 @@ func TestSlackCallbackRedirectsToTheInstallingWorkspace(t *testing.T) {
 			name: "no code and no error", query: "", wantResult: "failed", doer: &stubDoer{},
 		},
 		{
-			name: "slack rejected the exchange", query: "code=bad", wantResult: "failed",
+			// State from before authority-version capture is deliberately
+			// consumed and failed without reaching Slack or persistence.
+			name: "legacy state has no authority version", query: "code=bad", wantResult: "failed",
 			doer: &stubDoer{response: jsonResponse(http.StatusOK, `{"ok":false,"error":"invalid_code"}`)},
 		},
 	}

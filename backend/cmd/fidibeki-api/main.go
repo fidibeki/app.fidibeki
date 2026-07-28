@@ -38,6 +38,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/samlsso"
@@ -182,7 +183,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	defer pools.Close()
 
-	redisClient, err := cache.Open(settings.RedisURL)
+	redisClient, err := cache.Open(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,15 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	if err != nil {
 		return fmt.Errorf("initialize member notification token manager: %w", err)
 	}
-	emailQueue, err := email.OpenQueue(settings.RedisURL)
+	emailTaskAuthenticator, err := email.NewTaskAuthenticator(
+		settings.EmailTaskSigningKey, settings.EmailTaskPreviousKey,
+	)
+	if err != nil {
+		return fmt.Errorf("configure email task authentication: %w", err)
+	}
+	emailQueue, err := email.OpenQueue(
+		settings.RedisURL, emailTaskAuthenticator, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -249,7 +258,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 			logger.Warn("email queue close failed", "error", err)
 		}
 	}()
-	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL)
+	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -265,7 +274,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
-	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	verificationQueue, err := feedback.OpenVerificationQueue(
+		settings.RedisURL, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -278,7 +289,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: feedback.VerificationStore{Database: pools.Admin},
 		Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
-	replayQueue, err := replay.OpenQueue(settings.RedisURL)
+	replayQueue, err := replay.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -298,9 +309,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	adminAuth := platformadmin.Service{
 		Store: adminStore, JWT: jwtManager, Email: emailQueue,
-		PublicBaseURL: settings.PublicBaseURL,
-		AuthFrom:      settings.ResendAuthFrom,
-		MagicLinkTTL:  settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
+		PublicBaseURL: settings.PublicBaseURL, BackofficeURL: settings.PlatformBackofficeURL,
+		AuthFrom:     settings.ResendAuthFrom,
+		MagicLinkTTL: settings.MagicLinkTTL, RefreshTTL: settings.RefreshTokenTTL,
 	}
 	billingStore := billing.Store{Database: pools.Admin}
 	billingProvider := billing.NewStripeProvider(settings.StripeSecretKey, settings.StripeWebhookSecret)
@@ -324,9 +335,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: billingStore, Provider: billingProvider, Storage: objectStorage, Logger: logger,
 	}
 	platformHandler := platformadmin.NewHTTPHandler(platformadmin.HTTPOptions{
-		Auth: adminAuth, Tenants: adminStore, JWT: jwtManager, Deleter: deletionExecutor,
-		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
-		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
+		Auth: adminAuth, Tenants: adminStore, Backoffice: adminStore, JWT: jwtManager, Deleter: deletionExecutor, LoginLimiter: publicLimiter,
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+		SecureCookies:     settings.Environment != "local" && settings.Environment != "test",
+		RefreshTTL:        settings.RefreshTokenTTL, Logger: logger,
 	})
 	var resendVerifier issue.WebhookVerifier
 	if settings.ResendWebhookSecret != "" {
@@ -354,7 +366,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin: db.BeginFromPool(pools.App), BaseDomain: settings.BaseDomain,
 		WebPublicBaseURL: settings.WebPublicBaseURL, Logger: logger,
 	})
-	monitorRedis, err := asynq.ParseRedisURI(settings.RedisURL)
+	monitorRedis, err := redisconn.AsynqOptions(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return fmt.Errorf("configure queue monitor: %w", err)
 	}
@@ -370,6 +382,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	platformRoutes.With(appmiddleware.RequirePlatformAdminCookie(
 		jwtManager, platformadmin.PlatformQueueAccessCookie, auth.PermissionPlatformTenantRead,
 	)).Mount(queuemonitor.RootPath, queueMonitor)
+	queueMonitor.SetRetryAuditor(adminStore)
+	// The Nuxt backoffice consumes this read-only JSON representation. The
+	// browser-only legacy monitor above remains mounted at its existing path.
+	queueMonitor.RegisterBackofficeRoutes(platformRoutes, jwtManager)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
@@ -382,7 +398,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
 	// Its own client rather than the outbox enqueuer, whose Enqueue speaks in
 	// outbox events. Transcoding is not a domain event; it is one job.
-	redisQueueOptions, err := asynq.ParseRedisURI(settings.RedisURL)
+	redisQueueOptions, err := redisconn.AsynqOptions(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return fmt.Errorf("parse queue Redis URL: %w", err)
 	}
@@ -620,9 +636,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		BaseDomain:          settings.BaseDomain,
 		InternalProxySecret: settings.InternalProxySecret,
 		PlatformHandler:     platformRoutes,
-		TenantHandler:       tenantRoot,
-		WidgetHandler:       widgetRoutes,
-		PanicReporter:       observability.SentryPanicReporter{},
+		TenantHandler: appmiddleware.TenantAPIKeyRateLimit(
+			appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: publicLimiter, Logger: logger},
+		)(tenantRoot),
+		WidgetHandler: widgetRoutes,
+		PanicReporter: observability.SentryPanicReporter{},
 	})
 	httpServer := &http.Server{
 		Addr:              settings.HTTPAddress,
@@ -672,7 +690,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		return err
 	}
 	defer pools.Close()
-	redisClient, err := cache.Open(settings.RedisURL)
+	redisClient, err := cache.Open(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -690,7 +708,15 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	if err != nil {
 		return err
 	}
-	billingEmailQueue, err := email.OpenQueue(settings.RedisURL)
+	emailTaskAuthenticator, err := email.NewTaskAuthenticator(
+		settings.EmailTaskSigningKey, settings.EmailTaskPreviousKey,
+	)
+	if err != nil {
+		return fmt.Errorf("configure email task authentication: %w", err)
+	}
+	billingEmailQueue, err := email.OpenQueue(
+		settings.RedisURL, emailTaskAuthenticator, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -721,7 +747,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		BaseDomain: settings.BaseDomain, AuthFrom: settings.ResendAuthFrom,
 		MaxMembers: settings.DigestMembersPerRun, Logger: logger,
 	}
-	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL)
+	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -746,7 +772,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Resolver: breachregister.ControllerNotificationOutboxResolver{},
 		Enqueuer: outboxQueue, Logger: logger,
 	}
-	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL)
+	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -763,7 +789,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
-	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	verificationQueue, err := feedback.OpenVerificationQueue(
+		settings.RedisURL, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -776,7 +804,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	verificationScheduler := feedback.VerificationScheduler{
 		Store: verificationStore, Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
-	replayQueue, err := replay.OpenQueue(settings.RedisURL)
+	replayQueue, err := replay.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -800,7 +828,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	replayCleaner := replay.Cleaner{
 		Store: replayStore, Storage: objectStorage, Health: retentionHealth, Logger: logger,
 	}
-	privacyQueue, err := privacy.OpenQueue(settings.RedisURL)
+	privacyQueue, err := privacy.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -892,8 +920,13 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		WelcomeFrom: settings.ResendWelcomeFrom, WelcomeReplyTo: settings.ResendWelcomeReplyTo,
 	}
 	integrationHandler := integration.DeliveryHandler{
-		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
-		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		Store:             integration.Store{Database: pools.Admin, Cipher: integrationCipher},
+		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
+		PublicBaseURL:     settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+	}
+	testimonialMediaCleanup := &testimonial.MediaCleanupMaintainer{
+		Store:   testimonial.PostgresMediaCleanupStore{Database: pools.Admin},
+		Storage: objectStorage, Logger: logger,
 	}
 	issueTrackerHandler := issuetracker.AutoCreateHandler{
 		Store:   issuetracker.Store{Database: pools.Admin, Cipher: integrationCipher},
@@ -932,8 +965,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Logger:      logger,
 	}
 	worker, err := jobworker.New(jobworker.Options{
-		RedisURL: settings.RedisURL, EmailConcurrency: settings.EmailConcurrency,
-		AIConcurrency: settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
+		RedisURL: settings.RedisURL, RedisCACert: settings.RedisCACert,
+		EmailTaskAuthenticator: emailTaskAuthenticator,
+		EmailConcurrency:       settings.EmailConcurrency,
+		AIConcurrency:          settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
 		MediaConcurrency: settings.MediaConcurrency, PrivacyConcurrency: settings.PrivacyConcurrency,
 		Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
@@ -960,7 +995,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 17)
+	const backgroundWorkers = 20
+	backgroundDone := make(chan error, backgroundWorkers)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
@@ -977,19 +1013,18 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
+	go func() { backgroundDone <- testimonialMediaCleanup.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()
 	workerErr := worker.Run(workerCtx)
 	cancel()
-	return errors.Join(
-		workerErr,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone,
-	)
+	backgroundErrors := make([]error, 0, backgroundWorkers+1)
+	backgroundErrors = append(backgroundErrors, workerErr)
+	for range backgroundWorkers {
+		backgroundErrors = append(backgroundErrors, <-backgroundDone)
+	}
+	return errors.Join(backgroundErrors...)
 }
 
 // runSeedTestimonials installs the demo corpus and prints the URLs to open.

@@ -342,6 +342,22 @@ func (h *HTTPHandler) verify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if tokens.Security.IsBreakGlass() {
+		if err := accessaudit.Record(r.Context(), query, accessaudit.RecordInput{
+			TenantID: resolved.ID, Kind: "sso.break_glass_login_succeeded",
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorHuman, MemberID: tokens.Member.ID},
+			ResourceType: accessaudit.ResourceSSOConfiguration, ResourceID: resolved.ID,
+			Action: "break_glass", Outcome: accessaudit.OutcomeSuccess,
+			Data: map[string]any{"reason": "workspace_owner_recovery"},
+		}); err != nil {
+			h.options.Logger.ErrorContext(
+				r.Context(), "SSO break-glass completion audit failed",
+				"error", err, "tenant_id", resolved.ID,
+			)
+			api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+			return
+		}
+	}
 	h.setCookie(w, tokens.RefreshToken)
 	writeTokens(w, tokens, resolved)
 }
@@ -360,6 +376,9 @@ func (h *HTTPHandler) refresh(w http.ResponseWriter, r *http.Request) {
 		r.Context(), query, resolved.ID, cookie.Value, r.UserAgent(), remoteIP(r.RemoteAddr),
 	)
 	if err != nil {
+		if errors.Is(err, ErrRefreshSSORequired) {
+			appmiddleware.CommitTenantTransactionOnError(r.Context())
+		}
 		if errors.Is(err, ErrRefreshExpired) {
 			appmiddleware.CommitTenantTransactionOnError(r.Context())
 		}

@@ -71,7 +71,7 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 		t.Fatalf("idempotent BootstrapAdmin() = %#v, %v", again, err)
 	}
 	found, err := store.FindAdminByEmail(ctx, " Admin@Example.com ")
-	if err != nil || found.ID != admin.ID || len(found.Permissions) != 13 {
+	if err != nil || found.ID != admin.ID || len(found.Permissions) != 14 {
 		t.Fatalf("FindAdminByEmail() = %#v, %v", found, err)
 	}
 
@@ -375,12 +375,48 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 	if err != nil || fetched.Slug != "acme" {
 		t.Fatalf("GetTenant() = %#v, %v", fetched, err)
 	}
+	record = fetched
 	record.Name = "Acme Updated"
 	record.Status = tenant.StatusActive
 	record.TrialEndsAt = nil
-	updated, err := store.UpdateTenant(ctx, record)
+	updated, err := store.UpdateTenant(ctx, record, admin.ID)
 	if err != nil || updated.Name != "Acme Updated" || updated.Status != tenant.StatusActive {
 		t.Fatalf("UpdateTenant() = %#v, %v", updated, err)
+	}
+	var updateAuditActor string
+	if err := connection.QueryRow(ctx, `
+		SELECT actor_platform_admin_id::text FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'workspace.updated'
+	`, record.ID).Scan(&updateAuditActor); err != nil || updateAuditActor != admin.ID {
+		t.Fatalf("workspace update audit actor = %q, error = %v", updateAuditActor, err)
+	}
+	var updateAuditDetail bool
+	if err := connection.QueryRow(ctx, `
+		SELECT data->'changed_fields' ? 'name'
+		   AND data->'changed_fields' ? 'status'
+		   AND data->>'status_from' = 'trial'
+		   AND data->>'status_to' = 'active'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'workspace.updated'
+	`, record.ID).Scan(&updateAuditDetail); err != nil || !updateAuditDetail {
+		t.Fatalf("workspace update audit detail = %t, error = %v", updateAuditDetail, err)
+	}
+	stale := updated
+	fresh, err := store.GetTenant(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("GetTenant(after update) error = %v", err)
+	}
+	fresh.Name = "Acme Fresh"
+	if _, err := store.UpdateTenant(ctx, fresh, admin.ID); err != nil {
+		t.Fatalf("fresh UpdateTenant() error = %v", err)
+	}
+	stale.Plan = tenant.PlanScale
+	if _, err := store.UpdateTenant(ctx, stale, admin.ID); !errors.Is(err, ErrTenantUpdateConflict) {
+		t.Fatalf("stale UpdateTenant() error = %v, want conflict", err)
+	}
+	confirmed, err := store.GetTenant(ctx, updated.ID)
+	if err != nil || confirmed.Name != "Acme Fresh" || confirmed.Plan != tenant.PlanGrowth {
+		t.Fatalf("concurrent update preserved = %#v, error = %v", confirmed, err)
 	}
 	records, err := store.ListTenants(ctx)
 	if err != nil || len(records) != 1 {
@@ -394,6 +430,144 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 	}
 	if _, err := store.GetTenant(ctx, record.ID); !errors.Is(err, ErrTenantNotFound) {
 		t.Fatalf("GetTenant(deleted) error = %v", err)
+	}
+}
+
+func TestStoreBackofficeOverviewAndKeysetDirectory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := platformMagicLinkRetentionTestDatabase(t, ctx)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	store := Store{Database: database, Now: func() time.Time { return now }}
+
+	for _, row := range []struct {
+		name, slug, plan, status string
+		trialEndsAt, createdAt   *time.Time
+	}{
+		{name: "Newest Acme", slug: "newest-acme", plan: "growth", status: "active", createdAt: ptrTime(now)},
+		{name: "Older Acme", slug: "older-acme", plan: "growth", status: "active", createdAt: ptrTime(now.Add(-time.Hour))},
+		{name: "Trial Team", slug: "trial-team", plan: "starter", status: "trial", trialEndsAt: ptrTime(now.Add(48 * time.Hour)), createdAt: ptrTime(now.Add(-31 * 24 * time.Hour))},
+		{name: "Suspended Team", slug: "suspended-team", plan: "scale", status: "suspended", createdAt: ptrTime(now.Add(-2 * 24 * time.Hour))},
+	} {
+		if _, err := database.Exec(ctx, `
+			INSERT INTO tenants (name, slug, plan, status, trial_ends_at, created_at, updated_at)
+			VALUES ($1, $2, $3::tenant_plan, $4::tenant_status, $5, $6, $6)
+		`, row.name, row.slug, row.plan, row.status, row.trialEndsAt, row.createdAt); err != nil {
+			t.Fatalf("seed %s: %v", row.slug, err)
+		}
+	}
+
+	overview, err := store.Overview(ctx)
+	if err != nil {
+		t.Fatalf("Overview() error = %v", err)
+	}
+	if overview.WorkspaceCount != 4 || overview.ActiveWorkspaceCount != 2 ||
+		overview.TrialWorkspaceCount != 1 || overview.SuspendedWorkspaceCount != 1 ||
+		overview.TrialsEndingSoonCount != 1 || overview.RecentWorkspaceCount != 3 {
+		t.Fatalf("overview = %#v", overview)
+	}
+
+	first, err := store.ListBackofficeTenants(ctx, BackofficeTenantListParams{
+		Query: "acme", Status: tenant.StatusActive, Plan: tenant.PlanGrowth, Limit: 1,
+	})
+	if err != nil || len(first.Tenants) != 1 || first.Tenants[0].Slug != "newest-acme" || first.NextCursor == "" {
+		t.Fatalf("first directory page = %#v, error = %v", first, err)
+	}
+	second, err := store.ListBackofficeTenants(ctx, BackofficeTenantListParams{
+		Query: "acme", Status: tenant.StatusActive, Plan: tenant.PlanGrowth, Limit: 1, Cursor: first.NextCursor,
+	})
+	if err != nil || len(second.Tenants) != 1 || second.Tenants[0].Slug != "older-acme" || second.NextCursor != "" {
+		t.Fatalf("second directory page = %#v, error = %v", second, err)
+	}
+	if _, err := store.ListBackofficeTenants(ctx, BackofficeTenantListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
+		t.Fatal("invalid cursor error = nil")
+	}
+
+	var newestID string
+	if err := database.QueryRow(ctx, `SELECT id FROM tenants WHERE slug = 'newest-acme'`).Scan(&newestID); err != nil {
+		t.Fatalf("find audit tenant: %v", err)
+	}
+	memberIDs := make([]string, 3)
+	for index, createdAt := range []time.Time{now, now.Add(-time.Minute), now.Add(-2 * time.Minute)} {
+		if err := database.QueryRow(ctx, `
+			INSERT INTO tenant_members (tenant_id, email, permissions, last_login_at, created_at)
+			VALUES ($1, $2, '{}', $3, $4)
+			RETURNING id
+		`, newestID, "member"+string(rune('a'+index))+"@acme.test", now, createdAt).Scan(&memberIDs[index]); err != nil {
+			t.Fatalf("seed recovery candidate %d: %v", index, err)
+		}
+	}
+	if _, err := database.Exec(ctx, `UPDATE tenants SET owner_member_id = $2 WHERE id = $1`, newestID, memberIDs[0]); err != nil {
+		t.Fatalf("set backoffice owner: %v", err)
+	}
+	detail, err := store.GetBackofficeTenant(ctx, newestID)
+	if err != nil || detail.Owner == nil || detail.Owner.ID != memberIDs[0] || detail.MemberCount != 3 {
+		t.Fatalf("GetBackofficeTenant() = %#v, error = %v", detail, err)
+	}
+	firstCandidates, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1})
+	if err != nil || len(firstCandidates.Members) != 1 || firstCandidates.Members[0].ID != memberIDs[1] || firstCandidates.NextCursor == "" {
+		t.Fatalf("first recovery candidate page = %#v, error = %v", firstCandidates, err)
+	}
+	secondCandidates, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1, Cursor: firstCandidates.NextCursor})
+	if err != nil || len(secondCandidates.Members) != 1 || secondCandidates.Members[0].ID != memberIDs[2] || secondCandidates.NextCursor != "" {
+		t.Fatalf("second recovery candidate page = %#v, error = %v", secondCandidates, err)
+	}
+	if _, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
+		t.Fatal("invalid recovery candidate cursor error = nil")
+	}
+
+	for index, createdAt := range []time.Time{now, now.Add(-time.Minute)} {
+		if _, err := database.Exec(ctx, `
+			INSERT INTO tenant_access_events (tenant_id, kind, data, created_at)
+			VALUES ($1, $2, '{"private":"not in projection"}'::jsonb, $3)
+		`, newestID, "workspace.audit_"+string(rune('a'+index)), createdAt); err != nil {
+			t.Fatalf("seed audit event %d: %v", index, err)
+		}
+	}
+	firstAudit, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1})
+	if err != nil || len(firstAudit.Events) != 1 || firstAudit.NextCursor == "" || firstAudit.Events[0].Kind != "workspace.audit_a" {
+		t.Fatalf("first audit page = %#v, error = %v", firstAudit, err)
+	}
+	secondAudit, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1, Cursor: firstAudit.NextCursor})
+	if err != nil || len(secondAudit.Events) != 1 || secondAudit.NextCursor != "" || secondAudit.Events[0].Kind != "workspace.audit_b" {
+		t.Fatalf("second audit page = %#v, error = %v", secondAudit, err)
+	}
+	if _, err := store.ListBackofficeAccessEvents(ctx, newestID, BackofficeAccessEventListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
+		t.Fatal("invalid audit cursor error = nil")
+	}
+}
+
+func TestStoreRecordsQueueRetryCommandsAsAppendOnlyEvents(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := platformMagicLinkRetentionTestDatabase(t, ctx)
+	store := Store{Database: database}
+	actorID := seedPlatformAdmin(t, ctx, database, "queue-operator@example.test")
+
+	for _, taskID := range []string{"task-1", "task-2"} {
+		if err := store.RecordQueueTaskRetry(ctx, actorID, "email", taskID); err != nil {
+			t.Fatalf("RecordQueueTaskRetry(%q) error = %v", taskID, err)
+		}
+	}
+
+	var events, distinctResources int
+	var actorIDs []string
+	if err := database.QueryRow(ctx, `
+		SELECT count(*), count(DISTINCT resource_id), array_agg(data->>'actor_id' ORDER BY data->>'task_id')
+		FROM platform_security_events
+		WHERE kind = 'operations.queue_task_retry_requested'
+		  AND resource_type = 'queue_task_retry'
+	`).Scan(&events, &distinctResources, &actorIDs); err != nil {
+		t.Fatalf("load queue retry events: %v", err)
+	}
+	if events != 2 || distinctResources != 2 || len(actorIDs) != 2 || actorIDs[0] != actorID || actorIDs[1] != actorID {
+		t.Fatalf("queue retry events = %d, distinct resources = %d, actor IDs = %v", events, distinctResources, actorIDs)
 	}
 }
 

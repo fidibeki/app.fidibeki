@@ -90,12 +90,58 @@ type ObjectInfo struct {
 	ContentType string
 }
 
+type PresignedPost struct {
+	URL    string
+	Fields map[string]string
+}
+
+type StoredObject struct {
+	Key          string
+	Size         int64
+	LastModified time.Time
+}
+
 func (s *Storage) PresignPut(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	presigned, err := s.presignClient.PresignedPutObject(ctx, s.bucket, key, ttl)
 	if err != nil {
 		return "", fmt.Errorf("presign S3 upload: %w", err)
 	}
 	return presigned.String(), nil
+}
+
+// PresignPost creates a browser multipart upload whose policy is enforced by
+// object storage before the object is persisted.
+func (s *Storage) PresignPost(
+	ctx context.Context,
+	key string,
+	contentType string,
+	maxBytes int64,
+	ttl time.Duration,
+) (PresignedPost, error) {
+	policy := minio.NewPostPolicy()
+	if err := policy.SetBucket(s.bucket); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload bucket: %w", err)
+	}
+	if err := policy.SetKey(key); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload key: %w", err)
+	}
+	if err := policy.SetContentType(contentType); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload content type: %w", err)
+	}
+	if err := policy.SetContentLengthRange(1, maxBytes); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload size: %w", err)
+	}
+	if err := policy.SetSuccessStatusAction("204"); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload success status: %w", err)
+	}
+	if err := policy.SetExpires(time.Now().UTC().Add(ttl)); err != nil {
+		return PresignedPost{}, fmt.Errorf("set S3 upload expiry: %w", err)
+	}
+	endpoint, fields, err := s.presignClient.PresignedPostPolicy(ctx, policy)
+	if err != nil {
+		return PresignedPost{}, fmt.Errorf("presign S3 POST upload: %w", err)
+	}
+	return PresignedPost{URL: endpoint.String(), Fields: fields}, nil
 }
 
 // PresignInline issues a URL for an asset meant to be rendered in place rather
@@ -193,6 +239,35 @@ func (s *Storage) RemovePrefix(ctx context.Context, prefix string) error {
 		}
 	}
 	return nil
+}
+
+func (s *Storage) ListObjects(
+	ctx context.Context,
+	prefix string,
+	startAfter string,
+	limit int,
+) ([]StoredObject, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	listCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	objects := make([]StoredObject, 0, limit)
+	for object := range s.client.ListObjects(listCtx, s.bucket, minio.ListObjectsOptions{
+		Prefix: prefix, Recursive: true, StartAfter: startAfter, MaxKeys: limit,
+	}) {
+		if object.Err != nil {
+			return nil, fmt.Errorf("list S3 objects with prefix %q: %w", prefix, object.Err)
+		}
+		objects = append(objects, StoredObject{
+			Key: object.Key, Size: object.Size, LastModified: object.LastModified,
+		})
+		if len(objects) >= limit {
+			cancel()
+			break
+		}
+	}
+	return objects, nil
 }
 
 func (s *Storage) Check(ctx context.Context) error {

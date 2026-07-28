@@ -1,13 +1,16 @@
 package samlsso
 
 import (
+	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 )
 
 // Required mode is the lockout-sensitive transition: it must be unreachable
@@ -227,6 +230,25 @@ func TestNormalizeEmailDomains(t *testing.T) {
 	}
 }
 
+func TestValidateIdPURLRequiresHTTPSWithoutEmbeddedCredentials(t *testing.T) {
+	t.Parallel()
+	if err := validateIdPURL("https://idp.example/sso"); err != nil {
+		t.Fatalf("validateIdPURL(HTTPS) error = %v", err)
+	}
+	for _, value := range []string{
+		"http://idp.example/sso",
+		"ftp://idp.example/sso",
+		"https://user:password@idp.example/sso",
+		"https:idp.example/sso",
+		"/sso",
+		"",
+	} {
+		if err := validateIdPURL(value); err == nil {
+			t.Errorf("validateIdPURL(%q) error = nil, want rejection", value)
+		}
+	}
+}
+
 // The API fetches an administrator-supplied URL, so the destination is treated
 // as attacker-influenced.
 func TestMetadataFetcherRefusesUnsafeDestinations(t *testing.T) {
@@ -243,7 +265,7 @@ func TestMetadataFetcherRefusesUnsafeDestinations(t *testing.T) {
 		"not-a-url",
 		"",
 	} {
-		if _, err := fetcher.validateURL(value); !errors.Is(err, ErrValidation) {
+		if _, err := fetcher.validateURL(context.Background(), value); !errors.Is(err, ErrValidation) {
 			t.Errorf("validateURL(%q) error = %v, want ErrValidation", value, err)
 		}
 	}
@@ -254,10 +276,12 @@ func TestMetadataFetcherRefusesUnsafeDestinations(t *testing.T) {
 func TestMetadataFetcherAllowsPrivateDestinationsOnlyWhenExplicitlyPermitted(t *testing.T) {
 	t.Parallel()
 	fetcher := MetadataFetcher{AllowInsecure: true}
-	if _, err := fetcher.validateURL("http://localhost:8081/metadata"); err != nil {
+	if _, err := fetcher.validateURL(context.Background(), "http://localhost:8081/metadata"); err != nil {
 		t.Fatalf("validateURL() error = %v, want the local destination to be permitted", err)
 	}
-	if _, err := (MetadataFetcher{}).validateURL("http://localhost:8081/metadata"); err == nil {
+	if _, err := (MetadataFetcher{}).validateURL(
+		context.Background(), "http://localhost:8081/metadata",
+	); err == nil {
 		t.Fatal("validateURL() error = nil, want a plain-HTTP destination refused by default")
 	}
 }
@@ -268,15 +292,57 @@ func TestIsPublicAddressRejectsInternalRanges(t *testing.T) {
 		"127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254",
 		"100.64.0.1", "0.0.0.0", "::1", "fc00::1", "fe80::1",
 	} {
-		if isPublicAddress(parseIP(t, value)) {
+		if outboundhttp.IsPublicAddress(netip.MustParseAddr(value)) {
 			t.Errorf("isPublicAddress(%q) = true, want false", value)
 		}
 	}
 	for _, value := range []string{"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"} {
-		if !isPublicAddress(parseIP(t, value)) {
+		if !outboundhttp.IsPublicAddress(netip.MustParseAddr(value)) {
 			t.Errorf("isPublicAddress(%q) = false, want true", value)
 		}
 	}
+}
+
+func TestMetadataFetcherRejectsDNSRebindingBeforeConnecting(t *testing.T) {
+	resolver := &metadataSequenceResolver{answers: [][]netip.Addr{
+		{netip.MustParseAddr("93.184.216.34")},
+		{netip.MustParseAddr("169.254.169.254")},
+	}}
+	dialed := false
+	fetcher := MetadataFetcher{Outbound: outboundhttp.Policy{
+		Resolver: resolver,
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("must not dial")
+		},
+	}}
+
+	if _, err := fetcher.Fetch(
+		context.Background(), "https://rebind.example/metadata",
+	); !errors.Is(err, ErrValidation) {
+		t.Fatalf("Fetch() error = %v, want ErrValidation", err)
+	}
+	if dialed {
+		t.Fatal("metadata fetch connected after DNS rebound to a private address")
+	}
+}
+
+type metadataSequenceResolver struct {
+	answers [][]netip.Addr
+	index   int
+}
+
+func (r *metadataSequenceResolver) LookupNetIP(
+	context.Context,
+	string,
+	string,
+) ([]netip.Addr, error) {
+	index := r.index
+	if index >= len(r.answers) {
+		index = len(r.answers) - 1
+	}
+	r.index++
+	return append([]netip.Addr(nil), r.answers[index]...), nil
 }
 
 func TestPolicyNeverDependsOnMembership(t *testing.T) {
@@ -357,6 +423,31 @@ func TestParseIdPMetadataExtractsTheRedirectEndpointAndSigningCertificates(t *te
 	}
 }
 
+func TestParseIdPMetadataRejectsAnInsecureRedirectEndpoint(t *testing.T) {
+	t.Parallel()
+	idp := newTestIdP(t, "https://idp.test/entity")
+	certificate := idp.storedCertificate(t)
+	document := `<?xml version="1.0"?>
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.test/entity">
+  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <KeyDescriptor use="signing">
+      <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+        <X509Data><X509Certificate>` + certificate.Certificate + `</X509Certificate></X509Data>
+      </KeyInfo>
+    </KeyDescriptor>
+    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                         Location="http://idp.test/sso"/>
+  </IDPSSODescriptor>
+</EntityDescriptor>`
+
+	_, err := ParseIdPMetadata([]byte(document), time.Now())
+	var validation ValidationError
+	if !errors.As(err, &validation) ||
+		validation.Fields["idp_sso_url"] != "single sign-on URL must use HTTPS" {
+		t.Fatalf("ParseIdPMetadata() error = %#v, want idp_sso_url HTTPS validation", err)
+	}
+}
+
 func TestParseIdPMetadataRejectsUnusableDocuments(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
@@ -405,13 +496,4 @@ func TestParseCertificateAcceptsPEMAndBareBase64(t *testing.T) {
 			t.Errorf("ParseCertificate(%q) error = %v, want ErrValidation", value, err)
 		}
 	}
-}
-
-func parseIP(t *testing.T, value string) net.IP {
-	t.Helper()
-	address := net.ParseIP(value)
-	if address == nil {
-		t.Fatalf("net.ParseIP(%q) = nil", value)
-	}
-	return address
 }

@@ -1,15 +1,27 @@
 package integration
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 )
 
-func ValidateCreate(input CreateInput, allowInsecureURL ...bool) (CreateValues, []FieldError) {
+type ValidationOptions struct {
+	AllowInsecureURL bool
+	Outbound         outboundhttp.Policy
+}
+
+func ValidateCreate(
+	ctx context.Context,
+	input CreateInput,
+	options ValidationOptions,
+) (CreateValues, []FieldError) {
 	values := CreateValues{
 		Kind: input.Kind, Name: strings.TrimSpace(input.Name),
 		WebhookURL: strings.TrimSpace(input.WebhookURL), Active: true,
@@ -24,8 +36,16 @@ func ValidateCreate(input CreateInput, allowInsecureURL ...bool) (CreateValues, 
 	if values.Name == "" || utf8.RuneCountInString(values.Name) > 100 {
 		fields = append(fields, FieldError{Field: "name", Message: "must contain 1 to 100 characters"})
 	}
-	if !validWebhookURL(values.WebhookURL, allowInsecureURL...) {
+	validURL := validWebhookURL(values.WebhookURL, options.AllowInsecureURL)
+	if !validURL {
 		fields = append(fields, FieldError{Field: "webhook_url", Message: "must be a valid HTTPS URL"})
+	} else if !options.AllowInsecureURL {
+		parsed, _ := url.Parse(values.WebhookURL)
+		if err := options.Outbound.CheckHost(ctx, parsed.Hostname()); err != nil {
+			fields = append(fields, FieldError{
+				Field: "webhook_url", Message: "must resolve only to public addresses",
+			})
+		}
 	}
 	if input.Channel != nil {
 		channel := strings.TrimSpace(*input.Channel)

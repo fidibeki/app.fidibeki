@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -31,6 +34,10 @@ func TestValidateSiteURLAcceptsOnlyAJiraOrigin(t *testing.T) {
 		{name: "query is rejected", value: "https://acme.atlassian.net?a=b"},
 		{name: "credentials are rejected", value: "https://user:pass@acme.atlassian.net"},
 		{name: "plain http is rejected", value: "http://acme.atlassian.net"},
+		{name: "loopback HTTPS is rejected", value: "https://127.0.0.1"},
+		{name: "private HTTPS is rejected", value: "https://10.0.0.1"},
+		{name: "CGNAT HTTPS is rejected", value: "https://100.64.0.1"},
+		{name: "IPv6 ULA HTTPS is rejected", value: "https://[fc00::1]"},
 		{name: "empty is rejected", value: "   "},
 		{
 			name: "loopback allowed only in tests", value: "http://127.0.0.1:9000",
@@ -51,6 +58,29 @@ func TestValidateSiteURLAcceptsOnlyAJiraOrigin(t *testing.T) {
 					testCase.value, got, ok, testCase.want, testCase.wantOK)
 			}
 		})
+	}
+}
+
+func TestDefaultJiraClientRejectsAReboundPrivatePeer(t *testing.T) {
+	t.Parallel()
+
+	dialed := false
+	doer := defaultHTTPClient(outboundhttp.Policy{
+		Resolver: trackerStaticResolver{netip.MustParseAddr("169.254.169.254")},
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("must not dial")
+		},
+	})
+	client := JiraClient{HTTP: doer}
+	_, err := client.Validate(context.Background(), Credentials{
+		SiteURL: "https://jira.example", Email: "ops@example.com", APIToken: "token",
+	})
+	if failure := providerFailure(t, err); failure.Code != ErrorCodeUnreachable {
+		t.Fatalf("failure = %#v, want unreachable", failure)
+	}
+	if dialed {
+		t.Fatal("Jira connected after the site resolved to a private address")
 	}
 }
 
@@ -696,4 +726,14 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	if value != nil {
 		_ = json.NewEncoder(w).Encode(value)
 	}
+}
+
+type trackerStaticResolver []netip.Addr
+
+func (r trackerStaticResolver) LookupNetIP(
+	context.Context,
+	string,
+	string,
+) ([]netip.Addr, error) {
+	return append([]netip.Addr(nil), r...), nil
 }

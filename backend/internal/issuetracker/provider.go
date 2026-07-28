@@ -7,10 +7,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 )
 
 // HTTPDoer is the seam every provider client is built on so tests can drive them against an
@@ -118,8 +121,12 @@ func send(ctx context.Context, client HTTPDoer, request *http.Request) (int, []b
 	return response.StatusCode, body, nil
 }
 
-func defaultHTTPClient() HTTPDoer {
-	return &http.Client{Timeout: providerTimeout}
+func defaultHTTPClient(policies ...outboundhttp.Policy) HTTPDoer {
+	var policy outboundhttp.Policy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
+	return policy.NewClient(providerTimeout)
 }
 
 // ValidateSiteURL accepts the Jira site a workspace pastes in. Only HTTPS is allowed outside
@@ -136,6 +143,14 @@ func ValidateSiteURL(value string, allowInsecure bool) (string, bool) {
 	}
 	switch parsed.Scheme {
 	case "https":
+		host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+		if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+			return "", false
+		}
+		if address, parseErr := netip.ParseAddr(host); parseErr == nil &&
+			!outboundhttp.IsPublicAddress(address) {
+			return "", false
+		}
 		return parsed.Scheme + "://" + parsed.Host, true
 	case "http":
 		if !allowInsecure {

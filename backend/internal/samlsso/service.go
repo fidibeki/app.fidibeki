@@ -189,10 +189,10 @@ func validateIdPURL(value string) error {
 		return errors.New("single sign-on URL is required")
 	}
 	target, err := url.Parse(value)
-	if err != nil || !target.IsAbs() || target.Host == "" {
+	if err != nil || !target.IsAbs() || target.Hostname() == "" || target.User != nil {
 		return errors.New("single sign-on URL is invalid")
 	}
-	if target.Scheme != "https" && target.Scheme != "http" {
+	if !strings.EqualFold(target.Scheme, "https") {
 		return errors.New("single sign-on URL must use HTTPS")
 	}
 	if len(value) > 2048 {

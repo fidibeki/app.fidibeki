@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ type HTTPOptions struct {
 	Store             Store
 	JWT               *auth.JWTManager
 	AllowInsecureURLs bool
+	Outbound          outboundhttp.Policy
 	// Slack enables the one-click install path. Left zero, the endpoints report that the
 	// deployment has no Slack app and the manual path keeps working unchanged.
 	Slack  SlackOAuth
@@ -61,7 +63,10 @@ func (h *HTTPHandler) create(w http.ResponseWriter, r *http.Request) {
 	if !decodeIntegrationJSON(w, r, &input) {
 		return
 	}
-	values, fields := ValidateCreate(input, h.options.AllowInsecureURLs)
+	values, fields := ValidateCreate(r.Context(), input, ValidationOptions{
+		AllowInsecureURL: h.options.AllowInsecureURLs,
+		Outbound:         h.options.Outbound,
+	})
 	if len(fields) > 0 {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
 			"request validation failed", map[string]any{"fields": fields})

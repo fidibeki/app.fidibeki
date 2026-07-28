@@ -100,7 +100,7 @@ func TestOpenAsynqEnqueuerValidatesRedisURL(t *testing.T) {
 	if _, err := OpenAsynqEnqueuer("://invalid"); err == nil {
 		t.Error("OpenAsynqEnqueuer(invalid) error = nil")
 	}
-	queue, err := OpenAsynqEnqueuer("redis://localhost:6379/0")
+	queue, err := OpenAsynqEnqueuer("rediss://redis.fidibeki.test:6380/0")
 	if err != nil {
 		t.Fatalf("OpenAsynqEnqueuer(valid) error = %v", err)
 	}

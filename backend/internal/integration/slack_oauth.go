@@ -41,6 +41,9 @@ var (
 	// ErrInstallStateInvalid covers a forged, expired, or already-used state token. The
 	// three are deliberately indistinguishable to the caller.
 	ErrInstallStateInvalid = errors.New("slack install state is invalid or expired")
+	// ErrInstallAuthorityInvalid means the member or workspace no longer has
+	// the authority captured when the OAuth flow began.
+	ErrInstallAuthorityInvalid = errors.New("slack install authority is no longer valid")
 	// ErrSlackNotConfigured means the deployment has no Slack app credentials, so the
 	// one-click path is unavailable while the manual path keeps working.
 	ErrSlackNotConfigured = errors.New("slack one-click install is not configured")
@@ -58,11 +61,14 @@ func (e *SlackError) Error() string { return "slack rejected the install: " + e.
 // It is held server-side and referenced by an opaque token, so nothing in the URL the user
 // carries to Slack and back can be tampered with to reach another workspace.
 type InstallState struct {
-	TenantID      string   `json:"tenant_id"`
-	TenantSlug    string   `json:"tenant_slug"`
-	MemberID      string   `json:"member_id"`
-	Events        []string `json:"events"`
-	PrivacyFields []string `json:"privacy_fields"`
+	TenantID   string `json:"tenant_id"`
+	TenantSlug string `json:"tenant_slug"`
+	MemberID   string `json:"member_id"`
+	// AuthorizationVersion is required so any permission or lifecycle mutation
+	// invalidates an already-issued OAuth state.
+	AuthorizationVersion *int     `json:"authorization_version"`
+	Events               []string `json:"events"`
+	PrivacyFields        []string `json:"privacy_fields"`
 }
 
 // InstallStateStore hands out single-use state tokens. Consume must return a given token at
@@ -100,6 +106,10 @@ type SlackInstallation struct {
 func (s SlackOAuth) Begin(ctx context.Context, state InstallState) (string, error) {
 	if !s.Configured() {
 		return "", ErrSlackNotConfigured
+	}
+	if state.TenantID == "" || state.TenantSlug == "" || state.MemberID == "" ||
+		state.AuthorizationVersion == nil {
+		return "", ErrInstallAuthorityInvalid
 	}
 	token, err := s.States.Create(ctx, state, slackStateTTL)
 	if err != nil {

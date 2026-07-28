@@ -306,6 +306,34 @@ func TestNewProviderRequiresATrustedCertificate(t *testing.T) {
 	}
 }
 
+func TestNewProviderRejectsAStoredInsecureIdentityProviderEndpoint(t *testing.T) {
+	idp := newTestIdP(t, "https://idp.test/entity")
+	endpoints := testEndpoints()
+	entityID, err := endpoints.EntityID(testSlug)
+	if err != nil {
+		t.Fatalf("EntityID() error = %v", err)
+	}
+	keyPair, err := GenerateKeyPair(entityID, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateKeyPair() error = %v", err)
+	}
+	configuration := Configuration{
+		TenantID: "tenant-1", Mode: auth.SSOModeOptional,
+		IdPEntityID: idp.entityID, IdPSSOURL: "http://idp.test/sso",
+		SPCertificate: keyPair.CertificatePEM,
+		Certificates:  []Certificate{idp.storedCertificate(t)},
+	}
+
+	_, err = NewProvider(
+		configuration, keyPair.PrivateKeyDER, endpoints, testSlug, nil,
+	)
+	var validation ValidationError
+	if !errors.As(err, &validation) ||
+		validation.Fields["idp_sso_url"] != "single sign-on URL must use HTTPS" {
+		t.Fatalf("NewProvider() error = %#v, want idp_sso_url HTTPS validation", err)
+	}
+}
+
 func TestAssertionHashIsStableAndOpaque(t *testing.T) {
 	first := AssertionHash("_assertion-1")
 	if first != AssertionHash("_assertion-1") {

@@ -227,7 +227,7 @@ func TestOpenQueueValidatesURL(t *testing.T) {
 	if _, err := OpenQueue("://bad"); err == nil {
 		t.Fatal("OpenQueue(invalid) error = nil")
 	}
-	queue, err := OpenQueue("redis://localhost:6380/0")
+	queue, err := OpenQueue("rediss://redis.fidibeki.test:6380/0")
 	if err != nil {
 		t.Fatalf("OpenQueue(valid) error = %v", err)
 	}

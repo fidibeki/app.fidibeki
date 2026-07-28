@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 126
+	const latestMigrationVersion = 128
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2522,7 +2522,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	// Migration 000126 backfills testimonial:* permissions onto existing
 	// active members who were created before the testimonials feature landed.
 	// Insert a legacy active member without any testimonial permissions, then
-	// roll back and reapply 126 to verify the full set was appended and the
+	// roll back through 126 and reapply it to verify the full set was appended and the
 	// authorization version was bumped so existing sessions are invalidated.
 	var testimonialBackfillTenantID, testimonialBackfillMemberID string
 	if err := root.QueryRow(ctx, `
@@ -2547,8 +2547,8 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("create deactivated testimonial backfill member: %v", err)
 	}
-	if err := migrator.Steps(-1); err != nil {
-		t.Fatalf("roll back testimonial permission backfill: %v", err)
+	if err := migrator.Steps(-3); err != nil {
+		t.Fatalf("roll back migrations after testimonial permission backfill: %v", err)
 	}
 	if err := migrator.Steps(1); err != nil {
 		t.Fatalf("reapply testimonial permission backfill: %v", err)
@@ -2621,6 +2621,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("delete testimonial backfill fixtures: %v", err)
+	}
+	if err := migrator.Steps(2); err != nil {
+		t.Fatalf("restore latest migrations after testimonial permission backfill test: %v", err)
 	}
 
 	var twoFactorTablesProtected bool

@@ -21,7 +21,7 @@ const (
 
 var SubmissionPolicy = Policy{
 	Name: "feedback-submission", Version: 1, Reason: ReasonSubmissionRateLimited,
-	FailureMode: FailOpen,
+	FailureMode: FailClosed,
 	Rules: []Rule{
 		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 100, Period: time.Hour}},
 		{Scope: ScopeOrigin, Window: ratelimit.Window{Limit: 60, Period: time.Hour}},

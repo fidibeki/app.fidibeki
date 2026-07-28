@@ -302,6 +302,10 @@ func idpEntityDescriptor(configuration Configuration) (*saml.EntityDescriptor, e
 	if configuration.IdPEntityID == "" || configuration.IdPSSOURL == "" {
 		return nil, ErrNotConfigured
 	}
+	idpSSOURL := strings.TrimSpace(configuration.IdPSSOURL)
+	if err := validateIdPURL(idpSSOURL); err != nil {
+		return nil, ValidationError{Fields: map[string]string{"idp_sso_url": err.Error()}}
+	}
 	keys := make([]saml.KeyDescriptor, 0, len(configuration.Certificates))
 	for _, certificate := range configuration.Certificates {
 		keys = append(keys, saml.KeyDescriptor{
@@ -327,7 +331,7 @@ func idpEntityDescriptor(configuration Configuration) (*saml.EntityDescriptor, e
 			},
 			SingleSignOnServices: []saml.Endpoint{{
 				Binding:  saml.HTTPRedirectBinding,
-				Location: configuration.IdPSSOURL,
+				Location: idpSSOURL,
 			}},
 		}},
 	}, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -11,8 +12,8 @@ type Redis struct {
 	client *redis.Client
 }
 
-func Open(databaseURL string) (*Redis, error) {
-	options, err := redis.ParseURL(databaseURL)
+func Open(databaseURL string, caCertificates ...string) (*Redis, error) {
+	options, err := redisconn.ClientOptions(databaseURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse Redis URL: %w", err)
 	}

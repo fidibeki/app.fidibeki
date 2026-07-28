@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
@@ -36,13 +37,17 @@ var videoContentTypes = map[string]bool{
 
 // CollectMediaStore is the write surface the author's upload needs.
 type CollectMediaStore interface {
-	CreateVideoUpload(context.Context, db.Querier, string, VideoUploadValues) (string, error)
+	CreateVideoUpload(context.Context, db.Querier, string, VideoUploadValues) (VideoUploadReservation, error)
+	LoadPendingVideoUpload(context.Context, db.Querier, string, string, string) (PendingVideoUpload, error)
 	CompleteVideoUpload(context.Context, db.Querier, string, string, string, time.Time) error
+	DeletePendingVideoUpload(context.Context, db.Querier, string, string, string) error
 }
 
 // UploadSigner issues the URL the author's browser sends the file to.
 type UploadSigner interface {
-	PresignPut(context.Context, string, time.Duration) (string, error)
+	PresignPost(context.Context, string, string, int64, time.Duration) (storage.PresignedPost, error)
+	Stat(context.Context, string) (storage.ObjectInfo, error)
+	RemoveObject(context.Context, string) error
 }
 
 // requestVideo hands back a direct-to-storage upload URL.
@@ -98,20 +103,30 @@ func (h *CollectHTTPHandler) requestVideo(w http.ResponseWriter, r *http.Request
 	// be unique and unguessable.
 	storageKey := fmt.Sprintf("testimonials/%s/%s/source", tenantID, publicID)
 
+	var reservation VideoUploadReservation
 	if err := h.withTenant(r.Context(), tenantID, func(query db.Querier) error {
-		_, createErr := h.options.MediaStore.CreateVideoUpload(r.Context(), query, tenantID,
+		created, createErr := h.options.MediaStore.CreateVideoUpload(r.Context(), query, tenantID,
 			VideoUploadValues{
 				RequestID: request.ID, PublicID: publicID, StorageKey: storageKey,
 				ContentType: contentType, SizeBytes: submission.SizeBytes,
 				CompleteTokenHash: completeHash,
 			})
+		reservation = created
 		return createErr
 	}); err != nil {
 		h.writeFailure(w, r, err)
 		return
 	}
+	if reservation.ReplacedStorageKey != "" {
+		if err := h.options.Uploads.RemoveObject(r.Context(), reservation.ReplacedStorageKey); err != nil {
+			h.writeFailure(w, r, fmt.Errorf("remove replaced testimonial video: %w", err))
+			return
+		}
+	}
 
-	url, err := h.options.Uploads.PresignPut(r.Context(), storageKey, videoUploadTTL)
+	upload, err := h.options.Uploads.PresignPost(
+		r.Context(), storageKey, contentType, submission.SizeBytes, videoUploadTTL,
+	)
 	if err != nil {
 		h.writeFailure(w, r, err)
 		return
@@ -119,9 +134,9 @@ func (h *CollectHTTPHandler) requestVideo(w http.ResponseWriter, r *http.Request
 	noStore(w)
 	api.WriteJSON(w, http.StatusCreated, map[string]any{
 		"media_id":       publicID,
-		"upload_url":     url,
-		"method":         http.MethodPut,
-		"headers":        map[string]string{"Content-Type": contentType},
+		"upload_url":     upload.URL,
+		"method":         http.MethodPost,
+		"fields":         upload.Fields,
 		"complete_token": completeToken,
 		"expires_at":     h.now().Add(videoUploadTTL),
 	})
@@ -143,9 +158,57 @@ func (h *CollectHTTPHandler) completeVideo(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	publicID := strings.TrimSpace(submission.MediaID)
+	tokenHash := HashToken(submission.CompleteToken)
+	var upload PendingVideoUpload
+	if err := h.withTenant(r.Context(), tenantID, func(query db.Querier) error {
+		pending, loadErr := h.options.MediaStore.LoadPendingVideoUpload(
+			r.Context(), query, tenantID, publicID, tokenHash,
+		)
+		upload = pending
+		return loadErr
+	}); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			noStore(w)
+			api.WriteError(w, http.StatusNotFound, api.CodeNotFound,
+				"this upload is no longer expecting a file", nil)
+			return
+		}
+		h.writeFailure(w, r, err)
+		return
+	}
+	object, err := h.options.Uploads.Stat(r.Context(), upload.StorageKey)
+	if err != nil && !errors.Is(err, storage.ErrObjectNotFound) {
+		h.writeFailure(w, r, err)
+		return
+	}
+	actualType := strings.ToLower(strings.TrimSpace(object.ContentType))
+	if err != nil || object.Size != upload.SizeBytes || object.Size < 1 ||
+		object.Size > maxVideoBytes || actualType != upload.ContentType {
+		if h.options.Logger != nil {
+			h.options.Logger.WarnContext(r.Context(), "testimonial video upload rejected",
+				slog.String("media_id", publicID),
+				slog.Int64("declared_size_bytes", upload.SizeBytes),
+				slog.Int64("object_size_bytes", object.Size),
+				slog.String("declared_content_type", upload.ContentType),
+				slog.String("object_content_type", actualType),
+				slog.Bool("object_missing", errors.Is(err, storage.ErrObjectNotFound)),
+			)
+		}
+		if cleanupErr := h.rejectVideoUpload(r.Context(), tenantID, publicID, tokenHash, upload.StorageKey); cleanupErr != nil {
+			h.writeFailure(w, r, cleanupErr)
+			return
+		}
+		noStore(w)
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"the uploaded video does not match the reserved file", map[string]string{
+				"video": "upload the selected video again",
+			})
+		return
+	}
 	if err := h.withTenant(r.Context(), tenantID, func(query db.Querier) error {
 		return h.options.MediaStore.CompleteVideoUpload(r.Context(), query, tenantID,
-			strings.TrimSpace(submission.MediaID), HashToken(submission.CompleteToken), h.now())
+			publicID, tokenHash, h.now())
 	}); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			noStore(w)
@@ -159,7 +222,7 @@ func (h *CollectHTTPHandler) completeVideo(w http.ResponseWriter, r *http.Reques
 	// Enqueued after the row is committed, so the worker cannot claim an upload
 	// the transaction has not finished recording.
 	if h.options.Transcodes != nil {
-		task, err := NewTranscodeTask(tenantID, strings.TrimSpace(submission.MediaID))
+		task, err := NewTranscodeTask(tenantID, publicID)
 		if err == nil {
 			if _, err = h.options.Transcodes.EnqueueContext(r.Context(), task); err != nil &&
 				h.options.Logger != nil {
@@ -172,6 +235,20 @@ func (h *CollectHTTPHandler) completeVideo(w http.ResponseWriter, r *http.Reques
 	}
 	noStore(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *CollectHTTPHandler) rejectVideoUpload(
+	ctx context.Context,
+	tenantID, publicID, tokenHash, storageKey string,
+) error {
+	if err := h.options.Uploads.RemoveObject(ctx, storageKey); err != nil {
+		return fmt.Errorf("remove rejected testimonial video: %w", err)
+	}
+	return h.withTenant(ctx, tenantID, func(query db.Querier) error {
+		return h.options.MediaStore.DeletePendingVideoUpload(
+			ctx, query, tenantID, publicID, tokenHash,
+		)
+	})
 }
 
 // videoAllowed reports whether the workspace's plan carries video.

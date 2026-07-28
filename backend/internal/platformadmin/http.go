@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/billing"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -32,20 +36,33 @@ type TenantStore interface {
 	CreateTenant(context.Context, CreateTenantParams) (TenantRecord, error)
 	GetTenant(context.Context, string) (TenantRecord, error)
 	ListTenants(context.Context) ([]TenantRecord, error)
-	UpdateTenant(context.Context, TenantRecord) (TenantRecord, error)
+	UpdateTenant(context.Context, TenantRecord, string) (TenantRecord, error)
 	DeleteTenant(context.Context, string) error
 	RecoverOwnership(context.Context, RecoverOwnershipParams) error
+}
+
+type BackofficeStore interface {
+	Overview(context.Context) (BackofficeOverview, error)
+	ListBackofficeTenants(context.Context, BackofficeTenantListParams) (BackofficeTenantPage, error)
+	GetBackofficeTenant(context.Context, string) (BackofficeTenantDetail, error)
+	ListBackofficeRecoveryCandidates(context.Context, string, BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error)
+	ListBackofficeAccessEvents(context.Context, string, BackofficeAccessEventListParams) (BackofficeAccessEventPage, error)
 }
 
 type HTTPOptions struct {
 	Auth          Service
 	Tenants       TenantStore
+	Backoffice    BackofficeStore
 	JWT           *auth.JWTManager
 	SecureCookies bool
 	RefreshTTL    time.Duration
 	Now           func() time.Time
 	Deleter       TenantDeleter
-	Logger        *slog.Logger
+	LoginLimiter  ratelimit.Limiter
+	// TrustedProxyCIDRs controls when X-Forwarded-For is accepted for legacy
+	// platform login throttling. Empty means the socket peer is always used.
+	TrustedProxyCIDRs []netip.Prefix
+	Logger            *slog.Logger
 }
 
 type TenantDeleter interface {
@@ -67,6 +84,17 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 	router.Post("/admin/auth/verify", handler.verify)
 	router.Post("/admin/auth/refresh", handler.refresh)
 	router.Post("/admin/auth/logout", handler.logout)
+	router.Post("/admin/backoffice/auth/login", handler.backofficeLogin)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/overview", handler.backofficeOverview)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants", handler.backofficeTenants)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants/{tenantID}", handler.backofficeTenant)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantUpdate)).
+		Get("/admin/backoffice/tenants/{tenantID}/recovery-candidates", handler.backofficeRecoveryCandidates)
+	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantRead)).
+		Get("/admin/backoffice/tenants/{tenantID}/access-events", handler.backofficeAccessEvents)
 
 	router.With(appmiddleware.RequirePlatformAdmin(options.JWT, auth.PermissionPlatformTenantCreate)).
 		Post("/admin/tenants", handler.createTenant)
@@ -87,13 +115,223 @@ func NewHTTPHandler(options HTTPOptions) http.Handler {
 }
 
 func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
+	h.requestLogin(w, r, h.options.Auth.RequestMagicLink, h.options.LoginLimiter, false)
+}
+
+func (h *HTTPHandler) backofficeLogin(w http.ResponseWriter, r *http.Request) {
+	h.requestLogin(w, r, h.options.Auth.RequestBackofficeMagicLink, h.options.LoginLimiter, true)
+}
+
+func (h *HTTPHandler) backofficeOverview(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	overview, err := h.options.Backoffice.Overview(r.Context())
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]BackofficeOverview{"overview": overview})
+}
+
+func (h *HTTPHandler) backofficeTenants(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	params, err := parseBackofficeTenantListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
+	}
+	page, err := h.options.Backoffice.ListBackofficeTenants(r.Context(), params)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func (h *HTTPHandler) backofficeTenant(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	detail, err := h.options.Backoffice.GetBackofficeTenant(r.Context(), tenantID)
+	if errors.Is(err, ErrTenantNotFound) {
+		writeTenantError(w, err)
+		return
+	}
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) backofficeRecoveryCandidates(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	params, err := parseBackofficeRecoveryCandidateListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
+	}
+	page, err := h.options.Backoffice.ListBackofficeRecoveryCandidates(r.Context(), tenantID, params)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseBackofficeRecoveryCandidateListParams(r *http.Request) (BackofficeRecoveryCandidateListParams, error) {
+	params := BackofficeRecoveryCandidateListParams{Limit: 25, Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeRecoveryCandidateListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeTenantCursor(params.Cursor); err != nil {
+			return BackofficeRecoveryCandidateListParams{}, err
+		}
+	}
+	return params, nil
+}
+
+func (h *HTTPHandler) backofficeAccessEvents(w http.ResponseWriter, r *http.Request) {
+	if h.options.Backoffice == nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	tenantID, ok := backofficeTenantID(w, r)
+	if !ok {
+		return
+	}
+	params, err := parseBackofficeAccessEventListParams(r)
+	if err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
+		return
+	}
+	page, err := h.options.Backoffice.ListBackofficeAccessEvents(r.Context(), tenantID, params)
+	if err != nil {
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusOK, page)
+}
+
+func parseBackofficeAccessEventListParams(r *http.Request) (BackofficeAccessEventListParams, error) {
+	params := BackofficeAccessEventListParams{Limit: 25, Cursor: strings.TrimSpace(r.URL.Query().Get("cursor"))}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeAccessEventListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeAccessEventCursor(params.Cursor); err != nil {
+			return BackofficeAccessEventListParams{}, err
+		}
+	}
+	return params, nil
+}
+
+func backofficeTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := chi.URLParam(r, "tenantID")
+	if _, err := uuid.Parse(id); err != nil {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "tenant ID is invalid", nil)
+		return "", false
+	}
+	return id, true
+}
+
+func parseBackofficeTenantListParams(r *http.Request) (BackofficeTenantListParams, error) {
+	query := r.URL.Query()
+	params := BackofficeTenantListParams{
+		Query:  strings.TrimSpace(query.Get("q")),
+		Cursor: strings.TrimSpace(query.Get("cursor")),
+		Limit:  25,
+	}
+	if len(params.Query) > 120 {
+		return BackofficeTenantListParams{}, errors.New("q must not exceed 120 characters")
+	}
+	if rawLimit := query.Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 100 {
+			return BackofficeTenantListParams{}, errors.New("limit must be between 1 and 100")
+		}
+		params.Limit = limit
+	}
+	if rawStatus := strings.TrimSpace(query.Get("status")); rawStatus != "" {
+		params.Status = tenant.Status(rawStatus)
+		switch params.Status {
+		case tenant.StatusActive, tenant.StatusTrial, tenant.StatusSuspended, tenant.StatusCancelled:
+		default:
+			return BackofficeTenantListParams{}, errors.New("status is invalid")
+		}
+	}
+	if rawPlan := strings.TrimSpace(query.Get("plan")); rawPlan != "" {
+		params.Plan = tenant.Plan(rawPlan)
+		if _, exists := config.PlanFor(params.Plan); !exists {
+			return BackofficeTenantListParams{}, errors.New("plan is invalid")
+		}
+	}
+	if params.Cursor != "" {
+		if _, err := decodeBackofficeTenantCursor(params.Cursor); err != nil {
+			return BackofficeTenantListParams{}, err
+		}
+	}
+	return params, nil
+}
+
+func (h *HTTPHandler) requestLogin(
+	w http.ResponseWriter,
+	r *http.Request,
+	requestMagicLink func(context.Context, string) error,
+	limiter ratelimit.Limiter,
+	backoffice bool,
+) {
 	var request struct {
 		Email string `json:"email"`
 	}
 	if !decodeRequest(w, r, &request) {
 		return
 	}
-	if err := h.options.Auth.RequestMagicLink(r.Context(), request.Email); err != nil {
+	if limiter != nil {
+		ip := httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs)
+		if backoffice {
+			if trustedIP, ok := appmiddleware.BackofficeClientIP(r); ok {
+				ip = trustedIP
+			}
+		}
+		key := "platform-login:" + ip + ":" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
+		decision, err := limiter.Allow(r.Context(), key, ratelimit.Window{Limit: 5, Period: 15 * time.Minute})
+		if err != nil {
+			api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+			return
+		}
+		if !decision.Allowed {
+			api.WriteError(w, http.StatusTooManyRequests, api.CodeRateLimitExceeded, "rate limit exceeded", nil)
+			return
+		}
+	}
+	if err := requestMagicLink(r.Context(), request.Email); err != nil {
 		if strings.Contains(err.Error(), "email is invalid") {
 			api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "email is invalid", nil)
 			return
@@ -325,7 +563,12 @@ func (h *HTTPHandler) updateTenant(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, err.Error(), nil)
 		return
 	}
-	record, err := h.options.Tenants.UpdateTenant(r.Context(), current)
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	record, err := h.options.Tenants.UpdateTenant(r.Context(), current, claims.Subject)
 	if err != nil {
 		writeTenantError(w, err)
 		return
@@ -505,6 +748,8 @@ func writeTenantError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "tenant not found", nil)
 	case errors.Is(err, ErrSlugConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant slug already exists", nil)
+	case errors.Is(err, ErrTenantUpdateConflict):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant changed before update; reload and try again", nil)
 	case errors.Is(err, ErrOwnershipConfirmation):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipConfirmation, "workspace confirmation does not match", nil)
 	case errors.Is(err, ErrRecentAuthenticationRequired):

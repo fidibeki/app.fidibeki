@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -30,11 +31,16 @@ type Config struct {
 	// development. Every tenant-facing browser URL — SAML entity ID, assertion
 	// consumer, and login redirects — is derived from it, so no deployment URL
 	// is ever hardcoded. Defaults to PublicBaseURL.
-	WebPublicBaseURL          string
+	WebPublicBaseURL string
+	// PlatformBackofficeURL is the exact browser origin for the separately
+	// deployed platform-administration application. It is intentionally not
+	// derived from PublicBaseURL: API and backoffice origins are distinct.
+	PlatformBackofficeURL     string
 	DatabaseURLApp            string
 	DatabaseURLAdmin          string
 	DatabaseURLDirect         string
 	RedisURL                  string
+	RedisCACert               string
 	S3Endpoint                string
 	S3PublicEndpoint          string
 	S3Region                  string
@@ -71,6 +77,8 @@ type Config struct {
 	ResendWelcomeFrom         string
 	ResendWelcomeReplyTo      string
 	ResendWebhookSecret       string
+	EmailTaskSigningKey       string
+	EmailTaskPreviousKey      string
 	EmailConcurrency          int
 	AIConcurrency             int
 	DomainConcurrency         int
@@ -157,10 +165,12 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		BaseDomain:                get("BASE_DOMAIN", ""),
 		PublicBaseURL:             get("PUBLIC_BASE_URL", ""),
 		WebPublicBaseURL:          get("WEB_PUBLIC_BASE_URL", get("PUBLIC_BASE_URL", "")),
+		PlatformBackofficeURL:     get("PLATFORM_BACKOFFICE_URL", ""),
 		DatabaseURLApp:            get("DATABASE_URL_APP", ""),
 		DatabaseURLAdmin:          get("DATABASE_URL_ADMIN", ""),
 		DatabaseURLDirect:         get("DATABASE_URL_DIRECT", ""),
 		RedisURL:                  get("REDIS_URL", ""),
+		RedisCACert:               get("REDIS_CA_CERT", ""),
 		S3Endpoint:                s3Endpoint,
 		S3PublicEndpoint:          get("S3_PUBLIC_ENDPOINT", s3Endpoint),
 		S3Region:                  get("S3_REGION", "us-east-1"),
@@ -197,6 +207,8 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		ResendWelcomeFrom:         get("RESEND_WELCOME_FROM", "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>"),
 		ResendWelcomeReplyTo:      get("RESEND_WELCOME_REPLY_TO", "acidiney.dias@fidibeki.com"),
 		ResendWebhookSecret:       get("RESEND_WEBHOOK_SECRET", ""),
+		EmailTaskSigningKey:       get("EMAIL_TASK_SIGNING_KEY", ""),
+		EmailTaskPreviousKey:      get("EMAIL_TASK_PREVIOUS_SIGNING_KEY", ""),
 		EmailConcurrency:          emailConcurrency,
 		AIConcurrency:             aiConcurrency,
 		DomainConcurrency:         domainConcurrency,
@@ -320,6 +332,7 @@ func (c Config) validate() []error {
 		"JWT_SECRET":                 c.JWTSecret,
 		"INTEGRATION_ENCRYPTION_KEY": c.IntegrationEncryptionKey,
 		"TWO_FACTOR_ENCRYPTION_KEY":  c.TwoFactorEncryptionKey,
+		"EMAIL_TASK_SIGNING_KEY":     c.EmailTaskSigningKey,
 	}
 	for name, value := range required {
 		if value == "" {
@@ -334,16 +347,28 @@ func (c Config) validate() []error {
 	if strings.Contains(c.BaseDomain, "://") || strings.Contains(c.BaseDomain, "/") {
 		validationErrors = append(validationErrors, fmt.Errorf("BASE_DOMAIN must be a hostname without scheme or path"))
 	}
-	if c.PublicBaseURL != "" {
-		parsed, err := url.ParseRequestURI(c.PublicBaseURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("PUBLIC_BASE_URL must be an absolute URL"))
+	for name, value := range map[string]string{
+		"PUBLIC_BASE_URL": c.PublicBaseURL, "WEB_PUBLIC_BASE_URL": c.WebPublicBaseURL,
+	} {
+		if value == "" {
+			continue
+		}
+		if err := validateEnvironmentHTTPURL(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
 		}
 	}
-	if c.WebPublicBaseURL != "" {
-		parsed, err := url.ParseRequestURI(c.WebPublicBaseURL)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("WEB_PUBLIC_BASE_URL must be an absolute URL"))
+	if c.PlatformBackofficeURL != "" {
+		parsed, err := url.ParseRequestURI(c.PlatformBackofficeURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" ||
+			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an absolute origin without a path, query, or fragment"))
+		}
+	}
+	if c.Environment == "staging" || c.Environment == "production" {
+		parsed, err := url.ParseRequestURI(c.PlatformBackofficeURL)
+		if c.PlatformBackofficeURL == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			validationErrors = append(validationErrors, fmt.Errorf("PLATFORM_BACKOFFICE_URL must be an HTTPS origin in %s", c.Environment))
 		}
 	}
 	// Slack one-click install is all-or-nothing. A half-configured app would offer an
@@ -377,15 +402,40 @@ func (c Config) validate() []error {
 	}
 	for name, value := range map[string]string{
 		"DATABASE_URL_APP": c.DatabaseURLApp, "DATABASE_URL_ADMIN": c.DatabaseURLAdmin,
-		"DATABASE_URL_DIRECT": c.DatabaseURLDirect, "REDIS_URL": c.RedisURL,
+		"DATABASE_URL_DIRECT": c.DatabaseURLDirect,
+	} {
+		if value == "" {
+			continue
+		}
+		if err := validateDatabaseURL(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
+		}
+	}
+	if c.RedisURL != "" {
+		if err := validateRedisURL(c.RedisURL, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("REDIS_URL %w", err))
+		}
+	}
+	if c.RedisCACert != "" {
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM([]byte(c.RedisCACert)) {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("REDIS_CA_CERT must contain a valid PEM certificate"))
+		}
+		parsed, err := url.ParseRequestURI(c.RedisURL)
+		if err != nil || parsed.Scheme != "rediss" {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("REDIS_CA_CERT requires REDIS_URL to use rediss://"))
+		}
+	}
+	for name, value := range map[string]string{
 		"S3_ENDPOINT": c.S3Endpoint, "S3_PUBLIC_ENDPOINT": c.S3PublicEndpoint,
 	} {
 		if value == "" {
 			continue
 		}
-		parsed, err := url.ParseRequestURI(value)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("%s must be an absolute URL", name))
+		if err := validateEnvironmentHTTPURL(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
 		}
 	}
 	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
@@ -423,6 +473,32 @@ func (c Config) validate() []error {
 	if c.TwoFactorEncryptionKey != "" && c.TwoFactorEncryptionKey == c.IntegrationEncryptionKey {
 		validationErrors = append(validationErrors,
 			fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must differ from INTEGRATION_ENCRYPTION_KEY"))
+	}
+	var emailTaskSigningKey []byte
+	if c.EmailTaskSigningKey != "" {
+		decoded, err := base64.StdEncoding.Strict().DecodeString(c.EmailTaskSigningKey)
+		if err != nil || len(decoded) != sha256.Size {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("EMAIL_TASK_SIGNING_KEY must be base64 encoding of exactly 32 bytes"))
+		} else {
+			emailTaskSigningKey = decoded
+		}
+	}
+	var emailTaskPreviousSigningKey []byte
+	if c.EmailTaskPreviousKey != "" {
+		decoded, err := base64.StdEncoding.Strict().DecodeString(c.EmailTaskPreviousKey)
+		if err != nil || len(decoded) != sha256.Size {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("EMAIL_TASK_PREVIOUS_SIGNING_KEY must be base64 encoding of exactly 32 bytes"))
+		} else {
+			emailTaskPreviousSigningKey = decoded
+		}
+	}
+	if len(emailTaskSigningKey) == sha256.Size &&
+		len(emailTaskPreviousSigningKey) == sha256.Size &&
+		hmac.Equal(emailTaskSigningKey, emailTaskPreviousSigningKey) {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("EMAIL_TASK_PREVIOUS_SIGNING_KEY must differ from EMAIL_TASK_SIGNING_KEY"))
 	}
 	if c.AccessTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be positive"))
@@ -541,17 +617,117 @@ func (c Config) validate() []error {
 	return validationErrors
 }
 
+func validateEnvironmentHTTPURL(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	if parsed.User != nil {
+		return errors.New("must not include credentials")
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(parsed.Scheme, "http") {
+		if allowsInsecureTransport(environment) {
+			return nil
+		}
+		return fmt.Errorf("must use HTTPS in %s", environment)
+	}
+	return errors.New("must use HTTP or HTTPS")
+}
+
+func validateDatabaseURL(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+		return errors.New("must use postgres:// or postgresql://")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("contains invalid query parameters")
+	}
+	modes := query["sslmode"]
+	if len(modes) > 1 {
+		return errors.New("must set sslmode exactly once")
+	}
+	if len(modes) == 1 {
+		switch modes[0] {
+		case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		default:
+			return fmt.Errorf("has unsupported sslmode %q", modes[0])
+		}
+	}
+	if allowsInsecureTransport(environment) {
+		return nil
+	}
+	if len(modes) == 1 {
+		switch modes[0] {
+		case "require", "verify-ca", "verify-full":
+			return nil
+		}
+	}
+	return fmt.Errorf("must use sslmode=require, verify-ca, or verify-full in %s", environment)
+}
+
+func validateRedisURL(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("contains invalid query parameters")
+	}
+	if query.Has("skip_verify") {
+		return errors.New("must not disable TLS certificate verification")
+	}
+	switch parsed.Scheme {
+	case "rediss":
+	case "redis":
+		if allowsInsecureTransport(environment) {
+			return nil
+		}
+		return fmt.Errorf("must use rediss:// in %s", environment)
+	default:
+		return errors.New("must use redis:// or rediss://")
+	}
+	if allowsInsecureTransport(environment) {
+		return nil
+	}
+	username := ""
+	if parsed.User != nil {
+		username = strings.TrimSpace(parsed.User.Username())
+	}
+	if username == "" || strings.EqualFold(username, "default") {
+		return fmt.Errorf("must include a named Redis ACL username in %s", environment)
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword || strings.TrimSpace(password) == "" {
+		return fmt.Errorf("must include a non-empty Redis ACL password in %s", environment)
+	}
+	return nil
+}
+
+func allowsInsecureTransport(environment string) bool {
+	return environment == "local" || environment == "test"
+}
+
 func (c Config) Redacted() map[string]any {
-	return map[string]any{
+	redacted := map[string]any{
 		"environment":                  c.Environment,
 		"http_address":                 c.HTTPAddress,
 		"base_domain":                  c.BaseDomain,
 		"public_base_url":              c.PublicBaseURL,
 		"web_public_base_url":          c.WebPublicBaseURL,
+		"platform_backoffice_url":      c.PlatformBackofficeURL,
 		"database_url_app":             "[REDACTED]",
 		"database_url_admin":           "[REDACTED]",
 		"database_url_direct":          "[REDACTED]",
 		"redis_url":                    "[REDACTED]",
+		"redis_ca_cert":                "[REDACTED]",
 		"s3_endpoint":                  c.S3Endpoint,
 		"s3_public_endpoint":           c.S3PublicEndpoint,
 		"s3_region":                    c.S3Region,
@@ -607,6 +783,9 @@ func (c Config) Redacted() map[string]any {
 		"readiness_timeout":            c.ReadinessTimeout.String(),
 		"shutdown_timeout":             c.ShutdownTimeout.String(),
 	}
+	redacted["email_task_signing_key"] = "[REDACTED]"
+	redacted["email_task_previous_signing_key"] = "[REDACTED]"
+	return redacted
 }
 
 func deriveAbuseBucketSecret(jwtSecret string) string {

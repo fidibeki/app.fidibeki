@@ -13,6 +13,7 @@ var (
 	ErrDomainVerificationInvalid    = errors.New("domain verification is invalid or expired")
 	ErrMagicLinkInvalid             = errors.New("magic link is invalid or expired")
 	ErrRefreshInvalid               = errors.New("refresh token is invalid or expired")
+	ErrRefreshSSORequired           = errors.New("local refresh is blocked by required SSO")
 	ErrRefreshExpired               = errors.New("refresh token is expired")
 	ErrRefreshReuse                 = errors.New("revoked refresh token was reused")
 	ErrOwnerProtection              = errors.New("workspace owner is protected")
@@ -78,6 +79,10 @@ type SessionSecurity struct {
 	// persisted for audit; neither is ever serialized to a client.
 	SAMLIdPEntityID string
 	SAMLSubjectID   string
+	// breakGlass is true only on the initial local session issued to the owner
+	// while Required SSO is active. It reaches the HTTP boundary so the
+	// successful recovery login can be audited in the issuing transaction.
+	breakGlass bool
 }
 
 // IsSAML reports whether an identity provider authenticated this session.
@@ -85,6 +90,10 @@ type SessionSecurity struct {
 // receives a Fidibeki-managed challenge.
 func (s SessionSecurity) IsSAML() bool {
 	return s.AuthenticationMethod == AuthenticationMethodSAML
+}
+
+func (s SessionSecurity) IsBreakGlass() bool {
+	return s.breakGlass
 }
 
 // NormalizedForPersistence fills in the local default and drops identity

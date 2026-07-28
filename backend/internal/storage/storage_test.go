@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -58,6 +59,43 @@ func TestPresignUsesPublicEndpoint(t *testing.T) {
 	}
 	if !strings.HasPrefix(url, "https://uploads.example.test/fidibeki/tenant/object.webm?") {
 		t.Errorf("presigned URL = %q", url)
+	}
+}
+
+func TestPresignPostBindsKeyTypeAndMaximumObjectSize(t *testing.T) {
+	t.Parallel()
+	client, err := storage.Open(storage.Config{
+		Endpoint: "http://minio.internal:9000", PublicEndpoint: "https://uploads.example.test",
+		Region: "us-east-1", Bucket: "fidibeki", AccessKey: "key", SecretKey: "secret",
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	upload, err := client.PresignPost(
+		context.Background(), "testimonials/tenant/media/source", "video/webm", 4096, 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("PresignPost() error = %v", err)
+	}
+	if upload.URL != "https://uploads.example.test/fidibeki/" {
+		t.Errorf("upload URL = %q", upload.URL)
+	}
+	if upload.Fields["key"] != "testimonials/tenant/media/source" ||
+		upload.Fields["Content-Type"] != "video/webm" {
+		t.Errorf("upload fields = %#v", upload.Fields)
+	}
+	policy, err := base64.StdEncoding.DecodeString(upload.Fields["policy"])
+	if err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	for _, condition := range []string{
+		`["eq","$key","testimonials/tenant/media/source"]`,
+		`["eq","$Content-Type","video/webm"]`,
+		`["content-length-range", 1, 4096]`,
+	} {
+		if !strings.Contains(string(policy), condition) {
+			t.Errorf("policy %s is missing %s", policy, condition)
+		}
 	}
 }
 

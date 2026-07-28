@@ -5,14 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/hibiken/asynq"
 )
 
@@ -56,6 +59,7 @@ type TranscodeWork struct {
 	MediaID     string
 	StorageKey  string
 	ContentType string
+	SizeBytes   int64
 }
 
 // TranscodeStore is the surface the job needs.
@@ -63,12 +67,15 @@ type TranscodeStore interface {
 	ClaimTranscode(context.Context, db.Querier, string, string, time.Time) (TranscodeWork, error)
 	CompleteTranscode(context.Context, db.Querier, string, string, string, Probed, []RenditionValues, time.Time) error
 	FailTranscode(context.Context, db.Querier, string, string, string, time.Time) error
+	MarkSourceDeleted(context.Context, db.Querier, string, string, string, time.Time) error
 }
 
 // TranscodeStorage is the object storage the job reads from and writes to.
 type TranscodeStorage interface {
+	Stat(context.Context, string) (storage.ObjectInfo, error)
 	OpenObject(context.Context, string) (io.ReadCloser, error)
 	PutObject(context.Context, string, io.Reader, int64, string) error
+	RemoveObject(context.Context, string) error
 }
 
 // TranscodeOptions wires the job.
@@ -79,6 +86,9 @@ type TranscodeOptions struct {
 	Begin   db.BeginFunc
 	Logger  *slog.Logger
 	Now     func() time.Time
+	// MaxSourceBytes is lowered by tests. The zero value uses the product
+	// limit, keeping production configuration non-optional.
+	MaxSourceBytes int64
 }
 
 // NewTranscodeTask builds the task enqueued when an upload completes.
@@ -127,6 +137,23 @@ func RunTranscode(ctx context.Context, options TranscodeOptions, payload Transco
 		// Already claimed, already done, or gone. None of those are failures.
 		return nil
 	}
+	maxSourceBytes := options.MaxSourceBytes
+	if maxSourceBytes <= 0 || maxSourceBytes > maxVideoBytes {
+		maxSourceBytes = maxVideoBytes
+	}
+	object, err := options.Storage.Stat(ctx, work.StorageKey)
+	if err != nil {
+		return options.fail(ctx, payload, work.StorageKey, "source_unavailable", now, err)
+	}
+	if object.Size < 1 || object.Size > maxSourceBytes {
+		return options.fail(ctx, payload, work.StorageKey, "source_too_large", now,
+			fmt.Errorf("source size %d exceeds %d", object.Size, maxSourceBytes))
+	}
+	if object.Size != work.SizeBytes ||
+		strings.ToLower(strings.TrimSpace(object.ContentType)) != work.ContentType {
+		return options.fail(ctx, payload, work.StorageKey, "source_mismatch", now,
+			fmt.Errorf("source metadata changed after completion"))
+	}
 
 	directory, err := os.MkdirTemp("", "fidibeki-transcode-")
 	if err != nil {
@@ -135,28 +162,34 @@ func RunTranscode(ctx context.Context, options TranscodeOptions, payload Transco
 	defer func() { _ = os.RemoveAll(directory) }()
 
 	sourcePath := filepath.Join(directory, "source")
-	sourceHash, err := download(ctx, options.Storage, work.StorageKey, sourcePath)
+	sourceHash, err := download(
+		ctx, options.Storage, work.StorageKey, sourcePath, work.SizeBytes, maxSourceBytes,
+	)
 	if err != nil {
-		return options.fail(ctx, payload, "download_failed", now, err)
+		reason := "download_failed"
+		if errors.Is(err, errSourceTooLarge) {
+			reason = "source_too_large"
+		}
+		return options.fail(ctx, payload, work.StorageKey, reason, now, err)
 	}
 
 	probed, err := options.Encoder.Probe(ctx, sourcePath)
 	if err != nil {
-		return options.fail(ctx, payload, "not_a_video", now, err)
+		return options.fail(ctx, payload, work.StorageKey, "not_a_video", now, err)
 	}
 	target := Fit(probed.Dimensions)
 	if target == (Dimensions{}) {
-		return options.fail(ctx, payload, "unusable_dimensions", now,
+		return options.fail(ctx, payload, work.StorageKey, "unusable_dimensions", now,
 			fmt.Errorf("probed %dx%d", probed.Width, probed.Height))
 	}
 
 	videoPath := filepath.Join(directory, "video.mp4")
 	if err := options.Encoder.EncodeVideo(ctx, sourcePath, videoPath, target); err != nil {
-		return options.fail(ctx, payload, "encode_failed", now, err)
+		return options.fail(ctx, payload, work.StorageKey, "encode_failed", now, err)
 	}
 	posterPath := filepath.Join(directory, "poster.jpg")
 	if err := options.Encoder.ExtractPoster(ctx, videoPath, posterPath); err != nil {
-		return options.fail(ctx, payload, "poster_failed", now, err)
+		return options.fail(ctx, payload, work.StorageKey, "poster_failed", now, err)
 	}
 
 	renditions := []struct {
@@ -173,7 +206,7 @@ func RunTranscode(ctx context.Context, options TranscodeOptions, payload Transco
 		stored, err := upload(ctx, options.Storage, payload, rendition.kind,
 			rendition.path, rendition.contentType)
 		if err != nil {
-			return options.fail(ctx, payload, "upload_failed", now, err)
+			return options.fail(ctx, payload, work.StorageKey, "upload_failed", now, err)
 		}
 		stored.Kind = rendition.kind
 		stored.Width = rendition.dimensions.Width
@@ -181,11 +214,16 @@ func RunTranscode(ctx context.Context, options TranscodeOptions, payload Transco
 		values = append(values, stored)
 	}
 
-	return withTranscodeTenant(ctx, options, payload.TenantID, func(query db.Querier) error {
+	if err := withTranscodeTenant(ctx, options, payload.TenantID, func(query db.Querier) error {
 		return options.Store.CompleteTranscode(ctx, query, payload.TenantID, payload.MediaID,
 			sourceHash, probed, values, now)
-	})
+	}); err != nil {
+		return err
+	}
+	return options.removeSource(ctx, payload, work.StorageKey, now)
 }
+
+var errSourceTooLarge = errors.New("testimonial video exceeds the source limit")
 
 // download streams the object to disk and hashes it on the way past, so the
 // bytes are read once rather than twice.
@@ -193,6 +231,7 @@ func download(
 	ctx context.Context,
 	storage TranscodeStorage,
 	key, destination string,
+	expectedBytes, maxBytes int64,
 ) (string, error) {
 	reader, err := storage.OpenObject(ctx, key)
 	if err != nil {
@@ -207,8 +246,15 @@ func download(
 	defer func() { _ = file.Close() }()
 
 	digest := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(file, digest), reader); err != nil {
+	copied, err := io.Copy(io.MultiWriter(file, digest), io.LimitReader(reader, maxBytes+1))
+	if err != nil {
 		return "", fmt.Errorf("stream source video: %w", err)
+	}
+	if copied > maxBytes {
+		return "", fmt.Errorf("%w: copied more than %d bytes", errSourceTooLarge, maxBytes)
+	}
+	if copied != expectedBytes {
+		return "", fmt.Errorf("source size changed: copied %d bytes, expected %d", copied, expectedBytes)
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
@@ -229,8 +275,13 @@ func upload(
 	if err != nil {
 		return RenditionValues{}, fmt.Errorf("stat rendition: %w", err)
 	}
+	if info.Size() < 1 || info.Size() > maxVideoBytes {
+		return RenditionValues{}, fmt.Errorf(
+			"rendition size %d exceeds the %d byte budget", info.Size(), int64(maxVideoBytes),
+		)
+	}
 	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
+	if _, err := io.CopyN(digest, file, info.Size()); err != nil {
 		return RenditionValues{}, fmt.Errorf("hash rendition: %w", err)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -254,6 +305,7 @@ func upload(
 func (o TranscodeOptions) fail(
 	ctx context.Context,
 	payload TranscodePayload,
+	storageKey string,
 	reason string,
 	now time.Time,
 	cause error,
@@ -267,7 +319,25 @@ func (o TranscodeOptions) fail(
 	}); err != nil {
 		return err
 	}
-	return nil
+	return o.removeSource(ctx, payload, storageKey, now)
+}
+
+func (o TranscodeOptions) removeSource(
+	ctx context.Context,
+	payload TranscodePayload,
+	storageKey string,
+	now time.Time,
+) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := o.Storage.RemoveObject(cleanupCtx, storageKey); err != nil {
+		return fmt.Errorf("remove testimonial source video: %w", err)
+	}
+	return withTranscodeTenant(cleanupCtx, o, payload.TenantID, func(query db.Querier) error {
+		return o.Store.MarkSourceDeleted(
+			cleanupCtx, query, payload.TenantID, payload.MediaID, storageKey, now,
+		)
+	})
 }
 
 func withTranscodeTenant(

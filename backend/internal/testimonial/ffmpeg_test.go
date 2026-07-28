@@ -136,7 +136,10 @@ func TestFFmpegEncodeVideoBuildsTheRenditionCommand(t *testing.T) {
 	// faststart is the one that is invisible until it is missing: without it the
 	// index sits at the end of the file and the embed shows a blank rectangle
 	// until the whole download finishes.
-	for _, want := range []string{"scale=406:720", "libx264", "yuv420p", "+faststart", "/in.mov", "/out.mp4"} {
+	for _, want := range []string{
+		"scale=406:720", "libx264", "yuv420p", "+faststart",
+		"-fs", "209715200", "/in.mov", "/out.mp4",
+	} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("encode arguments %q are missing %q", argv, want)
 		}

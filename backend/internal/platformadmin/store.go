@@ -2,6 +2,7 @@ package platformadmin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -324,6 +326,334 @@ func (s Store) BootstrapAdmin(ctx context.Context, email string, permissions []s
 	return admin, nil
 }
 
+// RecordQueueTaskRetry writes the operator intent before a background task is
+// moved in Redis. The ledger is append-only and owned by the admin role. Each
+// command receives its own UUID resource because task IDs are not guaranteed
+// UUIDs and an administrator must be able to retry more than one task.
+func (s Store) RecordQueueTaskRetry(ctx context.Context, actorID, queue, taskID string) error {
+	payload, err := json.Marshal(map[string]string{"actor_id": actorID, "queue": queue, "task_id": taskID})
+	if err != nil {
+		return fmt.Errorf("encode queue retry audit: %w", err)
+	}
+	if _, err := s.Database.Exec(ctx, `
+		INSERT INTO platform_security_events (kind, resource_type, resource_id, data)
+		VALUES ('operations.queue_task_retry_requested', 'queue_task_retry', $1, $2::jsonb)
+	`, uuid.NewString(), string(payload)); err != nil {
+		return fmt.Errorf("record queue retry audit: %w", err)
+	}
+	return nil
+}
+
+// Overview returns bounded aggregate counts for the platform console. The
+// query deliberately remains on the admin pool and does not join member,
+// feedback, session, or attachment tables: the dashboard needs capacity
+// signals, not personal or content data.
+func (s Store) Overview(ctx context.Context) (BackofficeOverview, error) {
+	now := s.now()
+	var overview BackofficeOverview
+	if err := s.Database.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status = 'active'),
+			COUNT(*) FILTER (WHERE status = 'trial'),
+			COUNT(*) FILTER (WHERE status = 'suspended'),
+			COUNT(*) FILTER (WHERE status = 'cancelled'),
+			COUNT(*) FILTER (WHERE status = 'trial' AND trial_ends_at > $1 AND trial_ends_at <= $2),
+			COUNT(*) FILTER (WHERE created_at >= $3)
+		FROM tenants
+	`, now, now.Add(7*24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
+		&overview.WorkspaceCount,
+		&overview.ActiveWorkspaceCount,
+		&overview.TrialWorkspaceCount,
+		&overview.SuspendedWorkspaceCount,
+		&overview.CancelledWorkspaceCount,
+		&overview.TrialsEndingSoonCount,
+		&overview.RecentWorkspaceCount,
+	); err != nil {
+		return BackofficeOverview{}, fmt.Errorf("backoffice overview totals: %w", err)
+	}
+
+	rows, err := s.Database.Query(ctx, `
+		SELECT plan, COUNT(*)
+		FROM tenants
+		GROUP BY plan
+		ORDER BY plan ASC
+	`)
+	if err != nil {
+		return BackofficeOverview{}, fmt.Errorf("backoffice overview plans: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var count BackofficePlanCount
+		if err := rows.Scan(&count.Plan, &count.WorkspaceCount); err != nil {
+			return BackofficeOverview{}, fmt.Errorf("scan backoffice overview plan: %w", err)
+		}
+		overview.Plans = append(overview.Plans, count)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeOverview{}, fmt.Errorf("iterate backoffice overview plans: %w", err)
+	}
+	return overview, nil
+}
+
+type backofficeTenantCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+// ListBackofficeTenants uses a keyset cursor rather than offsets so inserts
+// cannot shift a later page into duplicates or gaps while an operator works.
+func (s Store) ListBackofficeTenants(
+	ctx context.Context,
+	params BackofficeTenantListParams,
+) (BackofficeTenantPage, error) {
+	var cursorCreatedAt any
+	var cursorID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeTenantCursor(params.Cursor)
+		if err != nil {
+			return BackofficeTenantPage{}, err
+		}
+		cursorCreatedAt = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
+	rows, err := s.Database.Query(ctx, `
+		SELECT id, name, slug, plan, status, trial_ends_at, created_at, updated_at
+		FROM tenants
+		WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR slug ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR status = $2::tenant_status)
+		  AND ($3 = '' OR plan = $3::tenant_plan)
+		  AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid))
+		ORDER BY created_at DESC, id DESC
+		LIMIT $6
+	`, params.Query, string(params.Status), string(params.Plan), cursorCreatedAt, cursorID, params.Limit+1)
+	if err != nil {
+		return BackofficeTenantPage{}, fmt.Errorf("list backoffice tenants: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeTenantPage{Tenants: make([]BackofficeTenantSummary, 0, params.Limit)}
+	for rows.Next() {
+		var record BackofficeTenantSummary
+		var trialEndsAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&record.ID, &record.Name, &record.Slug, &record.Plan, &record.Status,
+			&trialEndsAt, &record.CreatedAt, &record.UpdatedAt,
+		); err != nil {
+			return BackofficeTenantPage{}, fmt.Errorf("scan backoffice tenant: %w", err)
+		}
+		if trialEndsAt.Valid {
+			record.TrialEndsAt = &trialEndsAt.Time
+		}
+		page.Tenants = append(page.Tenants, record)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeTenantPage{}, fmt.Errorf("iterate backoffice tenants: %w", err)
+	}
+	if len(page.Tenants) > params.Limit {
+		last := page.Tenants[params.Limit-1]
+		nextCursor, err := encodeBackofficeTenantCursor(backofficeTenantCursor{
+			CreatedAt: last.CreatedAt, ID: last.ID,
+		})
+		if err != nil {
+			return BackofficeTenantPage{}, err
+		}
+		page.NextCursor = nextCursor
+		page.Tenants = page.Tenants[:params.Limit]
+	}
+	return page, nil
+}
+
+func (s Store) GetBackofficeTenant(ctx context.Context, tenantID string) (BackofficeTenantDetail, error) {
+	var detail BackofficeTenantDetail
+	var billingEmail pgtype.Text
+	var trialEndsAt pgtype.Timestamptz
+	err := s.Database.QueryRow(ctx, `
+		SELECT t.id, t.name, t.slug, t.plan, t.status, t.billing_email, t.trial_ends_at, t.created_at, t.updated_at,
+		       (SELECT count(*) FROM tenant_members WHERE tenant_id = t.id),
+		       (SELECT count(*) FROM projects WHERE tenant_id = t.id),
+		       (SELECT count(*) FROM feedbacks WHERE tenant_id = t.id)
+		FROM tenants AS t WHERE t.id = $1
+	`, tenantID).Scan(&detail.Tenant.ID, &detail.Tenant.Name, &detail.Tenant.Slug, &detail.Tenant.Plan, &detail.Tenant.Status,
+		&billingEmail, &trialEndsAt, &detail.Tenant.CreatedAt, &detail.Tenant.UpdatedAt,
+		&detail.MemberCount, &detail.ProjectCount, &detail.FeedbackCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BackofficeTenantDetail{}, ErrTenantNotFound
+	}
+	if err != nil {
+		return BackofficeTenantDetail{}, fmt.Errorf("get backoffice tenant: %w", err)
+	}
+	if billingEmail.Valid {
+		detail.Tenant.BillingEmail = &billingEmail.String
+	}
+	if trialEndsAt.Valid {
+		detail.Tenant.TrialEndsAt = &trialEndsAt.Time
+	}
+	var owner BackofficeTenantMember
+	var ownerName pgtype.Text
+	var ownerLastLogin pgtype.Timestamptz
+	err = s.Database.QueryRow(ctx, `SELECT m.id, m.email::text, m.name, m.status::text, m.last_login_at FROM tenants t JOIN tenant_members m ON m.tenant_id=t.id AND m.id=t.owner_member_id WHERE t.id=$1`, tenantID).Scan(&owner.ID, &owner.Email, &ownerName, &owner.Status, &ownerLastLogin)
+	if err == nil {
+		if ownerName.Valid {
+			owner.Name = &ownerName.String
+		}
+		if ownerLastLogin.Valid {
+			owner.LastLoginAt = &ownerLastLogin.Time
+		}
+		detail.Owner = &owner
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return BackofficeTenantDetail{}, fmt.Errorf("get backoffice tenant owner: %w", err)
+	}
+	return detail, nil
+}
+
+func (s Store) ListBackofficeRecoveryCandidates(ctx context.Context, tenantID string, params BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
+	var createdAt, memberID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeTenantCursor(params.Cursor)
+		if err != nil {
+			return BackofficeRecoveryCandidatePage{}, err
+		}
+		createdAt, memberID = cursor.CreatedAt, cursor.ID
+	}
+	rows, err := s.Database.Query(ctx, `SELECT m.id,m.email::text,m.name,m.status::text,m.last_login_at,m.created_at FROM tenant_members m JOIN tenants t ON t.id=m.tenant_id WHERE m.tenant_id=$1 AND m.status='active' AND m.last_login_at IS NOT NULL AND m.id IS DISTINCT FROM t.owner_member_id AND ($2::timestamptz IS NULL OR (m.created_at,m.id)<($2::timestamptz,$3::uuid)) ORDER BY m.created_at DESC,m.id DESC LIMIT $4`, tenantID, createdAt, memberID, params.Limit+1)
+	if err != nil {
+		return BackofficeRecoveryCandidatePage{}, fmt.Errorf("list recovery candidates: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeRecoveryCandidatePage{Members: make([]BackofficeTenantMember, 0, params.Limit)}
+	cursors := make([]backofficeTenantCursor, 0, params.Limit+1)
+	for rows.Next() {
+		var member BackofficeTenantMember
+		var name pgtype.Text
+		var login, created pgtype.Timestamptz
+		if err := rows.Scan(&member.ID, &member.Email, &name, &member.Status, &login, &created); err != nil {
+			return BackofficeRecoveryCandidatePage{}, fmt.Errorf("scan recovery candidate: %w", err)
+		}
+		if name.Valid {
+			member.Name = &name.String
+		}
+		member.LastLoginAt = &login.Time
+		page.Members = append(page.Members, member)
+		cursors = append(cursors, backofficeTenantCursor{CreatedAt: created.Time, ID: member.ID})
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeRecoveryCandidatePage{}, fmt.Errorf("iterate recovery candidates: %w", err)
+	}
+	if len(page.Members) > params.Limit {
+		cursor, err := encodeBackofficeTenantCursor(cursors[params.Limit-1])
+		if err != nil {
+			return BackofficeRecoveryCandidatePage{}, err
+		}
+		page.NextCursor = cursor
+		page.Members = page.Members[:params.Limit]
+	}
+	return page, nil
+}
+
+type backofficeAccessEventCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+// ListBackofficeAccessEvents paginates the metadata-only ledger with a
+// keyset cursor. The event JSON data column is deliberately never selected.
+func (s Store) ListBackofficeAccessEvents(ctx context.Context, tenantID string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
+	var cursorCreatedAt any
+	var cursorID any
+	if params.Cursor != "" {
+		cursor, err := decodeBackofficeAccessEventCursor(params.Cursor)
+		if err != nil {
+			return BackofficeAccessEventPage{}, err
+		}
+		cursorCreatedAt, cursorID = cursor.CreatedAt, cursor.ID
+	}
+	rows, err := s.Database.Query(ctx, `
+		SELECT id, kind, actor_type, action, outcome, created_at
+		FROM tenant_access_events
+		WHERE tenant_id = $1
+		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::uuid))
+		ORDER BY created_at DESC, id DESC LIMIT $4
+	`, tenantID, cursorCreatedAt, cursorID, params.Limit+1)
+	if err != nil {
+		return BackofficeAccessEventPage{}, fmt.Errorf("list backoffice access events: %w", err)
+	}
+	defer rows.Close()
+	page := BackofficeAccessEventPage{Events: make([]BackofficeAccessEvent, 0, params.Limit)}
+	for rows.Next() {
+		var event BackofficeAccessEvent
+		var action, outcome pgtype.Text
+		if err := rows.Scan(&event.ID, &event.Kind, &event.ActorType, &action, &outcome, &event.CreatedAt); err != nil {
+			return BackofficeAccessEventPage{}, fmt.Errorf("scan backoffice access event: %w", err)
+		}
+		if action.Valid {
+			event.Action = &action.String
+		}
+		if outcome.Valid {
+			event.Outcome = &outcome.String
+		}
+		page.Events = append(page.Events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return BackofficeAccessEventPage{}, fmt.Errorf("iterate backoffice access events: %w", err)
+	}
+	if len(page.Events) > params.Limit {
+		last := page.Events[params.Limit-1]
+		nextCursor, err := encodeBackofficeAccessEventCursor(backofficeAccessEventCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		if err != nil {
+			return BackofficeAccessEventPage{}, err
+		}
+		page.NextCursor = nextCursor
+		page.Events = page.Events[:params.Limit]
+	}
+	return page, nil
+}
+
+func encodeBackofficeAccessEventCursor(cursor backofficeAccessEventCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode backoffice access event cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeBackofficeAccessEventCursor(value string) (backofficeAccessEventCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(payload) == 0 || len(payload) > 512 {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	var cursor backofficeAccessEventCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.CreatedAt.IsZero() {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	if _, err := uuid.Parse(cursor.ID); err != nil {
+		return backofficeAccessEventCursor{}, errors.New("cursor is invalid")
+	}
+	return cursor, nil
+}
+
+func encodeBackofficeTenantCursor(cursor backofficeTenantCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode backoffice tenant cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeBackofficeTenantCursor(value string) (backofficeTenantCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(payload) == 0 || len(payload) > 512 {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	var cursor backofficeTenantCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.CreatedAt.IsZero() {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	if _, err := uuid.Parse(cursor.ID); err != nil {
+		return backofficeTenantCursor{}, errors.New("cursor is invalid")
+	}
+	return cursor, nil
+}
+
 func (s Store) CreateTenant(ctx context.Context, input CreateTenantParams) (TenantRecord, error) {
 	tx, err := s.Database.Begin(ctx)
 	if err != nil {
@@ -556,8 +886,26 @@ func (s Store) ListTenants(ctx context.Context) ([]TenantRecord, error) {
 	return records, nil
 }
 
-func (s Store) UpdateTenant(ctx context.Context, input TenantRecord) (TenantRecord, error) {
-	record, err := scanTenant(s.Database.QueryRow(ctx, `
+func (s Store) UpdateTenant(ctx context.Context, input TenantRecord, actorPlatformAdminID string) (TenantRecord, error) {
+	tx, err := s.Database.Begin(ctx)
+	if err != nil {
+		return TenantRecord{}, fmt.Errorf("begin workspace update: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	previous, err := scanTenant(tx.QueryRow(ctx, `
+		SELECT id, name, slug, plan, status, billing_email, trial_ends_at, created_at, updated_at
+		FROM tenants WHERE id = $1 FOR UPDATE
+	`, input.ID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantRecord{}, ErrTenantNotFound
+	}
+	if err != nil {
+		return TenantRecord{}, fmt.Errorf("lock workspace update: %w", err)
+	}
+	if !previous.UpdatedAt.Equal(input.UpdatedAt) {
+		return TenantRecord{}, ErrTenantUpdateConflict
+	}
+	record, err := scanTenant(tx.QueryRow(ctx, `
 		UPDATE tenants
 		SET name = $2, slug = $3, plan = $4, status = $5, billing_email = $6, trial_ends_at = $7
 		WHERE id = $1
@@ -572,7 +920,59 @@ func (s Store) UpdateTenant(ctx context.Context, input TenantRecord) (TenantReco
 	if err != nil {
 		return TenantRecord{}, fmt.Errorf("update tenant: %w", err)
 	}
+	changedFields := changedTenantFields(previous, record)
+	if err := insertPlatformAccessEvent(ctx, tx, input.ID, "workspace.updated", actorPlatformAdminID, nil, map[string]any{
+		"changed_fields": changedFields,
+		"plan_from":      previous.Plan,
+		"plan_to":        record.Plan,
+		"status_from":    previous.Status,
+		"status_to":      record.Status,
+	}); err != nil {
+		return TenantRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TenantRecord{}, fmt.Errorf("commit workspace update: %w", err)
+	}
 	return record, nil
+}
+
+// changedTenantFields records the shape of an administrative lifecycle change
+// without placing workspace names or billing addresses in the audit payload.
+func changedTenantFields(previous TenantRecord, current TenantRecord) []string {
+	fields := make([]string, 0, 7)
+	if previous.Name != current.Name {
+		fields = append(fields, "name")
+	}
+	if previous.Slug != current.Slug {
+		fields = append(fields, "slug")
+	}
+	if previous.Plan != current.Plan {
+		fields = append(fields, "plan")
+	}
+	if previous.Status != current.Status {
+		fields = append(fields, "status")
+	}
+	if !sameOptionalString(previous.BillingEmail, current.BillingEmail) {
+		fields = append(fields, "billing_email")
+	}
+	if !sameOptionalTime(previous.TrialEndsAt, current.TrialEndsAt) {
+		fields = append(fields, "trial_ends_at")
+	}
+	return fields
+}
+
+func sameOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func sameOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Equal(*right)
 }
 
 func (s Store) DeleteTenant(ctx context.Context, id string) error {

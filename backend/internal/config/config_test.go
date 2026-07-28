@@ -1,7 +1,15 @@
 package config_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +40,7 @@ func TestConfigurationReportsEveryMissingRequiredValue(t *testing.T) {
 		"JWT_SECRET",
 		"INTEGRATION_ENCRYPTION_KEY",
 		"TWO_FACTOR_ENCRYPTION_KEY",
+		"EMAIL_TASK_SIGNING_KEY",
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error %q does not mention %s", err, name)
@@ -60,9 +69,13 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		"TRUSTED_PROXY_CIDRS":          "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY":   "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"TWO_FACTOR_ENCRYPTION_KEY":    "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
-		"AUTH_REFRESH_RETRY_GRACE":     "10s",
-		"SENTRY_DSN":                   "https://public:private@sentry.example.test/1",
-		"GEMINI_API_KEY":               "gemini-secret",
+		"EMAIL_TASK_SIGNING_KEY":       base64.StdEncoding.EncodeToString([]byte(strings.Repeat("e", 32))),
+		"EMAIL_TASK_PREVIOUS_SIGNING_KEY": base64.StdEncoding.EncodeToString(
+			[]byte(strings.Repeat("p", 32)),
+		),
+		"AUTH_REFRESH_RETRY_GRACE": "10s",
+		"SENTRY_DSN":               "https://public:private@sentry.example.test/1",
+		"GEMINI_API_KEY":           "gemini-secret",
 	}
 	for name, value := range values {
 		t.Setenv(name, value)
@@ -87,10 +100,85 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		"abuse-current-secret", "abuse-previous-secret",
 		"gemini-secret",
 		"MDEyMzQ1Njc4OWFiY2Rl",
+		base64.StdEncoding.EncodeToString([]byte(strings.Repeat("e", 8))),
+		base64.StdEncoding.EncodeToString([]byte(strings.Repeat("p", 8))),
 	} {
 		if strings.Contains(string(encoded), secret) {
 			t.Errorf("redacted config contains %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestConfigurationValidatesAndRedactsEmailTaskSigningKeys(t *testing.T) {
+	t.Parallel()
+	current := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("c", 32)))
+	previous := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("p", 32)))
+	values := validEnvironmentValues("staging")
+	values["EMAIL_TASK_SIGNING_KEY"] = current
+	values["EMAIL_TASK_PREVIOUS_SIGNING_KEY"] = previous
+	lookup := func(name string) (string, bool) { value, ok := values[name]; return value, ok }
+
+	got, err := config.FromLookup(lookup)
+	if err != nil {
+		t.Fatalf("valid email task keys error = %v", err)
+	}
+	if got.EmailTaskSigningKey != current || got.EmailTaskPreviousKey != previous {
+		t.Fatal("email task signing keys were not loaded")
+	}
+	encoded, err := json.Marshal(got.Redacted())
+	if err != nil {
+		t.Fatalf("marshal redacted config: %v", err)
+	}
+	if strings.Contains(string(encoded), current) || strings.Contains(string(encoded), previous) {
+		t.Fatalf("redacted config contains email task key: %s", encoded)
+	}
+
+	for _, test := range []struct {
+		name     string
+		current  string
+		previous string
+		want     string
+	}{
+		{name: "invalid current", current: "not-base64", want: "EMAIL_TASK_SIGNING_KEY"},
+		{
+			name:    "short current",
+			current: base64.StdEncoding.EncodeToString([]byte("short")),
+			want:    "EMAIL_TASK_SIGNING_KEY",
+		},
+		{
+			name: "invalid previous", current: current, previous: "not-base64",
+			want: "EMAIL_TASK_PREVIOUS_SIGNING_KEY",
+		},
+		{
+			name: "same keys", current: current, previous: current,
+			want: "EMAIL_TASK_PREVIOUS_SIGNING_KEY must differ",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			testValues := validEnvironmentValues("staging")
+			testValues["EMAIL_TASK_SIGNING_KEY"] = test.current
+			testValues["EMAIL_TASK_PREVIOUS_SIGNING_KEY"] = test.previous
+			_, err := config.FromLookup(func(name string) (string, bool) {
+				value, exists := testValues[name]
+				return value, exists
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("FromLookup() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestRedactedConfigurationHidesRedisCA(t *testing.T) {
+	t.Parallel()
+	const certificate = "private Redis CA material"
+	encoded, err := json.Marshal((config.Config{RedisCACert: certificate}).Redacted())
+	if err != nil {
+		t.Fatalf("marshal redacted config: %v", err)
+	}
+	if strings.Contains(string(encoded), certificate) {
+		t.Fatalf("redacted config contains Redis CA: %s", encoded)
 	}
 }
 
@@ -102,6 +190,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"HTTP_ADDRESS":               ":8080",
 		"BASE_DOMAIN":                "fidibeki.localhost",
 		"PUBLIC_BASE_URL":            "http://api.fidibeki.localhost:8088",
+		"PLATFORM_BACKOFFICE_URL":    "http://admin.fidibeki.localhost:3001",
 		"DATABASE_URL_APP":           "postgres://fidibeki_app:app@localhost/fidibeki",
 		"DATABASE_URL_ADMIN":         "postgres://fidibeki_admin:admin@localhost/fidibeki",
 		"DATABASE_URL_DIRECT":        "postgres://fidibeki_admin:admin@localhost/fidibeki",
@@ -115,6 +204,7 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 		"TRUSTED_PROXY_CIDRS":        "10.0.0.0/8, 192.0.2.0/24",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"TWO_FACTOR_ENCRYPTION_KEY":  "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
+		"EMAIL_TASK_SIGNING_KEY":     base64.StdEncoding.EncodeToString([]byte(strings.Repeat("e", 32))),
 		"AUTH_REFRESH_RETRY_GRACE":   "10s",
 	}
 
@@ -130,6 +220,9 @@ func TestConfigurationLoadsValidatedValues(t *testing.T) {
 	}
 	if got.BaseDomain != "fidibeki.localhost" {
 		t.Errorf("BaseDomain = %q, want fidibeki.localhost", got.BaseDomain)
+	}
+	if got.PlatformBackofficeURL != "http://admin.fidibeki.localhost:3001" {
+		t.Errorf("PlatformBackofficeURL = %q", got.PlatformBackofficeURL)
 	}
 	if got.ReadinessTimeout.String() != "2s" {
 		t.Errorf("ReadinessTimeout = %s, want 2s", got.ReadinessTimeout)
@@ -184,6 +277,7 @@ func TestConfigurationUsesPlatformPortWhenAddressIsUnset(t *testing.T) {
 		"JWT_SECRET":                 "0123456789abcdef0123456789abcdef",
 		"INTEGRATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 		"TWO_FACTOR_ENCRYPTION_KEY":  "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=",
+		"EMAIL_TASK_SIGNING_KEY":     base64.StdEncoding.EncodeToString([]byte(strings.Repeat("e", 32))),
 	}
 	got, err := config.FromLookup(func(name string) (string, bool) {
 		value, exists := values[name]
@@ -195,6 +289,389 @@ func TestConfigurationUsesPlatformPortWhenAddressIsUnset(t *testing.T) {
 	if got.HTTPAddress != ":9091" {
 		t.Errorf("HTTPAddress = %q, want :9091", got.HTTPAddress)
 	}
+}
+
+func TestConfigurationRequiresSecureBackofficeOriginOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	values := validEnvironmentValues("staging")
+	delete(values, "PLATFORM_BACKOFFICE_URL")
+	lookup := func(name string) (string, bool) { value, ok := values[name]; return value, ok }
+	if _, err := config.FromLookup(lookup); err == nil || !strings.Contains(err.Error(), "PLATFORM_BACKOFFICE_URL must be an HTTPS origin") {
+		t.Fatalf("missing backoffice origin error = %v", err)
+	}
+	values["PLATFORM_BACKOFFICE_URL"] = "http://admin.fidibeki.test"
+	if _, err := config.FromLookup(lookup); err == nil || !strings.Contains(err.Error(), "PLATFORM_BACKOFFICE_URL must be an HTTPS origin") {
+		t.Fatalf("insecure backoffice origin error = %v", err)
+	}
+	values["PLATFORM_BACKOFFICE_URL"] = "https://admin.fidibeki.test"
+	if _, err := config.FromLookup(lookup); err != nil {
+		t.Fatalf("secure backoffice origin error = %v", err)
+	}
+}
+
+func TestConfigurationRequiresEncryptedDatabaseTransportOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	modes := []string{"", "disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"DATABASE_URL_APP", "DATABASE_URL_ADMIN", "DATABASE_URL_DIRECT"} {
+			for _, mode := range modes {
+				modeName := mode
+				if modeName == "" {
+					modeName = "missing"
+				}
+				t.Run(environment+"/"+name+"/"+modeName, func(t *testing.T) {
+					t.Parallel()
+					values := validEnvironmentValues(environment)
+					values[name] = databaseURLWithSSLMode(mode)
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					secureMode := mode == "require" || mode == "verify-ca" || mode == "verify-full"
+					if !insecureTransportAllowed(environment) && !secureMode {
+						want := name + " must use sslmode=require, verify-ca, or verify-full in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want database URL accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConfigurationRequiresEncryptedRedisTransportOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, scheme := range []string{"redis", "rediss"} {
+			t.Run(environment+"/"+scheme, func(t *testing.T) {
+				t.Parallel()
+				values := validEnvironmentValues(environment)
+				values["REDIS_URL"] = scheme + "://fidibeki_app:redis-secret@redis.fidibeki.test:6379/0"
+				_, err := config.FromLookup(func(name string) (string, bool) {
+					value, exists := values[name]
+					return value, exists
+				})
+				if scheme == "redis" && !insecureTransportAllowed(environment) {
+					want := "REDIS_URL must use rediss:// in " + environment
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("FromLookup() error = %v, want %q", err, want)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("FromLookup() error = %v, want Redis URL accepted", err)
+				}
+			})
+		}
+	}
+}
+
+func TestConfigurationRequiresNamedAuthenticatedRedisOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"staging", "production"} {
+		for _, test := range []struct {
+			name     string
+			redisURL string
+			want     string
+		}{
+			{
+				name: "anonymous", redisURL: "rediss://redis.fidibeki.test:6380/0",
+				want: "must include a named Redis ACL username",
+			},
+			{
+				name: "password only", redisURL: "rediss://:redis-secret@redis.fidibeki.test:6380/0",
+				want: "must include a named Redis ACL username",
+			},
+			{
+				name: "default user", redisURL: "rediss://default:redis-secret@redis.fidibeki.test:6380/0",
+				want: "must include a named Redis ACL username",
+			},
+			{
+				name: "missing password", redisURL: "rediss://fidibeki_app@redis.fidibeki.test:6380/0",
+				want: "must include a non-empty Redis ACL password",
+			},
+			{
+				name: "empty password", redisURL: "rediss://fidibeki_app:@redis.fidibeki.test:6380/0",
+				want: "must include a non-empty Redis ACL password",
+			},
+		} {
+			t.Run(environment+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				values := validEnvironmentValues(environment)
+				values["REDIS_URL"] = test.redisURL
+				_, err := config.FromLookup(func(name string) (string, bool) {
+					value, exists := values[name]
+					return value, exists
+				})
+				if err == nil || !strings.Contains(err.Error(), test.want+" in "+environment) {
+					t.Fatalf("FromLookup() error = %v, want %q", err, test.want+" in "+environment)
+				}
+			})
+		}
+	}
+
+	for _, environment := range []string{"local", "test"} {
+		t.Run(environment+"/anonymous local workflow", func(t *testing.T) {
+			t.Parallel()
+			values := validEnvironmentValues(environment)
+			values["REDIS_URL"] = "redis://redis.fidibeki.test:6379/0"
+			if _, err := config.FromLookup(func(name string) (string, bool) {
+				value, exists := values[name]
+				return value, exists
+			}); err != nil {
+				t.Fatalf("FromLookup() error = %v, want anonymous local Redis accepted", err)
+			}
+		})
+	}
+}
+
+func TestConfigurationValidatesRedisCertificateSettings(t *testing.T) {
+	t.Parallel()
+	caCertificate := testCACertificate(t)
+
+	values := validEnvironmentValues("staging")
+	values["REDIS_CA_CERT"] = caCertificate
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err != nil {
+		t.Fatalf("valid Redis CA configuration error = %v", err)
+	}
+
+	values["REDIS_CA_CERT"] = "not a certificate"
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "REDIS_CA_CERT must contain a valid PEM certificate") {
+		t.Fatalf("invalid Redis CA configuration error = %v", err)
+	}
+
+	values = validEnvironmentValues("local")
+	values["REDIS_CA_CERT"] = caCertificate
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "REDIS_CA_CERT requires REDIS_URL to use rediss://") {
+		t.Fatalf("plaintext Redis CA configuration error = %v", err)
+	}
+
+	values = validEnvironmentValues("staging")
+	values["REDIS_URL"] += "?skip_verify=true"
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "must not disable TLS certificate verification") {
+		t.Fatalf("disabled Redis certificate verification error = %v", err)
+	}
+}
+
+func TestConfigurationRejectsUnsupportedDatabaseAndRedisSchemes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "DATABASE_URL_APP", value: "mysql://user:secret@database.test/fidibeki", want: "must use postgres:// or postgresql://"},
+		{name: "DATABASE_URL_ADMIN", value: databaseURLWithSSLMode("REQUIRE"), want: `has unsupported sslmode "REQUIRE"`},
+		{name: "DATABASE_URL_DIRECT", value: databaseURLWithSSLMode("require") + "&sslmode=disable", want: "must set sslmode exactly once"},
+		{name: "REDIS_URL", value: "https://redis.fidibeki.test", want: "must use redis:// or rediss://"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			values := validEnvironmentValues("staging")
+			values[test.name] = test.value
+			_, err := config.FromLookup(func(name string) (string, bool) {
+				value, exists := values[name]
+				return value, exists
+			})
+			want := test.name + " " + test.want
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("FromLookup() error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestConfigurationAcceptsSecurePostgreSQLScheme(t *testing.T) {
+	t.Parallel()
+	values := validEnvironmentValues("production")
+	values["DATABASE_URL_DIRECT"] = strings.Replace(
+		databaseURLWithSSLMode("verify-full"), "postgres://", "postgresql://", 1,
+	)
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err != nil {
+		t.Fatalf("FromLookup() error = %v", err)
+	}
+}
+
+func TestConfigurationRequiresSecureStorageEndpointsOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"S3_ENDPOINT", "S3_PUBLIC_ENDPOINT"} {
+			for _, scheme := range []string{"http", "https"} {
+				t.Run(environment+"/"+name+"/"+scheme, func(t *testing.T) {
+					t.Parallel()
+					values := validEnvironmentValues(environment)
+					values[name] = scheme + "://storage.fidibeki.test"
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					insecureAllowed := environment == "local" || environment == "test"
+					if scheme == "http" && !insecureAllowed {
+						want := name + " must use HTTPS in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want endpoint accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConfigurationRequiresSecurePublicURLsOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"PUBLIC_BASE_URL", "WEB_PUBLIC_BASE_URL"} {
+			for _, scheme := range []string{"http", "https"} {
+				t.Run(environment+"/"+name+"/"+scheme, func(t *testing.T) {
+					t.Parallel()
+					values := validEnvironmentValues(environment)
+					values[name] = scheme + "://api.fidibeki.test"
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					insecureAllowed := environment == "local" || environment == "test"
+					if scheme == "http" && !insecureAllowed {
+						want := name + " must use HTTPS in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want URL accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConfigurationRejectsUnsafePublicURLs(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "embedded credentials", value: "https://user:secret@api.fidibeki.test", want: "must not include credentials"},
+		{name: "unsupported scheme", value: "ftp://api.fidibeki.test", want: "must use HTTP or HTTPS"},
+	} {
+		for _, setting := range []string{"PUBLIC_BASE_URL", "WEB_PUBLIC_BASE_URL"} {
+			t.Run(setting+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				values := validEnvironmentValues("staging")
+				values[setting] = test.value
+				_, err := config.FromLookup(func(name string) (string, bool) {
+					value, exists := values[name]
+					return value, exists
+				})
+				want := setting + " " + test.want
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("FromLookup() error = %v, want %q", err, want)
+				}
+			})
+		}
+	}
+}
+
+func validEnvironmentValues(environment string) map[string]string {
+	databaseURL := databaseURLWithSSLMode("disable")
+	redisURL := "redis://redis.fidibeki.test:6379/0"
+	if !insecureTransportAllowed(environment) {
+		databaseURL = databaseURLWithSSLMode("verify-full")
+		redisURL = "rediss://fidibeki_app:redis-secret@redis.fidibeki.test:6379/0"
+	}
+	return map[string]string{
+		"APP_ENV":                     environment,
+		"BASE_DOMAIN":                 "fidibeki.test",
+		"PUBLIC_BASE_URL":             "https://api.fidibeki.test",
+		"PLATFORM_BACKOFFICE_URL":     "https://admin.fidibeki.test",
+		"DATABASE_URL_APP":            databaseURL,
+		"DATABASE_URL_ADMIN":          databaseURL,
+		"DATABASE_URL_DIRECT":         databaseURL,
+		"REDIS_URL":                   redisURL,
+		"S3_ENDPOINT":                 "https://storage.fidibeki.test",
+		"S3_PUBLIC_ENDPOINT":          "https://uploads.fidibeki.test",
+		"S3_BUCKET":                   "fidibeki",
+		"S3_ACCESS_KEY":               "key",
+		"S3_SECRET_KEY":               "secret",
+		"JWT_SECRET":                  strings.Repeat("jwt-", 8),
+		"INTERNAL_PROXY_SECRET":       strings.Repeat("proxy-", 6),
+		"INTEGRATION_ENCRYPTION_KEY":  base64.StdEncoding.EncodeToString([]byte(strings.Repeat("i", 32))),
+		"TWO_FACTOR_ENCRYPTION_KEY":   base64.StdEncoding.EncodeToString([]byte(strings.Repeat("t", 32))),
+		"EMAIL_TASK_SIGNING_KEY":      base64.StdEncoding.EncodeToString([]byte(strings.Repeat("e", 32))),
+		"STRIPE_SECRET_KEY":           "fixture",
+		"STRIPE_WEBHOOK_SECRET":       "fixture",
+		"STRIPE_PRICE_STARTER":        "fixture",
+		"STRIPE_PRICE_GROWTH":         "fixture",
+		"STRIPE_PRICE_SCALE":          "fixture",
+		"STRIPE_PRICE_STARTER_YEARLY": "fixture",
+		"STRIPE_PRICE_GROWTH_YEARLY":  "fixture",
+		"STRIPE_PRICE_SCALE_YEARLY":   "fixture",
+		"TURNSTILE_SECRET_KEY":        "fixture",
+		"TURNSTILE_SITE_KEY":          "fixture",
+		"GEMINI_API_KEY":              "fixture",
+	}
+}
+
+func databaseURLWithSSLMode(mode string) string {
+	const databaseURL = "postgres://user:secret@database.fidibeki.test/fidibeki"
+	if mode == "" {
+		return databaseURL
+	}
+	return databaseURL + "?sslmode=" + mode
+}
+
+func insecureTransportAllowed(environment string) bool {
+	return environment == "local" || environment == "test"
+}
+
+func testCACertificate(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Fidibeki Redis Test CA"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create CA certificate: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
 func TestConfigurationRejectsMalformedValues(t *testing.T) {

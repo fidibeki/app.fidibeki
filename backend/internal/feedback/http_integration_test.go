@@ -653,7 +653,93 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		"metadata":{"url":"https://example.com/checkout","viewport_width":390,"viewport_height":844}
 	}`, ruleID)
 	limiterFailure := errors.New("redis unavailable")
-	degraded := feedbackHandler(HTTPOptions{
+	failureKeyring, err := abuse.NewKeyring(strings.Repeat("f", 32), "")
+	if err != nil {
+		t.Fatalf("create feedback limiter keyring: %v", err)
+	}
+	var feedbackBeforeLimiterFailure, outboxBeforeLimiterFailure int
+	if err := root.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM feedbacks WHERE project_id = $1),
+			(SELECT count(*) FROM outbox_events WHERE tenant_id = $2)
+	`, projectID, tenantID).Scan(
+		&feedbackBeforeLimiterFailure, &outboxBeforeLimiterFailure,
+	); err != nil {
+		t.Fatalf("count rows before feedback limiter failure: %v", err)
+	}
+	presignedBeforeLimiterFailure := len(storageClient.presignedKeys)
+	diagnosticsBeforeLimiterFailure := len(diagnostics.events)
+	unavailableSubmission := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Now: func() time.Time { return now },
+		Abuse: abuse.Evaluator{
+			Limiter: staticLimiter{err: limiterFailure}, Keyring: failureKeyring,
+		},
+		Diagnostics: diagnostics,
+	})
+	unavailableSubmissionResponse := performFeedbackRequest(
+		unavailableSubmission, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedBody, publicKey, "https://example.com",
+	)
+	if unavailableSubmissionResponse.Code != http.StatusServiceUnavailable ||
+		unavailableSubmissionResponse.Header().Get("Retry-After") != "5" ||
+		!strings.Contains(
+			unavailableSubmissionResponse.Body.String(),
+			`"reason":"submission_rate_limited"`,
+		) ||
+		strings.Contains(unavailableSubmissionResponse.Body.String(), limiterFailure.Error()) {
+		t.Fatalf("unavailable submission response status=%d headers=%#v body=%s",
+			unavailableSubmissionResponse.Code, unavailableSubmissionResponse.Header(),
+			unavailableSubmissionResponse.Body.String())
+	}
+	var feedbackAfterLimiterFailure, outboxAfterLimiterFailure int
+	if err := root.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM feedbacks WHERE project_id = $1),
+			(SELECT count(*) FROM outbox_events WHERE tenant_id = $2)
+	`, projectID, tenantID).Scan(
+		&feedbackAfterLimiterFailure, &outboxAfterLimiterFailure,
+	); err != nil {
+		t.Fatalf("count rows after feedback limiter failure: %v", err)
+	}
+	if feedbackAfterLimiterFailure != feedbackBeforeLimiterFailure ||
+		outboxAfterLimiterFailure != outboxBeforeLimiterFailure ||
+		len(storageClient.presignedKeys) != presignedBeforeLimiterFailure {
+		t.Fatalf(
+			"limiter failure side effects = feedback %d->%d outbox %d->%d presigns %d->%d",
+			feedbackBeforeLimiterFailure, feedbackAfterLimiterFailure,
+			outboxBeforeLimiterFailure, outboxAfterLimiterFailure,
+			presignedBeforeLimiterFailure, len(storageClient.presignedKeys),
+		)
+	}
+	if len(diagnostics.events) != diagnosticsBeforeLimiterFailure+1 ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure].Category != abuse.CategoryRateLimit ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure].Reason !=
+			abuse.SubmissionPolicy.Name+"_unavailable" {
+		t.Fatalf("unavailable limiter diagnostics = %#v", diagnostics.events)
+	}
+	missingLimiterSubmission := feedbackHandler(HTTPOptions{
+		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
+		Storage: storageClient, Now: func() time.Time { return now },
+		Abuse: abuse.Evaluator{
+			Keyring: failureKeyring,
+		},
+		Diagnostics: diagnostics,
+	})
+	missingLimiterResponse := performFeedbackRequest(
+		missingLimiterSubmission, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedBody, publicKey, "https://example.com",
+	)
+	if missingLimiterResponse.Code != http.StatusServiceUnavailable ||
+		missingLimiterResponse.Header().Get("Retry-After") != "5" ||
+		len(diagnostics.events) != diagnosticsBeforeLimiterFailure+2 ||
+		diagnostics.events[diagnosticsBeforeLimiterFailure+1].Reason !=
+			abuse.SubmissionPolicy.Name+"_unavailable" {
+		t.Fatalf("missing limiter response=%d/%s diagnostics=%#v",
+			missingLimiterResponse.Code, missingLimiterResponse.Body.String(), diagnostics.events)
+	}
+
+	degradedAttachments := feedbackHandler(HTTPOptions{
 		Authorizer: authorizer, Begin: db.BeginFromPool(pools.App), Store: Store{},
 		Storage: storageClient, Now: func() time.Time { return now },
 		Abuse: abuseEvaluatorFunc(func(
@@ -663,9 +749,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		) (abuse.Decision, error) {
 			switch policy.Name {
 			case abuse.SubmissionPolicy.Name:
-				return abuse.Decision{
-					Allowed: true, Unavailable: true, Reason: policy.Reason,
-				}, limiterFailure
+				return abuse.Decision{Allowed: true, Reason: policy.Reason}, nil
 			case abuse.AttachmentGrantPolicy.Name:
 				return abuse.Decision{
 					Allowed: false, Unavailable: true, Reason: policy.Reason,
@@ -677,7 +761,7 @@ func TestFeedbackHTTPFlow(t *testing.T) {
 		Diagnostics: diagnostics,
 	})
 	degradedResponse := performFeedbackRequest(
-		degraded, http.MethodPost, "/v1/feedback?key="+publicKey,
+		degradedAttachments, http.MethodPost, "/v1/feedback?key="+publicKey,
 		degradedBody, publicKey, "https://example.com",
 	)
 	if degradedResponse.Code != http.StatusCreated {
@@ -1007,15 +1091,23 @@ func assertTenantFeedbackReadFlow(
 	streamRoutes := chi.NewRouter()
 	streamRoutes.Get("/v1/feedbacks/{feedbackID}/attachments/{attachmentID}/content", streamHandler.ServeHTTP)
 	streamRoutes.Head("/v1/feedbacks/{feedbackID}/attachments/{attachmentID}/content", streamHandler.ServeHTTP)
+	credentialLimiter := &tenantAPIKeyLimiterStub{counts: map[string]int{}}
+	limitedStreamRoutes := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: credentialLimiter},
+	)(streamRoutes)
 	streamPath := "/v1/feedbacks/" + feedbackID + "/attachments/" + attachmentID + "/content"
 	streamAPIKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
-	if _, err := root.Exec(ctx, `
-		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions)
-		VALUES ($1, 'Attachment reader', $2, 'fk_live_0123...', '{feedback:read}')
-	`, tenantID, auth.HashToken(streamAPIKey)); err != nil {
+	var streamAPIKeyID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO api_keys (
+			tenant_id, name, token_hash, token_prefix, permissions, rate_limit_per_min
+		)
+		VALUES ($1, 'Attachment reader', $2, 'fk_live_0123...', '{feedback:read}', 1)
+		RETURNING id
+	`, tenantID, auth.HashToken(streamAPIKey)).Scan(&streamAPIKeyID); err != nil {
 		t.Fatalf("create attachment stream API key: %v", err)
 	}
-	streamed := performTenantFeedbackRequest(streamRoutes, http.MethodGet, streamPath, "", ownerToken)
+	streamed := performTenantFeedbackRequest(limitedStreamRoutes, http.MethodGet, streamPath, "", ownerToken)
 	if streamed.Code != http.StatusOK || streamed.Body.String() != "audio-evidence" ||
 		streamed.Header().Get("Content-Type") != "audio/webm" ||
 		streamed.Header().Get("Cache-Control") != "private, no-store" {
@@ -1024,24 +1116,41 @@ func assertTenantFeedbackReadFlow(
 	if streamStorage.key == "" || !strings.Contains(streamStorage.key, attachmentID) {
 		t.Errorf("streamed storage key = %q", streamStorage.key)
 	}
-	streamedWithAPIKey := performTenantFeedbackRequest(streamRoutes, http.MethodGet, streamPath, "", streamAPIKey)
+	streamedWithAPIKey := performTenantFeedbackRequest(
+		limitedStreamRoutes, http.MethodGet, streamPath, "", streamAPIKey,
+	)
 	if streamedWithAPIKey.Code != http.StatusOK || streamedWithAPIKey.Body.String() != "audio-evidence" {
 		t.Errorf("API-key attachment stream = %d body=%q", streamedWithAPIKey.Code, streamedWithAPIKey.Body.String())
 	}
+	rateLimitedHEAD := performTenantFeedbackRequest(
+		limitedStreamRoutes, http.MethodHead, streamPath, "", streamAPIKey,
+	)
+	if rateLimitedHEAD.Code != http.StatusTooManyRequests ||
+		rateLimitedHEAD.Header().Get("Retry-After") == "" {
+		t.Errorf("API-key attachment HEAD limit = %d headers=%v",
+			rateLimitedHEAD.Code, rateLimitedHEAD.Header())
+	}
+	limiterKey := "tenant-api-key:" + streamAPIKeyID
+	if credentialLimiter.counts[limiterKey] != 2 ||
+		credentialLimiter.counts[streamAPIKey] != 0 {
+		t.Errorf("attachment limiter calls = %#v, want one immutable-ID charge per request",
+			credentialLimiter.counts)
+	}
+	credentialLimiter.reset()
 	rangeRequest := httptest.NewRequest(http.MethodGet, "http://acme.localhost"+streamPath, nil)
 	rangeRequest.Header.Set("Authorization", "Bearer "+ownerToken)
 	rangeRequest.Header.Set("Range", "bytes=0-4")
 	rangeResponse := httptest.NewRecorder()
-	streamRoutes.ServeHTTP(rangeResponse, rangeRequest)
+	limitedStreamRoutes.ServeHTTP(rangeResponse, rangeRequest)
 	if rangeResponse.Code != http.StatusPartialContent || rangeResponse.Body.String() != "audio" {
 		t.Errorf("attachment range = %d body=%q", rangeResponse.Code, rangeResponse.Body.String())
 	}
-	streamDenied := performTenantFeedbackRequest(streamRoutes, http.MethodGet, streamPath, "", deniedToken)
+	streamDenied := performTenantFeedbackRequest(limitedStreamRoutes, http.MethodGet, streamPath, "", deniedToken)
 	if streamDenied.Code != http.StatusForbidden {
 		t.Errorf("denied attachment stream status = %d", streamDenied.Code)
 	}
 	crossFeedback := performTenantFeedbackRequest(
-		streamRoutes, http.MethodGet,
+		limitedStreamRoutes, http.MethodGet,
 		"/v1/feedbacks/"+secondFeedbackID+"/attachments/"+attachmentID+"/content", "", ownerToken,
 	)
 	if crossFeedback.Code != http.StatusNotFound {
@@ -1050,7 +1159,7 @@ func assertTenantFeedbackReadFlow(
 	unknownTenantRequest := httptest.NewRequest(http.MethodGet, "http://unknown-tenant.localhost"+streamPath, nil)
 	unknownTenantRequest.Header.Set("Authorization", "Bearer "+ownerToken)
 	unknownTenantResponse := httptest.NewRecorder()
-	streamRoutes.ServeHTTP(unknownTenantResponse, unknownTenantRequest)
+	limitedStreamRoutes.ServeHTTP(unknownTenantResponse, unknownTenantRequest)
 	if unknownTenantResponse.Code != http.StatusNotFound {
 		t.Errorf("unknown tenant attachment stream status = %d", unknownTenantResponse.Code)
 	}
@@ -1064,7 +1173,7 @@ func assertTenantFeedbackReadFlow(
 	wrongTenantRequest := httptest.NewRequest(http.MethodGet, "http://wrong-attachment-tenant.localhost"+streamPath, nil)
 	wrongTenantRequest.Header.Set("Authorization", "Bearer "+ownerToken)
 	wrongTenantResponse := httptest.NewRecorder()
-	streamRoutes.ServeHTTP(wrongTenantResponse, wrongTenantRequest)
+	limitedStreamRoutes.ServeHTTP(wrongTenantResponse, wrongTenantRequest)
 	if wrongTenantResponse.Code != http.StatusForbidden {
 		t.Errorf("wrong tenant attachment stream status = %d", wrongTenantResponse.Code)
 	}
@@ -1080,11 +1189,11 @@ func assertTenantFeedbackReadFlow(
 	headRequest := httptest.NewRequest(http.MethodHead, "http://acme.localhost"+streamPath, nil)
 	headRequest.Header.Set("Authorization", "Bearer "+ownerToken)
 	headResponse := httptest.NewRecorder()
-	streamRoutes.ServeHTTP(headResponse, headRequest)
+	limitedStreamRoutes.ServeHTTP(headResponse, headRequest)
 	if headResponse.Code != http.StatusOK {
 		t.Errorf("attachment HEAD status = %d", headResponse.Code)
 	}
-	downloadResponse := performTenantFeedbackRequest(streamRoutes, http.MethodGet, streamPath+"?mode=download", "", ownerToken)
+	downloadResponse := performTenantFeedbackRequest(limitedStreamRoutes, http.MethodGet, streamPath+"?mode=download", "", ownerToken)
 	if downloadResponse.Code != http.StatusOK ||
 		!strings.HasPrefix(downloadResponse.Header().Get("Content-Disposition"), "attachment;") {
 		t.Errorf("attachment download mode = %d disposition=%q",
@@ -1177,7 +1286,7 @@ func assertTenantFeedbackReadFlow(
 	}
 	streamStorage.err = errors.New("object storage open failed")
 	storageUnavailable := performTenantFeedbackRequest(
-		streamRoutes, http.MethodGet, streamPath+"?mode=download", "", streamAPIKey,
+		limitedStreamRoutes, http.MethodGet, streamPath+"?mode=download", "", streamAPIKey,
 	)
 	if storageUnavailable.Code != http.StatusServiceUnavailable {
 		t.Fatalf("storage-unavailable attachment stream status = %d", storageUnavailable.Code)
@@ -1541,6 +1650,26 @@ func (s *feedbackStorageStub) RemoveObject(_ context.Context, key string) error 
 type staticLimiter struct {
 	decision ratelimit.Decision
 	err      error
+}
+
+type tenantAPIKeyLimiterStub struct {
+	counts map[string]int
+}
+
+func (l *tenantAPIKeyLimiterStub) Allow(
+	_ context.Context,
+	key string,
+	window ratelimit.Window,
+) (ratelimit.Decision, error) {
+	l.counts[key]++
+	return ratelimit.Decision{
+		Allowed: l.counts[key] <= window.Limit, Limit: window.Limit,
+		Remaining: max(window.Limit-l.counts[key], 0), RetryAfter: 30 * time.Second,
+	}, nil
+}
+
+func (l *tenantAPIKeyLimiterStub) reset() {
+	l.counts = map[string]int{}
 }
 
 type abuseEvaluatorFunc func(

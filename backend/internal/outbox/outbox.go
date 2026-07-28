@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 
@@ -140,8 +141,8 @@ type AsynqEnqueuer struct {
 	client taskClient
 }
 
-func OpenAsynqEnqueuer(redisURL string) (*AsynqEnqueuer, error) {
-	options, err := asynq.ParseRedisURI(redisURL)
+func OpenAsynqEnqueuer(redisURL string, caCertificates ...string) (*AsynqEnqueuer, error) {
+	options, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse outbox Redis URL: %w", err)
 	}

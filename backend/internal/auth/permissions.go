@@ -61,6 +61,10 @@ const (
 	PermissionPlatformBreachCreate  Permission = "platform:breach:create"
 	PermissionPlatformBreachRead    Permission = "platform:breach:read"
 	PermissionPlatformBreachAppend  Permission = "platform:breach:append"
+	// PermissionPlatformQueueRun permits an operator to move one failed
+	// background task from retry to pending. It is separate from read-only queue
+	// visibility because this command has a direct production side effect.
+	PermissionPlatformQueueRun Permission = "platform:queue:run"
 	// PermissionPlatformTenantSupportAccess gates platform-admin/support access
 	// to a tenant's sensitive data (attachments, replay, exports). Distinct
 	// from the tenant CRUD permissions above: it never grants tenant metadata
@@ -83,6 +87,7 @@ var AllPlatformPermissions = []Permission{
 	PermissionPlatformBreachCreate,
 	PermissionPlatformBreachRead,
 	PermissionPlatformBreachAppend,
+	PermissionPlatformQueueRun,
 	PermissionPlatformTenantSupportAccess,
 }
 

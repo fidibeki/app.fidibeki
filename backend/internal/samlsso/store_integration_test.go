@@ -272,7 +272,77 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 	})
 
 	t.Run("required mode closes local login except for the owner", func(t *testing.T) {
+		staleLocalTokenHash := strings.Repeat("d", 64)
+		staleLocalRefreshHash := strings.Repeat("2", 64)
+		staleInvitationHash := strings.Repeat("01", 32)
+		samlHandoffHash := strings.Repeat("02", 32)
+		samlRefreshHash := strings.Repeat("03", 32)
+		ownerRefreshHash := strings.Repeat("04", 32)
+		ownerMagicLinkHash := strings.Repeat("09", 32)
+		memberID := harness.member(
+			ctx, t, acme, "required-member@acme.test", []string{"feedback:read"},
+		)
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if err := harness.members.CreateMagicLink(
+				ctx, query, acme.id, &memberID, "required-member@acme.test", nil,
+				staleLocalTokenHash, time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink(stale local login) error = %v", err)
+			}
+			if _, err := query.Exec(ctx, `
+				INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash)
+				VALUES ($1, $2, $3)
+			`, acme.id, memberID, staleLocalRefreshHash); err != nil {
+				t.Fatalf("create stale local session: %v", err)
+			}
+			if err := harness.members.CreateMagicLink(
+				ctx, query, acme.id, nil, "pending-required@acme.test",
+				[]string{"feedback:read"}, staleInvitationHash, time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink(pending invitation) error = %v", err)
+			}
+			if err := harness.members.CreateSAMLMagicLink(
+				ctx, query, acme.id, memberID, "required-member@acme.test",
+				samlHandoffHash, time.Now().Add(time.Hour),
+				acme.idp.entityID, "required-member@acme.test",
+			); err != nil {
+				t.Fatalf("CreateSAMLMagicLink() error = %v", err)
+			}
+			if _, err := query.Exec(ctx, `
+				INSERT INTO tenant_member_sessions (
+					tenant_id, member_id, refresh_hash, authentication_method,
+					saml_idp_entity_id, saml_subject_id
+				)
+				VALUES ($1, $2, $3, 'saml', $4, $5)
+			`, acme.id, memberID, samlRefreshHash,
+				acme.idp.entityID, "required-member@acme.test"); err != nil {
+				t.Fatalf("create SAML session: %v", err)
+			}
+			if _, err := query.Exec(ctx, `
+				INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash)
+				VALUES ($1, $2, $3)
+			`, acme.id, acme.ownerID, ownerRefreshHash); err != nil {
+				t.Fatalf("create owner local session: %v", err)
+			}
+			if err := harness.members.CreateMagicLink(
+				ctx, query, acme.id, &acme.ownerID, "owner@acme.test", nil,
+				ownerMagicLinkHash, time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink(owner) error = %v", err)
+			}
+			var memberAuthorizationVersion, ownerAuthorizationVersion int
+			if err := query.QueryRow(ctx, `
+				SELECT member.authorization_version, owner.authorization_version
+				FROM tenant_members AS member
+				JOIN tenants AS tenant ON tenant.id = member.tenant_id
+				JOIN tenant_members AS owner
+				  ON owner.tenant_id = tenant.id AND owner.id = tenant.owner_member_id
+				WHERE member.tenant_id = $1 AND member.id = $2
+			`, acme.id, memberID).Scan(
+				&memberAuthorizationVersion, &ownerAuthorizationVersion,
+			); err != nil {
+				t.Fatalf("read authorization versions before required SSO: %v", err)
+			}
 			requestID := harness.startLogin(ctx, t, query, acme, PurposeTest)
 			if _, err := harness.service.ConsumeAssertion(
 				ctx, query, acme.resolved,
@@ -285,6 +355,133 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 			); err != nil {
 				t.Fatalf("SetMode(required) error = %v", err)
 			}
+			var requiredMemberVersion, requiredOwnerVersion int
+			if err := query.QueryRow(ctx, `
+				SELECT member.authorization_version, owner.authorization_version
+				FROM tenant_members AS member
+				JOIN tenants AS tenant ON tenant.id = member.tenant_id
+				JOIN tenant_members AS owner
+				  ON owner.tenant_id = tenant.id AND owner.id = tenant.owner_member_id
+				WHERE member.tenant_id = $1 AND member.id = $2
+			`, acme.id, memberID).Scan(
+				&requiredMemberVersion, &requiredOwnerVersion,
+			); err != nil {
+				t.Fatalf("read authorization versions after required SSO: %v", err)
+			}
+			if requiredMemberVersion != memberAuthorizationVersion+1 {
+				t.Fatalf(
+					"member authorization version = %d, want %d after required SSO",
+					requiredMemberVersion, memberAuthorizationVersion+1,
+				)
+			}
+			if requiredOwnerVersion != ownerAuthorizationVersion {
+				t.Fatalf(
+					"owner authorization version = %d, want preserved version %d",
+					requiredOwnerVersion, ownerAuthorizationVersion,
+				)
+			}
+		})
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if _, _, err := harness.members.ConsumeMagicLink(
+				ctx, query, acme.id, staleLocalTokenHash, strings.Repeat("e", 64), "", "",
+			); !errors.Is(err, tenantmember.ErrMagicLinkInvalid) {
+				t.Fatalf(
+					"ConsumeMagicLink(pre-required local link) error = %v, want ErrMagicLinkInvalid",
+					err,
+				)
+			}
+			requiredLocalTokenHash := strings.Repeat("f", 64)
+			if err := harness.members.CreateMagicLink(
+				ctx, query, acme.id, &memberID, "required-member@acme.test", nil,
+				requiredLocalTokenHash, time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink(required local login) error = %v", err)
+			}
+			if _, _, err := harness.members.ConsumeMagicLink(
+				ctx, query, acme.id, requiredLocalTokenHash, strings.Repeat("1", 64), "", "",
+			); !errors.Is(err, tenantmember.ErrMagicLinkInvalid) {
+				t.Fatalf(
+					"ConsumeMagicLink(required local link) error = %v, want ErrMagicLinkInvalid",
+					err,
+				)
+			}
+			if _, _, err := harness.members.RotateSession(
+				ctx, query, acme.id, staleLocalRefreshHash, strings.Repeat("3", 64), "", "",
+			); !errors.Is(err, tenantmember.ErrRefreshInvalid) {
+				t.Fatalf(
+					"RotateSession(pre-required local session) error = %v, want ErrRefreshInvalid",
+					err,
+				)
+			}
+			if _, _, err := harness.members.ConsumeMagicLink(
+				ctx, query, acme.id, staleInvitationHash, strings.Repeat("08", 32), "", "",
+			); !errors.Is(err, tenantmember.ErrMagicLinkInvalid) {
+				t.Fatalf(
+					"ConsumeMagicLink(pre-required invitation) error = %v, want ErrMagicLinkInvalid",
+					err,
+				)
+			}
+			var invitedMembers int
+			if err := query.QueryRow(ctx, `
+				SELECT count(*) FROM tenant_members
+				WHERE tenant_id = $1 AND email = 'pending-required@acme.test'
+			`, acme.id).Scan(&invitedMembers); err != nil {
+				t.Fatalf("count members created from the pending invitation: %v", err)
+			}
+			if invitedMembers != 0 {
+				t.Fatalf("members created from the pending invitation = %d, want 0", invitedMembers)
+			}
+			samlMember, samlSecurity, err := harness.members.RotateSession(
+				ctx, query, acme.id, samlRefreshHash, strings.Repeat("05", 32), "", "",
+			)
+			if err != nil || samlMember.ID != memberID || !samlSecurity.IsSAML() {
+				t.Fatalf(
+					"RotateSession(SAML) = %q, %#v, %v, want the preserved SAML session",
+					samlMember.ID, samlSecurity, err,
+				)
+			}
+			owner, ownerSecurity, err := harness.members.RotateSession(
+				ctx, query, acme.id, ownerRefreshHash, strings.Repeat("06", 32), "", "",
+			)
+			if err != nil || owner.ID != acme.ownerID || ownerSecurity.IsSAML() {
+				t.Fatalf(
+					"RotateSession(owner local) = %q, %#v, %v, want owner break-glass session",
+					owner.ID, ownerSecurity, err,
+				)
+			}
+			handoffMember, handoffSecurity, err := harness.members.ConsumeMagicLink(
+				ctx, query, acme.id, samlHandoffHash, strings.Repeat("07", 32), "", "",
+			)
+			if err != nil || handoffMember.ID != memberID || !handoffSecurity.IsSAML() {
+				t.Fatalf(
+					"ConsumeMagicLink(SAML handoff) = %q, %#v, %v, want preserved SAML handoff",
+					handoffMember.ID, handoffSecurity, err,
+				)
+			}
+			breakGlassMember, breakGlassSecurity, err := harness.members.ConsumeMagicLink(
+				ctx, query, acme.id, ownerMagicLinkHash, strings.Repeat("10", 32), "", "",
+			)
+			if err != nil || breakGlassMember.ID != acme.ownerID || !breakGlassSecurity.IsBreakGlass() {
+				t.Fatalf(
+					"ConsumeMagicLink(owner) = %q, %#v, %v, want audited break-glass authentication",
+					breakGlassMember.ID, breakGlassSecurity, err,
+				)
+			}
+			requiredLocalRefreshHash := strings.Repeat("4", 64)
+			if _, err := query.Exec(ctx, `
+				INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash)
+				VALUES ($1, $2, $3)
+			`, acme.id, memberID, requiredLocalRefreshHash); err != nil {
+				t.Fatalf("create required-mode local session: %v", err)
+			}
+			if _, _, err := harness.members.RotateSession(
+				ctx, query, acme.id, requiredLocalRefreshHash, strings.Repeat("5", 64), "", "",
+			); !errors.Is(err, tenantmember.ErrRefreshInvalid) {
+				t.Fatalf(
+					"RotateSession(required-mode local session) error = %v, want ErrRefreshInvalid",
+					err,
+				)
+			}
 		})
 		memberService := tenantmember.Service{
 			Store: harness.members, PublicBaseURL: "http://api.localhost:3000",
@@ -292,7 +489,7 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 		}
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
 			if _, err := memberService.RequestMagicLink(
-				ctx, query, acme.resolved, "invited@acme.test",
+				ctx, query, acme.resolved, "required-member@acme.test",
 			); !errors.Is(err, tenantmember.ErrLocalLoginDisabled) {
 				t.Fatalf("member RequestMagicLink() error = %v, want ErrLocalLoginDisabled", err)
 			}
@@ -307,6 +504,99 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 				ctx, query, acme.resolved, "owner@acme.test",
 			); err != nil {
 				t.Fatalf("owner RequestMagicLink() error = %v, want the break-glass path to work", err)
+			}
+		})
+	})
+
+	t.Run("required transition serializes with local redemption and refresh", func(t *testing.T) {
+		boundary := harness.workspace(ctx, t, "required-boundary", "Required Boundary")
+		harness.configure(ctx, t, boundary)
+		memberID := harness.member(
+			ctx, t, boundary, "member@required-boundary.test", []string{"feedback:read"},
+		)
+		localLinkHash := strings.Repeat("11", 32)
+		localRefreshHash := strings.Repeat("12", 32)
+		linkSessionHash := strings.Repeat("13", 32)
+		rotatedSessionHash := strings.Repeat("14", 32)
+
+		harness.withTenant(ctx, t, boundary, func(query db.Querier) {
+			if err := harness.members.CreateMagicLink(
+				ctx, query, boundary.id, &memberID, "member@required-boundary.test", nil,
+				localLinkHash, time.Now().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("CreateMagicLink() error = %v", err)
+			}
+			if _, err := query.Exec(ctx, `
+				INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash)
+				VALUES ($1, $2, $3)
+			`, boundary.id, memberID, localRefreshHash); err != nil {
+				t.Fatalf("create local session: %v", err)
+			}
+			requestID := harness.startLogin(ctx, t, query, boundary, PurposeTest)
+			if _, err := harness.service.ConsumeAssertion(
+				ctx, query, boundary.resolved,
+				boundary.idp.response(
+					t, harness.assertion(t, boundary, requestID, "owner@acme.test"),
+				),
+			); err != nil {
+				t.Fatalf("test ConsumeAssertion() error = %v", err)
+			}
+		})
+
+		continuation := harness.beginTenant(ctx, t, boundary)
+		defer func() { _ = continuation.Rollback(ctx) }()
+		if _, _, err := harness.members.ConsumeMagicLink(
+			ctx, continuation, boundary.id, localLinkHash, linkSessionHash, "", "",
+		); err != nil {
+			t.Fatalf("ConsumeMagicLink() error = %v", err)
+		}
+		if _, _, err := harness.members.RotateSession(
+			ctx, continuation, boundary.id, localRefreshHash, rotatedSessionHash, "", "",
+		); err != nil {
+			t.Fatalf("RotateSession() error = %v", err)
+		}
+
+		modeChange := harness.beginTenant(ctx, t, boundary)
+		modeChangeDone := make(chan error, 1)
+		go func() {
+			_, err := harness.service.SetMode(
+				ctx, modeChange, boundary.resolved, auth.SSOModeRequired, boundary.ownerID,
+			)
+			if err == nil {
+				err = modeChange.Commit(ctx)
+			} else {
+				_ = modeChange.Rollback(ctx)
+			}
+			modeChangeDone <- err
+		}()
+
+		select {
+		case err := <-modeChangeDone:
+			t.Fatalf("SetMode(required) completed before local continuation committed: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		if err := continuation.Commit(ctx); err != nil {
+			t.Fatalf("commit local continuation: %v", err)
+		}
+		select {
+		case err := <-modeChangeDone:
+			if err != nil {
+				t.Fatalf("SetMode(required) after local continuation error = %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("SetMode(required) remained blocked: %v", ctx.Err())
+		}
+
+		harness.withTenant(ctx, t, boundary, func(query db.Querier) {
+			for name, refreshHash := range map[string]string{
+				"link session":    linkSessionHash,
+				"rotated session": rotatedSessionHash,
+			} {
+				if _, _, err := harness.members.RotateSession(
+					ctx, query, boundary.id, refreshHash, strings.Repeat("15", 32), "", "",
+				); !errors.Is(err, tenantmember.ErrRefreshInvalid) {
+					t.Fatalf("RotateSession(%s) error = %v, want ErrRefreshInvalid", name, err)
+				}
 			}
 		})
 	})
@@ -645,21 +935,29 @@ func (h *samlHarness) withTenant(
 	ctx context.Context, t *testing.T, workspace samlWorkspace, fn func(db.Querier),
 ) {
 	t.Helper()
+	transaction := h.beginTenant(ctx, t, workspace)
+	defer func() { _ = transaction.Rollback(ctx) }()
+	fn(transaction)
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit tenant transaction: %v", err)
+	}
+}
+
+func (h *samlHarness) beginTenant(
+	ctx context.Context, t *testing.T, workspace samlWorkspace,
+) pgx.Tx {
+	t.Helper()
 	transaction, err := h.pools.App.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin tenant transaction: %v", err)
 	}
-	defer func() { _ = transaction.Rollback(ctx) }()
 	var configured string
 	if err := transaction.QueryRow(ctx,
 		`SELECT set_config('app.tenant_id', $1, true)`, workspace.id,
 	).Scan(&configured); err != nil {
 		t.Fatalf("set tenant scope: %v", err)
 	}
-	fn(transaction)
-	if err := transaction.Commit(ctx); err != nil {
-		t.Fatalf("commit tenant transaction: %v", err)
-	}
+	return transaction
 }
 
 func (h *samlHarness) startLogin(

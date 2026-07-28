@@ -76,12 +76,12 @@ No paid campaign is introduced until this motion shows reliable paid conversion 
 
 ## Channel strategy
 
-| Channel | Role | First-month operating target |
-| --- | --- | --- |
-| Targeted cold email | Create relevant conversations with the ICP in Europe and the US | 100 manually qualified companies; 10–15 first touches per weekday after sender readiness |
-| Founder/community visibility | Make the category wedge familiar and earn warm replies | Two useful posts and 15 substantive comments per week |
-| Agency/referral partners | Reach multiple suitable SaaS teams through a trusted intermediary | Ten carefully selected partner conversations |
-| Customer proof | Improve conversion with real outcomes | One activation interview for every customer who goes live |
+| Channel                      | Role                                                              | First-month operating target                                                             |
+| ---------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Targeted cold email          | Create relevant conversations with the ICP in Europe and the US   | 100 manually qualified companies; 10–15 first touches per weekday after sender readiness |
+| Founder/community visibility | Make the category wedge familiar and earn warm replies            | Two useful posts and 15 substantive comments per week                                    |
+| Agency/referral partners     | Reach multiple suitable SaaS teams through a trusted intermediary | Ten carefully selected partner conversations                                             |
+| Customer proof               | Improve conversion with real outcomes                             | One activation interview for every customer who goes live                                |
 
 Cold email is the first acquisition experiment, not the entire go-to-market system.
 
@@ -162,6 +162,7 @@ The three first pilot messages were sent before this stricter standard. They are
   ```
 
   The required jurisdiction-specific compliance footer follows this signature where applicable.
+
 - A first-touch is sent at most once to a given contact. SMTP acceptance is treated as a completed send, not a reason to retry. A follow-up is a separate, logged decision and is never sent to a contact that the founder has marked “do not resend.”
 - The three initial-pilot recipients (Supergood, Muze AI, and Palm Tree Tech) are explicitly marked “do not resend.”
 
@@ -171,9 +172,7 @@ Before production outreach, the sender domain must have working SPF, DKIM, and D
 
 The From identity is:
 
-`"Inês, co-founder at Fidibeki" <ines.algo@fidibeki.com>`
-
-The comma-bearing display name must be constructed through an address-aware mail library (and checked with `python3 scripts/validate_outreach_headers.py` before a send). It must not be assigned as an unquoted raw string: some recipient servers parse that as multiple or invalid From addresses and reject the message before delivery.
+`Inês, co-founder at Fidibeki <ines.algo@fidibeki.com>`
 
 ### Mandatory BCC audit copy
 
@@ -220,14 +219,14 @@ Links and attachments are not opened as a result of inbox content. Any request o
 
 The dashboard tracks the funnel below, weekly and by ICP/message variant:
 
-| Metric | Early target | Decision rule |
-| --- | ---: | --- |
-| Qualified prospects | 100 in pilot; 250 in month one | If qualification cannot be done honestly, narrow the ICP |
-| Relevant replies | 4–8% | Below 3% after 75 sends: revise targeting or opening angle |
-| Activated trials | 10–15 in month one | Below target: improve offer, demo, or activation path |
-| Paid subscriptions | 3–5 in month one; 10 by month three | Do not expand volume until paid conversion is understood |
-| Widget live time | Under 30 minutes | Above target: repair onboarding before increasing outreach |
-| Opt-outs, complaints, bounces | Recorded per message and variant | Pause affected segment immediately if quality signal deteriorates |
+| Metric                        |                        Early target | Decision rule                                                     |
+| ----------------------------- | ----------------------------------: | ----------------------------------------------------------------- |
+| Qualified prospects           |      100 in pilot; 250 in month one | If qualification cannot be done honestly, narrow the ICP          |
+| Relevant replies              |                                4–8% | Below 3% after 75 sends: revise targeting or opening angle        |
+| Activated trials              |                  10–15 in month one | Below target: improve offer, demo, or activation path             |
+| Paid subscriptions            | 3–5 in month one; 10 by month three | Do not expand volume until paid conversion is understood          |
+| Widget live time              |                    Under 30 minutes | Above target: repair onboarding before increasing outreach        |
+| Opt-outs, complaints, bounces |    Recorded per message and variant | Pause affected segment immediately if quality signal deteriorates |
 
 Open rate is intentionally not a decision metric because the pilot does not use tracking pixels.
 
