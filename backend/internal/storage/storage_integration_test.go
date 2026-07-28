@@ -1,10 +1,12 @@
 package storage_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -64,6 +66,31 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	if err := client.Check(ctx); err != nil {
 		t.Fatalf("storage readiness: %v", err)
 	}
+	limited, err := client.PresignPost(
+		ctx, "tenants/test/limited.webm", "video/webm", 4, 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("presign limited POST upload: %v", err)
+	}
+	limitedResponse := postPresignedObject(t, ctx, limited, "clip.webm", "four", "")
+	if limitedResponse.StatusCode < 200 || limitedResponse.StatusCode >= 300 {
+		t.Fatalf("limited POST upload status = %d", limitedResponse.StatusCode)
+	}
+	_ = limitedResponse.Body.Close()
+	oversized, err := client.PresignPost(
+		ctx, "tenants/test/oversized.webm", "video/webm", 4, 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("presign oversized POST upload: %v", err)
+	}
+	oversizedResponse := postPresignedObject(t, ctx, oversized, "clip.webm", "fives", "")
+	if oversizedResponse.StatusCode >= 200 && oversizedResponse.StatusCode < 300 {
+		t.Fatalf("oversized POST upload status = %d, want rejection", oversizedResponse.StatusCode)
+	}
+	_ = oversizedResponse.Body.Close()
+	if _, err := client.Stat(ctx, "tenants/test/oversized.webm"); !errors.Is(err, storage.ErrObjectNotFound) {
+		t.Fatalf("oversized object stat error = %v, want ErrObjectNotFound", err)
+	}
 	presigned, err := client.PresignPut(ctx, "tenants/test/attachment.webm", 10*time.Minute)
 	if err != nil {
 		t.Fatalf("presign upload: %v", err)
@@ -109,8 +136,18 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 			t.Fatalf("put %s: %v", key, err)
 		}
 	}
+	listed, err := client.ListObjects(ctx, "tenants/test/cleanup/", "", 10)
+	if err != nil {
+		t.Fatalf("list cleanup objects: %v", err)
+	}
+	if len(listed) != 2 || listed[0].Key == "" || listed[0].LastModified.IsZero() {
+		t.Fatalf("listed objects = %#v", listed)
+	}
 	if err := client.RemoveObject(ctx, "tenants/test/attachment.webm"); err != nil {
 		t.Fatalf("remove uploaded object: %v", err)
+	}
+	if err := client.RemoveObject(ctx, "tenants/test/limited.webm"); err != nil {
+		t.Fatalf("remove limited upload: %v", err)
 	}
 	if _, err := client.Stat(ctx, "tenants/test/attachment.webm"); !errors.Is(err, storage.ErrObjectNotFound) {
 		t.Fatalf("removed upload stat error = %v, want ErrObjectNotFound", err)
@@ -128,4 +165,45 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	if err := client.RemovePrefix(ctx, "tenants/test/missing/"); err != nil {
 		t.Fatalf("remove empty prefix: %v", err)
 	}
+}
+
+func postPresignedObject(
+	t *testing.T,
+	ctx context.Context,
+	upload storage.PresignedPost,
+	filename string,
+	body string,
+	origin string,
+) *http.Response {
+	t.Helper()
+	var encoded bytes.Buffer
+	writer := multipart.NewWriter(&encoded)
+	for name, value := range upload.Fields {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write POST field %s: %v", name, err)
+		}
+	}
+	file, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("create POST file field: %v", err)
+	}
+	if _, err := io.WriteString(file, body); err != nil {
+		t.Fatalf("write POST object: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close POST upload: %v", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, upload.URL, &encoded)
+	if err != nil {
+		t.Fatalf("create POST upload request: %v", err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("perform POST upload: %v", err)
+	}
+	return response
 }

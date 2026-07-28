@@ -113,6 +113,7 @@ func (f FFmpeg) EncodeVideo(ctx context.Context, source, destination string, tar
 		"-profile:v", "high", "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "128k",
 		"-movflags", "+faststart",
+		"-fs", strconv.FormatInt(maxVideoBytes, 10),
 		destination,
 	)
 }
@@ -128,6 +129,7 @@ func (f FFmpeg) ExtractPoster(ctx context.Context, source, destination string) e
 		"-i", source,
 		"-frames:v", "1",
 		"-q:v", "3",
+		"-fs", strconv.FormatInt(maxVideoBytes, 10),
 		destination,
 	)
 }

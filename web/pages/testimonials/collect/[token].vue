@@ -102,7 +102,7 @@ const canSubmit = computed(() =>
  * Sends the recording straight to storage.
  *
  * Three steps, and the middle one does not touch our API at all: ask for a
- * destination, PUT the bytes there, then tell us it arrived. The file never
+ * destination, POST the signed form there, then tell us it arrived. The file never
  * passes through the API, which is what keeps a slow mobile upload from holding
  * a connection the rest of the workspace needs.
  */
@@ -113,12 +113,19 @@ async function uploadVideo(event: Event) {
   videoState.value = 'uploading'
   videoError.value = ''
   try {
-    const created = await $apiFetch<{ upload_url: string, media_id: string, complete_token: string, headers: Record<string, string> }>(
+    const created = await $apiFetch<{
+      upload_url: string
+      media_id: string
+      complete_token: string
+      method: 'POST'
+      fields: Record<string, string>
+    }>(
       `/v1/public/testimonial-requests/${encodeURIComponent(token.value)}/video`,
       { method: 'POST', body: { content_type: file.type, size_bytes: file.size } },
     )
+    const uploadBody = buildPresignedPostBody(created.fields, file)
     const stored = await fetch(created.upload_url, {
-      method: 'PUT', body: file, headers: created.headers,
+      method: created.method, body: uploadBody,
     })
     if (!stored.ok) throw new Error(`storage responded ${stored.status}`)
     await $apiFetch(

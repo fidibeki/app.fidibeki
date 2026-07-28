@@ -896,6 +896,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
 		PublicBaseURL:     settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
+	testimonialMediaCleanup := &testimonial.MediaCleanupMaintainer{
+		Store:   testimonial.PostgresMediaCleanupStore{Database: pools.Admin},
+		Storage: objectStorage, Logger: logger,
+	}
 	issueTrackerHandler := issuetracker.AutoCreateHandler{
 		Store:   issuetracker.Store{Database: pools.Admin, Cipher: integrationCipher},
 		Clients: issuetracker.DefaultClientFactory(nil),
@@ -961,7 +965,8 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	backgroundDone := make(chan error, 17)
+	const backgroundWorkers = 20
+	backgroundDone := make(chan error, backgroundWorkers)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- aiScheduler.RunReconciler(workerCtx, settings.AIReconcileEvery) }()
@@ -978,19 +983,18 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
+	go func() { backgroundDone <- testimonialMediaCleanup.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- deletionExecutor.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- dunning.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- memberDigests.Run(workerCtx, time.Minute) }()
 	workerErr := worker.Run(workerCtx)
 	cancel()
-	return errors.Join(
-		workerErr,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone, <-backgroundDone, <-backgroundDone,
-		<-backgroundDone, <-backgroundDone,
-	)
+	backgroundErrors := make([]error, 0, backgroundWorkers+1)
+	backgroundErrors = append(backgroundErrors, workerErr)
+	for range backgroundWorkers {
+		backgroundErrors = append(backgroundErrors, <-backgroundDone)
+	}
+	return errors.Join(backgroundErrors...)
 }
 
 // runSeedTestimonials installs the demo corpus and prints the URLs to open.

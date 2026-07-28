@@ -81,11 +81,12 @@ for both services because configuration is validated before the command starts.
 
 ### Browser upload CORS
 
-The widget uploads attachments and replay batches directly to presigned S3 `PUT` URLs. Configure
-this policy once on every environment's bucket before enabling those features:
+The widget uploads attachments and replay batches to presigned S3 `PUT` URLs. Testimonial videos
+use a presigned S3 `POST` policy so object storage enforces the reserved MIME type and size before
+persistence. Configure this policy once on every environment's bucket before enabling those features:
 
 - allowed origins: `*`
-- allowed methods: `PUT`
+- allowed methods: `PUT`, `POST`
 - allowed headers: `*`
 - exposed headers: `ETag`
 - max age: `3600` seconds
