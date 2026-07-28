@@ -13,15 +13,17 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
-	ErrNotFound          = errors.New("feedback resource not found")
-	ErrPublicIDCollision = errors.New("feedback public ID collision")
-	ErrInvalidReplay     = errors.New("replay session cannot be linked to feedback")
-	ErrLinkConflict      = errors.New("feedback is linked to another issue")
-	ErrProjectMismatch   = errors.New("feedback and issue projects do not match")
-	ErrMergedIssue       = errors.New("merged issue cannot receive feedback")
+	ErrNotFound            = errors.New("feedback resource not found")
+	ErrPublicIDCollision   = errors.New("feedback public ID collision")
+	ErrInvalidReplay       = errors.New("replay session cannot be linked to feedback")
+	ErrLinkConflict        = errors.New("feedback is linked to another issue")
+	ErrProjectMismatch     = errors.New("feedback and issue projects do not match")
+	ErrMergedIssue         = errors.New("merged issue cannot receive feedback")
+	ErrSubmissionCollision = errors.New("feedback idempotency key belongs to another submission")
 )
 
 type PreparedAttachment struct {
@@ -76,12 +78,14 @@ func (Store) FindSubmission(
 ) (Submission, bool, error) {
 	var submission Submission
 	err := query.QueryRow(ctx, `
-		SELECT feedback.id, feedback.public_id, COALESCE(issue.public_id, ''), feedback.notify_reporter
+		SELECT feedback.id, feedback.public_id, COALESCE(issue.public_id, ''),
+		       feedback.notify_reporter, feedback.source::text
 		FROM feedbacks AS feedback
 		LEFT JOIN issues AS issue ON issue.id = feedback.issue_id
 		WHERE feedback.project_id = $1 AND feedback.client_feedback_id = $2
 	`, projectID, clientFeedbackID).Scan(
-		&submission.ID, &submission.PublicID, &submission.IssuePublicID, &submission.NotifyReporter,
+		&submission.ID, &submission.PublicID, &submission.IssuePublicID,
+		&submission.NotifyReporter, &submission.Source,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Submission{}, false, nil
@@ -136,12 +140,14 @@ func (Store) CreateSubmission(
 				reporter_consent_locale, reporter_consent_source, reporter_consent_notice_snapshot,
 				page_url, referrer, user_agent, os, browser, device,
 				viewport_width, viewport_height, language, dom_snapshot_html, dom_snapshot_styles,
-				text_process_status, session_id
+				text_process_status, session_id, source, mobile_application_id,
+				mobile_screen, mobile_app_version, mobile_os_version
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12, $13, $14,
 				$15, $16, $17, $18,
 				$19,
-				$20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+				$20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32,
+				$33, $34, $35, $36, $37
 			)
 			ON CONFLICT (tenant_id, public_id) DO NOTHING
 			RETURNING public_id
@@ -155,9 +161,17 @@ func (Store) CreateSubmission(
 			values.UserAgent, values.OS, values.Browser, values.Device, values.ViewportWidth,
 			values.ViewportHeight, values.Language, values.DOMSnapshotHTML, values.DOMSnapshotStyles,
 			textProcessingStatus(values.Text, configuration, values.WidgetRuleID), values.ReplaySessionID,
+			values.Source, values.MobileApplicationID, values.MobileScreen,
+			values.MobileAppVersion, values.MobileOSVersion,
 		).Scan(&publicID)
 		if err == nil {
 			break
+		}
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) &&
+			databaseError.Code == "23505" &&
+			databaseError.ConstraintName == "feedbacks_project_client_feedback_id_key" {
+			return Submission{}, ErrSubmissionCollision
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return Submission{}, fmt.Errorf("create feedback: %w", err)
@@ -207,7 +221,8 @@ func (Store) CreateSubmission(
 	}
 	return Submission{
 		ID: feedbackID, PublicID: publicID,
-		NotifyReporter: values.NotifyReporter, Attachments: createdAttachments,
+		NotifyReporter: values.NotifyReporter, Source: values.Source,
+		Attachments: createdAttachments,
 	}, nil
 }
 

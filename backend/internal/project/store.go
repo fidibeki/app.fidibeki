@@ -693,6 +693,7 @@ func (store Store) LoadPublicConfiguration(
 			configuration.ControllerProfile = &controllerProfile
 		}
 	}
+	configuration.ControllerProfileVersion = privacyProfileVersion
 	var organizationLogo widgetconfig.AppearanceOverrides
 	if logoVersion != nil {
 		logoURL, err := identity.WorkspaceLogoURL(

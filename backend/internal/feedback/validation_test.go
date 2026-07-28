@@ -146,6 +146,64 @@ func TestValidateSubmissionNormalizesPublishedResponseBlocks(t *testing.T) {
 	}
 }
 
+func TestValidateMobileSubmissionBindsConsentToDisplayLocale(t *testing.T) {
+	t.Parallel()
+	email := "CUSTOMER@EXAMPLE.COM"
+	deviceLocale := "pt-PT"
+	configuration := project.PublicConfiguration{
+		Plan: tenant.PlanGrowth, ControllerProfile: testControllerProfile(),
+		Rules: []project.WidgetRule{{
+			ID: "1341b36b-d02c-4398-ab29-ca935e73539a", DefinitionVersion: 3,
+			AllowComment: true, CollectContact: true, CanAttachScreenshot: true,
+			CanWriteText:  true,
+			Localizations: testContactLocalizations(),
+			ResponseBlocks: []project.WidgetResponseBlock{{
+				Key: "details", Type: project.ResponseFreeText, Required: true,
+			}},
+		}},
+	}
+	request := MobileSubmissionRequest{
+		ClientFeedbackID: "57e3ee52-4ebf-43ce-9e31-9f909628634d",
+		Responses: map[string]json.RawMessage{
+			"details": json.RawMessage(`"The chart is difficult to read"`),
+		},
+		ReporterEmail: &email, NotifyReporter: true, DeviceLocale: &deviceLocale,
+		Consent: &ReporterConsentInput{
+			Purpose:                  ReporterConsentPurposeFeedbackUpdates,
+			NoticeVersion:            ReporterConsentNoticeVersion,
+			ControllerProfileVersion: 7, WidgetDefinitionVersion: 3,
+			Locale: "en", Granted: true,
+		},
+		Screenshot: &MobileScreenshotInput{
+			ClientAttachmentID: "61c18d72-2296-43fa-bd21-a1356aa5da1c",
+			ContentType:        "image/png", SizeBytes: 2048,
+		},
+	}
+	contextURL := "https://app.example.com/chart"
+	values, fields := ValidateMobileSubmissionAt(
+		request, configuration, configuration.Rules[0].ID, "ios",
+		"com.example.app", "/chart", &contextURL, "en", time.Now(),
+	)
+	if len(fields) != 0 {
+		t.Fatalf("mobile validation fields = %#v", fields)
+	}
+	if values.Source != "ios" || values.Language == nil || *values.Language != deviceLocale ||
+		values.ReporterConsentLocale == nil || *values.ReporterConsentLocale != "en" ||
+		values.ReporterConsentSource == nil ||
+		*values.ReporterConsentSource != ReporterConsentSourceMobile {
+		t.Fatalf("mobile consent/context values = %#v", values)
+	}
+
+	request.Consent.Locale = "pt-PT"
+	_, fields = ValidateMobileSubmissionAt(
+		request, configuration, configuration.Rules[0].ID, "ios",
+		"com.example.app", "/chart", &contextURL, "en", time.Now(),
+	)
+	if !hasField(fields, "consent.locale") {
+		t.Fatalf("device-locale consent mismatch fields = %#v", fields)
+	}
+}
+
 func TestValidateReporterConsentRejectsContradictoryAndUnknownPayloads(t *testing.T) {
 	t.Parallel()
 	baseConfiguration := project.PublicConfiguration{

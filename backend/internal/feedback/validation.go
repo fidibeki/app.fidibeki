@@ -37,6 +37,10 @@ const LegacyReporterConsentNoticeVersion = "2026-07"
 // grant. It is assigned by the server, never accepted from the client.
 const ReporterConsentSourceWidget = "widget_submission"
 
+// ReporterConsentSourceMobile is server-assigned to native capture grants.
+// Device payloads cannot choose or override this provenance.
+const ReporterConsentSourceMobile = "mobile_submission"
+
 var localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
 var attachmentRules = map[AttachmentKind]struct {
@@ -99,7 +103,9 @@ func validateSubmissionAt(
 		fields = append(fields, field("text", fmt.Sprintf("must not exceed %d characters", maxTextLength)))
 	}
 	selectedRule := submissionRule(configuration, values.WidgetRuleID)
-	fields = append(fields, validateReporterConsent(input, &values, configuration, selectedRule)...)
+	fields = append(fields, validateReporterConsent(
+		input, &values, configuration, selectedRule, ReporterConsentSourceWidget, "",
+	)...)
 	if !validHTTPURL(values.PageURL, 4096) {
 		fields = append(fields, field("metadata.url", "must be an absolute HTTP or HTTPS URL"))
 	} else if selectedRule != nil {
@@ -153,6 +159,8 @@ func validateReporterConsent(
 	values *SubmissionValues,
 	configuration project.PublicConfiguration,
 	selectedRule *project.WidgetRule,
+	source string,
+	requiredLocale string,
 ) []FieldError {
 	fields := make([]FieldError, 0)
 	if values.ReporterEmail != nil && !validEmail(*values.ReporterEmail) {
@@ -187,6 +195,8 @@ func validateReporterConsent(
 	locale := strings.ToLower(strings.TrimSpace(input.Consent.Locale))
 	if !validReporterConsentLocale(locale) {
 		fields = append(fields, field("consent.locale", "must identify a valid published locale"))
+	} else if requiredLocale != "" && locale != normalizeReporterLocale(requiredLocale) {
+		fields = append(fields, field("consent.locale", "must match the capture session display locale"))
 	}
 	if configuration.ControllerProfile == nil || !configuration.ControllerProfile.Complete() {
 		fields = append(fields, field("consent.controller_profile_version", "controller profile is not available"))
@@ -207,7 +217,6 @@ func validateReporterConsent(
 		}
 	}
 	if len(fields) == 0 {
-		source := ReporterConsentSourceWidget
 		snapshot, err := json.Marshal(ReporterConsentNoticeSnapshot{
 			SchemaVersion: 1, NoticeVersion: noticeVersion,
 			ControllerProfileVersion: configuration.ControllerProfile.Version,
@@ -232,6 +241,73 @@ func validateReporterConsent(
 		values.ReporterConsentNoticeSnapshot = &encodedSnapshot
 	}
 	return fields
+}
+
+func ValidateMobileSubmissionAt(
+	input MobileSubmissionRequest,
+	configuration project.PublicConfiguration,
+	widgetRuleID string,
+	source string,
+	applicationID string,
+	screen string,
+	contextURL *string,
+	displayLocale string,
+	now time.Time,
+) (SubmissionValues, []FieldError) {
+	attachments := make([]AttachmentInput, 0, 1)
+	if input.Screenshot != nil {
+		attachments = append(attachments, AttachmentInput{
+			ClientAttachmentID: input.Screenshot.ClientAttachmentID,
+			Kind:               AttachmentScreenshot, ContentType: input.Screenshot.ContentType,
+			SizeBytes: input.Screenshot.SizeBytes,
+		})
+	}
+	webShape := SubmissionRequest{
+		ClientFeedbackID: input.ClientFeedbackID, WidgetRuleID: widgetRuleID,
+		Responses: input.Responses, Comment: input.Comment,
+		ReporterEmail: input.ReporterEmail, NotifyReporter: input.NotifyReporter,
+		Consent: input.Consent, Attachments: attachments,
+	}
+	values := normalizeSubmission(webShape)
+	values.Source = source
+	values.PageURL = ""
+	if contextURL != nil {
+		values.PageURL = *contextURL
+	}
+	values.MobileApplicationID = trimString(applicationID)
+	values.MobileScreen = trimString(screen)
+	values.MobileAppVersion = trimOptional(input.AppVersion)
+	values.MobileOSVersion = trimOptional(input.OSVersion)
+	values.Language = trimOptional(input.DeviceLocale)
+
+	fields := make([]FieldError, 0)
+	if _, err := uuid.Parse(values.ClientFeedbackID); err != nil {
+		fields = append(fields, field("client_feedback_id", "must be a UUID"))
+	}
+	selectedRule := submissionRule(configuration, widgetRuleID)
+	fields = append(fields, validateReporterConsent(
+		webShape, &values, configuration, selectedRule,
+		ReporterConsentSourceMobile, displayLocale,
+	)...)
+	if values.MobileAppVersion != nil && len(*values.MobileAppVersion) > 64 {
+		fields = append(fields, field("app_version", "must not exceed 64 characters"))
+	}
+	if values.MobileOSVersion != nil && len(*values.MobileOSVersion) > 64 {
+		fields = append(fields, field("os_version", "must not exceed 64 characters"))
+	}
+	if values.Language != nil &&
+		(len(*values.Language) > maxLocaleLength || !localePattern.MatchString(*values.Language)) {
+		fields = append(fields, field("device_locale", "must be a valid locale"))
+	}
+	fields = append(fields, validateAttachments(values.Attachments)...)
+	fields = append(fields, validateResponses(webShape, &values, configuration)...)
+	fields = append(fields, validateRuleCapabilities(webShape, values, configuration)...)
+	_ = now
+	return values, fields
+}
+
+func normalizeReporterLocale(value string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "_", "-"))
 }
 
 // SupportedReporterConsentLocale reports whether legacy stored consent evidence used a locale
@@ -290,6 +366,7 @@ func normalizeSubmission(input SubmissionRequest) SubmissionValues {
 		Referrer: nil, UserAgent: nil, OS: trimString(input.Metadata.OS), Browser: trimString(input.Metadata.Browser),
 		Device: trimString(input.Metadata.Device), Language: trimString(input.Metadata.Language),
 		Attachments: make([]AttachmentValues, len(input.Attachments)),
+		Source:      "web",
 	}
 	if input.Metadata.ViewportWidth != 0 {
 		values.ViewportWidth = &input.Metadata.ViewportWidth

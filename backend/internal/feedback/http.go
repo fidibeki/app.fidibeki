@@ -2,7 +2,6 @@ package feedback
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
@@ -181,109 +179,63 @@ func (h *HTTPHandler) submit(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 		}
 	}()
-	if err := h.options.Store.LockSubmission(
-		r.Context(), tx, configuration.ProjectID, values.ClientFeedbackID,
-	); err != nil {
-		h.writeStoreError(w, r, err)
+	core := SubmissionCore{
+		Store: h.options.Store, Analytics: h.options.Analytics,
+		Now: h.options.Now, GeneratePublicID: h.options.GeneratePublicID,
+	}
+	result, err := core.Submit(r.Context(), tx, CoreSubmissionRequest{
+		Configuration: configuration, Values: values,
+		Ownership: SubmissionOwnership{Source: "web", AllowExisting: true},
+		BeforeCreate: func(ctx context.Context, query db.Querier) error {
+			if values.ReplaySessionID == nil {
+				return nil
+			}
+			return h.options.Store.LockReplaySession(
+				ctx, query, configuration.TenantID, configuration.ProjectID,
+				*values.ReplaySessionID,
+			)
+		},
+	})
+	var planLimit *PlanLimitError
+	if errors.As(err, &planLimit) {
+		h.recordDiagnostic(
+			r.Context(), configuration, abuse.CategoryPlanQuota,
+			abuse.ReasonPlanQuotaExhausted,
+		)
+		api.WriteError(w, http.StatusPaymentRequired, api.CodePlanLimitExceeded,
+			"monthly feedback limit reached", map[string]any{
+				"limit": planLimit.Limit, "usage": planLimit.Usage, "upgrade_url": "/v1/billing",
+			})
 		return
 	}
-	submission, exists, err := h.options.Store.FindSubmission(
-		r.Context(), tx, configuration.ProjectID, values.ClientFeedbackID,
-	)
+	if errors.Is(err, ErrInvalidReplay) {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"feedback is invalid", []FieldError{field("session_id", "must identify an unlinked replay session")})
+		return
+	}
+	if errors.Is(err, ErrSubmissionCollision) {
+		api.WriteError(w, http.StatusConflict, api.CodeConflict,
+			"feedback idempotency key is already in use", nil)
+		return
+	}
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return
-	}
-	rawTokens := map[string]string{}
-	if exists {
-		if err := h.rotateIncompleteTokens(r.Context(), tx, &submission, rawTokens); err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
-	} else {
-		if values.ReplaySessionID != nil {
-			if err := h.options.Store.LockReplaySession(
-				r.Context(), tx, configuration.TenantID, configuration.ProjectID, *values.ReplaySessionID,
-			); err != nil {
-				if errors.Is(err, ErrInvalidReplay) {
-					api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
-						"feedback is invalid", []FieldError{field("session_id", "must identify an unlinked replay session")})
-					return
-				}
-				h.writeStoreError(w, r, err)
-				return
-			}
-		}
-		definition, planExists := config.PlanFor(configuration.Plan)
-		if !planExists {
-			h.writeStoreError(w, r, errors.New("unsupported tenant plan"))
-			return
-		}
-		usage, err := h.options.Store.CountMonthly(r.Context(), tx, configuration.TenantID, h.now())
-		if err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
-		if definition.Limits.FeedbackPerMonth >= 0 && usage >= definition.Limits.FeedbackPerMonth {
-			h.recordDiagnostic(
-				r.Context(), configuration, abuse.CategoryPlanQuota,
-				abuse.ReasonPlanQuotaExhausted,
-			)
-			api.WriteError(w, http.StatusPaymentRequired, api.CodePlanLimitExceeded,
-				"monthly feedback limit reached", map[string]any{
-					"limit": definition.Limits.FeedbackPerMonth, "usage": usage, "upgrade_url": "/v1/billing",
-				})
-			return
-		}
-		feedbackID := NewID()
-		prepared, err := prepareAttachments(
-			configuration, feedbackID, values.WidgetRuleID, values.Attachments,
-			definition.Features.AI, rawTokens,
-			h.now().UTC(),
-		)
-		if err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
-		publicIDs, err := h.publicIDCandidates()
-		if err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
-		submission, err = h.options.Store.CreateSubmission(
-			r.Context(), tx, configuration, values, feedbackID, publicIDs, prepared,
-		)
-		if err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
-		if values.Analytics != nil {
-			if h.options.Analytics == nil {
-				h.writeStoreError(w, r, errors.New("feedback analytics store is not configured"))
-				return
-			}
-			analytics := *values.Analytics
-			analytics.FeedbackID = &feedbackID
-			if _, err := h.options.Analytics.InsertSubmittedEvent(
-				r.Context(), tx, configuration, analytics, h.now().UTC(),
-			); err != nil {
-				h.writeStoreError(w, r, fmt.Errorf("create submitted widget funnel event: %w", err))
-				return
-			}
-		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		h.writeStoreError(w, r, fmt.Errorf("commit feedback submission: %w", err))
 		return
 	}
 	committed = true
-	response, err := h.submissionResponse(r.Context(), submission, rawTokens, warnings)
+	response, err := h.submissionResponse(
+		r.Context(), result.Submission, result.RawTokens, warnings,
+	)
 	if err != nil {
 		h.writeStoreError(w, r, err)
 		return
 	}
 	status := http.StatusCreated
-	if exists {
+	if !result.Created {
 		status = http.StatusOK
 	}
 	api.WriteJSON(w, status, response)
@@ -326,27 +278,14 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 			_ = tx.Rollback(r.Context())
 		}
 	}()
-	attachment, err := h.options.Store.LockAttachment(r.Context(), tx, configuration.ProjectID, attachmentID)
-	if errors.Is(err, ErrNotFound) {
-		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "attachment not found", nil)
-		return
+	completer := AttachmentCompletionService{
+		Store: h.options.Store, Storage: h.options.Storage, Now: h.options.Now,
 	}
-	if err != nil {
-		h.writeStoreError(w, r, err)
-		return
-	}
-	if attachment.CompletedAt != nil || attachment.CompleteTokenHash == nil {
-		api.WriteError(w, http.StatusConflict, api.CodeConflict, "attachment is already complete", nil)
-		return
-	}
-	now := h.now().UTC()
-	if !now.Before(attachment.UploadExpiresAt) {
-		if err := h.options.Store.ExpireAttachment(
-			r.Context(), tx, attachment.ID, now,
-		); err != nil {
-			h.writeStoreError(w, r, err)
-			return
-		}
+	attachment, err := completer.Complete(
+		r.Context(), tx, configuration.ProjectID, attachmentID, nil, request.CompleteToken,
+	)
+	var completionError *AttachmentCompletionError
+	if errors.As(err, &completionError) && completionError.Failure == AttachmentCompletionExpired {
 		if err := tx.Commit(r.Context()); err != nil {
 			h.writeStoreError(w, r, fmt.Errorf("commit attachment expiry: %w", err))
 			return
@@ -361,34 +300,32 @@ func (h *HTTPHandler) completeAttachment(w http.ResponseWriter, r *http.Request)
 		)
 		return
 	}
-	wantHash := auth.HashToken(request.CompleteToken)
-	if subtle.ConstantTimeCompare([]byte(wantHash), []byte(*attachment.CompleteTokenHash)) != 1 {
-		api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "attachment completion denied", nil)
+	if errors.As(err, &completionError) {
+		switch completionError.Failure {
+		case AttachmentCompletionNotFound:
+			api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "attachment not found", nil)
+		case AttachmentCompletionComplete:
+			api.WriteError(w, http.StatusConflict, api.CodeConflict, "attachment is already complete", nil)
+		case AttachmentCompletionDenied:
+			api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "attachment completion denied", nil)
+		case AttachmentCompletionMissing:
+			api.WriteError(w, http.StatusConflict, api.CodeConflict, "attachment upload is not available", nil)
+		case AttachmentCompletionMismatch:
+			h.recordDiagnostic(
+				r.Context(), configuration, abuse.CategoryUploadSafety,
+				abuse.ReasonUploadCompletionMismatch,
+			)
+			api.WriteErrorWithOptions(
+				w, http.StatusUnprocessableEntity, api.CodeValidation,
+				"attachment upload is invalid", completionError.Fields,
+				api.ErrorOptions{Reason: abuse.ReasonUploadInvalid},
+			)
+		default:
+			h.writeStoreError(w, r, err)
+		}
 		return
 	}
-	object, err := h.options.Storage.Stat(r.Context(), attachment.StorageKey)
 	if err != nil {
-		api.WriteError(w, http.StatusConflict, api.CodeConflict, "attachment upload is not available", nil)
-		return
-	}
-	fields := make([]FieldError, 0, 2)
-	if object.Size != attachment.SizeBytes {
-		fields = append(fields, field("size_bytes", "uploaded object size does not match the declaration"))
-	}
-	if normalizeContentType(object.ContentType) != normalizeContentType(attachment.ContentType) {
-		fields = append(fields, field("content_type", "uploaded object MIME type does not match the declaration"))
-	}
-	if len(fields) > 0 {
-		h.recordDiagnostic(
-			r.Context(), configuration, abuse.CategoryUploadSafety, abuse.ReasonUploadCompletionMismatch,
-		)
-		api.WriteErrorWithOptions(
-			w, http.StatusUnprocessableEntity, api.CodeValidation, "attachment upload is invalid", fields,
-			api.ErrorOptions{Reason: abuse.ReasonUploadInvalid},
-		)
-		return
-	}
-	if err := h.options.Store.CompleteAttachment(r.Context(), tx, attachment.ID, now); err != nil {
 		h.writeStoreError(w, r, err)
 		return
 	}
@@ -506,54 +443,18 @@ func (h *HTTPHandler) beginTenantTransaction(
 	return tx, true
 }
 
-func (h *HTTPHandler) rotateIncompleteTokens(
-	ctx context.Context,
-	query db.Querier,
-	submission *Submission,
-	rawTokens map[string]string,
-) error {
-	for index := range submission.Attachments {
-		attachment := &submission.Attachments[index]
-		if attachment.CompletedAt != nil {
-			continue
-		}
-		raw, tokenHash, err := auth.NewOpaqueToken()
-		if err != nil {
-			return err
-		}
-		expiresAt, generation, err := h.options.Store.RotateCompletionToken(
-			ctx, query, attachment.ID, tokenHash, h.now().UTC(),
-		)
-		if err != nil {
-			return err
-		}
-		rawTokens[attachment.ID] = raw
-		attachment.CompleteTokenHash = &tokenHash
-		attachment.UploadExpiresAt = expiresAt
-		attachment.SafetyStatus = AttachmentSafetyPending
-		attachment.VerificationGeneration = generation
-	}
-	return nil
-}
-
-func (h *HTTPHandler) publicIDCandidates() ([]string, error) {
-	generator := h.options.GeneratePublicID
-	if generator == nil {
-		generator = GeneratePublicID
-	}
-	values := make([]string, 3)
-	for index := range values {
-		value, err := generator()
-		if err != nil {
-			return nil, err
-		}
-		values[index] = value
-	}
-	return values, nil
-}
-
 func (h *HTTPHandler) submissionResponse(
 	ctx context.Context,
+	submission Submission,
+	rawTokens map[string]string,
+	warnings []SubmissionWarning,
+) (SubmissionResponse, error) {
+	return BuildSubmissionResponse(ctx, h.options.Storage, submission, rawTokens, warnings)
+}
+
+func BuildSubmissionResponse(
+	ctx context.Context,
+	objectStorage ObjectStorage,
 	submission Submission,
 	rawTokens map[string]string,
 	warnings []SubmissionWarning,
@@ -564,7 +465,7 @@ func (h *HTTPHandler) submissionResponse(
 		if !exists {
 			continue
 		}
-		url, err := h.options.Storage.PresignPut(ctx, attachment.StorageKey, uploadTTL)
+		url, err := objectStorage.PresignPut(ctx, attachment.StorageKey, uploadTTL)
 		if err != nil {
 			return SubmissionResponse{}, err
 		}

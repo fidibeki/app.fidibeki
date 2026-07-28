@@ -155,8 +155,8 @@ func TestPlatformPermissionsAreExplicit(t *testing.T) {
 func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	t.Parallel()
 	permissions := TenantPermissionStrings()
-	if len(permissions) != 38 {
-		t.Fatalf("tenant permission count = %d, want 38", len(permissions))
+	if len(permissions) != 39 {
+		t.Fatalf("tenant permission count = %d, want 39", len(permissions))
 	}
 	if !ValidTenantPermissions(permissions) {
 		t.Error("full tenant permission set is invalid")
@@ -165,6 +165,9 @@ func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	// internet. It must stay a separate grant from editing one.
 	if !HasPermission(permissions, PermissionTestimonialPublish) {
 		t.Error("testimonial:publish is missing from the tenant permission set")
+	}
+	if !HasPermission(permissions, PermissionMobileCaptureCreate) {
+		t.Error("mobile_capture:create is missing from the tenant permission set")
 	}
 	if PermissionTestimonialPublish == PermissionTestimonialUpdate {
 		t.Error("testimonial:publish must not collapse into testimonial:update")

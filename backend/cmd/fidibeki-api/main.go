@@ -31,6 +31,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/logging"
 	"github.com/acidiney/app.fidibeki/backend/internal/membernotify"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/mobilecapture"
 	"github.com/acidiney/app.fidibeki/backend/internal/observability"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/platformadmin"
@@ -495,6 +496,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	projectStore := project.Store{PublicBaseURL: settings.PublicBaseURL}
 	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: projectStore, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})
+	mobileCaptureStore := mobilecapture.Store{ProjectStore: projectStore}
+	mobilecapture.RegisterTenantRoutes(tenantRoutes, mobilecapture.TenantHTTPOptions{
+		Store: mobileCaptureStore, JWT: jwtManager, Logger: logger,
+	})
 	integration.RegisterRoutes(tenantRoutes, integration.HTTPOptions{
 		Store: integration.Store{Cipher: integrationCipher}, JWT: jwtManager,
 		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
@@ -597,6 +602,15 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Storage: objectStorage, Logger: logger,
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 		Scheduler:         verificationScheduler, Analytics: widgetanalytics.Store{},
+	})
+	mobilecapture.RegisterPublicRoutes(widgetRoutes, mobilecapture.PublicHTTPOptions{
+		Store: mobileCaptureStore, Resolver: pools.Admin, Begin: db.BeginFromPool(pools.App),
+		FeedbackCore: feedback.SubmissionCore{
+			Store: feedback.Store{}, Analytics: widgetanalytics.Store{},
+		},
+		Storage: objectStorage, Scheduler: verificationScheduler,
+		Abuse: abuseEvaluator, Diagnostics: abuseDiagnostics,
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs, Logger: logger,
 	})
 	widgetanalytics.RegisterPublicRoutes(widgetRoutes, widgetanalytics.PublicHTTPOptions{
 		Authorizer: widgetAuthorizer, Begin: db.BeginFromPool(pools.App),
@@ -859,6 +873,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		}},
 		Health: retentionHealth, Logger: logger,
 	}
+	mobileCaptureCleaner := mobilecapture.Cleaner{
+		Store: mobilecapture.MaintenanceStore{
+			Database: pools.Admin, Store: mobilecapture.Store{},
+		},
+		Logger: logger,
+	}
 	aiBudgetMaintainer := aiprocessing.BudgetMaintainer{
 		Store:  aiprocessing.BudgetMaintenanceStore{Database: pools.Admin},
 		Health: retentionHealth, Logger: logger,
@@ -999,7 +1019,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	const backgroundWorkers = 20
+	const backgroundWorkers = 21
 	backgroundDone := make(chan error, backgroundWorkers)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
@@ -1011,6 +1031,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- privacyRetention.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- analyticsMaintainer.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- abuseMaintainer.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- mobileCaptureCleaner.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- aiBudgetMaintainer.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()

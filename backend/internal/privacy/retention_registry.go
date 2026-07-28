@@ -62,6 +62,18 @@ func retentionRegistry() []retentionDefinition {
 			),
 		},
 		{
+			Category: "mobile_capture_credentials", Label: "Mobile capture session credentials",
+			Purpose: "Authorize one bounded native feedback submission without exposing a private API key.",
+			Role:    "processor", Status: RetentionEnforced,
+			DurationKind: retentionDurationFixed, Duration: "At most 24 hours after the final applicable deadline",
+			DurationDays: days(1), Source: "Platform default",
+			Trigger: "Submission, exact-retry, and attachment-upload deadlines.",
+			Action:  "Hard-delete the hash-only capture-session row.",
+			Cadence: "Hourly", HoldBehavior: RetentionHoldNotApplicable,
+			Implementation: "mobilecapture.Store.DeleteExpired",
+			Resources:      tables("mobile_capture_sessions"),
+		},
+		{
 			Category: "workflow_metadata", Label: "Feedback and issue workflow content",
 			Purpose: "Capture, triage, resolve, and communicate product feedback.",
 			Role:    "processor", Status: RetentionDecisionRequired,

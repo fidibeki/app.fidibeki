@@ -60,6 +60,49 @@ var AttachmentCompletionPolicy = Policy{
 	},
 }
 
+// Native capture has no browser-enforced Origin or persistent device identity.
+// Preserve the existing project/network ceilings and replace claimed
+// origin/visitor buckets with the server-minted capture-session boundary.
+var MobileSubmissionPolicy = Policy{
+	Name: "mobile-feedback-submission", Version: 1, Reason: ReasonSubmissionRateLimited,
+	FailureMode: FailClosed,
+	Rules: []Rule{
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 100, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 10, Period: time.Minute}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 20, Period: time.Hour}},
+	},
+}
+
+var MobileAttachmentGrantPolicy = Policy{
+	Name: "mobile-attachment-grant", Version: 1, Reason: ReasonUploadRateLimited,
+	FailureMode: FailClosed,
+	Rules: []Rule{
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 200, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 20, Period: time.Hour}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 20, Period: time.Hour}},
+	},
+}
+
+var MobileAttachmentBytePolicy = Policy{
+	Name: "mobile-attachment-mebibytes", Version: 1, Reason: ReasonUploadRateLimited,
+	FailureMode: FailClosed,
+	Rules: []Rule{
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 4096, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 256, Period: time.Hour}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 256, Period: time.Hour}},
+	},
+}
+
+var MobileAttachmentCompletionPolicy = Policy{
+	Name: "mobile-attachment-completion", Version: 1, Reason: ReasonUploadRateLimited,
+	FailureMode: FailClosed,
+	Rules: []Rule{
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 300, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 30, Period: time.Minute}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 30, Period: time.Minute}},
+	},
+}
+
 var ReplayStartPolicy = Policy{
 	Name: "replay-start", Version: 1, Reason: ReasonReplayRateLimited,
 	FailureMode: FailClosed,

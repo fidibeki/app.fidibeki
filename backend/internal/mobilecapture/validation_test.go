@@ -1,0 +1,124 @@
+package mobilecapture
+
+import (
+	"testing"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+)
+
+func TestValidateCreateSessionNormalizesBoundNativeContext(t *testing.T) {
+	t.Parallel()
+	contextURL := "https://App.Example.com/chart/?asset=BAI#price"
+	values, fields := ValidateCreateSession(CreateSessionRequest{
+		ProjectID:           "1be03fd8-7560-4d4d-ae39-8e67a35d56d7",
+		WidgetDefinitionKey: "mobile-feedback", Platform: PlatformIOS,
+		ApplicationID: "com.example.fidibeki", Screen: "/chart/?asset=BAI#price",
+		ContextURL: &contextURL, DisplayLocale: "PT_AO",
+	})
+	if len(fields) > 0 {
+		t.Fatalf("ValidateCreateSession fields = %#v", fields)
+	}
+	if values.Screen != "/chart" || values.ContextURL == nil ||
+		*values.ContextURL != "https://app.example.com/chart" ||
+		values.DisplayLocale != "pt-ao" {
+		t.Fatalf("normalized values = %#v", values)
+	}
+}
+
+func TestValidateCreateSessionRejectsUnboundedFields(t *testing.T) {
+	t.Parallel()
+	insecure := "http://app.example.com/chart"
+	_, fields := ValidateCreateSession(CreateSessionRequest{
+		ProjectID: "not-a-uuid", WidgetDefinitionKey: "bad key",
+		Platform: "web", ApplicationID: "single", Screen: "chart",
+		ContextURL: &insecure, DisplayLocale: "invalid locale",
+	})
+	for _, field := range []string{
+		"project_id", "widget_definition_key", "platform", "application_id",
+		"screen", "context_url", "display_locale",
+	} {
+		if fields[field] == "" {
+			t.Errorf("field %q was not rejected: %#v", field, fields)
+		}
+	}
+}
+
+func TestResolveConfigurationSelectsExactPublishedLocaleAndPublicSafeLauncher(t *testing.T) {
+	t.Parallel()
+	configuration := mobileTestConfiguration()
+	values := CreateSessionValues{
+		ProjectID: configuration.ProjectID, WidgetDefinitionKey: "mobile-feedback",
+		DisplayLocale: "pt-ao",
+	}
+	resolved, fields := ResolveConfiguration(configuration, values)
+	if len(fields) > 0 {
+		t.Fatalf("ResolveConfiguration fields = %#v", fields)
+	}
+	public := PublicConfigurationFrom(resolved)
+	if public.DisplayLocale != "pt-ao" ||
+		public.Definition.Localization.Prompt != "Como correu?" ||
+		public.ControllerProfile == nil || public.ContactNotice == nil ||
+		public.ContactNotice.Locale != "pt-ao" ||
+		public.Definition.Presentation != project.PresentationLauncher {
+		t.Fatalf("public configuration = %#v", public)
+	}
+}
+
+func TestResolveConfigurationRejectsInactiveNonLauncherAndForeignContext(t *testing.T) {
+	t.Parallel()
+	for _, mutate := range []func(*project.WidgetRule){
+		func(rule *project.WidgetRule) { rule.Enabled = false },
+		func(rule *project.WidgetRule) { rule.DefinitionStatus = project.DefinitionPaused },
+		func(rule *project.WidgetRule) { rule.Presentation = project.PresentationInline },
+	} {
+		configuration := mobileTestConfiguration()
+		mutate(&configuration.Rules[0])
+		_, fields := ResolveConfiguration(configuration, CreateSessionValues{
+			ProjectID: configuration.ProjectID, WidgetDefinitionKey: "mobile-feedback",
+			DisplayLocale: "en",
+		})
+		if fields["widget_definition_key"] == "" {
+			t.Fatalf("definition mutation passed: %#v", configuration.Rules[0])
+		}
+	}
+	configuration := mobileTestConfiguration()
+	foreign := "https://evil.example/chart"
+	_, fields := ResolveConfiguration(configuration, CreateSessionValues{
+		ProjectID: configuration.ProjectID, WidgetDefinitionKey: "mobile-feedback",
+		DisplayLocale: "en", ContextURL: &foreign,
+	})
+	if fields["context_url"] == "" {
+		t.Fatalf("foreign context passed: %#v", fields)
+	}
+}
+
+func mobileTestConfiguration() project.PublicConfiguration {
+	return project.PublicConfiguration{
+		TenantID: "tenant-id", ProjectID: "1be03fd8-7560-4d4d-ae39-8e67a35d56d7",
+		DefaultLocale: "en", AllowedDomains: []string{"app.example.com"},
+		Plan: tenant.PlanScale, Status: tenant.StatusActive, ControllerProfileVersion: 3,
+		ControllerProfile: &project.ControllerProfile{
+			Version: 3, Name: "Acme", PrivacyContactEmail: "privacy@example.com",
+			PrivacyRightsEmail: "rights@example.com",
+			PrivacyPolicyURL:   "https://example.com/privacy",
+		},
+		Rules: []project.WidgetRule{{
+			ID: "rule-id", Enabled: true, DefinitionKey: "mobile-feedback",
+			DefinitionVersion: 4, DefinitionStatus: project.DefinitionActive,
+			Presentation: project.PresentationLauncher, CanAttachScreenshot: true,
+			CollectContact: true,
+			Localizations: map[string]project.WidgetLocalization{
+				"en": {
+					Prompt: "How was it?", PrivacyPurposeSummary: "Updates",
+					PrivacyLawfulBasisSummary: "Consent", PrivacyRetentionSummary: "30 days",
+				},
+				"pt-ao": {
+					Prompt: "Como correu?", PrivacyPurposeSummary: "Atualizações",
+					PrivacyLawfulBasisSummary: "Consentimento",
+					PrivacyRetentionSummary:   "30 dias",
+				},
+			},
+		}},
+	}
+}

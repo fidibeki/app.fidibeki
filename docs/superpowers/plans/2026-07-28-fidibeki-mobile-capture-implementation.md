@@ -21,7 +21,9 @@ isolation, and that no raw capture token is stored.
 owner/admin permission backfill plus authorization-version invalidation, and permission model before
 an HTTP route can use them. Existing non-admin members do not gain the permission.
 
-**Status:** Pending.
+**Status:** Completed locally on 2026-07-28. Migration 130, permission backfill,
+hash-only storage, composite tenant/resource FKs, forced RLS, and bounded cleanup are covered by
+PostgreSQL migration tests.
 
 ## Task 2: Mint One Bounded Capture Session
 
@@ -40,7 +42,9 @@ immediately revokes the mobile bearer. Definition pause/edit and controller noti
 the typed configuration conflict. Consent must use the session's display locale; a separate device
 locale cannot become notice provenance, and app-language changes require a new reviewed grant.
 
-**Status:** Pending.
+**Status:** Completed locally on 2026-07-28. The API-key-only mint route resolves one public-safe
+localized launcher configuration and binds the issuer, context, definition, and controller
+versions into a short-lived session.
 
 ## Task 3: Submit Feedback Through The Existing Domain Pipeline
 
@@ -63,7 +67,9 @@ Definition/controller mutation invalidates only an unbound first submission; pau
 definition after acceptance cannot strand the session's already-bound exact retry or attachment
 completion through its independent deadline.
 
-**Status:** Pending.
+**Status:** Completed locally on 2026-07-28. Mobile submission and screenshot completion reuse the
+shared Feedback pipeline, with atomic binding, exact retries, lifecycle/configuration revocation,
+abuse/quota enforcement, strict JSON, and mobile/web collision tests.
 
 ## Task 4: Make Mobile Feedback Operational In The Inbox
 

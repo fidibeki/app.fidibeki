@@ -234,8 +234,9 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			},
 			DataCategories: []ROPADataCategoryClass{
 				ROPADataCategoryContentCommunications, ROPADataCategoryIdentityContact,
+				ROPADataCategoryTechnicalUsage,
 			},
-			RetentionCategories: []string{"workflow_metadata"},
+			RetentionCategories: []string{"workflow_metadata", "mobile_capture_credentials"},
 			SecurityControls: []string{
 				"Forced tenant PostgreSQL RLS",
 				"tenant:update required for privacy-relevant workflow mutation",

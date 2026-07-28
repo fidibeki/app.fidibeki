@@ -238,6 +238,23 @@ func RequirePermission(required auth.Permission) func(http.Handler) http.Handler
 	}
 }
 
+// RequireTenantAPIKey keeps service-to-service routes from accepting a human
+// bearer even when that member has the same permission set.
+func RequireTenantAPIKey(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := TenantClaimsFromContext(r.Context())
+		if !ok {
+			api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+			return
+		}
+		if !claims.IsAPIKey {
+			api.WriteError(w, http.StatusForbidden, api.CodeForbidden, "API key authentication required", nil)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func RequireAnyPermission(required ...auth.Permission) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

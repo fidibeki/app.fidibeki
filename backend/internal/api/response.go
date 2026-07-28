@@ -15,6 +15,7 @@ const (
 	CodeNotFound              ErrorCode = "not_found"
 	CodeUnknownTenant         ErrorCode = "unknown_tenant"
 	CodeConflict              ErrorCode = "conflict"
+	CodeConfigurationChanged  ErrorCode = "configuration_changed"
 	CodeOwnerProtected        ErrorCode = "owner_protected"
 	CodeLastAdministrator     ErrorCode = "last_administrator"
 	CodeRecentAuthRequired    ErrorCode = "recent_authentication_required"

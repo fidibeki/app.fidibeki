@@ -403,6 +403,7 @@ type PublicConfiguration struct {
 	ProjectID                  string
 	DefaultLocale              string
 	ControllerProfile          *ControllerProfile
+	ControllerProfileVersion   int
 	AllowedDomains             []string
 	Plan                       tenant.Plan
 	Status                     tenant.Status

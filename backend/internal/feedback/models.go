@@ -79,6 +79,25 @@ type AttachmentInput struct {
 	DurationSeconds    *int           `json:"duration_seconds"`
 }
 
+type MobileScreenshotInput struct {
+	ClientAttachmentID string `json:"client_attachment_id"`
+	ContentType        string `json:"content_type"`
+	SizeBytes          int64  `json:"size_bytes"`
+}
+
+type MobileSubmissionRequest struct {
+	ClientFeedbackID string                     `json:"client_feedback_id"`
+	Responses        map[string]json.RawMessage `json:"responses"`
+	Comment          *string                    `json:"comment"`
+	ReporterEmail    *string                    `json:"reporter_email"`
+	NotifyReporter   bool                       `json:"notify_reporter"`
+	Consent          *ReporterConsentInput      `json:"consent"`
+	Screenshot       *MobileScreenshotInput     `json:"screenshot"`
+	AppVersion       *string                    `json:"app_version"`
+	OSVersion        *string                    `json:"os_version"`
+	DeviceLocale     *string                    `json:"device_locale"`
+}
+
 type SubmissionRequest struct {
 	ClientFeedbackID string                     `json:"client_feedback_id"`
 	WidgetRuleID     string                     `json:"widget_rule_id"`
@@ -164,6 +183,11 @@ type SubmissionValues struct {
 	ElementContextOmitted         bool
 	Attachments                   []AttachmentValues
 	Analytics                     *widgetanalytics.EventValues
+	Source                        string
+	MobileApplicationID           *string
+	MobileScreen                  *string
+	MobileAppVersion              *string
+	MobileOSVersion               *string
 }
 
 type AttachmentValues struct {
@@ -364,6 +388,7 @@ type Submission struct {
 	PublicID       string
 	IssuePublicID  string
 	NotifyReporter bool
+	Source         string
 	Attachments    []Attachment
 }
 
