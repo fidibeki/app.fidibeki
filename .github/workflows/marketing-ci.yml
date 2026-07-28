@@ -1,0 +1,59 @@
+name: Marketing CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "marketing/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "railway.marketing.json"
+      - ".github/workflows/marketing-ci.yml"
+  pull_request:
+    paths:
+      - "marketing/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "railway.marketing.json"
+      - ".github/workflows/marketing-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketing-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: warp-ubuntu-2604-arm64-4x
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - name: Build marketing image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: marketing/Dockerfile
+          load: true
+          tags: fidibeki-marketing-ci
+          cache-from: type=gha,scope=marketing-image
+          cache-to: type=gha,mode=max,scope=marketing-image
+      - name: Verify production headers
+        run: |
+          docker run --detach --name fidibeki-marketing-ci \
+            --publish 127.0.0.1:8098:8080 fidibeki-marketing-ci
+          trap 'docker rm --force fidibeki-marketing-ci' EXIT
+
+          hsts_header() {
+            curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 1 \
+              --dump-header - --output /dev/null "$1" \
+              | tr -d '\r' \
+              | awk -F': ' 'tolower($1) == "strict-transport-security" { print $2 }'
+          }
+
+          test "$(hsts_header http://127.0.0.1:8098/healthz)" = "max-age=31536000"
+          test "$(hsts_header http://127.0.0.1:8098/)" = "max-age=31536000"

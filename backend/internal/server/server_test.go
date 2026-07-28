@@ -51,17 +51,27 @@ func TestHealthzReportsProcessLiveness(t *testing.T) {
 func TestEveryResponseHasARequestID(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{"/healthz", "/not-found"} {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/healthz"},
+		{method: http.MethodGet, path: "/not-found"},
+		{method: http.MethodPost, path: "/healthz"},
+	} {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
 			t.Parallel()
 
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request := httptest.NewRequest(test.method, test.path, nil)
 			server.New(server.Options{}).ServeHTTP(recorder, request)
 
 			requestID := recorder.Header().Get("X-Request-ID")
 			if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(requestID) {
 				t.Fatalf("X-Request-ID = %q, want UUID v4", requestID)
+			}
+			if got := recorder.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+				t.Errorf("Strict-Transport-Security = %q, want max-age=31536000", got)
 			}
 		})
 	}

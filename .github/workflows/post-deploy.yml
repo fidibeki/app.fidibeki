@@ -2,6 +2,7 @@ name: Staging Post-Deploy
 
 on:
   deployment_status:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -9,16 +10,19 @@ permissions:
 jobs:
   smoke:
     if: >-
-      github.event.deployment_status.state == 'success' &&
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
       (github.event.deployment.environment == 'staging' ||
-      endsWith(github.event.deployment.environment, ' / staging'))
+      endsWith(github.event.deployment.environment, ' / staging')))
     runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 8
     environment: staging
     env:
       PLAYWRIGHT_EXTERNAL: "1"
       STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+      STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
       STAGING_TENANT_URL: ${{ vars.STAGING_TENANT_URL }}
+      STAGING_WIDGET_URL: ${{ vars.STAGING_WIDGET_URL }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4

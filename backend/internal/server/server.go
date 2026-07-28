@@ -39,6 +39,7 @@ func New(options Options) http.Handler {
 
 	router := chi.NewRouter()
 	router.Use(appmiddleware.TrustedProxyHost(options.InternalProxySecret))
+	router.Use(appmiddleware.StrictTransportSecurity)
 	router.Use(appmiddleware.RequestID)
 	router.Use(appmiddleware.RequestLogger(logger))
 	router.Use(appmiddleware.Recovery(logger, options.PanicReporter))

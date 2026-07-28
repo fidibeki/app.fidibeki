@@ -1,10 +1,13 @@
 import { expect, test } from '@playwright/test'
 
+const hstsPolicy = 'max-age=31536000'
+
 test('exposes a production health check without rendering the application shell', async ({ request }) => {
   const response = await request.get('/backoffice-healthz')
 
   expect(response.status()).toBe(200)
   expect(response.headers()['content-type']).toContain('application/json')
+  expect(response.headers()['strict-transport-security']).toBe(hstsPolicy)
   await expect(response.json()).resolves.toEqual({ status: 'ok' })
 })
 
@@ -18,6 +21,16 @@ test('renders the passwordless platform-admin entry point', async ({ page }) => 
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow')
   expect(response?.headers()['referrer-policy']).toBe('no-referrer')
   expect(response?.headers()['content-security-policy']).toContain("default-src 'self'")
+  expect(response?.headers()['strict-transport-security']).toBe(hstsPolicy)
+})
+
+test('adds HSTS when the platform API proxy is unavailable', async ({ request }) => {
+  const response = await request.post('/admin/auth/login', {
+    data: { email: 'admin@example.test' },
+  })
+
+  expect(response.status()).toBe(503)
+  expect(response.headers()['strict-transport-security']).toBe(hstsPolicy)
 })
 
 test('does not expose a protected console route without a browser refresh session', async ({ page }) => {

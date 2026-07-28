@@ -67,6 +67,10 @@ jobs:
             response=$(curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 1 \
               --header "Host: $host" http://127.0.0.1:8097/healthz)
             test "$response" = "ok"
+            headers=$(curl --fail --silent --show-error --dump-header - --output /dev/null \
+              --header "Host: $host" http://127.0.0.1:8097/healthz | tr -d '\r')
+            hsts=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1) == "strict-transport-security" { print $2 }')
+            test "$hsts" = "max-age=31536000"
           done
 
           curl --fail --silent --show-error \
