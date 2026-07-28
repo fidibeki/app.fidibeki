@@ -120,7 +120,10 @@ func TestNotificationPrivacyProfileDefaultsToMinimumAndStripsPageSecrets(t *test
 		Kind: KindWebhook, OutboxEventID: "event-id", Event: EventFeedbackCreated,
 		ResourceType: "feedback", ResourceID: "feedback-id", PublicID: "fb_private",
 		Title: "Sanitized title", Description: "DESCRIPTION-SENTINEL", Text: "TEXT-SENTINEL",
-		PageURL: "https://example.test/chart?asset=BAI#private-fragment", Rating: &rating,
+		Source: "ios", MobileApplicationID: "MOBILE-APPLICATION-SENTINEL",
+		MobileScreen: "/MOBILE-SCREEN-SENTINEL", MobileAppVersion: "APP-VERSION-SENTINEL",
+		MobileOSVersion: "OS-VERSION-SENTINEL",
+		PageURL:         "https://example.test/chart?asset=BAI#private-fragment", Rating: &rating,
 		Category: "billing", Actionability: "actionable", Priority: "high",
 		ProjectID: "project-id", ProjectName: "Storefront", FeedbackStatus: "new",
 		ResourceURL:     "https://acme.fidibeki.com/feedback/feedback-id",
@@ -138,6 +141,8 @@ func TestNotificationPrivacyProfileDefaultsToMinimumAndStripsPageSecrets(t *test
 	for _, forbidden := range []string{
 		"DESCRIPTION-SENTINEL", "TEXT-SENTINEL", "asset=BAI", "private-fragment",
 		"ACTOR-SENTINEL", "COMMENT-SENTINEL", "audio", "billing", "actionable",
+		"MOBILE-APPLICATION-SENTINEL", "MOBILE-SCREEN-SENTINEL",
+		"APP-VERSION-SENTINEL", "OS-VERSION-SENTINEL",
 	} {
 		if bytes.Contains(body, []byte(forbidden)) {
 			t.Errorf("minimum webhook disclosed %q: %s", forbidden, body)
@@ -145,6 +150,7 @@ func TestNotificationPrivacyProfileDefaultsToMinimumAndStripsPageSecrets(t *test
 	}
 	for _, required := range []string{
 		"fb_private", "Sanitized title", "Storefront", `"status":"new"`, `"priority":"high"`,
+		`"source":"ios"`,
 	} {
 		if !bytes.Contains(body, []byte(required)) {
 			t.Errorf("minimum webhook omitted %q: %s", required, body)
@@ -159,6 +165,7 @@ func TestNotificationPrivacyProfileDefaultsToMinimumAndStripsPageSecrets(t *test
 	for _, required := range []string{
 		"DESCRIPTION-SENTINEL", "ACTOR-SENTINEL", "COMMENT-SENTINEL",
 		`"page_url":"https://example.test/chart"`, `"attachment_metadata"`,
+		`"mobile_context"`, "MOBILE-APPLICATION-SENTINEL", "MOBILE-SCREEN-SENTINEL",
 	} {
 		if !bytes.Contains(body, []byte(required)) {
 			t.Errorf("full-profile webhook omitted %q: %s", required, body)
@@ -176,6 +183,8 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 		OutboxEventID: "event-id", TenantName: "Acme", Event: EventFeedbackCreated,
 		ResourceType: "feedback", ResourceID: "feedback-id", PublicID: "fb_123",
 		Title: "Checkout <script>", Description: "Checkout is confusing", Rating: &rating,
+		Source: "android", MobileApplicationID: "com.example.storefront",
+		MobileScreen: "/checkout", MobileAppVersion: "2.4.0", MobileOSVersion: "15",
 		ProjectID: "project-id", ProjectName: "Storefront", Priority: "high",
 		Category: "checkout", Actionability: "actionable",
 		IssueID: "issue-id", IssuePublicID: "ACME-2026-0001", Channel: "#feedback",
@@ -199,6 +208,7 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 		!bytes.Contains(body, []byte(`"channel":"#feedback"`)) ||
 		!bytes.Contains(body, []byte(`"type":"actions"`)) ||
 		!bytes.Contains(body, []byte(`Open issue`)) ||
+		!bytes.Contains(body, []byte(`Android | com.example.storefront | /checkout | 2.4.0 | 15`)) ||
 		bytes.Contains(body, []byte(`<script>`)) {
 		t.Fatalf("Slack body = %s, error = %v", body, err)
 	}
@@ -214,7 +224,9 @@ func TestNotificationPayloadsUseProviderFormats(t *testing.T) {
 		!bytes.Contains(body, []byte(`"schema_version":"1.0"`)) ||
 		!bytes.Contains(body, []byte(`"event_id":"event-id"`)) ||
 		!bytes.Contains(body, []byte(`"changes":{"priority":{"from":null,"to":"high"}}`)) ||
-		!bytes.Contains(body, []byte(`"page_url":"https://example.test/checkout"`)) {
+		!bytes.Contains(body, []byte(`"page_url":"https://example.test/checkout"`)) ||
+		!bytes.Contains(body, []byte(`"source":"android"`)) ||
+		!bytes.Contains(body, []byte(`"application_id":"com.example.storefront"`)) {
 		t.Fatalf("webhook body = %s, error = %v", body, err)
 	}
 	notification.Kind = "email"

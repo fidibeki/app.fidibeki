@@ -1147,6 +1147,8 @@ export const adminMessages = {
           abuse_diagnostics: 'Diagnósticos de abuso',
           ai_budget_ledgers: 'Registos de orçamento de IA',
           identity_asset_deletions: 'Eliminações de ativos de identidade',
+          saml_auth_artifacts: 'Artefactos de autenticação SAML',
+          mobile_capture_sessions: 'Sessões de captura móvel',
         },
         status: {
           healthy: 'Saudável',

@@ -1254,6 +1254,8 @@ export type RetentionHealthOperation =
   | 'abuse_diagnostics'
   | 'ai_budget_ledgers'
   | 'identity_asset_deletions'
+  | 'saml_auth_artifacts'
+  | 'mobile_capture_sessions'
 
 export interface RetentionOperationHealth {
   operation: RetentionHealthOperation

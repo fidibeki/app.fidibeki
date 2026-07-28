@@ -2,12 +2,14 @@ package mobilecapture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 )
 
 const (
@@ -34,6 +36,7 @@ func (store MaintenanceStore) DeleteExpired(
 
 type Cleaner struct {
 	Store  CleanupStore
+	Health retentionhealth.Recorder
 	Now    func() time.Time
 	Logger *slog.Logger
 }
@@ -42,29 +45,56 @@ func (cleaner Cleaner) CleanOnce(ctx context.Context) error {
 	if cleaner.Store == nil {
 		return fmt.Errorf("mobile capture cleanup store is unavailable")
 	}
+	if cleaner.Health == nil {
+		return fmt.Errorf("mobile capture retention health recorder is unavailable")
+	}
 	now := time.Now().UTC()
 	if cleaner.Now != nil {
 		now = cleaner.Now().UTC()
 	}
 	var total int64
+	var sweepErr error
+	budgetExhausted := true
 	for batch := 0; batch < cleanupBatchLimit; batch++ {
 		deleted, err := cleaner.Store.DeleteExpired(ctx, now, cleanupBatchSize)
 		total += deleted
 		if err != nil {
-			return fmt.Errorf("clean mobile capture sessions: %w", err)
+			budgetExhausted = false
+			sweepErr = fmt.Errorf("clean mobile capture sessions: %w", err)
+			break
 		}
 		if deleted < cleanupBatchSize {
-			cleaner.logger().InfoContext(
-				ctx, "mobile capture session cleanup completed", "deleted", total,
-			)
-			return nil
+			budgetExhausted = false
+			break
 		}
 	}
-	cleaner.logger().WarnContext(
-		ctx, "mobile capture session cleanup budget exhausted",
-		"deleted", total, "backlog_possible", true,
-	)
-	return nil
+	switch {
+	case sweepErr != nil:
+	case budgetExhausted:
+		cleaner.logger().WarnContext(
+			ctx, "mobile capture session cleanup budget exhausted",
+			"deleted", total, "backlog_possible", true,
+		)
+	default:
+		cleaner.logger().InfoContext(
+			ctx, "mobile capture session cleanup completed", "deleted", total,
+		)
+	}
+	result := retentionhealth.ResultSucceeded
+	if sweepErr != nil {
+		result = retentionhealth.ResultFailed
+	}
+	recordErr := cleaner.Health.RecordRun(ctx, retentionhealth.Run{
+		Operation:       retentionhealth.OperationMobileCaptureSessions,
+		AttemptedAt:     now,
+		Result:          result,
+		Processed:       total,
+		BudgetExhausted: budgetExhausted,
+	})
+	if recordErr != nil {
+		recordErr = fmt.Errorf("record mobile capture retention health: %w", recordErr)
+	}
+	return errors.Join(sweepErr, recordErr)
 }
 
 func (cleaner Cleaner) Run(ctx context.Context, interval time.Duration) error {

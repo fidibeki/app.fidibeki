@@ -879,7 +879,10 @@ func assertTenantFeedbackReadFlow(
 		UPDATE feedbacks
 		SET rating = 2, text_cleaned = 'Checkout total changed unexpectedly',
 		    text_sentiment_score = -0.8, text_moderation_flags = '{unsafe}',
-		    text_process_status = 'completed', ai_processed_at = $2, created_at = $2
+		    text_process_status = 'completed', ai_processed_at = $2, created_at = $2,
+		    source = 'ios', mobile_application_id = 'com.example.storefront',
+		    mobile_screen = '/checkout', mobile_app_version = '2.4.0',
+		    mobile_os_version = '18.5'
 		WHERE id = $1
 	`, feedbackID, firstCreatedAt); err != nil {
 		t.Fatalf("prepare readable feedback: %v", err)
@@ -1020,6 +1023,13 @@ func assertTenantFeedbackReadFlow(
 		t.Fatalf("first tenant feedback page = %#v", firstPage)
 	}
 	assertFeedbackTriageRead(t, firstPage.Feedbacks[0], assigneeID)
+	if firstPage.Feedbacks[0].Source != "ios" ||
+		firstPage.Feedbacks[0].MobileApplicationID == nil ||
+		*firstPage.Feedbacks[0].MobileApplicationID != "com.example.storefront" ||
+		firstPage.Feedbacks[0].MobileScreen == nil ||
+		*firstPage.Feedbacks[0].MobileScreen != "/checkout" {
+		t.Fatalf("mobile feedback source/context = %#v", firstPage.Feedbacks[0])
+	}
 	secondPageResponse := performTenantFeedbackRequest(
 		handler, http.MethodGet, "/v1/feedbacks?limit=1&cursor="+url.QueryEscape(*firstPage.Pagination.NextCursor),
 		"", ownerToken,
@@ -1038,7 +1048,7 @@ func assertTenantFeedbackReadFlow(
 	}
 
 	filters := url.Values{
-		"project_id": {projectID}, "status": {"open"}, "rating": {"2"},
+		"project_id": {projectID}, "source": {"ios"}, "status": {"open"}, "rating": {"2"},
 		"attachment": {"audio"}, "moderation": {"flagged"}, "issue": {"unlinked"},
 		"sentiment": {"negative"}, "date_from": {now.Add(-time.Hour).Format(time.RFC3339)},
 	}.Encode()
@@ -1067,6 +1077,13 @@ func assertTenantFeedbackReadFlow(
 		t.Fatalf("tenant feedback detail = %d %#v", detailResponse.Code, detailEnvelope.Feedback)
 	}
 	assertFeedbackTriageRead(t, detailEnvelope.Feedback.Item, assigneeID)
+	if detailEnvelope.Feedback.Source != "ios" ||
+		detailEnvelope.Feedback.MobileAppVersion == nil ||
+		*detailEnvelope.Feedback.MobileAppVersion != "2.4.0" ||
+		detailEnvelope.Feedback.MobileOSVersion == nil ||
+		*detailEnvelope.Feedback.MobileOSVersion != "18.5" {
+		t.Fatalf("mobile feedback detail context = %#v", detailEnvelope.Feedback.Item)
+	}
 	unavailableDetailResponse := performTenantFeedbackRequest(
 		handler, http.MethodGet, "/v1/feedbacks/"+secondFeedbackID, "", ownerToken,
 	)

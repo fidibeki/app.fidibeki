@@ -262,3 +262,41 @@ CREATE INDEX idx_issues_reporter_consent_active
       AND reporter_consent_purpose = 'feedback_updates'
       AND reporter_consent_notice_version IN ('2026-07', '2026-07-controller-v1')
       AND reporter_consent_source IN ('widget_submission', 'mobile_submission');
+
+ALTER TABLE retention_maintenance_status
+    DROP CONSTRAINT retention_maintenance_status_operation_key_check,
+    DROP CONSTRAINT retention_maintenance_status_category_check,
+    ADD CONSTRAINT retention_maintenance_status_operation_key_check
+        CHECK (operation_key IN (
+            'tenant_magic_links',
+            'platform_admin_magic_links',
+            'attachments',
+            'privacy_export_archives',
+            'reporter_privacy_requests',
+            'replay_sessions',
+            'widget_funnel_events',
+            'widget_funnel_daily',
+            'abuse_diagnostics',
+            'ai_budget_ledgers',
+            'identity_asset_deletions',
+            'saml_auth_artifacts',
+            'mobile_capture_sessions'
+        )),
+    ADD CONSTRAINT retention_maintenance_status_category_check
+        CHECK (category IN (
+            'auth_magic_links',
+            'attachments',
+            'export_archives',
+            'privacy_rights',
+            'session_replays',
+            'widget_events',
+            'widget_daily',
+            'abuse_diagnostics',
+            'ai_processing',
+            'identity_assets',
+            'mobile_capture_credentials'
+        ));
+
+INSERT INTO retention_maintenance_status (
+    operation_key, category, expected_interval_seconds, alert_grace_seconds
+) VALUES ('mobile_capture_sessions', 'mobile_capture_credentials', 3600, 900);

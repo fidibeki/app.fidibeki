@@ -2842,9 +2842,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var retentionHealthRows int
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
 		t.Fatalf(
-			"retention health row count = %d, error = %v, want 12",
+			"retention health row count = %d, error = %v, want 13",
 			retentionHealthRows, err,
 		)
 	}
@@ -2864,6 +2864,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		"ai_budget_ledgers":          {category: "ai_processing", interval: 86400},
 		"identity_asset_deletions":   {category: "identity_assets", interval: 60},
 		"saml_auth_artifacts":        {category: "auth_magic_links", interval: 3600},
+		"mobile_capture_sessions":    {category: "mobile_capture_credentials", interval: 3600},
 	}
 	retentionSeedRows, err := root.Query(ctx, `
 		SELECT operation_key, category, expected_interval_seconds,
@@ -2986,9 +2987,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
 		t.Fatalf(
-			"retention health rows after 108 replay = %d, error = %v, want 12",
+			"retention health rows after 108 replay = %d, error = %v, want 13",
 			retentionHealthRows, err,
 		)
 	}
@@ -3009,9 +3010,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 12 {
+	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
 		t.Fatalf(
-			"retention health rows after down/up = %d, error = %v, want 12",
+			"retention health rows after down/up = %d, error = %v, want 13",
 			retentionHealthRows, err,
 		)
 	}

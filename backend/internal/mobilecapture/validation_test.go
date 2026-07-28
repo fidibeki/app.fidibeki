@@ -2,10 +2,57 @@ package mobilecapture
 
 import (
 	"testing"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
+
+func TestCaptureSessionAuthorizationUsesCurrentLifecycleState(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Minute)
+	past := now.Add(-time.Minute)
+	base := CaptureSession{TenantStatus: "active"}
+	tests := []struct {
+		name    string
+		mutate  func(*CaptureSession)
+		allowed bool
+	}{
+		{name: "active", mutate: func(*CaptureSession) {}, allowed: true},
+		{name: "active issuer expired", mutate: func(session *CaptureSession) {
+			session.IssuerExpiresAt = &past
+		}},
+		{name: "deletion requested", mutate: func(session *CaptureSession) {
+			session.TenantDeletionRequestedAt = &past
+		}},
+		{name: "suspended", mutate: func(session *CaptureSession) {
+			session.TenantStatus = "suspended"
+		}},
+		{name: "unexpired trial", mutate: func(session *CaptureSession) {
+			session.TenantStatus = "trial"
+			session.TenantTrialEndsAt = &future
+		}, allowed: true},
+		{name: "expired trial", mutate: func(session *CaptureSession) {
+			session.TenantStatus = "trial"
+			session.TenantTrialEndsAt = &past
+		}},
+		{name: "trial without deadline", mutate: func(session *CaptureSession) {
+			session.TenantStatus = "trial"
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			session := base
+			test.mutate(&session)
+			if got := session.AuthorizedAt(now); got != test.allowed {
+				t.Fatalf("AuthorizedAt() = %t, want %t", got, test.allowed)
+			}
+		})
+	}
+}
 
 func TestValidateCreateSessionNormalizesBoundNativeContext(t *testing.T) {
 	t.Parallel()

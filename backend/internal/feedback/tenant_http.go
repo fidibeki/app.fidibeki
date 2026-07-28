@@ -441,6 +441,14 @@ func parseTenantFeedbackOptions(r *http.Request) (ListOptions, map[string]string
 			fields["project_id"] = "must be a UUID"
 		}
 	}
+	if raw := query.Get("source"); raw != "" {
+		switch raw {
+		case "web", "ios", "android":
+			options.Source = raw
+		default:
+			fields["source"] = "must be web, ios, or android"
+		}
+	}
 	if raw := query.Get("status"); raw != "" {
 		options.Status = Status(raw)
 		if !options.Status.Valid() {

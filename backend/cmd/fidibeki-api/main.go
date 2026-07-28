@@ -877,6 +877,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: mobilecapture.MaintenanceStore{
 			Database: pools.Admin, Store: mobilecapture.Store{},
 		},
+		Health: retentionHealth,
 		Logger: logger,
 	}
 	aiBudgetMaintainer := aiprocessing.BudgetMaintainer{

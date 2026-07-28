@@ -20,6 +20,11 @@ Deleting or expiring the issuing API key revokes every capture session minted by
 tokens are stored by Fidibeki only as SHA-256 hashes and expire independently for first
 submission, exact retry, and attachment completion.
 
+Expired capture rows become eligible for hard deletion after a 24-hour grace from the latest
+applicable deadline. An hourly bounded sweep performs deletion and reports failures or backlog
+through retention health; the grace is not represented as an absolute deletion-time guarantee
+while a sweep is unhealthy or budget-exhausted.
+
 ## Mint A Capture Session
 
 The customer backend calls the tenant-scoped API:

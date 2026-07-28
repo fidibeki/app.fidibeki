@@ -56,6 +56,7 @@ func TestParseTenantFeedbackOptions(t *testing.T) {
 	request := httptest.NewRequest("GET", "/v1/feedbacks?"+url.Values{
 		"q":          {"checkout"},
 		"project_id": {"945f0358-7dbb-4108-ab24-0157e24591ca"},
+		"source":     {"ios"},
 		"status":     {"open"},
 		"rating":     {"2"},
 		"attachment": {"replay"},
@@ -74,7 +75,7 @@ func TestParseTenantFeedbackOptions(t *testing.T) {
 	}
 	if options.Sort != SortRatingLow || options.Limit != 25 || options.Rating != 2 ||
 		options.Query != "checkout" || options.Attachment != "replay" || options.Processing != "failed" ||
-		options.Moderation != "flagged" ||
+		options.Moderation != "flagged" || options.Source != "ios" ||
 		options.Issue != "linked" || options.Sentiment != "negative" {
 		t.Fatalf("options = %#v", options)
 	}
@@ -88,6 +89,7 @@ func TestParseTenantFeedbackOptions(t *testing.T) {
 func TestParseTenantFeedbackOptionsRejectsInvalidFilters(t *testing.T) {
 	request := httptest.NewRequest("GET", "/v1/feedbacks?"+url.Values{
 		"project_id": {"nope"},
+		"source":     {"desktop"},
 		"status":     {"closed"},
 		"rating":     {"6"},
 		"attachment": {"pdf"},
@@ -102,7 +104,7 @@ func TestParseTenantFeedbackOptionsRejectsInvalidFilters(t *testing.T) {
 	}.Encode(), nil)
 	_, fields := parseTenantFeedbackOptions(request)
 	want := []string{
-		"project_id", "status", "rating", "attachment", "moderation", "issue",
+		"project_id", "source", "status", "rating", "attachment", "moderation", "issue",
 		"date_from", "date_to", "sentiment", "sort", "limit", "cursor",
 	}
 	for _, field := range want {

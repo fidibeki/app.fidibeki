@@ -193,6 +193,12 @@ upload URLs, and verifies each attachment's one-time completion token, byte size
 through S3 HEAD. Redis applies both the 10/minute per-IP/project and 100/hour project ceilings and
 fails open if Redis is unavailable.
 
+React Native hosts use `@fidibeki/mobile` and native controls rather than embedding the web widget.
+A trusted customer backend mints a short-lived capture session with a Fidibeki API key restricted
+to `mobile_capture:create`; neither that API key nor another private credential belongs in the
+mobile bundle. See [docs/mobile-capture.md](docs/mobile-capture.md) for the trust boundary, request
+contract, consent behavior, screenshot upload, recurrence, and failure semantics.
+
 Automatic definitions combine their compatible legacy trigger with a deterministic local objective
 policy. The policy uses active time, scroll depth, interaction counts, anonymous per-page visits,
 public document metadata, and optional boolean attributes on `<html>`:

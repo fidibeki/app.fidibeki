@@ -302,6 +302,11 @@ type Item struct {
 	ReporterConsentLocale         *string          `json:"reporter_consent_locale,omitempty"`
 	ReporterConsentSource         *string          `json:"reporter_consent_source,omitempty"`
 	ReporterConsentNoticeSnapshot json.RawMessage  `json:"reporter_consent_notice_snapshot,omitempty"`
+	Source                        string           `json:"source"`
+	MobileApplicationID           *string          `json:"mobile_application_id,omitempty"`
+	MobileScreen                  *string          `json:"mobile_screen,omitempty"`
+	MobileAppVersion              *string          `json:"mobile_app_version,omitempty"`
+	MobileOSVersion               *string          `json:"mobile_os_version,omitempty"`
 	PageURL                       string           `json:"page_url"`
 	Referrer                      *string          `json:"referrer,omitempty"`
 	UserAgent                     *string          `json:"user_agent,omitempty"`
@@ -341,6 +346,7 @@ type ListOptions struct {
 	IDs        []string
 	Query      string
 	ProjectID  string
+	Source     string
 	Status     Status
 	Rating     int
 	Attachment string

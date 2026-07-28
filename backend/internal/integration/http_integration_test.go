@@ -281,11 +281,13 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		INSERT INTO feedbacks (
 			tenant_id, project_id, issue_id, public_id, client_feedback_id,
 			title, description, page_url, rating, text, text_process_status, ai_processed_at,
-			priority, ai_category, ai_actionability, ai_priority
+			priority, ai_category, ai_actionability, ai_priority, source,
+			mobile_application_id, mobile_screen, mobile_app_version, mobile_os_version
 		) VALUES ($1, $2, $3, 'fb_Intg0001', gen_random_uuid(),
 		          'Checkout is confusing', 'The payment step is unclear.',
 		          'https://example.test/checkout', 4, 'The checkout is confusing', 'skipped', now(),
-		          'high', 'checkout', 'actionable', 'urgent')
+		          'high', 'checkout', 'actionable', 'urgent', 'ios',
+		          'com.example.storefront', '/checkout', '2.4.0', '18.5')
 		RETURNING id
 	`, tenantIDs["acme"], projectID, issueID).Scan(&feedbackID); err != nil {
 		t.Fatalf("create feedback: %v", err)
@@ -483,6 +485,8 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if requestCount != 1 || deliveredHeaders.Get("Authorization") != "Bearer stored-secret" ||
 		!strings.Contains(string(deliveredBody), `"event":"feedback.created"`) ||
 		!strings.Contains(string(deliveredBody), `"schema_version":"1.0"`) ||
+		!strings.Contains(string(deliveredBody), `"source":"ios"`) ||
+		!strings.Contains(string(deliveredBody), `"application_id":"com.example.storefront"`) ||
 		!strings.Contains(string(deliveredBody), `"name":"Acme web"`) ||
 		!strings.Contains(string(deliveredBody), `"count":1`) ||
 		!strings.Contains(string(deliveredBody), `http://acme.localhost/feedback/`+feedbackID) {
@@ -505,6 +509,7 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	if !strings.Contains(string(slackBody), `"blocks"`) ||
 		!strings.Contains(string(slackBody), "fb_Intg0001") ||
 		!strings.Contains(string(slackBody), `"type":"actions"`) ||
+		!strings.Contains(string(slackBody), `iOS | com.example.storefront | /checkout | 2.4.0 | 18.5`) ||
 		!strings.Contains(string(slackBody), "View attachments") {
 		t.Errorf("Slack body = %s", slackBody)
 	}

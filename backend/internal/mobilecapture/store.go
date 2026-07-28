@@ -180,10 +180,68 @@ func (Store) LockSession(
 	query db.Querier,
 	resolved ResolvedToken,
 	rawToken string,
-	now time.Time,
 ) (CaptureSession, error) {
 	var session CaptureSession
+	tokenHash := auth.HashToken(rawToken)
 	err := query.QueryRow(ctx, `
+		SELECT project_id, issuer_api_key_id
+		FROM mobile_capture_sessions
+		WHERE tenant_id = $1 AND id = $2 AND token_hash = $3
+	`, resolved.TenantID, resolved.SessionID, tokenHash).Scan(
+		&session.ProjectID, &session.IssuerAPIKeyID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CaptureSession{}, ErrAccessDenied
+	}
+	if err != nil {
+		return CaptureSession{}, fmt.Errorf("resolve mobile capture lock boundary: %w", err)
+	}
+
+	// Lock the rows whose deletion or lifecycle update revokes the bearer before
+	// locking the capture row. This matches the parent-to-child order used by
+	// tenant, project, and API-key deletion cascades.
+	err = query.QueryRow(ctx, `
+		SELECT status::text, trial_ends_at, deletion_requested_at
+		FROM tenants
+		WHERE id = $1
+		FOR SHARE
+	`, resolved.TenantID).Scan(
+		&session.TenantStatus, &session.TenantTrialEndsAt,
+		&session.TenantDeletionRequestedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CaptureSession{}, ErrAccessDenied
+	}
+	if err != nil {
+		return CaptureSession{}, fmt.Errorf("lock mobile capture tenant lifecycle: %w", err)
+	}
+	var lockedProjectID string
+	err = query.QueryRow(ctx, `
+		SELECT id
+		FROM projects
+		WHERE tenant_id = $1 AND id = $2
+		FOR SHARE
+	`, resolved.TenantID, session.ProjectID).Scan(&lockedProjectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CaptureSession{}, ErrAccessDenied
+	}
+	if err != nil {
+		return CaptureSession{}, fmt.Errorf("lock mobile capture project lifecycle: %w", err)
+	}
+	err = query.QueryRow(ctx, `
+		SELECT expires_at
+		FROM api_keys
+		WHERE tenant_id = $1 AND id = $2
+		FOR SHARE
+	`, resolved.TenantID, session.IssuerAPIKeyID).Scan(&session.IssuerExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CaptureSession{}, ErrAccessDenied
+	}
+	if err != nil {
+		return CaptureSession{}, fmt.Errorf("lock mobile capture issuer lifecycle: %w", err)
+	}
+
+	err = query.QueryRow(ctx, `
 		SELECT capture.id, capture.tenant_id, capture.project_id, capture.widget_rule_id,
 		       capture.issuer_api_key_id, capture.token_hash, capture.platform::text,
 		       capture.application_id, capture.screen, capture.context_url,
@@ -193,27 +251,14 @@ func (Store) LockSession(
 		       capture.submit_expires_at, capture.retry_expires_at,
 		       capture.cleanup_after, capture.created_at
 		FROM mobile_capture_sessions AS capture
-		JOIN api_keys AS issuer
-		  ON issuer.id = capture.issuer_api_key_id
-		 AND issuer.tenant_id = capture.tenant_id
-		 AND (issuer.expires_at IS NULL OR issuer.expires_at > $4)
-		JOIN tenants AS tenant ON tenant.id = capture.tenant_id
-		JOIN projects AS project
-		  ON project.id = capture.project_id AND project.tenant_id = capture.tenant_id
 		WHERE capture.tenant_id = $1
 		  AND capture.id = $2
 		  AND capture.token_hash = $3
-		  AND tenant.deletion_requested_at IS NULL
-		  AND (
-		      tenant.status = 'active'
-		      OR (
-		          tenant.status = 'trial'
-		          AND tenant.trial_ends_at IS NOT NULL
-		          AND tenant.trial_ends_at > $4
-		      )
-		  )
+		  AND capture.project_id = $4
+		  AND capture.issuer_api_key_id = $5
 		FOR UPDATE OF capture
-	`, resolved.TenantID, resolved.SessionID, auth.HashToken(rawToken), now.UTC()).Scan(
+	`, resolved.TenantID, resolved.SessionID, tokenHash,
+		session.ProjectID, session.IssuerAPIKeyID).Scan(
 		&session.ID, &session.TenantID, &session.ProjectID, &session.WidgetRuleID,
 		&session.IssuerAPIKeyID, &session.TokenHash, &session.Platform,
 		&session.ApplicationID, &session.Screen, &session.ContextURL,

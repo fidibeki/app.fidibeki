@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,8 +195,10 @@ func TestMobileCaptureHTTPFlow(t *testing.T) {
 		routes := chi.NewRouter()
 		RegisterPublicRoutes(routes, PublicHTTPOptions{
 			Store: store, Resolver: pools.Admin, Begin: db.BeginFromPool(pools.App),
+			// Deliberately drift the injected core clock. The mobile handler must
+			// pin every deadline in one submission to its request timestamp.
 			FeedbackCore: feedback.SubmissionCore{Store: feedback.Store{}, Now: func() time.Time {
-				return now
+				return now.Add(time.Millisecond)
 			}},
 			Storage: objectStorage, Abuse: evaluator,
 			Now: func() time.Time { return now },
@@ -203,6 +206,17 @@ func TestMobileCaptureHTTPFlow(t *testing.T) {
 		return routes
 	}
 	publicRoutes := newPublicHandler(allowMobileAbuse{}, objectStorage)
+
+	forged := performMobileRequest(
+		publicRoutes, "", http.MethodPost, "/v1/mobile/feedback",
+		validSubmissionBody("09000000-0000-4000-8000-000000000000", false),
+		TokenPrefix+strings.Repeat("A", 43),
+	)
+	if forged.Code != http.StatusForbidden ||
+		!strings.Contains(forged.Body.String(), "mobile capture denied") {
+		t.Fatalf("forged capture status = %d, body = %s",
+			forged.Code, forged.Body.String())
+	}
 
 	humanMint := performMobileRequest(
 		tenantHandler, "acme", http.MethodPost, "/v1/mobile/capture-sessions",
@@ -389,6 +403,172 @@ func TestMobileCaptureHTTPFlow(t *testing.T) {
 		!strings.HasPrefix(mainToken, TokenPrefix) {
 		t.Fatalf("stored session token = %q, platform = %q", storedHash, storedPlatform)
 	}
+
+	resolvedMain, err := store.ResolveToken(ctx, pools.Admin, mainToken)
+	if err != nil {
+		t.Fatalf("resolve main capture token: %v", err)
+	}
+	lockTx, err := pools.App.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin capture lifecycle lock transaction: %v", err)
+	}
+	if _, err := lockTx.Exec(ctx, `
+		SELECT set_config('app.tenant_id', $1, true)
+	`, tenantID); err != nil {
+		_ = lockTx.Rollback(ctx)
+		t.Fatalf("set capture lifecycle lock tenant: %v", err)
+	}
+	lockedSession, err := store.LockSession(ctx, lockTx, resolvedMain, mainToken)
+	if err != nil {
+		_ = lockTx.Rollback(ctx)
+		t.Fatalf("lock capture lifecycle: %v", err)
+	}
+	if !lockedSession.AuthorizedAt(now) {
+		_ = lockTx.Rollback(ctx)
+		t.Fatal("freshly locked capture lifecycle was not authorized")
+	}
+	revocationConn, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		_ = lockTx.Rollback(ctx)
+		t.Fatalf("connect lifecycle revocation writer: %v", err)
+	}
+	revocationCtx, cancelRevocation := context.WithTimeout(ctx, 150*time.Millisecond)
+	_, revocationErr := revocationConn.Exec(revocationCtx, `
+		UPDATE tenants SET status = 'suspended' WHERE id = $1
+	`, tenantID)
+	cancelRevocation()
+	if revocationErr == nil {
+		_ = revocationConn.Close(ctx)
+		_ = lockTx.Rollback(ctx)
+		t.Fatal("tenant lifecycle mutation was not serialized by capture authorization")
+	}
+	if err := lockTx.Rollback(ctx); err != nil {
+		_ = revocationConn.Close(ctx)
+		t.Fatalf("release capture lifecycle lock: %v", err)
+	}
+	_ = revocationConn.Close(ctx)
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET status = 'active' WHERE id = $1
+	`, tenantID); err != nil {
+		t.Fatalf("mutate tenant lifecycle after release: %v", err)
+	}
+
+	staleClockToken := mintMobileSession(
+		t, tenantHandler, root, projectID, rawAPIKey, PlatformIOS,
+	)
+	staleResolved, err := store.ResolveToken(ctx, pools.Admin, staleClockToken)
+	if err != nil {
+		t.Fatalf("resolve stale-clock capture token: %v", err)
+	}
+	blockerConn, err := pgx.Connect(ctx, directURL)
+	if err != nil {
+		t.Fatalf("connect stale-clock blocker: %v", err)
+	}
+	blockerTx, err := blockerConn.Begin(ctx)
+	if err != nil {
+		_ = blockerConn.Close(ctx)
+		t.Fatalf("begin stale-clock blocker: %v", err)
+	}
+	var blockedCaptureID string
+	if err := blockerTx.QueryRow(ctx, `
+		SELECT id FROM mobile_capture_sessions WHERE id = $1 FOR UPDATE
+	`, staleResolved.SessionID).Scan(&blockedCaptureID); err != nil {
+		_ = blockerTx.Rollback(ctx)
+		_ = blockerConn.Close(ctx)
+		t.Fatalf("lock stale-clock capture row: %v", err)
+	}
+	var staleClock atomic.Value
+	staleClock.Store(now)
+	staleNow := func() time.Time { return staleClock.Load().(time.Time) }
+	staleRoutes := chi.NewRouter()
+	RegisterPublicRoutes(staleRoutes, PublicHTTPOptions{
+		Store: store, Resolver: pools.Admin, Begin: db.BeginFromPool(pools.App),
+		FeedbackCore: feedback.SubmissionCore{
+			Store: feedback.Store{}, Now: staleNow,
+		},
+		Storage: objectStorage, Abuse: allowMobileAbuse{}, Now: staleNow,
+	})
+	staleResponse := make(chan *httptest.ResponseRecorder, 1)
+	staleClientID := "a0500000-0000-4000-8000-00000000000a"
+	go func() {
+		staleResponse <- performMobileRequest(
+			staleRoutes, "", http.MethodPost, "/v1/mobile/feedback",
+			validSubmissionBody(staleClientID, false), staleClockToken,
+		)
+	}()
+	waitCtx, cancelWait := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelWait()
+	for {
+		var waiting bool
+		if err := root.QueryRow(waitCtx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_stat_activity
+				WHERE usename = 'fidibeki_app'
+				  AND wait_event_type = 'Lock'
+				  AND query ILIKE '%mobile_capture_sessions%'
+			)
+		`).Scan(&waiting); err != nil {
+			_ = blockerTx.Rollback(ctx)
+			_ = blockerConn.Close(ctx)
+			t.Fatalf("observe stale-clock wait: %v", err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case <-waitCtx.Done():
+			_ = blockerTx.Rollback(ctx)
+			_ = blockerConn.Close(ctx)
+			t.Fatalf("mobile submission did not wait on capture lock: %v", waitCtx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	staleClock.Store(now.Add(SubmitTTL + time.Second))
+	if err := blockerTx.Rollback(ctx); err != nil {
+		_ = blockerConn.Close(ctx)
+		t.Fatalf("release stale-clock blocker: %v", err)
+	}
+	if err := blockerConn.Close(ctx); err != nil {
+		t.Fatalf("close stale-clock blocker: %v", err)
+	}
+	staleResult := <-staleResponse
+	if staleResult.Code != http.StatusForbidden {
+		t.Fatalf("post-wait expired submit status = %d, body = %s",
+			staleResult.Code, staleResult.Body.String())
+	}
+	var staleFeedbackCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks
+		WHERE project_id = $1 AND client_feedback_id = $2
+	`, projectID, staleClientID).Scan(&staleFeedbackCount); err != nil ||
+		staleFeedbackCount != 0 {
+		t.Fatalf("post-wait expired feedback count = %d, error = %v",
+			staleFeedbackCount, err)
+	}
+
+	uuidVariantToken := mintMobileSession(
+		t, tenantHandler, root, projectID, rawAPIKey, PlatformAndroid,
+	)
+	uuidVariantBody := validSubmissionBody(
+		"{A1000000-0000-4000-8000-00000000000A}", false,
+	)
+	uuidVariantCreated := performMobileRequest(
+		publicRoutes, "", http.MethodPost, "/v1/mobile/feedback",
+		uuidVariantBody, uuidVariantToken,
+	)
+	if uuidVariantCreated.Code != http.StatusCreated {
+		t.Fatalf("UUID variant submit status = %d, body = %s",
+			uuidVariantCreated.Code, uuidVariantCreated.Body.String())
+	}
+	uuidVariantRetry := performMobileRequest(
+		publicRoutes, "", http.MethodPost, "/v1/mobile/feedback",
+		uuidVariantBody, uuidVariantToken,
+	)
+	if uuidVariantRetry.Code != http.StatusOK {
+		t.Fatalf("UUID variant retry status = %d, body = %s",
+			uuidVariantRetry.Code, uuidVariantRetry.Body.String())
+	}
+
 	clientFeedbackID := "20000000-0000-4000-8000-000000000002"
 	submissionBody := validSubmissionBody(clientFeedbackID, true)
 	created := performMobileRequest(
@@ -505,6 +685,37 @@ func TestMobileCaptureHTTPFlow(t *testing.T) {
 	`, ruleID); err != nil {
 		t.Fatalf("reactivate definition: %v", err)
 	}
+	concurrentRetryToken := mintMobileSession(
+		t, tenantHandler, root, projectID, rawAPIKey, PlatformIOS,
+	)
+	concurrentRetryBody := validSubmissionBody(
+		"30500000-0000-4000-8000-000000000003", false,
+	)
+	concurrentRetryStatuses := make(chan int, 2)
+	var concurrentRetry sync.WaitGroup
+	for range 2 {
+		concurrentRetry.Add(1)
+		go func() {
+			defer concurrentRetry.Done()
+			response := performMobileRequest(
+				publicRoutes, "", http.MethodPost, "/v1/mobile/feedback",
+				concurrentRetryBody, concurrentRetryToken,
+			)
+			concurrentRetryStatuses <- response.Code
+		}()
+	}
+	concurrentRetry.Wait()
+	close(concurrentRetryStatuses)
+	concurrentRetryCounts := map[int]int{}
+	for status := range concurrentRetryStatuses {
+		concurrentRetryCounts[status]++
+	}
+	if concurrentRetryCounts[http.StatusCreated] != 1 ||
+		concurrentRetryCounts[http.StatusOK] != 1 {
+		t.Fatalf("concurrent exact-retry statuses = %#v, want one 201 and one 200",
+			concurrentRetryCounts)
+	}
+
 	collisionToken := mintMobileSession(
 		t, tenantHandler, root, projectID, rawAPIKey, PlatformAndroid,
 	)
@@ -808,6 +1019,83 @@ func TestMobileCaptureHTTPFlow(t *testing.T) {
 		UPDATE tenants SET plan = 'growth' WHERE id = $1
 	`, tenantID); err != nil {
 		t.Fatalf("restore growth plan: %v", err)
+	}
+
+	cleanupHashes := []string{
+		strings.Repeat("b", 64),
+		strings.Repeat("c", 64),
+		strings.Repeat("d", 64),
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO mobile_capture_sessions (
+			tenant_id, project_id, widget_rule_id, issuer_api_key_id, token_hash,
+			platform, application_id, screen, display_locale,
+			definition_version, controller_profile_version,
+			created_at, submit_expires_at, cleanup_after
+		) VALUES (
+			$1, $2, $3, $4, $5, 'ios', 'com.example.fidibeki', '/chart', 'en',
+			1, 2, $6::timestamptz - interval '4 hours',
+			$6::timestamptz - interval '3 hours',
+			$6::timestamptz - interval '2 hours'
+		)
+	`, tenantID, projectID, ruleID, apiKeyID, cleanupHashes[0], now); err != nil {
+		t.Fatalf("seed oldest cleanup session: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO mobile_capture_sessions (
+			tenant_id, project_id, widget_rule_id, issuer_api_key_id, token_hash,
+			platform, application_id, screen, display_locale,
+			definition_version, controller_profile_version, feedback_id,
+			client_feedback_id, request_digest, accepted_at, retry_expires_at,
+			created_at, submit_expires_at, cleanup_after
+		) VALUES (
+			$1, $2, $3, $4, $5, 'android', 'com.example.fidibeki', '/chart', 'en',
+			1, 2, $6, '63000000-0000-4000-8000-000000000006',
+			$7, $8::timestamptz - interval '150 minutes',
+			$8::timestamptz - interval '2 hours',
+			$8::timestamptz - interval '4 hours',
+			$8::timestamptz - interval '3 hours',
+			$8::timestamptz - interval '1 hour'
+		)
+	`, tenantID, projectID, ruleID, apiKeyID, cleanupHashes[1], first.FeedbackID,
+		strings.Repeat("e", 64), now); err != nil {
+		t.Fatalf("seed bound cleanup session: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO mobile_capture_sessions (
+			tenant_id, project_id, widget_rule_id, issuer_api_key_id, token_hash,
+			platform, application_id, screen, display_locale,
+			definition_version, controller_profile_version,
+			created_at, submit_expires_at, cleanup_after
+		) VALUES (
+			$1, $2, $3, $4, $5, 'ios', 'com.example.fidibeki', '/chart', 'en',
+			1, 2, $6::timestamptz, $6::timestamptz + interval '10 minutes',
+			$6::timestamptz + interval '24 hours'
+		)
+	`, tenantID, projectID, ruleID, apiKeyID, cleanupHashes[2], now); err != nil {
+		t.Fatalf("seed live cleanup session: %v", err)
+	}
+	maintenance := MaintenanceStore{Database: pools.Admin, Store: store}
+	deleted, err := maintenance.DeleteExpired(ctx, now, 1)
+	if err != nil || deleted != 1 {
+		t.Fatalf("delete oldest cleanup session = %d, error = %v", deleted, err)
+	}
+	var cleanupRemaining int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM mobile_capture_sessions WHERE token_hash = ANY($1)
+	`, cleanupHashes).Scan(&cleanupRemaining); err != nil || cleanupRemaining != 2 {
+		t.Fatalf("cleanup rows after first batch = %d, error = %v",
+			cleanupRemaining, err)
+	}
+	deleted, err = maintenance.DeleteExpired(ctx, now, 10)
+	if err != nil || deleted != 1 {
+		t.Fatalf("delete bound cleanup session = %d, error = %v", deleted, err)
+	}
+	var liveCleanupRows int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM mobile_capture_sessions WHERE token_hash = $1
+	`, cleanupHashes[2]).Scan(&liveCleanupRows); err != nil || liveCleanupRows != 1 {
+		t.Fatalf("live cleanup rows = %d, error = %v", liveCleanupRows, err)
 	}
 
 	firstDeadlineToken := mintMobileSession(

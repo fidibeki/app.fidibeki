@@ -30,12 +30,12 @@ The endpoint also returns a separate operational `health` object for every enfor
 Migration 105 keeps one current aggregate row per code-owned operation in
 `retention_maintenance_status`, and migration 109 extends the same contract from the two
 magic-link cleaners to the attachment, export-archive, reporter-request, replay-session,
-widget-funnel (raw and daily), abuse-diagnostic, AI-budget, and identity-asset cleaners; the
-ledger stores schedule metadata, last attempt/success, bounded counters,
+widget-funnel (raw and daily), abuse-diagnostic, AI-budget, identity-asset, SAML-auth-artifact,
+and mobile-capture-session cleaners; the ledger stores schedule metadata, last attempt/success, bounded counters,
 budget exhaustion, and only the generic failure code `cleanup_failed`. It stores no tenant, person,
 credential, token, IP/user-agent, or raw error data and no append-only run history. Health is derived
 as `healthy`, `attention`, `failed`, `overdue`, or `not_observed` from each operation's schedule and
-15-minute grace window. The bilingual Data & privacy surface shows the eleven tracked operations,
+15-minute grace window. The bilingual Data & privacy surface shows the thirteen tracked operations,
 their last success, next expected run, counts, and alert reason. Every enforced cleaner now reports
 into this ledger; categories without a cleaner still have no health row and are not represented
 as healthy.

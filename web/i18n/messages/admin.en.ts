@@ -1147,6 +1147,8 @@ export const adminMessages = {
           abuse_diagnostics: 'Abuse diagnostics',
           ai_budget_ledgers: 'AI budget ledgers',
           identity_asset_deletions: 'Identity asset deletions',
+          saml_auth_artifacts: 'SAML authentication artifacts',
+          mobile_capture_sessions: 'Mobile capture sessions',
         },
         status: {
           healthy: 'Healthy',

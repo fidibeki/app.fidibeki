@@ -167,6 +167,11 @@ type Notification struct {
 	IssueTitleModerated       bool
 	IssueDescriptionModerated bool
 	IssueModeratedSources     []string
+	Source                    string
+	MobileApplicationID       string
+	MobileScreen              string
+	MobileAppVersion          string
+	MobileOSVersion           string
 	PageURL                   string
 	Rating                    *int
 	Category                  string

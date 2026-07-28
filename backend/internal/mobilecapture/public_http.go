@@ -71,6 +71,9 @@ func (handler *publicHTTPHandler) submit(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &request, true) {
 		return
 	}
+	if parsed, parseErr := uuid.Parse(strings.TrimSpace(request.ClientFeedbackID)); parseErr == nil {
+		request.ClientFeedbackID = parsed.String()
+	}
 	requestDigest, err := canonicalRequestDigest(request)
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, api.CodeBadRequest, "request body is invalid", nil)
@@ -95,14 +98,18 @@ func (handler *publicHTTPHandler) submit(w http.ResponseWriter, r *http.Request)
 			_ = tx.Rollback(r.Context())
 		}
 	}()
-	now := handler.now().UTC()
-	session, err := handler.options.Store.LockSession(r.Context(), tx, resolved, rawToken, now)
+	session, err := handler.options.Store.LockSession(r.Context(), tx, resolved, rawToken)
 	if errors.Is(err, ErrAccessDenied) {
 		writeMobileDenied(w)
 		return
 	}
 	if err != nil {
 		handler.writeStoreError(w, r, err)
+		return
+	}
+	now := handler.now().UTC()
+	if !session.AuthorizedAt(now) {
+		writeMobileDenied(w)
 		return
 	}
 	bound := session.FeedbackID != nil
@@ -216,7 +223,9 @@ func (handler *publicHTTPHandler) submit(w http.ResponseWriter, r *http.Request)
 		Source: string(session.Platform), AllowExisting: bound,
 		ExistingFeedbackID: session.FeedbackID,
 	}
-	result, err := handler.options.FeedbackCore.Submit(
+	feedbackCore := handler.options.FeedbackCore
+	feedbackCore.Now = func() time.Time { return now }
+	result, err := feedbackCore.Submit(
 		r.Context(), tx, feedback.CoreSubmissionRequest{
 			Configuration: configuration, Values: values, Ownership: ownership,
 		},
@@ -315,7 +324,7 @@ func (handler *publicHTTPHandler) completeAttachment(w http.ResponseWriter, r *h
 		}
 	}()
 	session, err := handler.options.Store.LockSession(
-		r.Context(), tx, resolved, rawToken, handler.now().UTC(),
+		r.Context(), tx, resolved, rawToken,
 	)
 	if errors.Is(err, ErrAccessDenied) {
 		writeMobileDenied(w)
@@ -325,7 +334,7 @@ func (handler *publicHTTPHandler) completeAttachment(w http.ResponseWriter, r *h
 		handler.writeStoreError(w, r, err)
 		return
 	}
-	if session.FeedbackID == nil {
+	if !session.AuthorizedAt(handler.now().UTC()) || session.FeedbackID == nil {
 		writeMobileDenied(w)
 		return
 	}

@@ -320,9 +320,10 @@ identity are designed for native storage.
   notice and explicit consent with server-assigned mobile provenance.
 - Screenshot processing retains the existing quarantine, selective AI-processing, retention, and
   data-rights behavior.
-- Capture-session rows contain no reporter content and are deleted by a bounded cleanup job no
-  later than 24 hours after the latest applicable submit, retry, or bound-attachment upload
-  deadline.
+- Capture-session rows contain no reporter content and become eligible for hard deletion after a
+  24-hour grace from the latest applicable submit, retry, or bound-attachment upload deadline.
+  The hourly bounded cleanup reports failures and backlog through the retention-health ledger
+  rather than claiming an absolute deletion time while maintenance is unhealthy.
 - The privacy data map and retention registry identify the session token metadata and mobile
   feedback context explicitly.
 

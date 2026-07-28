@@ -73,6 +73,11 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		       COALESCE(feedback.text_process_status::text, ''),
 		       COALESCE(feedback.text_moderation_flags, '{}'::text[]),
 		       feedback.ai_processed_at IS NOT NULL,
+		       COALESCE(feedback.source::text, primary_feedback.source::text, 'web'),
+		       COALESCE(feedback.mobile_application_id, primary_feedback.mobile_application_id, ''),
+		       COALESCE(feedback.mobile_screen, primary_feedback.mobile_screen, ''),
+		       COALESCE(feedback.mobile_app_version, primary_feedback.mobile_app_version, ''),
+		       COALESCE(feedback.mobile_os_version, primary_feedback.mobile_os_version, ''),
 		       COALESCE(feedback.page_url, primary_feedback.page_url, ''),
 		       COALESCE(feedback.rating, primary_feedback.rating),
 		       COALESCE(feedback_issue.id::text, issue.id::text, ''),
@@ -133,7 +138,9 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		  ON issue_update.tenant_id = event.tenant_id
 		 AND issue_update.id::text = event.event_key
 		LEFT JOIN LATERAL (
-			SELECT linked.id, linked.page_url, linked.rating,
+			SELECT linked.id, linked.page_url, linked.rating, linked.source,
+			       linked.mobile_application_id, linked.mobile_screen,
+			       linked.mobile_app_version, linked.mobile_os_version,
 			       linked.ai_category, linked.ai_actionability
 			FROM feedbacks AS linked
 			WHERE linked.tenant_id = event.tenant_id AND linked.issue_id = issue.id
@@ -215,6 +222,9 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		&notification.Description, &notification.Text, &notification.SuggestedTitle,
 		&notification.FeedbackStatus, &notification.TextProcessStatus,
 		&notification.TextModerationFlags, &notification.AIProcessed,
+		&notification.Source, &notification.MobileApplicationID,
+		&notification.MobileScreen, &notification.MobileAppVersion,
+		&notification.MobileOSVersion,
 		&notification.PageURL, &notification.Rating,
 		&notification.IssueID, &notification.IssuePublicID, &notification.IssueStatus,
 		&notification.OldStatus, &notification.NewStatus,
@@ -681,12 +691,24 @@ func webhookMessage(notification Notification) map[string]any {
 			"id": notification.ProjectID, "name": notification.ProjectName,
 		},
 	}
+	if notificationHasFeedbackContext(notification) {
+		data["source"] = notificationSource(notification)
+	}
 	if notificationAllows(notification, PrivacyFieldDescription) {
 		data["description"] = notification.Description
 		data["text"] = notification.Text
 	}
 	if notificationAllows(notification, PrivacyFieldPage) {
 		data["page_url"] = integrationSafePageURL(notification.PageURL)
+		if notificationHasFeedbackContext(notification) &&
+			notificationSource(notification) != "web" {
+			data["mobile_context"] = map[string]string{
+				"application_id": notification.MobileApplicationID,
+				"screen":         notification.MobileScreen,
+				"app_version":    notification.MobileAppVersion,
+				"os_version":     notification.MobileOSVersion,
+			}
+		}
 	}
 	if notificationAllows(notification, PrivacyFieldRating) {
 		data["rating"] = notification.Rating
@@ -787,6 +809,25 @@ func notificationFacts(notification Notification) []notificationFact {
 		}
 	}
 	add("Project", notification.ProjectName)
+	if notificationHasFeedbackContext(notification) {
+		source := notificationSourceLabel(notification)
+		if notificationAllows(notification, PrivacyFieldPage) &&
+			notificationSource(notification) != "web" {
+			context := make([]string, 0, 4)
+			for _, value := range []string{
+				notification.MobileApplicationID, notification.MobileScreen,
+				notification.MobileAppVersion, notification.MobileOSVersion,
+			} {
+				if strings.TrimSpace(value) != "" {
+					context = append(context, value)
+				}
+			}
+			if len(context) > 0 {
+				source += " | " + strings.Join(context, " | ")
+			}
+		}
+		add("Source", source)
+	}
 	if notificationAllows(notification, PrivacyFieldPage) {
 		add("Page", integrationPageLabel(notification.PageURL))
 	}
@@ -820,6 +861,30 @@ func notificationFacts(notification Notification) []notificationFact {
 		add("Attachments", value)
 	}
 	return facts
+}
+
+func notificationHasFeedbackContext(notification Notification) bool {
+	return notification.ResourceType == "feedback" || notification.FeedbackID != ""
+}
+
+func notificationSource(notification Notification) string {
+	switch notification.Source {
+	case "ios", "android":
+		return notification.Source
+	default:
+		return "web"
+	}
+}
+
+func notificationSourceLabel(notification Notification) string {
+	switch notificationSource(notification) {
+	case "ios":
+		return "iOS"
+	case "android":
+		return "Android"
+	default:
+		return "Web"
+	}
 }
 
 type integrationAction struct {

@@ -48,27 +48,49 @@ type CreateSessionValues struct {
 }
 
 type CaptureSession struct {
-	ID                       string
-	TenantID                 string
-	ProjectID                string
-	WidgetRuleID             string
-	IssuerAPIKeyID           string
-	TokenHash                string
-	Platform                 Platform
-	ApplicationID            string
-	Screen                   string
-	ContextURL               *string
-	DisplayLocale            string
-	DefinitionVersion        int
-	ControllerProfileVersion int
-	FeedbackID               *string
-	ClientFeedbackID         *string
-	RequestDigest            *string
-	AcceptedAt               *time.Time
-	SubmitExpiresAt          time.Time
-	RetryExpiresAt           *time.Time
-	CleanupAfter             time.Time
-	CreatedAt                time.Time
+	ID                        string
+	TenantID                  string
+	ProjectID                 string
+	WidgetRuleID              string
+	IssuerAPIKeyID            string
+	TokenHash                 string
+	Platform                  Platform
+	ApplicationID             string
+	Screen                    string
+	ContextURL                *string
+	DisplayLocale             string
+	DefinitionVersion         int
+	ControllerProfileVersion  int
+	FeedbackID                *string
+	ClientFeedbackID          *string
+	RequestDigest             *string
+	AcceptedAt                *time.Time
+	SubmitExpiresAt           time.Time
+	RetryExpiresAt            *time.Time
+	CleanupAfter              time.Time
+	CreatedAt                 time.Time
+	IssuerExpiresAt           *time.Time
+	TenantStatus              string
+	TenantTrialEndsAt         *time.Time
+	TenantDeletionRequestedAt *time.Time
+}
+
+func (session CaptureSession) AuthorizedAt(now time.Time) bool {
+	now = now.UTC()
+	if session.IssuerExpiresAt != nil && !now.Before(*session.IssuerExpiresAt) {
+		return false
+	}
+	if session.TenantDeletionRequestedAt != nil {
+		return false
+	}
+	switch session.TenantStatus {
+	case "active":
+		return true
+	case "trial":
+		return session.TenantTrialEndsAt != nil && now.Before(*session.TenantTrialEndsAt)
+	default:
+		return false
+	}
 }
 
 type ResolvedConfiguration struct {

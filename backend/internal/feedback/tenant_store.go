@@ -72,6 +72,8 @@ const tenantFeedbackColumns = `
 	feedback.reporter_consent_purpose, feedback.reporter_consent_notice_version,
 	feedback.reporter_consent_locale, feedback.reporter_consent_source,
 	feedback.reporter_consent_notice_snapshot,
+	feedback.source::text, feedback.mobile_application_id, feedback.mobile_screen,
+	feedback.mobile_app_version, feedback.mobile_os_version,
 	feedback.page_url, feedback.referrer, feedback.user_agent, feedback.os,
 	feedback.browser, feedback.device, feedback.viewport_width,
 	feedback.viewport_height, feedback.language, feedback.status::text,
@@ -122,6 +124,9 @@ func (Store) ListTenantFeedback(
 
 	if options.ProjectID != "" {
 		where = append(where, "feedback.project_id = "+add(options.ProjectID))
+	}
+	if options.Source != "" {
+		where = append(where, "feedback.source = "+add(options.Source)+"::feedback_source")
 	}
 	if len(options.IDs) > 0 {
 		where = append(where, "feedback.id = ANY("+add(options.IDs)+"::uuid[])")
@@ -720,6 +725,8 @@ func tenantFeedbackScanTargets(
 		&item.ReporterConsentPurpose, &item.ReporterConsentNoticeVersion,
 		&item.ReporterConsentLocale, &item.ReporterConsentSource,
 		&item.ReporterConsentNoticeSnapshot,
+		&item.Source, &item.MobileApplicationID, &item.MobileScreen,
+		&item.MobileAppVersion, &item.MobileOSVersion,
 		&item.PageURL, &item.Referrer,
 		&item.UserAgent, &item.OS, &item.Browser, &item.Device, &item.ViewportWidth,
 		&item.ViewportHeight, &item.Language, &item.Status, &item.AIStatus,
