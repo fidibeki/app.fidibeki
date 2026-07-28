@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -150,8 +149,7 @@ func TestQueueMonitorRetryEndpointRequiresPermissionAndAuditsCommand(t *testing.
 	handler := queuemonitor.NewWithInspector(inspector)
 	handler.SetRetryAuditor(auditor)
 	router := chi.NewRouter()
-	router.With(appmiddleware.RequirePlatformAdmin(manager, auth.PermissionPlatformQueueRun)).
-		Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", handler.RetryBackofficeTask)
+	handler.RegisterBackofficeRoutes(router, manager)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
@@ -195,8 +193,7 @@ func TestQueueMonitorRetryEndpointFailsClosedWithoutAuditor(t *testing.T) {
 	inspector := &fakeInspector{task: &asynq.TaskInfo{ID: "task-1", State: asynq.TaskStateRetry}}
 	handler := queuemonitor.NewWithInspector(inspector)
 	router := chi.NewRouter()
-	router.With(appmiddleware.RequirePlatformAdmin(manager, auth.PermissionPlatformQueueRun)).
-		Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", handler.RetryBackofficeTask)
+	handler.RegisterBackofficeRoutes(router, manager)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
 	request.Header.Set("Authorization", "Bearer "+token)

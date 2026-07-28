@@ -540,6 +540,37 @@ func TestStoreBackofficeOverviewAndKeysetDirectory(t *testing.T) {
 	}
 }
 
+func TestStoreRecordsQueueRetryCommandsAsAppendOnlyEvents(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	database := platformMagicLinkRetentionTestDatabase(t, ctx)
+	store := Store{Database: database}
+	actorID := seedPlatformAdmin(t, ctx, database, "queue-operator@example.test")
+
+	for _, taskID := range []string{"task-1", "task-2"} {
+		if err := store.RecordQueueTaskRetry(ctx, actorID, "email", taskID); err != nil {
+			t.Fatalf("RecordQueueTaskRetry(%q) error = %v", taskID, err)
+		}
+	}
+
+	var events, distinctResources int
+	var actorIDs []string
+	if err := database.QueryRow(ctx, `
+		SELECT count(*), count(DISTINCT resource_id), array_agg(data->>'actor_id' ORDER BY data->>'task_id')
+		FROM platform_security_events
+		WHERE kind = 'operations.queue_task_retry_requested'
+		  AND resource_type = 'queue_task_retry'
+	`).Scan(&events, &distinctResources, &actorIDs); err != nil {
+		t.Fatalf("load queue retry events: %v", err)
+	}
+	if events != 2 || distinctResources != 2 || len(actorIDs) != 2 || actorIDs[0] != actorID || actorIDs[1] != actorID {
+		t.Fatalf("queue retry events = %d, distinct resources = %d, actor IDs = %v", events, distinctResources, actorIDs)
+	}
+}
+
 func platformMigrationsPath(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

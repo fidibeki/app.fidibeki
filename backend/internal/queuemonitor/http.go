@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -69,6 +70,17 @@ func NewWithInspector(inspector Inspector) *Handler {
 }
 
 func (h *Handler) SetRetryAuditor(auditor RetryAuditor) { h.auditor = auditor }
+
+// RegisterBackofficeRoutes mounts the read-only queue snapshot and the
+// separately authorized retry command used by the platform console.
+func (h *Handler) RegisterBackofficeRoutes(router chi.Router, jwt *auth.JWTManager) {
+	router.With(appmiddleware.RequirePlatformAdmin(
+		jwt, auth.PermissionPlatformTenantRead,
+	)).Get("/admin/backoffice/queues", h.ServeBackofficeJSON)
+	router.With(appmiddleware.RequirePlatformAdmin(
+		jwt, auth.PermissionPlatformQueueRun,
+	)).Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", h.RetryBackofficeTask)
+}
 
 // RetryTask moves one retry-state task to pending for immediate processing.
 // The caller is responsible for authenticating the platform administrator;

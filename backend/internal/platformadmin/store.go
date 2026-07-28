@@ -327,18 +327,18 @@ func (s Store) BootstrapAdmin(ctx context.Context, email string, permissions []s
 }
 
 // RecordQueueTaskRetry writes the operator intent before a background task is
-// moved in Redis. The ledger is append-only and owned by the admin role; the
-// actor is the resource because asynchronous task IDs are not guaranteed to be
-// UUIDs while platform_security_events resource IDs are.
+// moved in Redis. The ledger is append-only and owned by the admin role. Each
+// command receives its own UUID resource because task IDs are not guaranteed
+// UUIDs and an administrator must be able to retry more than one task.
 func (s Store) RecordQueueTaskRetry(ctx context.Context, actorID, queue, taskID string) error {
-	payload, err := json.Marshal(map[string]string{"queue": queue, "task_id": taskID})
+	payload, err := json.Marshal(map[string]string{"actor_id": actorID, "queue": queue, "task_id": taskID})
 	if err != nil {
 		return fmt.Errorf("encode queue retry audit: %w", err)
 	}
 	if _, err := s.Database.Exec(ctx, `
 		INSERT INTO platform_security_events (kind, resource_type, resource_id, data)
-		VALUES ('operations.queue_task_retry_requested', 'platform_admin', $1, $2::jsonb)
-	`, actorID, string(payload)); err != nil {
+		VALUES ('operations.queue_task_retry_requested', 'queue_task_retry', $1, $2::jsonb)
+	`, uuid.NewString(), string(payload)); err != nil {
 		return fmt.Errorf("record queue retry audit: %w", err)
 	}
 	return nil

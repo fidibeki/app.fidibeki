@@ -374,12 +374,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	queueMonitor.SetRetryAuditor(adminStore)
 	// The Nuxt backoffice consumes this read-only JSON representation. The
 	// browser-only legacy monitor above remains mounted at its existing path.
-	platformRoutes.With(appmiddleware.RequirePlatformAdmin(
-		jwtManager, auth.PermissionPlatformTenantRead,
-	)).Get("/admin/backoffice/queues", queueMonitor.ServeBackofficeJSON)
-	platformRoutes.With(appmiddleware.RequirePlatformAdmin(
-		jwtManager, auth.PermissionPlatformQueueRun,
-	)).Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", queueMonitor.RetryBackofficeTask)
+	queueMonitor.RegisterBackofficeRoutes(platformRoutes, jwtManager)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,

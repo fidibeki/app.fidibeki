@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { canRunQueueTasks } from '~/utils/platform-permissions'
+
 type Queue = { name: string; pending: number; active: number; scheduled: number; retry: number; archived: number; failed: number; latency: string; selected: boolean }
 type Task = { id: string; type: string; state: string; retries: string; last_error: string; next_process_at: string }
 type Dashboard = { queues: Queue[]; tasks: Task[]; selected_queue: string; refreshed_at: string; total_pending: number; total_active: number; total_retry: number; total_failed: number; selected_task_count: number }
@@ -6,6 +8,8 @@ type Dashboard = { queues: Queue[]; tasks: Task[]; selected_queue: string; refre
 const route = useRoute()
 const router = useRouter()
 const { $platformApi } = useNuxtApp()
+const { session } = usePlatformAuth()
+const mayRetryTasks = computed(() => canRunQueueTasks(session.value.admin?.permissions))
 const selectedQueue = computed(() => typeof route.query.queue === 'string' ? route.query.queue : '')
 const request = computed(() => selectedQueue.value ? `/admin/backoffice/queues?queue=${encodeURIComponent(selectedQueue.value)}` : '/admin/backoffice/queues')
 const { data, error, pending, refresh } = await useAsyncData('queue-dashboard', () => $platformApi<{ dashboard: Dashboard }>(request.value), { server: false, watch: [request] })
@@ -25,7 +29,7 @@ function refreshQueues() { return refresh() }
 
 async function retryTask(task: Task) {
   const queue = data.value?.dashboard.selected_queue
-  if (!queue || task.state !== 'retry' || retryingTaskID.value) return
+  if (!mayRetryTasks.value || !queue || task.state !== 'retry' || retryingTaskID.value) return
   retryingTaskID.value = task.id
   retryError.value = ''
   try {
@@ -57,7 +61,7 @@ async function retryTask(task: Task) {
 
       <section class="panel"><p class="eyebrow">Queues</p><div v-if="data.dashboard.queues.length" class="table-wrap"><table class="table"><thead><tr><th>Queue</th><th>Pending</th><th>Active</th><th>Scheduled</th><th>Retry</th><th>Archived</th><th>Latency</th></tr></thead><tbody><tr v-for="queue in data.dashboard.queues" :key="queue.name" :class="{ 'table-row-selected': queue.selected }"><td><button class="queue-link" :class="{ 'queue-link--selected': queue.selected }" type="button" :aria-current="queue.selected ? 'page' : undefined" @click="selectQueue(queue.name)">{{ queue.name }}</button></td><td>{{ queue.pending }}</td><td>{{ queue.active }}</td><td>{{ queue.scheduled }}</td><td>{{ queue.retry }}</td><td>{{ queue.archived }}</td><td>{{ queue.latency }}</td></tr></tbody></table></div><p v-else class="empty-state">No queues have been created yet.</p></section>
 
-      <section class="panel"><p class="eyebrow">Tasks</p><h2>{{ data.dashboard.selected_queue || 'No queue selected' }} <span class="muted">· {{ data.dashboard.selected_task_count }} shown</span></h2><p v-if="retryError" class="error queue-action-error" role="alert">{{ retryError }}</p><div v-if="data.dashboard.tasks.length" class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>State</th><th>Task ID</th><th>Retries</th><th>Last error</th><th>Next run (UTC)</th><th>Action</th></tr></thead><tbody><tr v-for="task in data.dashboard.tasks" :key="task.id"><td>{{ task.type }}</td><td><span class="status" :class="statusTone(task.state) && `status--${statusTone(task.state)}`">{{ task.state }}</span></td><td>{{ task.id }}</td><td>{{ task.retries }}</td><td>{{ task.last_error }}</td><td>{{ task.next_process_at }}</td><td><button v-if="task.state === 'retry'" class="button secondary button--compact" type="button" :disabled="Boolean(retryingTaskID)" @click="retryTask(task)">{{ retryingTaskID === task.id ? 'Retrying…' : 'Retry now' }}</button><span v-else class="muted">—</span></td></tr></tbody></table></div><p v-else class="empty-state">No pending, active, scheduled, retry, or archived tasks in this queue.</p></section>
+      <section class="panel"><p class="eyebrow">Tasks</p><h2>{{ data.dashboard.selected_queue || 'No queue selected' }} <span class="muted">· {{ data.dashboard.selected_task_count }} shown</span></h2><p v-if="retryError" class="error queue-action-error" role="alert">{{ retryError }}</p><div v-if="data.dashboard.tasks.length" class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>State</th><th>Task ID</th><th>Retries</th><th>Last error</th><th>Next run (UTC)</th><th>Action</th></tr></thead><tbody><tr v-for="task in data.dashboard.tasks" :key="task.id"><td>{{ task.type }}</td><td><span class="status" :class="statusTone(task.state) && `status--${statusTone(task.state)}`">{{ task.state }}</span></td><td>{{ task.id }}</td><td>{{ task.retries }}</td><td>{{ task.last_error }}</td><td>{{ task.next_process_at }}</td><td><button v-if="mayRetryTasks && task.state === 'retry'" class="button secondary button--compact" type="button" :disabled="Boolean(retryingTaskID)" @click="retryTask(task)">{{ retryingTaskID === task.id ? 'Retrying…' : 'Retry now' }}</button><span v-else class="muted">—</span></td></tr></tbody></table></div><p v-else class="empty-state">No pending, active, scheduled, retry, or archived tasks in this queue.</p></section>
     </template>
     <p v-else class="empty-state">Loading queue operations…</p>
   </section>
