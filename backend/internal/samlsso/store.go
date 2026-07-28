@@ -239,6 +239,50 @@ func (Store) RemoveCertificate(
 func (Store) SetMode(
 	ctx context.Context, query db.Querier, tenantID string, mode auth.SSOMode, actorMemberID string,
 ) error {
+	var ownerMemberID *string
+	var currentMode auth.SSOMode
+	if err := query.QueryRow(ctx, `
+		SELECT tenant.owner_member_id, configuration.mode::text
+		FROM tenants AS tenant
+		JOIN tenant_saml_configurations AS configuration ON configuration.tenant_id = tenant.id
+		WHERE tenant.id = $1
+		FOR UPDATE OF tenant, configuration
+	`, tenantID).Scan(&ownerMemberID, &currentMode); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotConfigured
+	} else if err != nil {
+		return fmt.Errorf("lock SAML authentication policy: %w", err)
+	}
+	if mode == auth.SSOModeRequired && currentMode != auth.SSOModeRequired {
+		if _, err := query.Exec(ctx, `
+			DELETE FROM tenant_magic_links
+			WHERE tenant_id = $1
+			  AND authentication_method = 'local'
+			  AND (member_id IS NULL OR member_id IS DISTINCT FROM $2::uuid)
+		`, tenantID, ownerMemberID); err != nil {
+			return fmt.Errorf("invalidate local magic links for required SSO: %w", err)
+		}
+		if _, err := query.Exec(ctx, `
+			UPDATE tenant_member_sessions
+			SET revoked_at = COALESCE(revoked_at, now()),
+			    rotated_at = NULL,
+			    replacement_hash = NULL
+			WHERE tenant_id = $1
+			  AND authentication_method = 'local'
+			  AND member_id IS DISTINCT FROM $2::uuid
+			  AND revoked_at IS NULL
+		`, tenantID, ownerMemberID); err != nil {
+			return fmt.Errorf("revoke local sessions for required SSO: %w", err)
+		}
+		if _, err := query.Exec(ctx, `
+			UPDATE tenant_members
+			SET authorization_version = authorization_version + 1
+			WHERE tenant_id = $1
+			  AND id IS DISTINCT FROM $2::uuid
+			  AND status = 'active'
+		`, tenantID, ownerMemberID); err != nil {
+			return fmt.Errorf("invalidate access tokens for required SSO: %w", err)
+		}
+	}
 	tag, err := query.Exec(ctx, `
 		UPDATE tenant_saml_configurations
 		SET mode = $2::tenant_sso_mode, updated_by_member_id = NULLIF($3, '')::uuid

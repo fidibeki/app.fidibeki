@@ -90,10 +90,12 @@ func TestSlackBeginBuildsAuthorizeURLAndRefusesWhenUnconfigured(t *testing.T) {
 	t.Parallel()
 	states := newFakeStateStore()
 	oauth := testSlackOAuth(nil, states)
+	authorizationVersion := 7
 
 	authorizeURL, err := oauth.Begin(context.Background(), InstallState{
 		TenantID: "tenant-1", TenantSlug: "acme", MemberID: "member-1",
-		Events: []string{EventFeedbackCreated},
+		AuthorizationVersion: &authorizationVersion,
+		Events:               []string{EventFeedbackCreated},
 	})
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)
@@ -123,8 +125,14 @@ func TestSlackBeginBuildsAuthorizeURLAndRefusesWhenUnconfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state was not recorded: %v", err)
 	}
-	if state.TenantID != "tenant-1" || state.MemberID != "member-1" {
+	if state.TenantID != "tenant-1" || state.MemberID != "member-1" ||
+		state.AuthorizationVersion == nil || *state.AuthorizationVersion != authorizationVersion {
 		t.Errorf("recorded state = %+v", state)
+	}
+	if _, err := oauth.Begin(context.Background(), InstallState{
+		TenantID: "tenant-1", TenantSlug: "acme", MemberID: "member-1",
+	}); !errors.Is(err, ErrInstallAuthorityInvalid) {
+		t.Errorf("Begin() without authority version error = %v, want ErrInstallAuthorityInvalid", err)
 	}
 
 	unconfigured := SlackOAuth{States: states}
@@ -137,8 +145,10 @@ func TestSlackStateIsSingleUse(t *testing.T) {
 	t.Parallel()
 	states := newFakeStateStore()
 	oauth := testSlackOAuth(nil, states)
+	authorizationVersion := 0
 	authorizeURL, err := oauth.Begin(context.Background(), InstallState{
 		TenantID: "tenant-1", TenantSlug: "acme", MemberID: "member-1",
+		AuthorizationVersion: &authorizationVersion,
 	})
 	if err != nil {
 		t.Fatalf("Begin() error = %v", err)

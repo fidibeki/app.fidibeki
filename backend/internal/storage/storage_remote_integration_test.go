@@ -95,4 +95,25 @@ func TestRemoteStorageAllowsBrowserPresignedPut(t *testing.T) {
 	if got := uploadResponse.Header.Get("Access-Control-Allow-Origin"); got != origin && got != "*" {
 		t.Errorf("upload Access-Control-Allow-Origin = %q, want %q or *", got, origin)
 	}
+
+	postKey := key + "-post"
+	post, err := client.PresignPost(
+		ctx, postKey, "text/plain", int64(len("post-cors-ok")), time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("presign remote POST upload: %v", err)
+	}
+	postResponse := postPresignedObject(t, ctx, post, "diagnostic.txt", "post-cors-ok", origin)
+	defer func() { _ = postResponse.Body.Close() }()
+	t.Cleanup(func() {
+		if err := client.RemoveObject(context.Background(), postKey); err != nil {
+			t.Errorf("remove POST diagnostic object: %v", err)
+		}
+	})
+	if postResponse.StatusCode < 200 || postResponse.StatusCode >= 300 {
+		t.Fatalf("POST upload status = %d, want 2xx", postResponse.StatusCode)
+	}
+	if got := postResponse.Header.Get("Access-Control-Allow-Origin"); got != origin && got != "*" {
+		t.Errorf("POST upload Access-Control-Allow-Origin = %q, want %q or *", got, origin)
+	}
 }

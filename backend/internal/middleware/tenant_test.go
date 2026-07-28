@@ -381,6 +381,8 @@ type fakeTransaction struct {
 	memberAuthVersion int
 	twoFactorRequired bool
 	twoFactorEnrolled bool
+	apiKeyID          string
+	apiKeyRateLimit   int
 }
 
 func (f *fakeTransaction) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -392,6 +394,11 @@ func (f *fakeTransaction) Query(context.Context, string, ...any) (pgx.Rows, erro
 }
 
 func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	if strings.Contains(query, "api_keys") {
+		return fakeAPIKeyAuthRow{
+			id: f.apiKeyID, permissions: []string{"project:read"}, rateLimit: f.apiKeyRateLimit,
+		}
+	}
 	if strings.Contains(query, "FROM tenant_members") {
 		return fakeMemberAuthRow{
 			permissions: []string{"project:read"}, status: "active", version: f.memberAuthVersion,
@@ -406,6 +413,28 @@ func (f *fakeTransaction) QueryRow(_ context.Context, query string, args ...any)
 	}
 	f.configuredTenant, _ = args[0].(string)
 	return fakeRow{value: f.configuredTenant}
+}
+
+type fakeAPIKeyAuthRow struct {
+	id          string
+	permissions []string
+	rateLimit   int
+}
+
+func (r fakeAPIKeyAuthRow) Scan(destinations ...any) error {
+	if len(destinations) != 3 {
+		return errors.New("unexpected API key auth scan destination count")
+	}
+	id, idOK := destinations[0].(*string)
+	permissions, permissionsOK := destinations[1].(*[]string)
+	rateLimit, rateLimitOK := destinations[2].(*int)
+	if !idOK || !permissionsOK || !rateLimitOK {
+		return errors.New("unexpected API key auth scan destination type")
+	}
+	*id = r.id
+	*permissions = append([]string(nil), r.permissions...)
+	*rateLimit = r.rateLimit
+	return nil
 }
 
 type fakeMemberAuthRow struct {

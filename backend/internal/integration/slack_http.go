@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,11 +12,13 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // SlackCallbackPath is fixed and lives on the apex API host: Slack matches a redirect URL's
@@ -65,9 +68,20 @@ func (h *HTTPHandler) slackInstall(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
 		return
 	}
+	if claims.IsAPIKey {
+		api.WriteError(w, http.StatusForbidden, api.CodeForbidden,
+			"Slack installation requires a tenant member", nil)
+		return
+	}
+	authorizationVersion := 0
+	if claims.AuthorizationVersion != nil {
+		authorizationVersion = *claims.AuthorizationVersion
+	}
 	authorizeURL, err := h.options.Slack.Begin(r.Context(), InstallState{
 		TenantID: resolved.ID, TenantSlug: resolved.Slug, MemberID: claims.Subject,
-		Events: events, PrivacyFields: privacyFields,
+		AuthorizationVersion: &authorizationVersion,
+		Events:               events,
+		PrivacyFields:        privacyFields,
 	})
 	if err != nil {
 		writeIntegrationError(w, err)
@@ -130,6 +144,18 @@ func (h *slackCallbackHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.preflightAuthority(r.Context(), state); err != nil {
+		if errors.Is(err, ErrInstallAuthorityInvalid) {
+			h.options.Logger.WarnContext(r.Context(), "slack install authority expired before exchange",
+				"tenant_id", state.TenantID, "member_id", state.MemberID)
+		} else {
+			h.options.Logger.ErrorContext(r.Context(), "slack install authority lookup failed",
+				"tenant_id", state.TenantID, "error", err)
+		}
+		h.redirect(w, r, state, "failed")
+		return
+	}
+
 	installation, err := h.options.Slack.Exchange(r.Context(), code)
 	if err != nil {
 		var slackErr *SlackError
@@ -145,12 +171,33 @@ func (h *slackCallbackHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.persist(r, state, installation); err != nil {
-		h.options.Logger.ErrorContext(r.Context(), "slack install persistence failed",
-			"tenant_id", state.TenantID, "error", err)
+		if revokeErr := h.options.Slack.Revoke(r.Context(), installation.AccessToken); revokeErr != nil {
+			h.options.Logger.ErrorContext(r.Context(), "slack rejected install cleanup failed",
+				"tenant_id", state.TenantID, "error", revokeErr)
+		}
+		if errors.Is(err, ErrInstallAuthorityInvalid) {
+			h.options.Logger.WarnContext(r.Context(), "slack install authority expired before persistence",
+				"tenant_id", state.TenantID, "member_id", state.MemberID)
+		} else {
+			h.options.Logger.ErrorContext(r.Context(), "slack install persistence failed",
+				"tenant_id", state.TenantID, "error", err)
+		}
 		h.redirect(w, r, state, "failed")
 		return
 	}
 	h.redirect(w, r, state, "installed")
+}
+
+func (h *slackCallbackHandler) preflightAuthority(ctx context.Context, state InstallState) error {
+	if state.AuthorizationVersion == nil {
+		return ErrInstallAuthorityInvalid
+	}
+	tx, err := h.beginTenantTransaction(ctx, state.TenantID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return lockSlackInstallAuthority(ctx, tx, state)
 }
 
 // persist writes the install inside one transaction scoped to the state's tenant. The audit
@@ -159,7 +206,7 @@ func (h *slackCallbackHandler) persist(
 	r *http.Request, state InstallState, installation SlackInstallation,
 ) error {
 	ctx := r.Context()
-	tx, err := h.options.Begin(ctx)
+	tx, err := h.beginTenantTransaction(ctx, state.TenantID)
 	if err != nil {
 		return err
 	}
@@ -171,15 +218,8 @@ func (h *slackCallbackHandler) persist(
 			}
 		}
 	}()
-
-	var configured string
-	if err := tx.QueryRow(ctx,
-		`SELECT set_config('app.tenant_id', $1, true)`, state.TenantID,
-	).Scan(&configured); err != nil {
+	if err := lockSlackInstallAuthority(ctx, tx, state); err != nil {
 		return err
-	}
-	if configured != state.TenantID {
-		return errors.New("slack install tenant scope was not applied")
 	}
 
 	// integrations.name is NOT NULL with a 1-character floor, so fall back through everything
@@ -215,6 +255,79 @@ func (h *slackCallbackHandler) persist(
 		return err
 	}
 	committed = true
+	return nil
+}
+
+func (h *slackCallbackHandler) beginTenantTransaction(
+	ctx context.Context, tenantID string,
+) (db.Transaction, error) {
+	tx, err := h.options.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var configured string
+	if err := tx.QueryRow(ctx,
+		`SELECT set_config('app.tenant_id', $1, true)`, tenantID,
+	).Scan(&configured); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	if configured != tenantID {
+		_ = tx.Rollback(ctx)
+		return nil, errors.New("slack install tenant scope was not applied")
+	}
+	return tx, nil
+}
+
+// lockSlackInstallAuthority serializes the callback with tenant lifecycle,
+// plan, and member authorization mutations. Those mutations use the same
+// tenant-then-member lock order, so whichever transaction commits first
+// defines whether this install remains authorized.
+func lockSlackInstallAuthority(
+	ctx context.Context, query db.Querier, state InstallState,
+) error {
+	if state.AuthorizationVersion == nil {
+		return ErrInstallAuthorityInvalid
+	}
+	var plan tenant.Plan
+	var available, deletionPending bool
+	if err := query.QueryRow(ctx, `
+		SELECT plan::text,
+		       status = 'active'
+		         OR (status = 'trial' AND trial_ends_at IS NOT NULL AND trial_ends_at > now()),
+		       deletion_requested_at IS NOT NULL
+		FROM tenants
+		WHERE id = $1
+		FOR UPDATE
+	`, state.TenantID).Scan(&plan, &available, &deletionPending); errors.Is(err, pgx.ErrNoRows) {
+		return ErrInstallAuthorityInvalid
+	} else if err != nil {
+		return fmt.Errorf("lock Slack install tenant authority: %w", err)
+	}
+	if !available || deletionPending ||
+		!config.CanUseFeature(tenant.Tenant{Plan: plan}, config.FeatureSlack) {
+		return ErrInstallAuthorityInvalid
+	}
+
+	var status string
+	var authorizationVersion int
+	var permissions []string
+	if err := query.QueryRow(ctx, `
+		SELECT status::text, authorization_version, permissions
+		FROM tenant_members
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, state.TenantID, state.MemberID).Scan(
+		&status, &authorizationVersion, &permissions,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return ErrInstallAuthorityInvalid
+	} else if err != nil {
+		return fmt.Errorf("lock Slack installer authority: %w", err)
+	}
+	if status != "active" || authorizationVersion != *state.AuthorizationVersion ||
+		!auth.HasPermission(permissions, auth.PermissionIntegrationCreate) {
+		return ErrInstallAuthorityInvalid
+	}
 	return nil
 }
 

@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("integration not found")
-	ErrNotReady = errors.New("integration content moderation is not complete")
+	ErrNotFound                 = errors.New("integration not found")
+	ErrNotReady                 = errors.New("integration content moderation is not complete")
+	ErrTenantDeliverySuppressed = errors.New("integration delivery suppressed by tenant lifecycle")
 )
 
 type Kind string

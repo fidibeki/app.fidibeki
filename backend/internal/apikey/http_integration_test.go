@@ -3,6 +3,7 @@ package apikey
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,12 +12,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -132,14 +135,20 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 		appmiddleware.RequireTenantMember(jwtManager),
 		appmiddleware.RequirePermission(auth.PermissionProjectUpdate),
 	).Get("/v1/key-write-probe", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	transactionalHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})(routes)
+	credentialLimiter := &apiKeyCredentialLimiter{counts: map[string]int{}}
+	limitAPIKeys := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: credentialLimiter},
+	)
+	handler := limitAPIKeys(transactionalHandler)
+	secondAPIInstance := limitAPIKeys(transactionalHandler)
 
 	createdResponse := performAPIKeyRequest(handler, "acme", http.MethodPost, "/v1/api-keys", `{
 		"name":"Deploy reader","permissions":["project:read","feedback:read"],
-		"rate_limit_per_min":750,"expires_at":null
+		"rate_limit_per_min":1,"expires_at":null
 	}`, ownerToken)
 	if createdResponse.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", createdResponse.Code, createdResponse.Body.String())
@@ -151,7 +160,7 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if created.Token != raw || created.APIKey.TokenPrefix != raw[:12]+"..." || created.APIKey.RateLimitPerMin != 750 {
+	if created.Token != raw || created.APIKey.TokenPrefix != raw[:12]+"..." || created.APIKey.RateLimitPerMin != 1 {
 		t.Errorf("create response = %#v", created)
 	}
 	var storedHash string
@@ -165,6 +174,32 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if keyAccess.Code != http.StatusNoContent {
 		t.Errorf("API key access status = %d, body = %s", keyAccess.Code, keyAccess.Body.String())
 	}
+	limited := performAPIKeyRequest(
+		secondAPIInstance, "acme", http.MethodGet, "/v1/key-probe", "", raw,
+	)
+	if limited.Code != http.StatusTooManyRequests ||
+		limited.Header().Get("Retry-After") == "" ||
+		limited.Header().Get("X-RateLimit-Limit") != "1" ||
+		limited.Header().Get("X-RateLimit-Remaining") != "0" {
+		t.Errorf("API key rate-limit response = %d headers=%v body=%s",
+			limited.Code, limited.Header(), limited.Body.String())
+	}
+	limiterKey := "tenant-api-key:" + created.APIKey.ID
+	if credentialLimiter.callCount(limiterKey) != 2 ||
+		credentialLimiter.callCount(raw) != 0 {
+		t.Errorf("API key limiter calls = %#v, want immutable key ID across API instances",
+			credentialLimiter.snapshot())
+	}
+	credentialLimiter.reset()
+	credentialLimiter.setError(errors.New("redis unavailable"))
+	unavailable := performAPIKeyRequest(handler, "acme", http.MethodGet, "/v1/key-probe", "", raw)
+	if unavailable.Code != http.StatusServiceUnavailable ||
+		unavailable.Header().Get("Retry-After") != "1" {
+		t.Errorf("API key limiter outage = %d headers=%v body=%s",
+			unavailable.Code, unavailable.Header(), unavailable.Body.String())
+	}
+	credentialLimiter.setError(nil)
+	credentialLimiter.reset()
 	keyDenied := performAPIKeyRequest(handler, "acme", http.MethodGet, "/v1/key-write-probe", "", raw)
 	if keyDenied.Code != http.StatusForbidden {
 		t.Errorf("API key permission status = %d, body = %s", keyDenied.Code, keyDenied.Body.String())
@@ -182,6 +217,7 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if _, err := root.Exec(ctx, `UPDATE tenants SET deletion_requested_at = now() WHERE id = $1`, acmeID); err != nil {
 		t.Fatalf("schedule tenant deletion: %v", err)
 	}
+	credentialLimiter.reset()
 	graceRead := performAPIKeyRequest(handler, "acme", http.MethodGet, "/v1/key-probe", "", raw)
 	if graceRead.Code != http.StatusNoContent {
 		t.Errorf("API key grace-period read status = %d, body = %s", graceRead.Code, graceRead.Body.String())
@@ -245,6 +281,58 @@ func TestAPIKeyHTTPFlow(t *testing.T) {
 	if deletedAgain.Code != http.StatusNotFound {
 		t.Errorf("repeat delete status = %d, body = %s", deletedAgain.Code, deletedAgain.Body.String())
 	}
+}
+
+type apiKeyCredentialLimiter struct {
+	mu     sync.Mutex
+	counts map[string]int
+	err    error
+}
+
+func (l *apiKeyCredentialLimiter) Allow(
+	_ context.Context,
+	key string,
+	window ratelimit.Window,
+) (ratelimit.Decision, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err != nil {
+		return ratelimit.Decision{}, l.err
+	}
+	l.counts[key]++
+	remaining := max(window.Limit-l.counts[key], 0)
+	return ratelimit.Decision{
+		Allowed: l.counts[key] <= window.Limit, Limit: window.Limit,
+		Remaining: remaining, RetryAfter: 30 * time.Second,
+	}, nil
+}
+
+func (l *apiKeyCredentialLimiter) callCount(key string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.counts[key]
+}
+
+func (l *apiKeyCredentialLimiter) snapshot() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[string]int, len(l.counts))
+	for key, value := range l.counts {
+		snapshot[key] = value
+	}
+	return snapshot
+}
+
+func (l *apiKeyCredentialLimiter) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.counts = map[string]int{}
+}
+
+func (l *apiKeyCredentialLimiter) setError(err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.err = err
 }
 
 func performAPIKeyRequest(

@@ -10,10 +10,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/hibiken/asynq"
 )
 
@@ -55,12 +57,14 @@ func TestCipherRoundTripBindsAssociatedData(t *testing.T) {
 func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 	t.Parallel()
 	active := false
-	values, fields := ValidateCreate(CreateInput{
+	values, fields := ValidateCreate(context.Background(), CreateInput{
 		Kind: KindWebhook, Name: "  Deploy alerts  ", WebhookURL: "https://hooks.example.test/fidibeki",
 		Events:        []string{EventIssueUpdated, EventFeedbackCreated, EventIssueUpdated},
 		CustomHeaders: map[string]string{"Authorization": "Bearer secret"}, Active: &active,
 		PrivacyFields: []string{PrivacyFieldPage, PrivacyFieldDescription, PrivacyFieldPage},
-	})
+	}, ValidationOptions{Outbound: outboundhttp.Policy{Resolver: staticResolver{
+		netip.MustParseAddr("93.184.216.34"),
+	}}})
 	if len(fields) != 0 {
 		t.Fatalf("ValidateCreate(valid) fields = %#v", fields)
 	}
@@ -82,7 +86,7 @@ func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 		{Kind: KindSlack, Name: "Alerts", WebhookURL: "https://example.test", Events: []string{EventFeedbackCreated}, PrivacyFields: []string{"reporter_email"}},
 	}
 	for index, input := range invalidCases {
-		if _, fields := ValidateCreate(input); len(fields) == 0 {
+		if _, fields := ValidateCreate(context.Background(), input, ValidationOptions{}); len(fields) == 0 {
 			t.Errorf("invalid case %d fields = nil", index)
 		}
 	}
@@ -90,6 +94,22 @@ func TestValidateCreateNormalizesAndRejectsUnsafeConfiguration(t *testing.T) {
 		!validWebhookURL("http://127.0.0.1:8080/hook", true) ||
 		!validWebhookURL("http://localhost:8080/hook", true) {
 		t.Error("loopback development webhook URL rejected")
+	}
+}
+
+func TestValidateCreateRejectsNonPublicWebhookDestinations(t *testing.T) {
+	t.Parallel()
+
+	for _, address := range []string{"127.0.0.1", "10.0.0.1", "100.64.0.1", "fc00::1"} {
+		_, fields := ValidateCreate(context.Background(), CreateInput{
+			Kind: KindWebhook, Name: "Private", WebhookURL: "https://webhook.example/hook",
+			Events: []string{EventFeedbackCreated},
+		}, ValidationOptions{Outbound: outboundhttp.Policy{Resolver: staticResolver{
+			netip.MustParseAddr(address),
+		}}})
+		if len(fields) == 0 || fields[0].Field != "webhook_url" {
+			t.Errorf("ValidateCreate() fields for %s = %#v, want webhook_url error", address, fields)
+		}
 	}
 }
 
@@ -412,6 +432,23 @@ func TestWebhookDeliverySignsExactBodyAndHandlesProviderFailures(t *testing.T) {
 	}
 }
 
+func TestWebhookDeliveryRevalidatesTheDestinationAtDialTime(t *testing.T) {
+	t.Parallel()
+
+	notification := Notification{
+		OutboxEventID: "event-id", IntegrationID: "integration-id", Kind: KindWebhook,
+		WebhookURL: "https://rebound.example/hook", WebhookSecret: "signing-secret",
+		Event: EventFeedbackCreated, ResourceType: "feedback", ResourceID: "feedback-id",
+	}
+	handler := DeliveryHandler{Outbound: outboundhttp.Policy{Resolver: staticResolver{
+		netip.MustParseAddr("127.0.0.1"),
+	}}}
+	if _, err := handler.deliver(context.Background(), notification); err == nil ||
+		!strings.Contains(err.Error(), outboundhttp.ErrUnsafeDestination.Error()) {
+		t.Fatalf("deliver() error = %v, want unsafe destination", err)
+	}
+}
+
 type captureDoer struct {
 	client  HTTPDoer
 	request *http.Request
@@ -423,3 +460,13 @@ func (d *captureDoer) Do(request *http.Request) (*http.Response, error) {
 }
 
 func stringPointer(value string) *string { return &value }
+
+type staticResolver []netip.Addr
+
+func (r staticResolver) LookupNetIP(
+	context.Context,
+	string,
+	string,
+) ([]netip.Addr, error) {
+	return append([]netip.Addr(nil), r...), nil
+}

@@ -94,6 +94,9 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		r.Context(), tx, h.options.JWT, resolved.ID, r.Header.Get("Authorization"),
 		resolved.DeletionRequestedAt == nil,
 	)
+	if appmiddleware.WriteTenantAPIKeyRateLimitError(w, r.Context(), err) {
+		return
+	}
 	if errors.Is(err, appmiddleware.ErrTenantCredentialInvalid) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
 		return
@@ -110,6 +113,7 @@ func (h *AttachmentStreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		h.writeError(w, r, err)
 		return
 	}
+	appmiddleware.WriteTenantAPIKeyRateLimitHeaders(w, r.Context())
 	mode := "preview"
 	if r.URL.Query().Get("mode") == "download" {
 		mode = "download"

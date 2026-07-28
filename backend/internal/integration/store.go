@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,7 @@ import (
 type Store struct {
 	Database db.Querier
 	Cipher   *Cipher
+	Now      func() time.Time
 }
 
 // integrationColumns is the single projection every read and write returns, so the scan

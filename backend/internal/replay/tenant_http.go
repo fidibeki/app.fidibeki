@@ -48,10 +48,12 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 	}
 	handler := &TenantHTTPHandler{options: options, logger: logger}
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionRead),
 	).Get("/v1/sessions/{sessionID}", handler.getSession)
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionWidgetRuleRead),
 	).Get(
@@ -59,6 +61,7 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		handler.getConsentDiagnostic,
 	)
 	router.With(
+		appmiddleware.RequireActive,
 		appmiddleware.RequireWritable,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionDelete),
@@ -246,6 +249,9 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Context(), tx, h.options.JWT, resolved.ID, r.Header.Get("Authorization"),
 		resolved.DeletionRequestedAt == nil,
 	)
+	if appmiddleware.WriteTenantAPIKeyRateLimitError(w, r.Context(), err) {
+		return
+	}
 	if errors.Is(err, appmiddleware.ErrTenantCredentialInvalid) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
 		return
@@ -258,6 +264,7 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	appmiddleware.WriteTenantAPIKeyRateLimitHeaders(w, r.Context())
 	recordAccess := func(outcome string) error {
 		return accessaudit.Record(r.Context(), tx, accessaudit.RecordInput{
 			TenantID: resolved.ID, Kind: "replay_session.accessed",

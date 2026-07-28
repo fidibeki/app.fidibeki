@@ -58,6 +58,9 @@ func requireTenantMember(verifier accessTokenVerifier, enforceTwoFactor bool) fu
 				r.Context(), query, verifier, resolved.ID, r.Header.Get("Authorization"),
 				resolved.DeletionRequestedAt == nil, enforceTwoFactor,
 			)
+			if WriteTenantAPIKeyRateLimitError(w, r.Context(), err) {
+				return
+			}
 			if errors.Is(err, ErrTenantCredentialInvalid) {
 				api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
 				return
@@ -74,6 +77,7 @@ func requireTenantMember(verifier accessTokenVerifier, enforceTwoFactor bool) fu
 				api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 				return
 			}
+			WriteTenantAPIKeyRateLimitHeaders(w, r.Context())
 			ctx := context.WithValue(r.Context(), tenantClaimsContextKey{}, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -120,8 +124,9 @@ func authenticateTenantCredential(
 		}
 		var keyID string
 		var permissions []string
+		var rateLimitPerMin int
 		statement := `
-			SELECT id, permissions FROM api_keys
+			SELECT id, permissions, rate_limit_per_min FROM api_keys
 			WHERE tenant_id = $1 AND token_hash = $2
 			  AND (expires_at IS NULL OR expires_at > now())
 		`
@@ -130,15 +135,20 @@ func authenticateTenantCredential(
 				UPDATE api_keys SET last_used_at = now()
 				WHERE tenant_id = $1 AND token_hash = $2
 				  AND (expires_at IS NULL OR expires_at > now())
-				RETURNING id, permissions
+				RETURNING id, permissions, rate_limit_per_min
 			`
 		}
-		err := query.QueryRow(ctx, statement, tenantID, auth.HashToken(raw)).Scan(&keyID, &permissions)
+		err := query.QueryRow(ctx, statement, tenantID, auth.HashToken(raw)).Scan(
+			&keyID, &permissions, &rateLimitPerMin,
+		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.Claims{}, ErrTenantCredentialInvalid
 		}
 		if err != nil {
 			return auth.Claims{}, fmt.Errorf("authenticate tenant API key: %w", err)
+		}
+		if err := enforceTenantAPIKeyRateLimit(ctx, tenantID, keyID, rateLimitPerMin); err != nil {
+			return auth.Claims{}, err
 		}
 		claims := auth.Claims{TenantID: tenantID, Permissions: permissions, IsAPIKey: true}
 		claims.Subject = keyID

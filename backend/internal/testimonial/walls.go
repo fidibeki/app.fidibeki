@@ -265,6 +265,17 @@ type VideoUploadValues struct {
 	CompleteTokenHash string
 }
 
+type PendingVideoUpload struct {
+	StorageKey  string
+	ContentType string
+	SizeBytes   int64
+}
+
+type VideoUploadReservation struct {
+	ID                 string
+	ReplacedStorageKey string
+}
+
 // CreateVideoUpload reserves a slot for one video against a collection request.
 //
 // Any earlier video for the same request is dropped first: someone who records
@@ -275,12 +286,15 @@ func (Store) CreateVideoUpload(
 	query db.Querier,
 	tenantID string,
 	values VideoUploadValues,
-) (string, error) {
-	if _, err := query.Exec(ctx, `
+) (VideoUploadReservation, error) {
+	var replacedStorageKey string
+	if err := query.QueryRow(ctx, `
 		DELETE FROM testimonial_media
 		WHERE tenant_id = $1 AND request_id = $2 AND role = 'video'
-	`, tenantID, values.RequestID); err != nil {
-		return "", fmt.Errorf("clear previous testimonial video: %w", err)
+		RETURNING source_storage_key
+	`, tenantID, values.RequestID).Scan(&replacedStorageKey); err != nil &&
+		!errors.Is(err, pgx.ErrNoRows) {
+		return VideoUploadReservation{}, fmt.Errorf("clear previous testimonial video: %w", err)
 	}
 	var id string
 	if err := query.QueryRow(ctx, `
@@ -291,9 +305,9 @@ func (Store) CreateVideoUpload(
 		RETURNING id
 	`, tenantID, values.RequestID, values.PublicID, values.StorageKey, values.ContentType,
 		values.SizeBytes, values.CompleteTokenHash).Scan(&id); err != nil {
-		return "", fmt.Errorf("create testimonial video upload: %w", err)
+		return VideoUploadReservation{}, fmt.Errorf("create testimonial video upload: %w", err)
 	}
-	return id, nil
+	return VideoUploadReservation{ID: id, ReplacedStorageKey: replacedStorageKey}, nil
 }
 
 // CompleteVideoUpload records that the bytes arrived.
@@ -315,6 +329,48 @@ func (Store) CompleteVideoUpload(
 	`, tenantID, publicID, tokenHash, now)
 	if err != nil {
 		return fmt.Errorf("complete testimonial video upload: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (Store) LoadPendingVideoUpload(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, tokenHash string,
+) (PendingVideoUpload, error) {
+	var upload PendingVideoUpload
+	err := query.QueryRow(ctx, `
+		SELECT source_storage_key, content_type, size_bytes
+		FROM testimonial_media
+		WHERE tenant_id = $1 AND public_id = $2 AND role = 'video'
+		  AND complete_token_hash = $3 AND completed_at IS NULL
+	`, tenantID, publicID, tokenHash).Scan(
+		&upload.StorageKey, &upload.ContentType, &upload.SizeBytes,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PendingVideoUpload{}, ErrNotFound
+	}
+	if err != nil {
+		return PendingVideoUpload{}, fmt.Errorf("load pending testimonial video upload: %w", err)
+	}
+	return upload, nil
+}
+
+func (Store) DeletePendingVideoUpload(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, tokenHash string,
+) error {
+	tag, err := query.Exec(ctx, `
+		DELETE FROM testimonial_media
+		WHERE tenant_id = $1 AND public_id = $2 AND role = 'video'
+		  AND complete_token_hash = $3 AND completed_at IS NULL
+	`, tenantID, publicID, tokenHash)
+	if err != nil {
+		return fmt.Errorf("delete pending testimonial video upload: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -360,8 +416,10 @@ func (Store) ClaimTranscode(
 		    updated_at = $3
 		WHERE tenant_id = $1 AND public_id = $2
 		  AND transcode_status = 'pending' AND completed_at IS NOT NULL
-		RETURNING id, source_storage_key, content_type
-	`, tenantID, publicID, now).Scan(&work.MediaID, &work.StorageKey, &work.ContentType)
+		RETURNING id, source_storage_key, content_type, size_bytes
+	`, tenantID, publicID, now).Scan(
+		&work.MediaID, &work.StorageKey, &work.ContentType, &work.SizeBytes,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TranscodeWork{}, ErrNotFound
 	}
@@ -435,6 +493,22 @@ func (Store) FailTranscode(
 		WHERE tenant_id = $1 AND public_id = $2
 	`, tenantID, publicID, reason, now); err != nil {
 		return fmt.Errorf("fail testimonial transcode: %w", err)
+	}
+	return nil
+}
+
+func (Store) MarkSourceDeleted(
+	ctx context.Context,
+	query db.Querier,
+	tenantID, publicID, storageKey string,
+	now time.Time,
+) error {
+	if _, err := query.Exec(ctx, `
+		UPDATE testimonial_media
+		SET source_deleted_at = COALESCE(source_deleted_at, $4), updated_at = $4
+		WHERE tenant_id = $1 AND public_id = $2 AND source_storage_key = $3
+	`, tenantID, publicID, storageKey, now); err != nil {
+		return fmt.Errorf("mark testimonial source deleted: %w", err)
 	}
 	return nil
 }

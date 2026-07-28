@@ -16,6 +16,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
@@ -328,7 +329,8 @@ func exerciseVideoReviewGate(
 func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvironment) {
 	t.Helper()
 	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
-	collect := env.collectServer(t, now)
+	uploads := &stubSigner{object: storage.ObjectInfo{Size: 4096, ContentType: "video/mp4"}}
+	collect := env.collectServer(t, now, uploads)
 	defer collect.Close()
 
 	token, tokenHash, err := GenerateToken()
@@ -361,15 +363,22 @@ func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvi
 		t.Fatalf("request upload = %d, want 201 (%s)", created.StatusCode, body)
 	}
 	var upload struct {
-		MediaID       string `json:"media_id"`
-		UploadURL     string `json:"upload_url"`
-		CompleteToken string `json:"complete_token"`
+		MediaID       string            `json:"media_id"`
+		UploadURL     string            `json:"upload_url"`
+		Method        string            `json:"method"`
+		Fields        map[string]string `json:"fields"`
+		CompleteToken string            `json:"complete_token"`
 	}
 	if err := json.Unmarshal([]byte(body), &upload); err != nil {
 		t.Fatalf("decode upload: %v (%s)", err, body)
 	}
-	if upload.MediaID == "" || upload.UploadURL == "" || upload.CompleteToken == "" {
+	if upload.MediaID == "" || upload.UploadURL == "" || upload.Method != http.MethodPost ||
+		upload.Fields["Content-Type"] != "video/mp4" ||
+		upload.Fields["key"] == "" || upload.CompleteToken == "" {
 		t.Fatalf("upload = %#v, want an id, a destination and a token", upload)
+	}
+	if uploads.maxBytes != 4096 {
+		t.Fatalf("signed upload maximum = %d, want the declared 4096 bytes", uploads.maxBytes)
 	}
 
 	// A wrong token cannot confirm someone else's slot.
@@ -410,6 +419,61 @@ func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvi
 	if second.StatusCode != http.StatusCreated {
 		t.Fatalf("second take = %d (%s)", second.StatusCode, secondBody)
 	}
+	if len(uploads.removed) != 1 || uploads.removed[0] != upload.Fields["key"] {
+		t.Fatalf("replacement removed objects = %#v, want the first source", uploads.removed)
+	}
+	var oversized struct {
+		MediaID       string `json:"media_id"`
+		CompleteToken string `json:"complete_token"`
+	}
+	if err := json.Unmarshal([]byte(secondBody), &oversized); err != nil {
+		t.Fatalf("decode second upload: %v", err)
+	}
+	uploads.object = storage.ObjectInfo{Size: 2049, ContentType: "video/webm"}
+	if got, _ := postJSON(t, base+"/video/complete",
+		`{"media_id":"`+oversized.MediaID+`","complete_token":"`+oversized.CompleteToken+`"}`); got.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("oversized completion = %d, want 422", got.StatusCode)
+	}
+	if len(uploads.removed) != 2 {
+		t.Fatalf("rejected completion removed objects = %#v", uploads.removed)
+	}
+	for _, testCase := range []struct {
+		name    string
+		object  storage.ObjectInfo
+		statErr error
+	}{
+		{
+			name:   "wrong content type",
+			object: storage.ObjectInfo{Size: 1024, ContentType: "application/octet-stream"},
+		},
+		{name: "missing object", statErr: storage.ErrObjectNotFound},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			created, createdBody := postJSON(
+				t, base+"/video", `{"content_type":"video/mp4","size_bytes":1024}`,
+			)
+			if created.StatusCode != http.StatusCreated {
+				t.Fatalf("request upload = %d (%s)", created.StatusCode, createdBody)
+			}
+			var candidate struct {
+				MediaID       string `json:"media_id"`
+				CompleteToken string `json:"complete_token"`
+			}
+			if err := json.Unmarshal([]byte(createdBody), &candidate); err != nil {
+				t.Fatalf("decode upload: %v", err)
+			}
+			uploads.object, uploads.statErr = testCase.object, testCase.statErr
+			response, _ := postJSON(t, base+"/video/complete",
+				`{"media_id":"`+candidate.MediaID+`","complete_token":"`+candidate.CompleteToken+`"}`)
+			if response.StatusCode != http.StatusUnprocessableEntity {
+				t.Errorf("completion = %d, want 422", response.StatusCode)
+			}
+			uploads.statErr = nil
+		})
+	}
+	if len(uploads.removed) != 4 {
+		t.Fatalf("invalid/replaced uploads removed objects = %#v", uploads.removed)
+	}
 	env.withTenant(ctx, t, func(tx pgx.Tx) {
 		var count int
 		if err := tx.QueryRow(ctx, `
@@ -417,8 +481,8 @@ func exerciseVideoUpload(ctx context.Context, t *testing.T, env *testimonialEnvi
 		`, env.tenantID, request.ID).Scan(&count); err != nil {
 			t.Fatalf("count media: %v", err)
 		}
-		if count != 1 {
-			t.Errorf("media rows after a second take = %d, want 1", count)
+		if count != 0 {
+			t.Errorf("media rows after rejecting invalid objects = %d, want 0", count)
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM testimonial_media WHERE tenant_id = $1`,
 			env.tenantID); err != nil {
@@ -830,23 +894,53 @@ func (e *testimonialEnvironment) publicServer(t *testing.T) *httptest.Server {
 
 // stubSigner stands in for object storage. What is under test is which requests
 // reach a signature at all, not what the signature looks like.
-type stubSigner struct{}
+type stubSigner struct {
+	object   storage.ObjectInfo
+	statErr  error
+	maxBytes int64
+	removed  []string
+}
 
 func (stubSigner) PresignInline(_ context.Context, key, contentType string, _ time.Duration) (string, error) {
 	return "https://storage.test/" + key + "?type=" + contentType, nil
 }
 
-func (stubSigner) PresignPut(_ context.Context, key string, _ time.Duration) (string, error) {
-	return "https://storage.test/put/" + key, nil
+func (s *stubSigner) PresignPost(
+	_ context.Context,
+	key string,
+	contentType string,
+	maxBytes int64,
+	_ time.Duration,
+) (storage.PresignedPost, error) {
+	s.maxBytes = maxBytes
+	return storage.PresignedPost{
+		URL: "https://storage.test/post",
+		Fields: map[string]string{
+			"key": key, "Content-Type": contentType, "policy": "signed-policy",
+		},
+	}, nil
+}
+
+func (s *stubSigner) Stat(context.Context, string) (storage.ObjectInfo, error) {
+	return s.object, s.statErr
+}
+
+func (s *stubSigner) RemoveObject(_ context.Context, key string) error {
+	s.removed = append(s.removed, key)
+	return nil
 }
 
 // collectServer mounts the author-facing endpoints on a real router, because
 // routing and middleware are where this feature's fatal defects have lived.
-func (e *testimonialEnvironment) collectServer(t *testing.T, now time.Time) *httptest.Server {
+func (e *testimonialEnvironment) collectServer(
+	t *testing.T,
+	now time.Time,
+	uploads UploadSigner,
+) *httptest.Server {
 	t.Helper()
 	router := chi.NewRouter()
 	RegisterCollectRoutes(router, CollectHTTPOptions{
-		Store: Store{}, MediaStore: Store{}, Uploads: stubSigner{},
+		Store: Store{}, MediaStore: Store{}, Uploads: uploads,
 		Resolver: e.pools.Admin, Begin: db.BeginFromPool(e.pools.App),
 		Now: func() time.Time { return now },
 	})
