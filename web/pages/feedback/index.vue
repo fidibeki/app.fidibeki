@@ -26,6 +26,11 @@ import type {
   TriagePriority,
   TriageTag,
 } from '~/types/api'
+import {
+  feedbackContextLabel,
+  feedbackContextURL,
+  feedbackSource,
+} from '~/utils/feedback-source'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +43,7 @@ const { integer, plural, relativeTime } = useRegionalFormat()
 const query = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const project = ref(typeof route.query.project_id === 'string' ? route.query.project_id : '')
 const feedbackStatus = ref(typeof route.query.status === 'string' ? route.query.status : 'open')
+const source = ref(typeof route.query.source === 'string' ? route.query.source : '')
 const rating = ref(typeof route.query.rating === 'string' ? route.query.rating : '')
 const attachment = ref(typeof route.query.attachment === 'string' ? route.query.attachment : '')
 const moderation = ref(typeof route.query.moderation === 'string' ? route.query.moderation : '')
@@ -79,6 +85,7 @@ const filterQuery = computed(() => {
   if (query.value.trim()) params.set('q', query.value.trim())
   if (project.value) params.set('project_id', project.value)
   if (feedbackStatus.value) params.set('status', feedbackStatus.value)
+  if (source.value) params.set('source', source.value)
   if (rating.value) params.set('rating', rating.value)
   if (attachment.value) params.set('attachment', attachment.value)
   if (moderation.value) params.set('moderation', moderation.value)
@@ -137,7 +144,7 @@ watch(data, (page) => {
 }, { immediate: true })
 
 watch(
-  [query, project, feedbackStatus, rating, attachment, moderation, issue, processing, sentiment, dateFrom, dateTo, sort],
+  [query, project, feedbackStatus, source, rating, attachment, moderation, issue, processing, sentiment, dateFrom, dateTo, sort],
   () => {
     const params = Object.fromEntries(new URLSearchParams(filterQuery.value).entries())
     delete params.limit
@@ -158,6 +165,7 @@ watch(() => route.fullPath, (fullPath) => {
   query.value = value('q')
   project.value = value('project_id')
   feedbackStatus.value = value('status', 'open')
+  source.value = value('source')
   rating.value = value('rating')
   attachment.value = value('attachment')
   moderation.value = value('moderation')
@@ -422,6 +430,7 @@ function clearFilters() {
   query.value = ''
   project.value = ''
   feedbackStatus.value = ''
+  source.value = ''
   rating.value = ''
   attachment.value = ''
   moderation.value = ''
@@ -436,6 +445,7 @@ function clearFilters() {
 const activeFilterCount = computed(() => [
   project.value,
   feedbackStatus.value,
+  source.value,
   rating.value,
   attachment.value,
   moderation.value,
@@ -459,6 +469,10 @@ function closeMobileFilters() {
 
 function copy(item: FeedbackItem) {
   return item.title || t('feedback.common.feedbackWithoutDetail')
+}
+
+function contextLabel(item: FeedbackItem) {
+  return feedbackContextLabel(item) || t('feedback.common.notAvailable')
 }
 
 function formatAge(value: string) {
@@ -491,6 +505,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
         <div class="feedback-filter-bar-desktop">
           <select v-model="project" :aria-label="t('feedback.filters.project')"><option value="">{{ t('feedback.filters.allProjects') }}</option><option v-for="item in projectData?.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select>
           <select v-model="feedbackStatus" :aria-label="t('feedback.filters.status')"><option value="">{{ t('feedback.filters.allStatuses') }}</option><option value="open">{{ statusLabel('open') }}</option><option value="archived">{{ statusLabel('archived') }}</option><option value="spam">{{ statusLabel('spam') }}</option></select>
+          <select v-model="source" :aria-label="t('feedback.filters.source')"><option value="">{{ t('feedback.filters.allSources') }}</option><option value="web">{{ t('feedback.source.web') }}</option><option value="ios">{{ t('feedback.source.ios') }}</option><option value="android">{{ t('feedback.source.android') }}</option></select>
           <select v-model="rating" :aria-label="t('feedback.filters.rating')"><option value="">{{ t('feedback.filters.anyRating') }}</option><option v-for="value in 5" :key="value" :value="String(value)">{{ plural('feedback.filters.star', value, { count: integer(value) }) }}</option></select>
           <select v-model="attachment" :aria-label="t('feedback.filters.evidence')"><option value="">{{ t('feedback.filters.anyEvidence') }}</option><option value="none">{{ t('feedback.filters.noEvidence') }}</option><option value="screenshot">{{ t('feedback.evidenceKinds.screenshot') }}</option><option value="audio">{{ t('feedback.evidenceKinds.audio') }}</option><option value="video">{{ t('feedback.evidenceKinds.video') }}</option><option value="replay">{{ t('feedback.evidenceKinds.replay') }}</option></select>
           <details class="feedback-more-filters">
@@ -513,6 +528,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
           <div class="feedback-mobile-filters-panel">
             <label>{{ t('feedback.filters.project') }}<select v-model="project"><option value="">{{ t('feedback.filters.allProjects') }}</option><option v-for="item in projectData?.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
             <label>{{ t('feedback.filters.status') }}<select v-model="feedbackStatus"><option value="">{{ t('feedback.filters.allStatuses') }}</option><option value="open">{{ statusLabel('open') }}</option><option value="archived">{{ statusLabel('archived') }}</option><option value="spam">{{ statusLabel('spam') }}</option></select></label>
+            <label>{{ t('feedback.filters.source') }}<select v-model="source"><option value="">{{ t('feedback.filters.allSources') }}</option><option value="web">{{ t('feedback.source.web') }}</option><option value="ios">{{ t('feedback.source.ios') }}</option><option value="android">{{ t('feedback.source.android') }}</option></select></label>
             <label>{{ t('feedback.filters.rating') }}<select v-model="rating"><option value="">{{ t('feedback.filters.anyRating') }}</option><option v-for="value in 5" :key="value" :value="String(value)">{{ plural('feedback.filters.star', value, { count: integer(value) }) }}</option></select></label>
             <label>{{ t('feedback.filters.evidence') }}<select v-model="attachment"><option value="">{{ t('feedback.filters.anyEvidence') }}</option><option value="none">{{ t('feedback.filters.noEvidence') }}</option><option value="screenshot">{{ t('feedback.evidenceKinds.screenshot') }}</option><option value="audio">{{ t('feedback.evidenceKinds.audio') }}</option><option value="video">{{ t('feedback.evidenceKinds.video') }}</option><option value="replay">{{ t('feedback.evidenceKinds.replay') }}</option></select></label>
             <label>{{ t('feedback.filters.moderation') }}<select v-model="moderation"><option value="">{{ t('feedback.filters.any') }}</option><option value="flagged">{{ t('feedback.filters.flagged') }}</option><option value="clean">{{ t('feedback.filters.clean') }}</option></select></label>
@@ -558,7 +574,14 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
           <label v-if="canWrite('feedback:update')" class="feedback-row-check" @click.stop><input type="checkbox" :checked="selectedIds.includes(item.id)" :aria-label="t('feedback.actions.select', { feedback: item.public_id })" @change="toggleSelected(item.id)" /></label>
           <span v-else class="feedback-row-check" aria-hidden="true" />
           <RatingMark :rating="item.rating" compact />
-          <div class="feedback-row-copy"><strong>{{ copy(item) }}</strong><span>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</span></div>
+          <div class="feedback-row-copy">
+            <strong>{{ copy(item) }}</strong>
+            <div class="feedback-row-context">
+              <span>{{ item.public_id }} · {{ item.project_name }}</span>
+              <FeedbackSourceBadge :source="feedbackSource(item)" />
+              <span>{{ contextLabel(item) }}</span>
+            </div>
+          </div>
           <div class="feedback-triage-markers">
             <span v-if="item.priority" class="feedback-priority-mark" :data-priority="item.priority">{{ priorityLabel(item.priority) }}</span>
             <span v-if="item.assignee" class="feedback-assignee-mark" :title="item.assignee.name || item.assignee.email"><MemberAvatar :member-id="item.assignee.id" :name="item.assignee.name" :email="item.assignee.email" :avatar-version="item.assignee.avatar_version" /></span>
@@ -579,7 +602,18 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 
     <aside v-if="selected" class="feedback-inspector">
       <header><div><span class="app-eyebrow">{{ selected.project_name }}</span><h2>{{ selected.public_id }}</h2></div><div><button :title="t('feedback.actions.previous')" :aria-label="t('feedback.actions.previous')" @click="moveSelection(-1)"><ChevronLeft :size="16" /></button><button :title="t('feedback.actions.next')" :aria-label="t('feedback.actions.next')" @click="moveSelection(1)"><ChevronRight :size="16" /></button><NuxtLink :to="`/feedback/${selected.id}`" :title="t('feedback.actions.openDetail')" :aria-label="t('feedback.actions.openDetail')"><ExternalLink :size="16" /></NuxtLink></div></header>
-      <div class="feedback-inspector-summary"><RatingMark :rating="selected.rating" /><div><b>{{ selected.page_url }}</b><span>{{ formatAge(selected.created_at) }} · {{ selected.browser || t('feedback.common.unknownBrowser') }}</span></div><span class="status-pill" :class="`status-${selected.status}`">{{ statusLabel(selected.status) }}</span></div>
+      <div class="feedback-inspector-summary">
+        <RatingMark :rating="selected.rating" />
+        <div class="feedback-inspector-context">
+          <div class="feedback-context-line">
+            <FeedbackSourceBadge :source="feedbackSource(selected)" />
+            <a v-if="feedbackContextURL(selected)" :href="feedbackContextURL(selected) || undefined" target="_blank" rel="noreferrer" @click.stop>{{ contextLabel(selected) }}</a>
+            <b v-else>{{ contextLabel(selected) }}</b>
+          </div>
+          <span>{{ formatAge(selected.created_at) }} · {{ selected.browser || t('feedback.common.unknownBrowser') }}</span>
+        </div>
+        <span class="status-pill" :class="`status-${selected.status}`">{{ statusLabel(selected.status) }}</span>
+      </div>
       <nav :aria-label="t('feedback.inspector.sections')"><button :data-active="inspectorTab === 'feedback'" @click="inspectorTab = 'feedback'">{{ t('feedback.inspector.feedback') }}</button><button :data-active="inspectorTab === 'evidence'" @click="inspectorTab = 'evidence'">{{ t('feedback.inspector.evidence') }}</button><button :data-active="inspectorTab === 'replay'" @click="inspectorTab = 'replay'">{{ t('feedback.inspector.replay') }}</button></nav>
       <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body">
         <p class="feedback-quote">{{ selected.description || selected.text || t('feedback.common.noWrittenFeedback') }}</p>
@@ -669,10 +703,11 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-stream article[data-selected='true'] { background: var(--teal-soft); box-shadow: inset 3px 0 var(--teal); }
 .feedback-row-check { display: grid; place-items: center; }
 .feedback-row-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.feedback-row-copy strong,
-.feedback-row-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feedback-row-copy strong { font-size: 11px; }
-.feedback-row-copy span { color: var(--muted); font-size: 9px; }
+.feedback-row-copy > strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-row-context { display: flex; min-width: 0; align-items: center; gap: 5px; }
+.feedback-row-context > span { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-row-context > span:first-child { flex: 0 1 auto; }
+.feedback-row-context > span:last-child { flex: 1 1 auto; }
 .feedback-triage-markers { display: flex; min-width: 0; height: 28px; align-items: center; gap: 4px; overflow: hidden; }
 .feedback-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: var(--ink-soft); background: var(--teal-soft); border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .feedback-priority-mark[data-priority='high'] { color: var(--amber); background: var(--amber-soft); }
@@ -697,11 +732,12 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-inspector > header button,
 .feedback-inspector > header a { display: grid; width: 31px; height: 31px; place-items: center; background: transparent; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; }
 .feedback-inspector-summary { display: grid; min-height: 70px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.feedback-inspector-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.feedback-inspector-summary > div b,
-.feedback-inspector-summary > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.feedback-inspector-summary > div b { font-size: 11px; }
-.feedback-inspector-summary > div span { color: var(--muted); font-size: 9px; }
+.feedback-inspector-context { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.feedback-inspector-context > span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-context-line { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.feedback-context-line > a,
+.feedback-context-line > b { min-width: 0; overflow: hidden; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-context-line > a:hover { color: var(--teal); text-decoration: underline; }
 .feedback-inspector > nav { display: flex; min-height: 42px; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .feedback-inspector > nav button { padding: 0 10px; background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; font-size: 10px; font-weight: 750; }
 .feedback-inspector > nav button[data-active='true'] { color: var(--teal); border-bottom-color: var(--teal); }

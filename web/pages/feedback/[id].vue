@@ -18,7 +18,11 @@ import {
   X,
 } from '@lucide/vue'
 import type { FeedbackAttachment, FeedbackDetail, FeedbackStatus, TenantConfiguration } from '~/types/api'
-import { specificPageLocation } from '~/utils/privacy-location'
+import {
+  feedbackContextLabel,
+  feedbackContextURL,
+  feedbackSource,
+} from '~/utils/feedback-source'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,7 +69,9 @@ const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some
 const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.value && hasReprocessableEvidence.value)
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 const structuredResponses = computed(() => Object.entries(feedback.value?.responses || {}))
-const specificPageURL = computed(() => specificPageLocation(feedback.value?.page_url))
+const source = computed(() => feedbackSource(feedback.value))
+const contextLabel = computed(() => feedbackContextLabel(feedback.value) || t('feedback.common.notAvailable'))
+const contextURL = computed(() => feedbackContextURL(feedback.value))
 
 function responseLabel(key: string) {
   return key.replace(/_/g, ' ').replace(/^./, (character) => character.toUpperCase())
@@ -253,7 +259,15 @@ useHead(() => ({
 
     <template v-else-if="feedback">
       <section class="feedback-detail-heading">
-        <div><p class="app-eyebrow">{{ feedback.project_name }} · {{ feedback.page_url }}</p><div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" :aria-label="t('feedback.detail.titleLabel')" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">{{ t('feedback.actions.save') }}</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">{{ t('feedback.actions.cancel') }}</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" :title="t('feedback.actions.editTitle')" :aria-label="t('feedback.actions.editTitle')" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span></div>
+        <div>
+          <div class="feedback-detail-origin">
+            <span class="app-eyebrow">{{ feedback.project_name }}</span>
+            <FeedbackSourceBadge :source="source" />
+            <a v-if="contextURL" :href="contextURL" target="_blank" rel="noreferrer">{{ contextLabel }} <ExternalLink :size="11" /></a>
+            <span v-else>{{ contextLabel }}</span>
+          </div>
+          <div v-if="titleEditing" class="feedback-title-editor"><input v-model="titleDraft" class="app-input" maxlength="80" :aria-label="t('feedback.detail.titleLabel')" autofocus /><button class="app-button app-button--primary" :disabled="mutationPending || !titleDraft.trim()" @click="saveTitle">{{ t('feedback.actions.save') }}</button><button class="app-button" :disabled="mutationPending" @click="titleEditing = false">{{ t('feedback.actions.cancel') }}</button></div><h1 v-else>{{ feedback.title }}<button v-if="canWrite('feedback:update')" class="feedback-title-edit" :title="t('feedback.actions.editTitle')" :aria-label="t('feedback.actions.editTitle')" @click="editTitle"><Pencil :size="14" /></button></h1><p v-if="description" class="feedback-description">{{ description }}</p><span>{{ feedback.public_id }} · {{ formatDate(feedback.created_at) }}</span>
+        </div>
         <RatingMark :rating="feedback.rating" />
       </section>
 
@@ -305,7 +319,7 @@ useHead(() => ({
 
           <section v-else class="feedback-environment">
             <h2>{{ t('feedback.detail.environment') }}</h2>
-            <dl><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a v-if="specificPageURL" :href="specificPageURL" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a><span v-else>{{ feedback.page_url }}</span></dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
+            <dl><div><dt>{{ t('feedback.detail.source') }}</dt><dd><FeedbackSourceBadge :source="source" /></dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.mobileScreen') }}</dt><dd>{{ feedback.mobile_screen || t('feedback.common.notAvailable') }}</dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.applicationID') }}</dt><dd>{{ feedback.mobile_application_id || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a v-if="contextURL" :href="contextURL" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a><span v-else>{{ feedback.page_url || t('feedback.common.notAvailable') }}</span></dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.appVersion') }}</dt><dd>{{ feedback.mobile_app_version || t('feedback.common.notAvailable') }}</dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.mobileOSVersion') }}</dt><dd>{{ feedback.mobile_os_version || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
           </section>
         </main>
 
@@ -336,9 +350,15 @@ useHead(() => ({
 .feedback-detail-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px clamp(16px, 3vw, 38px); background: var(--surface); border-bottom: 1px solid var(--line); }
 .feedback-detail-toolbar > div { display: flex; gap: 7px; }
 .feedback-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; padding: 26px clamp(16px, 3vw, 38px) 22px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.feedback-detail-heading > div { max-width: 900px; }
+.feedback-detail-heading > div { min-width: 0; max-width: 900px; flex: 1 1 auto; }
 .feedback-detail-heading h1 { margin: 7px 0 8px; font-size: 21px; font-weight: 650; line-height: 1.4; }
 .feedback-detail-heading h1 { display: flex; align-items: center; gap: 8px; }
+.feedback-detail-origin { display: flex; width: 100%; min-width: 0; max-width: 100%; align-items: center; gap: 7px; overflow: hidden; }
+.feedback-detail-origin > .app-eyebrow { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-detail-origin > a,
+.feedback-detail-origin > span:last-child { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-detail-origin > a { display: inline-flex; align-items: center; gap: 4px; }
+.feedback-detail-origin > a:hover { color: var(--teal); text-decoration: underline; }
 .feedback-title-edit { display: inline-grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; padding: 0; background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 4px; }
 .feedback-title-edit:hover { color: var(--teal); border-color: var(--line); }
 .feedback-title-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; margin: 7px 0 8px; }

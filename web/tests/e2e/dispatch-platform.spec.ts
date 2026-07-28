@@ -328,6 +328,11 @@ function createMockState() {
       text_cleaned: "Checkout froze after I applied a promotion code.",
       reporter_email: "customer@example.test",
       notify_reporter: true,
+      source: "web" as "web" | "ios" | "android",
+      mobile_application_id: null as string | null,
+      mobile_screen: null as string | null,
+      mobile_app_version: null as string | null,
+      mobile_os_version: null as string | null,
       page_url: "https://shop.acme.test/checkout",
       referrer: "https://shop.acme.test/cart",
       user_agent: "Mozilla/5.0",
@@ -370,6 +375,11 @@ function createMockState() {
       text: "The new checkout is much clearer.",
       text_cleaned: "The new checkout is much clearer.",
       notify_reporter: false,
+      source: "web" as "web" | "ios" | "android",
+      mobile_application_id: null as string | null,
+      mobile_screen: null as string | null,
+      mobile_app_version: null as string | null,
+      mobile_os_version: null as string | null,
       page_url: "https://shop.acme.test/checkout/success",
       status: "open",
       ai_status: "completed",
@@ -1769,6 +1779,7 @@ async function installMockAPI(page: Page, state: MockState) {
 
     if (path === "/v1/feedbacks" && method === "GET") {
       const requestedStatus = url.searchParams.get("status");
+      const requestedSource = url.searchParams.get("source");
       const requestedAttachment = url.searchParams.get("attachment");
       const requestedQuery = url.searchParams.get("q")?.toLowerCase();
       const items = state.feedback.filter((item) => {
@@ -1783,6 +1794,7 @@ async function installMockAPI(page: Page, state: MockState) {
         )
           return false;
         if (requestedStatus && item.status !== requestedStatus) return false;
+        if (requestedSource && item.source !== requestedSource) return false;
         if (requestedAttachment === "replay") return item.has_replay;
         if (requestedAttachment === "none")
           return item.attachment_kinds.length === 0 && !item.has_replay;
@@ -5729,6 +5741,68 @@ test("feedback can be inspected, previewed, and archived", async ({
   expect(state.feedback[0].status).toBe("archived");
 });
 
+test("mobile feedback is identifiable, filterable, and never receives a fabricated page link", async ({
+  page,
+}, testInfo) => {
+  const state = createMockState();
+  Object.assign(state.feedback[1], {
+    source: "ios",
+    page_url: "",
+    mobile_application_id: "com.acme.storefront",
+    mobile_screen: "/checkout/payment",
+    mobile_app_version: "4.8.1",
+    mobile_os_version: "18.5",
+    os: "iOS",
+    device: "phone",
+  });
+
+  await authenticate(page, state);
+  await openPrimary(page, "Feedback");
+
+  if (testInfo.project.name === "mobile") {
+    await page.locator(".feedback-mobile-filters > summary").click();
+    const panel = page.locator(".feedback-mobile-filters-panel");
+    await panel.getByRole("combobox", { name: "Source filter" }).selectOption("ios");
+    await panel.getByRole("button", { name: "Done", exact: true }).click();
+  } else {
+    await page
+      .locator(".feedback-filter-bar-desktop")
+      .getByLabel("Source filter")
+      .selectOption("ios");
+  }
+
+  await expect(page).toHaveURL(/source=ios/);
+  await expect(page.getByText("1 loaded")).toBeVisible();
+  const row = page.getByRole("listitem").filter({ hasText: "FB-1047" });
+  await expect(row.getByLabel("iOS source")).toBeVisible();
+  await expect(row).toContainText("/checkout/payment");
+
+  if (testInfo.project.name === "mobile") {
+    await row.getByRole("link", { name: "Open FB-1047" }).click();
+  } else {
+    await row.click();
+    const inspector = page.locator(".feedback-inspector");
+    await expect(inspector.getByLabel("iOS source")).toBeVisible();
+    await expect(inspector).toContainText("/checkout/payment");
+    await expect(inspector.locator(".feedback-context-line > a")).toHaveCount(0);
+    await inspector.getByTitle("Open full detail").click();
+  }
+
+  await expect(page).toHaveURL(/\/feedback\/feedback-2$/);
+  await expect(page.locator(".feedback-detail-origin").getByLabel("iOS source")).toBeVisible();
+  await expect(page.locator(".feedback-detail-origin")).toContainText("/checkout/payment");
+  await expect(page.locator(".feedback-detail-origin > a")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Environment", exact: true }).click();
+  const environment = page.locator(".feedback-environment");
+  await expect(environment).toContainText("com.acme.storefront");
+  await expect(environment).toContainText("4.8.1");
+  await expect(environment).toContainText("18.5");
+  await expect(environment.locator("dd a")).toHaveCount(0);
+  await expectNoPageOverflow(page);
+  await capture(page, testInfo, `feedback-mobile-source-${testInfo.project.name}`);
+});
+
 test("feedback sentiment uses semantic labels with an exact-score disclosure", async ({
   page,
 }, testInfo) => {
@@ -6926,6 +7000,7 @@ test("desktop feedback toolbar keeps every structured filter directly available"
   await expect(page.locator(".feedback-mobile-filters")).toBeHidden();
   await expect(desktopFilters.getByLabel("Project filter")).toBeVisible();
   await expect(desktopFilters.getByLabel("Status filter")).toBeVisible();
+  await expect(desktopFilters.getByLabel("Source filter")).toBeVisible();
   await expect(desktopFilters.getByLabel("Rating filter")).toBeVisible();
   await expect(desktopFilters.getByLabel("Evidence filter")).toBeVisible();
   await expect(page.getByText("More filters", { exact: true })).toBeVisible();
@@ -6984,6 +7059,9 @@ test("mobile Filters disclosure exposes every structured filter and restores foc
   ).toBeVisible();
   await expect(
     panel.getByRole("combobox", { name: "Status filter" }),
+  ).toBeVisible();
+  await expect(
+    panel.getByRole("combobox", { name: "Source filter" }),
   ).toBeVisible();
   await expect(
     panel.getByRole("combobox", { name: "Rating filter" }),

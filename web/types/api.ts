@@ -537,6 +537,11 @@ export interface FeedbackItem {
   tags: TriageTag[]
   reporter_email?: string
   notify_reporter: boolean
+  source?: 'web' | 'ios' | 'android'
+  mobile_application_id?: string | null
+  mobile_screen?: string | null
+  mobile_app_version?: string | null
+  mobile_os_version?: string | null
   page_url: string
   referrer?: string
   user_agent?: string
