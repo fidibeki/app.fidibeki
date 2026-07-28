@@ -20,13 +20,14 @@ for both services because configuration is validated before the command starts.
 | `WEB_PUBLIC_BASE_URL` | no | Browser-facing origin used to derive tenant URLs (SAML entity ID, assertion consumer, post-login redirects). Defaults to `PUBLIC_BASE_URL`; set it when the web tier answers on a different scheme or port, as it does in local development. Must use HTTPS in staging and production; HTTP is accepted only in local/test. |
 | `READINESS_TIMEOUT` | no | Per-request readiness budget; default `2s`. |
 | `SHUTDOWN_TIMEOUT` | no | Graceful shutdown budget; default `10s`. |
-| `DATABASE_URL_APP` | yes | Runtime URL with the `fidibeki_app` username and password. `migrate up` applies these credentials to the RLS-constrained role. |
-| `DATABASE_URL_ADMIN` | yes | Runtime URL with the `fidibeki_admin` username and password. `migrate up` applies these credentials to the bypass-RLS role. |
-| `DATABASE_URL_DIRECT` | yes | Direct owner-level Postgres URL used by migrations and runtime-role provisioning. |
+| `DATABASE_URL_APP` | yes | Runtime URL with the `fidibeki_app` username and password. `migrate up` applies these credentials to the RLS-constrained role. Requires TLS outside local/test. |
+| `DATABASE_URL_ADMIN` | yes | Runtime URL with the `fidibeki_admin` username and password. `migrate up` applies these credentials to the bypass-RLS role. Requires TLS outside local/test. |
+| `DATABASE_URL_DIRECT` | yes | Direct owner-level Postgres URL used by migrations and runtime-role provisioning. Requires TLS outside local/test. |
 | `DATABASE_APP_MAX_CONNS` | no | App pool maximum; default `10`. |
 | `DATABASE_ADMIN_MAX_CONNS` | no | Admin pool maximum; default `5`. |
 | `MIGRATIONS_PATH` | no | Migration directory; container default `/app/migrations`. |
-| `REDIS_URL` | yes | Redis URL for queues, rate limits, and cache. |
+| `REDIS_URL` | yes | Redis URL for queues, rate limits, and cache. Must use `rediss://` in staging and production; `redis://` is accepted only in local/test. |
+| `REDIS_CA_CERT` | no | PEM CA certificate used only to verify a private Redis server certificate. Requires `REDIS_URL=rediss://...`; omit it for certificates trusted by the system CA store. |
 | `S3_ENDPOINT` | yes | S3-compatible private endpoint. Must use HTTPS in staging and production; HTTP is accepted only in local/test for MinIO. |
 | `S3_PUBLIC_ENDPOINT` | no | Browser-reachable endpoint used for presigned uploads and downloads. Must use HTTPS in staging and production because presigned URLs are bearer capabilities; HTTP is accepted only in local/test. |
 | `S3_REGION` | no | Bucket region; default `us-east-1`. |
@@ -78,6 +79,25 @@ for both services because configuration is validated before the command starts.
 | `SLACK_CLIENT_ID` | no | Slack app client ID for one-click install. |
 | `SLACK_CLIENT_SECRET` | no | Slack app client secret. |
 | `SLACK_REDIRECT_URL` | no | Install callback, e.g. `https://api.<BASE_DOMAIN>/v1/integrations/slack/callback`. Must match a redirect URL registered on the Slack app exactly, and must be HTTPS. |
+
+### Database and Redis transport security
+
+Every PostgreSQL URL must explicitly set `sslmode=require`, `sslmode=verify-ca`, or
+`sslmode=verify-full` in staging and production. `require` is the minimum accepted encrypted
+transport; prefer `verify-full` so pgx verifies both the certificate chain and database hostname.
+Use `sslrootcert=system` for a publicly trusted provider certificate, or point `sslrootcert` at a
+mounted PEM CA file, for example:
+
+```text
+postgres://user:password@database.example.com/fidibeki?sslmode=verify-full&sslrootcert=system
+```
+
+Never use an omitted `sslmode`, `disable`, `allow`, or `prefer` outside local/test because pgx can
+fall back to plaintext. `rediss://` configures certificate and hostname-verified TLS for the cache,
+rate limiter, every queue client, the queue monitor, and all workers. Its certificate must chain to
+the runtime's system trust store or the private CA supplied in `REDIS_CA_CERT`; there is no insecure
+certificate-skip setting. The private CA is scoped to Redis clients and is not added to the process
+trust store used for Stripe, Resend, Gemini, or other HTTPS providers.
 
 ### Browser upload CORS
 

@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -39,6 +40,7 @@ type Config struct {
 	DatabaseURLAdmin          string
 	DatabaseURLDirect         string
 	RedisURL                  string
+	RedisCACert               string
 	S3Endpoint                string
 	S3PublicEndpoint          string
 	S3Region                  string
@@ -166,6 +168,7 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		DatabaseURLAdmin:          get("DATABASE_URL_ADMIN", ""),
 		DatabaseURLDirect:         get("DATABASE_URL_DIRECT", ""),
 		RedisURL:                  get("REDIS_URL", ""),
+		RedisCACert:               get("REDIS_CA_CERT", ""),
 		S3Endpoint:                s3Endpoint,
 		S3PublicEndpoint:          get("S3_PUBLIC_ENDPOINT", s3Endpoint),
 		S3Region:                  get("S3_REGION", "us-east-1"),
@@ -394,14 +397,30 @@ func (c Config) validate() []error {
 	}
 	for name, value := range map[string]string{
 		"DATABASE_URL_APP": c.DatabaseURLApp, "DATABASE_URL_ADMIN": c.DatabaseURLAdmin,
-		"DATABASE_URL_DIRECT": c.DatabaseURLDirect, "REDIS_URL": c.RedisURL,
+		"DATABASE_URL_DIRECT": c.DatabaseURLDirect,
 	} {
 		if value == "" {
 			continue
 		}
-		parsed, err := url.ParseRequestURI(value)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			validationErrors = append(validationErrors, fmt.Errorf("%s must be an absolute URL", name))
+		if err := validateDatabaseURL(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
+		}
+	}
+	if c.RedisURL != "" {
+		if err := validateRedisURL(c.RedisURL, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("REDIS_URL %w", err))
+		}
+	}
+	if c.RedisCACert != "" {
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM([]byte(c.RedisCACert)) {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("REDIS_CA_CERT must contain a valid PEM certificate"))
+		}
+		parsed, err := url.ParseRequestURI(c.RedisURL)
+		if err != nil || parsed.Scheme != "rediss" {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("REDIS_CA_CERT requires REDIS_URL to use rediss://"))
 		}
 	}
 	for name, value := range map[string]string{
@@ -579,12 +598,76 @@ func validateEnvironmentHTTPURL(value, environment string) error {
 		return nil
 	}
 	if strings.EqualFold(parsed.Scheme, "http") {
-		if environment == "local" || environment == "test" {
+		if allowsInsecureTransport(environment) {
 			return nil
 		}
 		return fmt.Errorf("must use HTTPS in %s", environment)
 	}
 	return errors.New("must use HTTP or HTTPS")
+}
+
+func validateDatabaseURL(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+		return errors.New("must use postgres:// or postgresql://")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("contains invalid query parameters")
+	}
+	modes := query["sslmode"]
+	if len(modes) > 1 {
+		return errors.New("must set sslmode exactly once")
+	}
+	if len(modes) == 1 {
+		switch modes[0] {
+		case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		default:
+			return fmt.Errorf("has unsupported sslmode %q", modes[0])
+		}
+	}
+	if allowsInsecureTransport(environment) {
+		return nil
+	}
+	if len(modes) == 1 {
+		switch modes[0] {
+		case "require", "verify-ca", "verify-full":
+			return nil
+		}
+	}
+	return fmt.Errorf("must use sslmode=require, verify-ca, or verify-full in %s", environment)
+}
+
+func validateRedisURL(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("contains invalid query parameters")
+	}
+	if query.Has("skip_verify") {
+		return errors.New("must not disable TLS certificate verification")
+	}
+	switch parsed.Scheme {
+	case "rediss":
+		return nil
+	case "redis":
+		if allowsInsecureTransport(environment) {
+			return nil
+		}
+		return fmt.Errorf("must use rediss:// in %s", environment)
+	default:
+		return errors.New("must use redis:// or rediss://")
+	}
+}
+
+func allowsInsecureTransport(environment string) bool {
+	return environment == "local" || environment == "test"
 }
 
 func (c Config) Redacted() map[string]any {
@@ -599,6 +682,7 @@ func (c Config) Redacted() map[string]any {
 		"database_url_admin":           "[REDACTED]",
 		"database_url_direct":          "[REDACTED]",
 		"redis_url":                    "[REDACTED]",
+		"redis_ca_cert":                "[REDACTED]",
 		"s3_endpoint":                  c.S3Endpoint,
 		"s3_public_endpoint":           c.S3PublicEndpoint,
 		"s3_region":                    c.S3Region,

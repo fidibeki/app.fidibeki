@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 
@@ -30,8 +31,8 @@ type VerificationQueue struct {
 	client verificationTaskClient
 }
 
-func OpenVerificationQueue(redisURL string) (*VerificationQueue, error) {
-	options, err := asynq.ParseRedisURI(redisURL)
+func OpenVerificationQueue(redisURL string, caCertificates ...string) (*VerificationQueue, error) {
+	options, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse attachment verification Redis URL: %w", err)
 	}

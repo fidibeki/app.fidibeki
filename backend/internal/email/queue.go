@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 
@@ -25,8 +26,8 @@ type Queue struct {
 	client taskClient
 }
 
-func OpenQueue(redisURL string) (*Queue, error) {
-	redisOptions, err := asynq.ParseRedisURI(redisURL)
+func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
+	redisOptions, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse queue Redis URL: %w", err)
 	}
@@ -77,14 +78,14 @@ type Worker struct {
 	mux    *asynq.ServeMux
 }
 
-func NewWorker(redisURL string, concurrency int, sender Sender) (*Worker, error) {
+func NewWorker(redisURL string, concurrency int, sender Sender, caCertificates ...string) (*Worker, error) {
 	if concurrency <= 0 {
 		return nil, fmt.Errorf("email worker concurrency must be positive")
 	}
 	if sender == nil {
 		return nil, fmt.Errorf("email worker sender is required")
 	}
-	redisOptions, err := asynq.ParseRedisURI(redisURL)
+	redisOptions, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse worker Redis URL: %w", err)
 	}

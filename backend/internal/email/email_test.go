@@ -251,7 +251,7 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	if _, err := NewWorker("://bad", 1, &fakeSender{}); err == nil {
 		t.Error("NewWorker(invalid URL) error = nil")
 	}
-	if worker, err := NewWorker("redis://localhost:6379/0", 1, &fakeSender{}); err != nil || worker == nil {
+	if worker, err := NewWorker("rediss://redis.fidibeki.test:6380/0", 1, &fakeSender{}); err != nil || worker == nil {
 		t.Errorf("NewWorker(valid) = %#v, %v", worker, err)
 	}
 	if err := RegisterHandlers(asynq.NewServeMux(), &fakeSender{}); err != nil {

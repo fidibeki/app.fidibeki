@@ -38,6 +38,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
 	"github.com/acidiney/app.fidibeki/backend/internal/samlsso"
@@ -182,7 +183,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	defer pools.Close()
 
-	redisClient, err := cache.Open(settings.RedisURL)
+	redisClient, err := cache.Open(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -240,7 +241,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	if err != nil {
 		return fmt.Errorf("initialize member notification token manager: %w", err)
 	}
-	emailQueue, err := email.OpenQueue(settings.RedisURL)
+	emailQueue, err := email.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -249,7 +250,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 			logger.Warn("email queue close failed", "error", err)
 		}
 	}()
-	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL)
+	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -265,7 +266,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
-	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	verificationQueue, err := feedback.OpenVerificationQueue(
+		settings.RedisURL, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -278,7 +281,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Store: feedback.VerificationStore{Database: pools.Admin},
 		Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
-	replayQueue, err := replay.OpenQueue(settings.RedisURL)
+	replayQueue, err := replay.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -355,7 +358,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Begin: db.BeginFromPool(pools.App), BaseDomain: settings.BaseDomain,
 		WebPublicBaseURL: settings.WebPublicBaseURL, Logger: logger,
 	})
-	monitorRedis, err := asynq.ParseRedisURI(settings.RedisURL)
+	monitorRedis, err := redisconn.AsynqOptions(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return fmt.Errorf("configure queue monitor: %w", err)
 	}
@@ -387,7 +390,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	issue.RegisterPublicRoutes(platformRoutes, reporterProgressOptions)
 	// Its own client rather than the outbox enqueuer, whose Enqueue speaks in
 	// outbox events. Transcoding is not a domain event; it is one job.
-	redisQueueOptions, err := asynq.ParseRedisURI(settings.RedisURL)
+	redisQueueOptions, err := redisconn.AsynqOptions(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return fmt.Errorf("parse queue Redis URL: %w", err)
 	}
@@ -679,7 +682,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		return err
 	}
 	defer pools.Close()
-	redisClient, err := cache.Open(settings.RedisURL)
+	redisClient, err := cache.Open(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -697,7 +700,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	if err != nil {
 		return err
 	}
-	billingEmailQueue, err := email.OpenQueue(settings.RedisURL)
+	billingEmailQueue, err := email.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -728,7 +731,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		BaseDomain: settings.BaseDomain, AuthFrom: settings.ResendAuthFrom,
 		MaxMembers: settings.DigestMembersPerRun, Logger: logger,
 	}
-	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL)
+	outboxQueue, err := outbox.OpenAsynqEnqueuer(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -753,7 +756,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Resolver: breachregister.ControllerNotificationOutboxResolver{},
 		Enqueuer: outboxQueue, Logger: logger,
 	}
-	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL)
+	aiQueue, err := aiprocessing.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -770,7 +773,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		}, Queue: aiQueue,
 		DailyLimit: settings.AIDailyLimit, Logger: logger,
 	}
-	verificationQueue, err := feedback.OpenVerificationQueue(settings.RedisURL)
+	verificationQueue, err := feedback.OpenVerificationQueue(
+		settings.RedisURL, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -783,7 +788,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	verificationScheduler := feedback.VerificationScheduler{
 		Store: verificationStore, Queue: verificationQueue, Storage: objectStorage, Logger: logger,
 	}
-	replayQueue, err := replay.OpenQueue(settings.RedisURL)
+	replayQueue, err := replay.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -807,7 +812,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	replayCleaner := replay.Cleaner{
 		Store: replayStore, Storage: objectStorage, Health: retentionHealth, Logger: logger,
 	}
-	privacyQueue, err := privacy.OpenQueue(settings.RedisURL)
+	privacyQueue, err := privacy.OpenQueue(settings.RedisURL, settings.RedisCACert)
 	if err != nil {
 		return err
 	}
@@ -944,8 +949,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Logger:      logger,
 	}
 	worker, err := jobworker.New(jobworker.Options{
-		RedisURL: settings.RedisURL, EmailConcurrency: settings.EmailConcurrency,
-		AIConcurrency: settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
+		RedisURL: settings.RedisURL, RedisCACert: settings.RedisCACert,
+		EmailConcurrency: settings.EmailConcurrency,
+		AIConcurrency:    settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
 		MediaConcurrency: settings.MediaConcurrency, PrivacyConcurrency: settings.PrivacyConcurrency,
 		Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),

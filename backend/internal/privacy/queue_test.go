@@ -60,7 +60,7 @@ func TestOpenQueueValidatesRedisURL(t *testing.T) {
 	if _, err := OpenQueue("://invalid"); err == nil {
 		t.Error("OpenQueue(invalid) error = nil")
 	}
-	queue, err := OpenQueue("redis://localhost:6379/0")
+	queue, err := OpenQueue("rediss://redis.fidibeki.test:6380/0")
 	if err != nil {
 		t.Fatalf("OpenQueue(valid) error = %v", err)
 	}

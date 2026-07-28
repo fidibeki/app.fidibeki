@@ -1,8 +1,15 @@
 package config_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +99,18 @@ func TestLoadReadsEnvironmentAndRedactsSecrets(t *testing.T) {
 		if strings.Contains(string(encoded), secret) {
 			t.Errorf("redacted config contains %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestRedactedConfigurationHidesRedisCA(t *testing.T) {
+	t.Parallel()
+	const certificate = "private Redis CA material"
+	encoded, err := json.Marshal((config.Config{RedisCACert: certificate}).Redacted())
+	if err != nil {
+		t.Fatalf("marshal redacted config: %v", err)
+	}
+	if strings.Contains(string(encoded), certificate) {
+		t.Fatalf("redacted config contains Redis CA: %s", encoded)
 	}
 }
 
@@ -204,13 +223,8 @@ func TestConfigurationUsesPlatformPortWhenAddressIsUnset(t *testing.T) {
 
 func TestConfigurationRequiresSecureBackofficeOriginOutsideLocalAndTest(t *testing.T) {
 	t.Parallel()
-	values := map[string]string{
-		"APP_ENV": "staging", "BASE_DOMAIN": "fidibeki.test", "PUBLIC_BASE_URL": "https://api.fidibeki.test",
-		"DATABASE_URL_APP": "postgres://app:app@localhost/fidibeki", "DATABASE_URL_ADMIN": "postgres://admin:admin@localhost/fidibeki", "DATABASE_URL_DIRECT": "postgres://admin:admin@localhost/fidibeki",
-		"REDIS_URL": "redis://localhost:6379/0", "S3_ENDPOINT": "https://storage.fidibeki.test", "S3_BUCKET": "fidibeki", "S3_ACCESS_KEY": "key", "S3_SECRET_KEY": "secret",
-		"JWT_SECRET": strings.Repeat("fixture-", 5), "INTEGRATION_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("i", 32))), "TWO_FACTOR_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("t", 32))),
-		"INTERNAL_PROXY_SECRET": strings.Repeat("proxy-", 6), "STRIPE_SECRET_KEY": "fixture", "STRIPE_WEBHOOK_SECRET": "fixture", "STRIPE_PRICE_STARTER": "fixture", "STRIPE_PRICE_GROWTH": "fixture", "STRIPE_PRICE_SCALE": "fixture", "STRIPE_PRICE_STARTER_YEARLY": "fixture", "STRIPE_PRICE_GROWTH_YEARLY": "fixture", "STRIPE_PRICE_SCALE_YEARLY": "fixture", "TURNSTILE_SECRET_KEY": "fixture", "TURNSTILE_SITE_KEY": "fixture",
-	}
+	values := validEnvironmentValues("staging")
+	delete(values, "PLATFORM_BACKOFFICE_URL")
 	lookup := func(name string) (string, bool) { value, ok := values[name]; return value, ok }
 	if _, err := config.FromLookup(lookup); err == nil || !strings.Contains(err.Error(), "PLATFORM_BACKOFFICE_URL must be an HTTPS origin") {
 		t.Fatalf("missing backoffice origin error = %v", err)
@@ -222,6 +236,150 @@ func TestConfigurationRequiresSecureBackofficeOriginOutsideLocalAndTest(t *testi
 	values["PLATFORM_BACKOFFICE_URL"] = "https://admin.fidibeki.test"
 	if _, err := config.FromLookup(lookup); err != nil {
 		t.Fatalf("secure backoffice origin error = %v", err)
+	}
+}
+
+func TestConfigurationRequiresEncryptedDatabaseTransportOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	modes := []string{"", "disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"DATABASE_URL_APP", "DATABASE_URL_ADMIN", "DATABASE_URL_DIRECT"} {
+			for _, mode := range modes {
+				modeName := mode
+				if modeName == "" {
+					modeName = "missing"
+				}
+				t.Run(environment+"/"+name+"/"+modeName, func(t *testing.T) {
+					t.Parallel()
+					values := validEnvironmentValues(environment)
+					values[name] = databaseURLWithSSLMode(mode)
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					secureMode := mode == "require" || mode == "verify-ca" || mode == "verify-full"
+					if !insecureTransportAllowed(environment) && !secureMode {
+						want := name + " must use sslmode=require, verify-ca, or verify-full in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want database URL accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestConfigurationRequiresEncryptedRedisTransportOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, scheme := range []string{"redis", "rediss"} {
+			t.Run(environment+"/"+scheme, func(t *testing.T) {
+				t.Parallel()
+				values := validEnvironmentValues(environment)
+				values["REDIS_URL"] = scheme + "://redis.fidibeki.test:6379/0"
+				_, err := config.FromLookup(func(name string) (string, bool) {
+					value, exists := values[name]
+					return value, exists
+				})
+				if scheme == "redis" && !insecureTransportAllowed(environment) {
+					want := "REDIS_URL must use rediss:// in " + environment
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("FromLookup() error = %v, want %q", err, want)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("FromLookup() error = %v, want Redis URL accepted", err)
+				}
+			})
+		}
+	}
+}
+
+func TestConfigurationValidatesRedisCertificateSettings(t *testing.T) {
+	t.Parallel()
+	caCertificate := testCACertificate(t)
+
+	values := validEnvironmentValues("staging")
+	values["REDIS_CA_CERT"] = caCertificate
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err != nil {
+		t.Fatalf("valid Redis CA configuration error = %v", err)
+	}
+
+	values["REDIS_CA_CERT"] = "not a certificate"
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "REDIS_CA_CERT must contain a valid PEM certificate") {
+		t.Fatalf("invalid Redis CA configuration error = %v", err)
+	}
+
+	values = validEnvironmentValues("local")
+	values["REDIS_CA_CERT"] = caCertificate
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "REDIS_CA_CERT requires REDIS_URL to use rediss://") {
+		t.Fatalf("plaintext Redis CA configuration error = %v", err)
+	}
+
+	values = validEnvironmentValues("staging")
+	values["REDIS_URL"] += "?skip_verify=true"
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err == nil || !strings.Contains(err.Error(), "must not disable TLS certificate verification") {
+		t.Fatalf("disabled Redis certificate verification error = %v", err)
+	}
+}
+
+func TestConfigurationRejectsUnsupportedDatabaseAndRedisSchemes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "DATABASE_URL_APP", value: "mysql://user:secret@database.test/fidibeki", want: "must use postgres:// or postgresql://"},
+		{name: "DATABASE_URL_ADMIN", value: databaseURLWithSSLMode("REQUIRE"), want: `has unsupported sslmode "REQUIRE"`},
+		{name: "DATABASE_URL_DIRECT", value: databaseURLWithSSLMode("require") + "&sslmode=disable", want: "must set sslmode exactly once"},
+		{name: "REDIS_URL", value: "https://redis.fidibeki.test", want: "must use redis:// or rediss://"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			values := validEnvironmentValues("staging")
+			values[test.name] = test.value
+			_, err := config.FromLookup(func(name string) (string, bool) {
+				value, exists := values[name]
+				return value, exists
+			})
+			want := test.name + " " + test.want
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("FromLookup() error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestConfigurationAcceptsSecurePostgreSQLScheme(t *testing.T) {
+	t.Parallel()
+	values := validEnvironmentValues("production")
+	values["DATABASE_URL_DIRECT"] = strings.Replace(
+		databaseURLWithSSLMode("verify-full"), "postgres://", "postgresql://", 1,
+	)
+	if _, err := config.FromLookup(func(name string) (string, bool) {
+		value, exists := values[name]
+		return value, exists
+	}); err != nil {
+		t.Fatalf("FromLookup() error = %v", err)
 	}
 }
 
@@ -314,15 +472,21 @@ func TestConfigurationRejectsUnsafePublicURLs(t *testing.T) {
 }
 
 func validEnvironmentValues(environment string) map[string]string {
+	databaseURL := databaseURLWithSSLMode("disable")
+	redisURL := "redis://redis.fidibeki.test:6379/0"
+	if !insecureTransportAllowed(environment) {
+		databaseURL = databaseURLWithSSLMode("verify-full")
+		redisURL = "rediss://redis.fidibeki.test:6379/0"
+	}
 	return map[string]string{
 		"APP_ENV":                     environment,
 		"BASE_DOMAIN":                 "fidibeki.test",
 		"PUBLIC_BASE_URL":             "https://api.fidibeki.test",
 		"PLATFORM_BACKOFFICE_URL":     "https://admin.fidibeki.test",
-		"DATABASE_URL_APP":            "postgres://app:app@localhost/fidibeki",
-		"DATABASE_URL_ADMIN":          "postgres://admin:admin@localhost/fidibeki",
-		"DATABASE_URL_DIRECT":         "postgres://admin:admin@localhost/fidibeki",
-		"REDIS_URL":                   "redis://localhost:6379/0",
+		"DATABASE_URL_APP":            databaseURL,
+		"DATABASE_URL_ADMIN":          databaseURL,
+		"DATABASE_URL_DIRECT":         databaseURL,
+		"REDIS_URL":                   redisURL,
 		"S3_ENDPOINT":                 "https://storage.fidibeki.test",
 		"S3_PUBLIC_ENDPOINT":          "https://uploads.fidibeki.test",
 		"S3_BUCKET":                   "fidibeki",
@@ -344,6 +508,40 @@ func validEnvironmentValues(environment string) map[string]string {
 		"TURNSTILE_SITE_KEY":          "fixture",
 		"GEMINI_API_KEY":              "fixture",
 	}
+}
+
+func databaseURLWithSSLMode(mode string) string {
+	const databaseURL = "postgres://user:secret@database.fidibeki.test/fidibeki"
+	if mode == "" {
+		return databaseURL
+	}
+	return databaseURL + "?sslmode=" + mode
+}
+
+func insecureTransportAllowed(environment string) bool {
+	return environment == "local" || environment == "test"
+}
+
+func testCACertificate(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Fidibeki Redis Test CA"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create CA certificate: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 }
 
 func TestConfigurationRejectsMalformedValues(t *testing.T) {

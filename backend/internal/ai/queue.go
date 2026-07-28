@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 
@@ -23,8 +24,8 @@ type Queue struct {
 	client taskClient
 }
 
-func OpenQueue(redisURL string) (*Queue, error) {
-	options, err := asynq.ParseRedisURI(redisURL)
+func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
+	options, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse AI queue Redis URL: %w", err)
 	}

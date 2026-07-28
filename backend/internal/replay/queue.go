@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 
@@ -28,8 +29,8 @@ type Queue struct {
 	client taskClient
 }
 
-func OpenQueue(redisURL string) (*Queue, error) {
-	redisOptions, err := asynq.ParseRedisURI(redisURL)
+func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
+	redisOptions, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse replay queue Redis URL: %w", err)
 	}
