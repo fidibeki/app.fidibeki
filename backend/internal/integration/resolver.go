@@ -13,11 +13,6 @@ import (
 
 const TaskDeliver = "integration:deliver"
 
-const tenantDeliveryEligibleSQL = `(
-	tenant.status = 'active'
-	OR (tenant.status = 'trial' AND tenant.trial_ends_at > $3)
-)`
-
 type OutboxResolver struct {
 	Database db.Querier
 	Now      func() time.Time
@@ -33,7 +28,7 @@ func (r OutboxResolver) Resolve(ctx context.Context, event outbox.Event) ([]outb
 		JOIN tenants AS tenant ON tenant.id = integration.tenant_id
 		WHERE integration.tenant_id = $1
 		  AND integration.is_active = true
-		  AND `+tenantDeliveryEligibleSQL+`
+		  AND `+tenant.OutboundDeliveryEligibleSQL(3)+`
 		  AND $2::event_type = ANY(integration.events)
 		ORDER BY integration.id
 	`, event.TenantID, event.Event, integrationNow(r.Now))

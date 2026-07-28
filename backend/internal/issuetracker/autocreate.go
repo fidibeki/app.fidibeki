@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/hibiken/asynq"
 )
 
@@ -27,6 +29,7 @@ const autoCreateDestinationKind = "issue_tracker"
 // produces a second external issue.
 type OutboxResolver struct {
 	Database db.Querier
+	Now      func() time.Time
 }
 
 func (r OutboxResolver) Resolve(
@@ -39,13 +42,22 @@ func (r OutboxResolver) Resolve(
 	if r.Database == nil {
 		return nil, errors.New("issue tracker outbox resolver database is required")
 	}
+	now := time.Now().UTC()
+	if r.Now != nil {
+		now = r.Now().UTC()
+	}
 	rows, err := r.Database.Query(ctx, `
-		SELECT provider
-		FROM issue_tracker_connections
-		WHERE tenant_id = $1 AND auto_create AND is_enabled AND destination_id <> ''
-		  AND (provider <> 'jira' OR issue_type_id <> '')
-		ORDER BY provider
-	`, event.TenantID)
+		SELECT connection.provider
+		FROM issue_tracker_connections AS connection
+		JOIN tenants AS tenant ON tenant.id = connection.tenant_id
+		WHERE connection.tenant_id = $1
+		  AND `+tenant.OutboundDeliveryEligibleSQL(2)+`
+		  AND connection.auto_create
+		  AND connection.is_enabled
+		  AND connection.destination_id <> ''
+		  AND (connection.provider <> 'jira' OR connection.issue_type_id <> '')
+		ORDER BY connection.provider
+	`, event.TenantID, now)
 	if err != nil {
 		return nil, fmt.Errorf("resolve automatic issue tracker destinations: %w", err)
 	}
@@ -114,6 +126,26 @@ func (h AutoCreateHandler) create(
 	query := h.Store.Database
 	if query == nil {
 		return errors.New("automatic issue tracker handler requires a database")
+	}
+	eligible, err := h.Store.OutboundDeliveryEligible(ctx, query, tenantID, h.now())
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return accessaudit.Record(ctx, query, accessaudit.RecordInput{
+			TenantID: tenantID, Kind: AuditKindAutoCreateSuppressed,
+			Actor:        accessaudit.Actor{Type: accessaudit.ActorSystem},
+			ResourceType: AuditResourceType, ResourceID: issueID,
+			Action: AuditActionAutomate, Outcome: accessaudit.OutcomeDenied,
+			Data: map[string]any{
+				"provider": string(provider),
+				"reason":   autoCreateSuppressionReasonTenantLifecycle,
+			},
+			Now: h.now(),
+		})
 	}
 	connection, err := h.Store.GetConnection(ctx, query, tenantID, provider)
 	if errors.Is(err, ErrNotConnected) {

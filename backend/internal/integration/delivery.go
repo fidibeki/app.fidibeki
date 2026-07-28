@@ -59,7 +59,7 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	var activityKind string
 	err := s.Database.QueryRow(ctx, `
 		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, tenant.plan,
-		       `+tenantDeliveryEligibleSQL+`,
+		       `+tenant.OutboundDeliveryEligibleSQL(3)+`,
 		       integration.id, integration.kind, integration.webhook_url, integration.channel,
 		       integration.custom_headers_ciphertext, integration.webhook_secret_ciphertext,
 		       integration.privacy_fields, integration.privacy_profile_version,

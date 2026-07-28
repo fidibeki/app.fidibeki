@@ -529,7 +529,11 @@ func TestIssueTrackerLifecycle(t *testing.T) {
 	`, tenantIDs["acme"], projectID).Scan(&automaticIssueID); err != nil {
 		t.Fatalf("create automatic issue: %v", err)
 	}
-	resolver := OutboxResolver{Database: root}
+	lifecycleNow := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	resolver := OutboxResolver{
+		Database: root,
+		Now:      func() time.Time { return lifecycleNow },
+	}
 	autoDestinations, err := resolver.Resolve(ctx, outbox.Event{
 		TenantID: tenantIDs["acme"], Event: "issue.created",
 		ResourceType: "issue", ResourceID: automaticIssueID,
@@ -545,6 +549,55 @@ func TestIssueTrackerLifecycle(t *testing.T) {
 	if err != nil || len(ignored) != 0 {
 		t.Fatalf("issue.updated resolved %#v, error = %v", ignored, err)
 	}
+	futureTrial := lifecycleNow.Add(time.Hour)
+	trialBoundary := lifecycleNow
+	deletionRequested := lifecycleNow.Add(-time.Hour)
+	for _, testCase := range []struct {
+		name                string
+		status              string
+		trialEndsAt         *time.Time
+		deletionRequestedAt *time.Time
+		wantDestinations    int
+	}{
+		{name: "active", status: "active", wantDestinations: 1},
+		{
+			name: "unexpired trial", status: "trial",
+			trialEndsAt: &futureTrial, wantDestinations: 1,
+		},
+		{name: "suspended", status: "suspended"},
+		{name: "cancelled", status: "cancelled"},
+		{name: "trial at exact boundary", status: "trial", trialEndsAt: &trialBoundary},
+		{
+			name: "active pending deletion", status: "active",
+			deletionRequestedAt: &deletionRequested,
+		},
+	} {
+		t.Run("automatic resolver "+testCase.name, func(t *testing.T) {
+			if _, err := root.Exec(ctx, `
+				UPDATE tenants
+				SET status = $2, trial_ends_at = $3, deletion_requested_at = $4
+				WHERE id = $1
+			`, tenantIDs["acme"], testCase.status,
+				testCase.trialEndsAt, testCase.deletionRequestedAt); err != nil {
+				t.Fatalf("set tenant lifecycle: %v", err)
+			}
+			destinations, err := resolver.Resolve(ctx, outbox.Event{
+				TenantID: tenantIDs["acme"], Event: "issue.created",
+				ResourceType: "issue", ResourceID: automaticIssueID,
+			})
+			if err != nil || len(destinations) != testCase.wantDestinations {
+				t.Fatalf("Resolve() = %#v, %v, want %d destinations",
+					destinations, err, testCase.wantDestinations)
+			}
+		})
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'active', trial_ends_at = NULL, deletion_requested_at = NULL
+		WHERE id = $1
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("restore tenant after resolver lifecycle tests: %v", err)
+	}
 	autoHandler := AutoCreateHandler{
 		Store: Store{Database: root, Cipher: cipher},
 		Clients: func(provider Provider) (Client, error) {
@@ -553,6 +606,146 @@ func TestIssueTrackerLifecycle(t *testing.T) {
 			}
 			return JiraClient{HTTP: jira.server.Client()}, nil
 		},
+	}
+	autoHandler.Now = func() time.Time { return lifecycleNow }
+	var trialLinearIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description, priority)
+		VALUES (
+			$1, $2, 'ACME-2026-0008', 'Trial Linear issue',
+			'Eligible trial work must still reach Linear.', 'medium'
+		)
+		RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&trialLinearIssueID); err != nil {
+		t.Fatalf("create trial Linear issue: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'trial', trial_ends_at = $2
+		WHERE id = $1
+	`, tenantIDs["acme"], futureTrial); err != nil {
+		t.Fatalf("start eligible issue-tracker trial: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issue_tracker_connections
+		SET is_enabled = true, auto_create = true
+		WHERE tenant_id = $1 AND provider = 'linear'
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("enable automatic Linear creation for trial: %v", err)
+	}
+	trialLinearPayload := fmt.Sprintf(
+		`{"outbox_event_id":"44444444-4444-4444-8444-444444444444","tenant_id":%q,"resource_id":%q,"destination_id":"linear"}`,
+		tenantIDs["acme"], trialLinearIssueID,
+	)
+	linearCreatesBeforeTrial := linear.createCount
+	if err := autoHandler.Handler()(ctx,
+		asynq.NewTask(TaskAutoCreate, []byte(trialLinearPayload))); err != nil {
+		t.Fatalf("create automatic Linear issue during trial: %v", err)
+	}
+	var trialLinearStatus string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text FROM issue_external_links
+		WHERE tenant_id = $1 AND issue_id = $2 AND provider = 'linear'
+	`, tenantIDs["acme"], trialLinearIssueID).Scan(&trialLinearStatus); err != nil {
+		t.Fatalf("read automatic trial Linear link: %v", err)
+	}
+	if trialLinearStatus != string(LinkStatusCreated) ||
+		linear.createCount != linearCreatesBeforeTrial+1 {
+		t.Fatalf("automatic trial Linear creation = status %q, requests %d -> %d",
+			trialLinearStatus, linearCreatesBeforeTrial, linear.createCount)
+	}
+	if _, err := root.Exec(ctx, `
+		DELETE FROM issues WHERE tenant_id = $1 AND id = $2
+	`, tenantIDs["acme"], trialLinearIssueID); err != nil {
+		t.Fatalf("remove trial Linear fixture: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'active', trial_ends_at = NULL
+		WHERE id = $1
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("restore active tenant after trial Linear test: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issue_tracker_connections
+		SET is_enabled = false, auto_create = false
+		WHERE tenant_id = $1 AND provider = 'linear'
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("restore Linear connection after trial: %v", err)
+	}
+	var queuedLifecycleIssueID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO issues (tenant_id, project_id, public_id, title, description, priority)
+		VALUES (
+			$1, $2, 'ACME-2026-0007', 'Queued lifecycle issue',
+			'Must not leave Fidibeki after suspension.', 'high'
+		)
+		RETURNING id
+	`, tenantIDs["acme"], projectID).Scan(&queuedLifecycleIssueID); err != nil {
+		t.Fatalf("create queued lifecycle issue: %v", err)
+	}
+	queuedLifecyclePayload := fmt.Sprintf(
+		`{"outbox_event_id":"33333333-3333-4333-8333-333333333333","tenant_id":%q,"resource_id":%q,"destination_id":"jira"}`,
+		tenantIDs["acme"], queuedLifecycleIssueID,
+	)
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET status = 'suspended' WHERE id = $1
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("suspend tenant before queued automatic creation: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issue_tracker_connections
+		SET credential_ciphertext = 'invalid-ciphertext'
+		WHERE tenant_id = $1 AND provider = 'jira'
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("replace queued lifecycle credential: %v", err)
+	}
+	createsBeforeLifecycleSuppression := jira.createCount
+	suppressionErr := autoHandler.Handler()(ctx,
+		asynq.NewTask(TaskAutoCreate, []byte(queuedLifecyclePayload)))
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET status = 'active' WHERE id = $1
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("restore tenant after queued lifecycle test: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE issue_tracker_connections
+		SET credential_ciphertext = $2
+		WHERE tenant_id = $1 AND provider = 'jira'
+	`, tenantIDs["acme"], ciphertext); err != nil {
+		t.Fatalf("restore credential after queued lifecycle test: %v", err)
+	}
+	if suppressionErr != nil {
+		t.Fatalf("suppress queued automatic creation: %v", suppressionErr)
+	}
+	var queuedLifecycleLinks int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM issue_external_links
+		WHERE tenant_id = $1 AND issue_id = $2
+	`, tenantIDs["acme"], queuedLifecycleIssueID).Scan(&queuedLifecycleLinks); err != nil {
+		t.Fatalf("count queued lifecycle links: %v", err)
+	}
+	var suppressionKind, suppressionAction, suppressionOutcome, suppressionProvider, suppressionReason string
+	if err := root.QueryRow(ctx, `
+		SELECT kind, action, outcome, data->>'provider', data->>'reason'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND resource_type = 'issue_tracker' AND resource_id = $2
+	`, tenantIDs["acme"], queuedLifecycleIssueID).Scan(
+		&suppressionKind, &suppressionAction, &suppressionOutcome,
+		&suppressionProvider, &suppressionReason,
+	); err != nil {
+		t.Fatalf("read queued lifecycle suppression audit: %v", err)
+	}
+	if jira.createCount != createsBeforeLifecycleSuppression || queuedLifecycleLinks != 0 {
+		t.Fatalf("queued lifecycle suppression = requests %d -> %d, links %d",
+			createsBeforeLifecycleSuppression, jira.createCount, queuedLifecycleLinks)
+	}
+	if suppressionKind != "issue_tracker.auto_create_suppressed" ||
+		suppressionAction != "automate" || suppressionOutcome != "denied" ||
+		suppressionProvider != "jira" || suppressionReason != "tenant_lifecycle_inactive" {
+		t.Fatalf("queued lifecycle audit = %q / %q / %q / %q / %q",
+			suppressionKind, suppressionAction, suppressionOutcome,
+			suppressionProvider, suppressionReason)
 	}
 	autoPayload := fmt.Sprintf(
 		`{"outbox_event_id":"11111111-1111-4111-8111-111111111111","tenant_id":%q,"resource_id":%q,"destination_id":"jira"}`,
@@ -797,6 +990,7 @@ func newFakeJira() *fakeJira {
 type fakeLinear struct {
 	server       *httptest.Server
 	lastPriority int
+	createCount  int
 }
 
 func newFakeLinear() *fakeLinear {
@@ -828,6 +1022,7 @@ func newFakeLinear() *fakeLinear {
 			if priority, ok := input["priority"].(float64); ok {
 				fake.lastPriority = int(priority)
 			}
+			fake.createCount++
 			writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 				"issueCreate": map[string]any{"success": true, "issue": map[string]any{
 					"id": "linear-1", "identifier": "OPS-7", "url": "https://linear.app/acme/issue/OPS-7",

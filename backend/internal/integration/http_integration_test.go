@@ -406,10 +406,63 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		t.Errorf("expired-trial delivery = requests %d status %q error %q",
 			requestCount, expiredTrialStatus, expiredTrialError)
 	}
+	var deletionPendingOutboxID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (
+			tenant_id, event, resource_type, resource_id, event_key
+		) VALUES (
+			$1, 'feedback.created', 'feedback', $2, 'deletion-pending-test'
+		) RETURNING id
+	`, tenantIDs["acme"], feedbackID).Scan(&deletionPendingOutboxID); err != nil {
+		t.Fatalf("create deletion-pending integration event: %v", err)
+	}
 	if _, err := root.Exec(ctx, `
-		UPDATE tenants SET status = 'active', trial_ends_at = NULL WHERE id = $1
+		UPDATE tenants
+		SET status = 'active', trial_ends_at = NULL, deletion_requested_at = $2
+		WHERE id = $1
+	`, tenantIDs["acme"], lifecycleNow.Add(-time.Hour)); err != nil {
+		t.Fatalf("request integration tenant deletion: %v", err)
+	}
+	deletionPendingEvent := event
+	deletionPendingEvent.ID = deletionPendingOutboxID
+	destinations, err = (OutboxResolver{Database: pools.Admin, Now: fixedNow}).Resolve(
+		ctx, deletionPendingEvent,
+	)
+	if err != nil || len(destinations) != 0 {
+		t.Fatalf("deletion-pending Resolve() = %#v, %v", destinations, err)
+	}
+	deletionPendingTask := DeliveryTask{
+		OutboxEventID: deletionPendingOutboxID, TenantID: tenantIDs["acme"],
+		ResourceID: feedbackID, IntegrationID: created.Integration.ID,
+	}
+	deletionPendingPayload, _ := json.Marshal(deletionPendingTask)
+	deletionPendingDelivery := delivery
+	deletionPendingDelivery.Store.Now = fixedNow
+	deletionPendingDelivery.Now = fixedNow
+	if err := deletionPendingDelivery.Handler()(
+		ctx, asynq.NewTask(TaskDeliver, deletionPendingPayload),
+	); err != nil {
+		t.Fatalf("suppress deletion-pending delivery: %v", err)
+	}
+	var deletionPendingStatus, deletionPendingError string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, error_message
+		FROM delivery_logs
+		WHERE outbox_event_id = $1 AND integration_id = $2
+	`, deletionPendingOutboxID, created.Integration.ID).Scan(
+		&deletionPendingStatus, &deletionPendingError,
+	); err != nil {
+		t.Fatalf("read deletion-pending integration ledger: %v", err)
+	}
+	if requestCount != 0 || deletionPendingStatus != "failed" ||
+		deletionPendingError != "integration delivery suppressed by tenant lifecycle" {
+		t.Errorf("deletion-pending delivery = requests %d status %q error %q",
+			requestCount, deletionPendingStatus, deletionPendingError)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET deletion_requested_at = NULL WHERE id = $1
 	`, tenantIDs["acme"]); err != nil {
-		t.Fatalf("restore active integration tenant: %v", err)
+		t.Fatalf("cancel integration tenant deletion: %v", err)
 	}
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
 		t.Fatalf("mark integration feedback moderation pending: %v", err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,6 +35,29 @@ const linkColumns = `
 	destination_id, destination_name, issue_type_id, external_id, external_key, external_url,
 	last_error, attempt_count, created_at, updated_at
 `
+
+// OutboundDeliveryEligible checks the owning tenant before an automatic worker loads any
+// connection configuration, issue content, or credential material.
+func (s Store) OutboundDeliveryEligible(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	now time.Time,
+) (bool, error) {
+	var eligible bool
+	err := query.QueryRow(ctx, `
+		SELECT `+tenant.OutboundDeliveryEligibleSQL(2)+`
+		FROM tenants AS tenant
+		WHERE tenant.id = $1
+	`, tenantID, now.UTC()).Scan(&eligible)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("check issue tracker outbound eligibility: %w", err)
+	}
+	return eligible, nil
+}
 
 // ConnectValues is a validated credential ready to be stored.
 type ConnectValues struct {

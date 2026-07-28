@@ -81,6 +81,11 @@ const (
 	AuditActionAutomate  = "automate"
 )
 
+const (
+	AuditKindAutoCreateSuppressed              = "issue_tracker.auto_create_suppressed"
+	autoCreateSuppressionReasonTenantLifecycle = "tenant_lifecycle_inactive"
+)
+
 // Connection is a workspace's stored provider configuration. It never carries the credential:
 // only the fingerprint is exposed, so the browser and the logs can distinguish two credentials
 // without being able to read either.
