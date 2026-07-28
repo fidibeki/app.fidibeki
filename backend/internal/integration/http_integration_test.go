@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -641,14 +642,27 @@ func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slack
 	const webhookURL = "https://hooks.slack.com/services/T-ACME/B-INSTALL/secret-path"
 	const accessToken = "xoxb-install-token"
 	channel, channelID := "#feedback", "C-FEEDBACK"
+	var exchangeRequests atomic.Int64
+	var revokeRequests atomic.Int64
+	raceExchangeStarted := make(chan struct{}, 1)
+	raceExchangeRelease := make(chan struct{})
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/oauth.v2.access":
+			exchangeRequests.Add(1)
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("parse Slack exchange form: %v", err)
+			}
+			if r.Form.Get("code") == "race-code" {
+				raceExchangeStarted <- struct{}{}
+				<-raceExchangeRelease
+			}
 			_, _ = fmt.Fprintf(w, `{"ok":true,"access_token":%q,"team":{"id":"T-ACME","name":"Acme HQ"},
 				"incoming_webhook":{"url":%q,"channel":%q,"channel_id":%q}}`,
 				accessToken, webhookURL, channel, channelID)
 		case "/api/auth.revoke":
+			revokeRequests.Add(1)
 			_, _ = fmt.Fprint(w, `{"ok":true,"revoked":true}`)
 		default:
 			t.Errorf("unexpected Slack path %q", r.URL.Path)
@@ -723,13 +737,245 @@ func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slack
 	if denied := install("acme", readOnly); denied.Code != http.StatusForbidden {
 		t.Errorf("install without integration:create status = %d", denied.Code)
 	}
+	apiKeyToken := "fk_live_" + strings.Repeat("A", 32)
+	if _, err := harness.root.Exec(ctx, `
+		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions)
+		VALUES ($1, 'Slack installer key', $2, 'fk_live_AAAA...', ARRAY['integration:create'])
+	`, harness.tenantIDs["acme"], auth.HashToken(apiKeyToken)); err != nil {
+		t.Fatalf("create Slack installer API key: %v", err)
+	}
+	if denied := install("acme", apiKeyToken); denied.Code != http.StatusForbidden {
+		t.Errorf("API-key Slack install status = %d, want forbidden", denied.Code)
+	}
 	invalidEvents := integrationRequest(handler, "acme", http.MethodPost,
 		"/v1/integrations/slack/install", `{"events":[]}`, harness.ownerToken)
 	if invalidEvents.Code != http.StatusUnprocessableEntity {
 		t.Errorf("install without events status = %d", invalidEvents.Code)
 	}
 
+	for _, test := range []struct {
+		name    string
+		channel string
+		mutate  func(string) error
+	}{
+		{
+			name: "member deactivated", channel: "C-STALE-DEACTIVATED",
+			mutate: func(memberID string) error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenant_members
+					SET status = 'deactivated', permissions = '{}',
+					    authorization_version = authorization_version + 1
+					WHERE tenant_id = $1 AND id = $2
+				`, harness.tenantIDs["acme"], memberID)
+				return err
+			},
+		},
+		{
+			name: "permission removed", channel: "C-STALE-PERMISSION",
+			mutate: func(memberID string) error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenant_members
+					SET permissions = ARRAY['integration:read'],
+					    authorization_version = authorization_version + 1
+					WHERE tenant_id = $1 AND id = $2
+				`, harness.tenantIDs["acme"], memberID)
+				return err
+			},
+		},
+		{
+			name: "authorization version changed", channel: "C-STALE-VERSION",
+			mutate: func(memberID string) error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenant_members
+					SET authorization_version = authorization_version + 1
+					WHERE tenant_id = $1 AND id = $2
+				`, harness.tenantIDs["acme"], memberID)
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var memberID string
+			if err := harness.root.QueryRow(ctx, `
+				INSERT INTO tenant_members (tenant_id, email, permissions)
+				VALUES ($1, $2, ARRAY['integration:create'])
+				RETURNING id
+			`, harness.tenantIDs["acme"], test.channel+"@acme.test").Scan(&memberID); err != nil {
+				t.Fatalf("create Slack installer: %v", err)
+			}
+			memberToken, _, err := harness.jwt.IssueTenantMember(
+				memberID, harness.tenantIDs["acme"],
+				[]string{string(auth.PermissionIntegrationCreate)}, 0,
+			)
+			if err != nil {
+				t.Fatalf("issue member token: %v", err)
+			}
+			channel, channelID = "#stale-installer", test.channel
+			state := beginInstall(t, "acme", memberToken)
+			if err := test.mutate(memberID); err != nil {
+				t.Fatalf("make Slack install authority stale: %v", err)
+			}
+			beforeExchange := exchangeRequests.Load()
+			response := callback("?code=install-code&state=" + state)
+			if location := response.Header().Get("Location"); response.Code != http.StatusFound ||
+				!strings.Contains(location, "slack=failed") {
+				t.Fatalf(
+					"stale callback status = %d, location = %q, want failed redirect",
+					response.Code, location,
+				)
+			}
+			if exchangeRequests.Load() != beforeExchange {
+				t.Fatalf(
+					"Slack exchange requests = %d, want unchanged %d",
+					exchangeRequests.Load(), beforeExchange,
+				)
+			}
+			var installs int
+			if err := harness.root.QueryRow(ctx, `
+				SELECT count(*) FROM integrations
+				WHERE tenant_id = $1 AND slack_channel_id = $2
+			`, harness.tenantIDs["acme"], test.channel).Scan(&installs); err != nil || installs != 0 {
+				t.Fatalf("stale-authority integrations = %d, error = %v, want 0", installs, err)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name    string
+		channel string
+		mutate  func() error
+	}{
+		{
+			name: "tenant suspended", channel: "C-STALE-SUSPENDED",
+			mutate: func() error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenants SET status = 'suspended' WHERE id = $1
+				`, harness.tenantIDs["acme"])
+				return err
+			},
+		},
+		{
+			name: "tenant deletion requested", channel: "C-STALE-DELETION",
+			mutate: func() error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenants
+					SET deletion_requested_at = now(), deletion_requested_by_member_id = $2
+					WHERE id = $1
+				`, harness.tenantIDs["acme"], harness.memberIDs["acme"])
+				return err
+			},
+		},
+		{
+			name: "plan downgraded", channel: "C-STALE-PLAN",
+			mutate: func() error {
+				_, err := harness.root.Exec(ctx, `
+					UPDATE tenants SET plan = 'growth' WHERE id = $1
+				`, harness.tenantIDs["acme"])
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			channel, channelID = "#stale-tenant", test.channel
+			state := beginInstall(t, "acme", harness.ownerToken)
+			if err := test.mutate(); err != nil {
+				t.Fatalf("make tenant Slack authority stale: %v", err)
+			}
+			beforeExchange := exchangeRequests.Load()
+			response := callback("?code=install-code&state=" + state)
+			_, resetErr := harness.root.Exec(ctx, `
+				UPDATE tenants
+				SET status = 'active', plan = 'scale',
+				    deletion_requested_at = NULL, deletion_requested_by_member_id = NULL
+				WHERE id = $1
+			`, harness.tenantIDs["acme"])
+			if resetErr != nil {
+				t.Fatalf("restore tenant after stale callback: %v", resetErr)
+			}
+			if location := response.Header().Get("Location"); response.Code != http.StatusFound ||
+				!strings.Contains(location, "slack=failed") {
+				t.Fatalf(
+					"stale tenant callback status = %d, location = %q, want failed redirect",
+					response.Code, location,
+				)
+			}
+			if exchangeRequests.Load() != beforeExchange {
+				t.Fatalf(
+					"Slack exchange requests = %d, want unchanged %d",
+					exchangeRequests.Load(), beforeExchange,
+				)
+			}
+			var installs int
+			if err := harness.root.QueryRow(ctx, `
+				SELECT count(*) FROM integrations
+				WHERE tenant_id = $1 AND slack_channel_id = $2
+			`, harness.tenantIDs["acme"], test.channel).Scan(&installs); err != nil || installs != 0 {
+				t.Fatalf("stale-tenant integrations = %d, error = %v, want 0", installs, err)
+			}
+		})
+	}
+
+	var racingMemberID string
+	if err := harness.root.QueryRow(ctx, `
+		INSERT INTO tenant_members (tenant_id, email, permissions)
+		VALUES ($1, 'racing-slack-installer@acme.test', ARRAY['integration:create'])
+		RETURNING id
+	`, harness.tenantIDs["acme"]).Scan(&racingMemberID); err != nil {
+		t.Fatalf("create racing Slack installer: %v", err)
+	}
+	racingMemberToken, _, err := harness.jwt.IssueTenantMember(
+		racingMemberID, harness.tenantIDs["acme"],
+		[]string{string(auth.PermissionIntegrationCreate)}, 0,
+	)
+	if err != nil {
+		t.Fatalf("issue racing member token: %v", err)
+	}
+	channel, channelID = "#racing-installer", "C-RACING-INSTALLER"
+	racingState := beginInstall(t, "acme", racingMemberToken)
+	racingCallbackDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		racingCallbackDone <- callback("?code=race-code&state=" + racingState)
+	}()
+	select {
+	case <-raceExchangeStarted:
+	case <-ctx.Done():
+		t.Fatalf("Slack exchange did not start: %v", ctx.Err())
+	}
+	if _, err := harness.root.Exec(ctx, `
+		UPDATE tenant_members
+		SET permissions = ARRAY['integration:read'],
+		    authorization_version = authorization_version + 1
+		WHERE tenant_id = $1 AND id = $2
+	`, harness.tenantIDs["acme"], racingMemberID); err != nil {
+		t.Fatalf("revoke racing Slack installer: %v", err)
+	}
+	close(raceExchangeRelease)
+	var racingCallback *httptest.ResponseRecorder
+	select {
+	case racingCallback = <-racingCallbackDone:
+	case <-ctx.Done():
+		t.Fatalf("racing Slack callback did not finish: %v", ctx.Err())
+	}
+	if location := racingCallback.Header().Get("Location"); racingCallback.Code != http.StatusFound ||
+		!strings.Contains(location, "slack=failed") {
+		t.Fatalf(
+			"racing callback status = %d, location = %q, want failed redirect",
+			racingCallback.Code, location,
+		)
+	}
+	var racingInstalls int
+	if err := harness.root.QueryRow(ctx, `
+		SELECT count(*) FROM integrations
+		WHERE tenant_id = $1 AND slack_channel_id = 'C-RACING-INSTALLER'
+	`, harness.tenantIDs["acme"]).Scan(&racingInstalls); err != nil || racingInstalls != 0 {
+		t.Fatalf("racing installer integrations = %d, error = %v, want 0", racingInstalls, err)
+	}
+	if revokeRequests.Load() != 1 {
+		t.Fatalf("revoke requests after rejected exchanged install = %d, want 1", revokeRequests.Load())
+	}
+
 	// A complete install: the user never sees or supplies the webhook URL.
+	channel, channelID = "#feedback", "C-FEEDBACK"
 	token := beginInstall(t, "acme", harness.ownerToken)
 	response := callback("?code=install-code&state=" + token)
 	if response.Code != http.StatusFound {
