@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/queuemonitor"
+	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 )
 
@@ -125,6 +128,81 @@ func TestQueueMonitorRetriesOnlyAuditedRetryTasks(t *testing.T) {
 	inspector.task.State = asynq.TaskStateActive
 	if err := handler.RetryTask(context.Background(), "admin-1", "email", "task-1"); !errors.Is(err, queuemonitor.ErrTaskNotRetryable) {
 		t.Errorf("RetryTask(active) error = %v, want ErrTaskNotRetryable", err)
+	}
+}
+
+func TestQueueMonitorRetryEndpointRequiresPermissionAndAuditsCommand(t *testing.T) {
+	t.Parallel()
+	manager, err := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", time.Minute)
+	if err != nil {
+		t.Fatalf("NewJWTManager() error = %v", err)
+	}
+	token, _, err := manager.Issue("admin-1", auth.AudiencePlatform, []string{string(auth.PermissionPlatformQueueRun)})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	withoutPermission, _, err := manager.Issue("admin-2", auth.AudiencePlatform, nil)
+	if err != nil {
+		t.Fatalf("Issue() without permission error = %v", err)
+	}
+	inspector := &fakeInspector{task: &asynq.TaskInfo{ID: "task-1", State: asynq.TaskStateRetry}}
+	auditor := &captureRetryAuditor{}
+	handler := queuemonitor.NewWithInspector(inspector)
+	handler.SetRetryAuditor(auditor)
+	router := chi.NewRouter()
+	router.With(appmiddleware.RequirePlatformAdmin(manager, auth.PermissionPlatformQueueRun)).
+		Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", handler.RetryBackofficeTask)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+withoutPermission)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || inspector.runID != "" || auditor.taskID != "" {
+		t.Fatalf("unprivileged request status = %d, inspector=%#v auditor=%#v", recorder.Code, inspector, auditor)
+	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if inspector.runQueue != "email" || auditor.taskID != "task-1" {
+		t.Errorf("command was not audited and run: inspector=%#v auditor=%#v", inspector, auditor)
+	}
+
+	inspector.task.State = asynq.TaskStateActive
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Errorf("active task status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestQueueMonitorRetryEndpointFailsClosedWithoutAuditor(t *testing.T) {
+	t.Parallel()
+	manager, err := auth.NewJWTManager(strings.Repeat("s", 32), "fidibeki", time.Minute)
+	if err != nil {
+		t.Fatalf("NewJWTManager() error = %v", err)
+	}
+	token, _, err := manager.Issue("admin-1", auth.AudiencePlatform, []string{string(auth.PermissionPlatformQueueRun)})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	inspector := &fakeInspector{task: &asynq.TaskInfo{ID: "task-1", State: asynq.TaskStateRetry}}
+	handler := queuemonitor.NewWithInspector(inspector)
+	router := chi.NewRouter()
+	router.With(appmiddleware.RequirePlatformAdmin(manager, auth.PermissionPlatformQueueRun)).
+		Post("/admin/backoffice/queues/{queue}/tasks/{taskID}/retry", handler.RetryBackofficeTask)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/queues/email/tasks/task-1/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || inspector.runID != "" {
+		t.Errorf("status = %d run task = %q, body = %s", recorder.Code, inspector.runID, recorder.Body.String())
 	}
 }
 
