@@ -126,13 +126,12 @@ while the existing tested limiter remains authoritative for all budgets.
 
 Suppressed attempts produce one structured log event containing:
 
-- tenant ID;
 - `passwordless_login_cooldown` or
   `passwordless_login_rate_limited`; and
-- no raw email, network address, token, or request body.
+- no raw tenant ID, email, network address, token, or request body.
 
-Limiter absence or failure produces an error log with tenant ID and the
-dependency error, followed by a generic `503`. These events distinguish
+Limiter absence or failure produces an error log with the dependency error but
+no raw request identity, followed by a generic `503`. These events distinguish
 healthy suppression from fail-closed dependency outages without adding a new
 database write to the public attack path.
 

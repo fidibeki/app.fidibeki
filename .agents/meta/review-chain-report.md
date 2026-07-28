@@ -38,3 +38,25 @@ Core interval-aware plumbing (catalog, checkout validation, webhook mapping, mig
 
 ## Resolver's Notes
 No findings declined. Integration tests (Docker-based) were updated for the new semantics but could not be executed locally (no Docker daemon); they will run in CI.
+
+---
+
+# Review Chain Report: Passwordless Login Abuse Guard
+
+**Artifact**: Issue #155 tenant passwordless-login cooldown and rate budgets
+**Date**: 2026-07-28
+**Rounds**: 2
+
+## Verdict: FIXED
+
+The first independent security review found one blocking privacy issue: the
+new suppression and dependency-failure logs included the raw tenant ID. The
+handler now logs only the event and suppression reason, while its isolated HTTP
+tests reject raw tenant ID, normalized email, and client IP in both paths. The
+design was updated to match.
+
+The second independent review passed with no findings. It confirmed that the
+guard runs before member lookup, magic-link creation, and email scheduling;
+fails closed; applies the intended cooldown and tenant/email, tenant/network,
+and tenant-wide budgets; preserves the generic accepted response on policy
+denial; and does not expose request identities in keys or logs.

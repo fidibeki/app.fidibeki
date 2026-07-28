@@ -18,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -35,6 +36,7 @@ type HTTPOptions struct {
 	JWT               *auth.JWTManager
 	Email             email.Enqueuer
 	Limiter           ratelimit.Limiter
+	LoginGuard        LoginGuard
 	TrustedProxyCIDRs []netip.Prefix
 	SecureCookies     bool
 	RefreshTTL        time.Duration
@@ -244,15 +246,46 @@ func (h *HTTPHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Resolved before issuing the link so the break-glass use is recorded in the
-	// same transaction that grants it: an owner sign-in that bypasses Required
-	// SSO is never possible without a matching audit row.
-	member, breakGlass, err := h.options.Service.BreakGlassLogin(r.Context(), query, resolved, request.Email)
+	emailAddress, err := normalizeEmail(request.Email)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	message, err := h.options.Service.RequestMagicLink(r.Context(), query, resolved, request.Email)
+	if h.options.LoginGuard == nil {
+		h.options.Logger.ErrorContext(r.Context(), "passwordless login guard unavailable")
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	decision, err := h.options.LoginGuard.Allow(r.Context(), LoginAttempt{
+		TenantID: resolved.ID,
+		Email:    emailAddress,
+		Network:  httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
+	})
+	if err != nil || decision.Unavailable {
+		h.options.Logger.ErrorContext(
+			r.Context(), "passwordless login guard unavailable",
+			"error", err,
+		)
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	if !decision.Allowed {
+		h.options.Logger.InfoContext(
+			r.Context(), "passwordless login request suppressed",
+			"reason", decision.Reason,
+		)
+		api.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+		return
+	}
+	// Resolved before issuing the link so the break-glass use is recorded in the
+	// same transaction that grants it: an owner sign-in that bypasses Required
+	// SSO is never possible without a matching audit row.
+	member, breakGlass, err := h.options.Service.BreakGlassLogin(r.Context(), query, resolved, emailAddress)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	message, err := h.options.Service.RequestMagicLink(r.Context(), query, resolved, emailAddress)
 	if err != nil {
 		writeError(w, err)
 		return

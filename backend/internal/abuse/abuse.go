@@ -23,6 +23,7 @@ const (
 	ScopeNetwork Scope = "network"
 	ScopeVisitor Scope = "visitor"
 	ScopeSession Scope = "session"
+	ScopeSubject Scope = "subject"
 )
 
 type FailureMode string
@@ -39,6 +40,7 @@ type Identity struct {
 	Network   string
 	VisitorID string
 	SessionID string
+	SubjectID string
 }
 
 func (identity Identity) value(scope Scope) (string, bool) {
@@ -65,6 +67,9 @@ func (identity Identity) value(scope Scope) (string, bool) {
 		value := strings.TrimSpace(identity.SessionID)
 		return tenant + "\x00" + project + "\x00" + value,
 			tenant != "" && project != "" && value != ""
+	case ScopeSubject:
+		value := strings.TrimSpace(identity.SubjectID)
+		return tenant + "\x00" + value, tenant != "" && value != ""
 	default:
 		return "", false
 	}

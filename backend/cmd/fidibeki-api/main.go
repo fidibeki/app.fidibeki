@@ -474,8 +474,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	billing.RegisterTenantRoutes(tenantRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	tenantmember.RegisterRoutes(tenantRoutes, tenantmember.HTTPOptions{
 		Service: tenantService, Store: tenantStore, JWT: jwtManager, Email: emailQueue,
-		TwoFactor: tenantmember.TwoFactorService{Store: tenantStore, Cipher: twoFactorCipher},
-		Limiter:   publicLimiter, TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+		TwoFactor:  tenantmember.TwoFactorService{Store: tenantStore, Cipher: twoFactorCipher},
+		LoginGuard: tenantmember.AbuseLoginGuard{Evaluator: abuseEvaluator},
+		Limiter:    publicLimiter, TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
 		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
 	})

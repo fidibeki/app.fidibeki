@@ -29,22 +29,25 @@ func TestEvaluatorHashesEveryScopeAndSupportsRotation(t *testing.T) {
 		Rules: []Rule{
 			{Scope: ScopeProject, Window: ratelimit.Window{Limit: 3, Period: time.Minute}},
 			{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 2, Period: time.Minute}},
+			{Scope: ScopeSubject, Window: ratelimit.Window{Limit: 1, Period: time.Minute}},
 		},
 	}
 	identity := Identity{
 		TenantID: "tenant-secret-value", ProjectID: "project-secret-value",
-		Network: "203.0.113.17",
+		Network: "203.0.113.17", SubjectID: "member@example.test",
 	}
 
 	first, err := evaluator.Evaluate(context.Background(), policy, Request{Identity: identity})
 	if err != nil || !first.Allowed {
 		t.Fatalf("first decision = %#v, error = %v", first, err)
 	}
-	if len(limiter.keys) != 4 {
-		t.Fatalf("key count = %d, want 4 for two scopes and two secrets", len(limiter.keys))
+	if len(limiter.keys) != 6 {
+		t.Fatalf("key count = %d, want 6 for three scopes and two secrets", len(limiter.keys))
 	}
 	for _, key := range limiter.keys {
-		for _, raw := range []string{identity.TenantID, identity.ProjectID, identity.Network} {
+		for _, raw := range []string{
+			identity.TenantID, identity.ProjectID, identity.Network, identity.SubjectID,
+		} {
 			if strings.Contains(key, raw) {
 				t.Fatalf("limiter key %q contains raw identity %q", key, raw)
 			}

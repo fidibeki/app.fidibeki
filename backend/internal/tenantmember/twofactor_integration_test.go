@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -43,16 +44,31 @@ func (l *countingLimiter) Allow(_ context.Context, key string, _ ratelimit.Windo
 	return ratelimit.Decision{Allowed: true, Remaining: l.limit - l.attempts[key]}, nil
 }
 
+type loginGuardStub struct {
+	decision LoginDecision
+	err      error
+	calls    []LoginAttempt
+}
+
+func (guard *loginGuardStub) Allow(
+	_ context.Context,
+	attempt LoginAttempt,
+) (LoginDecision, error) {
+	guard.calls = append(guard.calls, attempt)
+	return guard.decision, guard.err
+}
+
 type twoFactorHarness struct {
-	t         *testing.T
-	ctx       context.Context
-	root      *pgx.Conn
-	handler   http.Handler
-	tenantID  string
-	limiter   *countingLimiter
-	queue     *messageCapture
-	jwt       *auth.JWTManager
-	memberIDs map[string]string
+	t          *testing.T
+	ctx        context.Context
+	root       *pgx.Conn
+	handler    http.Handler
+	tenantID   string
+	limiter    *countingLimiter
+	loginGuard *loginGuardStub
+	queue      *messageCapture
+	jwt        *auth.JWTManager
+	memberIDs  map[string]string
 	// memberSecrets remembers the shared secret each member enrolled with so a
 	// later step can act as that member's authenticator app.
 	memberSecrets map[string]string
@@ -71,6 +87,87 @@ func TestTenantTwoFactorAuthenticationFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	harness := newTwoFactorHarness(ctx, t)
+
+	t.Run("passwordless login guard suppresses work without enumeration", func(t *testing.T) {
+		harness.loginGuard.calls = nil
+		harness.loginGuard.decision = LoginDecision{
+			Allowed: false, Reason: ReasonPasswordlessLoginCooldown,
+		}
+		defer func() {
+			harness.loginGuard.calls = nil
+			harness.loginGuard.decision = LoginDecision{Allowed: true}
+		}()
+		messageCount := len(harness.queue.messages)
+		linkCount := harness.magicLinkCount(t)
+		logOffset := harness.logs.Len()
+
+		response := harness.request(
+			http.MethodPost, "/auth/login", `{"email":" Owner@ACME.TEST "}`, "", nil,
+		)
+
+		if response.Code != http.StatusAccepted ||
+			response.Body.String() != "{\"status\":\"accepted\"}\n" {
+			t.Fatalf("login status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if len(harness.loginGuard.calls) != 1 {
+			t.Fatalf("login guard calls = %d, want 1", len(harness.loginGuard.calls))
+		}
+		attempt := harness.loginGuard.calls[0]
+		if attempt.TenantID != harness.tenantID || attempt.Email != "owner@acme.test" ||
+			attempt.Network != "192.0.2.1" {
+			t.Errorf("login attempt = %#v", attempt)
+		}
+		if len(harness.queue.messages) != messageCount {
+			t.Fatalf("email messages = %d, want unchanged %d", len(harness.queue.messages), messageCount)
+		}
+		if got := harness.magicLinkCount(t); got != linkCount {
+			t.Fatalf("magic-link rows = %d, want unchanged %d", got, linkCount)
+		}
+		logged := harness.logs.String()[logOffset:]
+		if !strings.Contains(logged, `"reason":"passwordless_login_cooldown"`) ||
+			strings.Contains(logged, harness.tenantID) ||
+			strings.Contains(logged, "owner@acme.test") ||
+			strings.Contains(logged, "192.0.2.1") {
+			t.Errorf("suppression log is missing its reason or contains raw identity: %s", logged)
+		}
+	})
+
+	t.Run("passwordless login guard failure creates no work", func(t *testing.T) {
+		harness.loginGuard.calls = nil
+		harness.loginGuard.err = errors.New("redis unavailable")
+		defer func() {
+			harness.loginGuard.calls = nil
+			harness.loginGuard.err = nil
+		}()
+		messageCount := len(harness.queue.messages)
+		linkCount := harness.magicLinkCount(t)
+		logOffset := harness.logs.Len()
+
+		response := harness.request(
+			http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil,
+		)
+
+		if response.Code != http.StatusServiceUnavailable ||
+			decodeErrorCode(t, response) != "service_unavailable" {
+			t.Fatalf("login status = %d, body = %s", response.Code, response.Body.String())
+		}
+		if len(harness.loginGuard.calls) != 1 {
+			t.Fatalf("login guard calls = %d, want 1", len(harness.loginGuard.calls))
+		}
+		if len(harness.queue.messages) != messageCount {
+			t.Fatalf("email messages = %d, want unchanged %d", len(harness.queue.messages), messageCount)
+		}
+		if got := harness.magicLinkCount(t); got != linkCount {
+			t.Fatalf("magic-link rows = %d, want unchanged %d", got, linkCount)
+		}
+		logged := harness.logs.String()[logOffset:]
+		if !strings.Contains(logged, `"msg":"passwordless login guard unavailable"`) ||
+			strings.Contains(logged, harness.tenantID) ||
+			strings.Contains(logged, "owner@acme.test") ||
+			strings.Contains(logged, "192.0.2.1") {
+			t.Errorf("failure log is missing or contains raw identity: %s", logged)
+		}
+	})
 
 	t.Run("inactive lifecycle suppresses local login without enumeration", func(t *testing.T) {
 		for _, test := range authenticationLifecycleCases() {
@@ -585,6 +682,7 @@ func newTwoFactorHarness(ctx context.Context, t *testing.T) *twoFactorHarness {
 		t: t, ctx: ctx, root: root, memberIDs: map[string]string{},
 		memberSecrets: map[string]string{},
 		limiter:       &countingLimiter{limit: 1000},
+		loginGuard:    &loginGuardStub{decision: LoginDecision{Allowed: true}},
 		totpClock:     time.Now().UTC(),
 		logs:          &bytes.Buffer{},
 	}
@@ -640,7 +738,7 @@ func newTwoFactorHarness(ctx context.Context, t *testing.T) *twoFactorHarness {
 			Store: store, Cipher: cipher,
 			Now: func() time.Time { return harness.totpClock },
 		},
-		Limiter:    harness.limiter,
+		Limiter: harness.limiter, LoginGuard: harness.loginGuard,
 		RefreshTTL: 30 * 24 * time.Hour, Logger: logger,
 	})
 	harness.handler = appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{

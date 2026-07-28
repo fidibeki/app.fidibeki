@@ -126,6 +126,7 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{
 		Service: service, Store: store, JWT: jwtManager, Email: queue,
+		LoginGuard: &loginGuardStub{decision: LoginDecision{Allowed: true}},
 		RefreshTTL: 30 * 24 * time.Hour, Logger: testLogger,
 	})
 	transactionalHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
