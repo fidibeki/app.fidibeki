@@ -38,8 +38,15 @@ function loadMore() { if (nextCursor.value && !pending.value) cursor.value = nex
 <template>
   <section>
     <header class="page-head"><div><p class="eyebrow">Workspace directory</p><h1 class="title">Every account,<br>in context.</h1></div><NuxtLink class="button" to="/workspaces/new">New workspace</NuxtLink></header>
-    <form class="panel" @submit.prevent="submit"><input v-model="query" placeholder="Search name or slug" aria-label="Search workspaces"><select v-model="status" aria-label="Workspace status"><option value="">All statuses</option><option>active</option><option>trial</option><option>suspended</option><option>cancelled</option></select><select v-model="plan" aria-label="Workspace plan"><option value="">All plans</option><option>starter</option><option>growth</option><option>scale</option><option>enterprise</option></select><button class="button">Filter</button></form>
-    <table class="table"><thead><tr><th>Workspace</th><th>Plan</th><th>Status</th><th>Created</th></tr></thead><tbody><tr v-for="tenant in tenants" :key="tenant.id"><td><NuxtLink :to="`/workspaces/${tenant.id}`">{{ tenant.name }}<br><span class="muted">{{ tenant.slug }}</span></NuxtLink></td><td>{{ tenant.plan }}</td><td>{{ tenant.status }}</td><td>{{ new Date(tenant.created_at).toLocaleDateString() }}</td></tr></tbody></table>
-    <button v-if="nextCursor" class="button" :disabled="pending" @click="loadMore">{{ pending ? 'Loading…' : 'Load more workspaces' }}</button>
+    <form class="panel filter-form" @submit.prevent="submit">
+      <input v-model="query" placeholder="Search name or slug" aria-label="Search workspaces">
+      <select v-model="status" aria-label="Workspace status"><option value="">All statuses</option><option>active</option><option>trial</option><option>suspended</option><option>cancelled</option></select>
+      <select v-model="plan" aria-label="Workspace plan"><option value="">All plans</option><option>starter</option><option>growth</option><option>scale</option><option>enterprise</option></select>
+      <button class="button" type="submit">Filter</button>
+    </form>
+    <section class="panel result-panel">
+      <div class="table-wrap"><table class="table"><thead><tr><th>Workspace</th><th>Plan</th><th>Status</th><th>Created</th></tr></thead><tbody><tr v-for="tenant in tenants" :key="tenant.id"><td><NuxtLink :to="`/workspaces/${tenant.id}`">{{ tenant.name }}<br><span class="muted">{{ tenant.slug }}</span></NuxtLink></td><td>{{ tenant.plan }}</td><td>{{ tenant.status }}</td><td>{{ new Date(tenant.created_at).toLocaleDateString() }}</td></tr></tbody></table></div>
+      <button v-if="nextCursor" class="button result-panel__action" :disabled="pending" @click="loadMore">{{ pending ? 'Loading…' : 'Load more workspaces' }}</button>
+    </section>
   </section>
 </template>

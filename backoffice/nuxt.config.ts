@@ -10,7 +10,7 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: false },
   css: ['~/assets/css/main.css'],
-  app: { head: { title: 'Fidibeki Control Room', meta: [{ name: 'robots', content: 'noindex, nofollow' }] } },
+  app: { head: { title: 'Fidibeki Control Room', htmlAttrs: { lang: 'en' }, meta: [{ name: 'robots', content: 'noindex, nofollow' }] } },
   routeRules: {
     '/**': {
       headers: {
