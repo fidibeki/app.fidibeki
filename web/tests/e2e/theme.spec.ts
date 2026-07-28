@@ -159,6 +159,32 @@ test('the shell toggle flips the theme and stores the choice', async ({ browser 
   await context.close()
 })
 
+test('an active workspace keeps theme and account controls right aligned', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop topbar alignment check')
+  await installAPI(page)
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=theme-token`)
+  const themeToggle = page.locator('.app-theme-toggle')
+  const accountMenu = page.locator('.app-account-menu')
+  await expect(themeToggle).toBeVisible()
+  await expect(accountMenu).toBeVisible()
+  await expect(page.locator('.app-trial-status')).toHaveCount(0)
+
+  const controls = await page.evaluate(() => {
+    const theme = document.querySelector('.app-theme-toggle')!.getBoundingClientRect()
+    const account = document.querySelector('.app-account-menu')!.getBoundingClientRect()
+    return {
+      themeRight: theme.right,
+      accountLeft: account.left,
+      accountRight: account.right,
+      viewportRight: document.documentElement.clientWidth,
+    }
+  })
+
+  expect(controls.themeRight).toBeLessThanOrEqual(controls.accountLeft)
+  expect(controls.viewportRight - controls.accountRight).toBeLessThanOrEqual(12)
+})
+
 test('both themes keep the primary button and page contrast intact', async ({ page }) => {
   await page.goto(`${baseOrigin}/login`)
 
