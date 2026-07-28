@@ -13,6 +13,8 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 const localHost = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1'
 const widgetBaseUrl = process.env.EXPO_PUBLIC_FIDIBEKI_WIDGET_BASE_URL ?? `http://${localHost}:43136`
 const sessionURL = process.env.EXPO_PUBLIC_FIDIBEKI_SESSION_URL ?? `http://${localHost}:43136/session`
+const screenshotURL =
+  process.env.EXPO_PUBLIC_FIDIBEKI_SCREENSHOT_URL ?? `${widgetBaseUrl}/fixture.png`
 const storage = createAsyncStorageAdapter()
 
 const sessionProvider: SessionProvider = async (request) => {
@@ -32,7 +34,7 @@ const sessionProvider: SessionProvider = async (request) => {
 }
 
 async function screenshotProvider(): Promise<ScreenshotAsset> {
-  const response = await fetch(`${widgetBaseUrl}/fixture.png`)
+  const response = await fetch(screenshotURL)
   if (!response.ok) throw new Error(`Screenshot fixture returned ${response.status}`)
   const blob = await response.blob()
   return {

@@ -105,9 +105,9 @@ smoke on an iOS simulator and an Android emulator or equivalent device CI; JS-on
 insufficient. Screenshot tests cover host cancellation, permission/provider error, URI
 non-disclosure, invalid MIME/size/read, direct upload, and deterministic cleanup.
 
-**Status:** Implemented locally on 2026-07-28. The package, example application, unit/component
+**Status:** Implemented and Android-validated on 2026-07-28. The package, example application, unit/component
 coverage, typechecks, ESM/CJS/type builds, dry-run package, Expo native generation, Android
-debug/release builds, and a Pixel emulator submission/upload/cold-restart smoke are green. The
+debug/release builds, and a Pixel emulator staging submission/upload/cold-restart smoke are green. The
 Android release manifest has no camera, photo-library, or storage permissions. iOS native
 compilation and runtime acceptance remain blocked because the available Xcode installation has no
 eligible iOS platform or simulator runtime; prebuild and CocoaPods installation pass, but this task
@@ -139,6 +139,17 @@ hardening, mobile source/context delivery, Android runtime evidence, and an inde
 and SDK security/correctness re-review are complete. Local repository gates pass, including the
 full backend coverage threshold, focused mobile-capture race test, 62 mobile tests with 84.77%
 statement coverage, package/example builds, Android debug/release builds, and the release
-permission audit. The implementation is pushed to `main` through `4d60a15`, and Backend, Web,
+permission audit. The implementation is pushed to `main` through `05646cf`, and Backend, Web,
 Mobile, Security, Widget, Backoffice, Marketing, and Release Artifacts CI are green. Staging
-validation and the iOS native build/runtime evidence are still required before #136 can close.
+deployments from that source are healthy: API `44b2627d-b8d7-4d0b-95b7-a136f5241c2a`, worker
+`85c5b98d-007b-4516-b1bc-0546257afa02`, and web
+`c05b138a-e23f-4ad4-b06b-52a5e9b20b88`.
+
+The public staging contract accepted `fb_BUNRresU` with a completed safe screenshot and no Issue.
+The release example running in a Pixel emulator then accepted `fb_zvVsKR3O` through the native UI
+with Android source, rating 5, normalized `/checkout/review` screen, a 39,754-byte safe completed
+screenshot, and no Issue. A cold restart retained the 30-day cooldown, reported `ineligible`, and
+did not render the launcher. The disposable least-privilege API key and its capture sessions were
+deleted after the smoke, and the existing staging rule's attachment setting was restored. No
+production action occurred. The remaining acceptance blocker is an iOS native build and runtime
+smoke: Xcode reports no eligible iOS platform or simulator destination, so #136 must remain open.
