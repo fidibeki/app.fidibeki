@@ -139,5 +139,6 @@ hardening, mobile source/context delivery, Android runtime evidence, and an inde
 and SDK security/correctness re-review are complete. Local repository gates pass, including the
 full backend coverage threshold, focused mobile-capture race test, 62 mobile tests with 84.77%
 statement coverage, package/example builds, Android debug/release builds, and the release
-permission audit. Push/CI, staging validation, and the iOS native build/runtime evidence are still
-required before #136 can close.
+permission audit. The implementation is pushed to `main` through `4d60a15`, and Backend, Web,
+Mobile, Security, Widget, Backoffice, Marketing, and Release Artifacts CI are green. Staging
+validation and the iOS native build/runtime evidence are still required before #136 can close.
