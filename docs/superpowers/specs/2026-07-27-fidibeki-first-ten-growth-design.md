@@ -171,7 +171,9 @@ Before production outreach, the sender domain must have working SPF, DKIM, and D
 
 The From identity is:
 
-`Inês, co-founder at Fidibeki <ines.algo@fidibeki.com>`
+`"Inês, co-founder at Fidibeki" <ines.algo@fidibeki.com>`
+
+The comma-bearing display name must be constructed through an address-aware mail library (and checked with `python3 scripts/validate_outreach_headers.py` before a send). It must not be assigned as an unquoted raw string: some recipient servers parse that as multiple or invalid From addresses and reject the message before delivery.
 
 ### Mandatory BCC audit copy
 

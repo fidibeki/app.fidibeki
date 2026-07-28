@@ -1,8 +1,8 @@
 # Fidibeki Cold-Email Sender Readiness
 
 **Checked:** 2026-07-27
-**Status:** Pilot active — DKIM DNS repaired; three US messages accepted by SMTP
-**Owner:** Inês, CMO
+**Status:** All cold outbound paused by founder after an over-fast initial batch
+**Owner:** Inês, co-founder
 
 ## What was verified
 
@@ -40,6 +40,23 @@ The outreach register must be private (not committed to this repository) and con
 - opt-out timestamp/reason.
 
 An unsubscribe, "no", or direct objection means permanent suppression for that business contact. Do not delete the record simply because it is an objection—the suppression record is needed to prevent future contact.
+
+## Header incident — 2026-07-27
+
+Five individual messages were rejected with `5.7.1` before recipient delivery. The DSNs identify the root cause as an invalid/multiple `From` address: the raw display name `Inês, co-founder at Fidibeki <...>` contained an unquoted comma. This is a message-construction defect, not evidence of a content complaint, a recipient opt-out, or DKIM failure.
+
+The corrected, quoted header is:
+
+`"Inês, co-founder at Fidibeki" <ines.algo@fidibeki.com>`
+
+Before one permitted retry for a recipient rejected solely for this defect:
+
+1. Run `python3 scripts/validate_outreach_headers.py` and require `outreach_from_header=valid`.
+2. Construct the `From` header with `email.headerregistry.Address`, not a raw string.
+3. Keep the original subject/body, mandatory BCC, jurisdiction footer, and private send-log link to the DSN.
+4. Retry only the five DSN-identified recipients once; never resend the two messages without a failure notice or any contact marked do-not-resend/suppressed.
+
+No new cohort, retry, or follow-up may be sent until the founder explicitly resumes outbound. The header correction remains documented for a future, founder-approved recovery; it is not an authorisation to retry.
 
 ## Pilot sending constraint
 
