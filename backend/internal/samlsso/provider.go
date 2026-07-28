@@ -272,13 +272,25 @@ func (p *Provider) ParseResponse(encodedResponse string, possibleRequestIDs []st
 	}
 	identity.Email = assertionEmail(assertion)
 	if identity.SubjectID == "" {
-		return AssertedIdentity{}, fmt.Errorf("%w: assertion carries no subject identifier", ErrAssertionInvalid)
+		return AssertedIdentity{}, markVerifiedAssertionFailure(
+			fmt.Errorf("%w: assertion carries no subject identifier", ErrAssertionInvalid),
+			identity,
+			"",
+		)
 	}
 	if identity.AssertionID == "" {
-		return AssertedIdentity{}, fmt.Errorf("%w: assertion carries no ID", ErrAssertionInvalid)
+		return AssertedIdentity{}, markVerifiedAssertionFailure(
+			fmt.Errorf("%w: assertion carries no ID", ErrAssertionInvalid),
+			identity,
+			"",
+		)
 	}
 	if identity.Email == "" {
-		return AssertedIdentity{}, fmt.Errorf("%w: assertion carries no email claim", ErrAssertionInvalid)
+		return AssertedIdentity{}, markVerifiedAssertionFailure(
+			fmt.Errorf("%w: assertion carries no email claim", ErrAssertionInvalid),
+			identity,
+			"",
+		)
 	}
 	return identity, nil
 }

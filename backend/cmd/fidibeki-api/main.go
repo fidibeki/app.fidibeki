@@ -543,6 +543,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		},
 		Store: samlStore, JWT: jwtManager, Logger: logger,
 		StartGuard:        samlsso.AbuseStartGuard{Evaluator: abuseEvaluator},
+		AssertionGuard:    samlsso.AbuseAssertionGuard{Evaluator: abuseEvaluator},
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	})
 	tenantapi.RegisterRoutes(tenantRoutes, tenantapi.Capabilities{

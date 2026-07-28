@@ -413,7 +413,19 @@ func (s Service) ConsumeAssertion(
 	query db.Querier,
 	resolved tenant.Tenant,
 	encodedResponse string,
-) (Outcome, error) {
+) (outcome Outcome, resultErr error) {
+	var verifiedIdentity *AssertedIdentity
+	var verifiedPurpose Purpose
+	defer func() {
+		if resultErr != nil && verifiedIdentity != nil {
+			resultErr = markVerifiedAssertionFailure(
+				resultErr,
+				*verifiedIdentity,
+				verifiedPurpose,
+			)
+		}
+	}()
+
 	now := s.now()
 	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, now); err != nil {
 		return Outcome{}, err
@@ -446,6 +458,7 @@ func (s Service) ConsumeAssertion(
 	if err != nil {
 		return Outcome{}, err
 	}
+	verifiedIdentity = &identity
 	if identity.InResponseTo != candidate {
 		return Outcome{}, fmt.Errorf(
 			"%w: response and assertion correlation differ", ErrAssertionInvalid,
@@ -474,6 +487,7 @@ func (s Service) ConsumeAssertion(
 		// rather than only by the library.
 		return Outcome{}, ErrRequestNotFound
 	}
+	verifiedPurpose = purpose
 
 	email, err := normalizeAssertedEmail(identity.Email, configuration.EmailDomains)
 	if err != nil {

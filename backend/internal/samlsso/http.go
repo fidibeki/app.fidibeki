@@ -22,7 +22,13 @@ import (
 
 // maxACSBodyBytes bounds a posted SAML response. Signed assertions from real
 // identity providers are tens of kilobytes at most.
-const maxACSBodyBytes = 1 << 20
+const (
+	maxACSBodyBytes                   = 1 << 20
+	assertionFailureDedupWindow       = 15 * time.Minute
+	assertionProvenanceAnonymous      = "anonymous"
+	assertionProvenanceIDPVerified    = "idp_verified"
+	assertionFailureAuditActionPrefix = "login_failed_"
+)
 
 type HTTPOptions struct {
 	Service           Service
@@ -30,6 +36,7 @@ type HTTPOptions struct {
 	JWT               *auth.JWTManager
 	Logger            *slog.Logger
 	StartGuard        StartGuard
+	AssertionGuard    AssertionGuard
 	TrustedProxyCIDRs []netip.Prefix
 }
 
@@ -171,12 +178,36 @@ func (h *HTTPHandler) startTest(w http.ResponseWriter, r *http.Request) {
 
 // assertionConsumer receives the identity provider's POST. Every failure ends
 // as a redirect back to the login page rather than a JSON error, because the
-// caller here is a browser mid-navigation, not an API client. The specific
-// cause is audited and logged but never shown, so a probe cannot use the
-// response to learn why an assertion was rejected.
+// caller here is a browser mid-navigation, not an API client. Validated
+// rejections produce a bounded audit signal; malformed and rate-limited public
+// input does not become an authoritative tenant event.
 func (h *HTTPHandler) assertionConsumer(w http.ResponseWriter, r *http.Request) {
 	resolved, query, ok := requestState(w, r)
 	if !ok {
+		return
+	}
+	if h.options.AssertionGuard == nil {
+		h.redirectFailure(w, r, resolved, "sso_unavailable", ErrAssertionGuardUnavailable)
+		return
+	}
+	decision, guardErr := h.options.AssertionGuard.Allow(r.Context(), AssertionAttempt{
+		TenantID: resolved.ID,
+		Network:  httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
+	})
+	if guardErr != nil || decision.Unavailable {
+		cause := guardErr
+		if cause == nil {
+			cause = ErrAssertionGuardUnavailable
+		}
+		h.redirectFailure(w, r, resolved, "sso_unavailable", cause)
+		return
+	}
+	if !decision.Allowed {
+		h.options.Logger.DebugContext(
+			r.Context(), "SAML assertion rate limited",
+			"tenant_id", resolved.ID, "reason", ReasonSAMLAssertionRateLimited,
+		)
+		h.redirectFailureResponse(w, r, resolved, "sso_unavailable")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxACSBodyBytes)
@@ -222,21 +253,40 @@ func (h *HTTPHandler) recordAssertionFailure(
 		// or correlation mutation performed before a late eligibility check.
 		appmiddleware.RollbackTenantTransaction(r.Context())
 	}
-	// The failure is recorded before the redirect so a rejected assertion is
-	// always auditable, including the replay and ineligible-member cases where
-	// the surrounding transaction has already written correlation state.
+	action, data := assertionFailureAudit(err, reason)
+	// The bounded failure signal is recorded before the redirect, including the
+	// replay and ineligible-member cases where the surrounding transaction has
+	// already written correlation state.
 	if auditErr := accessaudit.Record(r.Context(), query, accessaudit.RecordInput{
 		TenantID: resolved.ID, Kind: "sso.login_failed",
 		Actor:        accessaudit.Actor{Type: accessaudit.ActorSystem},
 		ResourceType: accessaudit.ResourceSSOConfiguration, ResourceID: resolved.ID,
-		Action: "login", Outcome: accessaudit.OutcomeDenied,
-		Data: map[string]any{"reason": reason},
+		Action: action, Outcome: accessaudit.OutcomeDenied, Data: data,
+		DedupWindow: assertionFailureDedupWindow,
 	}); auditErr != nil {
 		h.options.Logger.ErrorContext(
 			r.Context(), "SAML failure audit failed", "error", auditErr, "tenant_id", resolved.ID,
 		)
 	}
 	h.redirectFailure(w, r, resolved, reason, err)
+}
+
+func assertionFailureAudit(err error, reason string) (string, map[string]any) {
+	provenance := assertionProvenanceAnonymous
+	data := map[string]any{"reason": reason, "provenance": provenance}
+	var verified *verifiedAssertionFailure
+	if errors.As(err, &verified) {
+		provenance = assertionProvenanceIDPVerified
+		data["provenance"] = provenance
+		if verified.idpEntityID != "" {
+			data["idp_entity_id"] = verified.idpEntityID
+		}
+		data["correlation"] = verified.correlation
+		if verified.purpose != "" {
+			data["purpose"] = string(verified.purpose)
+		}
+	}
+	return assertionFailureAuditActionPrefix + provenance + "_" + reason, data
 }
 
 func (h *HTTPHandler) show(w http.ResponseWriter, r *http.Request) {

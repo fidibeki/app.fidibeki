@@ -98,10 +98,11 @@ func TestParseResponseRejectsInvalidAssertions(t *testing.T) {
 	otherIdP := newTestIdP(t, "https://other-idp.test/entity")
 
 	tests := []struct {
-		name    string
-		mutate  func(*assertionOptions)
-		signer  *testIdP
-		wantErr string
+		name     string
+		mutate   func(*assertionOptions)
+		signer   *testIdP
+		wantErr  string
+		verified bool
 	}{
 		{
 			name:    "tampered assertion",
@@ -160,9 +161,10 @@ func TestParseResponseRejectsInvalidAssertions(t *testing.T) {
 			wantErr: "InResponseTo",
 		},
 		{
-			name:    "no email claim",
-			mutate:  func(options *assertionOptions) { options.omitEmail = true },
-			wantErr: "email claim",
+			name:     "no email claim",
+			mutate:   func(options *assertionOptions) { options.omitEmail = true },
+			wantErr:  "email claim",
+			verified: true,
 		},
 	}
 
@@ -185,6 +187,10 @@ func TestParseResponseRejectsInvalidAssertions(t *testing.T) {
 			}
 			if test.wantErr != "" && !strings.Contains(err.Error(), test.wantErr) {
 				t.Errorf("ParseResponse() error = %v, want it to mention %q", err, test.wantErr)
+			}
+			var verified *verifiedAssertionFailure
+			if got := errors.As(err, &verified); got != test.verified {
+				t.Errorf("verified provenance = %v, want %v for %s", got, test.verified, test.name)
 			}
 		})
 	}

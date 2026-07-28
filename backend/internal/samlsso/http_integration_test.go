@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -42,11 +43,13 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 	}
 	routes := chi.NewRouter()
 	startGuard := &samlStartGuardStub{decision: StartDecision{Allowed: true}}
+	assertionGuard := &samlAssertionGuardStub{decision: AssertionDecision{Allowed: true}}
 	var samlLogs bytes.Buffer
 	RegisterRoutes(routes, HTTPOptions{
 		Service: harness.service, Store: harness.store, JWT: jwtManager,
 		Logger:            slog.New(slog.NewJSONHandler(&samlLogs, nil)),
 		StartGuard:        startGuard,
+		AssertionGuard:    assertionGuard,
 		TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 	})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
@@ -338,21 +341,308 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("the public assertion guard fails closed before parsing or audit", func(t *testing.T) {
+		before := harness.accessEventCount(ctx, t, acme, "sso.login_failed")
+		body := "SAMLResponse=" + strings.Repeat("x", maxACSBodyBytes+1)
+		for _, test := range []struct {
+			name     string
+			decision AssertionDecision
+			err      error
+		}{
+			{
+				name:     "rate limited",
+				decision: AssertionDecision{Reason: ReasonSAMLAssertionRateLimited},
+			},
+			{
+				name:     "limiter unavailable",
+				decision: AssertionDecision{Unavailable: true},
+				err:      errors.New("redis unavailable"),
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				assertionGuard.decision = test.decision
+				assertionGuard.err = test.err
+				calls := assertionGuard.calls
+				logBytes := samlLogs.Len()
+				response := samlRequest(handler, http.MethodPost, ACSPath, body, "")
+				if response.Code != http.StatusSeeOther ||
+					!strings.Contains(response.Header().Get("Location"), "sso_error=sso_unavailable") {
+					t.Fatalf("response = %d %q", response.Code, response.Header().Get("Location"))
+				}
+				if got := harness.accessEventCount(ctx, t, acme, "sso.login_failed"); got != before {
+					t.Fatalf("SAML failure events = %d, want unchanged %d", got, before)
+				}
+				if assertionGuard.calls != calls+1 {
+					t.Fatalf("guard calls = %d, want %d", assertionGuard.calls, calls+1)
+				}
+				if test.err == nil && samlLogs.Len() != logBytes {
+					t.Fatalf("rate-limit denial emitted a warning log: %s", samlLogs.String()[logBytes:])
+				}
+				if test.err != nil && samlLogs.Len() == logBytes {
+					t.Fatal("limiter failure emitted no operational warning")
+				}
+			})
+		}
+		assertionGuard.decision = AssertionDecision{Allowed: true}
+		assertionGuard.err = nil
+	})
+
+	t.Run("a missing public assertion guard fails closed", func(t *testing.T) {
+		unguardedRoutes := chi.NewRouter()
+		RegisterRoutes(unguardedRoutes, HTTPOptions{
+			Service: harness.service, Store: harness.store, JWT: jwtManager,
+			Logger: discardLogger(), StartGuard: startGuard,
+		})
+		unguarded := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+			BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: harness.pools.Admin},
+			Begin: db.BeginFromPool(harness.pools.App), Logger: discardLogger(),
+		})(unguardedRoutes)
+		before := harness.accessEventCount(ctx, t, acme, "sso.login_failed")
+		response := samlRequest(
+			unguarded, http.MethodPost, ACSPath,
+			"SAMLResponse="+strings.Repeat("x", maxACSBodyBytes+1), "",
+		)
+		if response.Code != http.StatusSeeOther ||
+			!strings.Contains(response.Header().Get("Location"), "sso_error=sso_unavailable") {
+			t.Fatalf("response = %d %q", response.Code, response.Header().Get("Location"))
+		}
+		if got := harness.accessEventCount(ctx, t, acme, "sso.login_failed"); got != before {
+			t.Fatalf("SAML failure events = %d, want unchanged %d", got, before)
+		}
+	})
+
+	t.Run("the assertion guard uses only forwarding data from a trusted proxy", func(t *testing.T) {
+		assertionGuard.decision = AssertionDecision{Reason: ReasonSAMLAssertionRateLimited}
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"http://globex.localhost"+ACSPath,
+			strings.NewReader("SAMLResponse=not-base64"),
+		)
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request.RemoteAddr = "10.0.0.5:43123"
+		request.Header.Set("X-Forwarded-For", "198.51.100.8, 10.0.0.4")
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body)
+		}
+		if assertionGuard.attempt.Network != "198.51.100.8" {
+			t.Fatalf(
+				"guard network = %q, want trusted client address",
+				assertionGuard.attempt.Network,
+			)
+		}
+		assertionGuard.decision = AssertionDecision{Allowed: true}
+	})
+
 	// The identity provider posts here from its own origin, so a rejection must
 	// return the browser to the login page rather than answer with JSON.
 	t.Run("a rejected assertion returns the browser to the login page", func(t *testing.T) {
-		response := samlRequest(handler, http.MethodPost, ACSPath, "SAMLResponse=not-base64", "")
-		if response.Code != http.StatusSeeOther {
-			t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+		before := harness.accessEventCount(ctx, t, acme, "sso.login_failed")
+		for range 8 {
+			response := samlRequest(handler, http.MethodPost, ACSPath, "SAMLResponse=not-base64", "")
+			if response.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body)
+			}
+			location := response.Header().Get("Location")
+			if !strings.Contains(location, "/login?") || !strings.Contains(location, "sso_error=") {
+				t.Fatalf("Location = %q, want the login page with a reason code", location)
+			}
 		}
-		location := response.Header().Get("Location")
-		if !strings.Contains(location, "/login?") || !strings.Contains(location, "sso_error=") {
-			t.Fatalf("Location = %q, want the login page with a reason code", location)
+		if got := harness.accessEventCount(ctx, t, acme, "sso.login_failed"); got != before+1 {
+			t.Fatalf("SAML failure events = %d, want one new bounded signal after 8 invalid responses", got)
 		}
-		missing := samlRequest(handler, http.MethodPost, ACSPath, "", "")
-		if missing.Code != http.StatusSeeOther ||
-			!strings.Contains(missing.Header().Get("Location"), "sso_error=missing_response") {
-			t.Fatalf("missing response = %d %q", missing.Code, missing.Header().Get("Location"))
+		var action, reason, provenance string
+		if err := harness.root.QueryRow(ctx, `
+			SELECT action, data->>'reason', data->>'provenance'
+			FROM tenant_access_events
+			WHERE tenant_id = $1 AND kind = 'sso.login_failed'
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		`, acme.id).Scan(&action, &reason, &provenance); err != nil {
+			t.Fatalf("read bounded SAML failure event: %v", err)
+		}
+		if action != "login_failed_anonymous_assertion_invalid" ||
+			reason != "assertion_invalid" || provenance != assertionProvenanceAnonymous {
+			t.Fatalf(
+				"failure signal = %q/%q/%q, want anonymous assertion rejection",
+				action, reason, provenance,
+			)
+		}
+
+		for _, test := range []struct {
+			name, body, reason string
+		}{
+			{name: "missing response", reason: "missing_response"},
+			{
+				name:   "oversized form",
+				body:   "SAMLResponse=" + strings.Repeat("x", maxACSBodyBytes+1),
+				reason: "malformed_response",
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				response := samlRequest(handler, http.MethodPost, ACSPath, test.body, "")
+				if response.Code != http.StatusSeeOther ||
+					!strings.Contains(response.Header().Get("Location"), "sso_error="+test.reason) {
+					t.Fatalf(
+						"response = %d %q, want %s",
+						response.Code, response.Header().Get("Location"), test.reason,
+					)
+				}
+				if got := harness.accessEventCount(ctx, t, acme, "sso.login_failed"); got != before+1 {
+					t.Fatalf("SAML failure events = %d, malformed form must not add an event", got)
+				}
+			})
+		}
+	})
+
+	t.Run("only verified identity provider failures receive trusted provenance", func(t *testing.T) {
+		startAssertion := func(t *testing.T, email string, tamper bool) string {
+			t.Helper()
+			started := samlRequest(handler, http.MethodGet, StartPath, "", "")
+			if started.Code != http.StatusSeeOther ||
+				!strings.HasPrefix(started.Header().Get("Location"), "https://idp.test/sso?") {
+				t.Fatalf("start response = %d %q", started.Code, started.Header().Get("Location"))
+			}
+			var requestID string
+			if err := harness.root.QueryRow(ctx, `
+				SELECT id
+				FROM tenant_saml_auth_requests
+				WHERE tenant_id = $1
+				ORDER BY created_at DESC, id DESC
+				LIMIT 1
+			`, acme.id).Scan(&requestID); err != nil {
+				t.Fatalf("load HTTP-started SAML request: %v", err)
+			}
+			options := harness.assertion(t, acme, requestID, email)
+			options.tamper = tamper
+			return acme.idp.response(t, options)
+		}
+
+		var anonymousInvalidBefore int
+		if err := harness.root.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_access_events
+			WHERE tenant_id = $1
+			  AND kind = 'sso.login_failed'
+			  AND action = 'login_failed_anonymous_assertion_invalid'
+		`, acme.id).Scan(&anonymousInvalidBefore); err != nil {
+			t.Fatalf("count anonymous assertion failures: %v", err)
+		}
+		tampered := startAssertion(t, "owner@acme.test", true)
+		invalidSignature := samlRequest(
+			handler, http.MethodPost, ACSPath,
+			url.Values{"SAMLResponse": []string{tampered}}.Encode(), "",
+		)
+		if invalidSignature.Code != http.StatusSeeOther ||
+			!strings.Contains(
+				invalidSignature.Header().Get("Location"),
+				"sso_error=assertion_invalid",
+			) {
+			t.Fatalf(
+				"invalid-signature response = %d %q",
+				invalidSignature.Code, invalidSignature.Header().Get("Location"),
+			)
+		}
+		var anonymousInvalidAfter, verifiedInvalidSignatures int
+		if err := harness.root.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_access_events
+			WHERE tenant_id = $1
+			  AND kind = 'sso.login_failed'
+			  AND action = 'login_failed_anonymous_assertion_invalid'
+		`, acme.id).Scan(&anonymousInvalidAfter); err != nil {
+			t.Fatalf("count bounded invalid-signature events: %v", err)
+		}
+		if anonymousInvalidAfter != anonymousInvalidBefore {
+			t.Fatalf(
+				"anonymous invalid-assertion events = %d after invalid signature, want deduplicated %d",
+				anonymousInvalidAfter, anonymousInvalidBefore,
+			)
+		}
+		if err := harness.root.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_access_events
+			WHERE tenant_id = $1
+			  AND kind = 'sso.login_failed'
+			  AND action = 'login_failed_idp_verified_assertion_invalid'
+		`, acme.id).Scan(&verifiedInvalidSignatures); err != nil {
+			t.Fatalf("count verified invalid-signature events: %v", err)
+		}
+		if verifiedInvalidSignatures != 0 {
+			t.Fatalf(
+				"verified invalid-signature events = %d, an invalid signature is anonymous",
+				verifiedInvalidSignatures,
+			)
+		}
+
+		const strangerEmail = "stranger@globex.test"
+		for range 2 {
+			signed := startAssertion(t, strangerEmail, false)
+			ineligible := samlRequest(
+				handler, http.MethodPost, ACSPath,
+				url.Values{"SAMLResponse": []string{signed}}.Encode(), "",
+			)
+			if ineligible.Code != http.StatusSeeOther ||
+				!strings.Contains(
+					ineligible.Header().Get("Location"),
+					"sso_error=member_not_eligible",
+				) {
+				t.Fatalf(
+					"ineligible response = %d %q",
+					ineligible.Code, ineligible.Header().Get("Location"),
+				)
+			}
+		}
+
+		var count int
+		if err := harness.root.QueryRow(ctx, `
+			SELECT count(*)
+			FROM tenant_access_events
+			WHERE tenant_id = $1
+			  AND kind = 'sso.login_failed'
+			  AND action = 'login_failed_idp_verified_member_not_eligible'
+		`, acme.id).Scan(&count); err != nil {
+			t.Fatalf("count verified SAML failure events: %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("verified ineligible-member events = %d after two failures, want 1", count)
+		}
+
+		var action, reason, provenance, idpEntityID, correlation, purpose, data string
+		if err := harness.root.QueryRow(ctx, `
+			SELECT
+				action,
+				data->>'reason',
+				data->>'provenance',
+				data->>'idp_entity_id',
+				data->>'correlation',
+				data->>'purpose',
+				data::text
+			FROM tenant_access_events
+			WHERE tenant_id = $1
+			  AND kind = 'sso.login_failed'
+			  AND action = 'login_failed_idp_verified_member_not_eligible'
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		`, acme.id).Scan(
+			&action, &reason, &provenance, &idpEntityID, &correlation, &purpose, &data,
+		); err != nil {
+			t.Fatalf("read verified SAML failure event: %v", err)
+		}
+		if action != "login_failed_idp_verified_member_not_eligible" ||
+			reason != "member_not_eligible" || provenance != assertionProvenanceIDPVerified ||
+			idpEntityID != acme.idp.entityID || correlation != "solicited" ||
+			purpose != string(PurposeLogin) {
+			t.Fatalf(
+				"verified failure = %q/%q/%q/%q/%q/%q",
+				action, reason, provenance, idpEntityID, correlation, purpose,
+			)
+		}
+		for _, forbidden := range []string{strangerEmail, "subject", "assertion", "response"} {
+			if strings.Contains(strings.ToLower(data), strings.ToLower(forbidden)) {
+				t.Errorf("verified audit data leaked %q: %s", forbidden, data)
+			}
 		}
 	})
 
@@ -450,6 +740,22 @@ func (guard *samlStartGuardStub) Allow(
 	_ context.Context,
 	attempt StartAttempt,
 ) (StartDecision, error) {
+	guard.calls++
+	guard.attempt = attempt
+	return guard.decision, guard.err
+}
+
+type samlAssertionGuardStub struct {
+	decision AssertionDecision
+	err      error
+	attempt  AssertionAttempt
+	calls    int
+}
+
+func (guard *samlAssertionGuardStub) Allow(
+	_ context.Context,
+	attempt AssertionAttempt,
+) (AssertionDecision, error) {
 	guard.calls++
 	guard.attempt = attempt
 	return guard.decision, guard.err

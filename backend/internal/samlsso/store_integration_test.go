@@ -1183,6 +1183,21 @@ func (h *samlHarness) assertionCount(
 	return count
 }
 
+func (h *samlHarness) accessEventCount(
+	ctx context.Context, t *testing.T, workspace samlWorkspace, kind string,
+) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = $2
+	`, workspace.id, kind).Scan(&count); err != nil {
+		t.Fatalf("count tenant access events: %v", err)
+	}
+	return count
+}
+
 func (h *samlHarness) samlHandoffCount(
 	ctx context.Context, t *testing.T, workspace samlWorkspace,
 ) int {

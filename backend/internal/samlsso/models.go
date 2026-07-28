@@ -53,6 +53,9 @@ var (
 	ErrAuthRequestCapacity = errors.New("SAML authentication request capacity reached")
 	// ErrStartGuardUnavailable keeps missing or failed rate limiting fail-closed.
 	ErrStartGuardUnavailable = errors.New("SAML start guard unavailable")
+	// ErrAssertionGuardUnavailable keeps missing or failed assertion rate
+	// limiting fail-closed before any public response parsing or audit write.
+	ErrAssertionGuardUnavailable = errors.New("SAML assertion guard unavailable")
 	// ErrValidation carries field-level configuration errors.
 	ErrValidation = errors.New("SAML configuration is invalid")
 )
@@ -64,6 +67,38 @@ type ValidationError struct {
 
 func (e ValidationError) Error() string { return ErrValidation.Error() }
 func (e ValidationError) Unwrap() error { return ErrValidation }
+
+// verifiedAssertionFailure marks the point after the configured IdP has
+// cryptographically authenticated an assertion. It carries only non-personal,
+// bounded provenance for audit classification.
+type verifiedAssertionFailure struct {
+	cause       error
+	idpEntityID string
+	correlation string
+	purpose     Purpose
+}
+
+func (failure *verifiedAssertionFailure) Error() string { return failure.cause.Error() }
+func (failure *verifiedAssertionFailure) Unwrap() error { return failure.cause }
+
+func markVerifiedAssertionFailure(
+	cause error,
+	identity AssertedIdentity,
+	purpose Purpose,
+) error {
+	var existing *verifiedAssertionFailure
+	if errors.As(cause, &existing) {
+		return cause
+	}
+	correlation := "idp_initiated"
+	if identity.InResponseTo != "" {
+		correlation = "solicited"
+	}
+	return &verifiedAssertionFailure{
+		cause: cause, idpEntityID: identity.IdPEntityID,
+		correlation: correlation, purpose: purpose,
+	}
+}
 
 // Certificate is one IdP signing certificate. Several can be active at once so
 // an identity provider can publish its successor before retiring the current
