@@ -8,6 +8,21 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
 
+function validateHTTPSURL(value: string, label: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    invalidSession(`invalid ${label} URL`)
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname === '') {
+    invalidSession(`${label} URL must use HTTPS`)
+  }
+  if (parsed.username || parsed.password) {
+    invalidSession(`${label} URL must not include credentials`)
+  }
+}
+
 function invalidSession(message: string): never {
   throw new MobileClientError('invalid_response', `Invalid capture session: ${message}`)
 }
@@ -25,11 +40,7 @@ function validateResponseBlock(value: unknown): MobileResponseBlock {
     }
     const optionValues = new Set<string>()
     for (const option of value.options) {
-      if (
-        !isObject(option) ||
-        !isNonEmptyString(option.value) ||
-        optionValues.has(option.value)
-      ) {
+      if (!isObject(option) || !isNonEmptyString(option.value) || optionValues.has(option.value)) {
         invalidSession('invalid response option')
       }
       optionValues.add(option.value)
@@ -62,12 +73,9 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     Number(definition.definition_version) < 1 ||
     definition.presentation !== 'launcher' ||
     !['edge_tab', 'floating_button'].includes(String(definition.launcher_variant)) ||
-    ![
-      'continuous_feedback',
-      'after_engagement',
-      'validate_content',
-      'detect_friction',
-    ].includes(String(definition.objective)) ||
+    !['continuous_feedback', 'after_engagement', 'validate_content', 'detect_friction'].includes(
+      String(definition.objective),
+    ) ||
     !['session', 'cooldown', 'never'].includes(String(definition.recurrence_mode)) ||
     !Array.isArray(definition.response_blocks) ||
     definition.response_blocks.length < 1 ||
@@ -79,6 +87,30 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     typeof definition.can_attach_screenshot !== 'boolean'
   ) {
     invalidSession('invalid widget definition')
+  }
+  const appearance = definition.appearance
+  if (
+    (appearance.position !== undefined && !['bottom-left', 'bottom-right'].includes(String(appearance.position))) ||
+    (appearance.theme !== undefined && !['light', 'dark', 'auto'].includes(String(appearance.theme)))
+  ) {
+    invalidSession('invalid widget appearance')
+  }
+  for (const field of [
+    appearance.accent_color,
+    appearance.accent_foreground,
+    appearance.surface_color,
+    appearance.text_color,
+  ]) {
+    if (field !== undefined && (typeof field !== 'string' || !/^#[0-9a-f]{6}$/i.test(field))) {
+      invalidSession('invalid widget appearance color')
+    }
+  }
+  if (appearance.logo_url !== undefined) {
+    if (!isNonEmptyString(appearance.logo_url)) invalidSession('invalid logo URL')
+    validateHTTPSURL(appearance.logo_url, 'logo')
+    if (appearance.logo_url.length > 2048 || new URL(appearance.logo_url).hash !== '') {
+      invalidSession('invalid logo URL')
+    }
   }
   const keys = new Set<string>()
   for (const rawBlock of definition.response_blocks) {
@@ -99,16 +131,10 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
   if (localizationFields.some((field) => !isNonEmptyString(localization[field]))) {
     invalidSession('incomplete localization')
   }
-  if (
-    definition.localization.block_labels !== undefined &&
-    !isObject(definition.localization.block_labels)
-  ) {
+  if (definition.localization.block_labels !== undefined && !isObject(definition.localization.block_labels)) {
     invalidSession('invalid response localization')
   }
-  if (
-    definition.localization.option_labels !== undefined &&
-    !isObject(definition.localization.option_labels)
-  ) {
+  if (definition.localization.option_labels !== undefined && !isObject(definition.localization.option_labels)) {
     invalidSession('invalid option localization')
   }
   if (definition.recurrence_mode === 'cooldown') {
@@ -144,20 +170,11 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     if (notice.locale !== configuration.display_locale) {
       invalidSession('contact notice locale must match the display locale')
     }
-    let policyURL: URL
-    try {
-      policyURL = new URL(notice.privacy_policy_url)
-    } catch {
-      invalidSession('invalid privacy policy URL')
-    }
-    if (policyURL.protocol !== 'https:') invalidSession('privacy policy URL must use HTTPS')
+    validateHTTPSURL(notice.privacy_policy_url, 'privacy policy')
   }
   if (definition.ai_processing !== undefined) {
     const ai = definition.ai_processing
-    if (
-      !isObject(ai) ||
-      typeof ai.enabled !== 'boolean'
-    ) {
+    if (!isObject(ai) || typeof ai.enabled !== 'boolean') {
       invalidSession('invalid AI disclosure')
     }
     if (
@@ -167,11 +184,13 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
         !isNonEmptyString(ai.policy_version) ||
         !Array.isArray(ai.input_categories) ||
         ai.input_categories.some(
-          (category) =>
-            !['feedback_text', 'screenshot', 'audio', 'video'].includes(String(category)),
+          (category) => !['feedback_text', 'screenshot', 'audio', 'video'].includes(String(category)),
         ))
     ) {
       invalidSession('incomplete AI disclosure')
+    }
+    if (ai.enabled) {
+      validateHTTPSURL(ai.privacy_policy_url as string, 'AI privacy policy')
     }
   }
   return value as unknown as MobileCaptureSession

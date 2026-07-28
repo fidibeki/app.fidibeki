@@ -27,16 +27,9 @@ function blockValueIsValid(block: MobileResponseBlock, value: unknown): boolean 
     return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5
   }
   if (block.type === 'free_text') {
-    return (
-      typeof value === 'string' &&
-      value.trim().length > 0 &&
-      value.trim().length <= MAX_TEXT_LENGTH
-    )
+    return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= MAX_TEXT_LENGTH
   }
-  return (
-    typeof value === 'string' &&
-    (block.options ?? []).some((option) => option.value === value)
-  )
+  return typeof value === 'string' && (block.options ?? []).some((option) => option.value === value)
 }
 
 export function reconcileResponses(
@@ -83,6 +76,7 @@ export function createConsentInput(
   session: MobileCaptureSession,
   state: FeedbackFormState,
 ): ReporterConsentInput | undefined {
+  if (!session.configuration.definition.collect_contact) return undefined
   const notice = session.configuration.contact_notice
   if (!notice || !state.consentGranted || state.reporterEmail.trim() === '') return undefined
   return {

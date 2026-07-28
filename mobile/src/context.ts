@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type {
   FeedbackFormState,
+  FeedbackDraftPolicy,
   FeedbackStatus,
   MobileCaptureSession,
   MobileClientError,
@@ -17,16 +18,15 @@ export interface FeedbackContextValue {
   status: FeedbackStatus
   error: MobileClientError | null
   eligible: boolean
+  draftPolicy: FeedbackDraftPolicy
+  draftRevision: number
   screen: string
   theme: MobileTheme
   messages: SystemMessages
   screenshotProvider?: ScreenshotProvider
   open(): Promise<void>
   dismiss(): void
-  submit(
-    state: FeedbackFormState,
-    screenshot?: PreparedScreenshot,
-  ): Promise<MobileSubmissionResult>
+  submit(state: FeedbackFormState, screenshot?: PreparedScreenshot): Promise<MobileSubmissionResult>
   clearError(): void
 }
 

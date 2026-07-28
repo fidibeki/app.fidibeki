@@ -3,15 +3,7 @@ import type { ReactNode } from 'react'
 export type MobilePlatform = 'ios' | 'android'
 export type ResponseBlockType = 'rating' | 'reaction' | 'single_choice' | 'free_text'
 export type RecurrenceMode = 'session' | 'cooldown' | 'never'
-export type FeedbackStatus =
-  | 'idle'
-  | 'loading'
-  | 'ready'
-  | 'open'
-  | 'submitting'
-  | 'submitted'
-  | 'ineligible'
-  | 'error'
+export type FeedbackStatus = 'idle' | 'loading' | 'ready' | 'open' | 'submitting' | 'submitted' | 'ineligible' | 'error'
 
 export interface MobileResponseOption {
   value: string
@@ -61,17 +53,23 @@ export interface MobileAIDisclosure {
   input_categories?: Array<'feedback_text' | 'screenshot' | 'audio' | 'video'>
 }
 
+export interface MobileAppearance {
+  position?: 'bottom-left' | 'bottom-right'
+  theme?: 'light' | 'dark' | 'auto'
+  accent_color?: string
+  accent_foreground?: string
+  surface_color?: string
+  text_color?: string
+  logo_url?: string
+}
+
 export interface MobileWidgetDefinition {
   id: string
   definition_key: string
   definition_version: number
   presentation: 'launcher'
   launcher_variant: 'edge_tab' | 'floating_button'
-  objective:
-    | 'continuous_feedback'
-    | 'after_engagement'
-    | 'validate_content'
-    | 'detect_friction'
+  objective: 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
   recurrence_mode: RecurrenceMode
   recurrence_days?: number | null
   response_blocks: MobileResponseBlock[]
@@ -80,7 +78,7 @@ export interface MobileWidgetDefinition {
   collect_contact: boolean
   can_attach_screenshot: boolean
   ai_processing?: MobileAIDisclosure
-  appearance: Record<string, unknown>
+  appearance: MobileAppearance
 }
 
 export interface MobileControllerProfile {
@@ -112,9 +110,7 @@ export interface SessionProviderRequest {
   display_locale: string
 }
 
-export type SessionProvider = (
-  request: SessionProviderRequest,
-) => Promise<MobileCaptureSession>
+export type SessionProvider = (request: SessionProviderRequest) => Promise<MobileCaptureSession>
 
 export interface StorageAdapter {
   getItem(key: string): Promise<string | null>
@@ -243,6 +239,8 @@ export interface FidibekiFeedbackLauncherProps {
   accessibilityLabel?: string
   testID?: string
 }
+
+export type FeedbackDraftPolicy = 'reset' | 'reconcile'
 
 export interface UseFidibekiFeedbackResult {
   open(): Promise<void>

@@ -13,6 +13,11 @@ export interface RecurrenceRecord {
   snoozedUntil?: number
 }
 
+export interface RecurrenceEligibility {
+  eligible: boolean
+  nextEligibleAt: number | null
+}
+
 let processAppSessionId: string | undefined
 
 export function normalizeScreen(screen: string): string {
@@ -21,11 +26,7 @@ export function normalizeScreen(screen: string): string {
   return normalized === '' ? '/' : normalized
 }
 
-export function recurrenceStorageKey(
-  projectId: string,
-  definitionKey: string,
-  screen: string,
-): string {
+export function recurrenceStorageKey(projectId: string, definitionKey: string, screen: string): string {
   return [
     STORAGE_PREFIX,
     encodeURIComponent(projectId),
@@ -47,10 +48,13 @@ function parseRecord(value: string | null): RecurrenceRecord | null {
   if (!value) return null
   try {
     const record = JSON.parse(value) as Partial<RecurrenceRecord>
-    if (
-      !['submitted', 'dismissed', 'snoozed'].includes(record.state ?? '') ||
-      !Number.isFinite(record.recordedAt)
-    ) {
+    if (!['submitted', 'dismissed', 'snoozed'].includes(record.state ?? '') || !Number.isFinite(record.recordedAt)) {
+      return null
+    }
+    if (record.state === 'snoozed' && !Number.isFinite(record.snoozedUntil)) {
+      return null
+    }
+    if (record.appSessionId !== undefined && typeof record.appSessionId !== 'string') {
       return null
     }
     return record as RecurrenceRecord
@@ -71,8 +75,7 @@ export class RecurrenceEngine {
       randomBytes?: RandomBytes
     } = {},
   ) {
-    this.appSessionId =
-      options.appSessionId ?? currentProcessAppSessionId(options.randomBytes)
+    this.appSessionId = options.appSessionId ?? currentProcessAppSessionId(options.randomBytes)
     this.now = options.now ?? Date.now
     this.randomBytes = options.randomBytes
     this.hostOwnsSession = options.appSessionId !== undefined
@@ -102,23 +105,39 @@ export class RecurrenceEngine {
     return true
   }
 
-  async isEligible(
+  async isEligible(projectId: string, definition: MobileWidgetDefinition, screen: string): Promise<boolean> {
+    return (await this.eligibility(projectId, definition, screen)).eligible
+  }
+
+  async eligibility(
     projectId: string,
     definition: MobileWidgetDefinition,
     screen: string,
-  ): Promise<boolean> {
+  ): Promise<RecurrenceEligibility> {
     const key = recurrenceStorageKey(projectId, definition.definition_key, screen)
     const record = parseRecord(await this.storage.getItem(key))
-    if (!record) return true
+    if (!record) return { eligible: true, nextEligibleAt: null }
     if (record.state === 'snoozed') {
-      return record.snoozedUntil === undefined || this.now() >= record.snoozedUntil
+      if (record.snoozedUntil === undefined || this.now() >= record.snoozedUntil) {
+        return { eligible: true, nextEligibleAt: null }
+      }
+      return { eligible: false, nextEligibleAt: record.snoozedUntil }
     }
     if (definition.recurrence_mode === 'session') {
-      return record.appSessionId !== this.appSessionId
+      return {
+        eligible: record.appSessionId !== this.appSessionId,
+        nextEligibleAt: null,
+      }
     }
-    if (definition.recurrence_mode === 'never') return false
+    if (definition.recurrence_mode === 'never') {
+      return { eligible: false, nextEligibleAt: null }
+    }
     const days = definition.recurrence_days ?? 30
-    return this.now() >= record.recordedAt + days * 24 * 60 * 60 * 1000
+    const nextEligibleAt = record.recordedAt + days * 24 * 60 * 60 * 1000
+    if (this.now() >= nextEligibleAt) {
+      return { eligible: true, nextEligibleAt: null }
+    }
+    return { eligible: false, nextEligibleAt }
   }
 
   async record(
@@ -130,9 +149,7 @@ export class RecurrenceEngine {
     const record: RecurrenceRecord = {
       state,
       recordedAt: this.now(),
-      ...(definition.recurrence_mode === 'session'
-        ? { appSessionId: this.appSessionId }
-        : {}),
+      ...(definition.recurrence_mode === 'session' ? { appSessionId: this.appSessionId } : {}),
     }
     await this.storage.setItem(
       recurrenceStorageKey(projectId, definition.definition_key, screen),
@@ -140,12 +157,7 @@ export class RecurrenceEngine {
     )
   }
 
-  async snooze(
-    projectId: string,
-    definition: MobileWidgetDefinition,
-    screen: string,
-    until: number,
-  ): Promise<void> {
+  async snooze(projectId: string, definition: MobileWidgetDefinition, screen: string, until: number): Promise<void> {
     await this.storage.setItem(
       recurrenceStorageKey(projectId, definition.definition_key, screen),
       JSON.stringify({

@@ -111,7 +111,11 @@ debug/release builds, and a Pixel emulator submission/upload/cold-restart smoke 
 Android release manifest has no camera, photo-library, or storage permissions. iOS native
 compilation and runtime acceptance remain blocked because the available Xcode installation has no
 eligible iOS platform or simulator runtime; prebuild and CocoaPods installation pass, but this task
-is not accepted until an iOS build and runtime smoke pass.
+is not accepted until an iOS build and runtime smoke pass. The final SDK hardening also covers
+draft isolation and reconciliation, stale-session invalidation, host re-render stability,
+cooldown wake-up, native safe-area placement, automatic appearance, URL validation, PII-free
+bounded idempotency evidence, concurrent retry coalescing, malformed response recovery, and
+corrupt recurrence storage.
 
 ## Task 6: Document, Audit, Validate, And Publish To Staging
 
@@ -132,5 +136,8 @@ comment links commits/tests/deployments, and no production action occurred.
 
 **Status:** In progress on 2026-07-28. Documentation, privacy/retention registration, backend
 hardening, mobile source/context delivery, Android runtime evidence, and an independent backend
-security/correctness re-review are complete. Final repository gates, push/CI, staging validation,
-and the iOS native build/runtime evidence are still required before #136 can close.
+and SDK security/correctness re-review are complete. Local repository gates pass, including the
+full backend coverage threshold, focused mobile-capture race test, 62 mobile tests with 84.77%
+statement coverage, package/example builds, Android debug/release builds, and the release
+permission audit. Push/CI, staging validation, and the iOS native build/runtime evidence are still
+required before #136 can close.

@@ -138,26 +138,218 @@ describe('mobile backend wire contract', () => {
     expect(JSON.stringify(calls)).not.toContain('file:///')
   })
 
-  it('reuses the exact request after ambiguity and rejects a changed retry', async () => {
+  it('keeps an exact bound retry past submit expiry without retaining payload PII', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T12:00:00Z'))
+    try {
+      const current = session({
+        submit_expires_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockRejectedValueOnce(new Error('connection reset'))
+        .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
+        .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
+      const client = new MobileClient({
+        apiBaseUrl: 'https://api.example.test',
+        fetch: fetchMock,
+      })
+      await expect(client.submitFeedback(current, request())).rejects.toMatchObject({
+        code: 'network_error',
+        retryable: true,
+      })
+      await expect(client.submitFeedback(current, request({ comment: 'changed' }))).rejects.toMatchObject({
+        code: 'retry_payload_changed',
+      })
+      await expect(client.submitFeedback(current, request())).resolves.toMatchObject({
+        feedback_id: 'feedback-uuid',
+      })
+      vi.setSystemTime(new Date('2026-07-28T12:00:02Z'))
+      await expect(
+        client.submitFeedback(current, request({ comment: 'changed after acceptance' })),
+      ).rejects.toMatchObject({ code: 'retry_payload_changed' })
+      await expect(client.submitFeedback(current, request())).resolves.toMatchObject({
+        feedback_id: 'feedback-uuid',
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases definitive validation failures so the user can edit and retry', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce(
+        response(
+          {
+            error: {
+              code: 'validation_failed',
+              message: 'invalid',
+              details: [{ field: 'comment', message: 'is invalid' }],
+            },
+          },
+          422,
+        ),
+      )
       .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
     const client = new MobileClient({
       apiBaseUrl: 'https://api.example.test',
       fetch: fetchMock,
     })
+    await expect(client.submitFeedback(session(), request({ comment: 'bad' }))).rejects.toMatchObject({
+      code: 'validation_error',
+    })
+    await expect(client.submitFeedback(session(), request({ comment: 'fixed' }))).resolves.toMatchObject({
+      feedback_id: 'feedback-uuid',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains an ambiguous 2xx digest for an exact retry after submit expiry', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T12:00:00Z'))
+    try {
+      const current = session({
+        submit_expires_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('{', { status: 200 }))
+        .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
+      const client = new MobileClient({
+        apiBaseUrl: 'https://api.example.test',
+        fetch: fetchMock,
+      })
+      await expect(client.submitFeedback(current, request())).rejects.toMatchObject({
+        code: 'invalid_response',
+        retryable: true,
+      })
+      vi.setSystemTime(new Date('2026-07-28T12:00:02Z'))
+      await expect(client.submitFeedback(current, request({ comment: 'changed' }))).rejects.toMatchObject({
+        code: 'retry_payload_changed',
+      })
+      await expect(client.submitFeedback(current, request())).resolves.toMatchObject({
+        feedback_id: 'feedback-uuid',
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['invalid JSON', new Response('{', { status: 503 })],
+    ['a malformed envelope', response({ message: 'upstream unavailable' }, 503)],
+  ])('retains a retryable non-2xx digest past submit expiry for %s', async (_case, failure) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T12:00:00Z'))
+    try {
+      const current = session({
+        submit_expires_at: new Date(Date.now() + 1_000).toISOString(),
+      })
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(failure)
+        .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
+      const client = new MobileClient({
+        apiBaseUrl: 'https://api.example.test',
+        fetch: fetchMock,
+      })
+      await expect(client.submitFeedback(current, request())).rejects.toMatchObject({
+        code: 'network_error',
+        retryable: true,
+      })
+      vi.setSystemTime(new Date('2026-07-28T12:00:02Z'))
+      await expect(client.submitFeedback(current, request({ comment: 'changed' }))).rejects.toMatchObject({
+        code: 'retry_payload_changed',
+      })
+      await expect(client.submitFeedback(current, request())).resolves.toMatchObject({
+        feedback_id: 'feedback-uuid',
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds ambiguous request retention without evicting active retry evidence', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'))
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: fetchMock,
+    })
+    for (let index = 0; index < 33; index += 1) {
+      const id = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
+      await expect(
+        client.submitFeedback(session(), request({ client_feedback_id: id, comment: `payload-${index}` })),
+      ).rejects.toMatchObject({ code: 'network_error' })
+    }
+    await expect(
+      client.submitFeedback(
+        session(),
+        request({
+          client_feedback_id: '00000000-0000-4000-8000-000000000000',
+          comment: 'edited after eviction',
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'retry_payload_changed' })
+    expect(fetchMock).toHaveBeenCalledTimes(32)
+  })
+
+  it('coalesces concurrent attempts with the same id and payload', async () => {
+    let resolveAttempt!: (response: Response) => void
+    const deferred = new Promise<Response>((resolve) => {
+      resolveAttempt = resolve
+    })
+    const fetchMock = vi.fn<typeof fetch>(async () => deferred)
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: fetchMock,
+    })
+
+    const first = client.submitFeedback(session(), request())
+    const second = client.submitFeedback(session(), request())
+    expect(fetchMock).toHaveBeenCalledOnce()
+    resolveAttempt(response({ ...accepted(), attachments: [] }))
+    await expect(first).resolves.toMatchObject({ feedback_id: 'feedback-uuid' })
+    await expect(second).resolves.toMatchObject({ feedback_id: 'feedback-uuid' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('releases a prior ambiguity after an exact retry gets a definitive failure', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error('upstream unavailable'))
+      .mockResolvedValueOnce(
+        response(
+          {
+            error: {
+              code: 'validation_failed',
+              message: 'invalid',
+              details: [{ field: 'comment', message: 'is invalid' }],
+            },
+          },
+          422,
+        ),
+      )
+      .mockResolvedValueOnce(response({ ...accepted(), attachments: [] }))
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: fetchMock,
+    })
+
     await expect(client.submitFeedback(session(), request())).rejects.toMatchObject({
       code: 'network_error',
       retryable: true,
     })
-    await expect(client.submitFeedback(session(), request())).resolves.toMatchObject({
+    await expect(client.submitFeedback(session(), request())).rejects.toMatchObject({
+      code: 'validation_error',
+    })
+    await expect(client.submitFeedback(session(), request({ comment: 'fixed' }))).resolves.toMatchObject({
       feedback_id: 'feedback-uuid',
     })
-    await expect(
-      client.submitFeedback(session(), request({ comment: 'changed' })),
-    ).rejects.toMatchObject({ code: 'retry_payload_changed' })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('returns accepted feedback with a failed upload outcome and never resubmits it', async () => {
@@ -291,17 +483,28 @@ describe('mobile backend wire contract', () => {
       },
       { code: 'network_error', retryable: true },
     ],
-    [
-      503,
-      { error: { code: 'service_unavailable', message: 'later' } },
-      { code: 'network_error', retryable: true },
-    ],
+    [503, { error: { code: 'service_unavailable', message: 'later' } }, { code: 'network_error', retryable: true }],
   ])('parses backend error envelope for HTTP %i', async (status, body, expected) => {
     const client = new MobileClient({
       apiBaseUrl: 'https://api.example.test',
       fetch: vi.fn(async () => response(body, status)),
     })
     await expect(client.submitFeedback(session(), request())).rejects.toMatchObject(expected)
+  })
+
+  it.each([
+    [401, 'access_denied'],
+    [403, 'access_denied'],
+    [404, 'access_denied'],
+    [410, 'session_expired'],
+  ])('maps terminal HTTP %i without requiring a valid error envelope', async (status, code) => {
+    for (const failure of [new Response('{', { status }), response({ message: 'proxy response' }, status)]) {
+      const client = new MobileClient({
+        apiBaseUrl: 'https://api.example.test',
+        fetch: vi.fn(async () => failure),
+      })
+      await expect(client.submitFeedback(session(), request())).rejects.toMatchObject({ code })
+    }
   })
 
   it('rejects malformed success and error JSON', async () => {
@@ -311,16 +514,15 @@ describe('mobile backend wire contract', () => {
         fetch: vi.fn(async () => new Response('{', { status })),
       })
       await expect(client.submitFeedback(session(), request())).rejects.toMatchObject({
-        code: 'invalid_response',
+        code: status === 200 ? 'invalid_response' : 'network_error',
+        retryable: true,
       })
     }
     const client = new MobileClient({
       apiBaseUrl: 'https://api.example.test',
       fetch: vi.fn(async () => response({ message: 'wrong envelope' }, 500)),
     })
-    await expect(client.submitFeedback(session(), request())).rejects.toBeInstanceOf(
-      MobileClientError,
-    )
+    await expect(client.submitFeedback(session(), request())).rejects.toBeInstanceOf(MobileClientError)
   })
 
   it('rejects bearer-like object upload headers from a malformed grant', async () => {

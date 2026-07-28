@@ -73,6 +73,24 @@ describe('capture session and form contracts', () => {
         }),
       ),
     ).toThrow('privacy policy URL must use HTTPS')
+    expect(() =>
+      validateCaptureSession(
+        session({
+          configuration: {
+            ...current.configuration,
+            contact_notice: {
+              ...current.configuration.contact_notice!,
+              privacy_policy_url: 'https://user:secret@example.test/privacy',
+            },
+          },
+        }),
+      ),
+    ).toThrow('privacy policy URL must not include credentials')
+    const unsafeAI = structuredClone(session())
+    unsafeAI.configuration.definition.ai_processing!.privacy_policy_url = 'javascript:alert(1)'
+    expect(() => validateCaptureSession(unsafeAI)).toThrow('AI privacy policy URL must use HTTPS')
+    unsafeAI.configuration.definition.ai_processing!.privacy_policy_url = 'https://user:secret@example.test/privacy'
+    expect(() => validateCaptureSession(unsafeAI)).toThrow('AI privacy policy URL must not include credentials')
   })
 
   it('validates every response block and optional reporter consent', () => {
@@ -99,7 +117,10 @@ describe('capture session and form contracts', () => {
       reporterEmail: 'reporter@example.test',
       consentGranted: true,
     }
-    expect(validateForm(current, validState)).toEqual({ valid: true, fields: {} })
+    expect(validateForm(current, validState)).toEqual({
+      valid: true,
+      fields: {},
+    })
     const currentSession = session()
     expect(
       createConsentInput(
@@ -123,15 +144,14 @@ describe('capture session and form contracts', () => {
       locale: 'pt-PT',
       granted: true,
     })
+    const contactDisabled = session()
+    contactDisabled.configuration.definition.collect_contact = false
+    expect(createConsentInput(contactDisabled, validState)).toBeUndefined()
   })
 
   it('preserves only compatible answers after a definition change', () => {
     const previous = definition().response_blocks
-    const next = [
-      previous[0]!,
-      { key: 'choice', type: 'free_text' as const, required: true },
-      previous[3]!,
-    ]
+    const next = [previous[0]!, { key: 'choice', type: 'free_text' as const, required: true }, previous[3]!]
     expect(
       reconcileResponses(previous, next, {
         rating: 4,
@@ -153,11 +173,17 @@ describe('capture session and form contracts', () => {
       reporterEmail: '',
       consentGranted: false,
     }
-    expect(validateForm(definition(), state)).toEqual({ valid: true, fields: {} })
+    expect(validateForm(definition(), state)).toEqual({
+      valid: true,
+      fields: {},
+    })
     expect(
       validateForm(definition(), {
         ...state,
-        responses: { ...state.responses, details: 'x'.repeat(MAX_TEXT_LENGTH + 1) },
+        responses: {
+          ...state.responses,
+          details: 'x'.repeat(MAX_TEXT_LENGTH + 1),
+        },
         comment: 'y'.repeat(MAX_TEXT_LENGTH + 1),
       }).fields,
     ).toEqual({

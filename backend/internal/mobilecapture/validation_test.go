@@ -140,6 +140,52 @@ func TestResolveConfigurationRejectsInactiveNonLauncherAndForeignContext(t *test
 	}
 }
 
+func TestResolveLocalizationUsesDeterministicFallbackOrder(t *testing.T) {
+	t.Parallel()
+	localizations := map[string]project.WidgetLocalization{
+		"fr": {Prompt: "Français"},
+		"pt": {Prompt: "Português"},
+	}
+	for _, testCase := range []struct {
+		name           string
+		requested      string
+		projectDefault string
+		wantLocale     string
+		wantPrompt     string
+	}{
+		{
+			name: "requested primary", requested: "pt-AO", projectDefault: "fr",
+			wantLocale: "pt", wantPrompt: "Português",
+		},
+		{
+			name: "project default", requested: "es", projectDefault: "fr-FR",
+			wantLocale: "fr", wantPrompt: "Français",
+		},
+		{
+			name: "sorted fallback", requested: "es", projectDefault: "de",
+			wantLocale: "fr", wantPrompt: "Français",
+		},
+	} {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			locale, localization, ok := resolveLocalization(
+				localizations, testCase.requested, testCase.projectDefault,
+			)
+			if !ok || locale != testCase.wantLocale || localization.Prompt != testCase.wantPrompt {
+				t.Fatalf(
+					"resolveLocalization() = (%q, %#v, %t), want (%q, %q, true)",
+					locale, localization, ok, testCase.wantLocale, testCase.wantPrompt,
+				)
+			}
+		})
+	}
+	if locale, localization, ok := resolveLocalization(nil, "en", "en"); ok ||
+		locale != "" || localization.Prompt != "" {
+		t.Fatalf("empty resolveLocalization() = (%q, %#v, %t)", locale, localization, ok)
+	}
+}
+
 func mobileTestConfiguration() project.PublicConfiguration {
 	return project.PublicConfiguration{
 		TenantID: "tenant-id", ProjectID: "1be03fd8-7560-4d4d-ae39-8e67a35d56d7",

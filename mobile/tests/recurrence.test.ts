@@ -1,9 +1,4 @@
-import {
-  BACKGROUND_SESSION_RESET_MS,
-  RecurrenceEngine,
-  normalizeScreen,
-  recurrenceStorageKey,
-} from '../src'
+import { BACKGROUND_SESSION_RESET_MS, RecurrenceEngine, normalizeScreen, recurrenceStorageKey } from '../src'
 import { resetProcessAppSessionForTesting } from '../src/recurrence'
 import { definition, MemoryStorage } from './fixtures'
 
@@ -27,9 +22,13 @@ describe('recurrence engine', () => {
 
   it('suppresses provider remounts in the same process session', async () => {
     const storage = new MemoryStorage()
-    const first = new RecurrenceEngine(storage, { randomBytes: deterministicRandom(1) })
+    const first = new RecurrenceEngine(storage, {
+      randomBytes: deterministicRandom(1),
+    })
     await first.record('project', definition(), '/checkout', 'submitted')
-    const remount = new RecurrenceEngine(storage, { randomBytes: deterministicRandom(2) })
+    const remount = new RecurrenceEngine(storage, {
+      randomBytes: deterministicRandom(2),
+    })
     expect(remount.currentAppSessionId).toBe(first.currentAppSessionId)
     expect(await remount.isEligible('project', definition(), '/checkout')).toBe(false)
   })
@@ -54,10 +53,14 @@ describe('recurrence engine', () => {
 
   it('treats a cold JS restart as a new app session', async () => {
     const storage = new MemoryStorage()
-    const first = new RecurrenceEngine(storage, { randomBytes: deterministicRandom(4) })
+    const first = new RecurrenceEngine(storage, {
+      randomBytes: deterministicRandom(4),
+    })
     await first.record('project', definition(), '/checkout', 'submitted')
     resetProcessAppSessionForTesting()
-    const cold = new RecurrenceEngine(storage, { randomBytes: deterministicRandom(5) })
+    const cold = new RecurrenceEngine(storage, {
+      randomBytes: deterministicRandom(5),
+    })
     expect(cold.currentAppSessionId).not.toBe(first.currentAppSessionId)
     expect(await cold.isEligible('project', definition(), '/checkout')).toBe(true)
   })
@@ -69,15 +72,46 @@ describe('recurrence engine', () => {
       appSessionId: 'host-session',
       now: () => now,
     })
-    const cooldown = definition({ recurrence_mode: 'cooldown', recurrence_days: 2 })
+    const cooldown = definition({
+      recurrence_mode: 'cooldown',
+      recurrence_days: 2,
+    })
     await engine.record('project', cooldown, '/checkout', 'submitted')
     now = 2 * 24 * 60 * 60 * 1000 - 1
     expect(await engine.isEligible('project', cooldown, '/checkout')).toBe(false)
+    expect(await engine.eligibility('project', cooldown, '/checkout')).toEqual({
+      eligible: false,
+      nextEligibleAt: 2 * 24 * 60 * 60 * 1000,
+    })
     now += 1
-    expect(await engine.isEligible('project', cooldown, '/checkout')).toBe(true)
+    expect(await engine.eligibility('project', cooldown, '/checkout')).toEqual({
+      eligible: true,
+      nextEligibleAt: null,
+    })
     const never = definition({ recurrence_mode: 'never' })
     await engine.record('project', never, '/never', 'dismissed')
     now = Number.MAX_SAFE_INTEGER
-    expect(await engine.isEligible('project', never, '/never')).toBe(false)
+    expect(await engine.eligibility('project', never, '/never')).toEqual({
+      eligible: false,
+      nextEligibleAt: null,
+    })
+  })
+
+  it('ignores malformed snooze timestamps instead of scheduling them', async () => {
+    const storage = new MemoryStorage()
+    const current = definition()
+    storage.values.set(
+      recurrenceStorageKey('project', current.definition_key, '/checkout'),
+      JSON.stringify({
+        state: 'snoozed',
+        recordedAt: 1,
+        snoozedUntil: 'not-a-timestamp',
+      }),
+    )
+    const engine = new RecurrenceEngine(storage, { appSessionId: 'host-session' })
+    expect(await engine.eligibility('project', current, '/checkout')).toEqual({
+      eligible: true,
+      nextEligibleAt: null,
+    })
   })
 })

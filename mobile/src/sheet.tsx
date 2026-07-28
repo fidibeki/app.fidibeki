@@ -5,28 +5,20 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
+  useColorScheme,
   View,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFeedbackContext } from './context'
-import {
-  EMPTY_FORM_STATE,
-  MAX_TEXT_LENGTH,
-  reconcileResponses,
-  validateForm,
-} from './form-state'
+import { EMPTY_FORM_STATE, MAX_TEXT_LENGTH, reconcileResponses, validateForm } from './form-state'
 import { prepareScreenshot } from './screenshot'
-import type {
-  FeedbackFormState,
-  MobileResponseBlock,
-  PreparedScreenshot,
-} from './types'
+import type { FeedbackFormState, MobileAppearance, MobileResponseBlock, PreparedScreenshot } from './types'
 
 interface Colors {
   accent: string
@@ -39,18 +31,26 @@ interface Colors {
   onAccent: string
 }
 
-function colorsFor(mode: 'light' | 'dark', theme: ReturnType<typeof useFeedbackContext>['theme']): Colors {
+function colorsFor(
+  mode: 'light' | 'dark',
+  theme: ReturnType<typeof useFeedbackContext>['theme'],
+  appearance: MobileAppearance,
+): Colors {
   const dark = mode === 'dark'
   return {
-    accent: theme.accentColor ?? (dark ? '#50d0ba' : '#087f6b'),
-    background: theme.backgroundColor ?? (dark ? '#141716' : '#ffffff'),
-    surface: dark ? '#202523' : '#f5f7f6',
-    text: theme.textColor ?? (dark ? '#f4f7f6' : '#17211f'),
+    accent: theme.accentColor ?? appearance.accent_color ?? (dark ? '#50d0ba' : '#087f6b'),
+    background: theme.backgroundColor ?? appearance.surface_color ?? (dark ? '#141716' : '#ffffff'),
+    surface: appearance.surface_color ?? (dark ? '#202523' : '#f5f7f6'),
+    text: theme.textColor ?? appearance.text_color ?? (dark ? '#f4f7f6' : '#17211f'),
     muted: theme.mutedTextColor ?? (dark ? '#b6c0bd' : '#53635f'),
     border: theme.borderColor ?? (dark ? '#3a4441' : '#ccd5d2'),
     danger: theme.dangerColor ?? (dark ? '#ff8f87' : '#b42318'),
-    onAccent: dark ? '#071411' : '#ffffff',
+    onAccent: appearance.accent_foreground ?? (dark ? '#071411' : '#ffffff'),
   }
+}
+
+function emptyFormState(): FeedbackFormState {
+  return { ...EMPTY_FORM_STATE, responses: {} }
 }
 
 function useReducedMotion(): boolean {
@@ -60,10 +60,7 @@ function useReducedMotion(): boolean {
     void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
       if (active) setReducedMotion(enabled)
     })
-    const subscription = AccessibilityInfo.addEventListener(
-      'reduceMotionChanged',
-      setReducedMotion,
-    )
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion)
     return () => {
       active = false
       subscription.remove()
@@ -113,7 +110,10 @@ function ResponseField({
           placeholderTextColor={colors.muted}
           style={[
             styles.textArea,
-            { borderColor: error ? colors.danger : colors.border, color: colors.text },
+            {
+              borderColor: error ? colors.danger : colors.border,
+              color: colors.text,
+            },
           ]}
           value={typeof value === 'string' ? value : ''}
         />
@@ -159,9 +159,7 @@ function ResponseField({
                 },
               ]}
             >
-              <Text style={{ color: selected ? colors.onAccent : colors.text }}>
-                {choice.label}
-              </Text>
+              <Text style={{ color: selected ? colors.onAccent : colors.text }}>{choice.label}</Text>
             </Pressable>
           )
         })}
@@ -192,9 +190,7 @@ function defaultBlockLabel(
 }
 
 function humanizeOption(value: string): string {
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase())
+  return value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
 export function FeedbackSheet() {
@@ -203,16 +199,26 @@ export function FeedbackSheet() {
   const definition = session?.configuration.definition
   const contactNotice = session?.configuration.contact_notice
   const reducedMotion = useReducedMotion()
-  const mode = context.theme.mode ?? 'light'
-  const colors = useMemo(() => colorsFor(mode, context.theme), [context.theme, mode])
-  const [form, setForm] = useState<FeedbackFormState>(EMPTY_FORM_STATE)
+  const appearance = definition?.appearance ?? {}
+  const systemMode = useColorScheme()
+  const configuredMode =
+    appearance.theme === 'light' || appearance.theme === 'dark'
+      ? appearance.theme
+      : systemMode === 'dark'
+        ? 'dark'
+        : 'light'
+  const mode = context.theme.mode ?? configuredMode
+  const colors = useMemo(() => colorsFor(mode, context.theme, appearance), [appearance, context.theme, mode])
+  const [form, setForm] = useState<FeedbackFormState>(emptyFormState)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [screenshot, setScreenshot] = useState<PreparedScreenshot | undefined>()
   const screenshotRef = useRef<PreparedScreenshot | undefined>(undefined)
   const [screenshotMessage, setScreenshotMessage] = useState<string | null>(null)
   const [attachmentFailed, setAttachmentFailed] = useState(false)
   const [readingScreenshot, setReadingScreenshot] = useState(false)
-  const previousSession = useRef(session)
+  const previousSession = useRef<typeof session>(null)
+  const appliedDraftRevision = useRef(0)
+  const screenshotGeneration = useRef(0)
 
   useEffect(() => {
     screenshotRef.current = screenshot
@@ -220,45 +226,48 @@ export function FeedbackSheet() {
 
   useEffect(
     () => () => {
+      screenshotGeneration.current += 1
       void screenshotRef.current?.dispose()
     },
     [],
   )
 
   useEffect(() => {
+    if (appliedDraftRevision.current === context.draftRevision || !session || !definition) {
+      return
+    }
+    appliedDraftRevision.current = context.draftRevision
+    screenshotGeneration.current += 1
+    setReadingScreenshot(false)
     const previous = previousSession.current
     const previousDefinition = previous?.configuration.definition
-    const previousNotice = previous?.configuration.contact_notice
     const definitionChanged =
-      previousDefinition &&
-      definition &&
-      previousDefinition.definition_version !== definition.definition_version
-    const consentContextChanged =
-      previous &&
-      session &&
-      (previous.configuration.display_locale !== session.configuration.display_locale ||
-        previousNotice?.notice_version !== contactNotice?.notice_version ||
-        previousNotice?.controller_profile_version !== contactNotice?.controller_profile_version ||
-        previousNotice?.widget_definition_version !== contactNotice?.widget_definition_version)
-    if (previousDefinition && definition && (definitionChanged || consentContextChanged)) {
+      previousDefinition && definition && previousDefinition.definition_version !== definition.definition_version
+    const resetDraft = context.draftPolicy === 'reset' || !previousDefinition
+    if (resetDraft) {
+      setForm(emptyFormState())
+    } else {
       setForm((current) => ({
         ...current,
         responses: definitionChanged
-          ? reconcileResponses(
-              previousDefinition.response_blocks,
-              definition.response_blocks,
-              current.responses,
-            )
+          ? reconcileResponses(previousDefinition.response_blocks, definition.response_blocks, current.responses)
           : current.responses,
+        comment: definition.allow_comment ? current.comment : '',
+        reporterEmail: definition.collect_contact && contactNotice ? current.reporterEmail : '',
         consentGranted: false,
       }))
-      if (!definition.can_attach_screenshot) {
-        void screenshotRef.current?.dispose()
-        setScreenshot(undefined)
-      }
+    }
+    setFieldErrors({})
+    setScreenshotMessage(null)
+    setAttachmentFailed(false)
+    if (resetDraft || !definition.can_attach_screenshot) {
+      const previousScreenshot = screenshotRef.current
+      screenshotRef.current = undefined
+      void previousScreenshot?.dispose()
+      setScreenshot(undefined)
     }
     previousSession.current = session
-  }, [contactNotice, definition, session])
+  }, [contactNotice, context.draftPolicy, context.draftRevision, definition, session])
 
   const updateResponse = useCallback((key: string, value: string | number) => {
     setForm((current) => ({
@@ -274,27 +283,47 @@ export function FeedbackSheet() {
 
   const addScreenshot = useCallback(async () => {
     if (!definition?.can_attach_screenshot || !context.screenshotProvider) return
+    const generation = ++screenshotGeneration.current
     setReadingScreenshot(true)
     setScreenshotMessage(null)
     try {
       const asset = await context.screenshotProvider()
+      if (generation !== screenshotGeneration.current) {
+        await asset?.dispose?.()
+        return
+      }
       if (!asset) {
         setScreenshotMessage(context.messages.screenshotCancelled)
         return
       }
       const prepared = await prepareScreenshot(asset)
-      await screenshotRef.current?.dispose()
+      if (generation !== screenshotGeneration.current) {
+        await prepared.dispose()
+        return
+      }
+      const previousScreenshot = screenshotRef.current
+      screenshotRef.current = prepared
+      await previousScreenshot?.dispose()
+      if (generation !== screenshotGeneration.current) {
+        await prepared.dispose()
+        return
+      }
       setScreenshot(prepared)
       setScreenshotMessage(context.messages.screenshotAdded)
     } catch {
-      setScreenshotMessage(context.messages.screenshotProviderFailed)
+      if (generation === screenshotGeneration.current) {
+        setScreenshotMessage(context.messages.screenshotProviderFailed)
+      }
     } finally {
-      setReadingScreenshot(false)
+      if (generation === screenshotGeneration.current) setReadingScreenshot(false)
     }
   }, [context.messages, context.screenshotProvider, definition?.can_attach_screenshot])
 
   const removeScreenshot = useCallback(async () => {
-    await screenshotRef.current?.dispose()
+    screenshotGeneration.current += 1
+    const previousScreenshot = screenshotRef.current
+    screenshotRef.current = undefined
+    await previousScreenshot?.dispose()
     setScreenshot(undefined)
     setScreenshotMessage(null)
   }, [])
@@ -323,10 +352,9 @@ export function FeedbackSheet() {
   if (!session || !definition) return null
 
   const customerCopy = definition.localization
-  const submitting = context.status === 'submitting'
+  const submitting = context.status === 'submitting' || context.status === 'loading' || !context.eligible
   const submitted = context.status === 'submitted'
-  const canAddScreenshot =
-    definition.can_attach_screenshot && context.screenshotProvider !== undefined && !screenshot
+  const canAddScreenshot = definition.can_attach_screenshot && context.screenshotProvider !== undefined && !screenshot
   const discloseMobileAI =
     definition.ai_processing?.enabled === true &&
     definition.ai_processing.input_categories?.some(
@@ -344,246 +372,210 @@ export function FeedbackSheet() {
       visible={context.visible}
     >
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
-          style={styles.keyboardLayout}
-          testID={`fidibeki-keyboard-${Platform.OS}`}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>
-              {customerCopy.prompt}
-            </Text>
-            <Pressable
-              accessibilityLabel={context.messages.close}
-              accessibilityRole="button"
-              hitSlop={12}
-              onPress={context.dismiss}
-              style={styles.iconButton}
-              testID="fidibeki-close"
-            >
-              <Text style={[styles.closeIcon, { color: colors.text }]}>×</Text>
-            </Pressable>
-          </View>
-          <ScrollView
-            contentContainerStyle={styles.content}
-            keyboardDismissMode="interactive"
-            keyboardShouldPersistTaps="handled"
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+            style={styles.keyboardLayout}
+            testID={`fidibeki-keyboard-${Platform.OS}`}
           >
-            {submitted ? (
-              <View accessibilityLiveRegion="polite" style={styles.success}>
-                <Text style={[styles.successText, { color: colors.text }]}>
-                  {customerCopy.success_message}
-                </Text>
-                {attachmentFailed ? (
-                  <Text style={[styles.errorText, { color: colors.danger }]}>
-                    {context.messages.attachmentFailed}
-                  </Text>
-                ) : null}
-              </View>
-            ) : (
-              <>
-                {definition.response_blocks.map((block) => (
-                  <ResponseField
-                    block={block}
-                    colors={colors}
-                    error={validationMessage(
-                      `responses.${block.key}`,
-                      fieldErrors[`responses.${block.key}`],
-                      context.messages,
-                    )}
-                    key={block.key}
-                    label={
-                      customerCopy.block_labels?.[block.key] ??
-                      defaultBlockLabel(block.type, context.messages)
-                    }
-                    onChange={(value) => updateResponse(block.key, value)}
-                    optionLabels={Object.fromEntries(
-                      (block.options ?? []).map((option) => [
-                        option.value,
-                        customerCopy.option_labels?.[block.key]?.[option.value] ??
-                          humanizeOption(option.value),
-                      ]),
-                    )}
-                    value={form.responses[block.key]}
-                  />
-                ))}
-                {definition.allow_comment ? (
-                  <View style={styles.field}>
-                    <TextInput
-                      accessibilityLabel={customerCopy.comment_placeholder}
-                      maxLength={MAX_TEXT_LENGTH}
-                      multiline
-                      onChangeText={(comment) => setForm((current) => ({ ...current, comment }))}
-                      placeholder={customerCopy.comment_placeholder}
-                      placeholderTextColor={colors.muted}
-                      style={[
-                        styles.textArea,
-                        {
-                          borderColor: fieldErrors.comment ? colors.danger : colors.border,
-                          color: colors.text,
-                        },
-                      ]}
-                      value={form.comment}
-                    />
-                    <FieldError
-                      colors={colors}
-                      message={validationMessage(
-                        'comment',
-                        fieldErrors.comment,
-                        context.messages,
-                      )}
-                    />
-                  </View>
-                ) : null}
-                {definition.collect_contact && contactNotice ? (
-                  <View style={styles.contactSection}>
-                    <Text style={[styles.label, { color: colors.text }]}>
-                      {customerCopy.contact_label}
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>
+                {customerCopy.prompt}
+              </Text>
+              <Pressable
+                accessibilityLabel={context.messages.close}
+                accessibilityRole="button"
+                hitSlop={12}
+                onPress={context.dismiss}
+                style={styles.iconButton}
+                testID="fidibeki-close"
+              >
+                <Text style={[styles.closeIcon, { color: colors.text }]}>×</Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.content}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+            >
+              {submitted ? (
+                <View accessibilityLiveRegion="polite" style={styles.success}>
+                  <Text style={[styles.successText, { color: colors.text }]}>{customerCopy.success_message}</Text>
+                  {attachmentFailed ? (
+                    <Text style={[styles.errorText, { color: colors.danger }]}>
+                      {context.messages.attachmentFailed}
                     </Text>
-                    <TextInput
-                      accessibilityLabel={customerCopy.contact_label}
-                      autoCapitalize="none"
-                      autoComplete="email"
-                      inputMode="email"
-                      onChangeText={(reporterEmail) =>
-                        setForm((current) => ({ ...current, reporterEmail }))
-                      }
-                      placeholder={context.messages.emailPlaceholder}
-                      placeholderTextColor={colors.muted}
-                      style={[
-                        styles.input,
-                        {
-                          borderColor: fieldErrors.reporter_email
-                            ? colors.danger
-                            : colors.border,
-                          color: colors.text,
-                        },
-                      ]}
-                      value={form.reporterEmail}
-                    />
-                    <FieldError
+                  ) : null}
+                </View>
+              ) : (
+                <>
+                  {definition.response_blocks.map((block) => (
+                    <ResponseField
+                      block={block}
                       colors={colors}
-                      message={validationMessage(
-                        'reporter_email',
-                        fieldErrors.reporter_email,
+                      error={validationMessage(
+                        `responses.${block.key}`,
+                        fieldErrors[`responses.${block.key}`],
                         context.messages,
                       )}
+                      key={block.key}
+                      label={customerCopy.block_labels?.[block.key] ?? defaultBlockLabel(block.type, context.messages)}
+                      onChange={(value) => updateResponse(block.key, value)}
+                      optionLabels={Object.fromEntries(
+                        (block.options ?? []).map((option) => [
+                          option.value,
+                          customerCopy.option_labels?.[block.key]?.[option.value] ?? humanizeOption(option.value),
+                        ]),
+                      )}
+                      value={form.responses[block.key]}
                     />
-                    <View style={styles.consentRow}>
-                      <Switch
-                        accessibilityLabel={customerCopy.consent_label}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: form.consentGranted }}
-                        onValueChange={(consentGranted) =>
-                          setForm((current) => ({ ...current, consentGranted }))
-                        }
-                        trackColor={{ false: colors.border, true: colors.accent }}
-                        value={form.consentGranted}
+                  ))}
+                  {definition.allow_comment ? (
+                    <View style={styles.field}>
+                      <TextInput
+                        accessibilityLabel={customerCopy.comment_placeholder}
+                        maxLength={MAX_TEXT_LENGTH}
+                        multiline
+                        onChangeText={(comment) => setForm((current) => ({ ...current, comment }))}
+                        placeholder={customerCopy.comment_placeholder}
+                        placeholderTextColor={colors.muted}
+                        style={[
+                          styles.textArea,
+                          {
+                            borderColor: fieldErrors.comment ? colors.danger : colors.border,
+                            color: colors.text,
+                          },
+                        ]}
+                        value={form.comment}
                       />
-                      <Text style={[styles.consentText, { color: colors.text }]}>
-                        {customerCopy.consent_label}
-                      </Text>
+                      <FieldError
+                        colors={colors}
+                        message={validationMessage('comment', fieldErrors.comment, context.messages)}
+                      />
                     </View>
-                    <FieldError
-                      colors={colors}
-                      message={validationMessage(
-                        'consent',
-                        fieldErrors.consent,
-                        context.messages,
-                      )}
-                    />
-                    <Text style={[styles.notice, { color: colors.muted }]}>
-                      {contactNotice.purpose_summary}{' '}
-                      {contactNotice.lawful_basis_summary}{' '}
-                      {contactNotice.retention_summary}
-                    </Text>
-                    <Pressable
-                      accessibilityRole="link"
-                      onPress={() =>
-                        void Linking.openURL(contactNotice.privacy_policy_url)
-                      }
-                    >
-                      <Text style={[styles.link, { color: colors.accent }]}>
-                        {context.messages.privacyPolicy}
+                  ) : null}
+                  {definition.collect_contact && contactNotice ? (
+                    <View style={styles.contactSection}>
+                      <Text style={[styles.label, { color: colors.text }]}>{customerCopy.contact_label}</Text>
+                      <TextInput
+                        accessibilityLabel={customerCopy.contact_label}
+                        autoCapitalize="none"
+                        autoComplete="email"
+                        inputMode="email"
+                        onChangeText={(reporterEmail) => setForm((current) => ({ ...current, reporterEmail }))}
+                        placeholder={context.messages.emailPlaceholder}
+                        placeholderTextColor={colors.muted}
+                        style={[
+                          styles.input,
+                          {
+                            borderColor: fieldErrors.reporter_email ? colors.danger : colors.border,
+                            color: colors.text,
+                          },
+                        ]}
+                        value={form.reporterEmail}
+                      />
+                      <FieldError
+                        colors={colors}
+                        message={validationMessage('reporter_email', fieldErrors.reporter_email, context.messages)}
+                      />
+                      <View style={styles.consentRow}>
+                        <Switch
+                          accessibilityLabel={customerCopy.consent_label}
+                          accessibilityRole="switch"
+                          accessibilityState={{ checked: form.consentGranted }}
+                          onValueChange={(consentGranted) =>
+                            setForm((current) => ({
+                              ...current,
+                              consentGranted,
+                            }))
+                          }
+                          trackColor={{
+                            false: colors.border,
+                            true: colors.accent,
+                          }}
+                          value={form.consentGranted}
+                        />
+                        <Text style={[styles.consentText, { color: colors.text }]}>{customerCopy.consent_label}</Text>
+                      </View>
+                      <FieldError
+                        colors={colors}
+                        message={validationMessage('consent', fieldErrors.consent, context.messages)}
+                      />
+                      <Text style={[styles.notice, { color: colors.muted }]}>
+                        {contactNotice.purpose_summary} {contactNotice.lawful_basis_summary}{' '}
+                        {contactNotice.retention_summary}
                       </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-                {canAddScreenshot ? (
-                  <Pressable
-                    accessibilityLabel={context.messages.addScreenshot}
-                    accessibilityRole="button"
-                    disabled={readingScreenshot}
-                    onPress={() => void addScreenshot()}
-                    style={[styles.secondaryButton, { borderColor: colors.border }]}
-                  >
-                    <Text style={{ color: colors.text }}>{context.messages.addScreenshot}</Text>
-                  </Pressable>
-                ) : null}
-                {screenshot ? (
-                  <View style={styles.screenshotRow}>
-                    <Text style={{ color: colors.text }}>{context.messages.screenshotAdded}</Text>
+                      <Pressable
+                        accessibilityRole="link"
+                        onPress={() => void Linking.openURL(contactNotice.privacy_policy_url)}
+                      >
+                        <Text style={[styles.link, { color: colors.accent }]}>{context.messages.privacyPolicy}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {canAddScreenshot ? (
                     <Pressable
-                      accessibilityLabel={context.messages.removeScreenshot}
+                      accessibilityLabel={context.messages.addScreenshot}
                       accessibilityRole="button"
-                      onPress={() => void removeScreenshot()}
+                      disabled={readingScreenshot}
+                      onPress={() => void addScreenshot()}
+                      style={[styles.secondaryButton, { borderColor: colors.border }]}
                     >
-                      <Text style={[styles.link, { color: colors.accent }]}>
-                        {context.messages.removeScreenshot}
-                      </Text>
+                      <Text style={{ color: colors.text }}>{context.messages.addScreenshot}</Text>
                     </Pressable>
-                  </View>
-                ) : null}
-                {screenshotMessage ? (
-                  <Text accessibilityLiveRegion="polite" style={{ color: colors.muted }}>
-                    {screenshotMessage}
-                  </Text>
-                ) : null}
-                {discloseMobileAI ? (
-                  <View style={styles.aiDisclosure}>
-                    <Text style={{ color: colors.muted }}>
-                      {context.messages.aiProcessingDisclosure}
+                  ) : null}
+                  {screenshot ? (
+                    <View style={styles.screenshotRow}>
+                      <Text style={{ color: colors.text }}>{context.messages.screenshotAdded}</Text>
+                      <Pressable
+                        accessibilityLabel={context.messages.removeScreenshot}
+                        accessibilityRole="button"
+                        onPress={() => void removeScreenshot()}
+                      >
+                        <Text style={[styles.link, { color: colors.accent }]}>{context.messages.removeScreenshot}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {screenshotMessage ? (
+                    <Text accessibilityLiveRegion="polite" style={{ color: colors.muted }}>
+                      {screenshotMessage}
                     </Text>
-                    <Pressable
-                      accessibilityRole="link"
-                      onPress={() =>
-                        void Linking.openURL(definition.ai_processing!.privacy_policy_url!)
-                      }
-                    >
-                      <Text style={[styles.link, { color: colors.accent }]}>
-                        {context.messages.privacyPolicy}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-                {context.error ? (
-                  <Text
-                    accessibilityLiveRegion="assertive"
-                    style={[styles.errorText, { color: colors.danger }]}
+                  ) : null}
+                  {discloseMobileAI ? (
+                    <View style={styles.aiDisclosure}>
+                      <Text style={{ color: colors.muted }}>{context.messages.aiProcessingDisclosure}</Text>
+                      <Pressable
+                        accessibilityRole="link"
+                        onPress={() => void Linking.openURL(definition.ai_processing!.privacy_policy_url!)}
+                      >
+                        <Text style={[styles.link, { color: colors.accent }]}>{context.messages.privacyPolicy}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                  {context.error ? (
+                    <Text accessibilityLiveRegion="assertive" style={[styles.errorText, { color: colors.danger }]}>
+                      {context.error.code === 'configuration_changed'
+                        ? context.messages.configurationChanged
+                        : context.messages.submitFailed}
+                    </Text>
+                  ) : null}
+                  <Pressable
+                    accessibilityLabel={customerCopy.submit_label}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: submitting }}
+                    disabled={submitting}
+                    onPress={() => void submit()}
+                    style={[styles.primaryButton, { backgroundColor: colors.accent }]}
+                    testID="fidibeki-submit"
                   >
-                    {context.error.code === 'configuration_changed'
-                      ? context.messages.configurationChanged
-                      : context.messages.submitFailed}
-                  </Text>
-                ) : null}
-                <Pressable
-                  accessibilityLabel={customerCopy.submit_label}
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: submitting }}
-                  disabled={submitting}
-                  onPress={() => void submit()}
-                  style={[styles.primaryButton, { backgroundColor: colors.accent }]}
-                  testID="fidibeki-submit"
-                >
-                  <Text style={[styles.primaryButtonText, { color: colors.onAccent }]}>
-                    {customerCopy.submit_label}
-                  </Text>
-                </Pressable>
-              </>
-            )}
-          </ScrollView>
-        </KeyboardAvoidingView>
+                    <Text style={[styles.primaryButtonText, { color: colors.onAccent }]}>
+                      {customerCopy.submit_label}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </ScrollView>
+          </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   )
@@ -670,6 +662,16 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: { fontSize: 16, fontWeight: '700' },
   errorText: { fontSize: 13, lineHeight: 18 },
-  success: { minHeight: 200, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  successText: { fontSize: 18, fontWeight: '600', lineHeight: 25, textAlign: 'center' },
+  success: {
+    minHeight: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  successText: {
+    fontSize: 18,
+    fontWeight: '600',
+    lineHeight: 25,
+    textAlign: 'center',
+  },
 })

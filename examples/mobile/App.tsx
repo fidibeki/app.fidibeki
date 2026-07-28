@@ -7,13 +7,12 @@ import {
 } from '@fidibeki/mobile'
 import { createAsyncStorageAdapter } from '@fidibeki/mobile/async-storage'
 import { StatusBar } from 'expo-status-bar'
-import { Platform, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native'
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 
 const localHost = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1'
-const widgetBaseUrl =
-  process.env.EXPO_PUBLIC_FIDIBEKI_WIDGET_BASE_URL ?? `http://${localHost}:43136`
-const sessionURL =
-  process.env.EXPO_PUBLIC_FIDIBEKI_SESSION_URL ?? `http://${localHost}:43136/session`
+const widgetBaseUrl = process.env.EXPO_PUBLIC_FIDIBEKI_WIDGET_BASE_URL ?? `http://${localHost}:43136`
+const sessionURL = process.env.EXPO_PUBLIC_FIDIBEKI_SESSION_URL ?? `http://${localHost}:43136/session`
 const storage = createAsyncStorageAdapter()
 
 const sessionProvider: SessionProvider = async (request) => {
@@ -24,10 +23,7 @@ const sessionProvider: SessionProvider = async (request) => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       ...request,
-      application_id:
-        request.platform === 'ios'
-          ? 'com.fidibeki.mobileexample'
-          : 'com.fidibeki.mobileexample',
+      application_id: request.platform === 'ios' ? 'com.fidibeki.mobileexample' : 'com.fidibeki.mobileexample',
       widget_definition_key: 'mobile-example',
     }),
   })
@@ -63,11 +59,7 @@ function ProductScreen() {
         <Text style={styles.body}>
           This native screen uses a host-minted capture session and explicit screenshot provider.
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void feedback.open()}
-          style={styles.productButton}
-        >
+        <Pressable accessibilityRole="button" onPress={() => void feedback.open()} style={styles.productButton}>
           <Text style={styles.productButtonText}>Send product feedback</Text>
         </Pressable>
         <FidibekiFeedbackLauncher />
@@ -78,20 +70,22 @@ function ProductScreen() {
 
 export default function App() {
   return (
-    <FidibekiProvider
-      apiBaseUrl={widgetBaseUrl}
-      appVersion="0.1.0"
-      deviceLocale="en-PT"
-      locale="en"
-      osVersion={String(Platform.Version)}
-      screen="/checkout/review"
-      screenshotProvider={screenshotProvider}
-      sessionProvider={sessionProvider}
-      storage={storage}
-      theme={{ accentColor: '#087f6b' }}
-    >
-      <ProductScreen />
-    </FidibekiProvider>
+    <SafeAreaProvider>
+      <FidibekiProvider
+        apiBaseUrl={widgetBaseUrl}
+        appVersion="0.1.0"
+        deviceLocale="en-PT"
+        locale="en"
+        osVersion={String(Platform.Version)}
+        screen="/checkout/review"
+        screenshotProvider={screenshotProvider}
+        sessionProvider={sessionProvider}
+        storage={storage}
+        theme={{ accentColor: '#087f6b' }}
+      >
+        <ProductScreen />
+      </FidibekiProvider>
+    </SafeAreaProvider>
   )
 }
 
