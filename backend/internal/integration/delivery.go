@@ -50,7 +50,7 @@ type DeliveryHandler struct {
 func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notification, error) {
 	var notification Notification
 	var plan tenant.Plan
-	var status tenant.Status
+	var tenantDeliveryEligible bool
 	var headersCiphertext []byte
 	var secretCiphertext []byte
 	var channel *string
@@ -58,7 +58,8 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	var actorID, actorName *string
 	var activityKind string
 	err := s.Database.QueryRow(ctx, `
-		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, tenant.plan, tenant.status,
+		SELECT event.id, event.tenant_id, tenant.name, tenant.slug, tenant.plan,
+		       `+tenantDeliveryEligibleSQL+`,
 		       integration.id, integration.kind, integration.webhook_url, integration.channel,
 		       integration.custom_headers_ciphertext, integration.webhook_secret_ciphertext,
 		       integration.privacy_fields, integration.privacy_profile_version,
@@ -116,7 +117,7 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 		FROM outbox_events AS event
 		JOIN tenants AS tenant ON tenant.id = event.tenant_id
 		JOIN integrations AS integration
-		  ON integration.id = $4 AND integration.tenant_id = event.tenant_id
+		  ON integration.id = $5 AND integration.tenant_id = event.tenant_id
 		LEFT JOIN feedbacks AS feedback
 		  ON event.resource_type = 'feedback' AND feedback.id = event.resource_id
 		 AND feedback.tenant_id = event.tenant_id
@@ -199,12 +200,14 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 			      OR (event.resource_type = 'issue' AND attached_feedback.issue_id = issue.id)
 			  )
 		) AS evidence ON true
-		WHERE event.id = $1 AND event.tenant_id = $2 AND event.resource_id = $3
+		WHERE event.id = $1 AND event.tenant_id = $2 AND event.resource_id = $4
 		  AND integration.is_active = true
 		  AND event.event = ANY(integration.events)
-	`, task.OutboxEventID, task.TenantID, task.ResourceID, task.IntegrationID).Scan(
+	`, task.OutboxEventID, task.TenantID, integrationNow(s.Now),
+		task.ResourceID, task.IntegrationID).Scan(
 		&notification.OutboxEventID, &notification.TenantID, &notification.TenantName,
-		&notification.TenantSlug, &plan, &status, &notification.IntegrationID, &notification.Kind,
+		&notification.TenantSlug, &plan, &tenantDeliveryEligible,
+		&notification.IntegrationID, &notification.Kind,
 		&notification.WebhookURL, &channel, &headersCiphertext, &secretCiphertext,
 		&notification.PrivacyFields, &notification.PrivacyProfileVersion,
 		&notification.Event, &notification.ResourceType, &notification.ResourceID,
@@ -230,8 +233,11 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	if err != nil {
 		return Notification{}, fmt.Errorf("load integration notification: %w", err)
 	}
-	if status != tenant.StatusActive && status != tenant.StatusTrial ||
-		!config.CanUseFeature(tenant.Tenant{Plan: plan}, config.FeatureSlack) {
+	notification.DestinationCapabilities = destinationCapabilities()
+	if !tenantDeliveryEligible {
+		return notification, ErrTenantDeliverySuppressed
+	}
+	if !config.CanUseFeature(tenant.Tenant{Plan: plan}, config.FeatureSlack) {
 		return Notification{}, ErrNotFound
 	}
 	if channel != nil {
@@ -271,7 +277,6 @@ func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notific
 	} else if activityKind == "reporter.responded" {
 		notification.Actor = &NotificationActor{Type: "reporter", Name: "Reporter"}
 	}
-	notification.DestinationCapabilities = destinationCapabilities()
 	if !supportedEvent(notification.Event, notification.ResourceType) || notification.PublicID == "" {
 		return Notification{}, ErrNotFound
 	}
@@ -437,15 +442,25 @@ func (h DeliveryHandler) Handler() asynq.HandlerFunc {
 			payload.ResourceID == "" || payload.IntegrationID == "" {
 			return fmt.Errorf("decode integration delivery task: %w", asynq.SkipRetry)
 		}
+		retryCount, _ := asynq.GetRetryCount(ctx)
 		notification, err := h.Store.LoadNotification(ctx, payload)
 		if errors.Is(err, ErrNotFound) {
 			return nil
+		}
+		if errors.Is(err, ErrTenantDeliverySuppressed) {
+			attempt, startErr := h.Store.StartDeliveryAttempt(ctx, notification, retryCount+1)
+			if startErr != nil {
+				return startErr
+			}
+			if attempt.Completed {
+				return nil
+			}
+			return h.Store.MarkDeliveryFailed(ctx, attempt.ID, ErrTenantDeliverySuppressed.Error())
 		}
 		if err != nil {
 			return err
 		}
 		notification = withNotificationURLs(notification, h.PublicBaseURL, h.BaseDomain)
-		retryCount, _ := asynq.GetRetryCount(ctx)
 		attempt, err := h.Store.StartDeliveryAttempt(ctx, notification, retryCount+1)
 		if err != nil {
 			return err

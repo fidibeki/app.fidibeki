@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
@@ -12,8 +13,14 @@ import (
 
 const TaskDeliver = "integration:deliver"
 
+const tenantDeliveryEligibleSQL = `(
+	tenant.status = 'active'
+	OR (tenant.status = 'trial' AND tenant.trial_ends_at > $3)
+)`
+
 type OutboxResolver struct {
 	Database db.Querier
+	Now      func() time.Time
 }
 
 func (r OutboxResolver) Resolve(ctx context.Context, event outbox.Event) ([]outbox.Destination, error) {
@@ -26,10 +33,10 @@ func (r OutboxResolver) Resolve(ctx context.Context, event outbox.Event) ([]outb
 		JOIN tenants AS tenant ON tenant.id = integration.tenant_id
 		WHERE integration.tenant_id = $1
 		  AND integration.is_active = true
-		  AND tenant.status IN ('active', 'trial')
+		  AND `+tenantDeliveryEligibleSQL+`
 		  AND $2::event_type = ANY(integration.events)
 		ORDER BY integration.id
-	`, event.TenantID, event.Event)
+	`, event.TenantID, event.Event, integrationNow(r.Now))
 	if err != nil {
 		return nil, fmt.Errorf("resolve integration destinations: %w", err)
 	}
@@ -51,6 +58,13 @@ func (r OutboxResolver) Resolve(ctx context.Context, event outbox.Event) ([]outb
 		return nil, fmt.Errorf("iterate integration destinations: %w", err)
 	}
 	return destinations, nil
+}
+
+func integrationNow(now func() time.Time) time.Time {
+	if now == nil {
+		return time.Now().UTC()
+	}
+	return now().UTC()
 }
 
 func supportedEvent(event, resourceType string) bool {

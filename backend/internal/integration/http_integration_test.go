@@ -334,6 +334,82 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 		})
 		return payload
 	}
+	lifecycleNow := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	fixedNow := func() time.Time { return lifecycleNow }
+	var expiredTrialOutboxID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO outbox_events (
+			tenant_id, event, resource_type, resource_id, event_key
+		) VALUES (
+			$1, 'feedback.created', 'feedback', $2, 'expired-trial-test'
+		) RETURNING id
+	`, tenantIDs["acme"], feedbackID).Scan(&expiredTrialOutboxID); err != nil {
+		t.Fatalf("create expired-trial integration event: %v", err)
+	}
+	expiredTrialEvent := event
+	expiredTrialEvent.ID = expiredTrialOutboxID
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants
+		SET status = 'trial', trial_ends_at = $2
+		WHERE id = $1
+	`, tenantIDs["acme"], lifecycleNow.Add(time.Hour)); err != nil {
+		t.Fatalf("set future integration trial: %v", err)
+	}
+	destinations, err = (OutboxResolver{Database: pools.Admin, Now: fixedNow}).Resolve(
+		ctx, expiredTrialEvent,
+	)
+	if err != nil || len(destinations) != 3 {
+		t.Fatalf("future-trial Resolve() = %#v, %v", destinations, err)
+	}
+	expiredTrialTask := DeliveryTask{
+		OutboxEventID: expiredTrialOutboxID, TenantID: tenantIDs["acme"],
+		ResourceID: feedbackID, IntegrationID: created.Integration.ID,
+	}
+	if _, err := (Store{
+		Database: pools.Admin, Cipher: cipher, Now: fixedNow,
+	}).LoadNotification(ctx, expiredTrialTask); err != nil {
+		t.Fatalf("future-trial LoadNotification() error = %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET trial_ends_at = $2 WHERE id = $1
+	`, tenantIDs["acme"], lifecycleNow); err != nil {
+		t.Fatalf("expire integration trial: %v", err)
+	}
+	destinations, err = (OutboxResolver{Database: pools.Admin, Now: fixedNow}).Resolve(
+		ctx, expiredTrialEvent,
+	)
+	if err != nil || len(destinations) != 0 {
+		t.Fatalf("expired-trial Resolve() = %#v, %v", destinations, err)
+	}
+	expiredTrialPayload, _ := json.Marshal(expiredTrialTask)
+	expiredTrialDelivery := DeliveryHandler{
+		Store: Store{Database: pools.Admin, Now: fixedNow},
+	}
+	if err := expiredTrialDelivery.Handler()(
+		ctx, asynq.NewTask(TaskDeliver, expiredTrialPayload),
+	); err != nil {
+		t.Fatalf("suppress expired-trial delivery: %v", err)
+	}
+	var expiredTrialStatus, expiredTrialError string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, error_message
+		FROM delivery_logs
+		WHERE outbox_event_id = $1 AND integration_id = $2
+	`, expiredTrialOutboxID, created.Integration.ID).Scan(
+		&expiredTrialStatus, &expiredTrialError,
+	); err != nil {
+		t.Fatalf("read expired-trial integration ledger: %v", err)
+	}
+	if requestCount != 0 || expiredTrialStatus != "failed" ||
+		expiredTrialError != "integration delivery suppressed by tenant lifecycle" {
+		t.Errorf("expired-trial delivery = requests %d status %q error %q",
+			requestCount, expiredTrialStatus, expiredTrialError)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE tenants SET status = 'active', trial_ends_at = NULL WHERE id = $1
+	`, tenantIDs["acme"]); err != nil {
+		t.Fatalf("restore active integration tenant: %v", err)
+	}
 	if _, err := root.Exec(ctx, `UPDATE feedbacks SET ai_processed_at = NULL WHERE id = $1`, feedbackID); err != nil {
 		t.Fatalf("mark integration feedback moderation pending: %v", err)
 	}
