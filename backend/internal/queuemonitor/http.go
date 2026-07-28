@@ -262,6 +262,8 @@ func (h *Handler) dashboard(requestedQueue string) (dashboardPage, error) {
 	page := dashboardPage{
 		SelectedQueue: selectedQueue,
 		RefreshedAt:   h.now().UTC().Format("2006-01-02 15:04:05 UTC"),
+		Queues:        make([]queueRow, 0, len(queueNames)),
+		Tasks:         make([]taskRow, 0),
 	}
 	for _, name := range queueNames {
 		info, infoErr := h.inspector.GetQueueInfo(name)
