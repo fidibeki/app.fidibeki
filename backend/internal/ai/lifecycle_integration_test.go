@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestQueuedAIStopsAfterTenantSuspension(t *testing.T) {
@@ -416,6 +417,119 @@ func TestReconcilerCancelsInactiveAIAndPreservesProviderCleanup(t *testing.T) {
 	}
 }
 
+func TestLifecycleCancellationPreservesCompletedAttachmentBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pool := aiTestDatabase(t, ctx)
+	seedAIFeedback(t, ctx, pool)
+
+	now := time.Date(2026, 7, 28, 16, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `
+		UPDATE widget_rules
+		SET ai_processing = jsonb_set(
+		    ai_processing,
+		    '{input_categories}',
+		    '["audio","screenshot"]'::jsonb
+		)
+		WHERE id = $1
+	`, testWidgetRuleID); err != nil {
+		t.Fatalf("restrict AI rule to attachments: %v", err)
+	}
+	store := Store{Database: pool, Model: "gemini-test"}
+	prepared, _, err := store.PrepareFeedback(ctx, testFeedbackID, 10, now)
+	if err != nil || len(prepared) != 2 {
+		t.Fatalf("PrepareFeedback() = %#v, %v, want two attachments", prepared, err)
+	}
+	audioTask := preparedTaskForResource(t, prepared, testAudioID)
+	processor := Processor{
+		Store: store, Analyzer: &lifecycleAnalyzer{}, Storage: &lifecycleObjectSource{},
+		Limiter: allowLimiter{}, RPM: 15, Now: func() time.Time { return now.Add(time.Minute) },
+	}
+	if err := runPreparedTask(ctx, processor, audioTask); err != nil {
+		t.Fatalf("complete audio attachment: %v", err)
+	}
+	assertAttachmentState(t, ctx, pool, testAudioID, "completed", 1, nil)
+	assertAttachmentState(t, ctx, pool, testScreenshotID, "processing", 1, nil)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE tenants SET status = 'suspended' WHERE id = $1
+	`, testTenantID); err != nil {
+		t.Fatalf("suspend tenant with mixed attachment states: %v", err)
+	}
+	if cancelled, err := store.CancelIneligibleWork(ctx, 500, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("CancelIneligibleWork() error = %v", err)
+	} else if cancelled != 1 {
+		t.Fatalf("CancelIneligibleWork() = %d, want 1 feedback", cancelled)
+	}
+	assertAttachmentState(t, ctx, pool, testAudioID, "completed", 1, nil)
+	assertAttachmentState(t, ctx, pool, testScreenshotID, "skipped", 1, nil)
+	assertLifecycleBudgetState(
+		t, ctx, pool, now,
+		"attachment", testAudioID, 1,
+		1, 1,
+	)
+}
+
+func TestLifecycleCancellationPreservesCompletedTextGenerationBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	pool := aiTestDatabase(t, ctx)
+	seedAIFeedback(t, ctx, pool)
+
+	now := time.Date(2026, 7, 28, 17, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `
+		UPDATE widget_rules
+		SET ai_processing = jsonb_set(
+		    ai_processing,
+		    '{input_categories}',
+		    '["feedback_text"]'::jsonb
+		)
+		WHERE id = $1
+	`, testWidgetRuleID); err != nil {
+		t.Fatalf("restrict AI rule to feedback text: %v", err)
+	}
+	store := Store{Database: pool, Model: "gemini-test"}
+	prepared, _, err := store.PrepareFeedback(ctx, testFeedbackID, 10, now)
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("PrepareFeedback() = %#v, %v, want one text task", prepared, err)
+	}
+	textTask := preparedTaskOfKind(t, prepared, TaskKindText)
+	processor := Processor{
+		Store: store, Analyzer: &lifecycleAnalyzer{}, Storage: &lifecycleObjectSource{},
+		Limiter: allowLimiter{}, RPM: 15, Now: func() time.Time { return now.Add(time.Minute) },
+	}
+	if err := runPreparedTask(ctx, processor, textTask); err != nil {
+		t.Fatalf("complete feedback text: %v", err)
+	}
+	if err := store.ReprocessFeedback(ctx, pool, testTenantID, testFeedbackID); err != nil {
+		t.Fatalf("ReprocessFeedback() error = %v", err)
+	}
+	assertAIState(t, ctx, pool, testFeedbackID, "pending", nil)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE tenants SET deletion_requested_at = $2 WHERE id = $1
+	`, testTenantID, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("request deletion with pending text reprocessing: %v", err)
+	}
+	if cancelled, err := store.CancelIneligibleWork(ctx, 500, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("CancelIneligibleWork() error = %v", err)
+	} else if cancelled != 1 {
+		t.Fatalf("CancelIneligibleWork() = %d, want 1 feedback", cancelled)
+	}
+	assertAIState(t, ctx, pool, testFeedbackID, "skipped", timePointer(now.Add(3*time.Minute)))
+	assertLifecycleBudgetState(
+		t, ctx, pool, now,
+		"text", testFeedbackID, textTask.Generation,
+		1, 1,
+	)
+}
+
 func preparedTaskOfKind(t *testing.T, tasks []PreparedTask, kind TaskKind) PreparedTask {
 	t.Helper()
 	for _, task := range tasks {
@@ -425,6 +539,54 @@ func preparedTaskOfKind(t *testing.T, tasks []PreparedTask, kind TaskKind) Prepa
 	}
 	t.Fatalf("prepared tasks %#v do not contain kind %q", tasks, kind)
 	return PreparedTask{}
+}
+
+func preparedTaskForResource(t *testing.T, tasks []PreparedTask, resourceID string) PreparedTask {
+	t.Helper()
+	for _, task := range tasks {
+		if task.ResourceID == resourceID {
+			return task
+		}
+	}
+	t.Fatalf("prepared tasks %#v do not contain resource %q", tasks, resourceID)
+	return PreparedTask{}
+}
+
+func assertLifecycleBudgetState(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	now time.Time,
+	kind string,
+	resourceID string,
+	generation int64,
+	wantReservations, wantUsage int,
+) {
+	t.Helper()
+	var reservations, preserved, tenantUsage, projectUsage int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		    (SELECT count(*) FROM ai_work_reservations WHERE tenant_id = $1),
+		    (SELECT count(*) FROM ai_work_reservations
+		     WHERE tenant_id = $1 AND work_kind = $4
+		       AND resource_id = $5 AND generation = $6),
+		    COALESCE((SELECT requests FROM ai_daily_usage
+		              WHERE tenant_id = $1 AND usage_date = $2), 0),
+		    COALESCE((SELECT requests FROM ai_project_daily_usage
+		              WHERE project_id = $3 AND usage_date = $2), 0)
+	`, testTenantID, midnightUTC(now), testProjectID, kind, resourceID, generation).Scan(
+		&reservations, &preserved, &tenantUsage, &projectUsage,
+	); err != nil {
+		t.Fatalf("read lifecycle budget state: %v", err)
+	}
+	if reservations != wantReservations || preserved != 1 ||
+		tenantUsage != wantUsage || projectUsage != wantUsage {
+		t.Fatalf(
+			"lifecycle budgets = reservations %d preserved %d tenant %d project %d, want %d/1/%d/%d",
+			reservations, preserved, tenantUsage, projectUsage,
+			wantReservations, wantUsage, wantUsage,
+		)
+	}
 }
 
 type lifecycleAnalyzer struct {

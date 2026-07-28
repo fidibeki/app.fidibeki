@@ -169,13 +169,9 @@ func cancelFeedbackForTenantLifecycle(
 	tenantID, feedbackID string,
 	now time.Time,
 ) error {
-	reservations, err := feedbackBudgetReservations(
-		ctx, query, tenantID, feedbackID,
-	)
-	if err != nil {
-		return err
-	}
-	if _, err := query.Exec(ctx, `
+	var textGeneration int64
+	textCancelled := false
+	err := query.QueryRow(ctx, `
 		UPDATE feedbacks
 		SET text_process_status = 'skipped',
 		    ai_job_enqueued_at = NULL,
@@ -183,19 +179,76 @@ func cancelFeedbackForTenantLifecycle(
 		    ai_budget_deferred_reason = NULL
 		WHERE id = $1 AND tenant_id = $2
 		  AND text_process_status IN ('pending', 'processing')
-	`, feedbackID, tenantID); err != nil {
+		RETURNING text_processing_generation
+	`, feedbackID, tenantID).Scan(&textGeneration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		textGeneration = 0
+	} else if err != nil {
 		return fmt.Errorf("cancel feedback AI for tenant lifecycle: %w", err)
+	} else {
+		textCancelled = true
 	}
-	if _, err := query.Exec(ctx, `
-		UPDATE attachments
-		SET processing_status = 'skipped',
-		    error_message = NULL,
-		    ai_budget_deferred_until = NULL
-		WHERE feedback_id = $1 AND tenant_id = $2
-		  AND processing_status IN ('pending', 'processing')
-	`, feedbackID, tenantID); err != nil {
+
+	rows, err := query.Query(ctx, `
+		WITH candidates AS MATERIALIZED (
+		    SELECT attachment.id, attachment.processing_attempts,
+		           (
+		               attachment.processing_status = 'processing'
+		               OR EXISTS (
+		                   SELECT 1
+		                   FROM ai_processing_runs AS run
+		                   WHERE run.tenant_id = $2
+		                     AND run.attachment_id = attachment.id
+		                     AND run.attempt = attachment.processing_attempts
+		                     AND run.status = 'processing'
+		               )
+		           ) AS refund_budget
+		    FROM attachments AS attachment
+		    WHERE attachment.feedback_id = $1
+		      AND attachment.tenant_id = $2
+		      AND attachment.processing_status IN ('pending', 'processing')
+		    FOR UPDATE OF attachment
+		),
+		cancelled AS (
+		    UPDATE attachments AS attachment
+		    SET processing_status = 'skipped',
+		        error_message = NULL,
+		        ai_budget_deferred_until = NULL
+		    FROM candidates
+		    WHERE attachment.id = candidates.id
+		      AND attachment.tenant_id = $2
+		    RETURNING
+		        attachment.id,
+		        attachment.processing_attempts,
+		        candidates.refund_budget
+		)
+		SELECT id, processing_attempts
+		FROM cancelled
+		WHERE refund_budget
+		ORDER BY id
+	`, feedbackID, tenantID)
+	if err != nil {
 		return fmt.Errorf("cancel feedback attachment AI for tenant lifecycle: %w", err)
 	}
+	type cancelledAttachment struct {
+		id      string
+		attempt int
+	}
+	cancelledAttachments := make([]cancelledAttachment, 0)
+	for rows.Next() {
+		var attachment cancelledAttachment
+		if err := rows.Scan(&attachment.id, &attachment.attempt); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan cancelled attachment AI budget: %w", err)
+		}
+		cancelledAttachments = append(cancelledAttachments, attachment)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate cancelled attachment AI budgets: %w", err)
+	}
+	rows.Close()
+
 	if _, err := query.Exec(ctx, `
 		UPDATE ai_processing_runs
 		SET status = 'discarded',
@@ -205,8 +258,18 @@ func cancelFeedbackForTenantLifecycle(
 	`, tenantID, feedbackID, tenantLifecycleInactiveReason, now); err != nil {
 		return fmt.Errorf("discard feedback AI for tenant lifecycle: %w", err)
 	}
-	for _, reservation := range reservations {
-		if err := refundBudget(ctx, query, reservation); err != nil {
+	if textCancelled {
+		if err := refundReservedWork(
+			ctx, query, tenantID, TaskKindText, feedbackID, textGeneration,
+		); err != nil {
+			return err
+		}
+	}
+	for _, attachment := range cancelledAttachments {
+		if err := refundReservedWork(
+			ctx, query, tenantID, TaskKindAttachment,
+			attachment.id, int64(attachment.attempt),
+		); err != nil {
 			return err
 		}
 	}
@@ -303,57 +366,6 @@ func cancelAttachmentForTenantLifecycle(
 		return err
 	}
 	return nil
-}
-
-func feedbackBudgetReservations(
-	ctx context.Context,
-	query db.Querier,
-	tenantID, feedbackID string,
-) ([]budgetReservation, error) {
-	rows, err := query.Query(ctx, `
-		SELECT reservation.project_id, reservation.work_kind,
-		       reservation.resource_id, reservation.generation, reservation.usage_date
-		FROM ai_work_reservations AS reservation
-		WHERE reservation.tenant_id = $1
-		  AND (
-		      (
-		          reservation.work_kind = 'text'
-		          AND reservation.resource_id = $2
-		      )
-		      OR (
-		          reservation.work_kind = 'attachment'
-		          AND EXISTS (
-		              SELECT 1
-		              FROM attachments AS attachment
-		              WHERE attachment.id = reservation.resource_id
-		                AND attachment.feedback_id = $2
-		                AND attachment.tenant_id = $1
-		          )
-		      )
-		  )
-		ORDER BY reservation.work_kind, reservation.resource_id, reservation.generation
-		FOR UPDATE OF reservation
-	`, tenantID, feedbackID)
-	if err != nil {
-		return nil, fmt.Errorf("lock feedback AI budget reservations: %w", err)
-	}
-	defer rows.Close()
-	reservations := make([]budgetReservation, 0)
-	for rows.Next() {
-		var reservation budgetReservation
-		reservation.TenantID = tenantID
-		if err := rows.Scan(
-			&reservation.ProjectID, &reservation.Kind, &reservation.ResourceID,
-			&reservation.Generation, &reservation.UsageDate,
-		); err != nil {
-			return nil, fmt.Errorf("scan feedback AI budget reservation: %w", err)
-		}
-		reservations = append(reservations, reservation)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate feedback AI budget reservations: %w", err)
-	}
-	return reservations, nil
 }
 
 func refundReservedWork(
