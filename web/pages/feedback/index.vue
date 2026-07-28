@@ -736,7 +736,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-inspector-context > span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-context-line { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .feedback-context-line > a,
-.feedback-context-line > b { min-width: 0; overflow: hidden; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-context-line > b { min-width: 0; color: var(--ink-soft); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 .feedback-context-line > a:hover { color: var(--teal); text-decoration: underline; }
 .feedback-inspector > nav { display: flex; min-height: 42px; padding: 0 14px; border-bottom: 1px solid var(--line); }
 .feedback-inspector > nav button { padding: 0 10px; background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; font-size: 10px; font-weight: 750; }
