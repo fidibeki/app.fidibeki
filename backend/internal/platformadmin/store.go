@@ -874,6 +874,19 @@ func (s Store) UpdateTenant(ctx context.Context, input TenantRecord, actorPlatfo
 		return TenantRecord{}, fmt.Errorf("begin workspace update: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	previous, err := scanTenant(tx.QueryRow(ctx, `
+		SELECT id, name, slug, plan, status, billing_email, trial_ends_at, created_at, updated_at
+		FROM tenants WHERE id = $1 FOR UPDATE
+	`, input.ID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantRecord{}, ErrTenantNotFound
+	}
+	if err != nil {
+		return TenantRecord{}, fmt.Errorf("lock workspace update: %w", err)
+	}
+	if !previous.UpdatedAt.Equal(input.UpdatedAt) {
+		return TenantRecord{}, ErrTenantUpdateConflict
+	}
 	record, err := scanTenant(tx.QueryRow(ctx, `
 		UPDATE tenants
 		SET name = $2, slug = $3, plan = $4, status = $5, billing_email = $6, trial_ends_at = $7
@@ -889,9 +902,13 @@ func (s Store) UpdateTenant(ctx context.Context, input TenantRecord, actorPlatfo
 	if err != nil {
 		return TenantRecord{}, fmt.Errorf("update tenant: %w", err)
 	}
+	changedFields := changedTenantFields(previous, record)
 	if err := insertPlatformAccessEvent(ctx, tx, input.ID, "workspace.updated", actorPlatformAdminID, nil, map[string]any{
-		"plan":   record.Plan,
-		"status": record.Status,
+		"changed_fields": changedFields,
+		"plan_from":      previous.Plan,
+		"plan_to":        record.Plan,
+		"status_from":    previous.Status,
+		"status_to":      record.Status,
 	}); err != nil {
 		return TenantRecord{}, err
 	}
@@ -899,6 +916,45 @@ func (s Store) UpdateTenant(ctx context.Context, input TenantRecord, actorPlatfo
 		return TenantRecord{}, fmt.Errorf("commit workspace update: %w", err)
 	}
 	return record, nil
+}
+
+// changedTenantFields records the shape of an administrative lifecycle change
+// without placing workspace names or billing addresses in the audit payload.
+func changedTenantFields(previous TenantRecord, current TenantRecord) []string {
+	fields := make([]string, 0, 7)
+	if previous.Name != current.Name {
+		fields = append(fields, "name")
+	}
+	if previous.Slug != current.Slug {
+		fields = append(fields, "slug")
+	}
+	if previous.Plan != current.Plan {
+		fields = append(fields, "plan")
+	}
+	if previous.Status != current.Status {
+		fields = append(fields, "status")
+	}
+	if !sameOptionalString(previous.BillingEmail, current.BillingEmail) {
+		fields = append(fields, "billing_email")
+	}
+	if !sameOptionalTime(previous.TrialEndsAt, current.TrialEndsAt) {
+		fields = append(fields, "trial_ends_at")
+	}
+	return fields
+}
+
+func sameOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func sameOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Equal(*right)
 }
 
 func (s Store) DeleteTenant(ctx context.Context, id string) error {

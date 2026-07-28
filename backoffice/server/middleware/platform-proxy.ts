@@ -1,4 +1,5 @@
-import { getRequestIP, getRequestURL, proxyRequest, setResponseStatus, type H3Event } from 'h3'
+import { getRequestURL, proxyRequest, setResponseStatus, type H3Event } from 'h3'
+import { trustedClientIP } from '../utils/client-ip'
 import { isBackofficeProxyPath } from '../utils/proxy-path'
 
 function unavailable(event: H3Event) {
@@ -16,6 +17,7 @@ export default defineEventHandler(async (event) => {
   if (!['http:', 'https:'].includes(target.protocol)) return unavailable(event)
   target.pathname = requestURL.pathname
   target.search = requestURL.search
+  const forwardedFor = event.node.req.headers['x-forwarded-for']
   try {
     return await proxyRequest(event, target.toString(), {
       headers: {
@@ -23,7 +25,14 @@ export default defineEventHandler(async (event) => {
         // would let an admin browser target a tenant host through the API proxy.
         'x-fidibeki-proxy-host': `api.${config.baseDomain}`,
         'x-fidibeki-proxy-secret': String(config.internalProxySecret),
-		'x-fidibeki-backoffice-client-ip': getRequestIP(event, { xForwardedFor: true }) || '',
+        // Replace, rather than forward, browser-controlled forwarding data.
+        // The original chain is consulted only after its direct peer matches a
+        // configured ingress CIDR.
+        'x-fidibeki-backoffice-client-ip': trustedClientIP(
+          event.node.req.socket.remoteAddress,
+          Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor,
+          String(config.trustedProxyCIDRs),
+        ),
       },
       fetchOptions: { redirect: 'manual' },
     })

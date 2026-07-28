@@ -64,6 +64,7 @@ interface so HTTP handlers depend on a testable contract instead of SQL.
 | `GET /admin/backoffice/overview` | `platform:tenant:read` | Aggregated, non-PII operational totals. |
 | `GET /admin/backoffice/tenants` | `platform:tenant:read` | Validated query/filter/cursor-paginated workspace directory. |
 | `GET /admin/backoffice/tenants/{tenantID}` | `platform:tenant:read` | Workspace detail and safe operational summary. |
+| `GET /admin/backoffice/tenants/{tenantID}/recovery-candidates` | `platform:tenant:update` | Bounded, cursor-paginated active members with a recorded login; excludes the current owner. |
 | `GET /admin/backoffice/tenants/{tenantID}/access-events` | `platform:tenant:read` | Bounded, cursor-paginated platform audit ledger. |
 
 Existing `POST/PATCH/DELETE /admin/tenants*` remain unchanged and are the only
@@ -78,6 +79,8 @@ credentials.
   permissions.
 - The backoffice proxy accepts only expected admin API paths and overwrites,
   rather than forwards, the trusted internal proxy host and secret headers.
+- The backoffice login limiter uses a browser address asserted by that
+  authenticated proxy; a direct request cannot supply the limiter address.
 - The login endpoint derives its verify URL from an exact configured backoffice
   origin. It does not accept a caller-provided redirect URL.
 - Refresh credentials remain `HttpOnly`, `Secure` outside local/test,

@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
@@ -134,14 +136,57 @@ func TestBackofficeLoginIsNonEnumeratingAndUsesConfiguredVerificationOrigin(t *t
 func TestBackofficeLoginRateLimitsBeforeAdminLookup(t *testing.T) {
 	t.Parallel()
 	limiter := &platformLoginLimiter{decision: ratelimit.Decision{Allowed: false, Limit: 5}}
-	handler := NewHTTPHandler(HTTPOptions{
+	platformHandler := NewHTTPHandler(HTTPOptions{
 		Auth:         Service{Store: &fakeAuthStore{}, Email: &captureEnqueuer{}, BackofficeURL: "https://admin.fidibeki.com"},
 		LoginLimiter: limiter,
 	})
+	handler := appmiddleware.TrustedProxyHost("test-proxy-secret")(platformHandler)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`)))
+	request := httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	request.Header.Set(appmiddleware.ProxyHostHeader, "api.fidibeki.test")
+	request.Header.Set(appmiddleware.ProxySecretHeader, "test-proxy-secret")
+	request.Header.Set(appmiddleware.BackofficeClientIPHeader, "203.0.113.5")
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusTooManyRequests || limiter.key == "" {
 		t.Fatalf("rate limited login = %d, key = %q", recorder.Code, limiter.key)
+	}
+	if !strings.Contains(limiter.key, "platform-login:203.0.113.5:") {
+		t.Errorf("login limiter key = %q, want authenticated proxy client address", limiter.key)
+	}
+
+	limiter.key = ""
+	untrusted := httptest.NewRequest(http.MethodPost, "/admin/backoffice/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	untrusted.RemoteAddr = "198.51.100.8:1234"
+	untrusted.Header.Set(appmiddleware.BackofficeClientIPHeader, "203.0.113.5")
+	handler.ServeHTTP(httptest.NewRecorder(), untrusted)
+	if !strings.Contains(limiter.key, "platform-login:198.51.100.8:") {
+		t.Errorf("untrusted header influenced login limiter key = %q", limiter.key)
+	}
+}
+
+func TestPlatformLoginRateLimiterOnlyTrustsConfiguredProxyPeers(t *testing.T) {
+	t.Parallel()
+
+	limiter := &platformLoginLimiter{decision: ratelimit.Decision{Allowed: false, Limit: 5}}
+	handler := NewHTTPHandler(HTTPOptions{
+		Auth: Service{Store: &fakeAuthStore{}, Email: &captureEnqueuer{}}, LoginLimiter: limiter,
+		TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+	})
+	trustedPeer := httptest.NewRequest(http.MethodPost, "/admin/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	trustedPeer.RemoteAddr = "10.0.0.4:443"
+	trustedPeer.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.2")
+	handler.ServeHTTP(httptest.NewRecorder(), trustedPeer)
+	if !strings.Contains(limiter.key, "platform-login:203.0.113.5:") {
+		t.Errorf("trusted proxy limiter key = %q", limiter.key)
+	}
+
+	limiter.key = ""
+	untrustedPeer := httptest.NewRequest(http.MethodPost, "/admin/auth/login", strings.NewReader(`{"email":"admin@example.com"}`))
+	untrustedPeer.RemoteAddr = "198.51.100.8:443"
+	untrustedPeer.Header.Set("X-Forwarded-For", "203.0.113.5")
+	handler.ServeHTTP(httptest.NewRecorder(), untrustedPeer)
+	if !strings.Contains(limiter.key, "platform-login:198.51.100.8:") {
+		t.Errorf("untrusted forwarding header influenced limiter key = %q", limiter.key)
 	}
 }
 
@@ -274,6 +319,34 @@ func TestBackofficeTenantDetailAndAuditRequireReadPermissionAndRejectInvalidIDs(
 	handler.ServeHTTP(audit, auditRequest)
 	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), `"ownership.provisioned"`) {
 		t.Fatalf("audit status = %d, body = %s", audit.Code, audit.Body.String())
+	}
+}
+
+func TestBackofficeRecoveryCandidatesRequireUpdatePermissionAndUseCursor(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	store := &fakeBackofficeStore{recoveryPage: BackofficeRecoveryCandidatePage{
+		Members:    []BackofficeTenantMember{{ID: "d0f62b82-8347-45e6-8f35-b0cc4114a75c", Email: "owner-candidate@example.com", Status: "active"}},
+		NextCursor: "next-recovery-page",
+	}}
+	handler := NewHTTPHandler(HTTPOptions{Backoffice: store, JWT: jwtManager})
+	readToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantRead)})
+	forbidden := httptest.NewRecorder()
+	forbiddenRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/recovery-candidates", nil)
+	forbiddenRequest.Header.Set("Authorization", "Bearer "+readToken)
+	handler.ServeHTTP(forbidden, forbiddenRequest)
+	if forbidden.Code != http.StatusForbidden || store.recoveryCalled {
+		t.Fatalf("read-only recovery candidate status = %d, called = %t", forbidden.Code, store.recoveryCalled)
+	}
+
+	updateToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{string(auth.PermissionPlatformTenantUpdate)})
+	allowed := httptest.NewRecorder()
+	allowedRequest := httptest.NewRequest(http.MethodGet, "/admin/backoffice/tenants/d0f62b82-8347-45e6-8f35-b0cc4114a75c/recovery-candidates?limit=10", nil)
+	allowedRequest.Header.Set("Authorization", "Bearer "+updateToken)
+	handler.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || store.recoveryParams.Limit != 10 || !strings.Contains(allowed.Body.String(), "next-recovery-page") {
+		t.Fatalf("recovery candidate status = %d, params = %#v, body = %s", allowed.Code, store.recoveryParams, allowed.Body.String())
 	}
 }
 
@@ -627,6 +700,9 @@ type fakeBackofficeStore struct {
 	auditPage        BackofficeAccessEventPage
 	auditParams      BackofficeAccessEventListParams
 	auditCalled      bool
+	recoveryPage     BackofficeRecoveryCandidatePage
+	recoveryParams   BackofficeRecoveryCandidateListParams
+	recoveryCalled   bool
 	err              error
 }
 
@@ -653,8 +729,10 @@ func (s *fakeBackofficeStore) GetBackofficeTenant(_ context.Context, _ string) (
 	s.detailCalled = true
 	return s.detail, s.err
 }
-func (s *fakeBackofficeStore) ListBackofficeRecoveryCandidates(_ context.Context, _ string, _ BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
-	return BackofficeRecoveryCandidatePage{}, s.err
+func (s *fakeBackofficeStore) ListBackofficeRecoveryCandidates(_ context.Context, _ string, params BackofficeRecoveryCandidateListParams) (BackofficeRecoveryCandidatePage, error) {
+	s.recoveryCalled = true
+	s.recoveryParams = params
+	return s.recoveryPage, s.err
 }
 func (s *fakeBackofficeStore) ListBackofficeAccessEvents(_ context.Context, _ string, params BackofficeAccessEventListParams) (BackofficeAccessEventPage, error) {
 	s.auditCalled = true

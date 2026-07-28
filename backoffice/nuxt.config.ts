@@ -29,6 +29,7 @@ export default defineNuxtConfig({
     apiUpstream: process.env.BACKOFFICE_API_UPSTREAM || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8088' : ''),
     internalProxySecret: process.env.BACKOFFICE_INTERNAL_PROXY_SECRET || (process.env.NODE_ENV === 'development' ? 'local-only-internal-proxy-secret-change-me' : ''),
     baseDomain: process.env.BACKOFFICE_BASE_DOMAIN || developmentBaseDomain,
+    trustedProxyCIDRs: process.env.BACKOFFICE_TRUSTED_PROXY_CIDRS || (process.env.NODE_ENV === 'development' ? '127.0.0.0/8,::1/128' : ''),
   },
   typescript: { strict: true, typeCheck: true },
 })

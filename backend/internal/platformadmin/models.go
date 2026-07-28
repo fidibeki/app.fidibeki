@@ -22,6 +22,7 @@ var (
 	ErrRefreshReuse                 = errors.New("revoked refresh token was reused")
 	ErrTenantNotFound               = errors.New("tenant not found")
 	ErrSlugConflict                 = errors.New("tenant slug already exists")
+	ErrTenantUpdateConflict         = errors.New("tenant changed before update")
 	ErrOwnershipConfirmation        = errors.New("workspace ownership confirmation is invalid")
 	ErrRecentAuthenticationRequired = errors.New("recent platform authentication is required")
 	ErrOwnershipTargetInvalid       = errors.New("workspace ownership recovery target is invalid")

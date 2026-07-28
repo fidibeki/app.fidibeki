@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/billing"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
+	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -57,7 +59,10 @@ type HTTPOptions struct {
 	Now           func() time.Time
 	Deleter       TenantDeleter
 	LoginLimiter  ratelimit.Limiter
-	Logger        *slog.Logger
+	// TrustedProxyCIDRs controls when X-Forwarded-For is accepted for legacy
+	// platform login throttling. Empty means the socket peer is always used.
+	TrustedProxyCIDRs []netip.Prefix
+	Logger            *slog.Logger
 }
 
 type TenantDeleter interface {
@@ -309,9 +314,11 @@ func (h *HTTPHandler) requestLogin(
 		return
 	}
 	if limiter != nil {
-		ip := clientIP(r.RemoteAddr)
+		ip := httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs)
 		if backoffice {
-			ip = strings.TrimSpace(r.Header.Get("X-Fidibeki-Backoffice-Client-IP"))
+			if trustedIP, ok := appmiddleware.BackofficeClientIP(r); ok {
+				ip = trustedIP
+			}
 		}
 		key := "platform-login:" + ip + ":" + auth.HashToken(strings.ToLower(strings.TrimSpace(request.Email)))
 		decision, err := limiter.Allow(r.Context(), key, ratelimit.Window{Limit: 5, Period: 15 * time.Minute})
@@ -741,6 +748,8 @@ func writeTenantError(w http.ResponseWriter, err error) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "tenant not found", nil)
 	case errors.Is(err, ErrSlugConflict):
 		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant slug already exists", nil)
+	case errors.Is(err, ErrTenantUpdateConflict):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "tenant changed before update; reload and try again", nil)
 	case errors.Is(err, ErrOwnershipConfirmation):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeOwnershipConfirmation, "workspace confirmation does not match", nil)
 	case errors.Is(err, ErrRecentAuthenticationRequired):

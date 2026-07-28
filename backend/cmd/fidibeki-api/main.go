@@ -325,8 +325,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	}
 	platformHandler := platformadmin.NewHTTPHandler(platformadmin.HTTPOptions{
 		Auth: adminAuth, Tenants: adminStore, Backoffice: adminStore, JWT: jwtManager, Deleter: deletionExecutor, LoginLimiter: publicLimiter,
-		SecureCookies: settings.Environment != "local" && settings.Environment != "test",
-		RefreshTTL:    settings.RefreshTokenTTL, Logger: logger,
+		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
+		SecureCookies:     settings.Environment != "local" && settings.Environment != "test",
+		RefreshTTL:        settings.RefreshTokenTTL, Logger: logger,
 	})
 	var resendVerifier issue.WebhookVerifier
 	if settings.ResendWebhookSecret != "" {

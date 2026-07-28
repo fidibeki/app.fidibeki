@@ -375,6 +375,7 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 	if err != nil || fetched.Slug != "acme" {
 		t.Fatalf("GetTenant() = %#v, %v", fetched, err)
 	}
+	record = fetched
 	record.Name = "Acme Updated"
 	record.Status = tenant.StatusActive
 	record.TrialEndsAt = nil
@@ -388,6 +389,34 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 		WHERE tenant_id = $1 AND kind = 'workspace.updated'
 	`, record.ID).Scan(&updateAuditActor); err != nil || updateAuditActor != admin.ID {
 		t.Fatalf("workspace update audit actor = %q, error = %v", updateAuditActor, err)
+	}
+	var updateAuditDetail bool
+	if err := connection.QueryRow(ctx, `
+		SELECT data->'changed_fields' ? 'name'
+		   AND data->'changed_fields' ? 'status'
+		   AND data->>'status_from' = 'trial'
+		   AND data->>'status_to' = 'active'
+		FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'workspace.updated'
+	`, record.ID).Scan(&updateAuditDetail); err != nil || !updateAuditDetail {
+		t.Fatalf("workspace update audit detail = %t, error = %v", updateAuditDetail, err)
+	}
+	stale := updated
+	fresh, err := store.GetTenant(ctx, updated.ID)
+	if err != nil {
+		t.Fatalf("GetTenant(after update) error = %v", err)
+	}
+	fresh.Name = "Acme Fresh"
+	if _, err := store.UpdateTenant(ctx, fresh, admin.ID); err != nil {
+		t.Fatalf("fresh UpdateTenant() error = %v", err)
+	}
+	stale.Plan = tenant.PlanScale
+	if _, err := store.UpdateTenant(ctx, stale, admin.ID); !errors.Is(err, ErrTenantUpdateConflict) {
+		t.Fatalf("stale UpdateTenant() error = %v, want conflict", err)
+	}
+	confirmed, err := store.GetTenant(ctx, updated.ID)
+	if err != nil || confirmed.Name != "Acme Fresh" || confirmed.Plan != tenant.PlanGrowth {
+		t.Fatalf("concurrent update preserved = %#v, error = %v", confirmed, err)
 	}
 	records, err := store.ListTenants(ctx)
 	if err != nil || len(records) != 1 {
@@ -461,6 +490,35 @@ func TestStoreBackofficeOverviewAndKeysetDirectory(t *testing.T) {
 	if err := database.QueryRow(ctx, `SELECT id FROM tenants WHERE slug = 'newest-acme'`).Scan(&newestID); err != nil {
 		t.Fatalf("find audit tenant: %v", err)
 	}
+	memberIDs := make([]string, 3)
+	for index, createdAt := range []time.Time{now, now.Add(-time.Minute), now.Add(-2 * time.Minute)} {
+		if err := database.QueryRow(ctx, `
+			INSERT INTO tenant_members (tenant_id, email, permissions, last_login_at, created_at)
+			VALUES ($1, $2, '{}', $3, $4)
+			RETURNING id
+		`, newestID, "member"+string(rune('a'+index))+"@acme.test", now, createdAt).Scan(&memberIDs[index]); err != nil {
+			t.Fatalf("seed recovery candidate %d: %v", index, err)
+		}
+	}
+	if _, err := database.Exec(ctx, `UPDATE tenants SET owner_member_id = $2 WHERE id = $1`, newestID, memberIDs[0]); err != nil {
+		t.Fatalf("set backoffice owner: %v", err)
+	}
+	detail, err := store.GetBackofficeTenant(ctx, newestID)
+	if err != nil || detail.Owner == nil || detail.Owner.ID != memberIDs[0] || detail.MemberCount != 3 {
+		t.Fatalf("GetBackofficeTenant() = %#v, error = %v", detail, err)
+	}
+	firstCandidates, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1})
+	if err != nil || len(firstCandidates.Members) != 1 || firstCandidates.Members[0].ID != memberIDs[1] || firstCandidates.NextCursor == "" {
+		t.Fatalf("first recovery candidate page = %#v, error = %v", firstCandidates, err)
+	}
+	secondCandidates, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1, Cursor: firstCandidates.NextCursor})
+	if err != nil || len(secondCandidates.Members) != 1 || secondCandidates.Members[0].ID != memberIDs[2] || secondCandidates.NextCursor != "" {
+		t.Fatalf("second recovery candidate page = %#v, error = %v", secondCandidates, err)
+	}
+	if _, err := store.ListBackofficeRecoveryCandidates(ctx, newestID, BackofficeRecoveryCandidateListParams{Limit: 1, Cursor: "not-a-cursor"}); err == nil {
+		t.Fatal("invalid recovery candidate cursor error = nil")
+	}
+
 	for index, createdAt := range []time.Time{now, now.Add(-time.Minute)} {
 		if _, err := database.Exec(ctx, `
 			INSERT INTO tenant_access_events (tenant_id, kind, data, created_at)
