@@ -241,6 +241,16 @@ was removed from the staging test tenant.
   staging behavior. Close issues that are already materially complete, then implement the remaining
   issues that do not carry the `postpone` label. Recommended planning decisions are pre-approved;
   the staging-only and no-production boundary still applies.
+  - [ ] Complete the first secure mobile-capture slice in #136.
+    - The approved design uses a React Native SDK for iOS and Android backed by short-lived,
+      one-feedback capture sessions minted by the customer's server with a least-privilege
+      `mobile_capture:create` API key. It reuses Widget Definitions, recurrence, consent,
+      attachments, AI processing, independent Feedback, and the Dispatch inbox without embedding a
+      WebView or placing a private Fidibeki key in the app.
+    - Design:
+      `docs/superpowers/specs/2026-07-28-fidibeki-mobile-capture-design.md`.
+    - Implementation plan:
+      `docs/superpowers/plans/2026-07-28-fidibeki-mobile-capture-implementation.md`.
   - [x] Confirm Phase 0 issues #8-#12 are closed and retain passing regression coverage.
   - [x] Complete Feedback UI and widget contact issues #15, #17, #18, and #20.
     - Sentiment now uses one threshold-tested semantic badge with exact-score disclosure; status
