@@ -59,6 +59,12 @@ func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 		now = s.Now().UTC()
 	}
 	var scheduleErrors []error
+	cancelled, err := s.Store.CancelIneligibleWork(ctx, 500, now)
+	if err != nil {
+		scheduleErrors = append(scheduleErrors, err)
+	} else if cancelled > 0 {
+		s.logger().InfoContext(ctx, "inactive tenant AI work cancelled", "count", cancelled)
+	}
 	expired, err := s.Store.ExpireIncompleteAttachments(
 		ctx, now.Add(-incompleteAttachmentGrace), now, 100,
 	)

@@ -22,7 +22,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 128
+	const latestMigrationVersion = 129
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2547,10 +2547,10 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("create deactivated testimonial backfill member: %v", err)
 	}
-	if err := migrator.Steps(-3); err != nil {
+	if err := migrateToVersion(migrator, 125); err != nil {
 		t.Fatalf("roll back migrations after testimonial permission backfill: %v", err)
 	}
-	if err := migrator.Steps(1); err != nil {
+	if err := migrateToVersion(migrator, 126); err != nil {
 		t.Fatalf("reapply testimonial permission backfill: %v", err)
 	}
 	var backfillRead, backfillCreate, backfillUpdate, backfillDelete, backfillPublish bool
@@ -2622,7 +2622,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	if _, err := root.Exec(ctx, `DELETE FROM tenants WHERE id = $1`, testimonialBackfillTenantID); err != nil {
 		t.Fatalf("delete testimonial backfill fixtures: %v", err)
 	}
-	if err := migrator.Steps(2); err != nil {
+	if err := migrateToVersion(migrator, latestMigrationVersion); err != nil {
 		t.Fatalf("restore latest migrations after testimonial permission backfill test: %v", err)
 	}
 
@@ -3028,6 +3028,28 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		  )
 	`).Scan(&analyticsIndexCount); err != nil || analyticsIndexCount != 4 {
 		t.Fatalf("widget funnel analytics index count = %d, error = %v, want 4", analyticsIndexCount, err)
+	}
+	var appCanExecuteAILifecycle, publicCanExecuteAILifecycle bool
+	if err := root.QueryRow(ctx, `
+		SELECT
+		    has_function_privilege(
+		        'fidibeki_app',
+		        'fidibeki_ai_tenant_processing_eligible(tenant_status,timestamptz,timestamptz,timestamptz)',
+		        'EXECUTE'
+		    ),
+		    has_function_privilege(
+		        'public',
+		        'fidibeki_ai_tenant_processing_eligible(tenant_status,timestamptz,timestamptz,timestamptz)',
+		        'EXECUTE'
+		    )
+	`).Scan(&appCanExecuteAILifecycle, &publicCanExecuteAILifecycle); err != nil {
+		t.Fatalf("read AI lifecycle function privileges: %v", err)
+	}
+	if !appCanExecuteAILifecycle || publicCanExecuteAILifecycle {
+		t.Fatalf(
+			"AI lifecycle function privileges = app %t public %t, want true/false",
+			appCanExecuteAILifecycle, publicCanExecuteAILifecycle,
+		)
 	}
 }
 

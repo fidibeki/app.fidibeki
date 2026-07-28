@@ -52,6 +52,13 @@ func (p Processor) TextHandler() asynq.HandlerFunc {
 		if err := p.acquire(ctx); err != nil {
 			return p.handleTextFailure(ctx, work, err)
 		}
+		authorized, err := p.Store.AuthorizeTextForProvider(ctx, work, p.now())
+		if err != nil {
+			return err
+		}
+		if !authorized {
+			return nil
+		}
 		result, err := p.Analyzer.AnalyzeText(ctx, work.Text)
 		if err != nil {
 			return p.handleTextFailure(ctx, work, err)
@@ -87,6 +94,13 @@ func (p Processor) AttachmentHandler() asynq.HandlerFunc {
 		}
 		if err := p.acquire(ctx); err != nil {
 			return p.handleAttachmentFailure(ctx, work, err)
+		}
+		authorized, err := p.Store.AuthorizeAttachmentForProvider(ctx, work, p.now())
+		if err != nil {
+			return err
+		}
+		if !authorized {
+			return nil
 		}
 		reader, err := p.Storage.OpenObject(ctx, work.StorageKey)
 		if err != nil {

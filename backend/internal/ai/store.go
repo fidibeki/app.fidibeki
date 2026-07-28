@@ -47,10 +47,18 @@ func (s Store) PrepareFeedback(
 	var text *string
 	var textEnqueuedAt *time.Time
 	var textDeferredUntil *time.Time
+	var tenantEligible bool
 	var aiEnabled, textAIEnabled, screenshotAIEnabled, audioAIEnabled, videoAIEnabled bool
 	var processingRestricted bool
 	err = tx.QueryRow(ctx, `
-		SELECT feedback.tenant_id, feedback.project_id, tenant.plan, feedback.text,
+		SELECT feedback.tenant_id, feedback.project_id, tenant.plan,
+		       fidibeki_ai_tenant_processing_eligible(
+		           tenant.status,
+		           tenant.trial_ends_at,
+		           tenant.deletion_requested_at,
+		           $2
+		       ),
+		       feedback.text,
 		       feedback.text_process_status, feedback.ai_job_enqueued_at,
 		       feedback.text_processing_generation, feedback.ai_budget_deferred_until,
 		       COALESCE((rule.ai_processing->>'enabled')::boolean, false),
@@ -65,8 +73,9 @@ func (s Store) PrepareFeedback(
 		  ON rule.id = feedback.widget_rule_id AND rule.project_id = feedback.project_id
 		WHERE feedback.id = $1
 		FOR UPDATE OF feedback
-	`, feedbackID).Scan(
-		&tenantID, &projectID, &planValue, &text, &textStatus, &textEnqueuedAt,
+		FOR SHARE OF tenant
+	`, feedbackID, now).Scan(
+		&tenantID, &projectID, &planValue, &tenantEligible, &text, &textStatus, &textEnqueuedAt,
 		&textGeneration, &textDeferredUntil, &aiEnabled, &textAIEnabled,
 		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled, &processingRestricted,
 	)
@@ -78,6 +87,17 @@ func (s Store) PrepareFeedback(
 	}
 
 	definition, planExists := config.PlanFor(tenant.Plan(planValue))
+	if !tenantEligible {
+		if err := cancelFeedbackForTenantLifecycle(
+			ctx, tx, tenantID, feedbackID, now,
+		); err != nil {
+			return nil, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("commit inactive tenant AI cancellation: %w", err)
+		}
+		return nil, false, nil
+	}
 	if !planExists || !definition.Features.AI || !aiEnabled || processingRestricted {
 		if _, err := tx.Exec(ctx, `
 				UPDATE feedbacks
@@ -367,6 +387,12 @@ func (s Store) PendingFeedbackIDs(
 			  ON project_usage.project_id = feedback.project_id
 			 AND project_usage.usage_date = $2
 				WHERE tenant.plan IN ('growth', 'scale', 'enterprise')
+				  AND fidibeki_ai_tenant_processing_eligible(
+				      tenant.status,
+				      tenant.trial_ends_at,
+				      tenant.deletion_requested_at,
+				      $4
+				  )
 				  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
 			  AND NOT fidibeki_privacy_feedback_restricted(
 			      feedback.tenant_id, feedback.id, 'ai'
@@ -427,19 +453,38 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 	rows, err := s.Database.Query(ctx, `
 		SELECT kind, tenant_id, project_id, resource_id, attempt, generation, enqueued_at
 		FROM (
-			SELECT 'text'::text AS kind, tenant_id, project_id, id AS resource_id, 0 AS attempt,
-			       text_processing_generation AS generation, ai_job_enqueued_at AS enqueued_at
-			FROM feedbacks
-			WHERE text_process_status = 'processing' AND ai_job_enqueued_at IS NOT NULL
-			  AND NOT fidibeki_privacy_feedback_restricted(tenant_id, id, 'ai')
+			SELECT 'text'::text AS kind, feedback.tenant_id, feedback.project_id,
+			       feedback.id AS resource_id, 0 AS attempt,
+			       feedback.text_processing_generation AS generation,
+			       feedback.ai_job_enqueued_at AS enqueued_at
+			FROM feedbacks AS feedback
+			JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
+			WHERE feedback.text_process_status = 'processing'
+			  AND feedback.ai_job_enqueued_at IS NOT NULL
+			  AND fidibeki_ai_tenant_processing_eligible(
+			      tenant.status,
+			      tenant.trial_ends_at,
+			      tenant.deletion_requested_at,
+			      CURRENT_TIMESTAMP
+			  )
+			  AND NOT fidibeki_privacy_feedback_restricted(
+			      feedback.tenant_id, feedback.id, 'ai'
+			  )
 			UNION ALL
 			SELECT 'attachment', attachment.tenant_id, feedback.project_id,
 			       attachment.id, attachment.processing_attempts, 0, attachment.created_at
 			FROM attachments AS attachment
 			JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
+			JOIN tenants AS tenant ON tenant.id = attachment.tenant_id
 			WHERE attachment.processing_status = 'processing'
 			  AND attachment.safety_status = 'safe'
 			  AND attachment.retention_deleted_at IS NULL
+			  AND fidibeki_ai_tenant_processing_eligible(
+			      tenant.status,
+			      tenant.trial_ends_at,
+			      tenant.deletion_requested_at,
+			      CURRENT_TIMESTAMP
+			  )
 			  AND NOT fidibeki_privacy_feedback_restricted(
 			      attachment.tenant_id, feedback.id, 'ai'
 			  )
@@ -781,6 +826,21 @@ func (s Store) ClaimText(
 		return TextWork{}, fmt.Errorf("begin text AI claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	eligible, err := tenantAIProcessingEligible(ctx, tx, tenantID)
+	if err != nil {
+		return TextWork{}, err
+	}
+	if !eligible {
+		if err := cancelTextForTenantLifecycle(
+			ctx, tx, tenantID, feedbackID, generation, time.Now().UTC(),
+		); err != nil {
+			return TextWork{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return TextWork{}, fmt.Errorf("commit text AI lifecycle cancellation: %w", err)
+		}
+		return TextWork{}, ErrNoWork
+	}
 	var work TextWork
 	work.TenantID, work.FeedbackID, work.Generation = tenantID, feedbackID, generation
 	err = tx.QueryRow(ctx, `
@@ -837,6 +897,21 @@ func (s Store) ClaimAttachment(
 		return AttachmentWork{}, fmt.Errorf("begin attachment AI claim: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	eligible, err := tenantAIProcessingEligible(ctx, tx, tenantID)
+	if err != nil {
+		return AttachmentWork{}, err
+	}
+	if !eligible {
+		if err := cancelAttachmentForTenantLifecycle(
+			ctx, tx, tenantID, attachmentID, attempt, time.Now().UTC(),
+		); err != nil {
+			return AttachmentWork{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AttachmentWork{}, fmt.Errorf("commit attachment AI lifecycle cancellation: %w", err)
+		}
+		return AttachmentWork{}, ErrNoWork
+	}
 	var work AttachmentWork
 	work.TenantID, work.AttachmentID, work.Attempt = tenantID, attachmentID, attempt
 	err = tx.QueryRow(ctx, `
