@@ -1,7 +1,7 @@
 # Fidibeki Cold-Email Sender Readiness
 
 **Checked:** 2026-07-27
-**Status:** All cold outbound paused by founder after an over-fast initial batch
+**Status:** Controlled weekday schedule active — maximum two approved first touches per day; no automatic retries
 **Owner:** Inês, co-founder
 
 ## What was verified
@@ -49,14 +49,20 @@ The corrected, quoted header is:
 
 `"Inês, co-founder at Fidibeki" <ines.algo@fidibeki.com>`
 
-Before one permitted retry for a recipient rejected solely for this defect:
+Before any founder-approved, manual retry for a recipient rejected solely for this defect:
 
 1. Run `python3 scripts/validate_outreach_headers.py` and require `outreach_from_header=valid`.
 2. Construct the `From` header with `email.headerregistry.Address`, not a raw string.
 3. Keep the original subject/body, mandatory BCC, jurisdiction footer, and private send-log link to the DSN.
-4. Retry only the five DSN-identified recipients once; never resend the two messages without a failure notice or any contact marked do-not-resend/suppressed.
+4. Retry only the DSN-identified recipient once if the founder explicitly approves it; never resend a contact without a failure notice or any contact marked do-not-resend/suppressed.
 
-No new cohort, retry, or follow-up may be sent until the founder explicitly resumes outbound. The header correction remains documented for a future, founder-approved recovery; it is not an authorisation to retry.
+The header correction is required by the controlled scheduler. It is not an authorisation for automatic retries.
+
+## Controlled weekday schedule — 2026-07-28
+
+The local LaunchAgent `com.fidibeki.outreach-dispatch` runs at **10:15 Europe/Lisbon on weekdays**. It sends no more than **two** individual first touches from the private pre-approved queue, then records SMTP acceptance.
+
+Before sending, the dispatcher rejects a queue item if the address is already in the send register or suppression list, validates the quoted `From` header, uses the mandatory founder BCC, and caps the day at two. It has no automatic retry, follow-up, tracking, attachment, or bulk-import path. The next job run is inert when no eligible queue item exists.
 
 ## Pilot sending constraint
 
