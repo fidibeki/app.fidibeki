@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/billing"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -232,6 +233,37 @@ func TestBackofficeOverviewRequiresPlatformReadPermission(t *testing.T) {
 	if !strings.Contains(allowed.Body.String(), `"workspace_count":12`) ||
 		strings.Contains(allowed.Body.String(), "admin@example.com") {
 		t.Errorf("overview body = %s", allowed.Body.String())
+	}
+}
+
+func TestBackofficeReadRoutesFailClosedWithoutDirectoryStore(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantRead),
+		string(auth.PermissionPlatformTenantUpdate),
+	})
+	handler := NewHTTPHandler(HTTPOptions{JWT: jwtManager})
+	tenantID := "d0f62b82-8347-45e6-8f35-b0cc4114a75c"
+
+	for _, path := range []string{
+		"/admin/backoffice/overview",
+		"/admin/backoffice/tenants",
+		"/admin/backoffice/tenants/" + tenantID,
+		"/admin/backoffice/tenants/" + tenantID + "/recovery-candidates",
+		"/admin/backoffice/tenants/" + tenantID + "/access-events",
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+accessToken)
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusServiceUnavailable ||
+			!strings.Contains(response.Body.String(), `"code":"service_unavailable"`) {
+			t.Errorf("GET %s status = %d body = %s", path, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -548,6 +580,43 @@ func TestTenantManagementMapsDomainErrors(t *testing.T) {
 	}
 }
 
+func TestTenantDeletionUsesAuditedForceDeleter(t *testing.T) {
+	t.Parallel()
+
+	jwtManager, _ := auth.NewJWTManager(strings.Repeat("s", 32), DefaultIssuer, 10*time.Minute)
+	accessToken, _, _ := jwtManager.Issue("admin-id", auth.AudiencePlatform, []string{
+		string(auth.PermissionPlatformTenantDelete),
+	})
+
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "deleted", status: http.StatusNoContent},
+		{name: "missing", err: billing.ErrNotFound, status: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			deleter := &fakeTenantDeleter{err: test.err}
+			handler := NewHTTPHandler(HTTPOptions{Deleter: deleter, JWT: jwtManager})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodDelete, "/admin/tenants/tenant-id", nil)
+			request.Header.Set("Authorization", "Bearer "+accessToken)
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d body = %s, want %d", response.Code, response.Body.String(), test.status)
+			}
+			if deleter.tenantID != "tenant-id" || deleter.actorID != "admin-id" {
+				t.Fatalf("force-delete call = tenant %q actor %q", deleter.tenantID, deleter.actorID)
+			}
+		})
+	}
+}
+
 func TestPlatformAdminRecoveryRequiresEvidenceAndPassesActor(t *testing.T) {
 	t.Parallel()
 
@@ -690,6 +759,12 @@ type fakeTenantStore struct {
 	recoverErr error
 }
 
+type fakeTenantDeleter struct {
+	tenantID string
+	actorID  string
+	err      error
+}
+
 type fakeBackofficeStore struct {
 	overview         BackofficeOverview
 	tenantPage       BackofficeTenantPage
@@ -772,4 +847,10 @@ func (s *fakeTenantStore) DeleteTenant(_ context.Context, id string) error {
 func (s *fakeTenantStore) RecoverOwnership(_ context.Context, input RecoverOwnershipParams) error {
 	s.recovered = input
 	return s.recoverErr
+}
+
+func (d *fakeTenantDeleter) ForceDelete(_ context.Context, tenantID, actorID string) error {
+	d.tenantID = tenantID
+	d.actorID = actorID
+	return d.err
 }
