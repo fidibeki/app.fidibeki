@@ -326,6 +326,24 @@ func (s Store) BootstrapAdmin(ctx context.Context, email string, permissions []s
 	return admin, nil
 }
 
+// RecordQueueTaskRetry writes the operator intent before a background task is
+// moved in Redis. The ledger is append-only and owned by the admin role; the
+// actor is the resource because asynchronous task IDs are not guaranteed to be
+// UUIDs while platform_security_events resource IDs are.
+func (s Store) RecordQueueTaskRetry(ctx context.Context, actorID, queue, taskID string) error {
+	payload, err := json.Marshal(map[string]string{"queue": queue, "task_id": taskID})
+	if err != nil {
+		return fmt.Errorf("encode queue retry audit: %w", err)
+	}
+	if _, err := s.Database.Exec(ctx, `
+		INSERT INTO platform_security_events (kind, resource_type, resource_id, data)
+		VALUES ('operations.queue_task_retry_requested', 'platform_admin', $1, $2::jsonb)
+	`, actorID, string(payload)); err != nil {
+		return fmt.Errorf("record queue retry audit: %w", err)
+	}
+	return nil
+}
+
 // Overview returns bounded aggregate counts for the platform console. The
 // query deliberately remains on the admin pool and does not join member,
 // feedback, session, or attachment tables: the dashboard needs capacity

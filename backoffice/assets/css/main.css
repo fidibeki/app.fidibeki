@@ -172,9 +172,11 @@
 .table th { height: 37px; padding: 0 12px; background: var(--surface-subtle); color: var(--muted); font-size: 10px; text-align: left; text-transform: uppercase; }
 .table td { padding: 12px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; vertical-align: top; }
 .table tbody tr:hover { background: var(--row-hover); }
+.table tbody tr.table-row-selected { background: var(--teal-soft); }
 .table a { color: var(--teal); font-weight: 700; }
 .queue-link { padding: 0; background: transparent; border: 0; color: var(--teal); font: inherit; font-weight: 700; text-align: left; }
 .queue-link:hover { text-decoration: underline; }
+.queue-link--selected { color: var(--ink); cursor: default; text-decoration: none !important; }
 .form, .panel form { display: grid; gap: 14px; }
 .panel label, .form label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 12px; font-weight: 650; }
 input, select, textarea {
@@ -205,7 +207,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--teal); box-shado
 .button:hover { background: var(--teal-fill-strong); }
 .button:disabled { cursor: not-allowed; opacity: .55; }
 .button.secondary { background: var(--surface); border-color: var(--line-strong); color: var(--ink-soft); }
+.button--compact { min-height: 30px; padding: 0 9px; font-size: 11px; }
 .error { color: var(--red); font-size: 12px; }
+.queue-action-error { margin: 10px 0 -2px; }
 .status { display: inline-flex; padding: 3px 7px; border-radius: 4px; background: var(--surface-soft); color: var(--ink-soft); font-size: 10px; font-weight: 750; text-transform: capitalize; }
 .status--warning { background: var(--amber-soft); color: var(--amber-ink); }
 .status--critical { background: var(--red-soft); color: var(--red); }

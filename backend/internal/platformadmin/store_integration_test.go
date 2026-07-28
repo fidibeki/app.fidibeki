@@ -71,7 +71,7 @@ func TestStorePersistsAuthenticationAndTenantLifecycle(t *testing.T) {
 		t.Fatalf("idempotent BootstrapAdmin() = %#v, %v", again, err)
 	}
 	found, err := store.FindAdminByEmail(ctx, " Admin@Example.com ")
-	if err != nil || found.ID != admin.ID || len(found.Permissions) != 13 {
+	if err != nil || found.ID != admin.ID || len(found.Permissions) != 14 {
 		t.Fatalf("FindAdminByEmail() = %#v, %v", found, err)
 	}
 

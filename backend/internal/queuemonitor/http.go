@@ -1,7 +1,9 @@
 package queuemonitor
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -9,11 +11,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
 
 const RootPath = "/admin/queues"
+
+var (
+	ErrTaskNotRetryable      = errors.New("queue task is not retryable")
+	ErrRetryAuditUnavailable = errors.New("queue retry audit is unavailable")
+)
 
 type Inspector interface {
 	Queues() ([]string, error)
@@ -23,12 +33,23 @@ type Inspector interface {
 	ListScheduledTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	ListRetryTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	ListArchivedTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error)
+	GetTaskInfo(string, string) (*asynq.TaskInfo, error)
+	RunTask(string, string) error
+}
+
+// RetryAuditor records the operator's requested task retry before the task is
+// moved in Redis. Redis and PostgreSQL cannot share a transaction, so an audit
+// failure deliberately prevents the command rather than creating an unaudited
+// operational action.
+type RetryAuditor interface {
+	RecordQueueTaskRetry(context.Context, string, string, string) error
 }
 
 type Handler struct {
 	inspector Inspector
 	close     func() error
 	now       func() time.Time
+	auditor   RetryAuditor
 }
 
 func New(redisOption asynq.RedisConnOpt) (*Handler, error) {
@@ -45,6 +66,67 @@ func New(redisOption asynq.RedisConnOpt) (*Handler, error) {
 
 func NewWithInspector(inspector Inspector) *Handler {
 	return &Handler{inspector: inspector, close: func() error { return nil }, now: time.Now}
+}
+
+func (h *Handler) SetRetryAuditor(auditor RetryAuditor) { h.auditor = auditor }
+
+// RetryTask moves one retry-state task to pending for immediate processing.
+// The caller is responsible for authenticating the platform administrator;
+// this method verifies the task state and makes the audit durable before the
+// non-transactional Redis mutation.
+func (h *Handler) RetryTask(ctx context.Context, actorID, queue, taskID string) error {
+	queue = strings.TrimSpace(queue)
+	taskID = strings.TrimSpace(taskID)
+	if queue == "" || taskID == "" {
+		return ErrTaskNotRetryable
+	}
+	task, err := h.inspector.GetTaskInfo(queue, taskID)
+	if err != nil {
+		return err
+	}
+	if task == nil || task.State != asynq.TaskStateRetry {
+		return ErrTaskNotRetryable
+	}
+	if h.auditor == nil {
+		return ErrRetryAuditUnavailable
+	}
+	if err := h.auditor.RecordQueueTaskRetry(ctx, actorID, queue, taskID); err != nil {
+		return fmt.Errorf("record queue retry audit: %w", err)
+	}
+	if err := h.inspector.RunTask(queue, taskID); err != nil {
+		return fmt.Errorf("run retry task: %w", err)
+	}
+	return nil
+}
+
+// RetryBackofficeTask is the authenticated command endpoint for one task in
+// the retry state. Its router is responsible for requiring
+// platform:queue:run; the handler additionally requires the claims context so
+// a missing authentication wrapper cannot produce an anonymous audit event.
+func (h *Handler) RetryBackofficeTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		api.WriteError(w, http.StatusMethodNotAllowed, api.CodeBadRequest, "method not allowed", nil)
+		return
+	}
+	claims, ok := appmiddleware.PlatformClaimsFromContext(r.Context())
+	if !ok {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	err := h.RetryTask(r.Context(), claims.Subject, chi.URLParam(r, "queue"), chi.URLParam(r, "taskID"))
+	switch {
+	case err == nil:
+		api.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	case errors.Is(err, ErrTaskNotRetryable):
+		api.WriteError(w, http.StatusConflict, api.CodeConflict, "task is not in retry state", nil)
+	case errors.Is(err, ErrRetryAuditUnavailable):
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "queue retry is temporarily unavailable", nil)
+	case errors.Is(err, asynq.ErrTaskNotFound), errors.Is(err, asynq.ErrQueueNotFound):
+		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "queue task not found", nil)
+	default:
+		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "queue retry is temporarily unavailable", nil)
+	}
 }
 
 func (h *Handler) Close() error {

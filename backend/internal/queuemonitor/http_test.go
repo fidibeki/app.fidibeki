@@ -1,6 +1,7 @@
 package queuemonitor_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -99,11 +100,42 @@ func TestQueueMonitorExposesReadOnlyDashboardJSON(t *testing.T) {
 	}
 }
 
+func TestQueueMonitorRetriesOnlyAuditedRetryTasks(t *testing.T) {
+	t.Parallel()
+	inspector := &fakeInspector{task: &asynq.TaskInfo{ID: "task-1", State: asynq.TaskStateRetry}}
+	auditor := &captureRetryAuditor{}
+	handler := queuemonitor.NewWithInspector(inspector)
+	handler.SetRetryAuditor(auditor)
+
+	if err := handler.RetryTask(context.Background(), "admin-1", "email", "task-1"); err != nil {
+		t.Fatalf("RetryTask() error = %v", err)
+	}
+	if inspector.runQueue != "email" || inspector.runID != "task-1" {
+		t.Errorf("RunTask(%q, %q), want email/task-1", inspector.runQueue, inspector.runID)
+	}
+	if auditor.actorID != "admin-1" || auditor.queue != "email" || auditor.taskID != "task-1" {
+		t.Errorf("audit = %#v", auditor)
+	}
+
+	withoutAudit := queuemonitor.NewWithInspector(&fakeInspector{task: &asynq.TaskInfo{ID: "task-2", State: asynq.TaskStateRetry}})
+	if err := withoutAudit.RetryTask(context.Background(), "admin-1", "email", "task-2"); !errors.Is(err, queuemonitor.ErrRetryAuditUnavailable) {
+		t.Errorf("RetryTask(without audit) error = %v, want ErrRetryAuditUnavailable", err)
+	}
+
+	inspector.task.State = asynq.TaskStateActive
+	if err := handler.RetryTask(context.Background(), "admin-1", "email", "task-1"); !errors.Is(err, queuemonitor.ErrTaskNotRetryable) {
+		t.Errorf("RetryTask(active) error = %v, want ErrTaskNotRetryable", err)
+	}
+}
+
 type fakeInspector struct {
-	queues []string
-	info   *asynq.QueueInfo
-	retry  []*asynq.TaskInfo
-	err    error
+	queues   []string
+	info     *asynq.QueueInfo
+	retry    []*asynq.TaskInfo
+	task     *asynq.TaskInfo
+	runQueue string
+	runID    string
+	err      error
 }
 
 func (f *fakeInspector) Queues() ([]string, error)                     { return f.queues, f.err }
@@ -122,4 +154,16 @@ func (f *fakeInspector) ListRetryTasks(string, ...asynq.ListOption) ([]*asynq.Ta
 }
 func (f *fakeInspector) ListArchivedTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
 	return nil, f.err
+}
+func (f *fakeInspector) GetTaskInfo(string, string) (*asynq.TaskInfo, error) { return f.task, f.err }
+func (f *fakeInspector) RunTask(queue, id string) error {
+	f.runQueue, f.runID = queue, id
+	return f.err
+}
+
+type captureRetryAuditor struct{ actorID, queue, taskID string }
+
+func (a *captureRetryAuditor) RecordQueueTaskRetry(_ context.Context, actorID, queue, taskID string) error {
+	a.actorID, a.queue, a.taskID = actorID, queue, taskID
+	return nil
 }
