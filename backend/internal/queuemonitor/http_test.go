@@ -102,6 +102,30 @@ func TestQueueMonitorExposesReadOnlyDashboardJSON(t *testing.T) {
 	}
 }
 
+func TestQueueMonitorDashboardJSONSerializesEmptyCollectionsAsArrays(t *testing.T) {
+	t.Parallel()
+
+	handler := queuemonitor.NewWithInspector(&fakeInspector{})
+	recorder := httptest.NewRecorder()
+	handler.ServeBackofficeJSON(recorder, httptest.NewRequest(http.MethodGet, "/admin/backoffice/queues", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Dashboard struct {
+			Queues json.RawMessage `json:"queues"`
+			Tasks  json.RawMessage `json:"tasks"`
+		} `json:"dashboard"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if string(response.Dashboard.Queues) != "[]" || string(response.Dashboard.Tasks) != "[]" {
+		t.Errorf("empty collections = queues %s, tasks %s; want []", response.Dashboard.Queues, response.Dashboard.Tasks)
+	}
+}
+
 func TestQueueMonitorRetriesOnlyAuditedRetryTasks(t *testing.T) {
 	t.Parallel()
 	inspector := &fakeInspector{task: &asynq.TaskInfo{ID: "task-1", State: asynq.TaskStateRetry}}

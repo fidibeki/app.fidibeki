@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { canRunQueueTasks } from '~/utils/platform-permissions'
-
-type Queue = { name: string; pending: number; active: number; scheduled: number; retry: number; archived: number; failed: number; latency: string; selected: boolean }
-type Task = { id: string; type: string; state: string; retries: string; last_error: string; next_process_at: string }
-type Dashboard = { queues: Queue[]; tasks: Task[]; selected_queue: string; refreshed_at: string; total_pending: number; total_active: number; total_retry: number; total_failed: number; selected_task_count: number }
+import { normalizeQueueDashboard, type QueueDashboardPayload, type QueueTask } from '~/utils/queue-dashboard'
 
 const route = useRoute()
 const { $platformApi } = useNuxtApp()
@@ -11,7 +8,10 @@ const { session } = usePlatformAuth()
 const mayRetryTasks = computed(() => canRunQueueTasks(session.value.admin?.permissions))
 const selectedQueue = ref(typeof route.query.queue === 'string' ? route.query.queue : '')
 const request = computed(() => selectedQueue.value ? `/admin/backoffice/queues?queue=${encodeURIComponent(selectedQueue.value)}` : '/admin/backoffice/queues')
-const { data, error, pending, refresh } = await useAsyncData('queue-dashboard', () => $platformApi<{ dashboard: Dashboard }>(request.value), { server: false, watch: [request] })
+const { data, error, pending, refresh } = await useAsyncData('queue-dashboard', async () => {
+  const response = await $platformApi<{ dashboard: QueueDashboardPayload }>(request.value)
+  return { dashboard: normalizeQueueDashboard(response.dashboard) }
+}, { server: false, watch: [request] })
 const retryingTaskID = ref('')
 const retryError = ref('')
 
@@ -27,7 +27,7 @@ function statusTone(state: string) {
 
 function refreshQueues() { return refresh() }
 
-async function retryTask(task: Task) {
+async function retryTask(task: QueueTask) {
   const queue = data.value?.dashboard.selected_queue
   if (!mayRetryTasks.value || !queue || task.state !== 'retry' || retryingTaskID.value) return
   retryingTaskID.value = task.id

@@ -33,15 +33,19 @@ Deploy the backoffice at a dedicated `admin` origin. Set:
 
 ```sh
 PLATFORM_BACKOFFICE_URL=https://admin.fidibeki.com
-BACKOFFICE_API_UPSTREAM=http://api:8080
-BACKOFFICE_INTERNAL_PROXY_SECRET=<same value as INTERNAL_PROXY_SECRET>
-BACKOFFICE_BASE_DOMAIN=fidibeki.com
-BACKOFFICE_TRUSTED_PROXY_CIDRS=<CIDRs of the ingress proxies immediately before Nuxt>
+NUXT_API_UPSTREAM=http://api:8080
+NUXT_INTERNAL_PROXY_SECRET=<same value as INTERNAL_PROXY_SECRET>
+NUXT_BASE_DOMAIN=fidibeki.com
+NUXT_TRUSTED_PROXY_CIDRS=<CIDRs of the ingress proxies immediately before Nuxt>
 ```
 
-Do not expose `BACKOFFICE_INTERNAL_PROXY_SECRET` in browser-visible runtime
-config, and never point the proxy at a tenant host.
-Set `BACKOFFICE_TRUSTED_PROXY_CIDRS` to the private ingress networks that can
+Nuxt applies deployed runtime overrides only from the `NUXT_*` names above.
+The `BACKOFFICE_*` names are build/development defaults and must not be relied
+on when starting an already-built `.output` bundle.
+
+Do not expose `NUXT_INTERNAL_PROXY_SECRET` through `runtimeConfig.public`, and
+never point the proxy at a tenant host.
+Set `NUXT_TRUSTED_PROXY_CIDRS` to the private ingress networks that can
 reach Nuxt in production. If it is empty, forwarding headers are ignored and
 the direct socket peer is throttled instead.
 

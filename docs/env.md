@@ -103,9 +103,10 @@ future production bucket.
 | --- | --- | --- |
 | `PORT` | web | Nitro listen port; injected by Railway. |
 | `HOST` | web | Listen host; image defaults to `0.0.0.0`. |
-| `NUXT_API_UPSTREAM` | web | Private API origin used by the same-origin server proxy. |
-| `NUXT_INTERNAL_PROXY_SECRET` | web | Must equal the API service's `INTERNAL_PROXY_SECRET`; never expose it through public runtime config. |
-| `NUXT_BASE_DOMAIN` | web | Server-only trusted base domain used when proxying public platform endpoints. |
+| `NUXT_API_UPSTREAM` | web, backoffice | Private API origin used by each same-origin server proxy. |
+| `NUXT_INTERNAL_PROXY_SECRET` | web, backoffice | Must equal the API service's `INTERNAL_PROXY_SECRET`; never expose it through public runtime config. |
+| `NUXT_BASE_DOMAIN` | web, backoffice | Server-only trusted base domain used when proxying platform endpoints. |
+| `NUXT_TRUSTED_PROXY_CIDRS` | backoffice | Immediate ingress proxy networks allowed to supply the browser address; leave empty when Railway connects directly. |
 | `NUXT_PUBLIC_APP_URL` | web, marketing | Browser-visible entry origin for global signup and workspace discovery links. |
 | `NUXT_PUBLIC_BASE_DOMAIN` | web | Browser-visible base domain used to construct workspace and environment-specific widget URLs. |
 | `NUXT_PUBLIC_TURNSTILE_SITE_KEY` | web | Public Turnstile site key rendered by the signup form. |
