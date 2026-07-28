@@ -1,8 +1,10 @@
 package widgetanalytics
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,6 +115,34 @@ func TestPublicHTTPEnforcesBodyAndEventRateLimitsBeforeTransaction(t *testing.T)
 		}
 	})
 
+	t.Run("working limiter permits requests within the event budget", func(t *testing.T) {
+		t.Parallel()
+		tx := &analyticsTransaction{}
+		store := &eventStoreStub{}
+		limiter := &analyticsLimiterStub{decisions: []ratelimit.Decision{{
+			Allowed: true, Limit: 300, Remaining: 299,
+		}}}
+		handler := publicAnalyticsHandler(PublicHTTPOptions{
+			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
+			Begin:      func(context.Context) (db.Transaction, error) { return tx, nil },
+			Store:      store, Consent: &consentAuthorizerStub{allow: true},
+			Limiter: limiter, Now: func() time.Time { return now },
+		})
+		response := performAnalyticsRequest(handler, http.MethodPost,
+			"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
+		if response.Code != http.StatusAccepted || limiter.calls != 1 ||
+			tx.commitCalls != 1 || tx.rollbackCalls != 0 || len(store.events) != 1 {
+			t.Fatalf("permitted response = status %d body %s calls %d transaction %d/%d events %#v",
+				response.Code, response.Body.String(), limiter.calls, tx.commitCalls,
+				tx.rollbackCalls, store.events)
+		}
+		if limiter.window != (ratelimit.Window{Limit: 300, Period: time.Minute}) ||
+			response.Header().Get("X-RateLimit-Limit") != "300;w=60" ||
+			response.Header().Get("X-RateLimit-Remaining") != "299" {
+			t.Fatalf("permitted limiter = window %#v headers %#v", limiter.window, response.Header())
+		}
+	})
+
 	t.Run("three hundred events per minute by project and source IP", func(t *testing.T) {
 		t.Parallel()
 		beginCalls := 0
@@ -144,21 +174,42 @@ func TestPublicHTTPEnforcesBodyAndEventRateLimitsBeforeTransaction(t *testing.T)
 		}
 	})
 
-	t.Run("limiter outage fails open", func(t *testing.T) {
+	t.Run("limiter outage fails closed", func(t *testing.T) {
 		t.Parallel()
-		limiter := &analyticsLimiterStub{err: errors.New("redis unavailable")}
+		limiterFailure := errors.New("redis unavailable")
+		limiter := &analyticsLimiterStub{err: limiterFailure}
+		store := &eventStoreStub{}
+		beginCalls := 0
+		var logs bytes.Buffer
 		handler := publicAnalyticsHandler(PublicHTTPOptions{
 			Authorizer: analyticsAuthorizer{configuration: analyticsHTTPConfiguration()},
-			Begin:      func(context.Context) (db.Transaction, error) { return &analyticsTransaction{}, nil },
-			Store:      &eventStoreStub{}, Consent: &consentAuthorizerStub{allow: true},
-			Limiter: limiter, Now: func() time.Time { return now },
+			Begin: func(context.Context) (db.Transaction, error) {
+				beginCalls++
+				return &analyticsTransaction{}, nil
+			},
+			Store: store, Consent: &consentAuthorizerStub{allow: true},
+			Limiter: limiter, Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+			Now: func() time.Time { return now },
 		})
 		response := performAnalyticsRequest(handler, http.MethodPost,
 			"/v1/widget/events?key=pk_live_test", validIngestBody(now), "", "https://example.com")
-		if response.Code != http.StatusAccepted || limiter.calls != 1 ||
-			response.Header().Get("X-RateLimit-Remaining") != "unknown" {
-			t.Fatalf("limiter outage response = status %d body %s calls %d headers %#v",
-				response.Code, response.Body.String(), limiter.calls, response.Header())
+		if response.Code != http.StatusServiceUnavailable ||
+			response.Header().Get("Retry-After") != "5" ||
+			response.Header().Get("X-RateLimit-Remaining") != "unknown" ||
+			limiter.calls != 1 || beginCalls != 0 || len(store.events) != 0 {
+			t.Fatalf("limiter outage response = status %d body %s calls %d begin %d events %#v headers %#v",
+				response.Code, response.Body.String(), limiter.calls, beginCalls, store.events,
+				response.Header())
+		}
+		if !strings.Contains(response.Body.String(), `"code":"service_unavailable"`) ||
+			strings.Contains(response.Body.String(), limiterFailure.Error()) {
+			t.Fatalf("limiter outage body = %s", response.Body.String())
+		}
+		if !strings.Contains(logs.String(), `"msg":"widget analytics rate limiter unavailable"`) ||
+			!strings.Contains(logs.String(), `"reason":"widget-analytics_unavailable"`) ||
+			!strings.Contains(logs.String(), `"failure_mode":"closed"`) ||
+			strings.Contains(logs.String(), "allowing request") {
+			t.Fatalf("limiter outage logs = %s", logs.String())
 		}
 	})
 }

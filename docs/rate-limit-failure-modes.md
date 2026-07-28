@@ -11,11 +11,10 @@ the application could not make the distributed decision.
 | Attachment completion | Fail closed | `503` with `Retry-After` | No completion or verification task |
 | Replay start/batch/byte budget | Fail closed | `503` with `Retry-After` | No replay state or object declaration |
 | API-key quota | Fail closed | `503` with `Retry-After` | Tenant handler is not called |
-| Widget analytics ingestion | Fail open (current exception) | `202`, `X-RateLimit-Remaining: unknown` | The bounded analytics batch may persist |
+| Widget analytics ingestion | Fail closed | `503` with `Retry-After` | No transaction or event insert |
 
-Widget analytics is lower-cost, bounded, anonymous ingestion, but its fail-open exception remains
-under security review in issue #141. It must not be copied to feedback, attachments, replay, API
-keys, or other cost-bearing paths. API-key quota details are in
+Widget analytics is lower-cost and bounded per batch, but it remains public write ingestion and
+must fail closed when the distributed limiter cannot make a decision. API-key quota details are in
 [`api-key-quotas.md`](api-key-quotas.md).
 
 ## Observability
@@ -30,3 +29,8 @@ diagnostic as the durable incident audit. Page immediately if unavailable events
 one project, because that indicates a shared limiter incident rather than a tenant-specific traffic
 spike. Do not alert on `submission_rate_limited` alone; investigate it as caller abuse or a
 limit-tuning question.
+
+Widget analytics quota exhaustion remains a `429`. Limiter failure returns `503` and emits
+`widget analytics rate limiter unavailable` with reason `widget-analytics_unavailable` and
+`failure_mode=closed`. Alert on that structured warning using the same consecutive-window and
+cross-project thresholds.
