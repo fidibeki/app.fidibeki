@@ -8,7 +8,10 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 )
 
-var ErrUnknownTenant = errors.New("unknown tenant")
+var (
+	ErrUnknownTenant = errors.New("unknown tenant")
+	ErrInactive      = errors.New("tenant is not active")
+)
 
 type Plan string
 
@@ -49,6 +52,19 @@ type Tenant struct {
 	PrivacyProfileVersion    int
 	TermsURL                 *string
 	LogoVersion              *string
+}
+
+// IsActiveAt is the single lifecycle policy for tenant access and
+// authentication. Deletion grace deliberately remains reachable but read-only;
+// RequireWritable owns that separate restriction.
+func (t Tenant) IsActiveAt(now time.Time) bool {
+	if t.DeletionRequestedAt != nil {
+		return true
+	}
+	if t.Status == StatusActive {
+		return true
+	}
+	return t.Status == StatusTrial && t.TrialEndsAt != nil && t.TrialEndsAt.After(now)
 }
 
 type OrganizationProfile struct {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -280,6 +281,9 @@ func (s Store) CreateMagicLink(
 	tokenHash string,
 	expiresAt time.Time,
 ) error {
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, s.now()); err != nil {
+		return err
+	}
 	if permissions == nil {
 		permissions = []string{}
 	}
@@ -314,6 +318,9 @@ func (s Store) CreateSAMLMagicLink(
 	if idpEntityID == "" || subjectID == "" {
 		return errors.New("SAML magic link requires an identity provider and subject")
 	}
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, s.now()); err != nil {
+		return err
+	}
 	_, err := query.Exec(ctx, `
 		INSERT INTO tenant_magic_links (
 			tenant_id, member_id, email, invited_permissions, token_hash, expires_at,
@@ -335,6 +342,12 @@ func (s Store) ConsumeMagicLink(
 	userAgent string,
 	ip string,
 ) (Member, SessionSecurity, error) {
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, s.now()); err != nil {
+		if errors.Is(err, tenant.ErrUnknownTenant) {
+			return Member{}, SessionSecurity{}, ErrMagicLinkInvalid
+		}
+		return Member{}, SessionSecurity{}, err
+	}
 	ssoMode, ownerMemberID, err := lockTenantAuthenticationPolicy(ctx, query, tenantID)
 	if err != nil {
 		return Member{}, SessionSecurity{}, err
@@ -522,6 +535,12 @@ func (s Store) RotateSession(
 	userAgent string,
 	ip string,
 ) (Member, SessionSecurity, error) {
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, s.now()); err != nil {
+		if errors.Is(err, tenant.ErrUnknownTenant) {
+			return Member{}, SessionSecurity{}, ErrRefreshInvalid
+		}
+		return Member{}, SessionSecurity{}, err
+	}
 	ssoMode, _, err := lockTenantAuthenticationPolicy(ctx, query, tenantID)
 	if errors.Is(err, ErrMagicLinkInvalid) {
 		return Member{}, SessionSecurity{}, ErrRefreshInvalid

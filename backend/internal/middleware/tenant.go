@@ -25,6 +25,7 @@ type afterCommitHooks struct {
 
 type transactionControl struct {
 	commitOnError bool
+	forceRollback bool
 }
 
 type TenantTransactionOptions struct {
@@ -98,7 +99,8 @@ func TenantTransaction(options TenantTransactionOptions) func(http.Handler) http
 			buffer := httpx.NewResponseBuffer()
 			next.ServeHTTP(buffer, r.WithContext(ctx))
 
-			if buffer.Status() >= http.StatusBadRequest && !control.commitOnError {
+			if control.forceRollback ||
+				(buffer.Status() >= http.StatusBadRequest && !control.commitOnError) {
 				rollback()
 				buffer.FlushTo(w)
 				return
@@ -139,6 +141,17 @@ func CommitTenantTransactionOnError(ctx context.Context) bool {
 	return true
 }
 
+// RollbackTenantTransaction forces the current tenant transaction to roll back
+// even when the response itself is successful or a redirect.
+func RollbackTenantTransaction(ctx context.Context) bool {
+	control, ok := ctx.Value(transactionControlContextKey{}).(*transactionControl)
+	if !ok {
+		return false
+	}
+	control.forceRollback = true
+	return true
+}
+
 func TenantFromContext(ctx context.Context) (tenant.Tenant, bool) {
 	resolved, ok := ctx.Value(tenantContextKey{}).(tenant.Tenant)
 	return resolved, ok
@@ -157,10 +170,7 @@ func RequireActive(next http.Handler) http.Handler {
 			return
 		}
 
-		active := resolved.Status == tenant.StatusActive || resolved.DeletionRequestedAt != nil
-		validTrial := resolved.Status == tenant.StatusTrial &&
-			resolved.TrialEndsAt != nil && resolved.TrialEndsAt.After(time.Now())
-		if !active && !validTrial {
+		if !resolved.IsActiveAt(time.Now()) {
 			api.WriteError(w, http.StatusForbidden, api.CodeTenantSuspended, "tenant is not active", nil)
 			return
 		}

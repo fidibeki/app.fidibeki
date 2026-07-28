@@ -244,6 +244,26 @@ func TestTenantTransactionRollsBackErrorResponsesAndPanics(t *testing.T) {
 		}
 	})
 
+	t.Run("forced rollback on redirect", func(t *testing.T) {
+		tx := &fakeTransaction{}
+		handler := newMiddleware(tx)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !appmiddleware.RollbackTenantTransaction(r.Context()) {
+				t.Error("RollbackTenantTransaction() returned false")
+			}
+			http.Redirect(w, r, "/login?sso_error=sso_unavailable", http.StatusSeeOther)
+		}))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder, httptest.NewRequest(http.MethodPost, "http://acme.localhost/auth/sso/saml/acs", nil),
+		)
+		if tx.rollbackCalls != 1 || tx.commitCalls != 0 || recorder.Code != http.StatusSeeOther {
+			t.Errorf(
+				"rollback=%d commit=%d status=%d",
+				tx.rollbackCalls, tx.commitCalls, recorder.Code,
+			)
+		}
+	})
+
 	t.Run("panic", func(t *testing.T) {
 		tx := &fakeTransaction{}
 		handler := newMiddleware(tx)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -259,6 +279,9 @@ func TestTenantTransactionRollsBackErrorResponsesAndPanics(t *testing.T) {
 		}()
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://acme.localhost/v1/test", nil))
 	})
+	if appmiddleware.RollbackTenantTransaction(context.Background()) {
+		t.Error("rollback enabled outside tenant transaction")
+	}
 }
 
 func TestRequestLoggerIncludesResolvedTenant(t *testing.T) {

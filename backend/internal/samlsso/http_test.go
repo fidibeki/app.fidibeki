@@ -41,6 +41,10 @@ func TestWriteErrorHasStableHTTPContracts(t *testing.T) {
 			err:    ValidationError{Fields: map[string]string{"idp_sso_url": "required"}},
 			status: http.StatusUnprocessableEntity, code: "validation_error",
 		},
+		{
+			name: "inactive tenant", err: tenant.ErrInactive,
+			status: http.StatusForbidden, code: "tenant_suspended",
+		},
 		{name: "not configured", err: ErrNotConfigured, status: http.StatusNotFound, code: "not_found"},
 		{name: "disabled", err: ErrSSODisabled, status: http.StatusConflict, code: "conflict"},
 		{
@@ -127,6 +131,9 @@ func TestAssertionFailureReasonIsCoarse(t *testing.T) {
 	}
 	if got := assertionFailureReason(ErrSSODisabled); got != "sso_unavailable" {
 		t.Errorf("disabled reason = %q, want sso_unavailable", got)
+	}
+	if got := assertionFailureReason(tenant.ErrInactive); got != "sso_unavailable" {
+		t.Errorf("inactive tenant reason = %q, want sso_unavailable", got)
 	}
 }
 

@@ -73,6 +73,164 @@ func TestSAMLSSOStoreAcrossTenants(t *testing.T) {
 		})
 	})
 
+	t.Run("inactive lifecycle blocks SAML start and an outstanding assertion", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if _, err := harness.service.SetMode(
+				ctx, query, acme.resolved, auth.SSOModeOptional, acme.ownerID,
+			); err != nil {
+				t.Fatalf("SetMode(optional) error = %v", err)
+			}
+		})
+		for _, test := range samlAuthenticationLifecycleCases() {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(ctx, t, acme, tenant.StatusActive, nil, nil)
+				var response string
+				harness.withTenant(ctx, t, acme, func(query db.Querier) {
+					requestID := harness.startLogin(ctx, t, query, acme, PurposeLogin)
+					response = acme.idp.response(
+						t, harness.assertion(t, acme, requestID, "owner@acme.test"),
+					)
+				})
+				requestCount := harness.authRequestCount(ctx, t, acme)
+				assertionCount := harness.assertionCount(ctx, t, acme)
+				handoffCount := harness.samlHandoffCount(ctx, t, acme)
+
+				harness.setLifecycle(ctx, t, acme, test.status, test.trialEnd, nil)
+				defer harness.setLifecycle(ctx, t, acme, tenant.StatusActive, nil, nil)
+				harness.withTenant(ctx, t, acme, func(query db.Querier) {
+					if _, err := harness.service.StartLogin(
+						ctx, query, acme.resolved, PurposeLogin, "", "",
+					); !errors.Is(err, tenant.ErrInactive) {
+						t.Fatalf("StartLogin() error = %v, want tenant.ErrInactive", err)
+					}
+					if _, err := harness.service.ConsumeAssertion(
+						ctx, query, acme.resolved, response,
+					); !errors.Is(err, tenant.ErrInactive) {
+						t.Fatalf("ConsumeAssertion() error = %v, want tenant.ErrInactive", err)
+					}
+					if err := harness.members.CreateSAMLMagicLink(
+						ctx, query, acme.id, acme.ownerID, "owner@acme.test",
+						strings.Repeat("ab", 32), time.Now().Add(time.Minute),
+						acme.idp.entityID, "owner@acme.test",
+					); !errors.Is(err, tenant.ErrInactive) {
+						t.Fatalf("CreateSAMLMagicLink() error = %v, want tenant.ErrInactive", err)
+					}
+				})
+
+				if got := harness.authRequestCount(ctx, t, acme); got != requestCount {
+					t.Fatalf("auth requests = %d, want unchanged %d", got, requestCount)
+				}
+				if got := harness.assertionCount(ctx, t, acme); got != assertionCount {
+					t.Fatalf("assertion ledger rows = %d, want unchanged %d", got, assertionCount)
+				}
+				if got := harness.samlHandoffCount(ctx, t, acme); got != handoffCount {
+					t.Fatalf("SAML handoffs = %d, want unchanged %d", got, handoffCount)
+				}
+			})
+		}
+	})
+
+	t.Run("lifecycle transition is serialized after SAML initiation", func(t *testing.T) {
+		harness.setLifecycle(ctx, t, acme, tenant.StatusActive, nil, nil)
+		defer harness.setLifecycle(ctx, t, acme, tenant.StatusActive, nil, nil)
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if _, err := harness.service.SetMode(
+				ctx, query, acme.resolved, auth.SSOModeOptional, acme.ownerID,
+			); err != nil {
+				t.Fatalf("SetMode(optional) error = %v", err)
+			}
+		})
+
+		initiation := harness.beginTenant(ctx, t, acme)
+		defer func() { _ = initiation.Rollback(ctx) }()
+		requestID := harness.startLogin(ctx, t, initiation, acme, PurposeLogin)
+		response := acme.idp.response(
+			t, harness.assertion(t, acme, requestID, "owner@acme.test"),
+		)
+
+		lifecycleUpdated := make(chan error, 1)
+		go func() {
+			_, err := harness.pools.Admin.Exec(ctx, `
+				UPDATE tenants SET status = 'suspended' WHERE id = $1
+			`, acme.id)
+			lifecycleUpdated <- err
+		}()
+		select {
+		case err := <-lifecycleUpdated:
+			t.Fatalf("lifecycle update completed before authentication commit: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		if err := initiation.Commit(ctx); err != nil {
+			t.Fatalf("commit SAML initiation: %v", err)
+		}
+		select {
+		case err := <-lifecycleUpdated:
+			if err != nil {
+				t.Fatalf("update lifecycle after authentication commit: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("lifecycle update remained blocked: %v", ctx.Err())
+		}
+
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if _, err := harness.service.ConsumeAssertion(
+				ctx, query, acme.resolved, response,
+			); !errors.Is(err, tenant.ErrInactive) {
+				t.Fatalf("ConsumeAssertion() error = %v, want tenant.ErrInactive", err)
+			}
+		})
+	})
+
+	t.Run("eligible lifecycle keeps SAML authentication available", func(t *testing.T) {
+		harness.withTenant(ctx, t, acme, func(query db.Querier) {
+			if _, err := harness.service.SetMode(
+				ctx, query, acme.resolved, auth.SSOModeOptional, acme.ownerID,
+			); err != nil {
+				t.Fatalf("SetMode(optional) error = %v", err)
+			}
+		})
+		deletionRequestedAt := time.Now().Add(-time.Hour)
+		for _, test := range []struct {
+			name                string
+			status              tenant.Status
+			trialEnd            *time.Time
+			deletionRequestedAt *time.Time
+		}{
+			{
+				name:     "unexpired trial",
+				status:   tenant.StatusTrial,
+				trialEnd: samlTimePointer(time.Now().Add(time.Hour)),
+			},
+			{
+				name:                "cancelled deletion grace",
+				status:              tenant.StatusCancelled,
+				deletionRequestedAt: &deletionRequestedAt,
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(
+					ctx, t, acme, test.status, test.trialEnd, test.deletionRequestedAt,
+				)
+				defer harness.setLifecycle(ctx, t, acme, tenant.StatusActive, nil, nil)
+				harness.withTenant(ctx, t, acme, func(query db.Querier) {
+					requestID := harness.startLogin(ctx, t, query, acme, PurposeLogin)
+					outcome, err := harness.service.ConsumeAssertion(
+						ctx, query, acme.resolved,
+						acme.idp.response(
+							t, harness.assertion(t, acme, requestID, "owner@acme.test"),
+						),
+					)
+					if err != nil {
+						t.Fatalf("ConsumeAssertion() error = %v", err)
+					}
+					if outcome.MemberID != acme.ownerID {
+						t.Fatalf("MemberID = %q, want %q", outcome.MemberID, acme.ownerID)
+					}
+				})
+			})
+		}
+	})
+
 	t.Run("a validated assertion signs an existing member in as a SAML session", func(t *testing.T) {
 		var handoffToken string
 		harness.withTenant(ctx, t, acme, func(query db.Querier) {
@@ -975,6 +1133,85 @@ func (h *samlHarness) startLogin(
 	}
 	return ids[0]
 }
+
+func (h *samlHarness) setLifecycle(
+	ctx context.Context,
+	t *testing.T,
+	workspace samlWorkspace,
+	status tenant.Status,
+	trialEndsAt *time.Time,
+	deletionRequestedAt *time.Time,
+) {
+	t.Helper()
+	if _, err := h.root.Exec(ctx, `
+		UPDATE tenants
+		SET status = $2, trial_ends_at = $3, deletion_requested_at = $4
+		WHERE id = $1
+	`, workspace.id, status, trialEndsAt, deletionRequestedAt); err != nil {
+		t.Fatalf("update tenant lifecycle: %v", err)
+	}
+}
+
+func (h *samlHarness) authRequestCount(
+	ctx context.Context, t *testing.T, workspace samlWorkspace,
+) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(
+		ctx, `SELECT count(*) FROM tenant_saml_auth_requests WHERE tenant_id = $1`, workspace.id,
+	).Scan(&count); err != nil {
+		t.Fatalf("count SAML auth requests: %v", err)
+	}
+	return count
+}
+
+func (h *samlHarness) assertionCount(
+	ctx context.Context, t *testing.T, workspace samlWorkspace,
+) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(
+		ctx, `SELECT count(*) FROM tenant_saml_assertions WHERE tenant_id = $1`, workspace.id,
+	).Scan(&count); err != nil {
+		t.Fatalf("count SAML assertions: %v", err)
+	}
+	return count
+}
+
+func (h *samlHarness) samlHandoffCount(
+	ctx context.Context, t *testing.T, workspace samlWorkspace,
+) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM tenant_magic_links
+		WHERE tenant_id = $1 AND authentication_method = 'saml'
+	`, workspace.id).Scan(&count); err != nil {
+		t.Fatalf("count SAML handoffs: %v", err)
+	}
+	return count
+}
+
+type samlAuthenticationLifecycleCase struct {
+	name     string
+	status   tenant.Status
+	trialEnd *time.Time
+}
+
+func samlAuthenticationLifecycleCases() []samlAuthenticationLifecycleCase {
+	return []samlAuthenticationLifecycleCase{
+		{name: "suspended", status: tenant.StatusSuspended},
+		{name: "cancelled", status: tenant.StatusCancelled},
+		{
+			name:     "expired trial",
+			status:   tenant.StatusTrial,
+			trialEnd: samlTimePointer(time.Now().Add(-time.Hour)),
+		},
+	}
+}
+
+func samlTimePointer(value time.Time) *time.Time { return &value }
 
 func (h *samlHarness) assertion(
 	t *testing.T, workspace samlWorkspace, requestID, email string,

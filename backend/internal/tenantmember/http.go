@@ -689,6 +689,8 @@ func writeTokens(w http.ResponseWriter, tokens SessionTokens, resolved tenant.Te
 
 func writeError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, tenant.ErrInactive):
+		api.WriteError(w, http.StatusForbidden, api.CodeTenantSuspended, "tenant is not active", nil)
 	case errors.Is(err, ErrMagicLinkInvalid), errors.Is(err, ErrRefreshInvalid),
 		errors.Is(err, ErrRefreshExpired), errors.Is(err, ErrRefreshReuse):
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication failed", nil)

@@ -59,6 +59,12 @@ func (s Service) RequestMagicLink(
 	resolved tenant.Tenant,
 	rawEmail string,
 ) (*email.Message, error) {
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+		if errors.Is(err, tenant.ErrInactive) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	emailAddress, err := normalizeEmail(rawEmail)
 	if err != nil {
 		return nil, err
@@ -96,6 +102,12 @@ func (s Service) BreakGlassLogin(
 	resolved tenant.Tenant,
 	rawEmail string,
 ) (Member, bool, error) {
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+		if errors.Is(err, tenant.ErrInactive) {
+			return Member{}, false, nil
+		}
+		return Member{}, false, err
+	}
 	emailAddress, err := normalizeEmail(rawEmail)
 	if err != nil {
 		return Member{}, false, nil

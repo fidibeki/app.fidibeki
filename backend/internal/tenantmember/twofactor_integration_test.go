@@ -72,7 +72,158 @@ func TestTenantTwoFactorAuthenticationFlow(t *testing.T) {
 	defer cancel()
 	harness := newTwoFactorHarness(ctx, t)
 
+	t.Run("inactive lifecycle suppresses local login without enumeration", func(t *testing.T) {
+		for _, test := range authenticationLifecycleCases() {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(t, test.status, test.trialEnd, nil)
+				messageCount := len(harness.queue.messages)
+				linkCount := harness.magicLinkCount(t)
+
+				response := harness.request(
+					http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil,
+				)
+				if response.Code != http.StatusAccepted {
+					t.Fatalf("login status = %d, body = %s", response.Code, response.Body.String())
+				}
+				if len(harness.queue.messages) != messageCount {
+					t.Fatalf(
+						"email messages = %d, want unchanged %d",
+						len(harness.queue.messages), messageCount,
+					)
+				}
+				if got := harness.magicLinkCount(t); got != linkCount {
+					t.Fatalf("magic-link rows = %d, want unchanged %d", got, linkCount)
+				}
+			})
+		}
+		harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+	})
+
+	t.Run("inactive lifecycle rejects an already issued local magic link", func(t *testing.T) {
+		for _, test := range authenticationLifecycleCases() {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				beforeMessages := len(harness.queue.messages)
+				login := harness.request(
+					http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil,
+				)
+				if login.Code != http.StatusAccepted || len(harness.queue.messages) != beforeMessages+1 {
+					t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
+				}
+				token := messageToken(t, harness.queue.messages[len(harness.queue.messages)-1])
+				sessionCount := harness.sessionCount(t)
+
+				harness.setLifecycle(t, test.status, test.trialEnd, nil)
+				defer harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				response := harness.request(
+					http.MethodPost, "/auth/verify", `{"token":"`+token+`"}`, "", nil,
+				)
+				if response.Code != http.StatusForbidden {
+					t.Fatalf("verify status = %d, body = %s", response.Code, response.Body.String())
+				}
+				if code := decodeErrorCode(t, response); code != "tenant_suspended" {
+					t.Fatalf("verify error code = %q, want tenant_suspended", code)
+				}
+				if got := harness.sessionCount(t); got != sessionCount {
+					t.Fatalf("session rows = %d, want unchanged %d", got, sessionCount)
+				}
+				if harness.magicLinkConsumed(t, token) {
+					t.Fatal("rejected magic link was consumed")
+				}
+			})
+		}
+	})
+
+	t.Run("eligible lifecycle keeps local authentication available", func(t *testing.T) {
+		deletionRequestedAt := time.Now().Add(-time.Hour)
+		for _, test := range []struct {
+			name                string
+			status              tenant.Status
+			trialEnd            *time.Time
+			deletionRequestedAt *time.Time
+		}{
+			{
+				name:     "unexpired trial",
+				status:   tenant.StatusTrial,
+				trialEnd: ptrTime(time.Now().Add(time.Hour)),
+			},
+			{
+				name:                "suspended deletion grace",
+				status:              tenant.StatusSuspended,
+				deletionRequestedAt: &deletionRequestedAt,
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(t, test.status, test.trialEnd, test.deletionRequestedAt)
+				defer harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+
+				cookie, verified := harness.magicLink(t, "owner@acme.test")
+				if verified.Code != http.StatusOK {
+					t.Fatalf("verify status = %d, body = %s", verified.Code, verified.Body.String())
+				}
+				refreshed := harness.request(http.MethodPost, "/auth/refresh", "", "", cookie)
+				if refreshed.Code != http.StatusOK {
+					t.Fatalf("refresh status = %d, body = %s", refreshed.Code, refreshed.Body.String())
+				}
+			})
+		}
+	})
+
 	ownerSecret := harness.enrollMember(t, "owner@acme.test")
+
+	t.Run("inactive lifecycle rejects refresh without rotating the session", func(t *testing.T) {
+		for _, test := range authenticationLifecycleCases() {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				_, cookie := harness.signInExpectingChallenge(t, "owner@acme.test")
+				sessionCount := harness.sessionCount(t)
+
+				harness.setLifecycle(t, test.status, test.trialEnd, nil)
+				defer harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				response := harness.request(http.MethodPost, "/auth/refresh", "", "", cookie)
+				if response.Code != http.StatusForbidden {
+					t.Fatalf("refresh status = %d, body = %s", response.Code, response.Body.String())
+				}
+				if code := decodeErrorCode(t, response); code != "tenant_suspended" {
+					t.Fatalf("refresh error code = %q, want tenant_suspended", code)
+				}
+				if got := harness.sessionCount(t); got != sessionCount {
+					t.Fatalf("session rows = %d, want unchanged %d", got, sessionCount)
+				}
+				if !responseClearsCookie(response, tenantRefreshCookie) {
+					t.Fatal("rejected refresh did not clear the refresh cookie")
+				}
+			})
+		}
+	})
+
+	t.Run("inactive lifecycle rejects a pending two-factor challenge", func(t *testing.T) {
+		for _, test := range authenticationLifecycleCases() {
+			t.Run(test.name, func(t *testing.T) {
+				harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				_, cookie := harness.signInExpectingChallenge(t, "owner@acme.test")
+				lastUsedStep := harness.lastUsedTOTPStep(t, "owner@acme.test")
+
+				harness.setLifecycle(t, test.status, test.trialEnd, nil)
+				defer harness.setLifecycle(t, tenant.StatusActive, nil, nil)
+				response := harness.request(
+					http.MethodPost, "/auth/2fa/challenge", harness.codeBody(t, ownerSecret), "", cookie,
+				)
+				if response.Code != http.StatusForbidden {
+					t.Fatalf("challenge status = %d, body = %s", response.Code, response.Body.String())
+				}
+				if code := decodeErrorCode(t, response); code != "tenant_suspended" {
+					t.Fatalf("challenge error code = %q, want tenant_suspended", code)
+				}
+				if state := harness.sessionTwoFactorState(t, cookie); state != TwoFactorStatePending {
+					t.Fatalf("two-factor state = %q, want %q", state, TwoFactorStatePending)
+				}
+				if got := harness.lastUsedTOTPStep(t, "owner@acme.test"); got != lastUsedStep {
+					t.Fatalf("last used TOTP step = %d, want unchanged %d", got, lastUsedStep)
+				}
+			})
+		}
+	})
 
 	t.Run("enrolled member is challenged after primary authentication", func(t *testing.T) {
 		requirement, cookie := harness.signInExpectingChallenge(t, "owner@acme.test")
@@ -661,6 +812,110 @@ func (h *twoFactorHarness) hasAccessEvent(kind string) bool {
 		h.t.Fatalf("count access events: %v", err)
 	}
 	return count > 0
+}
+
+func (h *twoFactorHarness) setLifecycle(
+	t *testing.T,
+	status tenant.Status,
+	trialEndsAt *time.Time,
+	deletionRequestedAt *time.Time,
+) {
+	t.Helper()
+	if _, err := h.root.Exec(h.ctx, `
+		UPDATE tenants
+		SET status = $2, trial_ends_at = $3, deletion_requested_at = $4
+		WHERE id = $1
+	`, h.tenantID, status, trialEndsAt, deletionRequestedAt); err != nil {
+		t.Fatalf("update tenant lifecycle: %v", err)
+	}
+}
+
+func (h *twoFactorHarness) magicLinkCount(t *testing.T) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(
+		h.ctx, `SELECT count(*) FROM tenant_magic_links WHERE tenant_id = $1`, h.tenantID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count tenant magic links: %v", err)
+	}
+	return count
+}
+
+func (h *twoFactorHarness) magicLinkConsumed(t *testing.T, rawToken string) bool {
+	t.Helper()
+	var consumed bool
+	if err := h.root.QueryRow(h.ctx, `
+		SELECT consumed_at IS NOT NULL
+		FROM tenant_magic_links
+		WHERE tenant_id = $1 AND token_hash = $2
+	`, h.tenantID, auth.HashToken(rawToken)).Scan(&consumed); err != nil {
+		t.Fatalf("read tenant magic link: %v", err)
+	}
+	return consumed
+}
+
+func (h *twoFactorHarness) sessionCount(t *testing.T) int {
+	t.Helper()
+	var count int
+	if err := h.root.QueryRow(
+		h.ctx, `SELECT count(*) FROM tenant_member_sessions WHERE tenant_id = $1`, h.tenantID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count tenant member sessions: %v", err)
+	}
+	return count
+}
+
+func (h *twoFactorHarness) sessionTwoFactorState(t *testing.T, cookie *http.Cookie) string {
+	t.Helper()
+	var state string
+	if err := h.root.QueryRow(h.ctx, `
+		SELECT two_factor_state
+		FROM tenant_member_sessions
+		WHERE tenant_id = $1 AND refresh_hash = $2
+	`, h.tenantID, auth.HashToken(cookie.Value)).Scan(&state); err != nil {
+		t.Fatalf("read tenant member session: %v", err)
+	}
+	return state
+}
+
+func (h *twoFactorHarness) lastUsedTOTPStep(t *testing.T, email string) int64 {
+	t.Helper()
+	var step int64
+	if err := h.root.QueryRow(h.ctx, `
+		SELECT COALESCE(last_used_step, -1)
+		FROM tenant_member_totp
+		WHERE tenant_id = $1 AND member_id = $2
+	`, h.tenantID, h.memberIDs[email]).Scan(&step); err != nil {
+		t.Fatalf("read last used TOTP step: %v", err)
+	}
+	return step
+}
+
+type authenticationLifecycleCase struct {
+	name     string
+	status   tenant.Status
+	trialEnd *time.Time
+}
+
+func authenticationLifecycleCases() []authenticationLifecycleCase {
+	return []authenticationLifecycleCase{
+		{name: "suspended", status: tenant.StatusSuspended},
+		{name: "cancelled", status: tenant.StatusCancelled},
+		{
+			name:     "expired trial",
+			status:   tenant.StatusTrial,
+			trialEnd: ptrTime(time.Now().Add(-time.Hour)),
+		},
+	}
+}
+
+func responseClearsCookie(recorder *httptest.ResponseRecorder, name string) bool {
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == name && cookie.MaxAge < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeTwoFactorRequirement(t *testing.T, recorder *httptest.ResponseRecorder) string {

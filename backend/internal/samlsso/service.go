@@ -359,6 +359,9 @@ func (s Service) StartLogin(
 	returnTo string,
 	actorMemberID string,
 ) (string, error) {
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+		return "", err
+	}
 	provider, configuration, err := s.provider(ctx, query, resolved)
 	if err != nil {
 		return "", err
@@ -411,6 +414,9 @@ func (s Service) ConsumeAssertion(
 	encodedResponse string,
 ) (Outcome, error) {
 	now := s.now()
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, now); err != nil {
+		return Outcome{}, err
+	}
 	provider, configuration, err := s.provider(ctx, query, resolved)
 	if err != nil {
 		return Outcome{}, err
@@ -423,6 +429,9 @@ func (s Service) ConsumeAssertion(
 		encodedResponse, PossibleRequestIDs(liveIDs, configuration.AllowIDPInitiated),
 	)
 	if err != nil {
+		return Outcome{}, err
+	}
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
 		return Outcome{}, err
 	}
 	if err := s.Store.RecordAssertion(
@@ -452,6 +461,9 @@ func (s Service) ConsumeAssertion(
 	}
 
 	if purpose == PurposeTest {
+		if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+			return Outcome{}, err
+		}
 		if err := s.Store.MarkTested(ctx, query, resolved.ID, now, ""); err != nil {
 			return Outcome{}, err
 		}
@@ -467,6 +479,9 @@ func (s Service) ConsumeAssertion(
 
 	if configuration.Mode == auth.SSOModeDisabled {
 		return Outcome{}, ErrSSODisabled
+	}
+	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
+		return Outcome{}, err
 	}
 	member, err := s.Store.ResolveMember(ctx, query, resolved.ID, email, now)
 	if err != nil {

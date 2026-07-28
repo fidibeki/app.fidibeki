@@ -8,6 +8,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
 	"github.com/jackc/pgx/v5"
 )
@@ -349,6 +350,12 @@ func (s Store) PendingChallengeSession(
 	tenantID string,
 	refreshHash string,
 ) (Member, error) {
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, s.now()); err != nil {
+		if errors.Is(err, tenant.ErrUnknownTenant) {
+			return Member{}, ErrRefreshInvalid
+		}
+		return Member{}, err
+	}
 	memberID, err := lockTenantMemberForSession(ctx, query, tenantID, refreshHash)
 	if err != nil {
 		return Member{}, err
@@ -397,6 +404,12 @@ func (s Store) SatisfyTwoFactorChallenge(
 	method string,
 ) error {
 	verifiedAt := s.now()
+	if err := tenant.LockForAuthentication(ctx, query, tenantID, verifiedAt); err != nil {
+		if errors.Is(err, tenant.ErrUnknownTenant) {
+			return ErrRefreshInvalid
+		}
+		return err
+	}
 	tag, err := query.Exec(ctx, `
 		UPDATE tenant_member_sessions
 		SET two_factor_state = $3, two_factor_verified_at = $4, last_used_at = $4

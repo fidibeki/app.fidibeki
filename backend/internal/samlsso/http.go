@@ -107,7 +107,11 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 		r.Context(), query, resolved, PurposeLogin, r.URL.Query().Get("return_to"), "",
 	)
 	if err != nil {
-		h.redirectFailure(w, r, resolved, "start_failed", err)
+		reason := "start_failed"
+		if errors.Is(err, tenant.ErrInactive) {
+			reason = "sso_unavailable"
+		}
+		h.redirectFailure(w, r, resolved, reason, err)
 		return
 	}
 	h.redirect(w, r, redirectURL)
@@ -182,6 +186,12 @@ func (h *HTTPHandler) recordAssertionFailure(
 	w http.ResponseWriter, r *http.Request, query db.Querier, resolved tenant.Tenant, err error,
 ) {
 	reason := assertionFailureReason(err)
+	if errors.Is(err, tenant.ErrInactive) {
+		// ACS failures are redirects, which normally commit the tenant
+		// transaction. Lifecycle rejection must instead discard any assertion
+		// or correlation mutation performed before a late eligibility check.
+		appmiddleware.RollbackTenantTransaction(r.Context())
+	}
 	// The failure is recorded before the redirect so a rejected assertion is
 	// always auditable, including the replay and ineligible-member cases where
 	// the surrounding transaction has already written correlation state.
@@ -481,7 +491,8 @@ func assertionFailureReason(err error) string {
 		return "request_not_correlated"
 	case errors.Is(err, ErrMemberNotEligible):
 		return "member_not_eligible"
-	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrSSODisabled):
+	case errors.Is(err, ErrNotConfigured), errors.Is(err, ErrSSODisabled),
+		errors.Is(err, tenant.ErrInactive):
 		return "sso_unavailable"
 	case errors.Is(err, ErrAssertionInvalid):
 		return "assertion_invalid"
@@ -496,6 +507,8 @@ func (h *HTTPHandler) writeError(w http.ResponseWriter, r *http.Request, err err
 	case errors.As(err, &validation):
 		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
 			"SAML configuration is invalid", map[string]any{"fields": validation.Fields})
+	case errors.Is(err, tenant.ErrInactive):
+		api.WriteError(w, http.StatusForbidden, api.CodeTenantSuspended, "tenant is not active", nil)
 	case errors.Is(err, ErrNotConfigured):
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound,
 			"SAML SSO is not configured for this workspace", nil)
