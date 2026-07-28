@@ -1,8 +1,10 @@
 packages:
   - widget
+  - mobile
   - web
   - marketing
   - backoffice
+  - examples/mobile
 supportedArchitectures:
   os:
     - darwin

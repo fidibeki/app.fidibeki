@@ -1,0 +1,66 @@
+{
+  "name": "@fidibeki/mobile",
+  "version": "0.1.0",
+  "description": "Native iOS and Android feedback capture for Fidibeki",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "react-native": "./src/index.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "react-native": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./async-storage": {
+      "react-native": "./src/async-storage.ts",
+      "types": "./dist/async-storage.d.ts",
+      "import": "./dist/async-storage.js",
+      "require": "./dist/async-storage.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --coverage",
+    "test:unit": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "pack:check": "pnpm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@react-native-async-storage/async-storage": ">=2.0.0",
+    "react": ">=18.2.0",
+    "react-native": ">=0.74.0"
+  },
+  "peerDependenciesMeta": {
+    "@react-native-async-storage/async-storage": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@react-native-async-storage/async-storage": "3.1.1",
+    "@testing-library/react-native": "14.0.1",
+    "@types/node": "24.10.13",
+    "@types/react": "19.2.17",
+    "@types/react-test-renderer": "19.1.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "react": "19.2.8",
+    "react-native": "0.86.2",
+    "react-test-renderer": "19.2.8",
+    "tsup": "8.5.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

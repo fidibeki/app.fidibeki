@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Fidibeki Mobile Example",
+    "slug": "fidibeki-mobile-example",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.fidibeki.mobileexample",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAllowsLocalNetworking": true
+      }
+    },
+    "android": {
+      "package": "com.fidibeki.mobileexample",
+      "usesCleartextTraffic": true,
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    }
+  }
+}
