@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test'
 
+test('exposes a production health check without rendering the application shell', async ({ request }) => {
+  const response = await request.get('/backoffice-healthz')
+
+  expect(response.status()).toBe(200)
+  expect(response.headers()['content-type']).toContain('application/json')
+  await expect(response.json()).resolves.toEqual({ status: 'ok' })
+})
+
 test('renders the passwordless platform-admin entry point', async ({ page }) => {
   const response = await page.goto('/login')
 

@@ -4,17 +4,21 @@ on:
   pull_request:
     paths:
       - "backoffice/**"
+      - "web/assets/css/main.css"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "railway.backoffice.json"
       - ".github/workflows/backoffice-ci.yml"
   push:
     branches: [main]
     paths:
       - "backoffice/**"
+      - "web/assets/css/main.css"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "railway.backoffice.json"
       - ".github/workflows/backoffice-ci.yml"
 
 permissions:

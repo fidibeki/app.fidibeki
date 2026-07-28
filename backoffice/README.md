@@ -17,7 +17,6 @@ BACKOFFICE_API_UPSTREAM=http://127.0.0.1:8088
 BACKOFFICE_INTERNAL_PROXY_SECRET=local-only-internal-proxy-secret-change-me
 BACKOFFICE_BASE_DOMAIN=localhost
 BACKOFFICE_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
-BACKOFFICE_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
 ```
 
 The Go API must receive the matching `PLATFORM_BACKOFFICE_URL`, e.g.
@@ -45,6 +44,11 @@ config, and never point the proxy at a tenant host.
 Set `BACKOFFICE_TRUSTED_PROXY_CIDRS` to the private ingress networks that can
 reach Nuxt in production. If it is empty, forwarding headers are ignored and
 the direct socket peer is throttled instead.
+
+The Railway service uses `/railway.backoffice.json`, listens on port `3000`,
+and exposes `/backoffice-healthz` for platform health checks. Production
+promotion is performed through the repository's `Promote Production` workflow,
+either as part of `all` or with the `backoffice` service selection.
 
 ## Bootstrap the root administrator
 
