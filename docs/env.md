@@ -27,8 +27,8 @@ for both services because configuration is validated before the command starts.
 | `DATABASE_ADMIN_MAX_CONNS` | no | Admin pool maximum; default `5`. |
 | `MIGRATIONS_PATH` | no | Migration directory; container default `/app/migrations`. |
 | `REDIS_URL` | yes | Redis URL for queues, rate limits, and cache. |
-| `S3_ENDPOINT` | yes | S3-compatible private endpoint. |
-| `S3_PUBLIC_ENDPOINT` | no | Browser-reachable endpoint used for presigned uploads. |
+| `S3_ENDPOINT` | yes | S3-compatible private endpoint. Must use HTTPS in staging and production; HTTP is accepted only in local/test for MinIO. |
+| `S3_PUBLIC_ENDPOINT` | no | Browser-reachable endpoint used for presigned uploads and downloads. Must use HTTPS in staging and production because presigned URLs are bearer capabilities; HTTP is accepted only in local/test. |
 | `S3_REGION` | no | Bucket region; default `us-east-1`. |
 | `S3_BUCKET` | yes | Private object bucket. |
 | `S3_ACCESS_KEY` | yes | S3 access key. |

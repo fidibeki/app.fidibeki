@@ -397,7 +397,6 @@ func (c Config) validate() []error {
 	for name, value := range map[string]string{
 		"DATABASE_URL_APP": c.DatabaseURLApp, "DATABASE_URL_ADMIN": c.DatabaseURLAdmin,
 		"DATABASE_URL_DIRECT": c.DatabaseURLDirect, "REDIS_URL": c.RedisURL,
-		"S3_ENDPOINT": c.S3Endpoint, "S3_PUBLIC_ENDPOINT": c.S3PublicEndpoint,
 	} {
 		if value == "" {
 			continue
@@ -405,6 +404,16 @@ func (c Config) validate() []error {
 		parsed, err := url.ParseRequestURI(value)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			validationErrors = append(validationErrors, fmt.Errorf("%s must be an absolute URL", name))
+		}
+	}
+	for name, value := range map[string]string{
+		"S3_ENDPOINT": c.S3Endpoint, "S3_PUBLIC_ENDPOINT": c.S3PublicEndpoint,
+	} {
+		if value == "" {
+			continue
+		}
+		if err := validateStorageEndpoint(value, c.Environment); err != nil {
+			validationErrors = append(validationErrors, fmt.Errorf("%s %w", name, err))
 		}
 	}
 	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
@@ -558,6 +567,23 @@ func (c Config) validate() []error {
 	}
 
 	return validationErrors
+}
+
+func validateStorageEndpoint(value, environment string) error {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(parsed.Scheme, "http") {
+		if environment == "local" || environment == "test" {
+			return nil
+		}
+		return fmt.Errorf("must use HTTPS in %s", environment)
+	}
+	return errors.New("must use HTTP or HTTPS")
 }
 
 func (c Config) Redacted() map[string]any {

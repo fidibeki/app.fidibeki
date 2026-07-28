@@ -225,6 +225,69 @@ func TestConfigurationRequiresSecureBackofficeOriginOutsideLocalAndTest(t *testi
 	}
 }
 
+func TestConfigurationRequiresSecureStorageEndpointsOutsideLocalAndTest(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"local", "test", "staging", "production"} {
+		for _, name := range []string{"S3_ENDPOINT", "S3_PUBLIC_ENDPOINT"} {
+			for _, scheme := range []string{"http", "https"} {
+				t.Run(environment+"/"+name+"/"+scheme, func(t *testing.T) {
+					t.Parallel()
+					values := validStorageEnvironmentValues(environment)
+					values[name] = scheme + "://storage.fidibeki.test"
+					_, err := config.FromLookup(func(name string) (string, bool) {
+						value, exists := values[name]
+						return value, exists
+					})
+					insecureAllowed := environment == "local" || environment == "test"
+					if scheme == "http" && !insecureAllowed {
+						want := name + " must use HTTPS in " + environment
+						if err == nil || !strings.Contains(err.Error(), want) {
+							t.Fatalf("FromLookup() error = %v, want %q", err, want)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("FromLookup() error = %v, want endpoint accepted", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func validStorageEnvironmentValues(environment string) map[string]string {
+	return map[string]string{
+		"APP_ENV":                     environment,
+		"BASE_DOMAIN":                 "fidibeki.test",
+		"PUBLIC_BASE_URL":             "https://api.fidibeki.test",
+		"PLATFORM_BACKOFFICE_URL":     "https://admin.fidibeki.test",
+		"DATABASE_URL_APP":            "postgres://app:app@localhost/fidibeki",
+		"DATABASE_URL_ADMIN":          "postgres://admin:admin@localhost/fidibeki",
+		"DATABASE_URL_DIRECT":         "postgres://admin:admin@localhost/fidibeki",
+		"REDIS_URL":                   "redis://localhost:6379/0",
+		"S3_ENDPOINT":                 "https://storage.fidibeki.test",
+		"S3_PUBLIC_ENDPOINT":          "https://uploads.fidibeki.test",
+		"S3_BUCKET":                   "fidibeki",
+		"S3_ACCESS_KEY":               "key",
+		"S3_SECRET_KEY":               "secret",
+		"JWT_SECRET":                  strings.Repeat("jwt-", 8),
+		"INTERNAL_PROXY_SECRET":       strings.Repeat("proxy-", 6),
+		"INTEGRATION_ENCRYPTION_KEY":  base64.StdEncoding.EncodeToString([]byte(strings.Repeat("i", 32))),
+		"TWO_FACTOR_ENCRYPTION_KEY":   base64.StdEncoding.EncodeToString([]byte(strings.Repeat("t", 32))),
+		"STRIPE_SECRET_KEY":           "fixture",
+		"STRIPE_WEBHOOK_SECRET":       "fixture",
+		"STRIPE_PRICE_STARTER":        "fixture",
+		"STRIPE_PRICE_GROWTH":         "fixture",
+		"STRIPE_PRICE_SCALE":          "fixture",
+		"STRIPE_PRICE_STARTER_YEARLY": "fixture",
+		"STRIPE_PRICE_GROWTH_YEARLY":  "fixture",
+		"STRIPE_PRICE_SCALE_YEARLY":   "fixture",
+		"TURNSTILE_SECRET_KEY":        "fixture",
+		"TURNSTILE_SITE_KEY":          "fixture",
+		"GEMINI_API_KEY":              "fixture",
+	}
+}
+
 func TestConfigurationRejectsMalformedValues(t *testing.T) {
 	t.Parallel()
 
