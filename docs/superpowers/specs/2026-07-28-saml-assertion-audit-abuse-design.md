@@ -1,7 +1,7 @@
 # SAML Assertion Audit Abuse Protection Design
 
-**Date:** 2026-07-28  
-**Issue:** [#157](https://github.com/fidibeki/app.fidibeki/issues/157)  
+**Date:** 2026-07-28
+**Issue:** [#157](https://github.com/fidibeki/app.fidibeki/issues/157)
 **Scope:** Backend and staging validation only
 
 ## Problem
