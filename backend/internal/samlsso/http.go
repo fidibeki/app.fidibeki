@@ -115,15 +115,22 @@ func (h *HTTPHandler) start(w http.ResponseWriter, r *http.Request) {
 		TenantID: resolved.ID,
 		Network:  httpx.ClientIPFromRequest(r, h.options.TrustedProxyCIDRs),
 	})
-	if guardErr != nil || !decision.Allowed {
+	if guardErr != nil || decision.Unavailable {
 		cause := guardErr
 		if cause == nil {
-			cause = ErrStartRateLimited
-			if decision.Unavailable {
-				cause = ErrStartGuardUnavailable
-			}
+			cause = ErrStartGuardUnavailable
 		}
 		h.redirectFailure(w, r, resolved, "sso_unavailable", cause)
+		return
+	}
+	if !decision.Allowed {
+		// Expected denials are already counted by the limiter. Avoid a
+		// caller-controlled warning per rejected request.
+		h.options.Logger.DebugContext(
+			r.Context(), "SAML start rate limited",
+			"tenant_id", resolved.ID, "reason", ReasonSAMLStartRateLimited,
+		)
+		h.redirectFailureResponse(w, r, resolved, "sso_unavailable")
 		return
 	}
 	redirectURL, err := h.options.Service.StartLogin(
@@ -491,6 +498,12 @@ func (h *HTTPHandler) redirectFailure(
 		r.Context(), "SAML sign-in rejected",
 		"tenant_id", resolved.ID, "reason", reason, "error", cause,
 	)
+	h.redirectFailureResponse(w, r, resolved, reason)
+}
+
+func (h *HTTPHandler) redirectFailureResponse(
+	w http.ResponseWriter, r *http.Request, resolved tenant.Tenant, reason string,
+) {
 	target, err := tenant.PublicURL(
 		h.options.Service.Endpoints.WebBaseURL, h.options.Service.Endpoints.BaseDomain,
 		resolved.Slug, "/login",

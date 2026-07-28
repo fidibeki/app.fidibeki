@@ -1,9 +1,11 @@
 package samlsso
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -40,8 +42,10 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 	}
 	routes := chi.NewRouter()
 	startGuard := &samlStartGuardStub{decision: StartDecision{Allowed: true}}
+	var samlLogs bytes.Buffer
 	RegisterRoutes(routes, HTTPOptions{
-		Service: harness.service, Store: harness.store, JWT: jwtManager, Logger: discardLogger(),
+		Service: harness.service, Store: harness.store, JWT: jwtManager,
+		Logger:            slog.New(slog.NewJSONHandler(&samlLogs, nil)),
 		StartGuard:        startGuard,
 		TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 	})
@@ -276,6 +280,7 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 				startGuard.decision = test.decision
 				startGuard.err = test.err
 				calls := startGuard.calls
+				logBytes := samlLogs.Len()
 				response := samlRequest(handler, http.MethodGet, StartPath, "", "")
 				if response.Code != http.StatusSeeOther ||
 					!strings.Contains(response.Header().Get("Location"), "sso_error=sso_unavailable") {
@@ -286,6 +291,12 @@ func TestSAMLSSOHTTPFlow(t *testing.T) {
 				}
 				if startGuard.calls != calls+1 {
 					t.Fatalf("guard calls = %d, want %d", startGuard.calls, calls+1)
+				}
+				if test.err == nil && samlLogs.Len() != logBytes {
+					t.Fatalf("rate-limit denial emitted a warning log: %s", samlLogs.String()[logBytes:])
+				}
+				if test.err != nil && samlLogs.Len() == logBytes {
+					t.Fatal("limiter failure emitted no operational warning")
 				}
 			})
 		}

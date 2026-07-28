@@ -81,9 +81,11 @@ other network merely by continuing to send already-rejected requests.
 The guard runs after tenant resolution but before `StartLogin`, so a denial or
 Redis failure creates no authentication-request row. Both cases redirect to the
 workspace login page with the same coarse `sso_error=sso_unavailable` response.
-Logs contain only the generic reason and underlying operational error, never
-assertion contents, user identity, or the client IP. Protected administrator
-test starts bypass the public limiter but remain subject to the database cap.
+Expected rate-limit denials are not emitted as per-request warning logs.
+Limiter failures retain an operational warning with only the generic reason and
+underlying error, never assertion contents, user identity, or the client IP.
+Protected administrator test starts bypass the public limiter but remain
+subject to the database cap.
 
 The handler fails closed when no guard is configured. Tests must explicitly
 provide an allow guard, which prevents a future wiring omission from silently

@@ -436,11 +436,20 @@ func (s Service) ConsumeAssertion(
 			liveIDs = []string{candidate}
 		}
 	}
+	// IdP-initiated mode widens only a genuinely uncorrelated envelope. Supplying
+	// both a live ID and the empty value would let the envelope and signed
+	// assertion satisfy correlation against different alternatives.
+	allowUncorrelated := candidate == "" && configuration.AllowIDPInitiated
 	identity, err := provider.ParseResponse(
-		encodedResponse, PossibleRequestIDs(liveIDs, configuration.AllowIDPInitiated),
+		encodedResponse, PossibleRequestIDs(liveIDs, allowUncorrelated),
 	)
 	if err != nil {
 		return Outcome{}, err
+	}
+	if identity.InResponseTo != candidate {
+		return Outcome{}, fmt.Errorf(
+			"%w: response and assertion correlation differ", ErrAssertionInvalid,
+		)
 	}
 	if err := tenant.LockForAuthentication(ctx, query, resolved.ID, s.now()); err != nil {
 		return Outcome{}, err

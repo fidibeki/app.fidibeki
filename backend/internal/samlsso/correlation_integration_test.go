@@ -59,6 +59,55 @@ func TestSAMLCorrelationKeepsAnIssuedRequestValidBeyondTheNewestFifty(t *testing
 	})
 }
 
+func TestSAMLIdPInitiatedModeRejectsEnvelopeAssertionCorrelationMismatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping PostgreSQL integration test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	harness := newSAMLHarness(ctx, t)
+	workspace := harness.workspace(ctx, t, "correlation-mismatch", "Correlation Mismatch")
+	certificate := workspace.idp.storedCertificate(t)
+	harness.withTenant(ctx, t, workspace, func(query db.Querier) {
+		if _, err := harness.service.Configure(
+			ctx, query, workspace.resolved, ConfigurationInput{
+				IdPEntityID: workspace.idp.entityID, IdPSSOURL: "https://idp.test/sso",
+				Certificates:      []string{certificate.Certificate},
+				AllowIDPInitiated: true,
+			}, workspace.ownerID,
+		); err != nil {
+			t.Fatalf("Configure() error = %v", err)
+		}
+		if _, err := harness.service.SetMode(
+			ctx, query, workspace.resolved, auth.SSOModeOptional, workspace.ownerID,
+		); err != nil {
+			t.Fatalf("SetMode(optional) error = %v", err)
+		}
+	})
+
+	var requestID string
+	harness.withTenant(ctx, t, workspace, func(query db.Querier) {
+		requestID = harness.startLogin(ctx, t, query, workspace, PurposeLogin)
+	})
+	harness.withTenant(ctx, t, workspace, func(query db.Querier) {
+		options := harness.assertion(t, workspace, "", "owner@acme.test")
+		options.inResponseTo = ""
+		options.responseInResponseTo = &requestID
+		if _, err := harness.service.ConsumeAssertion(
+			ctx, query, workspace.resolved, workspace.idp.response(t, options),
+		); !errors.Is(err, ErrAssertionInvalid) {
+			t.Fatalf("ConsumeAssertion(mismatched correlation) error = %v, want ErrAssertionInvalid", err)
+		}
+		live, err := harness.store.IsAuthRequestLive(
+			ctx, query, workspace.id, requestID, time.Now(),
+		)
+		if err != nil || !live {
+			t.Fatalf("issued request live = %v, error = %v", live, err)
+		}
+	})
+}
+
 func TestSAMLAuthRequestCapacityIsAtomicAndNonEvicting(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping PostgreSQL integration test in short mode")

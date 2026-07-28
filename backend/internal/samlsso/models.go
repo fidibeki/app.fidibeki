@@ -51,8 +51,6 @@ var (
 	// ErrAuthRequestCapacity rejects a new request when this tenant already has
 	// the maximum live correlation set. Existing requests remain valid.
 	ErrAuthRequestCapacity = errors.New("SAML authentication request capacity reached")
-	// ErrStartRateLimited is logged when the public start guard rejects traffic.
-	ErrStartRateLimited = errors.New("SAML start rate limit reached")
 	// ErrStartGuardUnavailable keeps missing or failed rate limiting fail-closed.
 	ErrStartGuardUnavailable = errors.New("SAML start guard unavailable")
 	// ErrValidation carries field-level configuration errors.

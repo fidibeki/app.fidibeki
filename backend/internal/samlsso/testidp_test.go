@@ -72,11 +72,14 @@ type assertionOptions struct {
 	recipient    string
 	destination  string
 	inResponseTo string
-	email        string
-	subjectID    string
-	notBefore    time.Time
-	notOnOrAfter time.Time
-	issueInstant time.Time
+	// responseInResponseTo overrides only the protocol Response envelope while
+	// leaving the signed assertion SubjectConfirmation unchanged.
+	responseInResponseTo *string
+	email                string
+	subjectID            string
+	notBefore            time.Time
+	notOnOrAfter         time.Time
+	issueInstant         time.Time
 	// tamper rewrites the asserted email after signing, which must invalidate
 	// the signature.
 	tamper bool
@@ -183,8 +186,12 @@ func (idp *testIdP) response(t *testing.T, options assertionOptions) string {
 	if options.destination != "" {
 		response.CreateAttr("Destination", options.destination)
 	}
-	if options.inResponseTo != "" {
-		response.CreateAttr("InResponseTo", options.inResponseTo)
+	responseInResponseTo := options.inResponseTo
+	if options.responseInResponseTo != nil {
+		responseInResponseTo = *options.responseInResponseTo
+	}
+	if responseInResponseTo != "" {
+		response.CreateAttr("InResponseTo", responseInResponseTo)
 	}
 	issuer := response.CreateElement("saml:Issuer")
 	issuer.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
