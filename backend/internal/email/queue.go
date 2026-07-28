@@ -3,7 +3,6 @@ package email
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -23,28 +22,36 @@ type taskClient interface {
 }
 
 type Queue struct {
-	client taskClient
+	client        taskClient
+	authenticator TaskAuthenticator
 }
 
-func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
+func OpenQueue(
+	redisURL string,
+	authenticator TaskAuthenticator,
+	caCertificates ...string,
+) (*Queue, error) {
+	if err := authenticator.validate(); err != nil {
+		return nil, err
+	}
 	redisOptions, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, fmt.Errorf("parse queue Redis URL: %w", err)
 	}
-	return &Queue{client: asynq.NewClient(redisOptions)}, nil
+	return &Queue{client: asynq.NewClient(redisOptions), authenticator: authenticator}, nil
 }
 
-func NewQueue(client taskClient) *Queue {
-	return &Queue{client: client}
+func NewQueue(client taskClient, authenticator TaskAuthenticator) *Queue {
+	return &Queue{client: client, authenticator: authenticator}
 }
 
 func (q *Queue) Enqueue(ctx context.Context, message Message) error {
 	if err := message.Validate(); err != nil {
 		return fmt.Errorf("validate queued email: %w", err)
 	}
-	payload, err := json.Marshal(message)
+	payload, err := q.authenticator.Encode(message)
 	if err != nil {
-		return fmt.Errorf("encode queued email: %w", err)
+		return fmt.Errorf("sign queued email: %w", err)
 	}
 	options := []asynq.Option{
 		asynq.Queue(QueueName),
@@ -78,12 +85,21 @@ type Worker struct {
 	mux    *asynq.ServeMux
 }
 
-func NewWorker(redisURL string, concurrency int, sender Sender, caCertificates ...string) (*Worker, error) {
+func NewWorker(
+	redisURL string,
+	concurrency int,
+	sender Sender,
+	authenticator TaskAuthenticator,
+	caCertificates ...string,
+) (*Worker, error) {
 	if concurrency <= 0 {
 		return nil, fmt.Errorf("email worker concurrency must be positive")
 	}
 	if sender == nil {
 		return nil, fmt.Errorf("email worker sender is required")
+	}
+	if err := authenticator.validate(); err != nil {
+		return nil, err
 	}
 	redisOptions, err := redisconn.AsynqOptions(redisURL, caCertificates...)
 	if err != nil {
@@ -94,20 +110,27 @@ func NewWorker(redisURL string, concurrency int, sender Sender, caCertificates .
 		Queues:      map[string]int{QueueName: 1},
 	})
 	mux := asynq.NewServeMux()
-	if err := RegisterHandlers(mux, sender); err != nil {
+	if err := RegisterHandlers(mux, sender, authenticator); err != nil {
 		return nil, err
 	}
 	return &Worker{server: server, mux: mux}, nil
 }
 
-func RegisterHandlers(mux *asynq.ServeMux, sender Sender) error {
+func RegisterHandlers(
+	mux *asynq.ServeMux,
+	sender Sender,
+	authenticator TaskAuthenticator,
+) error {
 	if mux == nil {
 		return fmt.Errorf("email worker mux is required")
 	}
 	if sender == nil {
 		return fmt.Errorf("email worker sender is required")
 	}
-	mux.HandleFunc(TaskSendEmail, sendEmailHandler(sender))
+	if err := authenticator.validate(); err != nil {
+		return err
+	}
+	mux.HandleFunc(TaskSendEmail, sendEmailHandler(sender, authenticator))
 	return nil
 }
 
@@ -120,11 +143,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	return nil
 }
 
-func sendEmailHandler(sender Sender) asynq.HandlerFunc {
+func sendEmailHandler(sender Sender, authenticator TaskAuthenticator) asynq.HandlerFunc {
 	return func(ctx context.Context, task *asynq.Task) error {
-		var message Message
-		if err := json.Unmarshal(task.Payload(), &message); err != nil {
-			return fmt.Errorf("decode email task: %w: %w", err, asynq.SkipRetry)
+		message, err := authenticator.Decode(task.Payload())
+		if err != nil {
+			return fmt.Errorf("verify email task: %w: %w", err, asynq.SkipRetry)
 		}
 		if _, err := sender.Send(ctx, message); err != nil {
 			return fmt.Errorf("send queued email: %w", err)

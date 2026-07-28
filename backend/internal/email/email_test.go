@@ -169,16 +169,20 @@ func TestQueueSerializesValidatedEmailTask(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeTaskClient{}
-	queue := NewQueue(client)
+	authenticator, err := NewTaskAuthenticator(encodedTaskKey("current"), "")
+	if err != nil {
+		t.Fatalf("NewTaskAuthenticator() error = %v", err)
+	}
+	queue := NewQueue(client, authenticator)
 	if err := queue.Enqueue(context.Background(), validMessage()); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if client.task == nil || client.task.Type() != TaskSendEmail {
 		t.Fatalf("task = %#v", client.task)
 	}
-	var decoded Message
-	if err := json.Unmarshal(client.task.Payload(), &decoded); err != nil {
-		t.Fatalf("decode task: %v", err)
+	decoded, err := authenticator.Decode(client.task.Payload())
+	if err != nil {
+		t.Fatalf("verify task: %v", err)
 	}
 	if decoded.To != "admin@example.com" {
 		t.Errorf("decoded message = %#v", decoded)
@@ -206,10 +210,10 @@ func TestQueueSerializesValidatedEmailTask(t *testing.T) {
 	if err := queue.Close(); !errors.Is(err, client.closeErr) {
 		t.Errorf("Close(error) = %v", err)
 	}
-	if err := RegisterHandlers(nil, &fakeSender{}); err == nil {
+	if err := RegisterHandlers(nil, &fakeSender{}, authenticator); err == nil {
 		t.Error("RegisterHandlers(nil mux) error = nil")
 	}
-	if err := RegisterHandlers(asynq.NewServeMux(), nil); err == nil {
+	if err := RegisterHandlers(asynq.NewServeMux(), nil, authenticator); err == nil {
 		t.Error("RegisterHandlers(nil sender) error = nil")
 	}
 }
@@ -218,15 +222,22 @@ func TestEmailTaskHandlerSendsAndClassifiesMalformedPayload(t *testing.T) {
 	t.Parallel()
 
 	sender := &fakeSender{}
-	handler := sendEmailHandler(sender)
-	payload, _ := json.Marshal(validMessage())
+	authenticator, err := NewTaskAuthenticator(encodedTaskKey("current"), "")
+	if err != nil {
+		t.Fatalf("NewTaskAuthenticator() error = %v", err)
+	}
+	handler := sendEmailHandler(sender, authenticator)
+	payload, err := authenticator.Encode(validMessage())
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
 	if err := handler(context.Background(), asynq.NewTask(TaskSendEmail, payload)); err != nil {
 		t.Fatalf("handler(valid) error = %v", err)
 	}
 	if len(sender.messages) != 1 {
 		t.Errorf("sent messages = %d", len(sender.messages))
 	}
-	err := handler(context.Background(), asynq.NewTask(TaskSendEmail, []byte("not-json")))
+	err = handler(context.Background(), asynq.NewTask(TaskSendEmail, []byte("not-json")))
 	if !errors.Is(err, asynq.SkipRetry) {
 		t.Errorf("handler(invalid) error = %v, want SkipRetry", err)
 	}
@@ -239,23 +250,43 @@ func TestEmailTaskHandlerSendsAndClassifiesMalformedPayload(t *testing.T) {
 
 func TestWorkerValidatesConstruction(t *testing.T) {
 	t.Parallel()
-	if _, err := NewWorker("redis://localhost:6379/0", 0, &fakeSender{}); err == nil {
+	authenticator, err := NewTaskAuthenticator(encodedTaskKey("current"), "")
+	if err != nil {
+		t.Fatalf("NewTaskAuthenticator() error = %v", err)
+	}
+	if _, err := NewWorker(
+		"redis://localhost:6379/0", 0, &fakeSender{}, authenticator,
+	); err == nil {
 		t.Error("NewWorker(zero concurrency) error = nil")
 	}
-	if _, err := NewWorker("redis://localhost:6379/0", 1, nil); err == nil {
+	if _, err := NewWorker(
+		"redis://localhost:6379/0", 1, nil, authenticator,
+	); err == nil {
 		t.Error("NewWorker(nil sender) error = nil")
 	}
-	if _, err := OpenQueue("://bad"); err == nil {
+	if _, err := OpenQueue("://bad", authenticator); err == nil {
 		t.Error("OpenQueue(invalid URL) error = nil")
 	}
-	if _, err := NewWorker("://bad", 1, &fakeSender{}); err == nil {
+	if _, err := NewWorker("://bad", 1, &fakeSender{}, authenticator); err == nil {
 		t.Error("NewWorker(invalid URL) error = nil")
 	}
-	if worker, err := NewWorker("rediss://redis.fidibeki.test:6380/0", 1, &fakeSender{}); err != nil || worker == nil {
+	if worker, err := NewWorker(
+		"rediss://redis.fidibeki.test:6380/0", 1, &fakeSender{}, authenticator,
+	); err != nil || worker == nil {
 		t.Errorf("NewWorker(valid) = %#v, %v", worker, err)
 	}
-	if err := RegisterHandlers(asynq.NewServeMux(), &fakeSender{}); err != nil {
+	if err := RegisterHandlers(asynq.NewServeMux(), &fakeSender{}, authenticator); err != nil {
 		t.Errorf("RegisterHandlers(valid) error = %v", err)
+	}
+	if _, err := NewWorker(
+		"redis://localhost:6379/0", 1, &fakeSender{}, TaskAuthenticator{},
+	); err == nil {
+		t.Error("NewWorker(missing authenticator) error = nil")
+	}
+	if err := RegisterHandlers(
+		asynq.NewServeMux(), &fakeSender{}, TaskAuthenticator{},
+	); err == nil {
+		t.Error("RegisterHandlers(missing authenticator) error = nil")
 	}
 }
 

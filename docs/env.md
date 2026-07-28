@@ -26,7 +26,7 @@ for both services because configuration is validated before the command starts.
 | `DATABASE_APP_MAX_CONNS` | no | App pool maximum; default `10`. |
 | `DATABASE_ADMIN_MAX_CONNS` | no | Admin pool maximum; default `5`. |
 | `MIGRATIONS_PATH` | no | Migration directory; container default `/app/migrations`. |
-| `REDIS_URL` | yes | Redis URL for queues, rate limits, and cache. Must use `rediss://` in staging and production; `redis://` is accepted only in local/test. |
+| `REDIS_URL` | yes | Redis URL for queues, rate limits, and cache. Staging/production require `rediss://<named-acl-user>:<password>@...`; anonymous, password-only, and `default` identities are rejected. API and worker must use different named users. Local/test may use anonymous `redis://`. |
 | `REDIS_CA_CERT` | no | PEM CA certificate used only to verify a private Redis server certificate. Requires `REDIS_URL=rediss://...`; omit it for certificates trusted by the system CA store. |
 | `S3_ENDPOINT` | yes | S3-compatible private endpoint. Must use HTTPS in staging and production; HTTP is accepted only in local/test for MinIO. |
 | `S3_PUBLIC_ENDPOINT` | no | Browser-reachable endpoint used for presigned uploads and downloads. Must use HTTPS in staging and production because presigned URLs are bearer capabilities; HTTP is accepted only in local/test. |
@@ -48,6 +48,8 @@ for both services because configuration is validated before the command starts.
 | `REPORTER_UNSUBSCRIBE_TTL` | no | Reporter unsubscribe JWT lifetime; default `2160h`. |
 | `EMAIL_DRIVER` | yes | `capture` locally or `resend` in production. |
 | `EMAIL_CAPTURE_DIR` | capture | Local captured-email directory. |
+| `EMAIL_TASK_SIGNING_KEY` | yes | Base64 encoding of exactly 32 random bytes. Signs the versioned `email:send` task envelope before it enters Redis. |
+| `EMAIL_TASK_PREVIOUS_SIGNING_KEY` | no | Verification-only previous/future 32-byte base64 key used during a worker-first signing-key rotation. Must differ from the current key. |
 | `EMAIL_QUEUE_CONCURRENCY` | no | Email worker concurrency; default `20`. |
 | `DOMAIN_QUEUE_CONCURRENCY` | no | Outbox and integration worker concurrency; default `4`. |
 | `MEDIA_QUEUE_CONCURRENCY` | no | Fair shared concurrency for replay and attachment verification queues; default `2`. |
@@ -80,7 +82,7 @@ for both services because configuration is validated before the command starts.
 | `SLACK_CLIENT_SECRET` | no | Slack app client secret. |
 | `SLACK_REDIRECT_URL` | no | Install callback, e.g. `https://api.<BASE_DOMAIN>/v1/integrations/slack/callback`. Must match a redirect URL registered on the Slack app exactly, and must be HTTPS. |
 
-### Database and Redis transport security
+### Database and Redis transport and access security
 
 Every PostgreSQL URL must explicitly set `sslmode=require`, `sslmode=verify-ca`, or
 `sslmode=verify-full` in staging and production. `require` is the minimum accepted encrypted
@@ -98,6 +100,37 @@ rate limiter, every queue client, the queue monitor, and all workers. Its certif
 the runtime's system trust store or the private CA supplied in `REDIS_CA_CERT`; there is no insecure
 certificate-skip setting. The private CA is scoped to Redis clients and is not added to the process
 trust store used for Stripe, Resend, Gemini, or other HTTPS providers.
+
+TLS does not replace Redis client authentication. Give the API and worker independently generated,
+named ACL users through their respective `REDIS_URL` values. Do not enable the `default` user.
+The baseline Redis ACL grants the data-plane commands required by go-redis and Asynq and removes
+the `@admin` and `@dangerous` categories:
+
+```text
+user default off
+user fidibeki_app on >APP_SECRET ~* &* +@all -@admin -@dangerous
+user fidibeki_worker on >WORKER_SECRET ~* &* +@all -@admin -@dangerous
+```
+
+Keep Redis on the provider's private network and do not expose its TLS port through a public proxy.
+Rotate one ACL identity at a time: add the replacement credential, update and verify that service,
+then disable the old credential. Readiness must report Redis `ok` before removing the old user.
+
+### Email queue integrity and incident response
+
+Every `email:send` task is a versioned envelope authenticated with HMAC-SHA256. Raw legacy payloads,
+unknown envelope versions, malformed messages, and invalid signatures are rejected without calling
+the email provider. Rotate the signing key worker-first:
+
+1. Configure the worker with key A as current and key B as previous, then deploy it.
+2. Configure the API with B as current and A as previous, then deploy it.
+3. Promote the worker to B as current and A as previous.
+4. Remove A after the maximum Asynq retry and retention window has elapsed.
+
+If Redis may have been exposed, immediately disable and rotate the affected ACL user and both email
+task keys. Inspect pending, scheduled, retry, and archived queues; purge tasks that cannot be
+attributed to Fidibeki; rotate any magic-link or privacy-action bearer credentials present in queued
+messages; and review Fidibeki audit logs plus Resend delivery logs for unauthorized sends.
 
 ### Browser upload CORS
 

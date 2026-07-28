@@ -17,11 +17,13 @@ import (
 func TestWorkerValidatesConstruction(t *testing.T) {
 	t.Parallel()
 	handler := func(context.Context, *asynq.Task) error { return nil }
+	authenticator := testEmailTaskAuthenticator(t)
 	valid := Options{
 		RedisURL: "rediss://redis.fidibeki.test:6380/0", EmailConcurrency: 2, AIConcurrency: 3,
 		DomainConcurrency: 4, MediaConcurrency: 2, PrivacyConcurrency: 1,
-		Logger: &testAsynqLogger{},
-		Sender: testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
+		EmailTaskAuthenticator: authenticator,
+		Logger:                 &testAsynqLogger{},
+		Sender:                 testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, RecipientHandler: handler,
 		CaseCommunicationHandler: handler, ControllerNotificationHandler: handler,
@@ -59,6 +61,11 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	if _, err := New(invalid); err == nil {
 		t.Error("New(nil logger) error = nil")
 	}
+	invalid = valid
+	invalid.EmailTaskAuthenticator = email.TaskAuthenticator{}
+	if _, err := New(invalid); err == nil {
+		t.Error("New(missing email task authenticator) error = nil")
+	}
 }
 
 func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
@@ -89,8 +96,9 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		RedisURL:         fmt.Sprintf("redis://%s:%s/0", host, port.Port()),
 		EmailConcurrency: 1, AIConcurrency: 1, Sender: testSender{},
 		DomainConcurrency: 1, MediaConcurrency: 1, PrivacyConcurrency: 1,
-		Logger:          logger,
-		PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
+		EmailTaskAuthenticator: testEmailTaskAuthenticator(t),
+		Logger:                 logger,
+		PipelineHandler:        handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
 		ReporterHandler: handler, RecipientHandler: handler,
 		CaseCommunicationHandler: handler, ControllerNotificationHandler: handler,
@@ -111,6 +119,17 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 	if !logger.contains("info:Starting processing") {
 		t.Errorf("worker logs = %v, want structured logger to receive Asynq startup", logger.entries)
 	}
+}
+
+func testEmailTaskAuthenticator(t *testing.T) email.TaskAuthenticator {
+	t.Helper()
+	authenticator, err := email.NewTaskAuthenticator(
+		"ZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWU=", "",
+	)
+	if err != nil {
+		t.Fatalf("NewTaskAuthenticator() error = %v", err)
+	}
+	return authenticator
 }
 
 type testSender struct{}

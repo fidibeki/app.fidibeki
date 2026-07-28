@@ -23,23 +23,22 @@ func ClientOptions(redisURL string, caCertificates ...string) (*redis.Options, e
 }
 
 func AsynqOptions(redisURL string, caCertificates ...string) (asynq.RedisConnOpt, error) {
-	options, err := asynq.ParseRedisURI(redisURL)
+	options, err := ClientOptions(redisURL, caCertificates...)
 	if err != nil {
 		return nil, err
 	}
-	caCertificate := first(caCertificates)
-	if caCertificate == "" {
-		return options, nil
-	}
-	clientOptions, ok := options.(asynq.RedisClientOpt)
-	if !ok {
-		return nil, errors.New("custom Redis CA certificate requires a rediss:// URL")
-	}
-	clientOptions.TLSConfig, err = tlsConfig(clientOptions.TLSConfig, caCertificate)
-	if err != nil {
-		return nil, err
-	}
-	return clientOptions, nil
+	return asynq.RedisClientOpt{
+		Network:      options.Network,
+		Addr:         options.Addr,
+		Username:     options.Username,
+		Password:     options.Password,
+		DB:           options.DB,
+		DialTimeout:  options.DialTimeout,
+		ReadTimeout:  options.ReadTimeout,
+		WriteTimeout: options.WriteTimeout,
+		PoolSize:     options.PoolSize,
+		TLSConfig:    options.TLSConfig,
+	}, nil
 }
 
 func tlsConfig(current *tls.Config, caCertificate string) (*tls.Config, error) {

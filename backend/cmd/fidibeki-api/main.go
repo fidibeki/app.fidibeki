@@ -241,7 +241,15 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	if err != nil {
 		return fmt.Errorf("initialize member notification token manager: %w", err)
 	}
-	emailQueue, err := email.OpenQueue(settings.RedisURL, settings.RedisCACert)
+	emailTaskAuthenticator, err := email.NewTaskAuthenticator(
+		settings.EmailTaskSigningKey, settings.EmailTaskPreviousKey,
+	)
+	if err != nil {
+		return fmt.Errorf("configure email task authentication: %w", err)
+	}
+	emailQueue, err := email.OpenQueue(
+		settings.RedisURL, emailTaskAuthenticator, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -700,7 +708,15 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	if err != nil {
 		return err
 	}
-	billingEmailQueue, err := email.OpenQueue(settings.RedisURL, settings.RedisCACert)
+	emailTaskAuthenticator, err := email.NewTaskAuthenticator(
+		settings.EmailTaskSigningKey, settings.EmailTaskPreviousKey,
+	)
+	if err != nil {
+		return fmt.Errorf("configure email task authentication: %w", err)
+	}
+	billingEmailQueue, err := email.OpenQueue(
+		settings.RedisURL, emailTaskAuthenticator, settings.RedisCACert,
+	)
 	if err != nil {
 		return err
 	}
@@ -950,8 +966,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	worker, err := jobworker.New(jobworker.Options{
 		RedisURL: settings.RedisURL, RedisCACert: settings.RedisCACert,
-		EmailConcurrency: settings.EmailConcurrency,
-		AIConcurrency:    settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
+		EmailTaskAuthenticator: emailTaskAuthenticator,
+		EmailConcurrency:       settings.EmailConcurrency,
+		AIConcurrency:          settings.AIConcurrency, DomainConcurrency: settings.DomainConcurrency,
 		MediaConcurrency: settings.MediaConcurrency, PrivacyConcurrency: settings.PrivacyConcurrency,
 		Logger: logging.NewAsynq(logger), Sender: sender,
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),

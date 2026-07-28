@@ -77,6 +77,8 @@ type Config struct {
 	ResendWelcomeFrom         string
 	ResendWelcomeReplyTo      string
 	ResendWebhookSecret       string
+	EmailTaskSigningKey       string
+	EmailTaskPreviousKey      string
 	EmailConcurrency          int
 	AIConcurrency             int
 	DomainConcurrency         int
@@ -205,6 +207,8 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		ResendWelcomeFrom:         get("RESEND_WELCOME_FROM", "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>"),
 		ResendWelcomeReplyTo:      get("RESEND_WELCOME_REPLY_TO", "acidiney.dias@fidibeki.com"),
 		ResendWebhookSecret:       get("RESEND_WEBHOOK_SECRET", ""),
+		EmailTaskSigningKey:       get("EMAIL_TASK_SIGNING_KEY", ""),
+		EmailTaskPreviousKey:      get("EMAIL_TASK_PREVIOUS_SIGNING_KEY", ""),
 		EmailConcurrency:          emailConcurrency,
 		AIConcurrency:             aiConcurrency,
 		DomainConcurrency:         domainConcurrency,
@@ -328,6 +332,7 @@ func (c Config) validate() []error {
 		"JWT_SECRET":                 c.JWTSecret,
 		"INTEGRATION_ENCRYPTION_KEY": c.IntegrationEncryptionKey,
 		"TWO_FACTOR_ENCRYPTION_KEY":  c.TwoFactorEncryptionKey,
+		"EMAIL_TASK_SIGNING_KEY":     c.EmailTaskSigningKey,
 	}
 	for name, value := range required {
 		if value == "" {
@@ -468,6 +473,32 @@ func (c Config) validate() []error {
 	if c.TwoFactorEncryptionKey != "" && c.TwoFactorEncryptionKey == c.IntegrationEncryptionKey {
 		validationErrors = append(validationErrors,
 			fmt.Errorf("TWO_FACTOR_ENCRYPTION_KEY must differ from INTEGRATION_ENCRYPTION_KEY"))
+	}
+	var emailTaskSigningKey []byte
+	if c.EmailTaskSigningKey != "" {
+		decoded, err := base64.StdEncoding.Strict().DecodeString(c.EmailTaskSigningKey)
+		if err != nil || len(decoded) != sha256.Size {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("EMAIL_TASK_SIGNING_KEY must be base64 encoding of exactly 32 bytes"))
+		} else {
+			emailTaskSigningKey = decoded
+		}
+	}
+	var emailTaskPreviousSigningKey []byte
+	if c.EmailTaskPreviousKey != "" {
+		decoded, err := base64.StdEncoding.Strict().DecodeString(c.EmailTaskPreviousKey)
+		if err != nil || len(decoded) != sha256.Size {
+			validationErrors = append(validationErrors,
+				fmt.Errorf("EMAIL_TASK_PREVIOUS_SIGNING_KEY must be base64 encoding of exactly 32 bytes"))
+		} else {
+			emailTaskPreviousSigningKey = decoded
+		}
+	}
+	if len(emailTaskSigningKey) == sha256.Size &&
+		len(emailTaskPreviousSigningKey) == sha256.Size &&
+		hmac.Equal(emailTaskSigningKey, emailTaskPreviousSigningKey) {
+		validationErrors = append(validationErrors,
+			fmt.Errorf("EMAIL_TASK_PREVIOUS_SIGNING_KEY must differ from EMAIL_TASK_SIGNING_KEY"))
 	}
 	if c.AccessTokenTTL <= 0 {
 		validationErrors = append(validationErrors, fmt.Errorf("AUTH_ACCESS_TOKEN_TTL must be positive"))
@@ -655,7 +686,6 @@ func validateRedisURL(value, environment string) error {
 	}
 	switch parsed.Scheme {
 	case "rediss":
-		return nil
 	case "redis":
 		if allowsInsecureTransport(environment) {
 			return nil
@@ -664,6 +694,21 @@ func validateRedisURL(value, environment string) error {
 	default:
 		return errors.New("must use redis:// or rediss://")
 	}
+	if allowsInsecureTransport(environment) {
+		return nil
+	}
+	username := ""
+	if parsed.User != nil {
+		username = strings.TrimSpace(parsed.User.Username())
+	}
+	if username == "" || strings.EqualFold(username, "default") {
+		return fmt.Errorf("must include a named Redis ACL username in %s", environment)
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword || strings.TrimSpace(password) == "" {
+		return fmt.Errorf("must include a non-empty Redis ACL password in %s", environment)
+	}
+	return nil
 }
 
 func allowsInsecureTransport(environment string) bool {
@@ -671,7 +716,7 @@ func allowsInsecureTransport(environment string) bool {
 }
 
 func (c Config) Redacted() map[string]any {
-	return map[string]any{
+	redacted := map[string]any{
 		"environment":                  c.Environment,
 		"http_address":                 c.HTTPAddress,
 		"base_domain":                  c.BaseDomain,
@@ -738,6 +783,9 @@ func (c Config) Redacted() map[string]any {
 		"readiness_timeout":            c.ReadinessTimeout.String(),
 		"shutdown_timeout":             c.ShutdownTimeout.String(),
 	}
+	redacted["email_task_signing_key"] = "[REDACTED]"
+	redacted["email_task_previous_signing_key"] = "[REDACTED]"
+	return redacted
 }
 
 func deriveAbuseBucketSecret(jwtSecret string) string {

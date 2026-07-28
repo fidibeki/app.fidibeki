@@ -22,6 +22,7 @@ import (
 type Options struct {
 	RedisURL                      string
 	RedisCACert                   string
+	EmailTaskAuthenticator        email.TaskAuthenticator
 	EmailConcurrency              int
 	AIConcurrency                 int
 	DomainConcurrency             int
@@ -94,7 +95,9 @@ func New(options Options) (*Worker, error) {
 		return nil, fmt.Errorf("parse worker Redis URL: %w", err)
 	}
 	emailMux := asynq.NewServeMux()
-	if err := email.RegisterHandlers(emailMux, options.Sender); err != nil {
+	if err := email.RegisterHandlers(
+		emailMux, options.Sender, options.EmailTaskAuthenticator,
+	); err != nil {
 		return nil, err
 	}
 	emailMux.HandleFunc(issue.TaskReporterNotify, options.ReporterHandler)

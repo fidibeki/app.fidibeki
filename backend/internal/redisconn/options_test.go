@@ -41,6 +41,31 @@ func TestSecureOptionsUseOnlyTheConfiguredCA(t *testing.T) {
 	assertTLSConfig(t, redisOptions.TLSConfig, caCertificate)
 }
 
+func TestOptionsPropagateNamedRedisCredentials(t *testing.T) {
+	t.Parallel()
+	const redisURL = "rediss://fidibeki_app:redis-secret@redis.fidibeki.test:6380/3"
+
+	clientOptions, err := redisconn.ClientOptions(redisURL)
+	if err != nil {
+		t.Fatalf("ClientOptions() error = %v", err)
+	}
+	if clientOptions.Username != "fidibeki_app" || clientOptions.Password != "redis-secret" {
+		t.Errorf("go-redis credentials = %q/%q", clientOptions.Username, clientOptions.Password)
+	}
+
+	asynqOptions, err := redisconn.AsynqOptions(redisURL)
+	if err != nil {
+		t.Fatalf("AsynqOptions() error = %v", err)
+	}
+	redisOptions, ok := asynqOptions.(asynq.RedisClientOpt)
+	if !ok {
+		t.Fatalf("AsynqOptions() type = %T", asynqOptions)
+	}
+	if redisOptions.Username != "fidibeki_app" || redisOptions.Password != "redis-secret" {
+		t.Errorf("Asynq credentials = %q/%q", redisOptions.Username, redisOptions.Password)
+	}
+}
+
 func TestCustomCARequiresTLSAndValidPEM(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
