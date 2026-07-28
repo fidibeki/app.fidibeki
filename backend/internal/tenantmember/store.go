@@ -335,13 +335,17 @@ func (s Store) ConsumeMagicLink(
 	userAgent string,
 	ip string,
 ) (Member, SessionSecurity, error) {
+	ssoMode, ownerMemberID, err := lockTenantAuthenticationPolicy(ctx, query, tenantID)
+	if err != nil {
+		return Member{}, SessionSecurity{}, err
+	}
 	var linkID string
 	var memberID *string
 	var email string
 	var invitedPermissions []string
 	var linkMethod string
 	var linkIdPEntityID, linkSubjectID *string
-	err := query.QueryRow(ctx, `
+	err = query.QueryRow(ctx, `
 		SELECT id, member_id, email, invited_permissions,
 		       authentication_method, saml_idp_entity_id, saml_subject_id
 		FROM tenant_magic_links
@@ -357,6 +361,10 @@ func (s Store) ConsumeMagicLink(
 	}
 	if err != nil {
 		return Member{}, SessionSecurity{}, fmt.Errorf("lock tenant magic link: %w", err)
+	}
+	if ssoMode == auth.SSOModeRequired && linkMethod == AuthenticationMethodLocal &&
+		(memberID == nil || ownerMemberID == nil || *memberID != *ownerMemberID) {
+		return Member{}, SessionSecurity{}, ErrMagicLinkInvalid
 	}
 
 	var member Member
@@ -450,6 +458,8 @@ func (s Store) ConsumeMagicLink(
 		security.TwoFactorState = TwoFactorStatePending
 	}
 	security = security.NormalizedForPersistence()
+	security.breakGlass = ssoMode == auth.SSOModeRequired &&
+		linkMethod == AuthenticationMethodLocal && member.IsOwner()
 	if _, err := query.Exec(ctx, `
 		INSERT INTO tenant_member_sessions (
 			tenant_id, member_id, refresh_hash, user_agent, ip,
@@ -465,6 +475,28 @@ func (s Store) ConsumeMagicLink(
 		return Member{}, SessionSecurity{}, fmt.Errorf("create tenant member session: %w", err)
 	}
 	return member, security, nil
+}
+
+func lockTenantAuthenticationPolicy(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+) (auth.SSOMode, *string, error) {
+	var mode auth.SSOMode
+	var ownerMemberID *string
+	if err := query.QueryRow(ctx, `
+		SELECT COALESCE(configuration.mode::text, 'disabled'), tenant.owner_member_id
+		FROM tenants AS tenant
+		LEFT JOIN tenant_saml_configurations AS configuration
+		  ON configuration.tenant_id = tenant.id
+		WHERE tenant.id = $1
+		FOR SHARE OF tenant
+	`, tenantID).Scan(&mode, &ownerMemberID); errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, ErrMagicLinkInvalid
+	} else if err != nil {
+		return "", nil, fmt.Errorf("lock tenant authentication policy: %w", err)
+	}
+	return mode, ownerMemberID, nil
 }
 
 type memberDomainScanner interface {
@@ -490,6 +522,13 @@ func (s Store) RotateSession(
 	userAgent string,
 	ip string,
 ) (Member, SessionSecurity, error) {
+	ssoMode, _, err := lockTenantAuthenticationPolicy(ctx, query, tenantID)
+	if errors.Is(err, ErrMagicLinkInvalid) {
+		return Member{}, SessionSecurity{}, ErrRefreshInvalid
+	}
+	if err != nil {
+		return Member{}, SessionSecurity{}, err
+	}
 	checkedAt := s.now()
 	retryGrace := s.refreshRetryGrace()
 	if _, err := lockTenantMemberForSession(ctx, query, tenantID, currentHash); err != nil {
@@ -544,6 +583,22 @@ func (s Store) RotateSession(
 	}
 	if err != nil {
 		return Member{}, SessionSecurity{}, fmt.Errorf("lock tenant member session: %w", err)
+	}
+	if ssoMode == auth.SSOModeRequired && !security.IsSAML() && !member.IsOwner() {
+		if _, err := query.Exec(ctx, `
+			UPDATE tenant_member_sessions
+			SET revoked_at = COALESCE(revoked_at, $3),
+			    rotated_at = NULL,
+			    replacement_hash = NULL
+			WHERE tenant_id = $1
+			  AND member_id = $2
+			  AND authentication_method = 'local'
+		`, tenantID, member.ID, checkedAt); err != nil {
+			return Member{}, SessionSecurity{}, fmt.Errorf(
+				"revoke local sessions blocked by required SSO: %w", err,
+			)
+		}
+		return Member{}, SessionSecurity{}, errors.Join(ErrRefreshInvalid, ErrRefreshSSORequired)
 	}
 	if revokedAt.Valid && !retryAllowed {
 		if _, err := query.Exec(ctx, `

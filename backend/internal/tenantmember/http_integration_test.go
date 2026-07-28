@@ -874,6 +874,77 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 	`, tenantID, auth.HashToken(expiryCookie.Value)).Scan(&expiryPersisted); err != nil || !expiryPersisted {
 		t.Fatalf("expired session revocation persisted = %t, error = %v", expiryPersisted, err)
 	}
+
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_saml_configurations (
+			tenant_id, mode, idp_entity_id, idp_sso_url,
+			sp_private_key, sp_certificate, last_tested_at
+		)
+		VALUES ($1, 'required', 'https://idp.acme.test/entity', 'https://idp.acme.test/sso',
+		        $2, 'test-certificate', $3)
+	`, tenantID, []byte("sealed-test-key"), now); err != nil {
+		t.Fatalf("enable required SSO for break-glass audit: %v", err)
+	}
+	requiredLocalRefresh := "required-local-refresh"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO tenant_member_sessions (tenant_id, member_id, refresh_hash)
+		VALUES ($1, $2, $3)
+	`, tenantID, ownerMemberID, auth.HashToken(requiredLocalRefresh)); err != nil {
+		t.Fatalf("create residual local session under required SSO: %v", err)
+	}
+	blockedLocalRefresh := performTenantRequest(
+		handler, http.MethodPost, "/auth/refresh", "", "",
+		&http.Cookie{Name: tenantRefreshCookie, Value: requiredLocalRefresh},
+	)
+	if blockedLocalRefresh.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"required-mode local refresh status = %d, body = %s, want unauthorized",
+			blockedLocalRefresh.Code, blockedLocalRefresh.Body.String(),
+		)
+	}
+	var requiredLocalRevoked bool
+	if err := root.QueryRow(ctx, `
+		SELECT revoked_at IS NOT NULL FROM tenant_member_sessions
+		WHERE tenant_id = $1 AND refresh_hash = $2
+	`, tenantID, auth.HashToken(requiredLocalRefresh)).Scan(&requiredLocalRevoked); err != nil ||
+		!requiredLocalRevoked {
+		t.Fatalf(
+			"required-mode local session revoked = %t, error = %v, want true",
+			requiredLocalRevoked, err,
+		)
+	}
+	messageCount := len(queue.messages)
+	breakGlassLogin := performTenantRequest(
+		handler, http.MethodPost, "/auth/login", `{"email":"viewer@acme.test"}`, "", nil,
+	)
+	if breakGlassLogin.Code != http.StatusAccepted || len(queue.messages) != messageCount+1 {
+		t.Fatalf(
+			"break-glass login status = %d, messages = %d, body = %s, want accepted/%d",
+			breakGlassLogin.Code, len(queue.messages), breakGlassLogin.Body.String(), messageCount+1,
+		)
+	}
+	breakGlassVerified := performTenantRequest(
+		handler, http.MethodPost, "/auth/verify",
+		`{"token":"`+messageToken(t, queue.messages[messageCount])+`"}`, "", nil,
+	)
+	if breakGlassVerified.Code != http.StatusOK {
+		t.Fatalf(
+			"break-glass verification status = %d, body = %s",
+			breakGlassVerified.Code, breakGlassVerified.Body.String(),
+		)
+	}
+	var breakGlassSuccessEvents int
+	if err := pools.Admin.QueryRow(ctx, `
+		SELECT count(*) FROM tenant_access_events
+		WHERE tenant_id = $1 AND kind = 'sso.break_glass_login_succeeded'
+		  AND actor_member_id = $2 AND outcome = 'success'
+	`, tenantID, viewerSession.Member.ID).Scan(&breakGlassSuccessEvents); err != nil ||
+		breakGlassSuccessEvents != 1 {
+		t.Fatalf(
+			"successful break-glass audit events = %d, error = %v, want 1",
+			breakGlassSuccessEvents, err,
+		)
+	}
 }
 
 type tenantSessionResponse struct {
