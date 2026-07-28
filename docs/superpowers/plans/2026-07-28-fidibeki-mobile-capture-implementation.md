@@ -82,7 +82,11 @@ feedback behavior.
 screen context, safe URL omission, and additive Slack/Teams/webhook payload fields with no fake
 page link.
 
-**Status:** Pending.
+**Status:** Completed locally on 2026-07-28. Feedback list/detail APIs expose the constrained
+source and mobile context projection, exact source filters are supported, and the Dispatch inbox
+renders compact web/iOS/Android context. Slack, Teams, and generic webhook deliveries include
+additive source/context fields only when the linked Feedback and disclosure policy permit them;
+unsafe URLs and fabricated page actions are omitted.
 
 ## Task 5: Ship The React Native SDK Slice
 
@@ -101,7 +105,13 @@ smoke on an iOS simulator and an Android emulator or equivalent device CI; JS-on
 insufficient. Screenshot tests cover host cancellation, permission/provider error, URI
 non-disclosure, invalid MIME/size/read, direct upload, and deterministic cleanup.
 
-**Status:** Pending.
+**Status:** Implemented locally on 2026-07-28. The package, example application, unit/component
+coverage, typechecks, ESM/CJS/type builds, dry-run package, Expo native generation, Android
+debug/release builds, and a Pixel emulator submission/upload/cold-restart smoke are green. The
+Android release manifest has no camera, photo-library, or storage permissions. iOS native
+compilation and runtime acceptance remain blocked because the available Xcode installation has no
+eligible iOS platform or simulator runtime; prebuild and CocoaPods installation pass, but this task
+is not accepted until an iOS build and runtime smoke pass.
 
 ## Task 6: Document, Audit, Validate, And Publish To Staging
 
@@ -120,4 +130,7 @@ first-slice contract is proven.
 **Acceptance:** Local and CI gates are green, staging evidence covers both platforms, the issue
 comment links commits/tests/deployments, and no production action occurred.
 
-**Status:** Pending.
+**Status:** In progress on 2026-07-28. Documentation, privacy/retention registration, backend
+hardening, mobile source/context delivery, Android runtime evidence, and an independent backend
+security/correctness re-review are complete. Final repository gates, push/CI, staging validation,
+and the iOS native build/runtime evidence are still required before #136 can close.

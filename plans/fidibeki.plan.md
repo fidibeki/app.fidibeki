@@ -247,6 +247,10 @@ was removed from the staging test tenant.
       `mobile_capture:create` API key. It reuses Widget Definitions, recurrence, consent,
       attachments, AI processing, independent Feedback, and the Dispatch inbox without embedding a
       WebView or placing a private Fidibeki key in the app.
+    - Local implementation now covers the secure backend boundary, source/context inbox and
+      integration delivery, the publishable React Native package, and an Android build/runtime
+      submission, screenshot upload, and recurrence smoke. Final gates, CI/staging validation, and
+      an iOS native build/runtime smoke remain open, so #136 is intentionally not complete.
     - Design:
       `docs/superpowers/specs/2026-07-28-fidibeki-mobile-capture-design.md`.
     - Implementation plan:
