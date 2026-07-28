@@ -322,8 +322,9 @@ func TestIntegrationHTTPFanoutAndDeliveryFlow(t *testing.T) {
 	}
 
 	delivery := DeliveryHandler{
-		Store:         Store{Database: pools.Admin, Cipher: cipher},
-		PublicBaseURL: "http://api.localhost", BaseDomain: "localhost",
+		Store:             Store{Database: pools.Admin, Cipher: cipher},
+		AllowInsecureURLs: true,
+		PublicBaseURL:     "http://api.localhost", BaseDomain: "localhost",
 	}
 	taskPayload := func(integrationID string) []byte {
 		payload, _ := json.Marshal(DeliveryTask{

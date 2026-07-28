@@ -17,6 +17,7 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/hibiken/asynq"
@@ -35,11 +36,15 @@ type HTTPDoer interface {
 }
 
 type DeliveryHandler struct {
-	Store         Store
-	Client        HTTPDoer
-	PublicBaseURL string
-	BaseDomain    string
-	Now           func() time.Time
+	Store    Store
+	Client   HTTPDoer
+	Outbound outboundhttp.Policy
+	// AllowInsecureURLs is restricted to local/test environments so their
+	// loopback webhook stubs remain reachable.
+	AllowInsecureURLs bool
+	PublicBaseURL     string
+	BaseDomain        string
+	Now               func() time.Time
 }
 
 func (s Store) LoadNotification(ctx context.Context, task DeliveryTask) (Notification, error) {
@@ -495,11 +500,13 @@ func (h DeliveryHandler) deliver(ctx context.Context, notification Notification)
 	}
 	client := h.Client
 	if client == nil {
-		client = &http.Client{
-			Timeout: 10 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+		if h.AllowInsecureURLs {
+			client = &http.Client{
+				Timeout:       10 * time.Second,
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			}
+		} else {
+			client = h.Outbound.NewClient(10 * time.Second)
 		}
 	}
 	response, err := client.Do(request)

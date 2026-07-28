@@ -892,8 +892,9 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		WelcomeFrom: settings.ResendWelcomeFrom, WelcomeReplyTo: settings.ResendWelcomeReplyTo,
 	}
 	integrationHandler := integration.DeliveryHandler{
-		Store:         integration.Store{Database: pools.Admin, Cipher: integrationCipher},
-		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
+		Store:             integration.Store{Database: pools.Admin, Cipher: integrationCipher},
+		AllowInsecureURLs: settings.Environment == "local" || settings.Environment == "test",
+		PublicBaseURL:     settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 	}
 	issueTrackerHandler := issuetracker.AutoCreateHandler{
 		Store:   issuetracker.Store{Database: pools.Admin, Cipher: integrationCipher},

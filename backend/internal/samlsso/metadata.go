@@ -12,12 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 )
@@ -209,24 +209,33 @@ func dedupeCertificates(certificates []Certificate) []Certificate {
 // redirects are not followed.
 type MetadataFetcher struct {
 	Client *http.Client
+	// Outbound controls DNS resolution and the connected peer in non-local
+	// environments. Its zero value applies the production-safe defaults.
+	Outbound outboundhttp.Policy
 	// AllowInsecure permits plain HTTP and private destinations. Only local and
 	// test environments set it, matching the integration package's convention.
 	AllowInsecure bool
 }
 
 func (f MetadataFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
-	target, err := f.validateURL(rawURL)
+	target, err := f.validateURL(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
-	client := f.Client
-	if client == nil {
-		client = &http.Client{}
+	var fetchClient *http.Client
+	if f.AllowInsecure {
+		client := f.Client
+		if client == nil {
+			client = &http.Client{}
+		}
+		localClient := *client
+		fetchClient = &localClient
+	} else {
+		fetchClient = f.Outbound.NewClient(metadataFetchTimeout)
 	}
 	// A metadata URL must resolve directly. Following redirects would let a
 	// public host bounce the request into private address space after the
 	// destination check has already passed.
-	fetchClient := *client
 	fetchClient.Timeout = metadataFetchTimeout
 	fetchClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -262,7 +271,7 @@ func (f MetadataFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, erro
 	return document, nil
 }
 
-func (f MetadataFetcher) validateURL(rawURL string) (*url.URL, error) {
+func (f MetadataFetcher) validateURL(ctx context.Context, rawURL string) (*url.URL, error) {
 	invalid := func(message string) error {
 		return ValidationError{Fields: map[string]string{"idp_metadata_url": message}}
 	}
@@ -289,35 +298,8 @@ func (f MetadataFetcher) validateURL(rawURL string) (*url.URL, error) {
 	if host == "" {
 		return nil, invalid("metadata URL is invalid")
 	}
-	addresses, err := net.LookupIP(host)
-	if err != nil || len(addresses) == 0 {
-		return nil, invalid("metadata URL host could not be resolved")
-	}
-	for _, address := range addresses {
-		if !isPublicAddress(address) {
-			return nil, invalid("metadata URL must resolve to a public address")
-		}
+	if err := f.Outbound.CheckHost(ctx, host); err != nil {
+		return nil, invalid("metadata URL must resolve to a public address")
 	}
 	return target, nil
-}
-
-func isPublicAddress(address net.IP) bool {
-	if address.IsLoopback() || address.IsPrivate() || address.IsUnspecified() ||
-		address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() ||
-		address.IsInterfaceLocalMulticast() || address.IsMulticast() {
-		return false
-	}
-	// Carrier-grade NAT (RFC 6598) and IPv4-mapped IPv6 forms are not covered
-	// by the standard library's predicates.
-	if v4 := address.To4(); v4 != nil {
-		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
-			return false
-		}
-		if v4[0] == 169 && v4[1] == 254 {
-			return false
-		}
-		return true
-	}
-	// Unique local addresses, fc00::/7.
-	return len(address) == net.IPv6len && address[0]&0xfe != 0xfc
 }
