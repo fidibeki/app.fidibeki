@@ -172,23 +172,25 @@ watch(
         <Search :size="15" />
         <input v-model="search" type="search" autocomplete="off" :placeholder="t('navigation.searchFeedback')" :aria-label="t('navigation.searchFeedback')" />
       </form>
-      <NuxtLink v-if="tenant?.status === 'trial'" to="/billing" class="app-trial-status">
-        <i /> {{ trialLabel }}
-      </NuxtLink>
-      <ThemeToggle />
-      <details ref="accountMenu" class="app-account-menu">
-        <summary>
-          <i class="app-account-avatar"><MemberAvatar :member-id="member?.id || ''" :name="member?.name" :email="member?.email" :avatar-version="member?.avatar_version" /></i>
-          <span>{{ displayName }}</span><ChevronDown :size="13" />
-        </summary>
-        <div>
-          <p><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
-          <NuxtLink to="/profile"><UserRoundPen :size="15" /> {{ t('navigation.profile') }}</NuxtLink>
-          <NuxtLink to="/settings/notifications"><BellRing :size="15" /> {{ t('navigation.notificationPreferences') }}</NuxtLink>
-          <NuxtLink v-if="can('billing:read') || can('billing:manage')" to="/billing"><CreditCard :size="15" /> {{ t('navigation.billing') }}</NuxtLink>
-          <button type="button" :disabled="loggingOut" @click="logout"><LogOut :size="15" /> {{ t('navigation.signOut') }}</button>
-        </div>
-      </details>
+      <div class="app-topbar-actions">
+        <NuxtLink v-if="tenant?.status === 'trial'" to="/billing" class="app-trial-status">
+          <i /> {{ trialLabel }}
+        </NuxtLink>
+        <ThemeToggle />
+        <details ref="accountMenu" class="app-account-menu">
+          <summary>
+            <i class="app-account-avatar"><MemberAvatar :member-id="member?.id || ''" :name="member?.name" :email="member?.email" :avatar-version="member?.avatar_version" /></i>
+            <span>{{ displayName }}</span><ChevronDown :size="13" />
+          </summary>
+          <div>
+            <p><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
+            <NuxtLink to="/profile"><UserRoundPen :size="15" /> {{ t('navigation.profile') }}</NuxtLink>
+            <NuxtLink to="/settings/notifications"><BellRing :size="15" /> {{ t('navigation.notificationPreferences') }}</NuxtLink>
+            <NuxtLink v-if="can('billing:read') || can('billing:manage')" to="/billing"><CreditCard :size="15" /> {{ t('navigation.billing') }}</NuxtLink>
+            <button type="button" :disabled="loggingOut" @click="logout"><LogOut :size="15" /> {{ t('navigation.signOut') }}</button>
+          </div>
+        </details>
+      </div>
     </header>
 
     <aside
