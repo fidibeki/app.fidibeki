@@ -1031,10 +1031,13 @@ func TestReplayHTTPFlow(t *testing.T) {
 	RegisterTenantRoutes(tenantRoutes, TenantHTTPOptions{
 		Store: Store{}, JWT: jwtManager, Storage: storageClient, Now: func() time.Time { return now },
 	})
-	tenantHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	controlPlaneLimiter := &replayAPIKeyLimiterStub{counts: map[string]int{}}
+	tenantHandler := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: controlPlaneLimiter},
+	)(appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App),
-	})(tenantRoutes)
+	})(tenantRoutes))
 	metadata := tenantReplayRequest(tenantHandler, http.MethodGet, "/v1/sessions/"+createResponse.ID, accessToken)
 	if metadata.Code != http.StatusOK || !strings.Contains(metadata.Body.String(), `"status":"ready"`) ||
 		!strings.Contains(metadata.Body.String(), `"replay_url"`) {

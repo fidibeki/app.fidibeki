@@ -25,6 +25,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
@@ -757,10 +758,13 @@ func verifySlackOneClickInstall(t *testing.T, ctx context.Context, harness slack
 		Store: Store{Cipher: harness.cipher}, JWT: harness.jwt,
 		AllowInsecureURLs: true, Slack: oauth,
 	})
-	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	handler := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: integrationAPIKeyLimiterStub{}},
+	)(appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: harness.pools.Admin},
-		Begin: db.BeginFromPool(harness.pools.App), Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
-	})(routes)
+		Begin:  db.BeginFromPool(harness.pools.App),
+		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	})(routes))
 
 	// The callback lives on the apex host with no tenant middleware at all.
 	apex := chi.NewRouter()
@@ -1213,6 +1217,16 @@ func createIntegrationThroughAPI(
 	}
 	decodeIntegrationResponse(t, response, &decoded)
 	return decoded.Integration.ID
+}
+
+type integrationAPIKeyLimiterStub struct{}
+
+func (integrationAPIKeyLimiterStub) Allow(
+	context.Context,
+	string,
+	ratelimit.Window,
+) (ratelimit.Decision, error) {
+	return ratelimit.Decision{Allowed: true}, nil
 }
 
 func integrationRequest(
