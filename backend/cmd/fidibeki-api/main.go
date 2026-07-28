@@ -620,9 +620,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		BaseDomain:          settings.BaseDomain,
 		InternalProxySecret: settings.InternalProxySecret,
 		PlatformHandler:     platformRoutes,
-		TenantHandler:       tenantRoot,
-		WidgetHandler:       widgetRoutes,
-		PanicReporter:       observability.SentryPanicReporter{},
+		TenantHandler: appmiddleware.TenantAPIKeyRateLimit(
+			appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: publicLimiter, Logger: logger},
+		)(tenantRoot),
+		WidgetHandler: widgetRoutes,
+		PanicReporter: observability.SentryPanicReporter{},
 	})
 	httpServer := &http.Server{
 		Addr:              settings.HTTPAddress,

@@ -23,6 +23,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
@@ -1073,11 +1074,19 @@ func TestReplayHTTPFlow(t *testing.T) {
 	})
 	streamRoutes := chi.NewRouter()
 	streamRoutes.Get("/v1/sessions/{sessionID}/replay", streamHandler.ServeHTTP)
+	credentialLimiter := &replayAPIKeyLimiterStub{counts: map[string]int{}}
+	limitedStreamRoutes := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{Limiter: credentialLimiter},
+	)(streamRoutes)
 	streamAPIKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
-	if _, err := root.Exec(ctx, `
-		INSERT INTO api_keys (tenant_id, name, token_hash, token_prefix, permissions)
-		VALUES ($1, 'Replay reader', $2, 'fk_live_0123...', '{session:read}')
-	`, tenantID, auth.HashToken(streamAPIKey)); err != nil {
+	var streamAPIKeyID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO api_keys (
+			tenant_id, name, token_hash, token_prefix, permissions, rate_limit_per_min
+		)
+		VALUES ($1, 'Replay reader', $2, 'fk_live_0123...', '{session:read}', 1)
+		RETURNING id
+	`, tenantID, auth.HashToken(streamAPIKey)).Scan(&streamAPIKeyID); err != nil {
 		t.Fatalf("create replay stream API key: %v", err)
 	}
 	methodDenied := httptest.NewRecorder()
@@ -1086,7 +1095,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if methodDenied.Code != http.StatusMethodNotAllowed {
 		t.Errorf("stream method status = %d", methodDenied.Code)
 	}
-	unauthenticatedStream := tenantReplayRequest(streamRoutes, http.MethodGet,
+	unauthenticatedStream := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", "")
 	if unauthenticatedStream.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated stream status = %d", unauthenticatedStream.Code)
@@ -1095,40 +1104,54 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue restricted tenant token: %v", err)
 	}
-	deniedStream := tenantReplayRequest(streamRoutes, http.MethodGet,
+	deniedStream := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", readDeniedToken)
 	if deniedStream.Code != http.StatusForbidden {
 		t.Errorf("permission-denied stream status = %d", deniedStream.Code)
 	}
-	badStream := tenantReplayRequest(streamRoutes, http.MethodGet, "/v1/sessions/not-a-uuid/replay", accessToken)
+	badStream := tenantReplayRequest(limitedStreamRoutes, http.MethodGet, "/v1/sessions/not-a-uuid/replay", accessToken)
 	if badStream.Code != http.StatusNotFound {
 		t.Errorf("invalid replay stream status = %d", badStream.Code)
 	}
-	streamed := tenantReplayRequest(streamRoutes, http.MethodGet,
+	streamed := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", accessToken)
 	if streamed.Code != http.StatusOK || streamed.Body.String() != string(batchData) ||
 		streamed.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("stream status = %d headers = %#v body = %s", streamed.Code, streamed.Header(), streamed.Body.String())
 	}
-	streamedAgain := tenantReplayRequest(streamRoutes, http.MethodGet,
+	streamedAgain := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", accessToken)
 	if streamedAgain.Code != http.StatusOK {
 		t.Errorf("repeated stream status = %d", streamedAgain.Code)
 	}
-	streamedWithAPIKey := tenantReplayRequest(streamRoutes, http.MethodGet,
+	streamedWithAPIKey := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", streamAPIKey)
 	if streamedWithAPIKey.Code != http.StatusOK || streamedWithAPIKey.Body.String() != string(batchData) {
 		t.Errorf("API-key replay stream = %d body=%q", streamedWithAPIKey.Code, streamedWithAPIKey.Body.String())
 	}
+	rateLimitedReplay := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
+		"/v1/sessions/"+createResponse.ID+"/replay", streamAPIKey)
+	if rateLimitedReplay.Code != http.StatusTooManyRequests ||
+		rateLimitedReplay.Header().Get("Retry-After") == "" {
+		t.Errorf("API-key replay limit = %d headers=%v body=%q",
+			rateLimitedReplay.Code, rateLimitedReplay.Header(), rateLimitedReplay.Body.String())
+	}
+	limiterKey := "tenant-api-key:" + streamAPIKeyID
+	if credentialLimiter.callCount(limiterKey) != 2 ||
+		credentialLimiter.callCount(streamAPIKey) != 0 {
+		t.Errorf("replay limiter calls = %#v, want one immutable-ID charge per request",
+			credentialLimiter.snapshot())
+	}
+	credentialLimiter.reset()
 	headRequest := httptest.NewRequest(http.MethodHead, "http://acme.localhost/v1/sessions/"+createResponse.ID+"/replay", nil)
 	headRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	headResponse := httptest.NewRecorder()
-	streamRoutes.ServeHTTP(headResponse, headRequest)
+	limitedStreamRoutes.ServeHTTP(headResponse, headRequest)
 	if headResponse.Code != http.StatusMethodNotAllowed {
 		t.Errorf("replay HEAD status = %d", headResponse.Code)
 	}
 	delete(storageClient.objects, mergedKey)
-	missingObject := tenantReplayRequest(streamRoutes, http.MethodGet,
+	missingObject := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+createResponse.ID+"/replay", accessToken)
 	if missingObject.Code != http.StatusServiceUnavailable {
 		t.Errorf("missing replay object status = %d", missingObject.Code)
@@ -1256,7 +1279,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		)
 	}
 	legacyStream := tenantReplayRequest(
-		streamRoutes, http.MethodGet, "/v1/sessions/"+legacySessionID+"/replay", accessToken,
+		limitedStreamRoutes, http.MethodGet, "/v1/sessions/"+legacySessionID+"/replay", accessToken,
 	)
 	if legacyStream.Code != http.StatusNotFound ||
 		strings.Contains(legacyStream.Body.String(), "jane@example.com") {
@@ -1546,7 +1569,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if mergeQueue.sessionIDs[len(mergeQueue.sessionIDs)-1] != pendingSessionID {
 		t.Errorf("reconciled sessions = %#v", mergeQueue.sessionIDs)
 	}
-	pendingStream := tenantReplayRequest(streamRoutes, http.MethodGet,
+	pendingStream := tenantReplayRequest(limitedStreamRoutes, http.MethodGet,
 		"/v1/sessions/"+pendingSessionID+"/replay", accessToken)
 	if pendingStream.Code != http.StatusNotFound {
 		t.Errorf("pending replay stream status = %d", pendingStream.Code)
@@ -1737,6 +1760,47 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if planDenied.Code != http.StatusPaymentRequired || !strings.Contains(planDenied.Body.String(), "plan_feature_unavailable") {
 		t.Errorf("plan denial status = %d, body = %s", planDenied.Code, planDenied.Body.String())
 	}
+}
+
+type replayAPIKeyLimiterStub struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (l *replayAPIKeyLimiterStub) Allow(
+	_ context.Context,
+	key string,
+	window ratelimit.Window,
+) (ratelimit.Decision, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.counts[key]++
+	return ratelimit.Decision{
+		Allowed: l.counts[key] <= window.Limit, Limit: window.Limit,
+		Remaining: max(window.Limit-l.counts[key], 0), RetryAfter: 30 * time.Second,
+	}, nil
+}
+
+func (l *replayAPIKeyLimiterStub) callCount(key string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.counts[key]
+}
+
+func (l *replayAPIKeyLimiterStub) snapshot() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[string]int, len(l.counts))
+	for key, value := range l.counts {
+		snapshot[key] = value
+	}
+	return snapshot
+}
+
+func (l *replayAPIKeyLimiterStub) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.counts = map[string]int{}
 }
 
 type replayStorageStub struct {

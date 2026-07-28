@@ -128,10 +128,15 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		Service: service, Store: store, JWT: jwtManager, Email: queue,
 		RefreshTTL: 30 * 24 * time.Hour, Logger: testLogger,
 	})
-	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	transactionalHandler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Logger: testLogger,
 	})(routes)
+	handler := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{
+			Limiter: &countingLimiter{limit: 100_000},
+		},
+	)(transactionalHandler)
 
 	login := performTenantRequest(handler, http.MethodPost, "/auth/login", `{"email":"owner@acme.test"}`, "", nil)
 	if login.Code != http.StatusAccepted || len(queue.messages) != 1 {

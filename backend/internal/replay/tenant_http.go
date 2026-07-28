@@ -246,6 +246,9 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Context(), tx, h.options.JWT, resolved.ID, r.Header.Get("Authorization"),
 		resolved.DeletionRequestedAt == nil,
 	)
+	if appmiddleware.WriteTenantAPIKeyRateLimitError(w, r.Context(), err) {
+		return
+	}
 	if errors.Is(err, appmiddleware.ErrTenantCredentialInvalid) {
 		api.WriteError(w, http.StatusUnauthorized, api.CodeUnauthenticated, "authentication required", nil)
 		return
@@ -258,6 +261,7 @@ func (h *StreamHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, err)
 		return
 	}
+	appmiddleware.WriteTenantAPIKeyRateLimitHeaders(w, r.Context())
 	recordAccess := func(outcome string) error {
 		return accessaudit.Record(r.Context(), tx, accessaudit.RecordInput{
 			TenantID: resolved.ID, Kind: "replay_session.accessed",
