@@ -87,6 +87,62 @@ func TestComposeInvitationMessageUsesTenantURLsLocaleAndStableIdempotency(t *tes
 	}
 }
 
+func TestComposeInvitationMessageUsesEnglishFallbackCopy(t *testing.T) {
+	t.Parallel()
+	recipient := "customer@example.com"
+	delivery := InvitationDelivery{
+		InvitationID:   "11111111-1111-4111-8111-111111111111",
+		TenantSlug:     "acme",
+		RecipientEmail: &recipient,
+		Locale:         " en-US ",
+		CampaignSnapshot: invitationCampaignSnapshot{
+			Subject: "Tell us how it went",
+		},
+		ControllerProfile: invitationControllerSnapshot{
+			Name:             "Acme Research",
+			PrivacyPolicyURL: "https://acme.example/privacy",
+		},
+	}
+	message, err := composeInvitationMessage(delivery, "efi_secret", invitationMessageOptions{
+		From:             "Fidibeki <feedback@fidibeki.test>",
+		PublicBaseURL:    "https://api.fidibeki.test",
+		WebPublicBaseURL: "https://fidibeki.test",
+		BaseDomain:       "fidibeki.test",
+	})
+	if err != nil {
+		t.Fatalf("composeInvitationMessage() error = %v", err)
+	}
+	for _, value := range []string{
+		"How was your experience?",
+		"Share your experience.",
+		"Share feedback: https://acme.fidibeki.test/email-feedback/efi_secret",
+		"Stop receiving these requests: https://acme.fidibeki.test/email-feedback/efi_secret/opt-out",
+	} {
+		if !strings.Contains(message.Text, value) {
+			t.Errorf("text email missing %q:\n%s", value, message.Text)
+		}
+	}
+
+	delivery.RecipientEmail = nil
+	if _, err := composeInvitationMessage(delivery, "efi_secret", invitationMessageOptions{}); err == nil {
+		t.Fatal("composeInvitationMessage() accepted a missing recipient")
+	}
+}
+
+func TestInvitationDeliveryErrorsAreBounded(t *testing.T) {
+	t.Parallel()
+	if got := truncateInvitationError(""); got != "email delivery failed" {
+		t.Fatalf("empty delivery error = %q", got)
+	}
+	message := strings.Repeat("é", 2001)
+	if got := truncateInvitationError(message); len([]rune(got)) != 2000 {
+		t.Fatalf("truncated delivery error contains %d runes", len([]rune(got)))
+	}
+	if got := truncateInvitationError("temporary failure"); got != "temporary failure" {
+		t.Fatalf("short delivery error = %q", got)
+	}
+}
+
 func TestInvitationTokenShapeValidation(t *testing.T) {
 	t.Parallel()
 	manager, err := NewInvitationTokenManager(strings.Repeat("s", 32))
