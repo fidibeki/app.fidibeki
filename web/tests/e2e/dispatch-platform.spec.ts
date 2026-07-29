@@ -328,7 +328,7 @@ function createMockState() {
       text_cleaned: "Checkout froze after I applied a promotion code.",
       reporter_email: "customer@example.test",
       notify_reporter: true,
-      source: "web" as "web" | "ios" | "android",
+      source: "web" as "web" | "ios" | "android" | "email",
       mobile_application_id: null as string | null,
       mobile_screen: null as string | null,
       mobile_app_version: null as string | null,
@@ -375,7 +375,7 @@ function createMockState() {
       text: "The new checkout is much clearer.",
       text_cleaned: "The new checkout is much clearer.",
       notify_reporter: false,
-      source: "web" as "web" | "ios" | "android",
+      source: "web" as "web" | "ios" | "android" | "email",
       mobile_application_id: null as string | null,
       mobile_screen: null as string | null,
       mobile_app_version: null as string | null,
@@ -5803,6 +5803,61 @@ test("mobile feedback is identifiable, filterable, and never receives a fabricat
   await expect(environment.locator("dd a")).toHaveCount(0);
   await expectNoPageOverflow(page);
   await capture(page, testInfo, `feedback-mobile-source-${testInfo.project.name}`);
+});
+
+test("email feedback is identifiable and filterable in the inbox", async ({
+  page,
+}, testInfo) => {
+  const state = createMockState();
+  Object.assign(state.feedback[1], {
+    source: "email",
+    page_url: "https://shop.acme.test/orders/1047",
+    mobile_application_id: null,
+    mobile_screen: null,
+    mobile_app_version: null,
+    mobile_os_version: null,
+    browser: null,
+    os: null,
+    device: null,
+  });
+
+  await authenticate(page, state);
+  await openPrimary(page, "Feedback");
+
+  if (testInfo.project.name === "mobile") {
+    await page.locator(".feedback-mobile-filters > summary").click();
+    const panel = page.locator(".feedback-mobile-filters-panel");
+    await panel.getByRole("combobox", { name: "Source filter" }).selectOption("email");
+    await panel.getByRole("button", { name: "Done", exact: true }).click();
+  } else {
+    await page
+      .locator(".feedback-filter-bar-desktop")
+      .getByLabel("Source filter")
+      .selectOption("email");
+  }
+
+  await expect(page).toHaveURL(/source=email/);
+  await expect(page.getByText("1 loaded")).toBeVisible();
+  const row = page.getByRole("listitem").filter({ hasText: "FB-1047" });
+  await expect(row.getByLabel("Email source")).toBeVisible();
+  await expect(row).toContainText("https://shop.acme.test/orders/1047");
+
+  if (testInfo.project.name === "mobile") {
+    await row.getByRole("link", { name: "Open FB-1047" }).click();
+  } else {
+    await row.click();
+    const inspector = page.locator(".feedback-inspector");
+    await expect(inspector.getByLabel("Email source")).toBeVisible();
+    await expect(inspector).toContainText("https://shop.acme.test/orders/1047");
+    await inspector.getByTitle("Open full detail").click();
+  }
+
+  await expect(page).toHaveURL(/\/feedback\/feedback-2$/);
+  await expect(page.locator(".feedback-detail-origin").getByLabel("Email source")).toBeVisible();
+  await expect(page.locator(".feedback-detail-origin")).toContainText(
+    "https://shop.acme.test/orders/1047",
+  );
+  await expectNoPageOverflow(page);
 });
 
 test("feedback sentiment uses semantic labels with an exact-score disclosure", async ({

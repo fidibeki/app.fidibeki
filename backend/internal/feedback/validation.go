@@ -41,6 +41,9 @@ const ReporterConsentSourceWidget = "widget_submission"
 // Device payloads cannot choose or override this provenance.
 const ReporterConsentSourceMobile = "mobile_submission"
 
+// ReporterConsentSourceEmail is server-assigned to consent collected by an invitation form.
+const ReporterConsentSourceEmail = "email_feedback_submission"
+
 var localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
 
 var attachmentRules = map[AttachmentKind]struct {
@@ -300,6 +303,49 @@ func ValidateMobileSubmissionAt(
 		fields = append(fields, field("device_locale", "must be a valid locale"))
 	}
 	fields = append(fields, validateAttachments(values.Attachments)...)
+	fields = append(fields, validateResponses(webShape, &values, configuration)...)
+	fields = append(fields, validateRuleCapabilities(webShape, values, configuration)...)
+	_ = now
+	return values, fields
+}
+
+func ValidateEmailSubmissionAt(
+	input EmailSubmissionRequest,
+	configuration project.PublicConfiguration,
+	invitationID string,
+	widgetRuleID string,
+	contextURL *string,
+	displayLocale string,
+	now time.Time,
+) (SubmissionValues, []FieldError) {
+	webShape := SubmissionRequest{
+		ClientFeedbackID: invitationID,
+		WidgetRuleID:     widgetRuleID,
+		Responses:        input.Responses,
+		Comment:          input.Comment,
+		ReporterEmail:    input.ReporterEmail,
+		NotifyReporter:   input.NotifyReporter,
+		Consent:          input.Consent,
+	}
+	values := normalizeSubmission(webShape)
+	values.Source = "email"
+	values.PageURL = ""
+	if contextURL != nil {
+		values.PageURL = strings.TrimSpace(*contextURL)
+	}
+
+	fields := make([]FieldError, 0)
+	if _, err := uuid.Parse(values.ClientFeedbackID); err != nil {
+		fields = append(fields, field("invitation", "must identify a valid invitation"))
+	}
+	if _, err := uuid.Parse(values.WidgetRuleID); err != nil {
+		fields = append(fields, field("invitation", "must identify a captured widget definition"))
+	}
+	selectedRule := submissionRule(configuration, widgetRuleID)
+	fields = append(fields, validateReporterConsent(
+		webShape, &values, configuration, selectedRule,
+		ReporterConsentSourceEmail, displayLocale,
+	)...)
 	fields = append(fields, validateResponses(webShape, &values, configuration)...)
 	fields = append(fields, validateRuleCapabilities(webShape, values, configuration)...)
 	_ = now

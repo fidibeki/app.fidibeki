@@ -574,7 +574,7 @@ export interface FeedbackItem {
   tags: TriageTag[]
   reporter_email?: string
   notify_reporter: boolean
-  source?: 'web' | 'ios' | 'android'
+  source?: 'web' | 'ios' | 'android' | 'email'
   mobile_application_id?: string | null
   mobile_screen?: string | null
   mobile_app_version?: string | null

@@ -103,6 +103,7 @@ export const feedbackMessages = {
     web: 'Web',
     ios: 'iOS',
     android: 'Android',
+    email: 'Email',
   },
   common: {
     anonymous: 'Anónimo',

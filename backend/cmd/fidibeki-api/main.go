@@ -589,6 +589,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	emailfeedback.RegisterPublicRoutes(tenantRoot, emailfeedback.PublicHTTPOptions{
 		Store: emailfeedback.Store{}, Resolver: pools.Admin,
 		Begin: db.BeginFromPool(pools.App), BaseDomain: settings.BaseDomain, Logger: logger,
+		FeedbackCore: feedback.SubmissionCore{Store: feedback.Store{}},
 	})
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},

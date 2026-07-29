@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Monitor, Smartphone } from '@lucide/vue'
+import { Mail, Monitor, Smartphone } from '@lucide/vue'
 import type { FeedbackSource } from '~/utils/feedback-source'
 
 const props = defineProps<{
@@ -8,9 +8,15 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const normalizedSource = computed<FeedbackSource>(() => (
-  props.source === 'ios' || props.source === 'android' ? props.source : 'web'
+  props.source === 'ios' || props.source === 'android' || props.source === 'email'
+    ? props.source
+    : 'web'
 ))
-const sourceIcon = computed(() => normalizedSource.value === 'web' ? Monitor : Smartphone)
+const sourceIcon = computed(() => {
+  if (normalizedSource.value === 'web') return Monitor
+  if (normalizedSource.value === 'email') return Mail
+  return Smartphone
+})
 </script>
 
 <template>
@@ -52,5 +58,11 @@ const sourceIcon = computed(() => normalizedSource.value === 'web' ? Monitor : S
   background: var(--green-soft);
   color: var(--green);
   border-color: var(--green-line);
+}
+
+.feedback-source-badge[data-source='email'] {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
 }
 </style>

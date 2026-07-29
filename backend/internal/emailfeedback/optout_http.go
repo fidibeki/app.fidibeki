@@ -13,17 +13,19 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 )
 
 type PublicHTTPOptions struct {
-	Store      Store
-	Resolver   db.Querier
-	Begin      db.BeginFunc
-	BaseDomain string
-	Logger     *slog.Logger
-	Now        func() time.Time
+	Store        Store
+	Resolver     db.Querier
+	Begin        db.BeginFunc
+	BaseDomain   string
+	Logger       *slog.Logger
+	Now          func() time.Time
+	FeedbackCore feedback.SubmissionCore
 }
 
 type publicHTTPHandler struct {
@@ -39,6 +41,8 @@ type InvitationOptOutView struct {
 
 func RegisterPublicRoutes(router chi.Router, options PublicHTTPOptions) {
 	handler := &publicHTTPHandler{options: options}
+	router.Get("/v1/public/email-feedback/{token}", handler.loadCollection)
+	router.Post("/v1/public/email-feedback/{token}", handler.submitCollection)
 	router.Get("/v1/public/email-feedback/{token}/opt-out", handler.loadOptOut)
 	router.Post("/v1/public/email-feedback/{token}/opt-out", handler.submitOptOut)
 }

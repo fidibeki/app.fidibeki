@@ -874,7 +874,7 @@ typecheck/build, and four desktop/mobile Playwright scenarios pass.
 ## Task 48: Create Feedback Only On Explicit Form Submission
 
 **Depends on:** Task 47
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** An invited person can open a localized form, optionally preselect a rating, and create
 one independent `email` Feedback only by POSTing the form.
@@ -884,6 +884,19 @@ one independent `email` Feedback only by POSTing the form.
 **Acceptance:** One public HTTP/browser integration journey proves mutation-free GET, query-only
 rating preselection, captured-definition validation, concurrent one-Feedback submission, optional
 explicit contact consent, inbox source rendering, and no automatic Issue or Testimonial.
+
+**Evidence:** Migration 134 adds the `email` source and enforces its privacy-safe, non-browser
+capture shape while preserving the shared mobile source enum through reversible migration tests.
+The tenant-host public route returns only the captured campaign, definition, localization,
+controller, and public AI notice; GET and rating query parameters never mutate state. Explicit POST
+validates against that immutable snapshot, records captured consent when selected, and locks the
+invitation so concurrent submissions produce exactly one independent Feedback and no Issue or
+Testimonial. Submitted, expired, suppressed, unknown, and cross-tenant links remain neutral. The
+localized mobile-first form preselects rating only in the browser, posts a strict minimal payload,
+and handles success/unavailable states without leaking raw API details. Email Feedback is distinct
+and filterable in the inbox with its own badge and safe context handling. Full backend tests and
+vet, migration up/down/up with RLS, 174 web unit tests, typecheck/build, four public-form
+desktop/mobile Playwright scenarios, and two inbox source scenarios pass.
 
 **Autonomy:** AFK
 

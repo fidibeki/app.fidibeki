@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
@@ -444,7 +446,110 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	RegisterPublicRoutes(publicRouter, PublicHTTPOptions{
 		Store: Store{}, Resolver: pools.Admin, Begin: db.BeginFromPool(pools.App),
 		BaseDomain: "fidibeki.test", Now: func() time.Time { return deliveryNow.Add(time.Minute) },
+		FeedbackCore: feedback.SubmissionCore{Store: feedback.Store{}},
 	})
+	collectionPath := "/v1/public/email-feedback/" + rawInvitationToken
+	var feedbackBeforeCollection int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks WHERE tenant_id = $1
+	`, tenantID).Scan(&feedbackBeforeCollection); err != nil {
+		t.Fatalf("count feedback before collection GET: %v", err)
+	}
+	collectionView := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodGet, collectionPath+"?rating=1", "",
+	)
+	if collectionView.Code != http.StatusOK ||
+		!strings.Contains(collectionView.Body.String(), `"locale":"pt"`) ||
+		!strings.Contains(collectionView.Body.String(), `"prompt":"Como foi?"`) ||
+		!strings.Contains(collectionView.Body.String(), `"type":"rating"`) ||
+		!strings.Contains(collectionView.Body.String(), `"controller_name":"Acme"`) ||
+		strings.Contains(collectionView.Body.String(), `"rating":1`) ||
+		strings.Contains(collectionView.Body.String(), `"acknowledged_at"`) ||
+		strings.Contains(collectionView.Body.String(), `"acknowledged_by_member_id"`) {
+		t.Fatalf("load collection = %d body=%s",
+			collectionView.Code, collectionView.Body.String())
+	}
+	wrongHostCollection := publicEmailFeedbackRequest(
+		publicRouter, "beta", http.MethodGet, collectionPath, "",
+	)
+	if wrongHostCollection.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant collection = %d body=%s",
+			wrongHostCollection.Code, wrongHostCollection.Body.String())
+	}
+	var feedbackAfterCollection int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks WHERE tenant_id = $1
+	`, tenantID).Scan(&feedbackAfterCollection); err != nil {
+		t.Fatalf("count feedback after collection GET: %v", err)
+	}
+	if feedbackAfterCollection != feedbackBeforeCollection {
+		t.Fatalf("collection GET created feedback: before=%d after=%d",
+			feedbackBeforeCollection, feedbackAfterCollection)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT status::text FROM email_feedback_invitations WHERE id = $1
+	`, invitation.ID).Scan(&storedStatus); err != nil ||
+		storedStatus != string(InvitationSent) {
+		t.Fatalf("collection GET status=%q error=%v", storedStatus, err)
+	}
+	submitted := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, collectionPath,
+		`{"responses":{"rating":4}}`,
+	)
+	if submitted.Code != http.StatusCreated ||
+		!strings.Contains(submitted.Body.String(), `"feedback_public_id":"fb_`) {
+		t.Fatalf("submit collection = %d body=%s",
+			submitted.Code, submitted.Body.String())
+	}
+	var submittedFeedbackID, submittedPublicID, submittedSource string
+	var submittedRating int
+	var submittedIssueID, submittedReporter *string
+	var submittedNotify bool
+	if err := root.QueryRow(ctx, `
+		SELECT feedback.id, feedback.public_id, feedback.source::text,
+		       feedback.rating, feedback.issue_id, feedback.reporter_email::text,
+		       feedback.notify_reporter
+		FROM feedbacks AS feedback
+		WHERE feedback.tenant_id = $1 AND feedback.client_feedback_id = $2
+	`, tenantID, invitation.ID).Scan(
+		&submittedFeedbackID, &submittedPublicID, &submittedSource,
+		&submittedRating, &submittedIssueID, &submittedReporter, &submittedNotify,
+	); err != nil {
+		t.Fatalf("load submitted email feedback: %v", err)
+	}
+	if submittedSource != "email" || submittedRating != 4 ||
+		submittedIssueID != nil || submittedReporter != nil || submittedNotify {
+		t.Fatalf(
+			"submitted email feedback source=%q rating=%d issue=%v reporter=%v notify=%t",
+			submittedSource, submittedRating, submittedIssueID, submittedReporter, submittedNotify,
+		)
+	}
+	var submittedAt time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, feedback_id, submitted_at
+		FROM email_feedback_invitations WHERE id = $1
+	`, invitation.ID).Scan(
+		&storedStatus, &submittedFeedbackID, &submittedAt,
+	); err != nil || storedStatus != string(InvitationSubmitted) ||
+		submittedFeedbackID == "" {
+		t.Fatalf("submitted invitation status=%q feedback=%q at=%s error=%v",
+			storedStatus, submittedFeedbackID, submittedAt, err)
+	}
+	repeatedSubmission := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, collectionPath,
+		`{"responses":{"rating":4}}`,
+	)
+	if repeatedSubmission.Code != http.StatusNotFound {
+		t.Fatalf("repeat collection submission = %d body=%s",
+			repeatedSubmission.Code, repeatedSubmission.Body.String())
+	}
+	unavailableAfterSubmission := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodGet, collectionPath+"?rating=5", "",
+	)
+	if unavailableAfterSubmission.Code != http.StatusNotFound {
+		t.Fatalf("submitted collection GET = %d body=%s",
+			unavailableAfterSubmission.Code, unavailableAfterSubmission.Body.String())
+	}
 	optOutPath := "/v1/public/email-feedback/" + rawInvitationToken + "/opt-out"
 	optOutView := publicEmailFeedbackRequest(
 		publicRouter, "acme", http.MethodGet, optOutPath, "",
@@ -497,11 +602,277 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	); err != nil {
 		t.Fatalf("load opted-out invitation: %v", err)
 	}
-	if storedStatus != string(InvitationSuppressed) ||
+	if storedStatus != string(InvitationSubmitted) ||
 		retainedTokenHash == nil || *retainedTokenHash != expectedTokenHash ||
 		suppressionReason != "opt_out" {
 		t.Fatalf("opted-out status=%q token=%v reason=%q",
 			storedStatus, retainedTokenHash, suppressionReason)
+	}
+
+	concurrentInvitationResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(
+			campaign.ID, "order-concurrent", "concurrent@example.com", "",
+			"https://shop.example.com/orders/concurrent",
+		), rawInvitationKey,
+	)
+	if concurrentInvitationResponse.Code != http.StatusCreated {
+		t.Fatalf("create concurrent invitation = %d body=%s",
+			concurrentInvitationResponse.Code, concurrentInvitationResponse.Body.String())
+	}
+	var concurrentEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(concurrentInvitationResponse.Body).Decode(
+		&concurrentEnvelope,
+	); err != nil {
+		t.Fatalf("decode concurrent invitation: %v", err)
+	}
+	concurrentInvitation := concurrentEnvelope.Invitation
+	concurrentToken, _, err := invitationTokens.Token(concurrentInvitation.ID)
+	if err != nil {
+		t.Fatalf("derive concurrent invitation token: %v", err)
+	}
+	var concurrentOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, concurrentInvitation.ID).Scan(&concurrentOutboxID); err != nil {
+		t.Fatalf("load concurrent invitation outbox: %v", err)
+	}
+	concurrentPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: concurrentOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    concurrentInvitation.ID,
+	})
+	deliverySender.providerMessageIDs = append(
+		deliverySender.providerMessageIDs, "resend-invitation-concurrent",
+	)
+	if err := deliveryHandler.Handler()(
+		ctx, asynq.NewTask(TaskDeliverInvitation, concurrentPayload),
+	); err != nil {
+		t.Fatalf("deliver concurrent invitation: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET response_blocks =
+		    '[{"key":"changed","type":"free_text","required":true}]'::jsonb
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("change live definition after invitation: %v", err)
+	}
+	concurrentPath := "/v1/public/email-feedback/" + concurrentToken
+	concurrentResponses := make(chan *httptest.ResponseRecorder, 2)
+	var submitters sync.WaitGroup
+	for range 2 {
+		submitters.Add(1)
+		go func() {
+			defer submitters.Done()
+			concurrentResponses <- publicEmailFeedbackRequest(
+				publicRouter, "acme", http.MethodPost, concurrentPath,
+				`{"responses":{"rating":5}}`,
+			)
+		}()
+	}
+	submitters.Wait()
+	close(concurrentResponses)
+	createdCount, unavailableCount := 0, 0
+	for response := range concurrentResponses {
+		switch response.Code {
+		case http.StatusCreated:
+			createdCount++
+		case http.StatusNotFound:
+			unavailableCount++
+		default:
+			t.Fatalf("concurrent collection POST = %d body=%s",
+				response.Code, response.Body.String())
+		}
+	}
+	if createdCount != 1 || unavailableCount != 1 {
+		t.Fatalf("concurrent results created=%d unavailable=%d",
+			createdCount, unavailableCount)
+	}
+	var concurrentFeedbackCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM feedbacks
+		WHERE tenant_id = $1 AND client_feedback_id = $2 AND source = 'email'
+	`, tenantID, concurrentInvitation.ID).Scan(&concurrentFeedbackCount); err != nil ||
+		concurrentFeedbackCount != 1 {
+		t.Fatalf("concurrent feedback count=%d error=%v",
+			concurrentFeedbackCount, err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET response_blocks =
+		    '[{"key":"rating","type":"rating","required":false}]'::jsonb
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("restore live definition after concurrent submission: %v", err)
+	}
+
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET collect_contact = true,
+		    allow_comment = true,
+		    response_blocks =
+		        '[{"key":"detail","type":"free_text","required":true}]'::jsonb,
+		    localizations = jsonb_set(
+		        localizations,
+		        '{pt}',
+		        '{
+		            "launcher_label":"Feedback",
+		            "prompt":"Como foi a sua experiência?",
+		            "comment_placeholder":"Mais algum contexto?",
+		            "contact_label":"Email",
+		            "consent_label":"Enviar-me atualizações",
+		            "submit_label":"Enviar",
+		            "success_message":"Obrigado",
+		            "privacy_purpose_summary":"Enviar atualizações sobre este feedback.",
+		            "privacy_lawful_basis_summary":"Consentimento.",
+		            "privacy_retention_summary":"Até retirar o consentimento.",
+		            "block_labels":{"detail":"O que aconteceu?"}
+		        }'::jsonb
+		    )
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("configure contact definition: %v", err)
+	}
+	contactInvitationResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(
+			campaign.ID, "order-contact", "invited@example.com", "pt",
+			"https://shop.example.com/orders/contact",
+		), rawInvitationKey,
+	)
+	if contactInvitationResponse.Code != http.StatusCreated {
+		t.Fatalf("create contact invitation = %d body=%s",
+			contactInvitationResponse.Code, contactInvitationResponse.Body.String())
+	}
+	var contactEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(contactInvitationResponse.Body).Decode(&contactEnvelope); err != nil {
+		t.Fatalf("decode contact invitation: %v", err)
+	}
+	contactInvitation := contactEnvelope.Invitation
+	contactToken, _, err := invitationTokens.Token(contactInvitation.ID)
+	if err != nil {
+		t.Fatalf("derive contact invitation token: %v", err)
+	}
+	var contactOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, contactInvitation.ID).Scan(&contactOutboxID); err != nil {
+		t.Fatalf("load contact invitation outbox: %v", err)
+	}
+	contactPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: contactOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    contactInvitation.ID,
+	})
+	deliverySender.providerMessageIDs = append(
+		deliverySender.providerMessageIDs, "resend-invitation-contact",
+	)
+	if err := deliveryHandler.Handler()(
+		ctx, asynq.NewTask(TaskDeliverInvitation, contactPayload),
+	); err != nil {
+		t.Fatalf("deliver contact invitation: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE widget_rules
+		SET collect_contact = false,
+		    allow_comment = false,
+		    response_blocks =
+		        '[{"key":"rating","type":"rating","required":false}]'::jsonb
+		WHERE id = $1
+	`, ruleID); err != nil {
+		t.Fatalf("change live definition after contact invitation: %v", err)
+	}
+	contactPath := "/v1/public/email-feedback/" + contactToken
+	contactViewResponse := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodGet, contactPath, "",
+	)
+	var contactView struct {
+		Collection InvitationCollectionView `json:"collection"`
+	}
+	if contactViewResponse.Code != http.StatusOK ||
+		json.NewDecoder(contactViewResponse.Body).Decode(&contactView) != nil ||
+		!contactView.Collection.CollectContact ||
+		len(contactView.Collection.ResponseBlocks) != 1 ||
+		contactView.Collection.ResponseBlocks[0].Key != "detail" {
+		t.Fatalf("captured contact view = %d %#v body=%s",
+			contactViewResponse.Code, contactView, contactViewResponse.Body.String())
+	}
+	contactSubmissionBody, _ := json.Marshal(map[string]any{
+		"responses": map[string]any{
+			"detail": "I need the invoice download to be easier to find.",
+		},
+		"comment":         "The rest of checkout worked well.",
+		"reporter_email":  "REPORTER@example.com",
+		"notify_reporter": true,
+		"consent": map[string]any{
+			"purpose":                    feedback.ReporterConsentPurposeFeedbackUpdates,
+			"notice_version":             feedback.ReporterConsentNoticeVersion,
+			"controller_profile_version": contactView.Collection.ControllerProfileVersion,
+			"widget_definition_version":  contactView.Collection.DefinitionVersion,
+			"locale":                     "pt",
+			"granted":                    true,
+		},
+	})
+	contactSubmission := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, contactPath, string(contactSubmissionBody),
+	)
+	if contactSubmission.Code != http.StatusCreated {
+		t.Fatalf("submit contact collection = %d body=%s",
+			contactSubmission.Code, contactSubmission.Body.String())
+	}
+	var contactFeedbackID, contactSource, contactText, contactComment string
+	var contactReporter, consentSource, consentSnapshot string
+	var contactNotify bool
+	var contactIssueID *string
+	if err := root.QueryRow(ctx, `
+		SELECT id, source::text, text, comment, reporter_email::text,
+		       notify_reporter, reporter_consent_source,
+		       reporter_consent_notice_snapshot::text, issue_id
+		FROM feedbacks
+		WHERE tenant_id = $1 AND client_feedback_id = $2
+	`, tenantID, contactInvitation.ID).Scan(
+		&contactFeedbackID, &contactSource, &contactText, &contactComment,
+		&contactReporter, &contactNotify, &consentSource, &consentSnapshot,
+		&contactIssueID,
+	); err != nil {
+		t.Fatalf("load contact email feedback: %v", err)
+	}
+	if contactSource != "email" ||
+		contactText != "I need the invoice download to be easier to find." ||
+		contactComment != "The rest of checkout worked well." ||
+		contactReporter != "reporter@example.com" || !contactNotify ||
+		consentSource != feedback.ReporterConsentSourceEmail ||
+		!strings.Contains(consentSnapshot, `"controller_name": "Acme"`) ||
+		contactIssueID != nil {
+		t.Fatalf(
+			"contact feedback source=%q text=%q comment=%q reporter=%q notify=%t consent=%q snapshot=%s issue=%v",
+			contactSource, contactText, contactComment, contactReporter, contactNotify,
+			consentSource, consentSnapshot, contactIssueID,
+		)
+	}
+	var contactOutboxCount, contactTestimonialCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE resource_type = 'feedback' AND resource_id = $1
+		  AND event = 'feedback.created'
+	`, contactFeedbackID).Scan(&contactOutboxCount); err != nil {
+		t.Fatalf("load contact feedback outbox: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM testimonials WHERE source_feedback_id = $1
+	`, contactFeedbackID).Scan(&contactTestimonialCount); err != nil {
+		t.Fatalf("load contact feedback testimonials: %v", err)
+	}
+	if contactOutboxCount != 1 || contactTestimonialCount != 0 {
+		t.Fatalf("contact outbox=%d testimonials=%d",
+			contactOutboxCount, contactTestimonialCount)
 	}
 
 	retriedInvitation := emailCampaignRequest(

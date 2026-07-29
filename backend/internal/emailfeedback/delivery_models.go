@@ -3,6 +3,8 @@ package emailfeedback
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/acidiney/app.fidibeki/backend/internal/project"
 )
 
 const TaskDeliverInvitation = "email-feedback:deliver-invitation"
@@ -24,6 +26,13 @@ type invitationControllerSnapshot struct {
 	PrivacyContactEmail string `json:"privacy_contact_email"`
 	PrivacyRightsEmail  string `json:"privacy_rights_email"`
 	PrivacyPolicyURL    string `json:"privacy_policy_url"`
+}
+
+type invitationDefinitionSnapshot struct {
+	ResponseBlocks []project.WidgetResponseBlock `json:"response_blocks"`
+	AllowComment   bool                          `json:"allow_comment"`
+	CollectContact bool                          `json:"collect_contact"`
+	AIProcessing   project.AIProcessingConfig    `json:"ai_processing"`
 }
 
 type InvitationDelivery struct {

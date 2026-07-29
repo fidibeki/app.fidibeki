@@ -98,6 +98,16 @@ type MobileSubmissionRequest struct {
 	DeviceLocale     *string                    `json:"device_locale"`
 }
 
+// EmailSubmissionRequest deliberately excludes transport-owned identifiers and browser capture
+// metadata. The invitation supplies the project, definition, locale, source, and page context.
+type EmailSubmissionRequest struct {
+	Responses      map[string]json.RawMessage `json:"responses"`
+	Comment        *string                    `json:"comment"`
+	ReporterEmail  *string                    `json:"reporter_email"`
+	NotifyReporter bool                       `json:"notify_reporter"`
+	Consent        *ReporterConsentInput      `json:"consent"`
+}
+
 type SubmissionRequest struct {
 	ClientFeedbackID string                     `json:"client_feedback_id"`
 	WidgetRuleID     string                     `json:"widget_rule_id"`
