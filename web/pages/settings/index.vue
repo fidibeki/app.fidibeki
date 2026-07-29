@@ -1072,7 +1072,11 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
         <header><div><p class="app-eyebrow">{{ modalEyebrow }}</p><h2 id="settings-modal-title">{{ modalTitle }}</h2></div><button class="app-icon-button" :title="t('admin.common.close')" @click="modal = null"><X :size="18" /></button></header>
 
         <form v-if="modal === 'member'" @submit.prevent="saveMember">
-          <label class="member-email-field">{{ t('admin.settings.members.email') }}<input ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" /><span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span></label>
+          <div class="member-email-field">
+            <label for="member-email">{{ t('admin.settings.members.email') }}</label>
+            <input id="member-email" ref="memberEmailInput" v-model.trim="memberEmail" class="app-input" type="email" required :disabled="memberMode === 'edit'" autofocus :aria-invalid="memberEmailError ? 'true' : undefined" :aria-describedby="memberEmailError ? 'member-email-error' : undefined" />
+            <span v-if="memberEmailError" id="member-email-error" class="settings-field-error" role="alert">{{ memberEmailError }}</span>
+          </div>
           <PermissionEditor :label="t('admin.settings.members.permissions')" :groups="availablePermissionGroups" :permissions="memberPermissions" :active-preset="memberPreset" @apply-preset="applyPreset('member', $event)" @toggle-permission="togglePermission('member', $event)" />
           <p v-if="formError" class="settings-form-error" role="alert">{{ formError }}</p>
           <footer><button class="app-button" type="button" @click="modal = null">{{ t('admin.common.cancel') }}</button><button class="app-button app-button--primary" type="submit" :disabled="pending || !memberEmail || !memberPermissions.length">{{ pending ? t('admin.common.saving') : memberMode === 'invite' ? t('admin.settings.members.sendInvitation') : t('admin.settings.members.savePermissions') }}</button></footer>
@@ -1295,7 +1299,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-modal > header { position: sticky; top: 0; z-index: 2; display: flex; min-height: 68px; align-items: center; justify-content: space-between; padding: 10px 15px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .settings-modal h2 { margin: 3px 0 0; font-size: 15px; }
 .settings-modal form { padding: 16px; }
-.settings-modal form > label, .settings-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
+.settings-modal form > label, .settings-modal form > .member-email-field, .settings-form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 10px; font-weight: 750; }
 .settings-transfer-form { display: grid; gap: 14px; }
 .settings-transfer-form > p:first-child { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .settings-transfer-form label b { color: var(--teal); }

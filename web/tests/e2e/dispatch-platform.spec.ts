@@ -4209,7 +4209,7 @@ test("widget rule save submits a valid update", async ({ page }, testInfo) => {
   await page.getByLabel("Name", { exact: true }).fill("Checkout follow-up");
   await page.getByRole("button", { name: "Save rule" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0].name).toBe("Checkout follow-up");
 });
 
@@ -4261,7 +4261,7 @@ test("widget rule contact collection previews and saves the contextual controlle
   );
 
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0].collect_contact).toBe(true);
   expect(state.widgetRules[0].localizations.en).toMatchObject({
     privacy_purpose_summary: "Send updates about this feedback.",
@@ -4349,7 +4349,7 @@ test("widget rule validation maps nested fields, switches locale, and clears edi
   await expect(summary).not.toContainText("response_blocks[1].key");
 
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   await expect(summary).toHaveCount(0);
 });
 
@@ -4390,7 +4390,7 @@ test("widget lifecycle exposes every status and hides archived rules by default"
 
   await page.getByLabel("Lifecycle status").selectOption("paused");
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[1]).toMatchObject({
     definition_status: "paused",
     enabled: false,
@@ -4444,7 +4444,7 @@ test("widget appearance resolves workspace, project, and definition overrides", 
     .getByLabel("Accent color swatch")
     .fill("#004c45");
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0].appearance_overrides).toMatchObject({
     position: "bottom-left",
     accent_color: "#004c45",
@@ -4914,7 +4914,7 @@ test("widget canvas replay is disabled by the anonymous privacy contract", async
   await expect(canvasNote).toContainText("pixel content is never recorded");
   await page.getByRole("button", { name: "Save rule" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0]).toMatchObject({
     replay_record_canvas: false,
     replay_canvas_fps: 2,
@@ -5123,7 +5123,7 @@ test("replay activation requires an explicit consent mode", async ({
     page.getByText("Replay waits for a structured grant"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0]).toMatchObject({
     replay_mode: "full",
     replay_consent: {
@@ -5245,7 +5245,7 @@ test("widget definitions persist response blocks and localized content", async (
   await page.getByLabel("Prompt", { exact: true }).fill("Como foi o checkout?");
   await page.getByRole("button", { name: "Save rule" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   const saved = state.widgetRules[0] as unknown as {
     response_blocks: Array<{ type: string; required: boolean }>;
     localizations: Record<string, { prompt: string }>;
@@ -5291,15 +5291,17 @@ test("widget targeting edits include and exclude conditions with a local URL tes
     "https://shop.acme.test/checkout/private/card?asset=BAI#details",
   );
   await page.getByRole("button", { name: "Test", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText("Excluded by condition 1.");
+  await expect(
+    page.locator("#widget-rule-form").getByRole("status"),
+  ).toHaveText("Excluded by condition 1.");
   await expect(page.locator(".project-install-diagnostics")).toContainText(
     "Excluded by condition 1.",
   );
   await testURL.fill("https://shop.acme.test/pricing/?asset=BIC#plans");
   await page.getByRole("button", { name: "Test", exact: true }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "This rule is eligible on the tested page.",
-  );
+  await expect(
+    page.locator("#widget-rule-form").getByRole("status"),
+  ).toHaveText("This rule is eligible on the tested page.");
   await expect(page.locator(".project-install-diagnostics")).toContainText(
     "This rule is eligible on the tested page.",
   );
@@ -5494,7 +5496,7 @@ test("launcher variant preview reflects the selected style and side, and saves t
   await capture(page, testInfo, "widget-launcher-variant-preview");
 
   await page.getByRole("button", { name: "Save rule" }).click();
-  await expect(page.getByRole("status")).toHaveText("Widget rule saved.");
+  await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0]).toMatchObject({
     presentation: "launcher",
     launcher_variant: "edge_tab",
@@ -5637,7 +5639,9 @@ test("project settings submit a valid update", async ({ page }, testInfo) => {
   await page.getByLabel("Project name").fill("European Storefront");
   await page.getByRole("button", { name: "Save project" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Project settings saved.");
+  await expect(page.locator(".project-toast")).toHaveText(
+    "Project settings saved.",
+  );
   expect(state.projects[0].name).toBe("European Storefront");
 });
 
@@ -9235,7 +9239,7 @@ test("member invitation keeps email errors beside the field and general errors s
   await page.getByRole("button", { name: "Invite member" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Invite member" });
-  const email = dialog.getByLabel("Email");
+  const email = dialog.getByLabel("Email", { exact: true });
   await email.fill("blocked@other.test");
   await dialog.getByRole("button", { name: "Send invitation" }).click();
 
@@ -9305,7 +9309,9 @@ test("workspace and project reporter access policies remain explicit", async ({
   await page.getByRole("button", { name: "Save project" }).click();
 
   expect(state.projects[0].reporter_access_enabled).toBe(false);
-  await expect(page.getByRole("status")).toHaveText("Project settings saved.");
+  await expect(page.locator(".project-toast")).toHaveText(
+    "Project settings saved.",
+  );
 });
 
 test("settings verifies additional member email domains before invitations", async ({

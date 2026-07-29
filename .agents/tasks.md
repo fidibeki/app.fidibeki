@@ -957,8 +957,11 @@ after the combined Playwright gate exposed that Nuxt was treating the opt-out pa
 child; production route output now contains independent form and opt-out routes. The integration
 and controlled staging procedure, including credential hygiene, QA evidence, and cleanup, is
 documented in `docs/email-feedback.md`. Full backend tests and vet, 174 web unit tests, typecheck,
-production build, and 14 desktop/mobile campaign/form/opt-out Playwright scenarios pass. No
-deployment or production work was performed; issue closure still requires the documented
-controlled staging execution after push/deploy authorization.
+production build, and the complete 322-scenario Playwright suite pass (263 executed, 59
+intentionally skipped), including the 14 desktop/mobile campaign/form/opt-out scenarios. The full
+gate also tightened project-toast and targeting assertions after the campaign readiness status
+made global role selectors ambiguous, and preserved the member email field's accessible name when
+validation help appears. No deployment or production work was performed; issue closure still
+requires the documented controlled staging execution after push/deploy authorization.
 
 **Autonomy:** AFK
