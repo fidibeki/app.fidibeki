@@ -798,3 +798,113 @@ attributes, CSS URLs, logs, AI, integrations, exports, storage, APIs, and backof
 closed under sentinel unit/integration/browser coverage.
 
 **Autonomy:** AFK
+
+## Issue #113: Email Feedback Campaign
+
+**Design:** `docs/superpowers/specs/2026-07-29-email-feedback-campaign-design.md`
+
+**Shared context:** Reuse Widget Definitions, tenant API-key authentication,
+`feedback.SubmissionCore`, the transactional outbox, the shared email composer, tenant-aware public
+URLs, and the existing privacy governance surfaces. GET requests never create Feedback, a recipient
+is never copied into Feedback without explicit consent, and no Issue or Testimonial is created
+automatically.
+
+## Task 45: Configure An Opt-In Email Feedback Campaign
+
+**Depends on:** None (issue #136 is complete)
+**Status:** In Progress
+
+**Outcome:** A project member can create, inspect, edit, activate, pause, and archive an email
+feedback campaign backed by an existing Widget Definition and complete controller profile.
+
+**Why:** No external system may ask Fidibeki to send invitations until the customer has made an
+explicit, valid project-level decision about the form and solicitation.
+
+**Acceptance:** The campaign API/UI integration journey proves tenant isolation, lifecycle
+transitions, definition/localization readiness, controller-profile gating, and preserved historical
+campaigns.
+
+**Autonomy:** AFK
+
+## Task 46: Accept One Idempotent Customer Event
+
+**Depends on:** Task 45
+**Status:** Pending
+
+**Outcome:** A least-privilege tenant API key can turn one external transaction event into one
+queued invitation without exposing a public submission credential.
+
+**Why:** This is the customer-facing server-to-server boundary and the cost/idempotency boundary.
+
+**Acceptance:** One backend HTTP integration journey proves API-key-only enforcement,
+`email_feedback:send`, exact retry reuse, changed-payload conflict, inactive-campaign rejection,
+suppressed-recipient non-enumeration, and atomic outbox creation.
+
+**Autonomy:** AFK
+
+## Task 47: Deliver And Suppress Invitation Email
+
+**Depends on:** Task 46
+**Status:** Pending
+
+**Outcome:** The outbox delivers one branded, tenant-aware, scanner-safe invitation and prevents
+later delivery after opt-out, bounce, or complaint.
+
+**Why:** Invitation acceptance is not useful until delivery is reliable and unwanted delivery is
+durably stopped.
+
+**Acceptance:** One worker/public-webhook integration journey proves deterministic retry, rating
+and form links, provider-message tracking, plaintext-recipient minimization, explicit POST opt-out,
+and bounce/complaint suppression.
+
+**Autonomy:** AFK
+
+## Task 48: Create Feedback Only On Explicit Form Submission
+
+**Depends on:** Task 47
+**Status:** Pending
+
+**Outcome:** An invited person can open a localized form, optionally preselect a rating, and create
+one independent `email` Feedback only by POSTing the form.
+
+**Why:** This closes the product path while remaining safe against email-link scanners.
+
+**Acceptance:** One public HTTP/browser integration journey proves mutation-free GET, query-only
+rating preselection, captured-definition validation, concurrent one-Feedback submission, optional
+explicit contact consent, inbox source rendering, and no automatic Issue or Testimonial.
+
+**Autonomy:** AFK
+
+## Task 49: Govern Invitation Personal Data
+
+**Depends on:** Task 48
+**Status:** Pending
+
+**Outcome:** Invitation records participate in reporter access, erasure, restriction, workspace
+export, retention health, ROPA, and provider-governance controls.
+
+**Why:** The campaign introduces a new processing purpose and address ledger that cannot remain
+outside existing data-rights and retention boundaries.
+
+**Acceptance:** One privacy integration suite proves digest-based subject matching, minimized
+exports, erasure/restriction enforcement, bounded retention, registry completeness, and no
+invented lawful-basis claim.
+
+**Autonomy:** AFK
+
+## Task 50: Prove The Email Feedback Journey
+
+**Depends on:** Tasks 45 through 49
+**Status:** Pending
+
+**Outcome:** The complete customer-event-to-inbox journey is documented, tested, and ready for
+staging validation.
+
+**Why:** Issue #113 should close only when the API, email, public page, Feedback inbox, and privacy
+boundaries work together.
+
+**Acceptance:** The staging-ready E2E creates a campaign and least-privilege key, retries one event,
+opens without mutation, submits one `email` Feedback with no Issue/Testimonial, and suppresses a
+second recipient; all affected backend/web checks pass.
+
+**Autonomy:** AFK
