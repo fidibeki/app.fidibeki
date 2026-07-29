@@ -8,7 +8,7 @@
 
 Deliver the first usable mobile capture path:
 
-`native launcher -> feedback sheet -> secure submission -> Fidibeki inbox`
+`host-owned trigger -> native feedback sheet -> secure submission -> Fidibeki inbox`
 
 The initial SDK targets React Native applications running on iOS and Android. It reuses the
 existing Widget Definition, response blocks, localization, recurrence, attachment verification,
@@ -67,8 +67,8 @@ backendless option.
 3. The mobile app configures `@fidibeki/mobile` with a `sessionProvider` callback. The callback calls
    the customer's backend; the private Fidibeki key never reaches the device.
 4. Fidibeki returns an opaque session token plus the resolved, public-safe Widget Definition.
-5. The SDK applies the definition's recurrence state for the current screen and renders a native
-   launcher/sheet when eligible, or the host opens it imperatively.
+5. The SDK applies the definition's recurrence state for the current screen. The host decides
+   where and how to render its trigger and calls the SDK imperatively to open the native sheet.
 6. A successful submit creates one independent Feedback record. Attachment uploads continue
    idempotently after the accepted-feedback boundary.
 7. The Feedback appears in the existing inbox with its mobile source and screen context. It never
@@ -267,11 +267,18 @@ and existing payload fields remain additive and compatible.
 
 Create a publishable workspace package, `@fidibeki/mobile`, with React and React Native as peer
 dependencies. Staging validation consumes the local workspace build; publishing it to a public
-registry remains outside this staging-only slice. Its public API has three bounded parts:
+registry remains outside this staging-only slice. Its public API has two bounded parts:
 
-- `FidibekiProvider`: API base, async `sessionProvider`, and storage adapter;
-- `FidibekiFeedbackLauncher`: native launcher plus accessible modal sheet;
+- `FidibekiProvider`: API base, async `sessionProvider`, storage adapter, and accessible native
+  sheet;
 - `useFidibekiFeedback`: imperative open/close/status controls for product-owned entry points.
+
+The SDK injects no launcher or trigger. The host application owns the trigger's placement,
+appearance, and interaction pattern. `presentation` and `launcher_variant` remain additive web
+configuration metadata in the shared definition payload but do not gate mobile session minting,
+session validity, or rendering. Any enabled, active definition explicitly selected by the trusted
+host backend may supply the mobile sheet's response blocks, localization, recurrence, privacy
+notices, and supported appearance fields.
 
 The provider may also receive a host-owned `screenshotProvider`. The SDK invokes it only after an
 explicit "Add screenshot" action and only when the resolved definition permits screenshots. It

@@ -69,6 +69,18 @@ Forward this response unchanged from the customer backend to the SDK. Do not per
 raw token in the customer backend. The resolved definition contains only public-safe presentation,
 response-block, recurrence, appearance, contact-notice, and AI-disclosure configuration.
 
+## Host-Owned Trigger
+
+`FidibekiProvider` mounts the native feedback sheet but never injects a launcher, tab, button, or
+other trigger into the application. The host places its own icon, link, menu item, gesture, or
+button and calls `useFidibekiFeedback().open()`. The hook also exposes `eligible`, `status`, and
+`error` so the host can decide whether its trigger should be visible or disabled.
+
+The definition's `presentation` and `launcher_variant` fields are web metadata and do not control
+mobile rendering. Any enabled, active definition selected by the trusted customer backend can
+drive the mobile sheet; response blocks, localization, recurrence, privacy notices, and supported
+appearance fields still apply.
+
 ## Submit Feedback
 
 The SDK submits directly to the widget API base for the selected environment:

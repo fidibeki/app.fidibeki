@@ -13,16 +13,31 @@ JavaScript bundle, iOS application, Android application, mobile configuration fi
 `sessionProvider` response.
 
 ```tsx
-import {
-  FidibekiFeedbackLauncher,
-  FidibekiProvider,
-} from '@fidibeki/mobile'
+import { FidibekiProvider, useFidibekiFeedback } from '@fidibeki/mobile'
 import { createAsyncStorageAdapter } from '@fidibeki/mobile/async-storage'
+import { Pressable, Text } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 const storage = createAsyncStorageAdapter()
 const sessionProvider = ({ platform, screen, display_locale }) =>
   hostAPI.createFeedbackSession({ platform, screen, display_locale })
+
+function AppContent() {
+  const feedback = useFidibekiFeedback()
+
+  return (
+    <>
+      <YourApp />
+      <Pressable
+        accessibilityLabel="Give feedback"
+        disabled={!feedback.eligible}
+        onPress={() => void feedback.open()}
+      >
+        <Text>💬</Text>
+      </Pressable>
+    </>
+  )
+}
 
 <SafeAreaProvider>
   <FidibekiProvider
@@ -34,7 +49,7 @@ const sessionProvider = ({ platform, screen, display_locale }) =>
     sessionProvider={sessionProvider}
     storage={storage}
   >
-    <FidibekiFeedbackLauncher />
+    <AppContent />
   </FidibekiProvider>
 </SafeAreaProvider>
 ```
@@ -46,5 +61,11 @@ The SDK does not use a WebView, request camera or photo-library permissions, col
 derive a device identifier, or invent a context URL. A screenshot can be added only through an
 explicit user action and a host-owned `screenshotProvider`.
 
-The launcher applies the configured position, colors, theme, and native safe-area insets. It does
-not fetch `appearance.logo_url`, avoiding an implicit remote image request from the host app.
+The SDK never injects a launcher. The host application owns the trigger's placement, appearance,
+copy, and interaction pattern, and calls `useFidibekiFeedback().open()` to present the native
+sheet. The provider applies the configured sheet colors, theme, and native safe-area insets. It
+does not fetch `appearance.logo_url`, avoiding an implicit remote image request from the host app.
+
+Web presentation metadata such as `presentation` and `launcher_variant` does not control mobile
+rendering. The host-selected active definition supplies the response blocks, localization,
+recurrence, privacy, and sheet appearance.

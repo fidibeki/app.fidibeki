@@ -92,17 +92,17 @@ func (Store) LockMintedConfiguration(
 ) error {
 	var definitionVersion, controllerVersion int
 	var enabled bool
-	var status, presentation string
+	var status string
 	err := query.QueryRow(ctx, `
 		SELECT rule.definition_version, tenant.privacy_profile_version,
-		       rule.enabled, rule.definition_status::text, rule.presentation::text
+		       rule.enabled, rule.definition_status::text
 		FROM widget_rules AS rule
 		JOIN projects AS project ON project.id = rule.project_id
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
 		WHERE tenant.id = $1 AND project.id = $2 AND rule.id = $3
 		FOR SHARE OF tenant, project, rule
 	`, session.TenantID, session.ProjectID, session.WidgetRuleID).Scan(
-		&definitionVersion, &controllerVersion, &enabled, &status, &presentation,
+		&definitionVersion, &controllerVersion, &enabled, &status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConfigurationChanged
@@ -112,8 +112,7 @@ func (Store) LockMintedConfiguration(
 	}
 	if definitionVersion != session.DefinitionVersion ||
 		controllerVersion != session.ControllerProfileVersion ||
-		!enabled || status != string(project.DefinitionActive) ||
-		presentation != string(project.PresentationLauncher) {
+		!enabled || status != string(project.DefinitionActive) {
 		return ErrConfigurationChanged
 	}
 	return nil

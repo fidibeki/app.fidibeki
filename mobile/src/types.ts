@@ -67,7 +67,7 @@ export interface MobileWidgetDefinition {
   id: string
   definition_key: string
   definition_version: number
-  presentation: 'launcher'
+  presentation: 'launcher' | 'prompt' | 'inline' | 'reaction'
   launcher_variant: 'edge_tab' | 'floating_button'
   objective: 'continuous_feedback' | 'after_engagement' | 'validate_content' | 'detect_friction'
   recurrence_mode: RecurrenceMode
@@ -233,11 +233,6 @@ export interface FidibekiProviderProps {
   screenshotProvider?: ScreenshotProvider
   theme?: MobileTheme
   children: ReactNode
-}
-
-export interface FidibekiFeedbackLauncherProps {
-  accessibilityLabel?: string
-  testID?: string
 }
 
 export type FeedbackDraftPolicy = 'reset' | 'reconcile'

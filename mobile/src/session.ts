@@ -71,7 +71,7 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     !isNonEmptyString(definition.definition_key) ||
     !Number.isInteger(definition.definition_version) ||
     Number(definition.definition_version) < 1 ||
-    definition.presentation !== 'launcher' ||
+    !['launcher', 'prompt', 'inline', 'reaction'].includes(String(definition.presentation)) ||
     !['edge_tab', 'floating_button'].includes(String(definition.launcher_variant)) ||
     !['continuous_feedback', 'after_engagement', 'validate_content', 'detect_friction'].includes(
       String(definition.objective),

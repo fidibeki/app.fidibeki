@@ -15,6 +15,17 @@ describe('capture session and form contracts', () => {
     expect(validateCaptureSession(session())).toEqual(session())
   })
 
+  it.each(['launcher', 'prompt', 'inline', 'reaction'])(
+    'accepts active definition presentation metadata %s',
+    (presentation) => {
+      const candidate = structuredClone(session()) as unknown as {
+        configuration: { definition: { presentation: string } }
+      }
+      candidate.configuration.definition.presentation = presentation
+      expect(validateCaptureSession(candidate)).toEqual(candidate)
+    },
+  )
+
   it('accepts backend legacy/disabled serialization edge cases', () => {
     const legacy = structuredClone(session()) as unknown as {
       configuration: {

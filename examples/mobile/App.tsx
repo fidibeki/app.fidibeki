@@ -1,5 +1,4 @@
 import {
-  FidibekiFeedbackLauncher,
   FidibekiProvider,
   useFidibekiFeedback,
   type ScreenshotAsset,
@@ -52,19 +51,33 @@ function ProductScreen() {
       <StatusBar style="dark" />
       <View style={styles.header}>
         <Text style={styles.brand}>Fidibeki Mobile Example</Text>
-        <Text accessibilityLiveRegion="polite" style={styles.status}>
-          {feedback.status}
-        </Text>
+        <View style={styles.headerActions}>
+          <Text accessibilityLiveRegion="polite" style={styles.status}>
+            {feedback.status}
+          </Text>
+          <Pressable
+            accessibilityLabel="Give feedback"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !feedback.eligible }}
+            disabled={!feedback.eligible}
+            hitSlop={8}
+            onPress={() => void feedback.open()}
+            style={({ pressed }) => [
+              styles.feedbackTrigger,
+              !feedback.eligible ? styles.feedbackTriggerDisabled : null,
+              pressed ? styles.feedbackTriggerPressed : null,
+            ]}
+            testID="host-feedback-trigger"
+          >
+            <Text style={styles.feedbackTriggerEmoji}>💬</Text>
+          </Pressable>
+        </View>
       </View>
       <View style={styles.content}>
         <Text style={styles.title}>Checkout review</Text>
         <Text style={styles.body}>
           This native screen uses a host-minted capture session and explicit screenshot provider.
         </Text>
-        <Pressable accessibilityRole="button" onPress={() => void feedback.open()} style={styles.productButton}>
-          <Text style={styles.productButtonText}>Send product feedback</Text>
-        </Pressable>
-        <FidibekiFeedbackLauncher />
       </View>
     </SafeAreaView>
   )
@@ -104,17 +117,20 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   brand: { flex: 1, color: '#17211f', fontSize: 17, fontWeight: '700' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   status: { color: '#53635f', fontSize: 13 },
   content: { flex: 1, padding: 24, justifyContent: 'center', gap: 18 },
   title: { color: '#17211f', fontSize: 28, fontWeight: '700' },
   body: { color: '#53635f', fontSize: 16, lineHeight: 24 },
-  productButton: {
-    minHeight: 48,
-    borderRadius: 6,
-    backgroundColor: '#17211f',
-    paddingHorizontal: 16,
+  feedbackTrigger: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#eef3f1',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  productButtonText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
+  feedbackTriggerDisabled: { opacity: 0.4 },
+  feedbackTriggerPressed: { backgroundColor: '#dbe7e3' },
+  feedbackTriggerEmoji: { fontSize: 22, lineHeight: 28 },
 })

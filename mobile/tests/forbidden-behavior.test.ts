@@ -24,6 +24,8 @@ describe('forbidden native behavior', () => {
       '/analytics',
       '/interactions',
       '/impressions',
+      'FidibekiFeedbackLauncher',
+      'fidibeki-launcher',
     ]) {
       expect(implementation).not.toContain(forbidden)
     }

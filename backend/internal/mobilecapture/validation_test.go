@@ -112,12 +112,11 @@ func TestResolveConfigurationSelectsExactPublishedLocaleAndPublicSafeLauncher(t 
 	}
 }
 
-func TestResolveConfigurationRejectsInactiveNonLauncherAndForeignContext(t *testing.T) {
+func TestResolveConfigurationRejectsInactiveAndForeignContext(t *testing.T) {
 	t.Parallel()
 	for _, mutate := range []func(*project.WidgetRule){
 		func(rule *project.WidgetRule) { rule.Enabled = false },
 		func(rule *project.WidgetRule) { rule.DefinitionStatus = project.DefinitionPaused },
-		func(rule *project.WidgetRule) { rule.Presentation = project.PresentationInline },
 	} {
 		configuration := mobileTestConfiguration()
 		mutate(&configuration.Rules[0])
@@ -137,6 +136,49 @@ func TestResolveConfigurationRejectsInactiveNonLauncherAndForeignContext(t *test
 	})
 	if fields["context_url"] == "" {
 		t.Fatalf("foreign context passed: %#v", fields)
+	}
+}
+
+func TestResolveConfigurationAcceptsEveryActivePresentationForHostTriggeredMobileCapture(t *testing.T) {
+	t.Parallel()
+	for _, presentation := range []project.WidgetPresentation{
+		project.PresentationLauncher,
+		project.PresentationPrompt,
+		project.PresentationInline,
+		project.PresentationReaction,
+	} {
+		configuration := mobileTestConfiguration()
+		configuration.Rules[0].Presentation = presentation
+		resolved, fields := ResolveConfiguration(configuration, CreateSessionValues{
+			ProjectID: configuration.ProjectID, WidgetDefinitionKey: "mobile-feedback",
+			DisplayLocale: "en",
+		})
+		if len(fields) > 0 || resolved.Definition.Presentation != presentation {
+			t.Fatalf("presentation %q rejected: resolved=%#v fields=%#v", presentation, resolved, fields)
+		}
+	}
+}
+
+func TestResolveSessionConfigurationIgnoresWebPresentationMetadata(t *testing.T) {
+	t.Parallel()
+	for _, presentation := range []project.WidgetPresentation{
+		project.PresentationLauncher,
+		project.PresentationPrompt,
+		project.PresentationInline,
+		project.PresentationReaction,
+	} {
+		configuration := mobileTestConfiguration()
+		configuration.Rules[0].Presentation = presentation
+		session := CaptureSession{
+			WidgetRuleID:             configuration.Rules[0].ID,
+			DisplayLocale:            "en",
+			DefinitionVersion:        configuration.Rules[0].DefinitionVersion,
+			ControllerProfileVersion: configuration.ControllerProfileVersion,
+		}
+		resolved, err := ResolveSessionConfiguration(configuration, session)
+		if err != nil || resolved.Definition.Presentation != presentation {
+			t.Fatalf("presentation %q invalidated session: resolved=%#v err=%v", presentation, resolved, err)
+		}
 	}
 }
 

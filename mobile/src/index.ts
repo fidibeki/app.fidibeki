@@ -1,5 +1,4 @@
 export { MobileClient, canonicalRequest } from './client'
-export { FidibekiFeedbackLauncher } from './launcher'
 export { FidibekiProvider, useFidibekiFeedback } from './provider'
 export { EMPTY_FORM_STATE, MAX_TEXT_LENGTH, createConsentInput, reconcileResponses, validateForm } from './form-state'
 export { systemMessages } from './localization'
@@ -20,7 +19,6 @@ export {
   type FeedbackFormState,
   type FeedbackDraftPolicy,
   type FeedbackStatus,
-  type FidibekiFeedbackLauncherProps,
   type FidibekiProviderProps,
   type FormResponses,
   type MobileAIDisclosure,

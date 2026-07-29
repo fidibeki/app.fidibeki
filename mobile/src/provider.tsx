@@ -7,6 +7,7 @@ import { createConsentInput } from './form-state'
 import { systemMessages } from './localization'
 import { normalizeScreen, RecurrenceEngine } from './recurrence'
 import { validateCaptureSession } from './session'
+import { FeedbackSheet } from './sheet'
 import {
   MobileClientError,
   type FeedbackFormState,
@@ -364,7 +365,12 @@ export function FidibekiProvider({
     ],
   )
 
-  return <FeedbackContext.Provider value={contextValue}>{children}</FeedbackContext.Provider>
+  return (
+    <FeedbackContext.Provider value={contextValue}>
+      {children}
+      <FeedbackSheet />
+    </FeedbackContext.Provider>
+  )
 }
 
 export function useFidibekiFeedback(): UseFidibekiFeedbackResult {

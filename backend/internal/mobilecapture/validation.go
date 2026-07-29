@@ -83,9 +83,8 @@ func ResolveConfiguration(
 		}
 	}
 	if definition == nil || !definition.Enabled ||
-		definition.DefinitionStatus != project.DefinitionActive ||
-		definition.Presentation != project.PresentationLauncher {
-		fields["widget_definition_key"] = "does not identify an active launcher definition"
+		definition.DefinitionStatus != project.DefinitionActive {
+		fields["widget_definition_key"] = "does not identify an active feedback definition"
 		return ResolvedConfiguration{}, fields
 	}
 	if values.ContextURL != nil {
@@ -171,7 +170,6 @@ func ResolveSessionConfiguration(
 	controllerVersion := configuration.ControllerProfileVersion
 	if definition == nil || !definition.Enabled ||
 		definition.DefinitionStatus != project.DefinitionActive ||
-		definition.Presentation != project.PresentationLauncher ||
 		definition.DefinitionVersion != session.DefinitionVersion ||
 		controllerVersion != session.ControllerProfileVersion {
 		return ResolvedConfiguration{}, ErrConfigurationChanged

@@ -1,9 +1,10 @@
 import React from 'react'
+import { Pressable } from 'react-native'
 import TestRenderer, { act, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
 import {
-  FidibekiFeedbackLauncher,
   FidibekiProvider,
   recurrenceStorageKey,
+  useFidibekiFeedback,
   type MobileCaptureSession,
   type ScreenshotProvider,
   type SessionProvider,
@@ -21,6 +22,18 @@ interface NativeTestControls {
 
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+function HostFeedbackTrigger() {
+  const feedback = useFidibekiFeedback()
+  return (
+    <Pressable
+      accessibilityLabel="Open product feedback"
+      disabled={!feedback.eligible}
+      onPress={() => void feedback.open()}
+      testID="host-feedback-trigger"
+    />
+  )
 }
 
 async function renderSDK(
@@ -45,7 +58,7 @@ async function renderSDK(
         storage={options.storage ?? new MemoryStorage()}
         {...(options.screenshotProvider ? { screenshotProvider: options.screenshotProvider } : {})}
       >
-        <FidibekiFeedbackLauncher />
+        <HostFeedbackTrigger />
       </FidibekiProvider>,
     )
     await flush()
@@ -54,9 +67,9 @@ async function renderSDK(
 }
 
 async function openSheet(renderer: ReactTestRenderer): Promise<void> {
-  const launcher = renderer.root.findByProps({ testID: 'fidibeki-launcher' })
+  const trigger = renderer.root.findByProps({ testID: 'host-feedback-trigger' })
   await act(async () => {
-    launcher.props.onPress()
+    trigger.props.onPress()
     await flush()
   })
 }
@@ -73,7 +86,7 @@ async function fillRequiredForm(renderer: ReactTestRenderer): Promise<void> {
   })
 }
 
-describe('native provider, launcher, and modal sheet', () => {
+describe('native provider, host trigger, and modal sheet', () => {
   beforeEach(async () => {
     const native = (await import('react-native')) as unknown as NativeTestControls
     native.__setReducedMotion(false)
@@ -353,7 +366,7 @@ describe('native provider, launcher, and modal sheet', () => {
         sessionProvider={sessionProvider}
         storage={storage}
       >
-        <FidibekiFeedbackLauncher />
+        <HostFeedbackTrigger />
       </FidibekiProvider>
     )
     let renderer!: ReactTestRenderer
@@ -409,7 +422,7 @@ describe('native provider, launcher, and modal sheet', () => {
     expect(sessionProvider).toHaveBeenCalledTimes(2)
     expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(false)
     await act(async () => {
-      renderer.root.findByProps({ testID: 'fidibeki-launcher' }).props.onPress()
+      renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.onPress()
       await flush()
     })
     expect(sessionProvider).toHaveBeenCalledTimes(3)
@@ -439,7 +452,7 @@ describe('native provider, launcher, and modal sheet', () => {
         sessionProvider={sessionProvider}
         storage={new MemoryStorage()}
       >
-        <FidibekiFeedbackLauncher />
+        <HostFeedbackTrigger />
       </FidibekiProvider>
     )
     let renderer!: ReactTestRenderer
@@ -456,7 +469,7 @@ describe('native provider, launcher, and modal sheet', () => {
             definition: definition({
               localization: {
                 ...definition().localization,
-                launcher_label: 'Current screen feedback',
+                prompt: 'Current screen feedback',
               },
             }),
           },
@@ -472,7 +485,7 @@ describe('native provider, launcher, and modal sheet', () => {
             definition: definition({
               localization: {
                 ...definition().localization,
-                launcher_label: 'Obsolete screen feedback',
+                prompt: 'Obsolete screen feedback',
               },
             }),
           },
@@ -500,7 +513,7 @@ describe('native provider, launcher, and modal sheet', () => {
         sessionProvider={sessionProvider}
         storage={storage}
       >
-        <FidibekiFeedbackLauncher />
+        <HostFeedbackTrigger />
       </FidibekiProvider>
     )
     let renderer!: ReactTestRenderer
@@ -551,7 +564,7 @@ describe('native provider, launcher, and modal sheet', () => {
         sessionProvider={sessionProvider}
         storage={storage}
       >
-        <FidibekiFeedbackLauncher />
+        <HostFeedbackTrigger />
       </FidibekiProvider>
     )
     let renderer!: ReactTestRenderer
@@ -569,7 +582,7 @@ describe('native provider, launcher, and modal sheet', () => {
       await flush()
     })
     expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(false)
-    expect(renderer.root.findAllByProps({ testID: 'fidibeki-launcher' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.disabled).toBe(true)
     expect(renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.disabled).toBe(true)
     await act(async () => {
       staleSubmit()
@@ -579,7 +592,7 @@ describe('native provider, launcher, and modal sheet', () => {
     renderer.unmount()
   })
 
-  it('reactivates a cooldown launcher without requiring an app restart', async () => {
+  it('reactivates a cooldown host trigger without requiring an app restart', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-28T12:00:00Z'))
     const current = session({
@@ -612,23 +625,23 @@ describe('native provider, launcher, and modal sheet', () => {
           sessionProvider={sessionProvider}
           storage={storage}
         >
-          <FidibekiFeedbackLauncher />
+          <HostFeedbackTrigger />
         </FidibekiProvider>,
       )
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(renderer.root.findAllByProps({ testID: 'fidibeki-launcher' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.disabled).toBe(true)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000)
     })
     expect(sessionProvider).toHaveBeenCalledTimes(2)
-    expect(renderer.root.findByProps({ testID: 'fidibeki-launcher' })).toBeTruthy()
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.disabled).toBe(false)
     renderer.unmount()
     vi.useRealTimers()
   })
 
-  it('renders edge and floating launchers with resolved appearance', async () => {
+  it('never renders an SDK-owned launcher for web presentation metadata', async () => {
     const edge = session({
       configuration: {
         ...session().configuration,
@@ -645,17 +658,9 @@ describe('native provider, launcher, and modal sheet', () => {
     const renderer = await renderSDK({
       sessionProvider: vi.fn(async () => edge),
     })
-    const launcher = renderer.root.findByProps({ testID: 'fidibeki-launcher' })
-    const style = Object.assign({}, ...launcher.props.style)
-    const layerStyle = Object.assign(
-      {},
-      ...renderer.root.find((node) => node.props.pointerEvents === 'box-none').props.style,
-    )
-    expect(style.backgroundColor).toBe('#123456')
-    expect(style.alignSelf).toBe('flex-start')
-    expect(style.borderBottomLeftRadius).toBe(0)
-    expect(layerStyle.position).toBe('absolute')
-    expect(layerStyle.bottom).toBe(42)
+    expect(renderer.root.findAllByProps({ testID: 'fidibeki-launcher' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' })).toBeTruthy()
+    expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(false)
     renderer.unmount()
   })
 
@@ -671,8 +676,6 @@ describe('native provider, launcher, and modal sheet', () => {
     const renderer = await renderSDK({
       sessionProvider: vi.fn(async () => automatic),
     })
-    const launcherStyle = Object.assign({}, ...renderer.root.findByProps({ testID: 'fidibeki-launcher' }).props.style)
-    expect(launcherStyle.backgroundColor).toBe('#50d0ba')
     await openSheet(renderer)
     const safeArea = renderer.root.find((node) => String(node.type) === 'SafeAreaView')
     expect(Object.assign({}, ...safeArea.props.style).backgroundColor).toBe('#141716')

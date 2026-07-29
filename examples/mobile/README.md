@@ -1,7 +1,8 @@
 # Mobile Example
 
 This Expo app exercises `@fidibeki/mobile` against a host-owned session endpoint and screenshot
-provider.
+provider. Its `💬` button is deliberately owned and positioned by the example app; the SDK injects
+no launcher and opens only when that trigger calls `useFidibekiFeedback().open()`.
 
 ```sh
 pnpm install
