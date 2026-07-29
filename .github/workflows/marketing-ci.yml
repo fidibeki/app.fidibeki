@@ -57,3 +57,4 @@ jobs:
 
           test "$(hsts_header http://127.0.0.1:8098/healthz)" = "max-age=31536000"
           test "$(hsts_header http://127.0.0.1:8098/)" = "max-age=31536000"
+          test "$(hsts_header http://127.0.0.1:8098/definitely-missing)" = "max-age=31536000"
