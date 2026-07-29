@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
@@ -17,8 +18,10 @@ import (
 )
 
 type HTTPOptions struct {
-	Store Store
-	JWT   *auth.JWTManager
+	Store            Store
+	JWT              *auth.JWTManager
+	InvitationTokens *InvitationTokenManager
+	Now              func() time.Time
 }
 
 type httpHandler struct {
@@ -42,6 +45,13 @@ func RegisterRoutes(router chi.Router, options HTTPOptions) {
 		protected, appmiddleware.RequireWritable,
 		appmiddleware.RequirePermission(auth.PermissionProjectUpdate),
 	)...).Patch("/v1/email-feedback-campaigns/{campaignID}", handler.update)
+	router.With(
+		appmiddleware.RequireActive,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequireTenantAPIKey,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequirePermission(auth.PermissionEmailFeedbackSend),
+	).Post("/v1/email-feedback/invitations", handler.createInvitation)
 }
 
 func (handler *httpHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -184,4 +194,26 @@ func writeStoreError(w http.ResponseWriter, err error) {
 
 func writeNotFound(w http.ResponseWriter) {
 	api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
+}
+
+func writeConflict(w http.ResponseWriter, message string) {
+	api.WriteError(w, http.StatusConflict, api.CodeConflict, message, nil)
+}
+
+func writeServiceUnavailable(w http.ResponseWriter) {
+	api.WriteError(
+		w, http.StatusServiceUnavailable, api.CodeServiceUnavailable,
+		"service unavailable", nil,
+	)
+}
+
+func writeInvitationJSON(w http.ResponseWriter, status int, invitation Invitation) {
+	api.WriteJSON(w, status, map[string]any{"invitation": invitation})
+}
+
+func (handler *httpHandler) now() time.Time {
+	if handler.options.Now != nil {
+		return handler.options.Now().UTC()
+	}
+	return time.Now().UTC()
 }

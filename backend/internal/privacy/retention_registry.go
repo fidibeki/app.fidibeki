@@ -92,6 +92,7 @@ func retentionRegistry() []retentionDefinition {
 			Resources: tables(
 				"feedback_tags", "feedbacks", "issue_activities", "issue_comment_mentions",
 				"issue_comments", "issue_counters", "issue_tags", "issue_updates", "issues",
+				"email_feedback_invitations", "email_feedback_suppressions",
 				"member_notifications", "reporter_clarification_requests",
 			),
 		},

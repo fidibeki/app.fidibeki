@@ -28,6 +28,7 @@ const (
 	PermissionAPIKeyRead          Permission = "api_key:read"
 	PermissionAPIKeyDelete        Permission = "api_key:delete"
 	PermissionMobileCaptureCreate Permission = "mobile_capture:create"
+	PermissionEmailFeedbackSend   Permission = "email_feedback:send"
 	PermissionIntegrationCreate   Permission = "integration:create"
 	PermissionIntegrationRead     Permission = "integration:read"
 	PermissionIntegrationUpdate   Permission = "integration:update"
@@ -100,7 +101,7 @@ var AllTenantPermissions = []Permission{
 	PermissionSessionRead, PermissionSessionDelete,
 	PermissionMemberRead, PermissionMemberInvite, PermissionMemberUpdate, PermissionMemberRemove,
 	PermissionAPIKeyCreate, PermissionAPIKeyRead, PermissionAPIKeyDelete,
-	PermissionMobileCaptureCreate,
+	PermissionMobileCaptureCreate, PermissionEmailFeedbackSend,
 	PermissionIntegrationCreate, PermissionIntegrationRead, PermissionIntegrationUpdate, PermissionIntegrationDelete,
 	PermissionTestimonialRead, PermissionTestimonialCreate, PermissionTestimonialUpdate,
 	PermissionTestimonialDelete, PermissionTestimonialPublish,

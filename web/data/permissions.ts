@@ -28,6 +28,14 @@ export const tenantPermissionGroups = [
     permissions: ['api_key:create', 'api_key:read', 'api_key:delete'],
   },
   {
+    label: 'Mobile capture',
+    permissions: ['mobile_capture:create'],
+  },
+  {
+    label: 'Email feedback',
+    permissions: ['email_feedback:send'],
+  },
+  {
     label: 'Integrations',
     permissions: ['integration:create', 'integration:read', 'integration:update', 'integration:delete'],
   },

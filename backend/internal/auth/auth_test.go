@@ -155,8 +155,8 @@ func TestPlatformPermissionsAreExplicit(t *testing.T) {
 func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	t.Parallel()
 	permissions := TenantPermissionStrings()
-	if len(permissions) != 39 {
-		t.Fatalf("tenant permission count = %d, want 39", len(permissions))
+	if len(permissions) != 40 {
+		t.Fatalf("tenant permission count = %d, want 40", len(permissions))
 	}
 	if !ValidTenantPermissions(permissions) {
 		t.Error("full tenant permission set is invalid")
@@ -168,6 +168,9 @@ func TestTenantPermissionsAreExplicitAndValidated(t *testing.T) {
 	}
 	if !HasPermission(permissions, PermissionMobileCaptureCreate) {
 		t.Error("mobile_capture:create is missing from the tenant permission set")
+	}
+	if !HasPermission(permissions, PermissionEmailFeedbackSend) {
+		t.Error("email_feedback:send is missing from the tenant permission set")
 	}
 	if PermissionTestimonialPublish == PermissionTestimonialUpdate {
 		t.Error("testimonial:publish must not collapse into testimonial:update")

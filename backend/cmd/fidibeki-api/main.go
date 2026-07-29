@@ -229,6 +229,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	if err != nil {
 		return fmt.Errorf("initialize JWT manager: %w", err)
 	}
+	emailFeedbackTokens, err := emailfeedback.NewInvitationTokenManager(settings.JWTSecret)
+	if err != nil {
+		return fmt.Errorf("initialize email feedback token manager: %w", err)
+	}
 	reporterTokens, err := auth.NewJWTManager(
 		settings.JWTSecret, platformadmin.DefaultIssuer, settings.ReporterTokenTTL,
 	)
@@ -499,6 +503,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})
 	emailfeedback.RegisterRoutes(tenantRoutes, emailfeedback.HTTPOptions{
 		Store: emailfeedback.Store{}, JWT: jwtManager,
+		InvitationTokens: emailFeedbackTokens,
 	})
 	mobileCaptureStore := mobilecapture.Store{ProjectStore: projectStore}
 	mobilecapture.RegisterTenantRoutes(tenantRoutes, mobilecapture.TenantHTTPOptions{

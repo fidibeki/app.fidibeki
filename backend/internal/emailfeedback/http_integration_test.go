@@ -17,6 +17,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -112,6 +113,29 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	`, tenantID).Scan(&readerID); err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
+	rawInvitationKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
+	limitedInvitationKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUW"
+	var invitationKeyID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO api_keys (
+			tenant_id, name, token_hash, token_prefix, permissions
+		) VALUES (
+			$1, 'Email feedback sender', $2, 'fk_live_0123...',
+			ARRAY['email_feedback:send']
+		) RETURNING id
+	`, tenantID, auth.HashToken(rawInvitationKey)).Scan(&invitationKeyID); err != nil {
+		t.Fatalf("create invitation API key: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO api_keys (
+			tenant_id, name, token_hash, token_prefix, permissions
+		) VALUES (
+			$1, 'Email feedback reader', $2, 'fk_live_0123...',
+			ARRAY['project:read']
+		)
+	`, tenantID, auth.HashToken(limitedInvitationKey)); err != nil {
+		t.Fatalf("create limited invitation API key: %v", err)
+	}
 	var betaTenantID, betaOwnerID string
 	if err := root.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug, plan, status)
@@ -124,6 +148,17 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		VALUES ($1, 'owner@beta.test', $2) RETURNING id
 	`, betaTenantID, auth.TenantPermissionStrings()).Scan(&betaOwnerID); err != nil {
 		t.Fatalf("create beta owner: %v", err)
+	}
+	betaInvitationKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUX"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO api_keys (
+			tenant_id, name, token_hash, token_prefix, permissions
+		) VALUES (
+			$1, 'Beta email feedback sender', $2, 'fk_live_0123...',
+			ARRAY['email_feedback:send']
+		)
+	`, betaTenantID, auth.HashToken(betaInvitationKey)); err != nil {
+		t.Fatalf("create beta invitation API key: %v", err)
 	}
 
 	pools, err := db.OpenPools(ctx, appURL, adminURL, 8, 4)
@@ -142,13 +177,25 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	betaToken, _, _ := jwt.IssueTenant(
 		betaOwnerID, betaTenantID, auth.TenantPermissionStrings(),
 	)
+	invitationTokens, err := NewInvitationTokenManager(strings.Repeat("i", 32))
+	if err != nil {
+		t.Fatalf("create invitation token manager: %v", err)
+	}
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	routes := chi.NewRouter()
-	RegisterRoutes(routes, HTTPOptions{Store: Store{}, JWT: jwt})
-	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
+	RegisterRoutes(routes, HTTPOptions{
+		Store: Store{}, JWT: jwt, InvitationTokens: invitationTokens,
+		Now: func() time.Time { return now },
+	})
+	handler := appmiddleware.TenantAPIKeyRateLimit(
+		appmiddleware.TenantAPIKeyRateLimitOptions{
+			Limiter: allowEmailFeedbackCredentialLimiter{},
+		},
+	)(appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin:  db.BeginFromPool(pools.App),
 		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
-	})(routes)
+	})(routes))
 
 	body := campaignBody(projectID, ruleID, "draft", "pt")
 	denied := emailCampaignRequest(
@@ -223,6 +270,256 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		t.Fatalf("activated campaign = %#v error=%v", envelope.Campaign, err)
 	}
 
+	invitationRequest := invitationBody(
+		campaign.ID, "order-123", "Customer@Example.com", "", "https://shop.example.com/orders/123",
+	)
+	humanInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationRequest, ownerToken,
+	)
+	if humanInvitation.Code != http.StatusForbidden {
+		t.Fatalf("human invitation = %d body=%s",
+			humanInvitation.Code, humanInvitation.Body.String())
+	}
+	limitedInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationRequest, limitedInvitationKey,
+	)
+	if limitedInvitation.Code != http.StatusForbidden {
+		t.Fatalf("limited invitation = %d body=%s",
+			limitedInvitation.Code, limitedInvitation.Body.String())
+	}
+	createdInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationRequest, rawInvitationKey,
+	)
+	if createdInvitation.Code != http.StatusCreated {
+		t.Fatalf("create invitation = %d body=%s",
+			createdInvitation.Code, createdInvitation.Body.String())
+	}
+	var invitationEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(createdInvitation.Body).Decode(&invitationEnvelope); err != nil {
+		t.Fatalf("decode invitation: %v", err)
+	}
+	invitation := invitationEnvelope.Invitation
+	rawInvitationToken, expectedTokenHash, err := invitationTokens.Token(invitation.ID)
+	if err != nil {
+		t.Fatalf("derive invitation token: %v", err)
+	}
+	if invitation.Status != InvitationQueued || invitation.Locale != "pt" ||
+		invitation.ExternalEventID != "order-123" ||
+		!invitation.ExpiresAt.Equal(now.Add(30*24*time.Hour)) ||
+		strings.Contains(createdInvitation.Body.String(), "customer@example.com") ||
+		strings.Contains(createdInvitation.Body.String(), rawInvitationToken) ||
+		strings.Contains(createdInvitation.Body.String(), "recipient_email") ||
+		strings.Contains(createdInvitation.Body.String(), "token_hash") ||
+		strings.Contains(createdInvitation.Body.String(), "request_digest") {
+		t.Fatalf("unsafe or invalid invitation response = %#v body=%s",
+			invitation, createdInvitation.Body.String())
+	}
+	var storedRecipient, storedDigest, storedTokenHash, storedRequestDigest string
+	var storedStatus string
+	var snapshotCount, invitationCount, outboxCount int
+	var outboxData string
+	if err := root.QueryRow(ctx, `
+		SELECT recipient_email::text, recipient_digest, token_hash, request_digest,
+		       status::text,
+		       (jsonb_typeof(campaign_snapshot) = 'object')::int
+		         + (jsonb_typeof(definition_snapshot) = 'object')::int
+		         + (jsonb_typeof(localization_snapshot) = 'object')::int
+		         + (jsonb_typeof(controller_snapshot) = 'object')::int
+		FROM email_feedback_invitations
+		WHERE id = $1
+	`, invitation.ID).Scan(
+		&storedRecipient, &storedDigest, &storedTokenHash, &storedRequestDigest,
+		&storedStatus, &snapshotCount,
+	); err != nil {
+		t.Fatalf("load invitation ledger: %v", err)
+	}
+	if storedRecipient != "customer@example.com" ||
+		storedDigest != digestString(storedRecipient) ||
+		storedTokenHash != expectedTokenHash ||
+		storedRequestDigest == "" || storedRequestDigest == storedRecipient ||
+		storedStatus != string(InvitationQueued) || snapshotCount != 4 {
+		t.Fatalf(
+			"invitation ledger recipient=%q digest=%q token=%q request=%q status=%q snapshots=%d",
+			storedRecipient, storedDigest, storedTokenHash, storedRequestDigest,
+			storedStatus, snapshotCount,
+		)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*), COALESCE(max(data::text), '')
+		FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, invitation.ID).Scan(&outboxCount, &outboxData); err != nil {
+		t.Fatalf("load invitation outbox: %v", err)
+	}
+	if outboxCount != 1 || outboxData != "{}" ||
+		strings.Contains(outboxData, storedRecipient) ||
+		strings.Contains(outboxData, rawInvitationToken) {
+		t.Fatalf("invitation outbox count=%d data=%q", outboxCount, outboxData)
+	}
+
+	retriedInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationRequest, rawInvitationKey,
+	)
+	if retriedInvitation.Code != http.StatusOK ||
+		!strings.Contains(retriedInvitation.Body.String(), invitation.ID) {
+		t.Fatalf("retry invitation = %d body=%s",
+			retriedInvitation.Code, retriedInvitation.Body.String())
+	}
+	conflictingInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(
+			campaign.ID, "order-123", "other@example.com", "",
+			"https://shop.example.com/orders/123",
+		), rawInvitationKey,
+	)
+	if conflictingInvitation.Code != http.StatusConflict {
+		t.Fatalf("conflicting invitation = %d body=%s",
+			conflictingInvitation.Code, conflictingInvitation.Body.String())
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM email_feedback_invitations
+		WHERE tenant_id = $1 AND campaign_id = $2 AND external_event_id = 'order-123'
+	`, tenantID, campaign.ID).Scan(&invitationCount); err != nil || invitationCount != 1 {
+		t.Fatalf("idempotent invitation count=%d error=%v", invitationCount, err)
+	}
+
+	if _, err := root.Exec(ctx, `
+		UPDATE email_feedback_campaigns SET status = 'paused' WHERE id = $1
+	`, campaign.ID); err != nil {
+		t.Fatalf("pause campaign for invitation: %v", err)
+	}
+	inactiveInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-124", "next@example.com", "", ""),
+		rawInvitationKey,
+	)
+	if inactiveInvitation.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("inactive invitation = %d body=%s",
+			inactiveInvitation.Code, inactiveInvitation.Body.String())
+	}
+	retryWhilePaused := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationRequest, rawInvitationKey,
+	)
+	if retryWhilePaused.Code != http.StatusOK ||
+		!strings.Contains(retryWhilePaused.Body.String(), invitation.ID) {
+		t.Fatalf("paused exact retry = %d body=%s",
+			retryWhilePaused.Code, retryWhilePaused.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE email_feedback_campaigns SET status = 'active' WHERE id = $1
+	`, campaign.ID); err != nil {
+		t.Fatalf("reactivate campaign for invitation: %v", err)
+	}
+	unsupportedLocale := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-125", "locale@example.com", "fr", ""),
+		rawInvitationKey,
+	)
+	if unsupportedLocale.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsupported locale = %d body=%s",
+			unsupportedLocale.Code, unsupportedLocale.Body.String())
+	}
+	crossTenantInvitation := emailCampaignRequest(
+		handler, "beta", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-126", "beta@example.com", "", ""),
+		betaInvitationKey,
+	)
+	if crossTenantInvitation.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant invitation = %d body=%s",
+			crossTenantInvitation.Code, crossTenantInvitation.Body.String())
+	}
+
+	suppressedEmail := "blocked@example.com"
+	if _, err := root.Exec(ctx, `
+		INSERT INTO email_feedback_suppressions (
+			tenant_id, recipient_digest, reason,
+			first_suppressed_at, last_suppressed_at
+		) VALUES ($1, $2, 'opt_out', $3, $3)
+	`, tenantID, digestString(suppressedEmail), now); err != nil {
+		t.Fatalf("create email suppression: %v", err)
+	}
+	suppressedInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-127", suppressedEmail, "", ""),
+		rawInvitationKey,
+	)
+	if suppressedInvitation.Code != http.StatusCreated ||
+		!strings.Contains(suppressedInvitation.Body.String(), `"status":"suppressed"`) ||
+		strings.Contains(suppressedInvitation.Body.String(), suppressedEmail) {
+		t.Fatalf("suppressed invitation = %d body=%s",
+			suppressedInvitation.Code, suppressedInvitation.Body.String())
+	}
+	var suppressedRecipient, suppressedToken *string
+	var suppressedOutboxCount int
+	if err := root.QueryRow(ctx, `
+		SELECT recipient_email::text, token_hash
+		FROM email_feedback_invitations
+		WHERE tenant_id = $1 AND campaign_id = $2 AND external_event_id = 'order-127'
+	`, tenantID, campaign.ID).Scan(&suppressedRecipient, &suppressedToken); err != nil {
+		t.Fatalf("load suppressed invitation: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation'
+		  AND resource_id = (
+		      SELECT id FROM email_feedback_invitations
+		      WHERE tenant_id = $1 AND campaign_id = $2
+		        AND external_event_id = 'order-127'
+		  )
+	`, tenantID, campaign.ID).Scan(&suppressedOutboxCount); err != nil {
+		t.Fatalf("load suppressed invitation outbox: %v", err)
+	}
+	if suppressedRecipient != nil || suppressedToken != nil || suppressedOutboxCount != 0 {
+		t.Fatalf("suppressed recipient=%v token=%v outbox=%d",
+			suppressedRecipient, suppressedToken, suppressedOutboxCount)
+	}
+
+	if _, err := root.Exec(ctx, `
+		CREATE FUNCTION reject_email_feedback_outbox() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.event::text = 'email_feedback.invitation_created' THEN
+				RAISE EXCEPTION 'forced email feedback outbox failure';
+			END IF;
+			RETURN NEW;
+		END
+		$$;
+		CREATE TRIGGER reject_email_feedback_outbox
+		BEFORE INSERT ON outbox_events
+		FOR EACH ROW EXECUTE FUNCTION reject_email_feedback_outbox()
+	`); err != nil {
+		t.Fatalf("install outbox failure trigger: %v", err)
+	}
+	atomicFailure := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-atomic", "atomic@example.com", "", ""),
+		rawInvitationKey,
+	)
+	if atomicFailure.Code != http.StatusServiceUnavailable {
+		t.Fatalf("atomic failure invitation = %d body=%s",
+			atomicFailure.Code, atomicFailure.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		DROP TRIGGER reject_email_feedback_outbox ON outbox_events;
+		DROP FUNCTION reject_email_feedback_outbox()
+	`); err != nil {
+		t.Fatalf("remove outbox failure trigger: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM email_feedback_invitations
+		WHERE tenant_id = $1 AND campaign_id = $2
+		  AND external_event_id = 'order-atomic'
+	`, tenantID, campaign.ID).Scan(&invitationCount); err != nil || invitationCount != 0 {
+		t.Fatalf("atomic rollback invitation count=%d error=%v", invitationCount, err)
+	}
+
 	listed := emailCampaignRequest(
 		handler, "acme", http.MethodGet,
 		"/v1/email-feedback-campaigns?project_id="+projectID, "", readerToken,
@@ -289,6 +586,28 @@ func campaignBody(projectID, ruleID, status, locale string) string {
 	}`
 }
 
+func invitationBody(
+	campaignID string,
+	externalEventID string,
+	recipientEmail string,
+	locale string,
+	contextURL string,
+) string {
+	payload := map[string]any{
+		"campaign_id":       campaignID,
+		"external_event_id": externalEventID,
+		"recipient_email":   recipientEmail,
+	}
+	if locale != "" {
+		payload["locale"] = locale
+	}
+	if contextURL != "" {
+		payload["context_url"] = contextURL
+	}
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
+}
+
 func quote(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
@@ -346,4 +665,16 @@ func emailCampaignRoleURL(
 	}
 	parsed.User = url.UserPassword(role, password)
 	return parsed.String()
+}
+
+type allowEmailFeedbackCredentialLimiter struct{}
+
+func (allowEmailFeedbackCredentialLimiter) Allow(
+	_ context.Context,
+	_ string,
+	window ratelimit.Window,
+) (ratelimit.Decision, error) {
+	return ratelimit.Decision{
+		Allowed: true, Limit: window.Limit, Remaining: window.Limit - 1,
+	}, nil
 }

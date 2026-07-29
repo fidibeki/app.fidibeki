@@ -829,7 +829,7 @@ campaigns.
 ## Task 46: Accept One Idempotent Customer Event
 
 **Depends on:** Task 45
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** A least-privilege tenant API key can turn one external transaction event into one
 queued invitation without exposing a public submission credential.
@@ -845,7 +845,7 @@ suppressed-recipient non-enumeration, and atomic outbox creation.
 ## Task 47: Deliver And Suppress Invitation Email
 
 **Depends on:** Task 46
-**Status:** Pending
+**Status:** In Progress
 
 **Outcome:** The outbox delivers one branded, tenant-aware, scanner-safe invitation and prevents
 later delivery after opt-out, bounce, or complaint.
