@@ -105,17 +105,18 @@ smoke on an iOS simulator and an Android emulator or equivalent device CI; JS-on
 insufficient. Screenshot tests cover host cancellation, permission/provider error, URI
 non-disclosure, invalid MIME/size/read, direct upload, and deterministic cleanup.
 
-**Status:** Implemented and Android-validated on 2026-07-28. The package, example application, unit/component
-coverage, typechecks, ESM/CJS/type builds, dry-run package, Expo native generation, Android
-debug/release builds, and a Pixel emulator staging submission/upload/cold-restart smoke are green. The
-Android release manifest has no camera, photo-library, or storage permissions. iOS native
-compilation and runtime acceptance remain blocked because the available Xcode installation has no
-eligible iOS platform or simulator runtime; prebuild and CocoaPods installation pass, but this task
-is not accepted until an iOS build and runtime smoke pass. The final SDK hardening also covers
-draft isolation and reconciliation, stale-session invalidation, host re-render stability,
-cooldown wake-up, native safe-area placement, automatic appearance, URL validation, PII-free
-bounded idempotency evidence, concurrent retry coalescing, malformed response recovery, and
-corrupt recurrence storage.
+**Status:** Completed on 2026-07-29. The package, example application, unit/component coverage,
+typechecks, ESM/CJS/type builds, dry-run package, Expo native generation, Android debug/release
+builds, and Pixel emulator staging submission/upload/cold-restart smoke are green. The Android
+release manifest has no camera, photo-library, or storage permissions. Xcode 26.6 regenerated and
+compiled the release example for an iPhone 17 Pro simulator running iOS 26.5. The native iOS local
+smoke acquired a host-minted session, exercised the modal, keyboard and safe-area layout, submitted
+the configured responses, uploaded and completed a screenshot, rendered the success state, and
+retained `never` recurrence across a cold restart with an absent launcher. The final SDK hardening
+also covers draft isolation and reconciliation, stale-session invalidation, host re-render
+stability, cooldown wake-up, native safe-area placement, automatic appearance, URL validation,
+PII-free bounded idempotency evidence, concurrent retry coalescing, malformed response recovery,
+and corrupt recurrence storage.
 
 ## Task 6: Document, Audit, Validate, And Publish To Staging
 
@@ -134,7 +135,7 @@ first-slice contract is proven.
 **Acceptance:** Local and CI gates are green, staging evidence covers both platforms, the issue
 comment links commits/tests/deployments, and no production action occurred.
 
-**Status:** In progress on 2026-07-28. Documentation, privacy/retention registration, backend
+**Status:** Completed on 2026-07-29. Documentation, privacy/retention registration, backend
 hardening, mobile source/context delivery, Android runtime evidence, and an independent backend
 and SDK security/correctness re-review are complete. Local repository gates pass, including the
 full backend coverage threshold, focused mobile-capture race test, 62 mobile tests with 84.77%
@@ -150,6 +151,16 @@ The release example running in a Pixel emulator then accepted `fb_zvVsKR3O` thro
 with Android source, rating 5, normalized `/checkout/review` screen, a 39,754-byte safe completed
 screenshot, and no Issue. A cold restart retained the 30-day cooldown, reported `ineligible`, and
 did not render the launcher. The disposable least-privilege API key and its capture sessions were
-deleted after the smoke, and the existing staging rule's attachment setting was restored. No
-production action occurred. The remaining acceptance blocker is an iOS native build and runtime
-smoke: Xcode reports no eligible iOS platform or simulator destination, so #136 must remain open.
+deleted after the smoke, and the existing staging rule's attachment setting was restored.
+
+The iPhone 17 Pro release example then submitted `fb_5a9Q2hAH` through the native UI against
+staging. The persisted result has iOS source, application `com.fidibeki.mobileexample`, normalized
+`/checkout/review` screen, app version `0.1.0`, OS version `26.5`, rating 5, a 142,907-byte
+completed and safe PNG screenshot, and no Issue. The tenant inbox API returned that exact item
+under the combined `source=ios`, `issue=unlinked`, and `attachment=screenshot` filters. A cold
+restart retained the 30-day cooldown, reported `ineligible`, hid the launcher, and prevented the
+explicit host button from reopening the form. Staging worker deployment
+`24f35f95-5b43-45fd-9f69-0e491b48ab7e` processed the queued attachment after the sleeping worker
+was restarted. API and worker error logs were clean. The disposable capture and read-only inbox
+keys and their capture sessions were deleted, the staging presentation was restored to `prompt`,
+and no production action occurred.
