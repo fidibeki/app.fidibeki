@@ -970,11 +970,13 @@ scanner-safe rating GETs, one explicit `email` Feedback with the expected respon
 Issue, reporter, Testimonial, or Testimonial candidate, followed by opt-out and a neutral suppressed
 event with no recipient, token, provider message, or outbox row. Cleanup archived Feedback
 `fb_lIy92VAS` and campaign `7a11d5f4-7fd2-453a-affc-c13190def3e3` and revoked the temporary API key.
-Issue closure remains gated on external delivery evidence: the staging API has no non-empty
-`RESEND_WEBHOOK_SECRET`, and its send-only Resend key receives `401` from the message-inspection API,
-so `last_event=delivered` and webhook health could not be proven. The validation also demonstrated
-that Redis queue traffic does not wake a Railway Serverless worker. Serverless was therefore
-disabled exclusively for the staging worker after the run; its service instance now reports
-`sleepApplication=false`.
+Both provider-accepted messages used unique `delivered+label@resend.dev` recipients, which
+[Resend designates](https://resend.com/docs/knowledge-base/what-email-addresses-to-use-for-testing)
+to simulate delivery without affecting sender reputation. The runtime Resend credential correctly
+remains send-only; no broader inspection credential is required. Issue closure remains gated only
+on webhook health because the staging API has no non-empty `RESEND_WEBHOOK_SECRET`. The validation
+also demonstrated that Redis queue traffic does not wake a Railway Serverless worker. Serverless
+was therefore disabled exclusively for the staging worker after the run; its service instance now
+reports `sleepApplication=false`.
 
 **Autonomy:** AFK
