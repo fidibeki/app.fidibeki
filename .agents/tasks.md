@@ -961,7 +961,18 @@ production build, and the complete 322-scenario Playwright suite pass (263 execu
 intentionally skipped), including the 14 desktop/mobile campaign/form/opt-out scenarios. The full
 gate also tightened project-toast and targeting assertions after the campaign readiness status
 made global role selectors ambiguous, and preserved the member email field's accessible name when
-validation help appears. No deployment or production work was performed; issue closure still
-requires the documented controlled staging execution after push/deploy authorization.
+validation help appears.
+
+Controlled staging validation on commit
+`07622eaa31ba6310c606e6d1937b2d65dd0773f7` proved campaign readiness, a short-lived key containing
+only `email_feedback:send`, `201`/`200` exact-retry convergence, one processed provider message,
+scanner-safe rating GETs, one explicit `email` Feedback with the expected response/context and no
+Issue, reporter, Testimonial, or Testimonial candidate, followed by opt-out and a neutral suppressed
+event with no recipient, token, provider message, or outbox row. Cleanup archived Feedback
+`fb_lIy92VAS` and campaign `7a11d5f4-7fd2-453a-affc-c13190def3e3` and revoked the temporary API key.
+Issue closure remains gated on external delivery evidence: the staging API has no non-empty
+`RESEND_WEBHOOK_SECRET`, and its send-only Resend key receives `401` from the message-inspection API,
+so `last_event=delivered` and webhook health could not be proven. The worker also had to be restarted
+because queue traffic does not wake its Railway scale-to-zero deployment.
 
 **Autonomy:** AFK
