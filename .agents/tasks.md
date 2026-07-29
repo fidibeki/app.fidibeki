@@ -974,9 +974,17 @@ Both provider-accepted messages used unique `delivered+label@resend.dev` recipie
 [Resend designates](https://resend.com/docs/knowledge-base/what-email-addresses-to-use-for-testing)
 to simulate delivery without affecting sender reputation. The runtime Resend credential correctly
 remains send-only; no broader inspection credential is required. Issue closure remains gated only
-on webhook health because the staging API has no non-empty `RESEND_WEBHOOK_SECRET`. The validation
-also demonstrated that Redis queue traffic does not wake a Railway Serverless worker. Serverless
-was therefore disabled exclusively for the staging worker after the run; its service instance now
-reports `sleepApplication=false`.
+on webhook health. A follow-up confirmed that staging now has a non-empty
+`RESEND_WEBHOOK_SECRET`: an unsigned probe returns `400 webhook signature is invalid`, while a
+validly signed payload using an unmatched provider message returns `200 accepted` without mutating
+tenant data. However, controlled bounce invitation `d531fb6a-15d6-4b93-8d4b-0a554d92e736`
+remained `sent` with a provider message and no `webhook_event_id` for more than ten minutes, and
+Railway recorded no provider POST to the endpoint during that window. Closure therefore remains
+gated on confirming that the Resend endpoint is enabled in the same team as the staging send-only
+key, subscribes to `email.bounced` and `email.complained`, and delivers one real test event. The
+temporary campaign was restored to `archived` and all temporary sender keys were revoked. The
+validation also demonstrated that Redis queue traffic does not wake a Railway Serverless worker.
+Serverless was therefore disabled exclusively for the staging worker after the run; its service
+instance now reports `sleepApplication=false`.
 
 **Autonomy:** AFK
