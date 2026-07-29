@@ -179,6 +179,43 @@ export interface Project {
   updated_at: string
 }
 
+export type EmailFeedbackCampaignStatus = 'draft' | 'active' | 'paused' | 'archived'
+
+export interface EmailFeedbackCampaignReadiness {
+  ready: boolean
+  reasons: string[]
+}
+
+export interface EmailFeedbackCampaign {
+  id: string
+  tenant_id: string
+  project_id: string
+  widget_rule_id: string
+  widget_rule_name: string
+  campaign_key: string
+  name: string
+  status: EmailFeedbackCampaignStatus
+  default_locale: string
+  subject: string
+  introduction: string
+  invitation_ttl_days: number
+  readiness: EmailFeedbackCampaignReadiness
+  created_at: string
+  updated_at: string
+}
+
+export interface EmailFeedbackCampaignInput {
+  project_id: string
+  widget_rule_id: string
+  campaign_key: string
+  name: string
+  status: EmailFeedbackCampaignStatus
+  default_locale: string
+  subject: string
+  introduction: string
+  invitation_ttl_days: number
+}
+
 export type MatcherType = 'all_pages' | 'url_exact' | 'url_prefix' | 'url_regex'
 export type TriggerType = 'delay' | 'scroll' | 'exit_intent'
 export type WidgetPosition = 'bottom-left' | 'bottom-right'

@@ -23,6 +23,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/emailfeedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/identity"
 	"github.com/acidiney/app.fidibeki/backend/internal/integration"
@@ -496,6 +497,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	projectStore := project.Store{PublicBaseURL: settings.PublicBaseURL}
 	project.RegisterRoutes(tenantRoutes, project.HTTPOptions{Store: projectStore, JWT: jwtManager})
 	apikey.RegisterRoutes(tenantRoutes, apikey.HTTPOptions{Store: apikey.Store{}, JWT: jwtManager})
+	emailfeedback.RegisterRoutes(tenantRoutes, emailfeedback.HTTPOptions{
+		Store: emailfeedback.Store{}, JWT: jwtManager,
+	})
 	mobileCaptureStore := mobilecapture.Store{ProjectStore: projectStore}
 	mobilecapture.RegisterTenantRoutes(tenantRoutes, mobilecapture.TenantHTTPOptions{
 		Store: mobileCaptureStore, JWT: jwtManager, Logger: logger,

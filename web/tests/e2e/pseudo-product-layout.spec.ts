@@ -245,6 +245,9 @@ test('pseudo-locale product surfaces remain responsive and preserve customer con
     if (path === `/v1/projects/${project.id}/widget-rules` && request.method() === 'GET') {
       return json(route, { widget_rules: [widgetRule] })
     }
+    if (path === '/v1/email-feedback-campaigns' && request.method() === 'GET') {
+      return json(route, { campaigns: [] })
+    }
     if (path === '/v1/config' && request.method() === 'GET') {
       return json(route, configuration)
     }

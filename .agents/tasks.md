@@ -812,7 +812,7 @@ automatically.
 ## Task 45: Configure An Opt-In Email Feedback Campaign
 
 **Depends on:** None (issue #136 is complete)
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** A project member can create, inspect, edit, activate, pause, and archive an email
 feedback campaign backed by an existing Widget Definition and complete controller profile.
@@ -829,7 +829,7 @@ campaigns.
 ## Task 46: Accept One Idempotent Customer Event
 
 **Depends on:** Task 45
-**Status:** Pending
+**Status:** In Progress
 
 **Outcome:** A least-privilege tenant API key can turn one external transaction event into one
 queued invitation without exposing a public submission credential.

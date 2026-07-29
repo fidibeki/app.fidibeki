@@ -1234,6 +1234,12 @@ useHead(() => ({
         </aside>
       </div>
 
+      <EmailFeedbackCampaigns
+        :project-id="projectID"
+        :default-locale="data.project.default_locale"
+        :rules="data.rules"
+        :controller-ready="controllerProfileReady"
+      />
       <section id="project-settings" class="project-settings app-surface"><header><div><h2>{{ t('projects.settings.title') }}</h2><p>{{ t('projects.settings.description') }}</p></div><button class="app-button app-button--primary" type="submit" form="project-settings-form" :disabled="pending || !canWrite('project:update')"><Save :size="14" /> {{ t('projects.settings.save') }}</button></header><form id="project-settings-form" @submit.prevent="saveProject"><fieldset :disabled="!workspaceWritable"><label>{{ t('projects.settings.name') }}<input v-model.trim="projectName" class="app-input" required maxlength="120" /></label><label>{{ t('projects.settings.defaultLanguage') }}<input v-model.trim="projectDefaultLocale" class="app-input" required maxlength="32" :placeholder="t('projects.settings.defaultLanguagePlaceholder')" /></label><label>{{ t('projects.settings.reporterAccess') }}<select v-model="projectReporterAccess" class="app-select"><option value="inherit">{{ t('projects.settings.reporterAccessOptions.inherit') }}</option><option value="enabled">{{ t('projects.settings.reporterAccessOptions.enabled') }}</option><option value="disabled">{{ t('projects.settings.reporterAccessOptions.disabled') }}</option></select></label><label class="wide">{{ t('projects.settings.allowedDomains') }}<textarea v-model="projectDomains" /></label><div class="wide project-appearance"><h3>{{ t('projects.settings.appearanceTitle') }}</h3><WidgetAppearanceEditor v-model="projectAppearance" :parent="workspaceAppearance" allow-logo-reset /></div></fieldset></form><footer><div><b>{{ t('projects.settings.deleteTitle') }}</b><span>{{ t('projects.settings.deleteDescription') }}</span></div><button class="app-button project-danger" :disabled="pending || !canWrite('project:delete')" @click="deleteProject"><Trash2 :size="14" /> {{ t('projects.settings.delete') }}</button></footer></section>
     </template>
     <AppConfirmationDialog

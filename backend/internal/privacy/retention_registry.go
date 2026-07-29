@@ -56,7 +56,8 @@ func retentionRegistry() []retentionDefinition {
 			Action:  "Approved deletion or anonymization policy is not yet implemented.",
 			Cadence: "Not scheduled", HoldBehavior: RetentionHoldDecisionRequired,
 			Resources: tables(
-				"api_keys", "member_notification_preferences", "projects", "tags",
+				"api_keys", "email_feedback_campaigns", "member_notification_preferences",
+				"projects", "tags",
 				"tenant_deletions", "tenant_member_domains", "tenant_members", "tenants",
 				"widget_rule_target_conditions", "widget_rules",
 			),

@@ -1608,6 +1608,8 @@ async function installMockAPI(page: Page, state: MockState) {
 
     if (path === "/v1/projects" && method === "GET")
       return json(route, { projects: state.projects });
+    if (path === "/v1/email-feedback-campaigns" && method === "GET")
+      return json(route, { campaigns: [] });
     if (path === "/v1/projects" && method === "POST") {
       const input = body();
       const project = {

@@ -21,6 +21,10 @@ const tenant = {
   reporter_access_enabled: true,
   default_locale: 'en',
   default_timezone: 'UTC',
+  privacy_profile_version: 1,
+  privacy_contact_email: 'privacy@loja.ao',
+  privacy_rights_email: 'direitos@loja.ao',
+  privacy_policy_url: 'https://loja.ao/privacidade',
   widget_appearance_defaults: {},
   logo_version: null,
 }
@@ -143,6 +147,8 @@ interface Captured {
   ruleOverride?: typeof rule
   ruleDeleted?: boolean
   saveRuleShouldFail?: boolean
+  emailCampaigns?: Array<Record<string, unknown>>
+  emailCampaignBody?: Record<string, unknown>
 }
 
 async function json(route: Route, body: unknown, status = 200) {
@@ -203,6 +209,31 @@ async function installAPI(page: Page, state: Captured) {
       }
       return json(route, { project: state.createdProject })
     }
+    if (path === '/v1/email-feedback-campaigns' && method === 'GET') {
+      return json(route, { campaigns: state.emailCampaigns || [] })
+    }
+    if (path === '/v1/email-feedback-campaigns' && method === 'POST') {
+      state.emailCampaignBody = request.postDataJSON()
+      const campaign = {
+        ...state.emailCampaignBody,
+        id: 'campaign-1',
+        tenant_id: tenant.id,
+        widget_rule_name: rule.name,
+        readiness: { ready: true, reasons: [] },
+        created_at: now,
+        updated_at: now,
+      }
+      state.emailCampaigns = [campaign]
+      return json(route, { campaign }, 201)
+    }
+    const emailCampaignMatch = path.match(/^\/v1\/email-feedback-campaigns\/([^/]+)$/)
+    if (emailCampaignMatch && method === 'PATCH') {
+      state.emailCampaignBody = request.postDataJSON()
+      const current = state.emailCampaigns?.find(candidate =>
+        candidate.id === emailCampaignMatch[1])
+      if (current) Object.assign(current, state.emailCampaignBody, { updated_at: now })
+      return json(route, { campaign: current })
+    }
 
     const projectMatch = path.match(/^\/v1\/projects\/([^/]+)$/)
     if (projectMatch && method === 'GET') {
@@ -249,6 +280,65 @@ async function installAPI(page: Page, state: Captured) {
     return json(route, { error: { code: 'not_found', message: 'unhandled route' } }, 404)
   })
 }
+
+test('project owner configures an opt-in email feedback campaign', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const state: Captured = {}
+  await installAPI(page, state)
+
+  await page.goto(`${tenantOrigin}/auth/verify#token=email-campaign-token`)
+  await page.waitForURL(`${tenantOrigin}/`)
+  await openProjects(page, testInfo)
+  await page.getByRole('link', { name: 'Loja Central' }).click()
+  await page.waitForURL(`${tenantOrigin}/projects/project-1`)
+
+  const section = page.locator('#email-feedback-campaigns')
+  await section.scrollIntoViewIfNeeded()
+  await expect(section.getByRole('heading', { name: 'Feedback por email' })).toBeVisible()
+  await expect(section).toContainText(
+    'O email só é enviado quando o seu servidor chama a API de convites.',
+  )
+  await section.getByLabel('Nome da campanha').fill('Pós-compra')
+  await section.getByLabel('Chave da campanha').fill('pos-compra')
+  await section.getByLabel('Estado').selectOption('active')
+  await section.getByLabel('Idioma predefinido').fill('fr')
+  await expect(section).toContainText('A ativação está bloqueada')
+  await expect(section).toContainText('A localização selecionada não existe')
+  await section.getByLabel('Idioma predefinido').fill('pt-ao')
+
+  await section.getByRole('button', { name: 'Guardar campanha' }).click()
+  await expect(section.getByText('Campanha de email guardada.')).toBeVisible()
+  await expect.poll(() => state.emailCampaignBody).toEqual({
+    project_id: project.id,
+    widget_rule_id: rule.id,
+    campaign_key: 'pos-compra',
+    name: 'Pós-compra',
+    status: 'active',
+    default_locale: 'pt-ao',
+    subject: 'Como foi a sua experiência?',
+    introduction: 'O seu feedback ajuda-nos a melhorar a experiência.',
+    invitation_ttl_days: 30,
+  })
+  await expect(section).toContainText('Pronta para ativar')
+  await expect(section).toContainText('email_feedback:send')
+  await expect(section).toContainText('"campaign_id":"campaign-1"')
+  if (testInfo.project.name === 'mobile') {
+    const sectionBox = await section.boundingBox()
+    const saveBox = await section.getByRole('button', { name: 'Guardar campanha' }).boundingBox()
+    expect(sectionBox).not.toBeNull()
+    expect(saveBox).not.toBeNull()
+    expect(saveBox!.x).toBeGreaterThanOrEqual(sectionBox!.x)
+    expect(saveBox!.x + saveBox!.width).toBeLessThanOrEqual(sectionBox!.x + sectionBox!.width + 1)
+    expect(await section.locator('.email-campaign-layout > form').evaluate(
+      element => element.scrollWidth <= element.clientWidth,
+    )).toBe(true)
+  }
+
+  await section.getByLabel('Estado').selectOption('paused')
+  await section.getByRole('button', { name: 'Guardar campanha' }).click()
+  await expect.poll(() => state.emailCampaignBody?.status).toBe('paused')
+  await expect(section.getByRole('button', { name: /Pós-compra/ })).toContainText('Pausada')
+})
 
 async function openProjects(page: Page, testInfo: { project: { name: string } }) {
   if (testInfo.project.name === 'mobile') {
