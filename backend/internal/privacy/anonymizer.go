@@ -140,15 +140,23 @@ func reporterRecordCount(
 		WITH related_feedback AS (
 			SELECT id, issue_id FROM feedbacks
 			WHERE tenant_id = $1 AND lower(reporter_email) = $2 AND created_at <= $3
-		), related_issues AS (
-			SELECT issue.id FROM issues AS issue
-			WHERE issue.tenant_id = $1 AND issue.created_at <= $3 AND (
-				lower(issue.reporter_email) = $2
-				OR EXISTS (SELECT 1 FROM related_feedback WHERE issue_id = issue.id)
+			), related_issues AS (
+				SELECT issue.id FROM issues AS issue
+				WHERE issue.tenant_id = $1 AND issue.created_at <= $3 AND (
+					lower(issue.reporter_email) = $2
+					OR EXISTS (SELECT 1 FROM related_feedback WHERE issue_id = issue.id)
+				)
+			), related_invitations AS (
+				SELECT invitation.id
+				FROM email_feedback_invitations AS invitation
+				WHERE invitation.tenant_id = $1
+				  AND invitation.recipient_digest = encode(digest($2, 'sha256'), 'hex')
+				  AND invitation.created_at <= $3
 			)
-		)
-		SELECT (SELECT count(*) FROM related_feedback) + (SELECT count(*) FROM related_issues)
-	`, tenantID, email, cutoff.UTC()).Scan(&count)
+			SELECT (SELECT count(*) FROM related_feedback)
+			     + (SELECT count(*) FROM related_issues)
+			     + (SELECT count(*) FROM related_invitations)
+		`, tenantID, email, cutoff.UTC()).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count reporter records: %w", err)
 	}
@@ -171,6 +179,25 @@ func anonymizeReporterRows(
 		query      string
 		includeNow bool
 	}{
+		{
+			query: `UPDATE email_feedback_invitations
+				 SET recipient_email = NULL, token_hash = NULL, context_url = NULL,
+				     provider_message_id = NULL, webhook_event_id = NULL,
+				     last_error = NULL, feedback_id = NULL,
+				     status = CASE
+				         WHEN status = 'queued'
+				         THEN 'suppressed'::email_feedback_invitation_status
+				         ELSE status
+				     END,
+				     suppressed_at = CASE
+				         WHEN status = 'queued' THEN COALESCE(suppressed_at, $4)
+				         ELSE suppressed_at
+				     END
+				 WHERE tenant_id = $1
+				   AND recipient_digest = encode(digest($2, 'sha256'), 'hex')
+				   AND created_at <= $3`,
+			includeNow: true,
+		},
 		{query: `DELETE FROM ai_processing_runs AS run USING feedbacks AS feedback
 		 WHERE run.tenant_id = $1 AND feedback.tenant_id = run.tenant_id
 		   AND feedback.id = run.feedback_id AND lower(feedback.reporter_email) = $2

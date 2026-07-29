@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,22 @@ func TestLoadProviderGovernanceReturnsPendingRegistry(t *testing.T) {
 		default:
 			t.Fatalf("provider %q has unknown boundary kind %q", provider.ProviderID, provider.BoundaryKind)
 		}
+	}
+	var resend *ProviderGovernanceRecord
+	for index := range registry.Providers {
+		if registry.Providers[index].ProviderID == "resend_transactional_email" {
+			resend = &registry.Providers[index]
+			break
+		}
+	}
+	if resend == nil || !strings.Contains(resend.Purpose, "post-transaction") ||
+		!slices.Contains(
+			resend.PersonalDataCategories,
+			"transactional and post-transaction feedback invitation content",
+		) ||
+		resend.ContractStatus != GovernanceContractUnknown ||
+		resend.Approval != GovernanceApprovalPending {
+		t.Fatalf("Resend feedback invitation governance = %#v", resend)
 	}
 }
 

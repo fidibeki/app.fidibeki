@@ -2,6 +2,7 @@ package emailfeedback
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
 	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
@@ -327,12 +329,13 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	}
 	var storedRecipient, storedDigest, storedTokenHash, storedRequestDigest string
 	var storedStatus string
+	var storedCleanupAfter *time.Time
 	var snapshotCount, invitationCount, outboxCount int
 	var outboxID, outboxData string
 	if err := root.QueryRow(ctx, `
-		SELECT recipient_email::text, recipient_digest, token_hash, request_digest,
-		       status::text,
-		       (jsonb_typeof(campaign_snapshot) = 'object')::int
+			SELECT recipient_email::text, recipient_digest, token_hash, request_digest,
+			       status::text, cleanup_after,
+			       (jsonb_typeof(campaign_snapshot) = 'object')::int
 		         + (jsonb_typeof(definition_snapshot) = 'object')::int
 		         + (jsonb_typeof(localization_snapshot) = 'object')::int
 		         + (jsonb_typeof(controller_snapshot) = 'object')::int
@@ -340,7 +343,7 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		WHERE id = $1
 	`, invitation.ID).Scan(
 		&storedRecipient, &storedDigest, &storedTokenHash, &storedRequestDigest,
-		&storedStatus, &snapshotCount,
+		&storedStatus, &storedCleanupAfter, &snapshotCount,
 	); err != nil {
 		t.Fatalf("load invitation ledger: %v", err)
 	}
@@ -348,11 +351,13 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		storedDigest != digestString(storedRecipient) ||
 		storedTokenHash != expectedTokenHash ||
 		storedRequestDigest == "" || storedRequestDigest == storedRecipient ||
-		storedStatus != string(InvitationQueued) || snapshotCount != 4 {
+		storedStatus != string(InvitationQueued) || storedCleanupAfter == nil ||
+		!storedCleanupAfter.Equal(invitation.ExpiresAt.Add(90*24*time.Hour)) ||
+		snapshotCount != 4 {
 		t.Fatalf(
-			"invitation ledger recipient=%q digest=%q token=%q request=%q status=%q snapshots=%d",
+			"invitation ledger recipient=%q digest=%q token=%q request=%q status=%q cleanup=%v snapshots=%d",
 			storedRecipient, storedDigest, storedTokenHash, storedRequestDigest,
-			storedStatus, snapshotCount,
+			storedStatus, storedCleanupAfter, snapshotCount,
 		)
 	}
 	if err := root.QueryRow(ctx, `
@@ -1246,8 +1251,73 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 			suppressedRecipient, suppressedToken, suppressedOutboxCount)
 	}
 
+	restrictedEmail := "restricted@example.com"
+	privacyCase, _, shouldVerify, err := (privacy.Store{}).CreateCase(
+		ctx, root, tenantID, ownerID, "email-feedback-restriction",
+		privacy.CreateCaseInput{
+			SubjectType:    privacy.SubjectReporter,
+			RightType:      privacy.RightRestriction,
+			ControllerRole: privacy.RoleCustomerControllerAssistance,
+			SubjectEmail:   restrictedEmail,
+			OwnerMemberID:  ownerID,
+			Scope:          map[string]any{"source": "email_feedback"},
+		}, now,
+	)
+	if err != nil || !shouldVerify {
+		t.Fatalf("create email feedback restriction = %#v verify=%t error=%v",
+			privacyCase, shouldVerify, err)
+	}
+	var storedVerificationHash []byte
+	if err := root.QueryRow(ctx, `
+		SELECT verification_token_hash
+		FROM privacy_cases
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, privacyCase.ID).Scan(&storedVerificationHash); err != nil {
+		t.Fatalf("read email feedback restriction token: %v", err)
+	}
+	var verificationHash [sha256.Size]byte
+	copy(verificationHash[:], storedVerificationHash)
+	if _, err := (privacy.Store{}).VerifyCase(
+		ctx, root, verificationHash, now.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("verify email feedback restriction: %v", err)
+	}
+	restrictedInvitation := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-restricted", restrictedEmail, "", ""),
+		rawInvitationKey,
+	)
+	if restrictedInvitation.Code != http.StatusCreated ||
+		!strings.Contains(restrictedInvitation.Body.String(), `"status":"suppressed"`) ||
+		strings.Contains(restrictedInvitation.Body.String(), restrictedEmail) {
+		t.Fatalf("restricted invitation = %d body=%s",
+			restrictedInvitation.Code, restrictedInvitation.Body.String())
+	}
+	var restrictedRecipient, restrictedToken *string
+	var restrictedOutboxCount int
+	if err := root.QueryRow(ctx, `
+		SELECT invitation.recipient_email::text, invitation.token_hash,
+		       (
+		           SELECT count(*)
+		           FROM outbox_events AS event
+		           WHERE event.resource_type = 'email_feedback_invitation'
+		             AND event.resource_id = invitation.id
+		       )
+		FROM email_feedback_invitations AS invitation
+		WHERE invitation.tenant_id = $1 AND invitation.campaign_id = $2
+		  AND invitation.external_event_id = 'order-restricted'
+	`, tenantID, campaign.ID).Scan(
+		&restrictedRecipient, &restrictedToken, &restrictedOutboxCount,
+	); err != nil {
+		t.Fatalf("load restricted invitation: %v", err)
+	}
+	if restrictedRecipient != nil || restrictedToken != nil || restrictedOutboxCount != 0 {
+		t.Fatalf("restricted recipient=%v token=%v outbox=%d",
+			restrictedRecipient, restrictedToken, restrictedOutboxCount)
+	}
+
 	if _, err := root.Exec(ctx, `
-		CREATE FUNCTION reject_email_feedback_outbox() RETURNS trigger
+			CREATE FUNCTION reject_email_feedback_outbox() RETURNS trigger
 		LANGUAGE plpgsql AS $$
 		BEGIN
 			IF NEW.event::text = 'email_feedback.invitation_created' THEN

@@ -29,11 +29,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 30 {
+		len(starter.Policies) != 32 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 9, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
+		Enforced: 11, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -45,6 +45,18 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	magicLinks := retentionPolicyByCategory(t, starter, "auth_magic_links")
 	if magicLinks.Status != RetentionEnforced || magicLinks.DurationDays != nil {
 		t.Fatalf("starter auth magic link policy = %#v", magicLinks)
+	}
+	emailInvitations := retentionPolicyByCategory(t, starter, "email_feedback_delivery")
+	if emailInvitations.Status != RetentionEnforced ||
+		emailInvitations.DurationDays == nil || *emailInvitations.DurationDays != 90 ||
+		emailInvitations.Implementation != "privacy.RetentionMaintainer" {
+		t.Fatalf("email invitation retention policy = %#v", emailInvitations)
+	}
+	emailSuppressions := retentionPolicyByCategory(t, starter, "email_feedback_suppressions")
+	if emailSuppressions.Status != RetentionEnforced ||
+		emailSuppressions.Duration != "Until the customer removes the workspace or an approved policy changes" ||
+		emailSuppressions.DurationDays != nil {
+		t.Fatalf("email suppression retention policy = %#v", emailSuppressions)
 	}
 	for _, policy := range starter.Policies {
 		if strings.Contains(strings.ToLower(policy.Duration), "workspace lifetime") {
@@ -330,7 +342,8 @@ func TestRetentionMaintainerKeepsFailedObjectsRetryableAndContinues(t *testing.T
 		archiveBatches: [][]RetentionObjectCandidate{{
 			{TenantID: "one", ID: "archive-one", ObjectKey: "archive-one"},
 		}},
-		requestResults: []int64{2},
+		requestResults:    []int64{2},
+		invitationResults: []int64{4},
 	}
 	storage := &retentionStorageStub{
 		failures: map[string]error{"attachment-two": errors.New("storage unavailable")},
@@ -346,7 +359,7 @@ func TestRetentionMaintainerKeepsFailedObjectsRetryableAndContinues(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
 		t.Fatalf("MaintainOnce() error = %v", err)
 	}
-	if len(health.runs) != 3 ||
+	if len(health.runs) != 4 ||
 		health.runs[0].Operation != retentionhealth.OperationAttachments ||
 		health.runs[0].Result != retentionhealth.ResultFailed ||
 		health.runs[0].Processed != 1 ||
@@ -356,6 +369,9 @@ func TestRetentionMaintainerKeepsFailedObjectsRetryableAndContinues(t *testing.T
 		health.runs[2].Operation != retentionhealth.OperationReporterPrivacyRequests ||
 		health.runs[2].Result != retentionhealth.ResultSucceeded ||
 		health.runs[2].Processed != 2 ||
+		health.runs[3].Operation != retentionhealth.OperationEmailFeedbackInvitations ||
+		health.runs[3].Result != retentionhealth.ResultSucceeded ||
+		health.runs[3].Processed != 4 ||
 		!health.runs[0].AttemptedAt.Equal(now) {
 		t.Fatalf("health runs = %#v", health.runs)
 	}
@@ -389,7 +405,8 @@ func TestRetentionMaintainerBoundsWorkAndSupportsShutdown(t *testing.T) {
 			{{ID: "e1", ObjectKey: "e1"}},
 			{{ID: "e2", ObjectKey: "e2"}},
 		},
-		requestResults: []int64{1, 1},
+		requestResults:    []int64{1, 1},
+		invitationResults: []int64{1, 1},
 	}
 	health := &retentionHealthRecorderStub{}
 	var logs bytes.Buffer
@@ -405,8 +422,9 @@ func TestRetentionMaintainerBoundsWorkAndSupportsShutdown(t *testing.T) {
 		!strings.Contains(logs.String(), `"request_budget_exhausted":true`) {
 		t.Fatalf("budget logs = %s", logs.String())
 	}
-	if len(health.runs) != 3 || !health.runs[0].BudgetExhausted ||
-		!health.runs[1].BudgetExhausted || !health.runs[2].BudgetExhausted {
+	if len(health.runs) != 4 || !health.runs[0].BudgetExhausted ||
+		!health.runs[1].BudgetExhausted || !health.runs[2].BudgetExhausted ||
+		!health.runs[3].BudgetExhausted {
 		t.Fatalf("health runs = %#v", health.runs)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -433,20 +451,22 @@ func TestRetentionMaintainerValidationAndPhaseErrors(t *testing.T) {
 	}
 	want := errors.New("database unavailable")
 	store := &retentionOperationsStub{
-		attachmentErr: want, archiveErr: want, requestErr: want,
+		attachmentErr: want, archiveErr: want, requestErr: want, invitationErr: want,
 	}
 	health := &retentionHealthRecorderStub{}
 	err := (RetentionMaintainer{
 		Store: store, Storage: &retentionStorageStub{}, Health: health,
 	}).MaintainOnce(context.Background())
-	if !errors.Is(err, want) || store.archiveCalls != 1 || store.requestCalls != 1 {
-		t.Fatalf("MaintainOnce(independent failures) error=%v calls=%d/%d",
-			err, store.archiveCalls, store.requestCalls)
+	if !errors.Is(err, want) || store.archiveCalls != 1 || store.requestCalls != 1 ||
+		store.invitationCalls != 1 {
+		t.Fatalf("MaintainOnce(independent failures) error=%v calls=%d/%d/%d",
+			err, store.archiveCalls, store.requestCalls, store.invitationCalls)
 	}
-	if len(health.runs) != 3 ||
+	if len(health.runs) != 4 ||
 		health.runs[0].Result != retentionhealth.ResultFailed ||
 		health.runs[1].Result != retentionhealth.ResultFailed ||
-		health.runs[2].Result != retentionhealth.ResultFailed {
+		health.runs[2].Result != retentionhealth.ResultFailed ||
+		health.runs[3].Result != retentionhealth.ResultFailed {
 		t.Fatalf("failed health runs = %#v", health.runs)
 	}
 	recordFailure := errors.New("health database unavailable")
@@ -483,13 +503,16 @@ type retentionOperationsStub struct {
 	attachmentBatches [][]RetentionObjectCandidate
 	archiveBatches    [][]RetentionObjectCandidate
 	requestResults    []int64
+	invitationResults []int64
 	attachmentErr     error
 	archiveErr        error
 	requestErr        error
+	invitationErr     error
 	markedAttachments []string
 	markedArchives    []string
 	archiveCalls      int
 	requestCalls      int
+	invitationCalls   int
 	lastNow           time.Time
 }
 
@@ -571,6 +594,26 @@ func (store *retentionOperationsStub) ExpireReporterRequests(
 	}
 	result := store.requestResults[0]
 	store.requestResults = store.requestResults[1:]
+	return result, nil
+}
+
+func (store *retentionOperationsStub) ExpireEmailFeedbackInvitations(
+	_ context.Context,
+	now time.Time,
+	_ int,
+) (int64, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.invitationCalls++
+	store.lastNow = now
+	if store.invitationErr != nil {
+		return 0, store.invitationErr
+	}
+	if len(store.invitationResults) == 0 {
+		return 0, nil
+	}
+	result := store.invitationResults[0]
+	store.invitationResults = store.invitationResults[1:]
 	return result, nil
 }
 

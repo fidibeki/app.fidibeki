@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+const invitationLedgerRetention = 90 * 24 * time.Hour
+
 var (
 	ErrInvitationConflict = errors.New("external event was reused with different input")
 	ErrCampaignInactive   = errors.New("email feedback campaign is inactive")
@@ -152,12 +154,15 @@ func createInvitation(
 	var suppressed bool
 	if err := query.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1
-			FROM email_feedback_suppressions
-			WHERE tenant_id = $1 AND recipient_digest = $2
-		)
-	`, tenantID, values.RecipientDigest).Scan(&suppressed); err != nil {
-		return Invitation{}, false, fmt.Errorf("check email feedback suppression: %w", err)
+			       SELECT 1
+			       FROM email_feedback_suppressions
+			       WHERE tenant_id = $1 AND recipient_digest = $2
+			   )
+			   OR fidibeki_privacy_email_restricted(
+			       $1, $3, 'background_processing'
+			   )
+	`, tenantID, values.RecipientDigest, values.RecipientEmail).Scan(&suppressed); err != nil {
+		return Invitation{}, false, fmt.Errorf("check email feedback contact eligibility: %w", err)
 	}
 	status := InvitationQueued
 	var recipientEmail any = values.RecipientEmail
@@ -170,6 +175,7 @@ func createInvitation(
 		suppressedAt = now
 	}
 	expiresAt := now.Add(time.Duration(campaign.InvitationTTLDays) * 24 * time.Hour)
+	cleanupAfter := expiresAt.Add(invitationLedgerRetention)
 	tag, err := query.Exec(ctx, `
 		INSERT INTO email_feedback_invitations (
 			id, tenant_id, project_id, campaign_id, widget_rule_id,
@@ -177,7 +183,7 @@ func createInvitation(
 			recipient_email, recipient_digest, locale, context_url, token_hash,
 			definition_version, controller_profile_version,
 			campaign_snapshot, definition_snapshot, localization_snapshot,
-			controller_snapshot, status, suppressed_at, expires_at,
+			controller_snapshot, status, suppressed_at, expires_at, cleanup_after,
 			created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
@@ -185,8 +191,8 @@ func createInvitation(
 			$9, $10, $11, $12, $13,
 			$14, $15,
 			$16, $17, $18,
-			$19, $20, $21, $22,
-			$23, $23
+			$19, $20, $21, $22, $23,
+			$24, $24
 		)
 		ON CONFLICT (tenant_id, campaign_id, external_event_id) DO NOTHING
 	`, invitationID, tenantID, campaign.ProjectID, values.CampaignID,
@@ -195,7 +201,7 @@ func createInvitation(
 		values.ContextURL, persistedTokenHash, campaign.DefinitionVersion,
 		campaign.ControllerProfileVersion, campaign.CampaignSnapshot,
 		campaign.DefinitionSnapshot, campaign.LocalizationSnapshot,
-		campaign.ControllerSnapshot, status, suppressedAt, expiresAt, now)
+		campaign.ControllerSnapshot, status, suppressedAt, expiresAt, cleanupAfter, now)
 	var databaseError *pgconn.PgError
 	if errors.As(err, &databaseError) && databaseError.Code == "23505" {
 		return Invitation{}, false, ErrInvitationToken

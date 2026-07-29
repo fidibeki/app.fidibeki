@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 134
+	const latestMigrationVersion = 135
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2842,9 +2843,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var retentionHealthRows int
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 14 {
 		t.Fatalf(
-			"retention health row count = %d, error = %v, want 13",
+			"retention health row count = %d, error = %v, want 14",
 			retentionHealthRows, err,
 		)
 	}
@@ -2863,6 +2864,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		"abuse_diagnostics":          {category: "abuse_diagnostics", interval: 3600},
 		"ai_budget_ledgers":          {category: "ai_processing", interval: 86400},
 		"identity_asset_deletions":   {category: "identity_assets", interval: 60},
+		"email_feedback_invitations": {category: "email_feedback_delivery", interval: 86400},
 		"saml_auth_artifacts":        {category: "auth_magic_links", interval: 3600},
 		"mobile_capture_sessions":    {category: "mobile_capture_credentials", interval: 3600},
 	}
@@ -2896,6 +2898,36 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("iterate retention health seeds: %v", err)
 	}
 	retentionSeedRows.Close()
+	var cleanupNullable, cleanupConstraint string
+	if err := root.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'email_feedback_invitations'
+		  AND column_name = 'cleanup_after'
+	`).Scan(&cleanupNullable); err != nil || cleanupNullable != "NO" {
+		t.Fatalf("email invitation cleanup nullability = %q, error = %v",
+			cleanupNullable, err)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conname = 'email_feedback_invitations_cleanup_bounded'
+	`).Scan(&cleanupConstraint); err != nil ||
+		!strings.Contains(cleanupConstraint, "90 days") {
+		t.Fatalf("email invitation cleanup constraint = %q, error = %v",
+			cleanupConstraint, err)
+	}
+	var cleanupIndexCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_indexes
+		WHERE schemaname = 'public'
+		  AND indexname = 'idx_email_feedback_invitations_cleanup'
+	`).Scan(&cleanupIndexCount); err != nil || cleanupIndexCount != 1 {
+		t.Fatalf("email invitation cleanup index count = %d, error = %v",
+			cleanupIndexCount, err)
+	}
 	var appRetentionSelect, appRetentionUpdate, appRetentionDelete bool
 	var adminRetentionSelect, adminRetentionResultUpdate, adminRetentionKeyUpdate bool
 	var adminRetentionInsert, adminRetentionDelete bool
@@ -2987,9 +3019,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 14 {
 		t.Fatalf(
-			"retention health rows after 108 replay = %d, error = %v, want 13",
+			"retention health rows after 108 replay = %d, error = %v, want 14",
 			retentionHealthRows, err,
 		)
 	}
@@ -3010,9 +3042,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-	`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 13 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 14 {
 		t.Fatalf(
-			"retention health rows after down/up = %d, error = %v, want 13",
+			"retention health rows after down/up = %d, error = %v, want 14",
 			retentionHealthRows, err,
 		)
 	}

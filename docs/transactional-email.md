@@ -23,6 +23,7 @@ same monitored address.
 | Member invitation | Authorized invitation | Invited address | Access, requested |
 | Member-domain verification | Authorized verification request | Verification address | Security, requested |
 | Founder welcome | First owner activation for a new workspace | Activating owner | Account, one time |
+| Email feedback invitation | Customer calls an active campaign with a unique external event ID | Customer-selected recipient | Customer-directed post-transaction solicitation; opt-out/bounce/complaint/restriction-controlled |
 | Trial ending | Trial reaches reminder window | Workspace members | Account, mandatory |
 | Feedback receipt | Feedback accepted with explicit, evidenced reporter consent | Reporter | Consent-controlled |
 | Reporter progress and resolution | Material Issue lifecycle update | Consented reporter | Consent/unsubscribe-controlled |
@@ -33,6 +34,13 @@ same monitored address.
 
 Bounced or complained addresses are excluded where recipient state is available. Billing contacts
 are deduplicated against authorized administrators.
+
+Email feedback campaigns are opt-in customer configuration. Fidibeki acts on the customer's
+documented server-to-server instruction and does not infer or claim the customer's lawful basis.
+An active verified restriction, opt-out, bounce, or complaint produces a neutral suppressed
+invitation with no delivery outbox. Delivery removes the plaintext recipient; the minimized
+invitation ledger expires 90 days after the public invitation expires, while the one-way
+suppression digest remains until workspace deletion or an approved policy change.
 
 ## Member notification preferences
 

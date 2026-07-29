@@ -10,37 +10,39 @@ import (
 type Operation string
 
 const (
-	OperationTenantMagicLinks        Operation = "tenant_magic_links"
-	OperationPlatformAdminMagicLinks Operation = "platform_admin_magic_links"
-	OperationAttachments             Operation = "attachments"
-	OperationPrivacyExportArchives   Operation = "privacy_export_archives"
-	OperationReporterPrivacyRequests Operation = "reporter_privacy_requests"
-	OperationReplaySessions          Operation = "replay_sessions"
-	OperationWidgetFunnelEvents      Operation = "widget_funnel_events"
-	OperationWidgetFunnelDaily       Operation = "widget_funnel_daily"
-	OperationAbuseDiagnostics        Operation = "abuse_diagnostics"
-	OperationAIBudgetLedgers         Operation = "ai_budget_ledgers"
-	OperationIdentityAssetDeletions  Operation = "identity_asset_deletions"
-	OperationSAMLAuthArtifacts       Operation = "saml_auth_artifacts"
-	OperationMobileCaptureSessions   Operation = "mobile_capture_sessions"
+	OperationTenantMagicLinks         Operation = "tenant_magic_links"
+	OperationPlatformAdminMagicLinks  Operation = "platform_admin_magic_links"
+	OperationAttachments              Operation = "attachments"
+	OperationPrivacyExportArchives    Operation = "privacy_export_archives"
+	OperationReporterPrivacyRequests  Operation = "reporter_privacy_requests"
+	OperationReplaySessions           Operation = "replay_sessions"
+	OperationWidgetFunnelEvents       Operation = "widget_funnel_events"
+	OperationWidgetFunnelDaily        Operation = "widget_funnel_daily"
+	OperationAbuseDiagnostics         Operation = "abuse_diagnostics"
+	OperationAIBudgetLedgers          Operation = "ai_budget_ledgers"
+	OperationIdentityAssetDeletions   Operation = "identity_asset_deletions"
+	OperationSAMLAuthArtifacts        Operation = "saml_auth_artifacts"
+	OperationMobileCaptureSessions    Operation = "mobile_capture_sessions"
+	OperationEmailFeedbackInvitations Operation = "email_feedback_invitations"
 )
 
-// Migrations 105 and 109 seed exactly one retention_maintenance_status row
+// Migrations seed exactly one retention_maintenance_status row
 // per entry; Read fails when the table and this map disagree.
 var operationCategories = map[Operation]string{
-	OperationTenantMagicLinks:        "auth_magic_links",
-	OperationPlatformAdminMagicLinks: "auth_magic_links",
-	OperationAttachments:             "attachments",
-	OperationPrivacyExportArchives:   "export_archives",
-	OperationReporterPrivacyRequests: "privacy_rights",
-	OperationReplaySessions:          "session_replays",
-	OperationWidgetFunnelEvents:      "widget_events",
-	OperationWidgetFunnelDaily:       "widget_daily",
-	OperationAbuseDiagnostics:        "abuse_diagnostics",
-	OperationAIBudgetLedgers:         "ai_processing",
-	OperationIdentityAssetDeletions:  "identity_assets",
-	OperationSAMLAuthArtifacts:       "auth_magic_links",
-	OperationMobileCaptureSessions:   "mobile_capture_credentials",
+	OperationTenantMagicLinks:         "auth_magic_links",
+	OperationPlatformAdminMagicLinks:  "auth_magic_links",
+	OperationAttachments:              "attachments",
+	OperationPrivacyExportArchives:    "export_archives",
+	OperationReporterPrivacyRequests:  "privacy_rights",
+	OperationReplaySessions:           "session_replays",
+	OperationWidgetFunnelEvents:       "widget_events",
+	OperationWidgetFunnelDaily:        "widget_daily",
+	OperationAbuseDiagnostics:         "abuse_diagnostics",
+	OperationAIBudgetLedgers:          "ai_processing",
+	OperationIdentityAssetDeletions:   "identity_assets",
+	OperationSAMLAuthArtifacts:        "auth_magic_links",
+	OperationMobileCaptureSessions:    "mobile_capture_credentials",
+	OperationEmailFeedbackInvitations: "email_feedback_delivery",
 }
 
 type Result string

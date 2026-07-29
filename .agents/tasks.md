@@ -903,7 +903,7 @@ desktop/mobile Playwright scenarios, and two inbox source scenarios pass.
 ## Task 49: Govern Invitation Personal Data
 
 **Depends on:** Task 48
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Invitation records participate in reporter access, erasure, restriction, workspace
 export, retention health, ROPA, and provider-governance controls.
@@ -914,6 +914,20 @@ outside existing data-rights and retention boundaries.
 **Acceptance:** One privacy integration suite proves digest-based subject matching, minimized
 exports, erasure/restriction enforcement, bounded retention, registry completeness, and no
 invented lawful-basis claim.
+
+**Evidence:** Migration 135 requires every invitation ledger row to expire no later than 90 days
+after its public link, indexes the bounded cleanup deadline, and registers a daily
+retention-health operation. The maintainer deletes due invitations and their invitation outbox
+rows while preserving tenant suppression digests. Reporter access and erasure now match
+invitations by normalized email digest; erasure removes delivery addresses, tokens, page context,
+provider/webhook identifiers, errors, and optional Feedback links while retaining only the
+minimized event/idempotency ledger. Verified reporter restrictions suppress new invitations
+before any address, token, or outbox is stored. Workspace exports include campaigns, minimized
+invitations, and suppressions without plaintext recipients, delivery secrets, captured snapshots,
+or provider identifiers. The retention registry, data map, transactional-email inventory, ROPA,
+and Resend governance record document the new processing boundary while keeping lawful basis and
+provider approval pending. Full backend tests, focused privacy integration tests, migration
+up/down/up, and `go vet ./...` pass.
 
 **Autonomy:** AFK
 
