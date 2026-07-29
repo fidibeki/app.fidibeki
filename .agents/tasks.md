@@ -972,7 +972,9 @@ event with no recipient, token, provider message, or outbox row. Cleanup archive
 `fb_lIy92VAS` and campaign `7a11d5f4-7fd2-453a-affc-c13190def3e3` and revoked the temporary API key.
 Issue closure remains gated on external delivery evidence: the staging API has no non-empty
 `RESEND_WEBHOOK_SECRET`, and its send-only Resend key receives `401` from the message-inspection API,
-so `last_event=delivered` and webhook health could not be proven. The worker also had to be restarted
-because queue traffic does not wake its Railway scale-to-zero deployment.
+so `last_event=delivered` and webhook health could not be proven. The validation also demonstrated
+that Redis queue traffic does not wake a Railway Serverless worker. Serverless was therefore
+disabled exclusively for the staging worker after the run; its service instance now reports
+`sleepApplication=false`.
 
 **Autonomy:** AFK
