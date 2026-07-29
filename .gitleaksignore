@@ -77,3 +77,12 @@ adcb7561e0f709b7162ede6e56ca7e7c7da1c45b:web/tests/unit/feedback-widget.test.ts:
 # PostgreSQL integration test, and cannot authenticate against any environment.
 a1655ab591016fdc3a2eeb59717d250eaaedfcc1:backend/internal/mobilecapture/http_integration_test.go:generic-api-key:130
 a1655ab591016fdc3a2eeb59717d250eaaedfcc1:backend/internal/mobilecapture/http_integration_test.go:generic-api-key:142
+
+# Email feedback (#113): deterministic collection-token and API-key fixtures
+# used only by browser and PostgreSQL integration tests. They cannot
+# authenticate against any environment.
+e22f8c6efb77c4acc585ea2169b92f3e445704f1:web/tests/e2e/email-feedback-form.spec.ts:generic-api-key:5
+a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_integration_test.go:generic-api-key:116
+a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_integration_test.go:generic-api-key:117
+a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_integration_test.go:generic-api-key:152
+2ef6a8bc65e87a8745b98767b3da682d9ef0d50c:web/tests/e2e/email-feedback-opt-out.spec.ts:generic-api-key:5
