@@ -10,7 +10,11 @@ func TestRenderTransactionalEmailHasTextParityAndEscapesDynamicContent(t *testin
 	content := Content{
 		Preheader: "A useful preview", Heading: `Welcome <script>alert(1)</script>`,
 		Workspace: `Acme & Sons`, Body: []string{`Hello <img src=x onerror=alert(1)>`, "Your trial is ready."},
-		Metadata:      []Metadata{{Label: "Plan", Value: "Growth"}},
+		Metadata: []Metadata{{Label: "Plan", Value: "Growth"}},
+		Choices: []Link{
+			{Label: "1", URL: "https://acme.fidibeki.com/feedback?rating=1"},
+			{Label: "5", URL: "https://acme.fidibeki.com/feedback?rating=5"},
+		},
 		Action:        &Link{Label: "Open workspace", URL: "https://acme.fidibeki.com/getting-started"},
 		ShowActionURL: true, Footer: "You received this because you created the workspace.",
 		FooterLinks: []Link{{Label: "Contact support", URL: "mailto:support@fidibeki.com"}},
@@ -22,6 +26,8 @@ func TestRenderTransactionalEmailHasTextParityAndEscapesDynamicContent(t *testin
 	}
 	for _, expected := range []string{
 		"Welcome <script>alert(1)</script>", "Workspace: Acme & Sons", "Plan: Growth",
+		"1: https://acme.fidibeki.com/feedback?rating=1",
+		"5: https://acme.fidibeki.com/feedback?rating=5",
 		"Open workspace: https://acme.fidibeki.com/getting-started", "Contact support: mailto:support@fidibeki.com",
 	} {
 		if !strings.Contains(textBody, expected) {
@@ -76,6 +82,7 @@ func TestRenderTransactionalEmailValidatesStructuredLinksAndOptionalSections(t *
 		{LogoURL: base.LogoURL},
 		{Heading: "Sign in", LogoURL: "/logo.png"},
 		{Heading: "Sign in", LogoURL: base.LogoURL, Action: &Link{Label: "Open", URL: "/relative"}},
+		{Heading: "Sign in", LogoURL: base.LogoURL, Choices: []Link{{Label: "1", URL: "javascript:alert(1)"}}},
 		{Heading: "Sign in", LogoURL: base.LogoURL, FooterLinks: []Link{{Label: "Bad", URL: "javascript:alert(1)"}}},
 	} {
 		if _, _, err := Render(content); err == nil {

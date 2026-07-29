@@ -3,6 +3,7 @@ package emailfeedback
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,10 +17,13 @@ import (
 
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/acidiney/app.fidibeki/backend/internal/issue"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -322,7 +326,7 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	var storedRecipient, storedDigest, storedTokenHash, storedRequestDigest string
 	var storedStatus string
 	var snapshotCount, invitationCount, outboxCount int
-	var outboxData string
+	var outboxID, outboxData string
 	if err := root.QueryRow(ctx, `
 		SELECT recipient_email::text, recipient_digest, token_hash, request_digest,
 		       status::text,
@@ -350,16 +354,154 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		)
 	}
 	if err := root.QueryRow(ctx, `
-		SELECT count(*), COALESCE(max(data::text), '')
+		SELECT count(*), COALESCE(max(id::text), ''), COALESCE(max(data::text), '')
 		FROM outbox_events
 		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
-	`, invitation.ID).Scan(&outboxCount, &outboxData); err != nil {
+	`, invitation.ID).Scan(&outboxCount, &outboxID, &outboxData); err != nil {
 		t.Fatalf("load invitation outbox: %v", err)
 	}
 	if outboxCount != 1 || outboxData != "{}" ||
 		strings.Contains(outboxData, storedRecipient) ||
 		strings.Contains(outboxData, rawInvitationToken) {
 		t.Fatalf("invitation outbox count=%d data=%q", outboxCount, outboxData)
+	}
+
+	deliveryNow := now.Add(time.Minute)
+	deliverySender := &invitationTestSender{
+		providerMessageIDs: []string{"resend-invitation-123"},
+	}
+	deliveryHandler := InvitationDeliveryHandler{
+		Store:            Store{},
+		Begin:            db.BeginFromPool(pools.Admin),
+		Sender:           deliverySender,
+		Tokens:           invitationTokens,
+		From:             "Fidibeki <feedback@fidibeki.test>",
+		PublicBaseURL:    "https://api.fidibeki.test",
+		WebPublicBaseURL: "https://fidibeki.test",
+		BaseDomain:       "fidibeki.test",
+		Now:              func() time.Time { return deliveryNow },
+	}
+	deliveryPayload, err := json.Marshal(DeliveryTask{
+		OutboxEventID: outboxID,
+		TenantID:      tenantID,
+		ResourceID:    invitation.ID,
+	})
+	if err != nil {
+		t.Fatalf("encode invitation delivery: %v", err)
+	}
+	deliveryTask := asynq.NewTask(TaskDeliverInvitation, deliveryPayload)
+	if err := deliveryHandler.Handler()(ctx, deliveryTask); err != nil {
+		t.Fatalf("deliver invitation: %v", err)
+	}
+	if len(deliverySender.messages) != 1 {
+		t.Fatalf("delivery messages = %d", len(deliverySender.messages))
+	}
+	deliveredMessage := deliverySender.messages[0]
+	for _, value := range []string{
+		"1: https://acme.fidibeki.test/email-feedback/" + rawInvitationToken + "?rating=1",
+		"5: https://acme.fidibeki.test/email-feedback/" + rawInvitationToken + "?rating=5",
+		"Partilhar feedback: https://acme.fidibeki.test/email-feedback/" + rawInvitationToken,
+		"Política de privacidade: https://shop.example.com/privacy",
+		"Não receber mais estes pedidos: https://acme.fidibeki.test/email-feedback/" +
+			rawInvitationToken + "/opt-out",
+	} {
+		if !strings.Contains(deliveredMessage.Text, value) {
+			t.Errorf("delivered invitation missing %q:\n%s", value, deliveredMessage.Text)
+		}
+	}
+	if deliveredMessage.To != storedRecipient ||
+		deliveredMessage.IdempotencyKey != "email-feedback-invitation:"+invitation.ID {
+		t.Fatalf("delivery envelope = %#v", deliveredMessage)
+	}
+	var deliveredRecipient *string
+	var deliveredProviderID string
+	var deliveredSentAt time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, recipient_email::text, provider_message_id, sent_at
+		FROM email_feedback_invitations
+		WHERE id = $1
+	`, invitation.ID).Scan(
+		&storedStatus, &deliveredRecipient, &deliveredProviderID, &deliveredSentAt,
+	); err != nil {
+		t.Fatalf("load delivered invitation: %v", err)
+	}
+	if storedStatus != string(InvitationSent) || deliveredRecipient != nil ||
+		deliveredProviderID != "resend-invitation-123" ||
+		!deliveredSentAt.Equal(deliveryNow) {
+		t.Fatalf(
+			"delivered status=%q recipient=%v provider=%q sent_at=%s",
+			storedStatus, deliveredRecipient, deliveredProviderID, deliveredSentAt,
+		)
+	}
+	if err := deliveryHandler.Handler()(ctx, deliveryTask); err != nil {
+		t.Fatalf("repeat invitation delivery: %v", err)
+	}
+	if len(deliverySender.messages) != 1 {
+		t.Fatalf("repeat delivery messages = %d", len(deliverySender.messages))
+	}
+
+	publicRouter := chi.NewRouter()
+	RegisterPublicRoutes(publicRouter, PublicHTTPOptions{
+		Store: Store{}, Resolver: pools.Admin, Begin: db.BeginFromPool(pools.App),
+		BaseDomain: "fidibeki.test", Now: func() time.Time { return deliveryNow.Add(time.Minute) },
+	})
+	optOutPath := "/v1/public/email-feedback/" + rawInvitationToken + "/opt-out"
+	optOutView := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodGet, optOutPath, "",
+	)
+	if optOutView.Code != http.StatusOK ||
+		!strings.Contains(optOutView.Body.String(), `"controller_name":"Acme"`) ||
+		!strings.Contains(optOutView.Body.String(), `"locale":"pt"`) ||
+		!strings.Contains(optOutView.Body.String(), `"opted_out":false`) ||
+		strings.Contains(optOutView.Body.String(), storedRecipient) {
+		t.Fatalf("load opt-out = %d body=%s", optOutView.Code, optOutView.Body.String())
+	}
+	if optOutView.Header().Get("Cache-Control") != "no-store" ||
+		optOutView.Header().Get("Referrer-Policy") != "no-referrer" ||
+		!strings.Contains(optOutView.Header().Get("X-Robots-Tag"), "noindex") {
+		t.Fatalf("opt-out privacy headers = %#v", optOutView.Header())
+	}
+	wrongHostOptOut := publicEmailFeedbackRequest(
+		publicRouter, "beta", http.MethodGet, optOutPath, "",
+	)
+	if wrongHostOptOut.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant opt-out = %d body=%s",
+			wrongHostOptOut.Code, wrongHostOptOut.Body.String())
+	}
+	optedOut := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, optOutPath, "{}",
+	)
+	if optedOut.Code != http.StatusOK ||
+		!strings.Contains(optedOut.Body.String(), `"opted_out":true`) {
+		t.Fatalf("submit opt-out = %d body=%s", optedOut.Code, optedOut.Body.String())
+	}
+	repeatedOptOut := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, optOutPath, "",
+	)
+	if repeatedOptOut.Code != http.StatusOK {
+		t.Fatalf("repeat opt-out = %d body=%s",
+			repeatedOptOut.Code, repeatedOptOut.Body.String())
+	}
+	var suppressionReason string
+	var retainedTokenHash *string
+	if err := root.QueryRow(ctx, `
+		SELECT invitation.status::text, invitation.token_hash,
+		       suppression.reason::text
+		FROM email_feedback_invitations AS invitation
+		JOIN email_feedback_suppressions AS suppression
+		  ON suppression.tenant_id = invitation.tenant_id
+		 AND suppression.recipient_digest = invitation.recipient_digest
+		WHERE invitation.id = $1
+	`, invitation.ID).Scan(
+		&storedStatus, &retainedTokenHash, &suppressionReason,
+	); err != nil {
+		t.Fatalf("load opted-out invitation: %v", err)
+	}
+	if storedStatus != string(InvitationSuppressed) ||
+		retainedTokenHash == nil || *retainedTokenHash != expectedTokenHash ||
+		suppressionReason != "opt_out" {
+		t.Fatalf("opted-out status=%q token=%v reason=%q",
+			storedStatus, retainedTokenHash, suppressionReason)
 	}
 
 	retriedInvitation := emailCampaignRequest(
@@ -434,6 +576,258 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	if crossTenantInvitation.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant invitation = %d body=%s",
 			crossTenantInvitation.Code, crossTenantInvitation.Body.String())
+	}
+
+	retryResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-retry", "retry@example.com", "", ""),
+		rawInvitationKey,
+	)
+	if retryResponse.Code != http.StatusCreated {
+		t.Fatalf("create retry invitation = %d body=%s",
+			retryResponse.Code, retryResponse.Body.String())
+	}
+	var retryEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(retryResponse.Body).Decode(&retryEnvelope); err != nil {
+		t.Fatalf("decode retry invitation: %v", err)
+	}
+	var retryOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, retryEnvelope.Invitation.ID).Scan(&retryOutboxID); err != nil {
+		t.Fatalf("load retry invitation outbox: %v", err)
+	}
+	retryPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: retryOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    retryEnvelope.Invitation.ID,
+	})
+	retryTask := asynq.NewTask(TaskDeliverInvitation, retryPayload)
+	retrySender := &retryingInvitationTestSender{}
+	retryHandler := deliveryHandler
+	retryHandler.Sender = retrySender
+	if err := retryHandler.Handler()(ctx, retryTask); err == nil {
+		t.Fatal("transient invitation delivery error = nil")
+	}
+	var retryRecipient, retryLastError *string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, recipient_email::text, last_error
+		FROM email_feedback_invitations WHERE id = $1
+	`, retryEnvelope.Invitation.ID).Scan(
+		&storedStatus, &retryRecipient, &retryLastError,
+	); err != nil {
+		t.Fatalf("load transient invitation failure: %v", err)
+	}
+	if storedStatus != string(InvitationQueued) || retryRecipient == nil ||
+		retryLastError == nil || !strings.Contains(*retryLastError, "transient") {
+		t.Fatalf("transient status=%q recipient=%v error=%v",
+			storedStatus, retryRecipient, retryLastError)
+	}
+	if err := retryHandler.Handler()(ctx, retryTask); err != nil {
+		t.Fatalf("retry invitation delivery: %v", err)
+	}
+	if len(retrySender.messages) != 2 ||
+		retrySender.messages[0].IdempotencyKey != retrySender.messages[1].IdempotencyKey {
+		t.Fatalf("retry delivery messages = %#v", retrySender.messages)
+	}
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, recipient_email::text, provider_message_id, last_error
+		FROM email_feedback_invitations WHERE id = $1
+	`, retryEnvelope.Invitation.ID).Scan(
+		&storedStatus, &retryRecipient, &deliveredProviderID, &retryLastError,
+	); err != nil {
+		t.Fatalf("load retried invitation: %v", err)
+	}
+	if storedStatus != string(InvitationSent) || retryRecipient != nil ||
+		deliveredProviderID != "resend-invitation-retry" || retryLastError != nil {
+		t.Fatalf("retried status=%q recipient=%v provider=%q error=%v",
+			storedStatus, retryRecipient, deliveredProviderID, retryLastError)
+	}
+
+	raceEmail := "race@example.com"
+	raceResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-race", raceEmail, "", ""),
+		rawInvitationKey,
+	)
+	if raceResponse.Code != http.StatusCreated {
+		t.Fatalf("create suppression-race invitation = %d body=%s",
+			raceResponse.Code, raceResponse.Body.String())
+	}
+	var raceEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(raceResponse.Body).Decode(&raceEnvelope); err != nil {
+		t.Fatalf("decode suppression-race invitation: %v", err)
+	}
+	var raceOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, raceEnvelope.Invitation.ID).Scan(&raceOutboxID); err != nil {
+		t.Fatalf("load suppression-race outbox: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO email_feedback_suppressions (
+			tenant_id, recipient_digest, reason,
+			first_suppressed_at, last_suppressed_at
+		) VALUES ($1, $2, 'opt_out', $3, $3)
+	`, tenantID, digestString(raceEmail), deliveryNow); err != nil {
+		t.Fatalf("create suppression during delivery delay: %v", err)
+	}
+	racePayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: raceOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    raceEnvelope.Invitation.ID,
+	})
+	deliveredCount := len(deliverySender.messages)
+	if err := deliveryHandler.Handler()(
+		ctx, asynq.NewTask(TaskDeliverInvitation, racePayload),
+	); err != nil {
+		t.Fatalf("suppress delayed invitation: %v", err)
+	}
+	var raceRecipient, raceToken *string
+	if err := root.QueryRow(ctx, `
+		SELECT status::text, recipient_email::text, token_hash
+		FROM email_feedback_invitations WHERE id = $1
+	`, raceEnvelope.Invitation.ID).Scan(
+		&storedStatus, &raceRecipient, &raceToken,
+	); err != nil {
+		t.Fatalf("load delayed suppressed invitation: %v", err)
+	}
+	if len(deliverySender.messages) != deliveredCount ||
+		storedStatus != string(InvitationSuppressed) ||
+		raceRecipient != nil || raceToken != nil {
+		t.Fatalf("delayed suppression messages=%d status=%q recipient=%v token=%v",
+			len(deliverySender.messages), storedStatus, raceRecipient, raceToken)
+	}
+
+	complaintRequest := invitationBody(
+		campaign.ID, "order-complaint", "complaint@example.com", "", "",
+	)
+	complaintResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		complaintRequest, rawInvitationKey,
+	)
+	if complaintResponse.Code != http.StatusCreated {
+		t.Fatalf("create complaint invitation = %d body=%s",
+			complaintResponse.Code, complaintResponse.Body.String())
+	}
+	var complaintEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(complaintResponse.Body).Decode(&complaintEnvelope); err != nil {
+		t.Fatalf("decode complaint invitation: %v", err)
+	}
+	var complaintOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, complaintEnvelope.Invitation.ID).Scan(&complaintOutboxID); err != nil {
+		t.Fatalf("load complaint invitation outbox: %v", err)
+	}
+	complaintPayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: complaintOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    complaintEnvelope.Invitation.ID,
+	})
+	deliverySender.providerMessageIDs = append(
+		deliverySender.providerMessageIDs, "resend-invitation-complaint",
+	)
+	if err := deliveryHandler.Handler()(
+		ctx, asynq.NewTask(TaskDeliverInvitation, complaintPayload),
+	); err != nil {
+		t.Fatalf("deliver complaint invitation: %v", err)
+	}
+	resendNow := deliveryNow.Add(2 * time.Minute)
+	webhookRouter := chi.NewRouter()
+	issue.RegisterPublicRoutes(webhookRouter, issue.PublicHTTPOptions{
+		Store:    issue.Store{Database: pools.Admin},
+		Verifier: acceptingResendVerifier{},
+		AdditionalResendEventAppliers: []issue.ResendEventApplier{
+			ResendEventApplier{
+				Database: pools.Admin,
+				Now:      func() time.Time { return resendNow },
+			},
+		},
+	})
+	complaintWebhook := publicEmailFeedbackRequest(
+		webhookRouter, "api", http.MethodPost, "/v1/webhooks/resend",
+		`{"type":"email.complained","data":{"email_id":"resend-invitation-complaint",`+
+			`"to":["spoofed@example.com"]}}`,
+	)
+	complaintWebhook.Header().Set("svix-id", "event-complaint")
+	if complaintWebhook.Code != http.StatusOK {
+		t.Fatalf("complaint webhook = %d body=%s",
+			complaintWebhook.Code, complaintWebhook.Body.String())
+	}
+	var complainedAt *time.Time
+	var complaintWebhookID *string
+	var complaintRecipient, complaintToken *string
+	var complaintSuppressedAt time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT invitation.status::text, invitation.recipient_email::text,
+		       invitation.token_hash, invitation.complained_at,
+		       invitation.webhook_event_id, suppression.reason::text,
+		       suppression.last_suppressed_at
+		FROM email_feedback_invitations AS invitation
+		JOIN email_feedback_suppressions AS suppression
+		  ON suppression.tenant_id = invitation.tenant_id
+		 AND suppression.recipient_digest = invitation.recipient_digest
+		WHERE invitation.id = $1
+	`, complaintEnvelope.Invitation.ID).Scan(
+		&storedStatus, &complaintRecipient, &complaintToken, &complainedAt,
+		&complaintWebhookID, &suppressionReason, &complaintSuppressedAt,
+	); err != nil {
+		t.Fatalf("load complained invitation: %v", err)
+	}
+	if storedStatus != string(InvitationComplained) ||
+		complaintRecipient != nil || complaintToken != nil || complainedAt == nil ||
+		complaintWebhookID == nil || *complaintWebhookID != "event-complaint" ||
+		suppressionReason != "complaint" {
+		t.Fatalf(
+			"complained status=%q recipient=%v token=%v at=%v webhook=%v reason=%q",
+			storedStatus, complaintRecipient, complaintToken, complainedAt,
+			complaintWebhookID, suppressionReason,
+		)
+	}
+	resendNow = resendNow.Add(10 * time.Minute)
+	repeatedComplaintWebhook := publicEmailFeedbackRequest(
+		webhookRouter, "api", http.MethodPost, "/v1/webhooks/resend",
+		`{"type":"email.complained","data":{"email_id":"resend-invitation-complaint",`+
+			`"to":["different-spoof@example.com"]}}`,
+	)
+	if repeatedComplaintWebhook.Code != http.StatusOK {
+		t.Fatalf("repeat complaint webhook = %d body=%s",
+			repeatedComplaintWebhook.Code, repeatedComplaintWebhook.Body.String())
+	}
+	var repeatedSuppressedAt time.Time
+	if err := root.QueryRow(ctx, `
+		SELECT last_suppressed_at
+		FROM email_feedback_suppressions
+		WHERE tenant_id = $1 AND recipient_digest = $2
+	`, tenantID, digestString("complaint@example.com")).Scan(
+		&repeatedSuppressedAt,
+	); err != nil {
+		t.Fatalf("load repeated complaint suppression: %v", err)
+	}
+	if !repeatedSuppressedAt.Equal(complaintSuppressedAt) {
+		t.Fatalf("repeat complaint changed suppression timestamp from %s to %s",
+			complaintSuppressedAt, repeatedSuppressedAt)
+	}
+	complaintSuppressed := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(
+			campaign.ID, "order-after-complaint", "complaint@example.com", "", "",
+		), rawInvitationKey,
+	)
+	if complaintSuppressed.Code != http.StatusCreated ||
+		!strings.Contains(complaintSuppressed.Body.String(), `"status":"suppressed"`) {
+		t.Fatalf("complaint suppression = %d body=%s",
+			complaintSuppressed.Code, complaintSuppressed.Body.String())
 	}
 
 	suppressedEmail := "blocked@example.com"
@@ -632,6 +1026,66 @@ func emailCampaignRequest(
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func publicEmailFeedbackRequest(
+	handler http.Handler,
+	slug string,
+	method string,
+	path string,
+	body string,
+) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(
+		method, "https://"+slug+".fidibeki.test"+path, strings.NewReader(body),
+	)
+	request.Host = slug + ".fidibeki.test"
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if strings.Contains(path, "/v1/webhooks/resend") {
+		request.Header.Set("svix-id", "event-complaint")
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+type invitationTestSender struct {
+	messages           []email.Message
+	providerMessageIDs []string
+}
+
+func (sender *invitationTestSender) Send(
+	_ context.Context,
+	message email.Message,
+) (string, error) {
+	sender.messages = append(sender.messages, message)
+	index := len(sender.messages) - 1
+	if index >= len(sender.providerMessageIDs) {
+		return "", io.ErrUnexpectedEOF
+	}
+	return sender.providerMessageIDs[index], nil
+}
+
+type acceptingResendVerifier struct{}
+
+func (acceptingResendVerifier) Verify([]byte, http.Header) error {
+	return nil
+}
+
+type retryingInvitationTestSender struct {
+	messages []email.Message
+}
+
+func (sender *retryingInvitationTestSender) Send(
+	_ context.Context,
+	message email.Message,
+) (string, error) {
+	sender.messages = append(sender.messages, message)
+	if len(sender.messages) == 1 {
+		return "", errors.New("transient email provider failure")
+	}
+	return "resend-invitation-retry", nil
 }
 
 func containsReason(values []string, wanted string) bool {

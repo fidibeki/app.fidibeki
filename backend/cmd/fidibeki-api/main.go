@@ -398,6 +398,9 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	})
 	reporterProgressOptions := issue.PublicHTTPOptions{
 		Store: issue.Store{Database: pools.Admin}, Tokens: reporterTokens, Verifier: resendVerifier,
+		AdditionalResendEventAppliers: []issue.ResendEventApplier{
+			emailfeedback.ResendEventApplier{Database: pools.Admin},
+		},
 		Begin: db.BeginFromPool(pools.Admin), Limiter: ratelimit.NewRedisLimiter(redisClient.Client()),
 		TrustedProxyCIDRs: settings.TrustedProxyCIDRs,
 	}
@@ -583,6 +586,10 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	testimonial.RegisterRevokeRoutes(tenantRoot, testimonialRevokeOptions)
 	testimonial.RegisterMediaRoutes(tenantRoot, testimonialMediaOptions)
 	privacy.RegisterPublicRoutes(tenantRoot, privacyPublicOptions)
+	emailfeedback.RegisterPublicRoutes(tenantRoot, emailfeedback.PublicHTTPOptions{
+		Store: emailfeedback.Store{}, Resolver: pools.Admin,
+		Begin: db.BeginFromPool(pools.App), BaseDomain: settings.BaseDomain, Logger: logger,
+	})
 	attachmentStream := feedback.NewAttachmentStreamHTTPHandler(feedback.AttachmentStreamHTTPOptions{
 		BaseDomain: settings.BaseDomain, Resolver: tenant.PostgresResolver{Admin: pools.Admin},
 		Begin: db.BeginFromPool(pools.App), Store: feedback.Store{}, JWT: jwtManager,
@@ -787,6 +794,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: outbox.Store{Database: pools.Admin},
 		Resolver: outbox.MultiResolver{
 			outbox.FeedbackResolver{}, issue.OutboxResolver{Database: pools.Admin},
+			emailfeedback.OutboxResolver{},
 			email.LifecycleResolver{}, privacy.RecipientOutboxResolver{},
 			privacy.CaseCommunicationOutboxResolver{},
 			integration.OutboxResolver{Database: pools.Admin},
@@ -925,6 +933,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	default:
 		return fmt.Errorf("unsupported email driver %q", settings.EmailDriver)
 	}
+	emailFeedbackTokens, err := emailfeedback.NewInvitationTokenManager(settings.JWTSecret)
+	if err != nil {
+		return fmt.Errorf("initialize email feedback token manager: %w", err)
+	}
 	reporterTokens, err := auth.NewJWTManager(
 		settings.JWTSecret, platformadmin.DefaultIssuer, settings.ReporterTokenTTL,
 	)
@@ -952,6 +964,12 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		PublicBaseURL: settings.PublicBaseURL, BaseDomain: settings.BaseDomain,
 		AuthFrom:    settings.ResendAuthFrom,
 		WelcomeFrom: settings.ResendWelcomeFrom, WelcomeReplyTo: settings.ResendWelcomeReplyTo,
+	}
+	emailFeedbackHandler := emailfeedback.InvitationDeliveryHandler{
+		Store: emailfeedback.Store{}, Begin: db.BeginFromPool(pools.Admin),
+		Sender: sender, Tokens: emailFeedbackTokens, From: settings.ResendAuthFrom,
+		PublicBaseURL: settings.PublicBaseURL, WebPublicBaseURL: settings.WebPublicBaseURL,
+		BaseDomain: settings.BaseDomain,
 	}
 	integrationHandler := integration.DeliveryHandler{
 		Store:             integration.Store{Database: pools.Admin, Cipher: integrationCipher},
@@ -1013,6 +1031,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		CaseCommunicationHandler:      caseCommunicationHandler.Handler(),
 		ControllerNotificationHandler: controllerNotificationHandler.Handler(),
 		LifecycleHandler:              lifecycleHandler.Handler(),
+		EmailFeedbackHandler:          emailFeedbackHandler.Handler(),
 		ReplayMergeHandler:            replayProcessor.MergeHandler(),
 		ReplayVerificationHandler:     replayVerificationProcessor.Handler(),
 		AttachmentVerificationHandler: verificationProcessor.Handler(),

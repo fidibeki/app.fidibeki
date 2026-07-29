@@ -845,7 +845,7 @@ suppressed-recipient non-enumeration, and atomic outbox creation.
 ## Task 47: Deliver And Suppress Invitation Email
 
 **Depends on:** Task 46
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** The outbox delivers one branded, tenant-aware, scanner-safe invitation and prevents
 later delivery after opt-out, bounce, or complaint.
@@ -857,12 +857,24 @@ durably stopped.
 and form links, provider-message tracking, plaintext-recipient minimization, explicit POST opt-out,
 and bounce/complaint suppression.
 
+**Evidence:** Migration 133 records provider webhook IDs and enforces unique provider-message
+correlation. The outbox now routes invitations to the email queue, where one tenant-aware branded
+message exposes five rating links, the form, privacy policy, and opt-out while using a deterministic
+provider idempotency key. Delivery clears the plaintext recipient; transient retries preserve only
+the data still needed, terminal states minimize it, and a suppression created before worker
+execution prevents the send. The public tenant-host route is mutation-free on GET and requires an
+explicit idempotent POST to opt out tenant-wide. Verified Resend bounce/complaint events correlate
+only through the provider message ID, strengthen suppressions, and ignore exact webhook retries.
+The EN/PT confirmation page bypasses member auth and is no-store, no-referrer, noindex, responsive,
+and accessible. Full backend tests and vet, migration up/down/up with RLS, 173 web unit tests,
+typecheck/build, and four desktop/mobile Playwright scenarios pass.
+
 **Autonomy:** AFK
 
 ## Task 48: Create Feedback Only On Explicit Form Submission
 
 **Depends on:** Task 47
-**Status:** Pending
+**Status:** In Progress
 
 **Outcome:** An invited person can open a localized form, optionally preselect a rating, and create
 one independent `email` Feedback only by POSTing the form.

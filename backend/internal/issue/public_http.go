@@ -24,13 +24,18 @@ type WebhookVerifier interface {
 	Verify([]byte, http.Header) error
 }
 
+type ResendEventApplier interface {
+	ApplyResendEvent(context.Context, string, string, string) error
+}
+
 type PublicHTTPOptions struct {
-	Store             Store
-	Tokens            *auth.JWTManager
-	Verifier          WebhookVerifier
-	Begin             db.BeginFunc
-	Limiter           ratelimit.Limiter
-	TrustedProxyCIDRs []netip.Prefix
+	Store                         Store
+	Tokens                        *auth.JWTManager
+	Verifier                      WebhookVerifier
+	AdditionalResendEventAppliers []ResendEventApplier
+	Begin                         db.BeginFunc
+	Limiter                       ratelimit.Limiter
+	TrustedProxyCIDRs             []netip.Prefix
 }
 
 type PublicHTTPHandler struct {
@@ -151,6 +156,20 @@ func (h *PublicHTTPHandler) resendWebhook(w http.ResponseWriter, r *http.Request
 	); err != nil {
 		api.WriteError(w, http.StatusServiceUnavailable, api.CodeServiceUnavailable, "service unavailable", nil)
 		return
+	}
+	for _, applier := range h.options.AdditionalResendEventAppliers {
+		if applier == nil {
+			continue
+		}
+		if err := applier.ApplyResendEvent(
+			r.Context(), event.Data.EmailID, event.Type, r.Header.Get("svix-id"),
+		); err != nil {
+			api.WriteError(
+				w, http.StatusServiceUnavailable, api.CodeServiceUnavailable,
+				"service unavailable", nil,
+			)
+			return
+		}
 	}
 	api.WriteJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
 }
