@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/apikey"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/email"
@@ -123,17 +124,6 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	}
 	rawInvitationKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUV"
 	limitedInvitationKey := "fk_live_0123456789ABCDEFGHIJKLMNOPQRSTUW"
-	var invitationKeyID string
-	if err := root.QueryRow(ctx, `
-		INSERT INTO api_keys (
-			tenant_id, name, token_hash, token_prefix, permissions
-		) VALUES (
-			$1, 'Email feedback sender', $2, 'fk_live_0123...',
-			ARRAY['email_feedback:send']
-		) RETURNING id
-	`, tenantID, auth.HashToken(rawInvitationKey)).Scan(&invitationKeyID); err != nil {
-		t.Fatalf("create invitation API key: %v", err)
-	}
 	if _, err := root.Exec(ctx, `
 		INSERT INTO api_keys (
 			tenant_id, name, token_hash, token_prefix, permissions
@@ -191,6 +181,13 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	}
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	routes := chi.NewRouter()
+	apikey.RegisterRoutes(routes, apikey.HTTPOptions{
+		Store: apikey.Store{}, JWT: jwt,
+		GenerateToken: func() (string, string, string, error) {
+			return rawInvitationKey, auth.HashToken(rawInvitationKey),
+				rawInvitationKey[:12] + "...", nil
+		},
+	})
 	RegisterRoutes(routes, HTTPOptions{
 		Store: Store{}, JWT: jwt, InvitationTokens: invitationTokens,
 		Now: func() time.Time { return now },
@@ -204,6 +201,30 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		Begin:  db.BeginFromPool(pools.App),
 		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})(routes))
+
+	createdSenderKey := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/api-keys", `{
+			"name":"Email feedback staging sender",
+			"permissions":["email_feedback:send"],
+			"rate_limit_per_min":1000,
+			"expires_at":null
+		}`, ownerToken,
+	)
+	if createdSenderKey.Code != http.StatusCreated {
+		t.Fatalf("create sender API key = %d body=%s",
+			createdSenderKey.Code, createdSenderKey.Body.String())
+	}
+	var senderKeyEnvelope struct {
+		APIKey apikey.APIKey `json:"api_key"`
+		Token  string        `json:"token"`
+	}
+	if err := json.NewDecoder(createdSenderKey.Body).Decode(&senderKeyEnvelope); err != nil ||
+		senderKeyEnvelope.Token != rawInvitationKey ||
+		len(senderKeyEnvelope.APIKey.Permissions) != 1 ||
+		senderKeyEnvelope.APIKey.Permissions[0] != "email_feedback:send" {
+		t.Fatalf("least-privilege sender API key = %#v error=%v",
+			senderKeyEnvelope, err)
+	}
 
 	body := campaignBody(projectID, ruleID, "draft", "pt")
 	denied := emailCampaignRequest(
@@ -528,6 +549,14 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 			"submitted email feedback source=%q rating=%d issue=%v reporter=%v notify=%t",
 			submittedSource, submittedRating, submittedIssueID, submittedReporter, submittedNotify,
 		)
+	}
+	var submittedTestimonialCount int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*) FROM testimonials WHERE source_feedback_id = $1
+	`, submittedFeedbackID).Scan(&submittedTestimonialCount); err != nil ||
+		submittedTestimonialCount != 0 {
+		t.Fatalf("submitted email feedback testimonials=%d error=%v",
+			submittedTestimonialCount, err)
 	}
 	var submittedAt time.Time
 	if err := root.QueryRow(ctx, `
@@ -1206,18 +1235,69 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 			complaintSuppressed.Code, complaintSuppressed.Body.String())
 	}
 
-	suppressedEmail := "blocked@example.com"
-	if _, err := root.Exec(ctx, `
-		INSERT INTO email_feedback_suppressions (
-			tenant_id, recipient_digest, reason,
-			first_suppressed_at, last_suppressed_at
-		) VALUES ($1, $2, 'opt_out', $3, $3)
-	`, tenantID, digestString(suppressedEmail), now); err != nil {
-		t.Fatalf("create email suppression: %v", err)
+	suppressedEmail := "second-optout@example.com"
+	optOutSourceResponse := emailCampaignRequest(
+		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
+		invitationBody(campaign.ID, "order-optout-source", suppressedEmail, "", ""),
+		rawInvitationKey,
+	)
+	if optOutSourceResponse.Code != http.StatusCreated {
+		t.Fatalf("create second-recipient invitation = %d body=%s",
+			optOutSourceResponse.Code, optOutSourceResponse.Body.String())
 	}
+	var optOutSourceEnvelope struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	if err := json.NewDecoder(optOutSourceResponse.Body).Decode(
+		&optOutSourceEnvelope,
+	); err != nil {
+		t.Fatalf("decode second-recipient invitation: %v", err)
+	}
+	optOutSourceToken, _, err := invitationTokens.Token(optOutSourceEnvelope.Invitation.ID)
+	if err != nil {
+		t.Fatalf("derive second-recipient invitation token: %v", err)
+	}
+	var optOutSourceOutboxID string
+	if err := root.QueryRow(ctx, `
+		SELECT id::text FROM outbox_events
+		WHERE resource_type = 'email_feedback_invitation' AND resource_id = $1
+	`, optOutSourceEnvelope.Invitation.ID).Scan(&optOutSourceOutboxID); err != nil {
+		t.Fatalf("load second-recipient invitation outbox: %v", err)
+	}
+	optOutSourcePayload, _ := json.Marshal(DeliveryTask{
+		OutboxEventID: optOutSourceOutboxID,
+		TenantID:      tenantID,
+		ResourceID:    optOutSourceEnvelope.Invitation.ID,
+	})
+	deliverySender.providerMessageIDs = append(
+		deliverySender.providerMessageIDs, "resend-invitation-second-optout",
+	)
+	if err := deliveryHandler.Handler()(
+		ctx, asynq.NewTask(TaskDeliverInvitation, optOutSourcePayload),
+	); err != nil {
+		t.Fatalf("deliver second-recipient invitation: %v", err)
+	}
+	secondOptOutPath := "/v1/public/email-feedback/" + optOutSourceToken + "/opt-out"
+	secondOptOutView := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodGet, secondOptOutPath, "",
+	)
+	if secondOptOutView.Code != http.StatusOK ||
+		!strings.Contains(secondOptOutView.Body.String(), `"opted_out":false`) {
+		t.Fatalf("load second-recipient opt-out = %d body=%s",
+			secondOptOutView.Code, secondOptOutView.Body.String())
+	}
+	secondOptOut := publicEmailFeedbackRequest(
+		publicRouter, "acme", http.MethodPost, secondOptOutPath, "{}",
+	)
+	if secondOptOut.Code != http.StatusOK ||
+		!strings.Contains(secondOptOut.Body.String(), `"opted_out":true`) {
+		t.Fatalf("submit second-recipient opt-out = %d body=%s",
+			secondOptOut.Code, secondOptOut.Body.String())
+	}
+	deliveredBeforeSuppressedRetry := len(deliverySender.messages)
 	suppressedInvitation := emailCampaignRequest(
 		handler, "acme", http.MethodPost, "/v1/email-feedback/invitations",
-		invitationBody(campaign.ID, "order-127", suppressedEmail, "", ""),
+		invitationBody(campaign.ID, "order-after-optout", suppressedEmail, "", ""),
 		rawInvitationKey,
 	)
 	if suppressedInvitation.Code != http.StatusCreated ||
@@ -1231,7 +1311,8 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 	if err := root.QueryRow(ctx, `
 		SELECT recipient_email::text, token_hash
 		FROM email_feedback_invitations
-		WHERE tenant_id = $1 AND campaign_id = $2 AND external_event_id = 'order-127'
+		WHERE tenant_id = $1 AND campaign_id = $2
+		  AND external_event_id = 'order-after-optout'
 	`, tenantID, campaign.ID).Scan(&suppressedRecipient, &suppressedToken); err != nil {
 		t.Fatalf("load suppressed invitation: %v", err)
 	}
@@ -1241,14 +1322,16 @@ func TestEmailFeedbackCampaignHTTPFlow(t *testing.T) {
 		  AND resource_id = (
 		      SELECT id FROM email_feedback_invitations
 		      WHERE tenant_id = $1 AND campaign_id = $2
-		        AND external_event_id = 'order-127'
+		        AND external_event_id = 'order-after-optout'
 		  )
 	`, tenantID, campaign.ID).Scan(&suppressedOutboxCount); err != nil {
 		t.Fatalf("load suppressed invitation outbox: %v", err)
 	}
-	if suppressedRecipient != nil || suppressedToken != nil || suppressedOutboxCount != 0 {
-		t.Fatalf("suppressed recipient=%v token=%v outbox=%d",
-			suppressedRecipient, suppressedToken, suppressedOutboxCount)
+	if suppressedRecipient != nil || suppressedToken != nil || suppressedOutboxCount != 0 ||
+		len(deliverySender.messages) != deliveredBeforeSuppressedRetry {
+		t.Fatalf("suppressed recipient=%v token=%v outbox=%d messages=%d/%d",
+			suppressedRecipient, suppressedToken, suppressedOutboxCount,
+			len(deliverySender.messages), deliveredBeforeSuppressedRetry)
 	}
 
 	restrictedEmail := "restricted@example.com"

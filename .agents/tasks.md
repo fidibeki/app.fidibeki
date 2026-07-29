@@ -934,7 +934,7 @@ up/down/up, and `go vet ./...` pass.
 ## Task 50: Prove The Email Feedback Journey
 
 **Depends on:** Tasks 45 through 49
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** The complete customer-event-to-inbox journey is documented, tested, and ready for
 staging validation.
@@ -945,5 +945,20 @@ boundaries work together.
 **Acceptance:** The staging-ready E2E creates a campaign and least-privilege key, retries one event,
 opens without mutation, submits one `email` Feedback with no Issue/Testimonial, and suppresses a
 second recipient; all affected backend/web checks pass.
+
+**Evidence:** `TestEmailFeedbackCampaignHTTPFlow` now creates the sender key through
+`POST /v1/api-keys`, proves that `email_feedback:send` is its only permission, creates and activates
+the campaign, converges an exact event retry, and confirms rating-link GETs create no Feedback. The
+explicit submission creates exactly one `email` Feedback with no Issue or Testimonial. A second
+recipient is delivered an invitation, opts out through the public confirmation endpoint, and a
+later event for the same normalized address is accepted as suppressed without recipient data,
+token, delivery outbox, or email send. The public form was moved to the dynamic route's `index.vue`
+after the combined Playwright gate exposed that Nuxt was treating the opt-out page as an unrendered
+child; production route output now contains independent form and opt-out routes. The integration
+and controlled staging procedure, including credential hygiene, QA evidence, and cleanup, is
+documented in `docs/email-feedback.md`. Full backend tests and vet, 174 web unit tests, typecheck,
+production build, and 14 desktop/mobile campaign/form/opt-out Playwright scenarios pass. No
+deployment or production work was performed; issue closure still requires the documented
+controlled staging execution after push/deploy authorization.
 
 **Autonomy:** AFK

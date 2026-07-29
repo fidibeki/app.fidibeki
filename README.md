@@ -199,6 +199,12 @@ to `mobile_capture:create`; neither that API key nor another private credential 
 mobile bundle. See [docs/mobile-capture.md](docs/mobile-capture.md) for the trust boundary, request
 contract, consent behavior, screenshot upload, recurrence, and failure semantics.
 
+Customer backends can request post-transaction feedback email through an explicitly activated
+campaign and a separate API key restricted to `email_feedback:send`. Opening the email is
+mutation-free; only an explicit form submission creates independent Feedback, with no automatic
+Issue or Testimonial. See [docs/email-feedback.md](docs/email-feedback.md) for configuration,
+idempotency, privacy boundaries, and the controlled staging checklist.
+
 Automatic definitions combine their compatible legacy trigger with a deterministic local objective
 policy. The policy uses active time, scroll depth, interaction counts, anonymous per-page visits,
 public document metadata, and optional boolean attributes on `<html>`:
