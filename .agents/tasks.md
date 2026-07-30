@@ -1287,7 +1287,7 @@ packages remain `publish_to: none`; dry-runs validate their archives without upl
 ## Task 62: Add Flutter CI And Close The Delivery Loop
 
 **Depends on:** Task 61
-**Status:** Pending
+**Status:** In Progress
 
 **Outcome:** Isolated Flutter CI, independent review, remote checks, documentation, TODO, and issue
 evidence complete the unpublished Flutter SDK delivery.

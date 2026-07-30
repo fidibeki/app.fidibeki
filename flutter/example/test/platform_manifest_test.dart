@@ -24,9 +24,7 @@ void main() {
   });
 
   test('iOS host declares no sensitive resource usage', () {
-    final plist = File(
-      'example/ios/Runner/Info.plist',
-    ).readAsStringSync();
+    final plist = File('example/ios/Runner/Info.plist').readAsStringSync();
 
     for (final key in <String>[
       'NSCameraUsageDescription',

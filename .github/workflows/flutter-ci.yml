@@ -1,0 +1,125 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flutter/**"
+      - "contracts/mobile-capture/**"
+      - ".github/workflows/flutter-ci.yml"
+  pull_request:
+    paths:
+      - "flutter/**"
+      - "contracts/mobile-capture/**"
+      - ".github/workflows/flutter-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.7'
+          cache: true
+          pub-cache: true
+      - name: Resolve locked dependencies
+        run: dart pub get --enforce-lockfile
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Run fatal analysis
+        run: flutter analyze --fatal-infos --fatal-warnings
+      - name: Test host example
+        run: flutter test example/test
+      - name: Test packages with coverage
+        run: >-
+          flutter test
+          packages/fidibeki_flutter
+          packages/fidibeki_flutter_shared_preferences
+          --coverage
+          --coverage-path=coverage/lcov.info
+      - name: Enforce package coverage
+        run: dart run tool/check_coverage.dart coverage/lcov.info 85
+      - name: Generate API documentation
+        run: |
+          (cd packages/fidibeki_flutter && dart doc)
+          (cd packages/fidibeki_flutter_shared_preferences && dart doc)
+      - name: Validate unpublished package archives
+        run: |
+          (cd packages/fidibeki_flutter && dart pub publish --dry-run)
+          (cd packages/fidibeki_flutter_shared_preferences && dart pub publish --dry-run)
+
+  lowest-dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.7'
+          cache: true
+          pub-cache: true
+      - name: Resolve lowest compatible dependencies
+        run: dart pub downgrade
+      - name: Test lowest compatible dependencies
+        run: >-
+          flutter test
+          packages/fidibeki_flutter
+          packages/fidibeki_flutter_shared_preferences
+          example/test
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.7'
+          cache: true
+          pub-cache: true
+      - name: Resolve locked dependencies
+        run: dart pub get --enforce-lockfile
+      - name: Build release Android example
+        working-directory: flutter/example
+        run: flutter build apk --release
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44.7'
+          cache: true
+          pub-cache: true
+      - name: Resolve locked dependencies
+        run: dart pub get --enforce-lockfile
+      - name: Build iOS simulator example
+        working-directory: flutter/example
+        run: flutter build ios --simulator --debug
