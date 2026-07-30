@@ -1,9 +1,24 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
+
 import 'models.dart';
 import 'storage.dart';
 
 const _storagePrefix = '@fidibeki/flutter/v1';
+const backgroundSessionResetDuration = Duration(minutes: 30);
+
+String? _processAppSessionId;
+
+String _currentProcessAppSessionId(String Function() generator) {
+  return _processAppSessionId ??= generator();
+}
+
+@visibleForTesting
+void resetFidibekiProcessAppSessionForTesting() {
+  _processAppSessionId = null;
+}
 
 String normalizeFidibekiScreen(String screen) {
   final trimmed = screen.trim();
@@ -46,13 +61,45 @@ final class FidibekiRecurrenceEligibility {
 final class FidibekiRecurrenceEngine {
   FidibekiRecurrenceEngine(
     this.storage, {
-    required this.appSessionId,
+    String? appSessionId,
     DateTime Function()? now,
-  }) : _now = now ?? DateTime.now;
+    String Function()? appSessionIdGenerator,
+  }) : _appSessionId =
+           appSessionId ??
+           _currentProcessAppSessionId(
+             appSessionIdGenerator ?? const Uuid().v4,
+           ),
+       _hostOwnsSession = appSessionId != null,
+       _appSessionIdGenerator = appSessionIdGenerator ?? const Uuid().v4,
+       _now = now ?? DateTime.now;
 
   final FidibekiStorage storage;
-  final String appSessionId;
+  String _appSessionId;
+  final bool _hostOwnsSession;
+  final String Function() _appSessionIdGenerator;
   final DateTime Function() _now;
+  DateTime? _backgroundedAt;
+
+  String get currentAppSessionId => _appSessionId;
+
+  void onBackground() {
+    if (!_hostOwnsSession && _backgroundedAt == null) {
+      _backgroundedAt = _now().toUtc();
+    }
+  }
+
+  bool onForeground() {
+    final backgroundedAt = _backgroundedAt;
+    if (_hostOwnsSession || backgroundedAt == null) return false;
+    _backgroundedAt = null;
+    if (_now().toUtc().difference(backgroundedAt) <
+        backgroundSessionResetDuration) {
+      return false;
+    }
+    _appSessionId = _appSessionIdGenerator();
+    _processAppSessionId = _appSessionId;
+    return true;
+  }
 
   Future<FidibekiRecurrenceEligibility> eligibility(
     String projectId,
@@ -76,36 +123,52 @@ final class FidibekiRecurrenceEngine {
       return const FidibekiRecurrenceEligibility(eligible: true);
     }
     final state = record['state'];
-    if (state == 'dismissed' || state is! String) {
+    if (state == 'dismissed') {
       await storage.delete(key);
       return const FidibekiRecurrenceEligibility(eligible: true);
     }
     if (state != 'submitted') {
+      await storage.delete(key);
+      return const FidibekiRecurrenceEligibility(eligible: true);
+    }
+    if (record.keys.any(
+      (key) => !const <String>{
+        'state',
+        'recorded_at',
+        'app_session_id',
+      }.contains(key),
+    )) {
+      await storage.delete(key);
+      return const FidibekiRecurrenceEligibility(eligible: true);
+    }
+    final rawRecordedAt = record['recorded_at'];
+    final recordedAt = rawRecordedAt is String
+        ? DateTime.tryParse(rawRecordedAt)?.toUtc()
+        : null;
+    if (recordedAt == null) {
+      await storage.delete(key);
       return const FidibekiRecurrenceEligibility(eligible: true);
     }
     if (definition.recurrenceMode == FidibekiRecurrenceMode.session) {
+      final recordedAppSessionId = record['app_session_id'];
+      if (recordedAppSessionId is! String || recordedAppSessionId.isEmpty) {
+        await storage.delete(key);
+        return const FidibekiRecurrenceEligibility(eligible: true);
+      }
       return FidibekiRecurrenceEligibility(
-        eligible: record['app_session_id'] != appSessionId,
+        eligible: recordedAppSessionId != _appSessionId,
       );
     }
     if (definition.recurrenceMode == FidibekiRecurrenceMode.never) {
       return const FidibekiRecurrenceEligibility(eligible: false);
     }
-    final recordedAt = DateTime.tryParse(
-      record['recorded_at'] as String? ?? '',
-    );
-    if (recordedAt == null) {
-      await storage.delete(key);
-      return const FidibekiRecurrenceEligibility(eligible: true);
-    }
-    final nextEligibleAt = recordedAt.toUtc().add(
+    final nextEligibleAt = recordedAt.add(
       Duration(days: definition.recurrenceDays ?? 30),
     );
+    final now = _now().toUtc();
     return FidibekiRecurrenceEligibility(
-      eligible: !_now().toUtc().isBefore(nextEligibleAt),
-      nextEligibleAt: _now().toUtc().isBefore(nextEligibleAt)
-          ? nextEligibleAt
-          : null,
+      eligible: !now.isBefore(nextEligibleAt),
+      nextEligibleAt: now.isBefore(nextEligibleAt) ? nextEligibleAt : null,
     );
   }
 
@@ -120,7 +183,7 @@ final class FidibekiRecurrenceEngine {
         'state': 'submitted',
         'recorded_at': _now().toUtc().toIso8601String(),
         if (definition.recurrenceMode == FidibekiRecurrenceMode.session)
-          'app_session_id': appSessionId,
+          'app_session_id': _appSessionId,
       }),
     );
   }

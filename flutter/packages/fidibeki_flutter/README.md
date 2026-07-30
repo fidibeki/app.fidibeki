@@ -40,6 +40,17 @@ always clears the previous consent grant. A `configuration_changed` response per
 automatically. Draft content, reporter email, capture tokens, and responses remain in memory; only
 anonymous recurrence state crosses the storage boundary.
 
+For session recurrence, controllers created in the same process share an anonymous in-memory app
+session. A cold launch or 30 continuous minutes in the background starts a new generated session.
+Hosts that already own this lifecycle can pass `appSessionId`; the SDK then keeps that value stable
+until the host creates a controller with a new one. Query strings, fragments, repeated separators,
+and trailing slashes do not create distinct recurrence keys.
+
+The host observes application lifecycle changes and rechecks cooldown eligibility on foreground.
+Expired or denied capture sessions are discarded before another request can be sent. Public errors
+use typed, sanitized messages and never expose capture-provider messages, bearer tokens, reporter
+data, response content, or screenshot bytes.
+
 Screenshot capture is also host-owned and runs only after the user selects the sheet action. The
 provider returns a declared PNG, JPEG, or WebP size plus a bounded byte reader and optional cleanup:
 

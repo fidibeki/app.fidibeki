@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'controller.dart';
@@ -21,13 +23,15 @@ final class FidibekiFeedbackHost extends StatefulWidget {
   State<FidibekiFeedbackHost> createState() => _FidibekiFeedbackHostState();
 }
 
-final class _FidibekiFeedbackHostState extends State<FidibekiFeedbackHost> {
+final class _FidibekiFeedbackHostState extends State<FidibekiFeedbackHost>
+    with WidgetsBindingObserver {
   late final OverlayEntry _entry;
   bool _entryInserted = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _entry = OverlayEntry(builder: _buildOverlay);
     widget.controller.initialize();
   }
@@ -64,7 +68,13 @@ final class _FidibekiFeedbackHostState extends State<FidibekiFeedbackHost> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(widget.controller.handleAppLifecycleState(state));
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_entryInserted) _entry.remove();
     _entry.dispose();
     super.dispose();

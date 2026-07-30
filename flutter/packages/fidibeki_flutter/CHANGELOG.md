@@ -14,3 +14,6 @@
   system localization.
 - Add explicit host-owned PNG/JPEG/WebP screenshots with bounded preparation, strict declaration,
   safe grant upload/completion, exact retry, cleanup, and accepted-feedback attachment warnings.
+- Add process-stable session recurrence, 30-minute background rotation, host-owned session IDs,
+  cooldown foreground rechecks, stale-session replacement, async race guards, and provider-error
+  redaction.

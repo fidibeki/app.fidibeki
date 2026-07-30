@@ -1214,13 +1214,24 @@ photo-library, media, or storage permissions pass.
 ## Task 59: Harden Flutter Lifecycle, Recurrence, And Privacy
 
 **Depends on:** Task 58
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Every recurrence mode, background/cold-launch boundary, session lifecycle, retry race,
 storage rule, redaction rule, rebuild, and disposal path is deterministic and private.
 
 **Acceptance:** Lifecycle/security/contract tests prove normalization, recurrence, stale-session
 denial, safe async ownership, memory-only tokens, recurrence-only storage, and redacted errors.
+
+**Evidence:** Flutter now shares an implicit anonymous app-session across controller remounts,
+rotates it only after 30 continuous background minutes or a cold process launch, preserves
+host-owned app-session IDs, and rechecks cooldown eligibility on foreground. Corrupt, legacy, and
+over-broad recurrence records are deleted; persisted records contain recurrence metadata only.
+Session expiry/denial replaces the full capture session and draft, configuration refresh cannot
+reuse stale authorization, public refresh cannot race an accepted submission, failed initialization
+can retry, and generation guards reject late async completions after replacement or disposal.
+Provider and terminal errors expose typed static messages without tokens or reporter content.
+Fifty-one Flutter tests, fatal analysis, seven shared React Native contract tests, the local
+session/feedback smoke, and the Android debug APK pass.
 
 **Autonomy:** AFK
 

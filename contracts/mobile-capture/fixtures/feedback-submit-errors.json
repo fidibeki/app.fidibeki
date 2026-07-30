@@ -1,6 +1,39 @@
 {
   "cases": [
     {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "invalid_token",
+          "message": "Bearer fmc_private_session_token must not escape"
+        }
+      },
+      "expected_code": "access_denied",
+      "retryable": false
+    },
+    {
+      "status": 404,
+      "body": {
+        "error": {
+          "code": "not_found",
+          "message": "The chart labels are difficult to read"
+        }
+      },
+      "expected_code": "access_denied",
+      "retryable": false
+    },
+    {
+      "status": 410,
+      "body": {
+        "error": {
+          "code": "session_expired",
+          "message": "fmc_expired_private_session_token"
+        }
+      },
+      "expected_code": "session_expired",
+      "retryable": false
+    },
+    {
       "status": 409,
       "body": {
         "error": {

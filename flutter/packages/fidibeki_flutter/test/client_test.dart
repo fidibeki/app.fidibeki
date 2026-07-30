@@ -106,6 +106,56 @@ void main() {
     },
   );
 
+  test('retains only an exact retry after a malformed success', () async {
+    final fixture = fixtureJson('feedback-submit-valid.json');
+    final requestJson = fixture['request']! as Map<String, Object?>;
+    var attempts = 0;
+    final client = FidibekiMobileClient(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      httpClient: MockClient((request) async {
+        attempts += 1;
+        return attempts == 1
+            ? http.Response('{invalid-json', 201)
+            : http.Response(jsonEncode(fixture['accepted']), 201);
+      }),
+    );
+    final request = FidibekiFeedbackRequest.fromJson(requestJson);
+
+    await expectLater(
+      client.submitFeedback(captureSession(), request),
+      throwsA(
+        isA<FidibekiException>()
+            .having(
+              (error) => error.code,
+              'code',
+              FidibekiErrorCode.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+
+    final changedJson = Map<String, Object?>.of(requestJson)
+      ..['comment'] = 'Changed after malformed acceptance';
+    await expectLater(
+      client.submitFeedback(
+        captureSession(),
+        FidibekiFeedbackRequest.fromJson(changedJson),
+      ),
+      throwsA(
+        isA<FidibekiException>().having(
+          (error) => error.code,
+          'code',
+          FidibekiErrorCode.retryPayloadChanged,
+        ),
+      ),
+    );
+    await expectLater(
+      client.submitFeedback(captureSession(), request),
+      completes,
+    );
+    expect(attempts, 2);
+  });
+
   test('coalesces concurrent attempts with the same ID and body', () async {
     final fixture = fixtureJson('feedback-submit-valid.json');
     final request = FidibekiFeedbackRequest.fromJson(

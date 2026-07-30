@@ -47,6 +47,8 @@ Finder formScroll() {
 }
 
 void main() {
+  setUp(resetFidibekiProcessAppSessionForTesting);
+
   testWidgets('opens, closes, and reopens with one capture session', (
     tester,
   ) async {
@@ -241,5 +243,107 @@ void main() {
       find.byKey(const ValueKey('fidibeki-ai-disclosure')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('forwards app lifecycle changes to recurrence ownership', (
+    tester,
+  ) async {
+    var now = DateTime.utc(2026, 7, 30, 12);
+    var sessionRequests = 0;
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.android,
+      screen: '/checkout',
+      now: () => now,
+      sessionProvider: (_) async {
+        sessionRequests += 1;
+        return fixtureSession();
+      },
+      storage: MemoryFidibekiStorage(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FidibekiFeedbackHost(
+          controller: controller,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const SizedBox.expand(),
+      ),
+    );
+    await tester.pump();
+    expect(sessionRequests, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    now = now.add(backgroundSessionResetDuration);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(sessionRequests, 2);
+    expect(controller.status, FidibekiFeedbackStatus.ready);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('rebuilds with a new controller without stale ownership', (
+    tester,
+  ) async {
+    FidibekiFeedbackController createController() {
+      return FidibekiFeedbackController(
+        apiBaseUrl: Uri.parse('https://api.example.test'),
+        appVersion: '2.4.0',
+        locale: const Locale('en'),
+        osVersion: '18.5',
+        platform: FidibekiPlatform.ios,
+        screen: '/checkout',
+        sessionProvider: (_) async => fixtureSession(),
+        storage: MemoryFidibekiStorage(),
+      );
+    }
+
+    final first = createController();
+    final second = createController();
+    var active = first;
+    late StateSetter rebuild;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            rebuild = setState;
+            return FidibekiFeedbackHost(
+              controller: active,
+              child: const SizedBox.expand(),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await first.open();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fidibeki-sheet')), findsOneWidget);
+    first.close();
+    await tester.pump();
+
+    rebuild(() {
+      active = second;
+    });
+    await tester.pump();
+    expect(second.status, FidibekiFeedbackStatus.ready);
+
+    await first.open();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fidibeki-sheet')), findsNothing);
+
+    await second.open();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fidibeki-sheet')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    first.dispose();
+    second.dispose();
   });
 }
