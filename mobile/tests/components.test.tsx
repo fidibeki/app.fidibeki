@@ -84,6 +84,10 @@ function flattenedStyle(style: unknown): Record<string, unknown> {
   return Object.assign({}, ...styles.filter((value) => value && typeof value === 'object'))
 }
 
+function findHostByTestID(root: ReactTestInstance, testID: string): ReactTestInstance {
+  return root.find((node) => typeof node.type === 'string' && node.props.testID === testID)
+}
+
 async function fillRequiredForm(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => {
     pressByLabel(renderer.root, '5 out of 5')
@@ -208,6 +212,8 @@ describe('native provider, host trigger, and modal sheet', () => {
     expect(
       flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-star-icon-rating-5' }).props.style).color,
     ).not.toBe('#d9485f')
+    expect(findHostByTestID(renderer.root, 'fidibeki-star-icon-rating-4').children).toEqual(['★'])
+    expect(findHostByTestID(renderer.root, 'fidibeki-star-icon-rating-5').children).toEqual(['☆'])
     expect(renderer.root.findByProps({ testID: 'fidibeki-rating-rating-4' }).props.accessibilityState.checked).toBe(
       true,
     )
@@ -1061,6 +1067,28 @@ describe('native provider, host trigger, and modal sheet', () => {
     await openSheet(renderer)
     const sheet = renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' })
     expect(flattenedStyle(sheet.props.style).backgroundColor).toBe('#141716')
+    renderer.unmount()
+  })
+
+  it('chooses readable primary-button text for a dark custom accent', async () => {
+    const native = (await import('react-native')) as unknown as NativeTestControls
+    native.__setColorScheme('dark')
+    const customAccent = session({
+      configuration: {
+        ...session().configuration,
+        definition: definition({
+          appearance: { accent_color: '#087f6b', theme: 'auto' },
+        }),
+      },
+    })
+    const renderer = await renderSDK({
+      sessionProvider: vi.fn(async () => customAccent),
+    })
+    await openSheet(renderer)
+    const submitLabel = renderer.root.findByProps({ testID: 'fidibeki-submit' }).find(
+      (node) => String(node.type) === 'Text',
+    )
+    expect(flattenedStyle(submitLabel.props.style).color).toBe('#ffffff')
     renderer.unmount()
   })
 

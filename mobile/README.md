@@ -66,6 +66,16 @@ copy, and interaction pattern, and calls `useFidibekiFeedback().open()` to prese
 sheet. The provider applies the configured sheet colors, theme, and native safe-area insets. It
 does not fetch `appearance.logo_url`, avoiding an implicit remote image request from the host app.
 
+The sheet opens at 75% of the safe viewport, expands around the keyboard, and keeps its header and
+submit action fixed while the form scrolls. Rating blocks render as cumulative stars but continue
+to submit numeric `1..5` values. Optional comment and contact sections use explicit progressive
+disclosures, and a user-selected screenshot remains a compact attachment action.
+
+Closing without submitting preserves the in-memory draft and keeps the host trigger eligible, so
+the same sheet can reopen immediately without minting a new capture session. Recurrence is written
+only after Fidibeki accepts the feedback; the configured session, cooldown, or never policy then
+controls subsequent eligibility.
+
 Web presentation metadata such as `presentation` and `launcher_variant` does not control mobile
 rendering. The host-selected active definition supplies the response blocks, localization,
 recurrence, privacy, and sheet appearance.

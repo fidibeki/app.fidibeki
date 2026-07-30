@@ -81,6 +81,20 @@ mobile rendering. Any enabled, active definition selected by the trusted custome
 drive the mobile sheet; response blocks, localization, recurrence, privacy notices, and supported
 appearance fields still apply.
 
+## Native Sheet Behavior
+
+The SDK opens a bottom sheet at 75% of the safe viewport. The form body scrolls independently
+between a stable header and submit footer, and the sheet expands around the keyboard so the focused
+control and validation message remain visible. Rating response blocks display five cumulative
+stars while preserving the existing numeric `1..5` payload contract. Optional comment and contact
+fields remain behind explicit disclosures until the person chooses to add them.
+
+Closing the sheet before submission changes only its visibility. The current capture session,
+draft responses, comment, contact choice, and screenshot remain in memory, and the host trigger
+can call `open()` again immediately without another session request. The SDK writes recurrence
+state only after the backend accepts feedback. At that point the definition's session, cooldown,
+or never policy determines whether the host trigger remains eligible.
+
 ## Submit Feedback
 
 The SDK submits directly to the widget API base for the selected environment:

@@ -33,21 +33,40 @@ interface Colors {
   onAccent: string
 }
 
+function readableAccentForeground(accent: string, darkMode: boolean): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(accent)
+  if (!match) return darkMode ? '#071411' : '#ffffff'
+  const channels = [0, 2, 4].map(
+    (offset) => Number.parseInt(match[1]!.slice(offset, offset + 2), 16) / 255,
+  )
+  const [red, green, blue] = channels.map((channel) =>
+    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+  )
+  const luminance = 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!
+  const whiteContrast = 1.05 / (luminance + 0.05)
+  const darkContrast = (luminance + 0.05) / 0.055
+  return whiteContrast >= darkContrast ? '#ffffff' : '#071411'
+}
+
 function colorsFor(
   mode: 'light' | 'dark',
   theme: ReturnType<typeof useFeedbackContext>['theme'],
   appearance: MobileAppearance,
 ): Colors {
   const dark = mode === 'dark'
+  const accent = theme.accentColor ?? appearance.accent_color ?? (dark ? '#50d0ba' : '#087f6b')
   return {
-    accent: theme.accentColor ?? appearance.accent_color ?? (dark ? '#50d0ba' : '#087f6b'),
+    accent,
     background: theme.backgroundColor ?? appearance.surface_color ?? (dark ? '#141716' : '#ffffff'),
     surface: appearance.surface_color ?? (dark ? '#202523' : '#f5f7f6'),
     text: theme.textColor ?? appearance.text_color ?? (dark ? '#f4f7f6' : '#17211f'),
     muted: theme.mutedTextColor ?? (dark ? '#b6c0bd' : '#53635f'),
     border: theme.borderColor ?? (dark ? '#3a4441' : '#ccd5d2'),
     danger: theme.dangerColor ?? (dark ? '#ff8f87' : '#b42318'),
-    onAccent: appearance.accent_foreground ?? (dark ? '#071411' : '#ffffff'),
+    onAccent:
+      theme.accentColor === undefined && appearance.accent_foreground
+        ? appearance.accent_foreground
+        : readableAccentForeground(accent, dark),
   }
 }
 
@@ -228,8 +247,8 @@ function ResponseField({
                 style={[
                   styles.starButton,
                   {
-                    backgroundColor: selected ? colors.surface : 'transparent',
-                    borderColor: selected ? colors.accent : 'transparent',
+                    backgroundColor: 'transparent',
+                    borderColor: 'transparent',
                   },
                 ]}
                 testID={`fidibeki-rating-${block.key}-${rating}`}
@@ -239,7 +258,7 @@ function ResponseField({
                   style={[styles.starIcon, { color: filled ? colors.accent : colors.muted }]}
                   testID={`fidibeki-star-icon-${block.key}-${rating}`}
                 >
-                  ★
+                  {filled ? '★' : '☆'}
                 </Text>
               </Pressable>
             )
