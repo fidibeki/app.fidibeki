@@ -106,11 +106,63 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: npm install --global @railway/cli@5.27.2
+      - run: npm install --global @railway/cli@5.30.1
       - name: Deploy selected services
         env:
           TARGETS: ${{ steps.resolve.outputs.targets }}
+          SHA: ${{ steps.resolve.outputs.sha }}
         run: |
+          latest_deployment() {
+            railway deployment list \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment production \
+              --service "$1" \
+              --limit 1 \
+              --json
+          }
+
+          reconcile_deployment() {
+            local service="$1"
+            local previous_id="$2"
+            local deadline=$((SECONDS + 720))
+            local deployment_id=""
+            local status=""
+
+            while (( SECONDS < deadline )); do
+              if deployment=$(latest_deployment "$service" 2>/dev/null); then
+                deployment_id=$(jq -r '.[0].id // empty' <<< "$deployment")
+                status=$(jq -r '.[0].status // empty' <<< "$deployment")
+              fi
+
+              if [[ -z "$deployment_id" || "$deployment_id" == "$previous_id" ]]; then
+                sleep 10
+                continue
+              fi
+
+              echo "Railway deployment $deployment_id is $status"
+              case "$status" in
+                SUCCESS|SKIPPED)
+                  return 0
+                  ;;
+                FAILED|CRASHED|REMOVED|CANCELLED)
+                  railway logs \
+                    --project "$RAILWAY_PROJECT_ID" \
+                    --environment production \
+                    --service "$service" \
+                    --build \
+                    --lines 200 \
+                    "$deployment_id" || true
+                  return 1
+                  ;;
+              esac
+
+              sleep 10
+            done
+
+            echo "::error::Timed out reconciling Railway deployment ${deployment_id:-unknown} (${status:-unknown})"
+            return 1
+          }
+
           for target in $TARGETS; do
             case "$target" in
               api) service="$API_SERVICE" ;;
@@ -120,7 +172,19 @@ jobs:
               widget) service="$WIDGET_SERVICE" ;;
             esac
             echo "::group::Deploy $target"
-            railway up --ci --project "$RAILWAY_PROJECT_ID" --environment production --service "$service"
+            previous_id=$(latest_deployment "$service" | jq -r '.[0].id // empty')
+            if ! railway up \
+              --ci \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment production \
+              --service "$service" \
+              --message "Production promotion $SHA ($target)"; then
+              echo "::warning::Railway log streaming failed; checking the deployment status directly"
+              if ! reconcile_deployment "$service" "$previous_id"; then
+                echo "::endgroup::"
+                exit 1
+              fi
+            fi
             echo "::endgroup::"
           done
       - name: Verify production readiness
