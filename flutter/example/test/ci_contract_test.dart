@@ -27,9 +27,10 @@ void main() {
     expect(workflow, contains('flutter build apk --release'));
     expect(workflow, contains('flutter build ios --simulator --debug'));
     expect(
-      RegExp(r'runs-on: warp-ubuntu-2604-arm64-4x').allMatches(workflow),
+      RegExp(r'runs-on: warp-ubuntu-latest-x64-4x').allMatches(workflow),
       hasLength(3),
     );
+    expect(workflow, isNot(contains('runs-on: warp-ubuntu-2604-arm64-4x')));
     expect(workflow, contains('runs-on: warp-macos-15-arm64-6x'));
     expect(workflow, isNot(contains('railway')));
     expect(workflow, isNot(contains('environment: production')));
