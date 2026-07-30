@@ -710,10 +710,13 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 <style scoped>
 .feedback-workspace { display: grid; min-height: calc(100vh - 56px); grid-template-columns: minmax(520px, 1fr) minmax(330px, 36%); background: var(--surface); }
 .feedback-stream-panel { min-width: 0; border-right: 1px solid var(--line); }
+/* Long localized labels (the sort options and the scope line) must compress
+   inside the head instead of widening the document on narrow viewports. */
 .feedback-stream-head { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
-.feedback-stream-head > div { display: flex; align-items: baseline; gap: 10px; }
-.feedback-stream-head h1 { margin: 0; font-size: 17px; }
-.feedback-stream-head div > span { color: var(--muted); font-size: 11px; }
+.feedback-stream-head > div { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
+.feedback-stream-head h1 { margin: 0; flex: 0 0 auto; font-size: 17px; }
+.feedback-stream-head div > span { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-stream-head > .app-select { min-width: 0; flex: 0 1 auto; }
 .feedback-filter-bar { position: sticky; top: 56px; z-index: 30; display: flex; min-height: 54px; align-items: center; gap: 7px; padding: 8px 12px; background: var(--surface-subtle); border-bottom: 1px solid var(--line); }
 .feedback-filter-bar-desktop { display: contents; }
 .feedback-filter-bar select,
@@ -807,9 +810,11 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 @media (max-width: 1240px) {
   .feedback-workspace { grid-template-columns: minmax(480px, 1fr) 320px; }
   .feedback-stream article { grid-template-columns: 22px 36px minmax(140px, 1fr) auto auto max-content 20px; }
+  /* Hides the empty issue/time placeholders; the read-only check placeholder
+     must keep its cell or every later child shifts one column left. */
   .feedback-stream article .feedback-row-evidence,
   .feedback-stream article .issue-label,
-  .feedback-stream article > span[aria-hidden='true'] { display: none; }
+  .feedback-stream article > span[aria-hidden='true']:not(.feedback-row-check) { display: none; }
 }
 
 @media (max-width: 1100px) {

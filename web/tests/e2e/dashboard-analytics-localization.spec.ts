@@ -321,7 +321,10 @@ test('Portuguese dashboard and analytics preserve calculations and operational s
   await expect(page.locator('.dashboard-ledger article').filter({ hasText: 'Feedback recebido' })).toContainText('+12,4%')
   await expect(page.locator('.dashboard-ledger article').filter({ hasText: 'Satisfação' })).toContainText('4,2')
   await expect(page.getByText('Checkout froze after I applied a promotion code.')).toBeVisible()
-  await expect(page.locator('.dashboard-work-row').getByText('Sem issue', { exact: true })).toHaveText('Sem issue')
+  // Work rows only mark positive signals: an unlinked row renders no
+  // "Sem issue" filler, so its absence is the localized contract.
+  await expect(page.locator('.dashboard-work-row').getByText('Sem issue', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.dashboard-work-row time').first()).toBeVisible()
   await capture(page, testInfo, 'dashboard-pt')
 
   state.dashboardDelayMs = 500

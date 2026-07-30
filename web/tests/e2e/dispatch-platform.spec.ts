@@ -5848,7 +5848,9 @@ test("email feedback is identifiable and filterable in the inbox", async ({
   await expect(page.getByText("1 loaded")).toBeVisible();
   const row = page.getByRole("listitem").filter({ hasText: "FB-1047" });
   await expect(row.getByLabel("Email source")).toBeVisible();
-  await expect(row).toContainText("https://shop.acme.test/orders/1047");
+  // Stream rows render the context URL without its scheme; the inspector
+  // below still carries the full address.
+  await expect(row).toContainText("shop.acme.test/orders/1047");
 
   if (testInfo.project.name === "mobile") {
     await row.getByRole("link", { name: "Open FB-1047" }).click();
@@ -6903,7 +6905,10 @@ test("Portuguese feedback operations preserve customer content and exact mutatio
       exact: true,
     }),
   ).toBeVisible();
-  await expect(negativeFeedbackRow).toContainText("Storefront");
+  // A single-project workspace suppresses the project name in stream rows:
+  // repeating "Storefront" on every row disambiguates nothing.
+  await expect(negativeFeedbackRow).not.toContainText("Storefront");
+  await expect(negativeFeedbackRow).toContainText("shop.acme.test/checkout");
 
   if (testInfo.project.name === "mobile") {
     const summary = page.locator(".feedback-mobile-filters > summary");
