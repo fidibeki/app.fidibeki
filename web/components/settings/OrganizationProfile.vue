@@ -30,6 +30,21 @@ const { data, status, error, refresh } = await useAsyncData(
   () => $apiFetch<{ organization_profile: OrganizationProfile }>('/v1/organization-profile'),
 )
 
+// Closed by default: the workspace screen opens on its current state, and
+// editing identity is the deliberate act. Project pages deep-link here with
+// #organization-profile when a controller profile is required, so that hash
+// must land on the form already open.
+const route = useRoute()
+const open = ref(false)
+// The hash never reaches the server, so reading it before mount would make
+// the client hydrate a different open state than the server rendered.
+onMounted(() => {
+  if (route.hash === '#organization-profile') open.value = true
+})
+watch(() => route.hash, (hash) => {
+  if (hash === '#organization-profile') open.value = true
+})
+
 const form = reactive({
   name: '',
   short_name: '',
@@ -206,22 +221,21 @@ async function removeLogo() {
 </script>
 
 <template>
-  <section id="organization-profile" class="app-surface organization-profile">
-    <header>
-      <div>
-        <p class="app-eyebrow">{{ t('admin.organization.eyebrow') }}</p>
-        <h2>{{ t('admin.organization.title') }}</h2>
-      </div>
-      <button
-        v-if="status === 'success'"
-        class="app-button app-button--primary"
-        type="submit"
-        form="organization-profile-form"
-        :disabled="saving || !writable"
-      >
-        <Save :size="14" /> {{ saving ? t('admin.common.saving') : t('admin.organization.save') }}
-      </button>
-    </header>
+  <details
+    id="organization-profile"
+    class="app-surface settings-disclosure organization-profile"
+    :open="open"
+    @toggle="open = ($event.target as HTMLDetailsElement).open"
+  >
+    <summary>
+      <span class="settings-disclosure-head">
+        <div>
+          <p class="app-eyebrow">{{ t('admin.organization.eyebrow') }}</p>
+          <h2>{{ t('admin.organization.title') }}</h2>
+        </div>
+        <em>{{ t('admin.organization.summaryHint') }}</em>
+      </span>
+    </summary>
 
     <div v-if="status === 'pending'" class="organization-state">
       <span class="app-spinner" />
@@ -234,7 +248,6 @@ async function removeLogo() {
 
     <form
       v-else-if="profile"
-      id="organization-profile-form"
       class="organization-body"
       @submit.prevent="save"
     >
@@ -367,9 +380,18 @@ async function removeLogo() {
         <p v-if="!writable" class="organization-readonly">{{ t('admin.organization.readOnly') }}</p>
         <p v-if="failure" class="settings-form-error" role="alert">{{ failure }}</p>
         <p v-if="notice" class="organization-notice" role="status">{{ notice }}</p>
+        <footer class="organization-actions">
+          <button
+            class="app-button app-button--primary"
+            type="submit"
+            :disabled="saving || !writable"
+          >
+            <Save :size="14" /> {{ saving ? t('admin.common.saving') : t('admin.organization.save') }}
+          </button>
+        </footer>
       </fieldset>
     </form>
-  </section>
+  </details>
 </template>
 
 <style scoped>
@@ -377,18 +399,10 @@ async function removeLogo() {
   grid-column: 1 / -1;
   overflow: hidden;
 }
-.organization-profile > header {
+.organization-actions {
   display: flex;
-  min-height: 68px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.organization-profile h2 {
-  margin: 3px 0 0;
-  font-size: 14px;
+  justify-content: flex-end;
+  margin-top: 15px;
 }
 .organization-state {
   display: flex;
@@ -530,11 +544,7 @@ async function removeLogo() {
   }
 }
 @media (max-width: 540px) {
-  .organization-profile > header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .organization-profile > header .app-button {
+  .organization-actions .app-button {
     width: 100%;
   }
   .organization-form-grid {

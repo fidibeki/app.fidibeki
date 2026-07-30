@@ -4464,6 +4464,7 @@ test("workspace widget defaults can be updated with controlled tokens", async ({
   await openPrimary(page, "Settings");
 
   const appearance = page.locator(".settings-widget-appearance");
+  await appearance.locator("summary").click();
   await appearance.getByLabel("Accent color swatch").fill("#46c754");
   await appearance
     .getByLabel("Logo URL")
@@ -4511,6 +4512,7 @@ test("workspace appearance and reporter policy keep validation in their own form
   await expect(reporterPolicy.getByRole("alert")).toBeVisible();
 
   const appearance = page.locator(".settings-widget-appearance");
+  await appearance.locator("summary").click();
   const logoURL = appearance.getByLabel("Logo URL");
   await logoURL.fill("http://example.test/logo.svg");
   await appearance.getByRole("button", { name: "Save defaults" }).click();
@@ -4549,6 +4551,7 @@ test("organization profile validates identity assets and updates the workspace i
   await expect(
     organization.getByRole("heading", { name: "Identity and public defaults" }),
   ).toBeVisible();
+  await organization.locator("summary").click();
 
   state.failNextIdentityUpload = true;
   await organization.getByLabel("Workspace logo file").setInputFiles({
@@ -4572,7 +4575,12 @@ test("organization profile validates identity assets and updates the workspace i
   await expect(organization.getByRole("status")).toHaveText(
     "Workspace logo updated.",
   );
+  // The workspace identity lives in the rail, which folds into a drawer on
+  // mobile — open it to see the refreshed logo the way a user would.
+  const drawered = (page.viewportSize()?.width || 0) <= 700;
+  if (drawered) await page.getByTitle("Open navigation").click();
   await expect(page.locator(".app-tenant-switcher img")).toBeVisible();
+  if (drawered) await page.getByTitle("Close navigation").click();
 
   await organization.getByLabel("Public name").fill("Acme Operations");
   await organization.getByLabel("Default language").selectOption("pt-AO");
@@ -4634,6 +4642,7 @@ test("organization identity controls are read-only without workspace update acce
   await authenticate(page, state);
   await openPrimary(page, "Settings");
   const organization = page.locator(".organization-profile");
+  await organization.locator("summary").click();
   await expect(
     organization.getByRole("button", { name: "Save profile" }),
   ).toBeDisabled();
@@ -5844,7 +5853,9 @@ test("email feedback is identifiable and filterable in the inbox", async ({
   await expect(page.getByText("1 loaded")).toBeVisible();
   const row = page.getByRole("listitem").filter({ hasText: "FB-1047" });
   await expect(row.getByLabel("Email source")).toBeVisible();
-  await expect(row).toContainText("https://shop.acme.test/orders/1047");
+  // Stream rows render the context URL without its scheme; the inspector
+  // below still carries the full address.
+  await expect(row).toContainText("shop.acme.test/orders/1047");
 
   if (testInfo.project.name === "mobile") {
     await row.getByRole("link", { name: "Open FB-1047" }).click();
@@ -6899,7 +6910,10 @@ test("Portuguese feedback operations preserve customer content and exact mutatio
       exact: true,
     }),
   ).toBeVisible();
-  await expect(negativeFeedbackRow).toContainText("Storefront");
+  // A single-project workspace suppresses the project name in stream rows:
+  // repeating "Storefront" on every row disambiguates nothing.
+  await expect(negativeFeedbackRow).not.toContainText("Storefront");
+  await expect(negativeFeedbackRow).toContainText("shop.acme.test/checkout");
 
   if (testInfo.project.name === "mobile") {
     const summary = page.locator(".feedback-mobile-filters > summary");
@@ -7937,6 +7951,7 @@ test("data privacy controls cover retention, exports, reporter verification, and
   await expect(
     page.getByRole("heading", { name: "Retention schedule" }),
   ).toBeVisible();
+  await page.locator(".privacy-register > summary").click();
   await expect(page.locator(".privacy-retention-table")).toContainText(
     "Attachments",
   );
@@ -7952,6 +7967,12 @@ test("data privacy controls cover retention, exports, reporter verification, and
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Cleanup health",
   );
+  // Operations that missed their window surface as permanent rows; routine
+  // operations sit behind the steady-operations disclosure.
+  await expect(page.locator(".privacy-retention-health-exceptions")).toContainText(
+    "Platform admin magic links",
+  );
+  await page.locator(".privacy-health-ledger > summary").click();
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Workspace magic links",
   );
@@ -8846,6 +8867,7 @@ test("Portuguese administration preserves permissions and operational mutations"
   await expect(
     page.getByRole("heading", { name: "Calendário de retenção" }),
   ).toBeVisible();
+  await page.locator(".privacy-register > summary").click();
   await expect(page.locator(".privacy-retention-table")).toContainText(
     "90 dias",
   );
@@ -8855,6 +8877,7 @@ test("Portuguese administration preserves permissions and operational mutations"
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Saúde da limpeza",
   );
+  await page.locator(".privacy-health-ledger > summary").click();
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Magic links do workspace",
   );

@@ -137,6 +137,7 @@ export const adminMessages = {
       reporterDescription: 'Applies to every project unless a project disables access.',
       widgetEyebrow: 'Widget defaults',
       controlledAppearance: 'Controlled appearance',
+      appearanceHint: 'Accent · position · logo',
       saveDefaults: 'Save defaults',
     },
     members: {
@@ -428,6 +429,7 @@ export const adminMessages = {
   organization: {
     eyebrow: 'Organization profile',
     title: 'Identity and public defaults',
+    summaryHint: 'Public name · logo · languages · legal links',
     save: 'Save profile',
     loading: 'Loading organization profile',
     unavailable: 'Organization profile is unavailable.',
@@ -817,6 +819,8 @@ export const adminMessages = {
       unavailable: 'Data controls unavailable',
       policyEyebrow: 'Effective policy',
       retention: 'Retention schedule',
+      register: 'Retention register',
+      registerHint: '{count} data category · purpose, trigger, and operation | {count} data categories · purpose, trigger, and operation',
       plan: '{plan} plan',
       readRequired: 'Workspace read access required',
       columns: {
@@ -882,6 +886,8 @@ export const adminMessages = {
         owner: 'Owner',
         unassigned: 'Unassigned',
         create: 'Create case',
+        openCase: 'Open a case',
+        openCaseHint: 'Access · rectification · erasure · portability',
         empty: 'No data-rights cases',
         case: 'Case',
         subject: 'Subject',
@@ -1140,6 +1146,8 @@ export const adminMessages = {
         nextExpected: 'Next expected {date}',
         processed: 'Last / total processed',
         consecutiveFailures: '{count} consecutive failure | {count} consecutive failures',
+        steadyOperations: '{count} operation running on schedule | {count} operations running on schedule',
+        steadyHint: 'Last run · volumes',
         operation: {
           tenant_magic_links: 'Workspace magic links',
           platform_admin_magic_links: 'Platform admin magic links',
