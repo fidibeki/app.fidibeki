@@ -215,8 +215,6 @@ jobs:
           SHA: ${{ steps.resolve.outputs.sha }}
           TARGETS: ${{ steps.resolve.outputs.targets }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           latest=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
           latest="${latest:-v0.0.0}"
           IFS=. read -r major minor patch <<< "${latest#v}"
@@ -226,6 +224,25 @@ jobs:
             patch) patch=$((patch + 1)) ;;
           esac
           version="v${major}.${minor}.${patch}"
-          git tag -a "$version" -m "Production release $version (services: $TARGETS)" "$SHA"
-          git push origin "refs/tags/$version"
+          message="Production release $version (services: $TARGETS)"
+          tag_sha=$(jq -n \
+            --arg tag "$version" \
+            --arg message "$message" \
+            --arg object "$SHA" \
+            '{
+              tag: $tag,
+              message: $message,
+              object: $object,
+              type: "commit"
+            }' | gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/tags" \
+              --input - \
+              --jq '.sha')
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/$version" \
+            -f sha="$tag_sha" \
+            --silent
           echo "Tagged $version at $SHA (previous: $latest)" >> "$GITHUB_STEP_SUMMARY"
