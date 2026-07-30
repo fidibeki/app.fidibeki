@@ -14,6 +14,7 @@ final feedback = FidibekiFeedbackController(
   screen: '/checkout/review',
   sessionProvider: hostBackend.createCaptureSession,
   storage: appStorage,
+  screenshotProvider: hostScreenshots.capture,
   linkOpener: hostLinks.open,
   theme: const FidibekiTheme(
     accent: Color(0xff087f6b),
@@ -38,5 +39,25 @@ System copy is available in English and Portuguese and falls back to English for
 always clears the previous consent grant. A `configuration_changed` response performs this refresh
 automatically. Draft content, reporter email, capture tokens, and responses remain in memory; only
 anonymous recurrence state crosses the storage boundary.
+
+Screenshot capture is also host-owned and runs only after the user selects the sheet action. The
+provider returns a declared PNG, JPEG, or WebP size plus a bounded byte reader and optional cleanup:
+
+```dart
+Future<FidibekiScreenshotAsset?> capture() async {
+  final image = await hostPicker.pickScreenshot();
+  if (image == null) return null;
+  return FidibekiScreenshotAsset(
+    contentType: image.contentType,
+    sizeBytes: image.sizeBytes,
+    read: (maximumBytes) => image.readBytes(maximumBytes),
+    dispose: image.dispose,
+  );
+}
+```
+
+The SDK accepts no local URI, limits screenshots to 10 MiB, uploads only to the returned safe grant,
+and completes through the existing mobile endpoint. A later upload/completion failure keeps the
+Feedback accepted and exposes only a scoped attachment warning.
 
 The package is under active development and is not published.

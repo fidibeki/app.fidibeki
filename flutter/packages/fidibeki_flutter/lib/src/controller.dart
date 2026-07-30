@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:uuid/uuid.dart';
@@ -7,6 +9,7 @@ import 'errors.dart';
 import 'localization.dart';
 import 'models.dart';
 import 'recurrence.dart';
+import 'screenshot.dart';
 import 'storage.dart';
 import 'submission.dart';
 import 'theme.dart';
@@ -49,6 +52,8 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     String Function()? feedbackIdGenerator,
     this.linkOpener,
     this.theme,
+    this.screenshotProvider,
+    String Function()? clientAttachmentIdGenerator,
   }) : platform = platform ?? _runtimePlatform(),
        normalizedScreen = normalizeFidibekiScreen(screen),
        _now = now ?? DateTime.now,
@@ -58,6 +63,8 @@ final class FidibekiFeedbackController extends ChangeNotifier {
        _ownsMobileClient = mobileClient == null,
        _feedbackIdGenerator = feedbackIdGenerator ?? const Uuid().v4,
        _feedbackId = (feedbackIdGenerator ?? const Uuid().v4).call(),
+       _clientAttachmentIdGenerator =
+           clientAttachmentIdGenerator ?? const Uuid().v4,
        _recurrence = FidibekiRecurrenceEngine(
          storage,
          appSessionId: appSessionId ?? const Uuid().v4(),
@@ -75,10 +82,12 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   final FidibekiSessionProvider sessionProvider;
   final Future<void> Function(Uri url)? linkOpener;
   final FidibekiTheme? theme;
+  final FidibekiScreenshotProvider? screenshotProvider;
   final DateTime Function() _now;
   final FidibekiMobileClient _mobileClient;
   final bool _ownsMobileClient;
   final String Function() _feedbackIdGenerator;
+  final String Function() _clientAttachmentIdGenerator;
   String _feedbackId;
   final FidibekiRecurrenceEngine _recurrence;
   final Map<String, Object> _responses = <String, Object>{};
@@ -87,6 +96,11 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   bool _consentGranted = false;
   bool _commentExpanded = false;
   bool _contactExpanded = false;
+  FidibekiPreparedScreenshot? _screenshot;
+  FidibekiScreenshotNotice? _screenshotNotice;
+  FidibekiAttachmentOutcome? _attachmentOutcome;
+  bool _readingScreenshot = false;
+  int _screenshotGeneration = 0;
 
   FidibekiFeedbackStatus _status = FidibekiFeedbackStatus.initializing;
   FidibekiCaptureSession? _session;
@@ -112,6 +126,16 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   bool get consentGranted => _consentGranted;
   bool get commentExpanded => _commentExpanded;
   bool get contactExpanded => _contactExpanded;
+  bool get hasScreenshot => _screenshot != null;
+  bool get readingScreenshot => _readingScreenshot;
+  FidibekiScreenshotNotice? get screenshotNotice => _screenshotNotice;
+  FidibekiAttachmentOutcome? get attachmentOutcome => _attachmentOutcome;
+  bool get canAddScreenshot {
+    return screenshotProvider != null &&
+        _session?.configuration.definition.canAttachScreenshot == true &&
+        _screenshot == null;
+  }
+
   DateTime? get nextEligibleAt => _nextEligibleAt;
   bool get eligible => _eligible;
   bool get visible => _visible;
@@ -214,6 +238,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
         _session = next;
         _feedbackId = _feedbackIdGenerator();
         _accepted = null;
+        _attachmentOutcome = null;
         _eligible = true;
         _nextEligibleAt = null;
         _error = reason;
@@ -269,6 +294,14 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     if (!contactAvailable) {
       _reporterEmail = '';
       _contactExpanded = false;
+    }
+    if (!next.canAttachScreenshot) {
+      _screenshotGeneration += 1;
+      final screenshot = _screenshot;
+      _screenshot = null;
+      _screenshotNotice = null;
+      _readingScreenshot = false;
+      if (screenshot != null) unawaited(screenshot.dispose());
     }
     _consentGranted = false;
   }
@@ -380,6 +413,90 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     await linkOpener?.call(url);
   }
 
+  Future<void> addScreenshot() async {
+    final provider = screenshotProvider;
+    final definition = _session?.configuration.definition;
+    if (!_canEditDraft() ||
+        provider == null ||
+        definition?.canAttachScreenshot != true ||
+        _screenshot != null ||
+        _readingScreenshot) {
+      return;
+    }
+    final generation = ++_screenshotGeneration;
+    _setState(() {
+      _readingScreenshot = true;
+      _screenshotNotice = null;
+    });
+
+    FidibekiScreenshotAsset? asset;
+    try {
+      asset = await provider();
+    } on Object {
+      if (_disposed || generation != _screenshotGeneration) return;
+      _setState(() {
+        _readingScreenshot = false;
+        _screenshotNotice = FidibekiScreenshotNotice.providerFailed;
+      });
+      return;
+    }
+    if (_disposed || generation != _screenshotGeneration) {
+      await _disposeScreenshotAsset(asset);
+      return;
+    }
+    if (asset == null) {
+      _setState(() {
+        _readingScreenshot = false;
+        _screenshotNotice = FidibekiScreenshotNotice.cancelled;
+      });
+      return;
+    }
+
+    FidibekiPreparedScreenshot prepared;
+    try {
+      prepared = await prepareFidibekiScreenshot(
+        asset,
+        clientAttachmentIdGenerator: _clientAttachmentIdGenerator,
+      );
+    } on FidibekiException {
+      if (_disposed || generation != _screenshotGeneration) return;
+      _setState(() {
+        _readingScreenshot = false;
+        _screenshotNotice = FidibekiScreenshotNotice.invalid;
+      });
+      return;
+    }
+    if (_disposed || generation != _screenshotGeneration) {
+      await prepared.dispose();
+      return;
+    }
+    _setState(() {
+      _screenshot = prepared;
+      _readingScreenshot = false;
+      _screenshotNotice = null;
+    });
+  }
+
+  Future<void> _disposeScreenshotAsset(FidibekiScreenshotAsset? asset) async {
+    try {
+      await asset?.dispose?.call();
+    } on Object {
+      // Host cleanup failures remain private.
+    }
+  }
+
+  Future<void> removeScreenshot() async {
+    if (!_canEditDraft()) return;
+    _screenshotGeneration += 1;
+    final screenshot = _screenshot;
+    _setState(() {
+      _screenshot = null;
+      _screenshotNotice = null;
+      _readingScreenshot = false;
+    });
+    await screenshot?.dispose();
+  }
+
   bool _canEditDraft() {
     return !_disposed &&
         _visible &&
@@ -451,6 +568,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
             widgetDefinitionVersion: definition.definitionVersion,
             locale: contactNotice.locale,
           );
+    final screenshot = definition.canAttachScreenshot ? _screenshot : null;
     final request = FidibekiFeedbackRequest(
       clientFeedbackId: _feedbackId,
       responses: <String, Object>{
@@ -464,6 +582,13 @@ final class FidibekiFeedbackController extends ChangeNotifier {
       reporterEmail: reporterEmail.isEmpty ? null : reporterEmail,
       notifyReporter: reporterEmail.isNotEmpty,
       consent: consent,
+      screenshot: screenshot == null
+          ? null
+          : FidibekiScreenshotDeclaration(
+              clientAttachmentId: screenshot.clientAttachmentId,
+              contentType: screenshot.contentType,
+              sizeBytes: screenshot.sizeBytes,
+            ),
     );
     _setState(() {
       _error = null;
@@ -483,10 +608,25 @@ final class FidibekiFeedbackController extends ChangeNotifier {
       );
       _setState(() {
         _accepted = accepted;
+        _attachmentOutcome = null;
         _eligible = false;
         _nextEligibleAt = recurrence.nextEligibleAt;
         _status = FidibekiFeedbackStatus.submitted;
       });
+      if (screenshot != null) {
+        final outcome = await _mobileClient.uploadScreenshot(
+          current,
+          accepted,
+          screenshot,
+        );
+        await screenshot.dispose();
+        _setState(() {
+          if (identical(_screenshot, screenshot)) {
+            _screenshot = null;
+          }
+          _attachmentOutcome = outcome;
+        });
+      }
       return accepted;
     } on FidibekiException catch (error) {
       _setState(() {
@@ -604,6 +744,10 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _screenshotGeneration += 1;
+    final screenshot = _screenshot;
+    _screenshot = null;
+    if (screenshot != null) unawaited(screenshot.dispose());
     if (_ownsMobileClient) _mobileClient.close();
     super.dispose();
   }

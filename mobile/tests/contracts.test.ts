@@ -72,6 +72,40 @@ describe('shared mobile capture contracts', () => {
     expect(JSON.parse(canonicalRequest(request))).toEqual(request)
   })
 
+  it('accepts the shared screenshot declaration and upload grant', async () => {
+    const contract = fixture<{
+      request: MobileFeedbackRequest
+      accepted: {
+        feedback_id: string
+        feedback_public_id: string
+        attachments: Array<{
+          attachment_id: string
+          client_attachment_id: string
+          presigned_url: string
+          method: 'PUT'
+          headers: Record<string, string>
+          complete_token: string
+          expires_at: string
+        }>
+      }
+    }>('feedback-submit-screenshot.json')
+
+    expect(JSON.parse(canonicalRequest(contract.request))).toEqual(contract.request)
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: async () => new Response(JSON.stringify(contract.accepted), { status: 201 }),
+    })
+    await expect(
+      client.submitFeedback(
+        validateCaptureSession(fixture('session-valid.json')),
+        contract.request,
+      ),
+    ).resolves.toMatchObject({
+      feedback_public_id: 'FDBK-SCREENSHOT',
+      attachments: [{ method: 'PUT' }],
+    })
+  })
+
   it('maps every shared backend error fixture', async () => {
     const request = fixture<{ request: MobileFeedbackRequest }>('feedback-submit-valid.json').request
     const contract = fixture<{

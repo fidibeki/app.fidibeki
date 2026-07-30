@@ -1189,13 +1189,25 @@ analysis, six shared React Native contract tests, and the Android debug APK pass
 ## Task 58: Complete The Flutter Screenshot Boundary
 
 **Depends on:** Task 57
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Explicit host-owned screenshots validate, upload, complete, dispose, and report
 post-acceptance failures without permission, URI, or duplicate-Feedback leakage.
 
 **Acceptance:** Provider/upload/completion tests cover cancellation, bounds, MIME/bytes, cleanup,
 unsafe redirects, exact retry, success warning, and forbidden data/permission absence.
+
+**Evidence:** Flutter now accepts screenshots only through an explicit host callback with no URI
+field, a PNG/JPEG/WebP allowlist, a 10-MiB bounded reader, immutable copied bytes, and idempotent
+cleanup. The strict Feedback request carries one declaration; accepted grants upload with
+redirects disabled and without bearer/private headers, then complete through the authenticated
+mobile endpoint. Exact ambiguous retries preserve the same frozen declaration and bytes. Upload,
+grant, or completion failures produce a scoped outcome after recurrence and Feedback acceptance,
+leaving the success state visible with a localized warning. Cancellation, provider failure,
+declaration/read mismatch, cleanup, unsafe URL/header/redirect, upload/completion failure, and
+close/reopen behavior are covered. Thirty-two Flutter package tests, fatal analysis, seven shared
+React Native contract tests, the Android debug APK, and a native manifest scan with no camera,
+photo-library, media, or storage permissions pass.
 
 **Autonomy:** AFK
 

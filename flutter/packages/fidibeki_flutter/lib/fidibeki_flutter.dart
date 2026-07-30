@@ -7,6 +7,7 @@ export 'src/host.dart';
 export 'src/localization.dart';
 export 'src/models.dart';
 export 'src/recurrence.dart';
+export 'src/screenshot.dart';
 export 'src/storage.dart';
 export 'src/submission.dart';
 export 'src/theme.dart';

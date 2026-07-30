@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'errors.dart';
 import 'models.dart';
+import 'screenshot.dart';
 import 'submission.dart';
 
 bool _isLocalDevelopmentHost(String host) {
@@ -259,6 +260,111 @@ final class FidibekiMobileClient {
         retryable: true,
       );
     }
+  }
+
+  Future<FidibekiAttachmentOutcome> uploadScreenshot(
+    FidibekiCaptureSession session,
+    FidibekiFeedbackAccepted accepted,
+    FidibekiPreparedScreenshot screenshot,
+  ) async {
+    final grant = accepted.attachments
+        .where(
+          (candidate) =>
+              candidate.clientAttachmentId == screenshot.clientAttachmentId,
+        )
+        .firstOrNull;
+    if (grant == null) {
+      return FidibekiAttachmentOutcome(
+        attachmentId: screenshot.clientAttachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.upload,
+        error: 'The server did not grant this attachment.',
+      );
+    }
+    final uploadUrl = grant.presignedUrl;
+    final localDevelopment =
+        uploadUrl.scheme == 'http' && _isLocalDevelopmentHost(uploadUrl.host);
+    if ((uploadUrl.scheme != 'https' && !localDevelopment) ||
+        uploadUrl.host.isEmpty ||
+        uploadUrl.userInfo.isNotEmpty ||
+        uploadUrl.fragment.isNotEmpty ||
+        !grant.expiresAt.isAfter(_now().toUtc())) {
+      return FidibekiAttachmentOutcome(
+        attachmentId: grant.attachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.upload,
+        error: 'The attachment upload grant is invalid.',
+      );
+    }
+
+    int uploadStatus;
+    try {
+      final upload = http.Request(grant.method, uploadUrl)
+        ..followRedirects = false
+        ..headers.addAll(grant.headers)
+        ..headers['content-type'] = screenshot.contentType
+        ..bodyBytes = screenshot.bytes;
+      final response = await _httpClient.send(upload);
+      uploadStatus = response.statusCode;
+      await response.stream.drain<void>();
+    } on Object {
+      return FidibekiAttachmentOutcome(
+        attachmentId: grant.attachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.upload,
+        error: 'The screenshot upload failed.',
+      );
+    }
+    if (uploadStatus < 200 || uploadStatus >= 300) {
+      return FidibekiAttachmentOutcome(
+        attachmentId: grant.attachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.upload,
+        error: 'The screenshot upload failed.',
+      );
+    }
+
+    int completionStatus;
+    try {
+      final request =
+          http.Request(
+              'POST',
+              Uri.parse(
+                '$_apiBaseUrl/v1/mobile/attachments/'
+                '${Uri.encodeComponent(grant.attachmentId)}/complete',
+              ),
+            )
+            ..followRedirects = false
+            ..headers.addAll(<String, String>{
+              'authorization': 'Bearer ${session.token}',
+              'content-type': 'application/json',
+            })
+            ..body = jsonEncode(<String, String>{
+              'complete_token': grant.completeToken,
+            });
+      final response = await _httpClient.send(request);
+      completionStatus = response.statusCode;
+      await response.stream.drain<void>();
+    } on Object {
+      return FidibekiAttachmentOutcome(
+        attachmentId: grant.attachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.complete,
+        error: 'The screenshot completion request failed.',
+      );
+    }
+    if (completionStatus < 200 || completionStatus >= 300) {
+      return FidibekiAttachmentOutcome(
+        attachmentId: grant.attachmentId,
+        status: FidibekiAttachmentStatus.failed,
+        stage: FidibekiAttachmentStage.complete,
+        error: 'The screenshot completion request failed.',
+      );
+    }
+    return FidibekiAttachmentOutcome(
+      attachmentId: grant.attachmentId,
+      status: FidibekiAttachmentStatus.uploaded,
+    );
   }
 
   void _bindAttempt(_FidibekiSubmissionAttempt attempt) {

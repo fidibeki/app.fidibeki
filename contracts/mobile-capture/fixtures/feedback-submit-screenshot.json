@@ -1,0 +1,40 @@
+{
+  "request": {
+    "client_feedback_id": "99999999-9999-4999-8999-999999999999",
+    "responses": {
+      "rating": 5,
+      "feedback": "The receipt preview is difficult to read"
+    },
+    "screenshot": {
+      "client_attachment_id": "88888888-8888-4888-8888-888888888888",
+      "content_type": "image/png",
+      "size_bytes": 3
+    },
+    "app_version": "2.4.0",
+    "os_version": "18.5"
+  },
+  "accepted": {
+    "feedback_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "feedback_public_id": "FDBK-SCREENSHOT",
+    "attachments": [
+      {
+        "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "client_attachment_id": "88888888-8888-4888-8888-888888888888",
+        "presigned_url": "https://objects.example.test/upload",
+        "method": "PUT",
+        "headers": {
+          "x-amz-meta-purpose": "feedback"
+        },
+        "complete_token": "fixture-complete-token",
+        "expires_at": "2099-07-30T12:10:00.000Z"
+      }
+    ]
+  },
+  "completion_request": {
+    "complete_token": "fixture-complete-token"
+  },
+  "completion_accepted": {
+    "attachment_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "status": "accepted"
+  }
+}

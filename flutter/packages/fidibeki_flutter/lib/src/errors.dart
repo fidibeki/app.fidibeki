@@ -1,5 +1,6 @@
 enum FidibekiErrorCode {
   accessDenied('access_denied'),
+  attachment('attachment_error'),
   configurationChanged('configuration_changed'),
   invalidResponse('invalid_response'),
   network('network_error'),

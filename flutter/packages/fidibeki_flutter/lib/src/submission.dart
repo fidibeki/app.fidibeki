@@ -1,4 +1,5 @@
 import 'errors.dart';
+import 'screenshot.dart';
 
 String _requiredString(Object? value, String field) {
   if (value is! String || value.trim().isEmpty) {
@@ -99,6 +100,55 @@ final class FidibekiReporterConsent {
   }
 }
 
+final class FidibekiScreenshotDeclaration {
+  const FidibekiScreenshotDeclaration({
+    required this.clientAttachmentId,
+    required this.contentType,
+    required this.sizeBytes,
+  });
+
+  factory FidibekiScreenshotDeclaration.fromJson(Object? value) {
+    final json = _requiredObject(value, 'screenshot');
+    final contentType = _requiredString(
+      json['content_type'],
+      'screenshot content type',
+    );
+    final sizeBytes = _requiredInteger(json['size_bytes'], 'screenshot size');
+    if (!const <String>{
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+        }.contains(contentType) ||
+        sizeBytes < 1 ||
+        sizeBytes > maxFidibekiScreenshotBytes) {
+      throw const FidibekiException(
+        FidibekiErrorCode.invalidResponse,
+        'Invalid mobile feedback screenshot.',
+      );
+    }
+    return FidibekiScreenshotDeclaration(
+      clientAttachmentId: _requiredString(
+        json['client_attachment_id'],
+        'screenshot client attachment ID',
+      ),
+      contentType: contentType,
+      sizeBytes: sizeBytes,
+    );
+  }
+
+  final String clientAttachmentId;
+  final String contentType;
+  final int sizeBytes;
+
+  Map<String, Object> toWireJson() {
+    return <String, Object>{
+      'client_attachment_id': clientAttachmentId,
+      'content_type': contentType,
+      'size_bytes': sizeBytes,
+    };
+  }
+}
+
 final class FidibekiFeedbackRequest {
   FidibekiFeedbackRequest({
     required this.clientFeedbackId,
@@ -110,6 +160,7 @@ final class FidibekiFeedbackRequest {
     this.reporterEmail,
     this.notifyReporter = false,
     this.consent,
+    this.screenshot,
   }) : responses = Map.unmodifiable(responses) {
     final hasReporter = reporterEmail != null;
     if (hasReporter != notifyReporter ||
@@ -145,6 +196,9 @@ final class FidibekiFeedbackRequest {
     final consent = json['consent'] == null
         ? null
         : FidibekiReporterConsent.fromJson(json['consent']);
+    final screenshot = json['screenshot'] == null
+        ? null
+        : FidibekiScreenshotDeclaration.fromJson(json['screenshot']);
 
     return FidibekiFeedbackRequest(
       clientFeedbackId: _requiredString(
@@ -159,6 +213,7 @@ final class FidibekiFeedbackRequest {
       reporterEmail: optionalString('reporter_email'),
       notifyReporter: notifyReporter,
       consent: consent,
+      screenshot: screenshot,
     );
   }
 
@@ -171,6 +226,7 @@ final class FidibekiFeedbackRequest {
   final String? reporterEmail;
   final bool notifyReporter;
   final FidibekiReporterConsent? consent;
+  final FidibekiScreenshotDeclaration? screenshot;
 
   Map<String, Object> toWireJson() {
     final json = <String, Object>{
@@ -187,6 +243,8 @@ final class FidibekiFeedbackRequest {
       json['notify_reporter'] = true;
       json['consent'] = consent!.toWireJson();
     }
+    final screenshot = this.screenshot;
+    if (screenshot != null) json['screenshot'] = screenshot.toWireJson();
     final deviceLocale = this.deviceLocale;
     if (deviceLocale != null) json['device_locale'] = deviceLocale;
     return json;
@@ -208,11 +266,18 @@ final class FidibekiAttachmentGrant {
     final json = _requiredObject(value, 'attachment grant');
     final rawHeaders = _requiredObject(json['headers'], 'attachment headers');
     final headers = <String, String>{};
+    const privateHeaders = <String>{
+      'authorization',
+      'cookie',
+      'proxy-authorization',
+      'x-api-key',
+    };
     for (final entry in rawHeaders.entries) {
-      if (entry.value is! String) {
+      if (entry.value is! String ||
+          privateHeaders.contains(entry.key.toLowerCase())) {
         throw const FidibekiException(
           FidibekiErrorCode.invalidResponse,
-          'Invalid mobile feedback attachment headers.',
+          'Unsafe mobile feedback attachment headers.',
         );
       }
       headers[entry.key] = entry.value! as String;

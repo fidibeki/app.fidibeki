@@ -4,6 +4,7 @@ import 'controller.dart';
 import 'errors.dart';
 import 'localization.dart';
 import 'models.dart';
+import 'screenshot.dart';
 import 'theme.dart';
 
 final class FidibekiFeedbackHost extends StatefulWidget {
@@ -188,15 +189,38 @@ final class _FeedbackSheet extends StatelessWidget {
                                 padding: const EdgeInsets.all(24),
                                 child: Semantics(
                                   liveRegion: true,
-                                  child: Text(
-                                    localization?.successMessage ?? '',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: text,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.4,
-                                    ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: <Widget>[
+                                      Text(
+                                        localization?.successMessage ?? '',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: text,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      if (controller
+                                              .attachmentOutcome
+                                              ?.status ==
+                                          FidibekiAttachmentStatus.failed)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 10,
+                                          ),
+                                          child: Text(
+                                            messages.attachmentFailed,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: colors.danger,
+                                              fontSize: 14,
+                                              height: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -348,6 +372,34 @@ final class _FeedbackForm extends StatelessWidget {
                   text: text,
                   border: border,
                   messages: messages,
+                ),
+              if (controller.canAddScreenshot || controller.readingScreenshot)
+                _ScreenshotAction(
+                  controller: controller,
+                  accent: accent,
+                  text: text,
+                  border: border,
+                  messages: messages,
+                ),
+              if (controller.hasScreenshot)
+                _ScreenshotAttached(
+                  controller: controller,
+                  accent: accent,
+                  text: text,
+                  border: border,
+                  messages: messages,
+                ),
+              if (controller.screenshotNotice case final notice?)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    _screenshotNoticeText(notice, messages),
+                    key: const ValueKey('fidibeki-screenshot-message'),
+                    style: TextStyle(
+                      color: text.withValues(alpha: 0.7),
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
               if (_disclosesMobileAi(definition))
                 _AiDisclosure(
@@ -817,6 +869,138 @@ final class _ContactFields extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 6),
             ),
             child: Text(messages.privacyPolicy),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _screenshotNoticeText(
+  FidibekiScreenshotNotice notice,
+  FidibekiSystemMessages messages,
+) {
+  return switch (notice) {
+    FidibekiScreenshotNotice.cancelled => messages.screenshotCancelled,
+    FidibekiScreenshotNotice.invalid => messages.screenshotInvalid,
+    FidibekiScreenshotNotice.providerFailed =>
+      messages.screenshotProviderFailed,
+  };
+}
+
+final class _ScreenshotAction extends StatelessWidget {
+  const _ScreenshotAction({
+    required this.controller,
+    required this.accent,
+    required this.text,
+    required this.border,
+    required this.messages,
+  });
+
+  final FidibekiFeedbackController controller;
+  final Color accent;
+  final Color text;
+  final Color border;
+  final FidibekiSystemMessages messages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      key: const ValueKey('fidibeki-screenshot-action'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: controller.readingScreenshot ? null : controller.addScreenshot,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Row(
+            children: <Widget>[
+              if (controller.readingScreenshot)
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: accent,
+                  ),
+                )
+              else
+                Icon(
+                  Icons.add_photo_alternate_outlined,
+                  color: accent,
+                  size: 20,
+                ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  controller.readingScreenshot
+                      ? messages.addingScreenshot
+                      : messages.addScreenshot,
+                  style: TextStyle(
+                    color: text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _ScreenshotAttached extends StatelessWidget {
+  const _ScreenshotAttached({
+    required this.controller,
+    required this.accent,
+    required this.text,
+    required this.border,
+    required this.messages,
+  });
+
+  final FidibekiFeedbackController controller;
+  final Color accent;
+  final Color text;
+  final Color border;
+  final FidibekiSystemMessages messages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('fidibeki-screenshot-attached'),
+      constraints: const BoxConstraints(minHeight: 48),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(left: 12, right: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.check_circle_outline, color: accent, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              messages.screenshotAdded,
+              style: TextStyle(
+                color: text,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('fidibeki-screenshot-remove'),
+            tooltip: messages.removeScreenshot,
+            onPressed: controller.removeScreenshot,
+            icon: Icon(Icons.close, color: text),
           ),
         ],
       ),

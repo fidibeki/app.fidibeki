@@ -12,3 +12,5 @@
 - Add configuration refresh with compatible-draft reconciliation and mandatory consent clearing.
 - Add host/definition/system theme precedence with verified accent contrast and English/Portuguese
   system localization.
+- Add explicit host-owned PNG/JPEG/WebP screenshots with bounded preparation, strict declaration,
+  safe grant upload/completion, exact retry, cleanup, and accepted-feedback attachment warnings.
