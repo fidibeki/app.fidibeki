@@ -1106,3 +1106,119 @@ React Native `Response.blob()` warning. No backend, deployment, production, or i
 files changed.
 
 **Autonomy:** AFK
+
+# Flutter Feedback SDK
+
+**Design:** `docs/superpowers/specs/2026-07-30-fidibeki-flutter-sdk-design.md`
+
+**Implementation:**
+`docs/superpowers/plans/2026-07-30-fidibeki-flutter-sdk-implementation.md`
+
+**Shared context:** Flutter is the second cross-platform mobile client. It reuses the existing
+capture-session and Feedback pipeline without React Native embedding, backend changes, an SDK-owned
+launcher, publication, deployment, production, or infrastructure work. The first release supports
+Flutter on iOS and Android only.
+
+## Task 55: Establish The Flutter Contract Tracer
+
+**Depends on:** Task 54
+**Status:** Pending
+
+**Outcome:** A pinned Dart workspace, publish-ready packages, shared mobile fixtures, strict session
+models, controller/host shell, and host-owned example prove session -> open -> close -> reopen.
+
+**Acceptance:** Flutter format/analyze/unit/widget gates and React Native fixture compatibility
+pass; reopening reuses the same session and eligibility.
+
+**Autonomy:** AFK
+
+## Task 56: Submit One Complete Flutter Feedback
+
+**Depends on:** Task 55
+**Status:** Pending
+
+**Outcome:** Rating and text submit through the existing mobile endpoint with validation, exact
+retry, accepted success, and recurrence only after acceptance.
+
+**Acceptance:** Contract/unit/widget/local-smoke tests prove one Feedback, numeric rating, frozen
+idempotent request, coalesced submit, safe errors, and post-submit suppression.
+
+**Autonomy:** AFK
+
+## Task 57: Complete Dynamic Forms And Consent
+
+**Depends on:** Task 56
+**Status:** Pending
+
+**Outcome:** Every configured response block, progressive comment/contact, consent, localization,
+AI disclosure, theme, and configuration reconciliation path reaches wire-compatible submission.
+
+**Acceptance:** Form/widget/contract tests prove order, values, disclosure persistence, consent
+provenance/clearing, hidden-data omission, locale fallback, and appearance precedence.
+
+**Autonomy:** AFK
+
+## Task 58: Complete The Flutter Screenshot Boundary
+
+**Depends on:** Task 57
+**Status:** Pending
+
+**Outcome:** Explicit host-owned screenshots validate, upload, complete, dispose, and report
+post-acceptance failures without permission, URI, or duplicate-Feedback leakage.
+
+**Acceptance:** Provider/upload/completion tests cover cancellation, bounds, MIME/bytes, cleanup,
+unsafe redirects, exact retry, success warning, and forbidden data/permission absence.
+
+**Autonomy:** AFK
+
+## Task 59: Harden Flutter Lifecycle, Recurrence, And Privacy
+
+**Depends on:** Task 58
+**Status:** Pending
+
+**Outcome:** Every recurrence mode, background/cold-launch boundary, session lifecycle, retry race,
+storage rule, redaction rule, rebuild, and disposal path is deterministic and private.
+
+**Acceptance:** Lifecycle/security/contract tests prove normalization, recurrence, stale-session
+denial, safe async ownership, memory-only tokens, recurrence-only storage, and redacted errors.
+
+**Autonomy:** AFK
+
+## Task 60: Reach Compact Progressive Flutter UI Parity
+
+**Depends on:** Task 59
+**Status:** Pending
+
+**Outcome:** Material and Cupertino hosts receive the approved accessible, keyboard-safe, 75%
+Compact Progressive sheet with complete states and stable responsive layout.
+
+**Acceptance:** Widget/golden tests and inspected compact/standard light/dark/large-text states show
+no clipping or overlap and preserve the approved visual hierarchy.
+
+**Autonomy:** AFK
+
+## Task 61: Prove Flutter Packages And Native Example
+
+**Depends on:** Task 60
+**Status:** Pending
+
+**Outcome:** Package metadata/docs/gates and the host example build and run through the full local
+capture lifecycle on Android and iOS.
+
+**Acceptance:** Format/analyze/coverage/docs/dependency/publish-dry-run gates and both native runtime
+smokes pass without forbidden permissions, sensitive logs, publication, or deployment.
+
+**Autonomy:** AFK
+
+## Task 62: Add Flutter CI And Close The Delivery Loop
+
+**Depends on:** Task 61
+**Status:** Pending
+
+**Outcome:** Isolated Flutter CI, independent review, remote checks, documentation, TODO, and issue
+evidence complete the unpublished Flutter SDK delivery.
+
+**Acceptance:** Flutter, React Native, and Security CI pass; evidence is recorded; worktree is clean;
+no backend, production, deployment, registry, or infrastructure action occurred.
+
+**Autonomy:** AFK
