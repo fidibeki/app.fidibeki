@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   packages:
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 20
     defaults:
       run:
@@ -62,7 +62,7 @@ jobs:
           (cd packages/fidibeki_flutter_shared_preferences && dart pub publish --dry-run)
 
   lowest-dependencies:
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 15
     defaults:
       run:
@@ -85,7 +85,7 @@ jobs:
           example/test
 
   android:
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-2604-arm64-4x
     timeout-minutes: 20
     defaults:
       run:
@@ -105,7 +105,7 @@ jobs:
         run: flutter build apk --release
 
   ios:
-    runs-on: macos-15
+    runs-on: warp-macos-15-arm64-6x
     timeout-minutes: 25
     defaults:
       run:
