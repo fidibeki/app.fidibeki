@@ -48,6 +48,27 @@ func TestLoadProcessingActivityRegistryGovernanceReturnsPendingRegistry(t *testi
 			t.Fatalf("activity %q has a blank reason: %#v", activity.ActivityID, activity)
 		}
 	}
+	var feedbackActivity, externalCommunicationActivity *ProcessingActivityRecord
+	for index := range registry.Activities {
+		switch registry.Activities[index].ActivityID {
+		case "feedback_workflow_management":
+			feedbackActivity = &registry.Activities[index]
+		case "external_communications_delivery":
+			externalCommunicationActivity = &registry.Activities[index]
+		}
+	}
+	if feedbackActivity == nil ||
+		!slices.Contains(feedbackActivity.RetentionCategories, "email_feedback_delivery") ||
+		!slices.Contains(feedbackActivity.RetentionCategories, "email_feedback_suppressions") ||
+		!strings.Contains(feedbackActivity.Purpose, "post-transaction") ||
+		feedbackActivity.LawfulBasis != LawfulBasisPending {
+		t.Fatalf("email feedback ROPA activity = %#v", feedbackActivity)
+	}
+	if externalCommunicationActivity == nil ||
+		!strings.Contains(externalCommunicationActivity.Purpose, "post-transaction") ||
+		externalCommunicationActivity.LawfulBasis != LawfulBasisPending {
+		t.Fatalf("email delivery ROPA activity = %#v", externalCommunicationActivity)
+	}
 }
 
 func TestProcessingActivityRegistryCoversEveryRetentionCategoryExactlyOnce(t *testing.T) {

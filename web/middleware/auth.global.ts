@@ -12,6 +12,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (to.path.startsWith('/designs') || to.path === '/login' || to.path === '/signup' ||
     to.path === '/auth/verify' || to.path === '/auth/domain-verify' || to.path === '/auth/two-factor' ||
     to.path.startsWith('/reporter/') || to.path.startsWith('/privacy/') ||
+    to.path.startsWith('/email-feedback/') ||
     // The person answering a testimonial request is not a member and never will
     // be, so these pages have to sit outside the session entirely. Their token
     // is the credential, checked server-side.

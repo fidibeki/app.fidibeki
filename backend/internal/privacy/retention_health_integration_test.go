@@ -18,7 +18,10 @@ func TestRetentionMaintainerRecordsHealthPerPhase(t *testing.T) {
 	defer cancel()
 	database := privacyTestDatabase(t, ctx)
 	health := retentionhealth.Store{Database: database}
-	operations := []string{"attachments", "privacy_export_archives", "reporter_privacy_requests"}
+	operations := []string{
+		"attachments", "privacy_export_archives", "reporter_privacy_requests",
+		"email_feedback_invitations",
+	}
 	firstRun := retentionHealthRegisteredAt(t, ctx, database).Add(time.Minute)
 
 	maintainer := RetentionMaintainer{
@@ -30,7 +33,8 @@ func TestRetentionMaintainerRecordsHealthPerPhase(t *testing.T) {
 			archiveBatches: [][]RetentionObjectCandidate{{
 				{TenantID: "one", ID: "archive-one", ObjectKey: "archive-one"},
 			}},
-			requestResults: []int64{3},
+			requestResults:    []int64{3},
+			invitationResults: []int64{4},
 		},
 		Storage: &retentionStorageStub{}, Health: health,
 		Now: func() time.Time { return firstRun }, BatchSize: 10,
@@ -40,6 +44,7 @@ func TestRetentionMaintainerRecordsHealthPerPhase(t *testing.T) {
 	}
 	for operation, processed := range map[string]int64{
 		"attachments": 2, "privacy_export_archives": 1, "reporter_privacy_requests": 3,
+		"email_feedback_invitations": 4,
 	} {
 		row := readRetentionHealthRow(t, ctx, database, operation)
 		if row.lastResult != "succeeded" || row.lastProcessed != processed ||
@@ -53,6 +58,7 @@ func TestRetentionMaintainerRecordsHealthPerPhase(t *testing.T) {
 	failure := errors.New("database unavailable")
 	maintainer.Store = &retentionOperationsStub{
 		attachmentErr: failure, archiveErr: failure, requestErr: failure,
+		invitationErr: failure,
 	}
 	maintainer.Now = func() time.Time { return failedRun }
 	if err := maintainer.MaintainOnce(ctx); !errors.Is(err, failure) {

@@ -227,7 +227,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 		{
 			ActivityID: "feedback_workflow_management", Version: 1,
 			Label:   "Feedback and issue workflow management",
-			Purpose: "Capture, triage, resolve, and communicate reporter-submitted product feedback and issues.",
+			Purpose: "Send customer-directed post-transaction feedback solicitations, capture responses, triage, resolve, and communicate reporter-submitted product feedback and issues.",
 			Role:    RetentionRoleProcessor,
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectReporters, ROPADataSubjectTenantMembers, ROPADataSubjectThirdParties,
@@ -236,7 +236,10 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 				ROPADataCategoryContentCommunications, ROPADataCategoryIdentityContact,
 				ROPADataCategoryTechnicalUsage,
 			},
-			RetentionCategories: []string{"workflow_metadata", "mobile_capture_credentials"},
+			RetentionCategories: []string{
+				"workflow_metadata", "mobile_capture_credentials",
+				"email_feedback_delivery", "email_feedback_suppressions",
+			},
 			SecurityControls: []string{
 				"Forced tenant PostgreSQL RLS",
 				"tenant:update required for privacy-relevant workflow mutation",
@@ -595,7 +598,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 		{
 			ActivityID: "external_communications_delivery", Version: 1,
 			Label:   "External communications delivery",
-			Purpose: "Deliver transactional and lifecycle email, configured operational notifications, and reviewer-confirmed issue copies to an enabled external issue tracker.",
+			Purpose: "Deliver transactional and lifecycle email, customer-directed post-transaction feedback invitations, configured operational notifications, and reviewer-confirmed issue copies to an enabled external issue tracker.",
 			Role:    RetentionRoleControllerProcessor,
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectTenantMembers, ROPADataSubjectReporters, ROPADataSubjectPlatformAdmins,

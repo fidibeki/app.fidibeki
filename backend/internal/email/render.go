@@ -15,6 +15,7 @@ type Content struct {
 	Workspace     string
 	Body          []string
 	Metadata      []Metadata
+	Choices       []Link
 	Action        *Link
 	ShowActionURL bool
 	Footer        string
@@ -72,6 +73,11 @@ func Render(content Content) (string, string, error) {
 	for index, link := range content.FooterLinks {
 		if err := validateLink(link, true); err != nil {
 			return "", "", fmt.Errorf("footer link %d: %w", index+1, err)
+		}
+	}
+	for index, link := range content.Choices {
+		if err := validateLink(link, false); err != nil {
+			return "", "", fmt.Errorf("choice link %d: %w", index+1, err)
 		}
 	}
 	textBody := renderText(content)
@@ -140,6 +146,13 @@ func renderText(content Content) string {
 			parts = append(parts, strings.Join(lines, "\n"))
 		}
 	}
+	if len(content.Choices) > 0 {
+		choices := make([]string, 0, len(content.Choices))
+		for _, link := range content.Choices {
+			choices = append(choices, link.Label+": "+link.URL)
+		}
+		parts = append(parts, strings.Join(choices, "\n"))
+	}
 	if content.Action != nil {
 		parts = append(parts, content.Action.Label+": "+content.Action.URL)
 	}
@@ -171,6 +184,7 @@ var transactionalTemplate = template.Must(template.New("transactional").Parse(`<
 <h1 style="margin:0 0 18px;font-size:24px;line-height:32px;font-weight:700;color:#161a17;">{{.Heading}}</h1>
 {{range .Body}}<p style="margin:0 0 16px;font-size:16px;line-height:25px;color:#343a35;">{{.}}</p>{{end}}
 {{if .Metadata}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:20px 0;border-top:1px solid #e8ebe8;">{{range .Metadata}}{{if and .Label .Value}}<tr><td style="padding:10px 12px 10px 0;color:#687169;font-size:13px;line-height:19px;vertical-align:top;">{{.Label}}</td><td style="padding:10px 0;color:#202622;font-size:14px;line-height:19px;vertical-align:top;">{{.Value}}</td></tr>{{end}}{{end}}</table>{{end}}
+{{if .Choices}}<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:20px 0;"><tr>{{range .Choices}}<td align="center" style="padding:0 3px;"><a href="{{.URL}}" style="display:block;border:1px solid #cfd8d2;color:#176b47;text-decoration:none;font-size:16px;line-height:22px;font-weight:bold;padding:10px 4px;border-radius:4px;">{{.Label}}</a></td>{{end}}</tr></table>{{end}}
 {{with .Action}}<p style="margin:24px 0 12px;"><a href="{{.URL}}" style="display:inline-block;background:#16794b;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:bold;padding:12px 18px;border-radius:4px;">{{.Label}}</a></p>{{end}}
 {{if and .Action .ShowActionURL}}<p style="margin:12px 0 0;color:#687169;font-size:12px;line-height:18px;word-break:break-all;">If the button does not work, open:<br><a href="{{.Action.URL}}" style="color:#176b47;">{{.Action.URL}}</a></p>{{end}}
 </td></tr>

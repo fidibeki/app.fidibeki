@@ -42,7 +42,18 @@ func TestWorkspaceExportTracer(t *testing.T) {
 	database := privacyTestDatabase(t, ctx)
 	now := time.Date(2026, 7, 23, 8, 0, 0, 0, time.UTC)
 	tenantID, memberID := seedPrivacyWorkspace(t, ctx, database, "acme-privacy", "Acme secret feedback")
-	otherTenantID, _ := seedPrivacyWorkspace(t, ctx, database, "beta-privacy", "Beta must never leak")
+	otherTenantID, otherMemberID := seedPrivacyWorkspace(t, ctx, database, "beta-privacy", "Beta must never leak")
+	emailInvitation := seedPrivacyEmailInvitation(
+		t, ctx, database, tenantID, memberID, privacyFeedbackID(t, ctx, database, tenantID),
+		"workspace-recipient@example.test", "workspace-export",
+		"order-workspace-export", now,
+	)
+	seedPrivacyEmailInvitation(
+		t, ctx, database, otherTenantID, otherMemberID,
+		privacyFeedbackID(t, ctx, database, otherTenantID),
+		"other-workspace-recipient@example.test", "other-workspace-export",
+		"order-other-workspace", now,
+	)
 
 	store := Store{Database: database}
 	job, created, err := store.CreateWorkspaceExport(ctx, database, tenantID, memberID, now)
@@ -92,7 +103,9 @@ func TestWorkspaceExportTracer(t *testing.T) {
 
 	files := readPrivacyArchive(t, storage.body)
 	wantFiles := []string{
-		"ai-processing-runs.jsonl", "attachments.jsonl", "feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
+		"ai-processing-runs.jsonl", "attachments.jsonl", "email-feedback-campaigns.jsonl",
+		"email-feedback-invitations.jsonl", "email-feedback-suppressions.jsonl",
+		"feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
 		"issue-activities.jsonl", "issue-comments.jsonl", "issue-tags.jsonl", "issue-updates.jsonl",
 		"issues.jsonl", "manifest.json", "projects.jsonl", "replays.jsonl", "tags.jsonl",
 		"widget-analytics-daily.jsonl", "widget-rules.jsonl", "widget-target-conditions.jsonl",
@@ -110,6 +123,11 @@ func TestWorkspaceExportTracer(t *testing.T) {
 	for _, forbidden := range []string{
 		"Beta must never leak", otherTenantID, "https://hooks.secret.example/acme",
 		"encrypted-secret", "fk_live_", "refresh_hash",
+		"workspace-recipient@example.test", "other-workspace-recipient@example.test",
+		emailInvitation.RequestDigest, emailInvitation.TokenHash,
+		emailInvitation.ProviderMessageID, emailInvitation.WebhookEventID,
+		emailInvitation.SnapshotSecret,
+		"order-other-workspace",
 	} {
 		if strings.Contains(archiveText, forbidden) {
 			t.Errorf("archive leaked %q", forbidden)
@@ -117,7 +135,10 @@ func TestWorkspaceExportTracer(t *testing.T) {
 	}
 	for _, required := range []string{
 		"Acme secret feedback", "fidibeki.workspace-export.v1", "available_not_included",
-		"credential_values_omitted",
+		"credential_values_omitted", "Privacy workspace-export",
+		"order-workspace-export", emailInvitation.RecipientDigest,
+		"https://shop.example.test/orders/order-workspace-export",
+		"plaintext invitation recipient addresses",
 	} {
 		if !strings.Contains(archiveText, required) {
 			t.Errorf("archive does not contain %q", required)
@@ -314,12 +335,13 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		!strings.Contains(retention.Body.String(), `"hold_behavior":"case_scoped"`) ||
 		!strings.Contains(retention.Body.String(), `"category":"attachments"`) ||
 		!strings.Contains(retention.Body.String(), `"health"`) ||
-		!strings.Contains(retention.Body.String(), `"tracked":13`) ||
+		!strings.Contains(retention.Body.String(), `"tracked":14`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"tenant_magic_links"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"saml_auth_artifacts"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"platform_admin_magic_links"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"identity_asset_deletions"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"mobile_capture_sessions"`) ||
+		!strings.Contains(retention.Body.String(), `"operation":"email_feedback_invitations"`) ||
 		!strings.Contains(retention.Body.String(), `"state":"not_observed"`) {
 		t.Fatalf("viewer retention = %d body=%s", retention.Code, retention.Body.String())
 	}
@@ -1125,6 +1147,16 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	`, tenantID).Scan(&feedbackID, &issueID, &projectID, &ruleID); err != nil {
 		t.Fatalf("read reporter fixture IDs: %v", err)
 	}
+	emailInvitation := seedPrivacyEmailInvitation(
+		t, ctx, database, tenantID, memberID, feedbackID,
+		"reporter@example.test", "reporter-rights", "order-reporter-private", now,
+	)
+	otherFeedbackID := privacyFeedbackID(t, ctx, database, otherTenantID)
+	seedPrivacyEmailInvitation(
+		t, ctx, database, otherTenantID, "",
+		otherFeedbackID, "reporter@example.test", "other-rights",
+		"order-other-tenant-private", now,
+	)
 	if _, err := database.Exec(ctx, `
 		UPDATE feedbacks SET dom_snapshot_html = '<main>Reporter Name</main>',
 		                     dom_snapshot_styles = 'main{color:red}',
@@ -1276,6 +1308,7 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	for _, filename := range []string{
 		"delivery-logs.jsonl", "privacy-request-history.jsonl",
 		"replay-consents.jsonl", "widget-submission-events.jsonl",
+		"email-feedback-invitations.jsonl",
 	} {
 		if _, exists := exportFiles[filename]; !exists {
 			t.Errorf("reporter archive is missing %q", filename)
@@ -1287,20 +1320,32 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		"Operational comment", "Investigating", "gemini-test", "policy_version",
 		"replay-consent-v1", "provider-message-reporter",
 		"00000000-0000-4000-8000-000000000201",
+		"order-reporter-private", "reporter@example.test",
 	} {
 		if !strings.Contains(archiveText, required) {
 			t.Errorf("reporter archive does not contain %q", required)
 		}
 	}
-	for _, forbidden := range []string{"Other reporter private data", otherTenantID, "hooks.secret"} {
+	for _, forbidden := range []string{
+		"Other reporter private data", otherTenantID, "hooks.secret",
+		"order-other-tenant-private", emailInvitation.RecipientDigest,
+		emailInvitation.RequestDigest, emailInvitation.TokenHash,
+		emailInvitation.ProviderMessageID, emailInvitation.WebhookEventID,
+		emailInvitation.SnapshotSecret,
+	} {
 		if strings.Contains(archiveText, forbidden) {
 			t.Errorf("reporter archive leaked %q", forbidden)
 		}
 	}
 	exportView, err := store.GetReporterRequestView(ctx, exportHash, now)
 	if err != nil || exportView.Status != ReporterCompleted || !exportView.DownloadAvailable ||
-		exportView.RecordCount == nil || *exportView.RecordCount != 2 {
-		t.Fatalf("completed reporter export view = %#v, error=%v", exportView, err)
+		exportView.RecordCount == nil || *exportView.RecordCount != 3 {
+		recordCount := -1
+		if exportView.RecordCount != nil {
+			recordCount = *exportView.RecordCount
+		}
+		t.Fatalf("completed reporter export view = %#v, record_count=%d, error=%v",
+			exportView, recordCount, err)
 	}
 
 	anonymizeRequest, anonymizeToken, _, err := store.CreateReporterRequest(
@@ -1353,7 +1398,7 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 	var textCleaned, suggestedTitle *string
 	var redactionManifest string
 	if err := database.QueryRow(ctx, `
-		SELECT reporter_email, notify_reporter, dom_snapshot_html, dom_snapshot_styles,
+			SELECT reporter_email, notify_reporter, dom_snapshot_html, dom_snapshot_styles,
 		       title, description, text_cleaned, ai_suggested_title,
 		       ai_redaction_manifest::text
 		FROM feedbacks WHERE id = $1
@@ -1366,6 +1411,45 @@ func TestReporterExportAndAnonymizationTracer(t *testing.T) {
 		t.Fatalf("anonymized feedback = email=%v notify=%t dom=%v/%v title=%q description=%q cleaned=%v suggested=%v manifest=%s error=%v",
 			reporterEmail, notify, domHTML, domStyles, feedbackTitle, feedbackDescription,
 			textCleaned, suggestedTitle, redactionManifest, err)
+	}
+	var invitationRecipient, invitationToken, invitationContext, invitationProvider *string
+	var invitationWebhook, invitationError *string
+	var invitationFeedbackID *string
+	var invitationDigest, invitationRequestDigest, invitationEventID string
+	if err := database.QueryRow(ctx, `
+			SELECT recipient_email::text, token_hash, context_url, provider_message_id,
+			       webhook_event_id, last_error, feedback_id::text,
+			       recipient_digest, request_digest, external_event_id
+		FROM email_feedback_invitations
+		WHERE tenant_id = $1 AND id = $2
+		`, tenantID, emailInvitation.InvitationID).Scan(
+		&invitationRecipient, &invitationToken, &invitationContext, &invitationProvider,
+		&invitationWebhook, &invitationError, &invitationFeedbackID, &invitationDigest,
+		&invitationRequestDigest, &invitationEventID,
+	); err != nil {
+		t.Fatalf("read anonymized email invitation: %v", err)
+	}
+	if invitationRecipient != nil || invitationToken != nil || invitationContext != nil ||
+		invitationProvider != nil || invitationWebhook != nil ||
+		invitationError != nil || invitationFeedbackID != nil ||
+		invitationDigest != emailInvitation.RecipientDigest ||
+		invitationRequestDigest != emailInvitation.RequestDigest ||
+		invitationEventID != "order-reporter-private" {
+		t.Fatalf(
+			"anonymized email invitation = recipient=%v token=%v context=%v provider=%v webhook=%v error=%v feedback=%v digest=%q request=%q event=%q",
+			invitationRecipient, invitationToken, invitationContext, invitationProvider,
+			invitationWebhook, invitationError, invitationFeedbackID, invitationDigest,
+			invitationRequestDigest, invitationEventID,
+		)
+	}
+	var suppressionDigest string
+	if err := database.QueryRow(ctx, `
+		SELECT recipient_digest
+		FROM email_feedback_suppressions
+		WHERE tenant_id = $1 AND source_invitation_id = $2
+	`, tenantID, emailInvitation.InvitationID).Scan(&suppressionDigest); err != nil ||
+		suppressionDigest != emailInvitation.RecipientDigest {
+		t.Fatalf("preserved email suppression digest = %q, error=%v", suppressionDigest, err)
 	}
 	var attachmentKey, transcription *string
 	var attachmentDeleted *time.Time
@@ -1753,6 +1837,122 @@ func mapValues(values map[string][]byte) [][]byte {
 		result = append(result, value)
 	}
 	return result
+}
+
+type privacyEmailInvitationFixture struct {
+	CampaignID        string
+	InvitationID      string
+	RecipientDigest   string
+	RequestDigest     string
+	TokenHash         string
+	ProviderMessageID string
+	WebhookEventID    string
+	SnapshotSecret    string
+}
+
+func privacyFeedbackID(
+	t *testing.T,
+	ctx context.Context,
+	database *pgxpool.Pool,
+	tenantID string,
+) string {
+	t.Helper()
+	var feedbackID string
+	if err := database.QueryRow(ctx, `
+		SELECT id FROM feedbacks WHERE tenant_id = $1 ORDER BY created_at, id LIMIT 1
+	`, tenantID).Scan(&feedbackID); err != nil {
+		t.Fatalf("read privacy feedback ID: %v", err)
+	}
+	return feedbackID
+}
+
+func seedPrivacyEmailInvitation(
+	t *testing.T,
+	ctx context.Context,
+	database *pgxpool.Pool,
+	tenantID string,
+	memberID string,
+	feedbackID string,
+	recipientEmail string,
+	campaignKey string,
+	externalEventID string,
+	now time.Time,
+) privacyEmailInvitationFixture {
+	t.Helper()
+	var projectID, ruleID string
+	if err := database.QueryRow(ctx, `
+		SELECT project.id, rule.id
+		FROM projects AS project
+		JOIN widget_rules AS rule ON rule.project_id = project.id
+		WHERE project.tenant_id = $1
+		ORDER BY project.created_at, project.id, rule.created_at, rule.id
+		LIMIT 1
+	`, tenantID).Scan(&projectID, &ruleID); err != nil {
+		t.Fatalf("read email invitation project and rule: %v", err)
+	}
+	fixture := privacyEmailInvitationFixture{
+		RecipientDigest:   fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(recipientEmail))))),
+		RequestDigest:     fmt.Sprintf("%x", sha256.Sum256([]byte("request:"+externalEventID))),
+		TokenHash:         fmt.Sprintf("%x", sha256.Sum256([]byte("token:"+externalEventID))),
+		ProviderMessageID: "resend-" + externalEventID,
+		WebhookEventID:    "resend-webhook-" + externalEventID,
+		SnapshotSecret:    "captured-private-" + externalEventID,
+	}
+	if err := database.QueryRow(ctx, `
+		INSERT INTO email_feedback_campaigns (
+			tenant_id, project_id, widget_rule_id, campaign_key, name, status,
+			default_locale, subject, introduction, invitation_ttl_days,
+			created_by, updated_by
+		) VALUES (
+			$1, $2, $3, $4, $5, 'active',
+			'en', 'How was your purchase?', 'Tell us about the purchase.', 30,
+			NULLIF($6, '')::uuid, NULLIF($6, '')::uuid
+		)
+		RETURNING id
+	`, tenantID, projectID, ruleID, campaignKey, "Privacy "+campaignKey, memberID).
+		Scan(&fixture.CampaignID); err != nil {
+		t.Fatalf("create privacy email campaign: %v", err)
+	}
+	if err := database.QueryRow(ctx, `
+		INSERT INTO email_feedback_invitations (
+			id, tenant_id, project_id, campaign_id, widget_rule_id,
+			external_event_id, request_digest, recipient_email, recipient_digest,
+			locale, context_url, token_hash, definition_version,
+			controller_profile_version, campaign_snapshot, definition_snapshot,
+			localization_snapshot, controller_snapshot, status, provider_message_id,
+			webhook_event_id, feedback_id, sent_at, last_error, expires_at, cleanup_after,
+			created_at, updated_at
+		) VALUES (
+			gen_random_uuid(), $1, $2, $3, $4,
+			$5, $6, $7, $8,
+			'en', $9, $10, 1,
+			1, jsonb_build_object('private_copy', $11::text), '{}'::jsonb,
+			'{}'::jsonb, '{}'::jsonb, 'sent', $12,
+			$13, $14, $15::timestamptz - interval '30 minutes',
+			$16, $15::timestamptz + interval '30 days',
+			$15::timestamptz + interval '120 days',
+			$15::timestamptz - interval '1 hour',
+			$15::timestamptz - interval '1 hour'
+		)
+		RETURNING id
+	`, tenantID, projectID, fixture.CampaignID, ruleID, externalEventID,
+		fixture.RequestDigest, recipientEmail, fixture.RecipientDigest,
+		"https://shop.example.test/orders/"+externalEventID, fixture.TokenHash,
+		fixture.SnapshotSecret, fixture.ProviderMessageID, fixture.WebhookEventID,
+		feedbackID, now,
+		"legacy-delivery-error-"+externalEventID,
+	).Scan(&fixture.InvitationID); err != nil {
+		t.Fatalf("create privacy email invitation: %v", err)
+	}
+	if _, err := database.Exec(ctx, `
+		INSERT INTO email_feedback_suppressions (
+			tenant_id, recipient_digest, reason, source_invitation_id,
+			first_suppressed_at, last_suppressed_at
+		) VALUES ($1, $2, 'opt_out', $3, $4, $4)
+	`, tenantID, fixture.RecipientDigest, fixture.InvitationID, now); err != nil {
+		t.Fatalf("create privacy email suppression: %v", err)
+	}
+	return fixture
 }
 
 func seedPrivacyWorkspace(

@@ -117,6 +117,60 @@ var workspaceExportFiles = []exportFile{
 		WHERE project.tenant_id = $1
 		ORDER BY condition.widget_rule_id, condition.kind, condition.position, condition.id
 	`},
+	{Name: "email-feedback-campaigns.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', campaign.id, 'project_id', campaign.project_id,
+			'widget_rule_id', campaign.widget_rule_id,
+			'campaign_key', campaign.campaign_key, 'name', campaign.name,
+			'status', campaign.status, 'default_locale', campaign.default_locale,
+			'subject', campaign.subject, 'introduction', campaign.introduction,
+			'invitation_ttl_days', campaign.invitation_ttl_days,
+			'created_by', campaign.created_by, 'updated_by', campaign.updated_by,
+			'created_at', campaign.created_at, 'updated_at', campaign.updated_at
+		)
+		FROM email_feedback_campaigns AS campaign
+		WHERE campaign.tenant_id = $1
+		ORDER BY campaign.created_at, campaign.id
+	`},
+	{Name: "email-feedback-invitations.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', invitation.id, 'project_id', invitation.project_id,
+			'campaign_id', invitation.campaign_id,
+			'widget_rule_id', invitation.widget_rule_id,
+			'external_event_id', invitation.external_event_id,
+			'recipient_digest', invitation.recipient_digest,
+			'locale', invitation.locale, 'context_url', invitation.context_url,
+			'definition_version', invitation.definition_version,
+			'controller_profile_version', invitation.controller_profile_version,
+			'status', invitation.status, 'feedback_id', invitation.feedback_id,
+			'sent_at', invitation.sent_at, 'submitted_at', invitation.submitted_at,
+			'suppressed_at', invitation.suppressed_at,
+			'bounced_at', invitation.bounced_at,
+			'complained_at', invitation.complained_at,
+			'failed_at', invitation.failed_at, 'expired_at', invitation.expired_at,
+			'expires_at', invitation.expires_at,
+			'cleanup_after', invitation.cleanup_after,
+			'created_at', invitation.created_at, 'updated_at', invitation.updated_at,
+			'sensitive_delivery_fields_omitted', true
+		)
+		FROM email_feedback_invitations AS invitation
+		WHERE invitation.tenant_id = $1
+		ORDER BY invitation.created_at, invitation.id
+	`},
+	{Name: "email-feedback-suppressions.jsonl", Query: `
+		SELECT jsonb_build_object(
+			'id', suppression.id,
+			'recipient_digest', suppression.recipient_digest,
+			'reason', suppression.reason,
+			'source_invitation_id', suppression.source_invitation_id,
+			'first_suppressed_at', suppression.first_suppressed_at,
+			'last_suppressed_at', suppression.last_suppressed_at,
+			'created_at', suppression.created_at, 'updated_at', suppression.updated_at
+		)
+		FROM email_feedback_suppressions AS suppression
+		WHERE suppression.tenant_id = $1
+		ORDER BY suppression.created_at, suppression.id
+	`},
 	{Name: "feedback.jsonl", Query: `
 		SELECT jsonb_build_object(
 			'id', feedback.id, 'public_id', feedback.public_id,
@@ -452,6 +506,7 @@ func (exporter Exporter) buildWorkspaceArchive(ctx context.Context, job Job) (st
 		SensitiveOmissions: []string{
 			"API keys and token hashes", "authentication sessions and magic links",
 			"encrypted integration credentials", "billing provider identifiers", "internal queue payloads",
+			"plaintext invitation recipient addresses, invitation request hashes, delivery token hashes, provider message and webhook identifiers, and captured snapshots",
 		},
 	}
 	for _, definition := range workspaceExportFiles {

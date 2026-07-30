@@ -49,4 +49,15 @@ describe('feedback source context', () => {
       page_url: 'javascript:alert(1)',
     })).toBeNull()
   })
+
+  it('preserves email as a distinct source and uses its captured page context', () => {
+    const feedback = {
+      source: 'email' as const,
+      page_url: 'https://shop.example.test/orders/123',
+    }
+
+    expect(feedbackSource(feedback)).toBe('email')
+    expect(feedbackContextLabel(feedback)).toBe(feedback.page_url)
+    expect(feedbackContextURL(feedback)).toBe(feedback.page_url)
+  })
 })

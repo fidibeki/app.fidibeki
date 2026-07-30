@@ -443,10 +443,10 @@ func parseTenantFeedbackOptions(r *http.Request) (ListOptions, map[string]string
 	}
 	if raw := query.Get("source"); raw != "" {
 		switch raw {
-		case "web", "ios", "android":
+		case "web", "ios", "android", "email":
 			options.Source = raw
 		default:
-			fields["source"] = "must be web, ios, or android"
+			fields["source"] = "must be web, ios, android, or email"
 		}
 	}
 	if raw := query.Get("status"); raw != "" {

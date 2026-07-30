@@ -22,6 +22,7 @@ import {
   feedbackContextLabel,
   feedbackContextURL,
   feedbackSource,
+  isMobileFeedbackSource,
 } from '~/utils/feedback-source'
 
 const route = useRoute()
@@ -70,6 +71,7 @@ const canReprocessAll = computed(() => canWrite('feedback:update') && aiEnabled.
 const evidenceIcons = { screenshot: Camera, audio: Mic, video: Video, replay: MonitorPlay }
 const structuredResponses = computed(() => Object.entries(feedback.value?.responses || {}))
 const source = computed(() => feedbackSource(feedback.value))
+const isMobileSource = computed(() => isMobileFeedbackSource(source.value))
 const contextLabel = computed(() => feedbackContextLabel(feedback.value) || t('feedback.common.notAvailable'))
 const contextURL = computed(() => feedbackContextURL(feedback.value))
 
@@ -319,7 +321,7 @@ useHead(() => ({
 
           <section v-else class="feedback-environment">
             <h2>{{ t('feedback.detail.environment') }}</h2>
-            <dl><div><dt>{{ t('feedback.detail.source') }}</dt><dd><FeedbackSourceBadge :source="source" /></dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.mobileScreen') }}</dt><dd>{{ feedback.mobile_screen || t('feedback.common.notAvailable') }}</dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.applicationID') }}</dt><dd>{{ feedback.mobile_application_id || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a v-if="contextURL" :href="contextURL" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a><span v-else>{{ feedback.page_url || t('feedback.common.notAvailable') }}</span></dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.appVersion') }}</dt><dd>{{ feedback.mobile_app_version || t('feedback.common.notAvailable') }}</dd></div><div v-if="source !== 'web'"><dt>{{ t('feedback.detail.mobileOSVersion') }}</dt><dd>{{ feedback.mobile_os_version || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
+            <dl><div><dt>{{ t('feedback.detail.source') }}</dt><dd><FeedbackSourceBadge :source="source" /></dd></div><div v-if="isMobileSource"><dt>{{ t('feedback.detail.mobileScreen') }}</dt><dd>{{ feedback.mobile_screen || t('feedback.common.notAvailable') }}</dd></div><div v-if="isMobileSource"><dt>{{ t('feedback.detail.applicationID') }}</dt><dd>{{ feedback.mobile_application_id || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.pageContext') }}</dt><dd><a v-if="contextURL" :href="contextURL" target="_blank" rel="noreferrer">{{ feedback.page_url }} <ExternalLink :size="12" /></a><span v-else>{{ feedback.page_url || t('feedback.common.notAvailable') }}</span></dd></div><div v-if="isMobileSource"><dt>{{ t('feedback.detail.appVersion') }}</dt><dd>{{ feedback.mobile_app_version || t('feedback.common.notAvailable') }}</dd></div><div v-if="isMobileSource"><dt>{{ t('feedback.detail.mobileOSVersion') }}</dt><dd>{{ feedback.mobile_os_version || t('feedback.common.notAvailable') }}</dd></div><div><dt>{{ t('feedback.detail.browser') }}</dt><dd>{{ feedback.browser || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.os') }}</dt><dd>{{ feedback.os || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.device') }}</dt><dd>{{ feedback.device || t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.viewport') }}</dt><dd>{{ feedback.viewport_width && feedback.viewport_height ? `${integer(feedback.viewport_width)} × ${integer(feedback.viewport_height)}` : t('feedback.common.unknown') }}</dd></div><div><dt>{{ t('feedback.detail.language') }}</dt><dd>{{ feedback.language || t('feedback.common.unknown') }}</dd></div></dl>
           </section>
         </main>
 

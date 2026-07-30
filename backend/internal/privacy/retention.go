@@ -29,6 +29,7 @@ type RetentionOperations interface {
 	ExpiredExportArchives(context.Context, time.Time, int) ([]RetentionObjectCandidate, error)
 	MarkExportArchiveExpired(context.Context, RetentionObjectCandidate, time.Time) error
 	ExpireReporterRequests(context.Context, time.Time, int) (int64, error)
+	ExpireEmailFeedbackInvitations(context.Context, time.Time, int) (int64, error)
 }
 
 type RetentionObjectRemover interface {
@@ -228,6 +229,46 @@ func (store Store) ExpireReporterRequests(
 	return expired, nil
 }
 
+func (store Store) ExpireEmailFeedbackInvitations(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) (int64, error) {
+	if limit <= 0 {
+		limit = retentionBatchSize
+	}
+	var expired, deletedOutbox int64
+	err := store.Database.QueryRow(ctx, `
+		WITH candidates AS (
+			SELECT tenant_id, id
+			FROM email_feedback_invitations
+			WHERE cleanup_after <= $1
+			ORDER BY cleanup_after, id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		), deleted_outbox AS (
+			DELETE FROM outbox_events AS event
+			USING candidates
+			WHERE event.tenant_id = candidates.tenant_id
+			  AND event.resource_type = 'email_feedback_invitation'
+			  AND event.resource_id = candidates.id
+			RETURNING event.id
+		), deleted AS (
+			DELETE FROM email_feedback_invitations AS invitation
+			USING candidates
+			WHERE invitation.tenant_id = candidates.tenant_id
+			  AND invitation.id = candidates.id
+			RETURNING invitation.id
+		)
+		SELECT (SELECT count(*) FROM deleted),
+		       (SELECT count(*) FROM deleted_outbox)
+	`, now.UTC(), limit).Scan(&expired, &deletedOutbox)
+	if err != nil {
+		return 0, fmt.Errorf("expire email feedback invitations: %w", err)
+	}
+	return expired, nil
+}
+
 func (maintainer RetentionMaintainer) MaintainOnce(ctx context.Context) error {
 	if maintainer.Store == nil {
 		return errors.New("privacy retention store is unavailable")
@@ -278,19 +319,29 @@ func (maintainer RetentionMaintainer) MaintainOnce(ctx context.Context) error {
 		},
 	)
 	cancelRequests()
+	invitationCtx, cancelInvitations := maintainer.phaseContext(ctx)
+	invitations, invitationBudget, invitationErr := drainRequestRetention(
+		invitationCtx, batchSize, maxBatches, func(expireCtx context.Context, limit int) (int64, error) {
+			return maintainer.Store.ExpireEmailFeedbackInvitations(expireCtx, now, limit)
+		},
+	)
+	cancelInvitations()
 	log := maintainer.logger()
 	log.InfoContext(ctx, "privacy retention maintenance completed",
 		"attachments_deleted", attachments, "archives_deleted", archives,
 		"requests_expired", requests,
+		"email_feedback_invitations_deleted", invitations,
 		"attachment_cleanup_failed", attachmentErr != nil,
 		"archive_cleanup_failed", archiveErr != nil,
 		"request_cleanup_failed", requestErr != nil,
+		"email_feedback_invitation_cleanup_failed", invitationErr != nil,
 	)
-	if attachmentBudget || archiveBudget || requestBudget {
+	if attachmentBudget || archiveBudget || requestBudget || invitationBudget {
 		log.WarnContext(ctx, "privacy retention budget exhausted",
 			"attachment_budget_exhausted", attachmentBudget,
 			"archive_budget_exhausted", archiveBudget,
 			"request_budget_exhausted", requestBudget,
+			"email_feedback_invitation_budget_exhausted", invitationBudget,
 			"maximum_batches", maxBatches,
 		)
 	}
@@ -301,8 +352,10 @@ func (maintainer RetentionMaintainer) MaintainOnce(ctx context.Context) error {
 			now, archives, archiveBudget, archiveErr),
 		maintainer.recordPhase(ctx, retentionhealth.OperationReporterPrivacyRequests,
 			now, requests, requestBudget, requestErr),
+		maintainer.recordPhase(ctx, retentionhealth.OperationEmailFeedbackInvitations,
+			now, invitations, invitationBudget, invitationErr),
 	)
-	return errors.Join(attachmentErr, archiveErr, requestErr, recordErr)
+	return errors.Join(attachmentErr, archiveErr, requestErr, invitationErr, recordErr)
 }
 
 func (maintainer RetentionMaintainer) recordPhase(

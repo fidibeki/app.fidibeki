@@ -74,6 +74,14 @@ export default defineNuxtConfig({
         'x-robots-tag': 'noindex, nofollow',
       },
     },
+    '/email-feedback/**': {
+      ssr: false,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex, nofollow',
+      },
+    },
     // The author-facing pages carry someone else's words and consent record, and
     // must never be cached or indexed. Same treatment as /reporter and /privacy.
     '/testimonials/collect/**': {

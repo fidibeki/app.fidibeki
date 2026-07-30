@@ -18,6 +18,7 @@ interface NativeTestControls {
   __setReducedMotion(enabled: boolean): void
   __setColorScheme(colorScheme: 'light' | 'dark' | null): void
   __emitAppState(state: 'active' | 'background'): void
+  __emitKeyboard(state: 'show' | 'hide'): void
 }
 
 async function flush(): Promise<void> {
@@ -78,6 +79,15 @@ function pressByLabel(root: ReactTestInstance, label: string): void {
   root.findByProps({ accessibilityLabel: label }).props.onPress()
 }
 
+function flattenedStyle(style: unknown): Record<string, unknown> {
+  const styles = Array.isArray(style) ? style.flat(Infinity) : [style]
+  return Object.assign({}, ...styles.filter((value) => value && typeof value === 'object'))
+}
+
+function findHostByTestID(root: ReactTestInstance, testID: string): ReactTestInstance {
+  return root.find((node) => typeof node.type === 'string' && node.props.testID === testID)
+}
+
 async function fillRequiredForm(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => {
     pressByLabel(renderer.root, '5 out of 5')
@@ -119,17 +129,30 @@ describe('native provider, host trigger, and modal sheet', () => {
       native.__setPlatform(platform)
       const renderer = await renderSDK()
       await openSheet(renderer)
-      expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(true)
+      const modal = renderer.root.findByProps({ testID: 'fidibeki-modal' })
+      expect(modal.props.visible).toBe(true)
+      expect(modal.props.transparent).toBe(true)
+      expect(modal.props.presentationStyle).toBe('overFullScreen')
       expect(renderer.root.findByProps({ testID: `fidibeki-keyboard-${platform}` }).props.behavior).toBe(
         platform === 'ios' ? 'padding' : 'height',
       )
       expect(renderer.root.findAll((node) => String(node.type) === 'SafeAreaView')).toHaveLength(1)
+      expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+        '75%',
+      )
+      expect(renderer.root.findByProps({ testID: 'fidibeki-sheet-grabber' })).toBeTruthy()
+      expect(renderer.root.findByProps({ testID: 'fidibeki-sheet-header' })).toBeTruthy()
+      const body = renderer.root.findByProps({ testID: 'fidibeki-sheet-body' })
+      const footer = renderer.root.findByProps({ testID: 'fidibeki-sheet-footer' })
+      expect(body.findAllByProps({ testID: 'fidibeki-submit' })).toHaveLength(0)
+      expect(footer.findByProps({ testID: 'fidibeki-submit' })).toBeTruthy()
       expect(
         renderer.root.findAll((node) => String(node.type) === 'View' && node.props.accessibilityRole === 'radiogroup'),
       ).toHaveLength(3)
       expect(
         renderer.root.findAll((node) => String(node.type) === 'Switch' && node.props.accessibilityRole === 'switch'),
-      ).toHaveLength(1)
+      ).toHaveLength(0)
+      expect(renderer.root.findByProps({ testID: 'fidibeki-contact-disclosure' })).toBeTruthy()
       for (const key of ['rating', 'reaction', 'choice', 'details']) {
         expect(renderer.root.findByProps({ testID: `fidibeki-field-${key}` })).toBeTruthy()
       }
@@ -138,6 +161,80 @@ describe('native provider, host trigger, and modal sheet', () => {
     },
   )
 
+  it.each(['ios', 'android'] as const)('expands the sheet while the keyboard is visible on %s', async (platform) => {
+    const native = (await import('react-native')) as unknown as NativeTestControls
+    native.__setPlatform(platform)
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+
+    await act(async () => {
+      native.__emitKeyboard('show')
+      await flush()
+    })
+    expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+      '100%',
+    )
+
+    await act(async () => {
+      native.__emitKeyboard('hide')
+      await flush()
+    })
+    expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+      '75%',
+    )
+    renderer.unmount()
+  })
+
+  it('renders cumulative accent stars while submitting the numeric rating value', async () => {
+    const current = session({
+      configuration: {
+        ...session().configuration,
+        definition: definition({
+          appearance: { accent_color: '#d9485f' },
+        }),
+      },
+    })
+    const renderer = await renderSDK({
+      sessionProvider: vi.fn(async () => current),
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, '4 out of 5')
+      pressByLabel(renderer.root, 'Alpha')
+      renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Numeric contract')
+    })
+
+    for (const rating of [1, 2, 3, 4]) {
+      expect(
+        flattenedStyle(renderer.root.findByProps({ testID: `fidibeki-star-icon-rating-${rating}` }).props.style).color,
+      ).toBe('#d9485f')
+    }
+    expect(
+      flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-star-icon-rating-5' }).props.style).color,
+    ).not.toBe('#d9485f')
+    expect(findHostByTestID(renderer.root, 'fidibeki-star-icon-rating-4').children).toEqual(['★'])
+    expect(findHostByTestID(renderer.root, 'fidibeki-star-icon-rating-5').children).toEqual(['☆'])
+    expect(renderer.root.findByProps({ testID: 'fidibeki-rating-rating-4' }).props.accessibilityState.checked).toBe(
+      true,
+    )
+    expect(renderer.root.findByProps({ testID: 'fidibeki-rating-rating-3' }).props.accessibilityState.checked).toBe(
+      false,
+    )
+    expect(
+      flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-choice-choice-a' }).props.style).backgroundColor,
+    ).toBe('#d9485f')
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+      await flush()
+    })
+    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1]
+    const body = JSON.parse(String(request?.body)) as { responses: Record<string, string | number> }
+    expect(body.responses.rating).toBe(4)
+    renderer.unmount()
+  })
+
   it('uses no modal transition when reduced motion is enabled', async () => {
     const native = (await import('react-native')) as unknown as NativeTestControls
     native.__setPlatform('ios')
@@ -145,6 +242,49 @@ describe('native provider, host trigger, and modal sheet', () => {
     const renderer = await renderSDK()
     await openSheet(renderer)
     expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.animationType).toBe('none')
+    renderer.unmount()
+  })
+
+  it('closes and reopens with the same session, draft, screenshot, and eligibility', async () => {
+    const storage = new MemoryStorage()
+    const setItem = vi.spyOn(storage, 'setItem')
+    const removeItem = vi.spyOn(storage, 'removeItem')
+    const sessionProvider = vi.fn<SessionProvider>(async () => session())
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const screenshotProvider = vi.fn<ScreenshotProvider>(async () => ({
+      uri: 'file:///private/user/screenshot.png',
+      contentType: 'image/png',
+      size: screenshotBlob.size,
+      read: async () => screenshotBlob,
+    }))
+    const renderer = await renderSDK({
+      screenshotProvider,
+      sessionProvider,
+      storage,
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this draft')
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(false)
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.disabled).toBe(false)
+    expect(sessionProvider).toHaveBeenCalledOnce()
+    expect(setItem).not.toHaveBeenCalled()
+    expect(removeItem).not.toHaveBeenCalled()
+
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(true)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.value).toBe('Keep this draft')
+    expect(JSON.stringify(renderer.toJSON())).toContain('Screenshot added')
+    expect(sessionProvider).toHaveBeenCalledOnce()
+    expect(screenshotProvider).toHaveBeenCalledOnce()
     renderer.unmount()
   })
 
@@ -158,6 +298,246 @@ describe('native provider, host trigger, and modal sheet', () => {
     const rendered = JSON.stringify(renderer.toJSON())
     expect(rendered.match(/This response is required/g)?.length).toBe(3)
     expect(globalThis.fetch).not.toHaveBeenCalled()
+    renderer.unmount()
+  })
+
+  it('progressively reveals optional context and preserves it across collapse and reopen', async () => {
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Anything else?' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      false,
+    )
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.onChangeText('Keep this context')
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      true,
+    )
+    await act(async () => {
+      pressByLabel(renderer.root, 'Hide more context')
+    })
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Anything else?' })).toHaveLength(0)
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+    })
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Keep this context')
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Keep this context')
+    renderer.unmount()
+  })
+
+  it('reveals contact collection explicitly and keeps the consent section open for the draft', async () => {
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Email for updates' })).toHaveLength(0)
+    const disclosure = renderer.root.findByProps({ testID: 'fidibeki-contact-disclosure' })
+    expect(disclosure.props.accessibilityState.expanded).toBe(false)
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('user@example.test')
+    })
+    expect(renderer.root.findAllByProps({ testID: 'fidibeki-contact-disclosure' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.value).toBe(
+      'user@example.test',
+    )
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.value).toBe(
+      'user@example.test',
+    )
+    renderer.unmount()
+  })
+
+  it('keeps submit and close dimensions stable while exposing a busy submission state', async () => {
+    let resolveRequest!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRequest = resolve
+          }),
+      ),
+    )
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await Promise.resolve()
+    })
+    const submit = renderer.root.findByProps({ testID: 'fidibeki-submit' })
+    expect(submit.props.disabled).toBe(true)
+    expect(submit.props.accessibilityState).toMatchObject({ busy: true, disabled: true })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-close' }).props.disabled).toBe(true)
+    expect(JSON.stringify(renderer.toJSON())).toContain('Sending')
+
+    await act(async () => {
+      resolveRequest(
+        new Response(
+          JSON.stringify({
+            feedback_id: 'feedback-id',
+            feedback_public_id: 'FDBK-42',
+            attachments: [],
+          }),
+          { status: 200 },
+        ),
+      )
+      await flush()
+    })
+    renderer.unmount()
+  })
+
+  it('keeps expanded context and answers intact for an exact retry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              feedback_id: 'feedback-id',
+              feedback_public_id: 'FDBK-42',
+              attachments: [],
+            }),
+            { status: 200 },
+          ),
+        ),
+    )
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.onChangeText('Retry context')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+    })
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('Feedback could not be sent')
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.value).toBe(
+      'Captured on the current screen',
+    )
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Retry context')
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      true,
+    )
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+      await flush()
+    })
+    expect(JSON.stringify(renderer.toJSON())).toContain('Thanks for the feedback.')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    renderer.unmount()
+  })
+
+  it('releases an attached screenshot and restores the compact add action', async () => {
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const dispose = vi.fn()
+    const renderer = await renderSDK({
+      screenshotProvider: vi.fn<ScreenshotProvider>(async () => ({
+        uri: 'file:///private/user/screenshot.png',
+        contentType: 'image/png',
+        size: screenshotBlob.size,
+        read: async () => screenshotBlob,
+        dispose,
+      })),
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-screenshot-attached' })).toBeTruthy()
+    await act(async () => {
+      pressByLabel(renderer.root, 'Remove screenshot')
+      await flush()
+    })
+    expect(renderer.root.findAllByProps({ testID: 'fidibeki-screenshot-attached' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-screenshot-action' })).toBeTruthy()
+    expect(dispose).toHaveBeenCalledOnce()
+    renderer.unmount()
+  })
+
+  it('keeps accepted feedback visible when the screenshot upload later fails', async () => {
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      if (fetchMock.mock.calls.length === 1) {
+        const body = JSON.parse(String(init?.body)) as {
+          screenshot: { client_attachment_id: string }
+        }
+        return new Response(
+          JSON.stringify({
+            feedback_id: 'feedback-id',
+            feedback_public_id: 'FDBK-42',
+            attachments: [
+              {
+                attachment_id: 'attachment-id',
+                client_attachment_id: body.screenshot.client_attachment_id,
+                presigned_url: 'https://objects.example.test/upload',
+                method: 'PUT',
+                headers: {},
+                complete_token: 'complete-secret',
+                expires_at: '2099-07-28T12:10:00Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(null, { status: 503 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const renderer = await renderSDK({
+      screenshotProvider: vi.fn<ScreenshotProvider>(async () => ({
+        uri: 'file:///private/user/screenshot.png',
+        contentType: 'image/png',
+        size: screenshotBlob.size,
+        read: async () => screenshotBlob,
+      })),
+    })
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+      await flush()
+    })
+    const rendered = JSON.stringify(renderer.toJSON())
+    expect(rendered).toContain('Thanks for the feedback.')
+    expect(rendered).toContain('screenshot could not be uploaded')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     renderer.unmount()
   })
 
@@ -238,6 +618,10 @@ describe('native provider, host trigger, and modal sheet', () => {
       pressByLabel(renderer.root, '5 out of 5')
       pressByLabel(renderer.root, 'Alpha')
       renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this answer')
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('reporter@example.test')
       renderer.root.findByProps({ accessibilityLabel: 'I agree to receive updates' }).props.onValueChange(true)
     })
@@ -299,6 +683,10 @@ describe('native provider, host trigger, and modal sheet', () => {
       pressByLabel(renderer.root, '5 out of 5')
       pressByLabel(renderer.root, 'Alpha')
       renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this answer')
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('reporter@example.test')
       renderer.root.findByProps({ accessibilityLabel: 'I agree to receive updates' }).props.onValueChange(true)
     })
@@ -677,8 +1065,30 @@ describe('native provider, host trigger, and modal sheet', () => {
       sessionProvider: vi.fn(async () => automatic),
     })
     await openSheet(renderer)
-    const safeArea = renderer.root.find((node) => String(node.type) === 'SafeAreaView')
-    expect(Object.assign({}, ...safeArea.props.style).backgroundColor).toBe('#141716')
+    const sheet = renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' })
+    expect(flattenedStyle(sheet.props.style).backgroundColor).toBe('#141716')
+    renderer.unmount()
+  })
+
+  it('chooses readable primary-button text for a dark custom accent', async () => {
+    const native = (await import('react-native')) as unknown as NativeTestControls
+    native.__setColorScheme('dark')
+    const customAccent = session({
+      configuration: {
+        ...session().configuration,
+        definition: definition({
+          appearance: { accent_color: '#087f6b', theme: 'auto' },
+        }),
+      },
+    })
+    const renderer = await renderSDK({
+      sessionProvider: vi.fn(async () => customAccent),
+    })
+    await openSheet(renderer)
+    const submitLabel = renderer.root.findByProps({ testID: 'fidibeki-submit' }).find(
+      (node) => String(node.type) === 'Text',
+    )
+    expect(flattenedStyle(submitLabel.props.style).color).toBe('#ffffff')
     renderer.unmount()
   })
 

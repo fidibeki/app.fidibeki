@@ -86,6 +86,14 @@ func TestParseTenantFeedbackOptions(t *testing.T) {
 	}
 }
 
+func TestParseTenantFeedbackOptionsAcceptsEmailSource(t *testing.T) {
+	request := httptest.NewRequest("GET", "/v1/feedbacks?source=email", nil)
+	options, fields := parseTenantFeedbackOptions(request)
+	if len(fields) != 0 || options.Source != "email" {
+		t.Fatalf("options = %#v fields = %#v", options, fields)
+	}
+}
+
 func TestParseTenantFeedbackOptionsRejectsInvalidFilters(t *testing.T) {
 	request := httptest.NewRequest("GET", "/v1/feedbacks?"+url.Values{
 		"project_id": {"nope"},

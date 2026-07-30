@@ -845,7 +845,7 @@ suppressed-recipient non-enumeration, and atomic outbox creation.
 ## Task 47: Deliver And Suppress Invitation Email
 
 **Depends on:** Task 46
-**Status:** In Progress
+**Status:** Complete
 
 **Outcome:** The outbox delivers one branded, tenant-aware, scanner-safe invitation and prevents
 later delivery after opt-out, bounce, or complaint.
@@ -857,12 +857,24 @@ durably stopped.
 and form links, provider-message tracking, plaintext-recipient minimization, explicit POST opt-out,
 and bounce/complaint suppression.
 
+**Evidence:** Migration 133 records provider webhook IDs and enforces unique provider-message
+correlation. The outbox now routes invitations to the email queue, where one tenant-aware branded
+message exposes five rating links, the form, privacy policy, and opt-out while using a deterministic
+provider idempotency key. Delivery clears the plaintext recipient; transient retries preserve only
+the data still needed, terminal states minimize it, and a suppression created before worker
+execution prevents the send. The public tenant-host route is mutation-free on GET and requires an
+explicit idempotent POST to opt out tenant-wide. Verified Resend bounce/complaint events correlate
+only through the provider message ID, strengthen suppressions, and ignore exact webhook retries.
+The EN/PT confirmation page bypasses member auth and is no-store, no-referrer, noindex, responsive,
+and accessible. Full backend tests and vet, migration up/down/up with RLS, 173 web unit tests,
+typecheck/build, and four desktop/mobile Playwright scenarios pass.
+
 **Autonomy:** AFK
 
 ## Task 48: Create Feedback Only On Explicit Form Submission
 
 **Depends on:** Task 47
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** An invited person can open a localized form, optionally preselect a rating, and create
 one independent `email` Feedback only by POSTing the form.
@@ -873,12 +885,25 @@ one independent `email` Feedback only by POSTing the form.
 rating preselection, captured-definition validation, concurrent one-Feedback submission, optional
 explicit contact consent, inbox source rendering, and no automatic Issue or Testimonial.
 
+**Evidence:** Migration 134 adds the `email` source and enforces its privacy-safe, non-browser
+capture shape while preserving the shared mobile source enum through reversible migration tests.
+The tenant-host public route returns only the captured campaign, definition, localization,
+controller, and public AI notice; GET and rating query parameters never mutate state. Explicit POST
+validates against that immutable snapshot, records captured consent when selected, and locks the
+invitation so concurrent submissions produce exactly one independent Feedback and no Issue or
+Testimonial. Submitted, expired, suppressed, unknown, and cross-tenant links remain neutral. The
+localized mobile-first form preselects rating only in the browser, posts a strict minimal payload,
+and handles success/unavailable states without leaking raw API details. Email Feedback is distinct
+and filterable in the inbox with its own badge and safe context handling. Full backend tests and
+vet, migration up/down/up with RLS, 174 web unit tests, typecheck/build, four public-form
+desktop/mobile Playwright scenarios, and two inbox source scenarios pass.
+
 **Autonomy:** AFK
 
 ## Task 49: Govern Invitation Personal Data
 
 **Depends on:** Task 48
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Invitation records participate in reporter access, erasure, restriction, workspace
 export, retention health, ROPA, and provider-governance controls.
@@ -890,12 +915,26 @@ outside existing data-rights and retention boundaries.
 exports, erasure/restriction enforcement, bounded retention, registry completeness, and no
 invented lawful-basis claim.
 
+**Evidence:** Migration 135 requires every invitation ledger row to expire no later than 90 days
+after its public link, indexes the bounded cleanup deadline, and registers a daily
+retention-health operation. The maintainer deletes due invitations and their invitation outbox
+rows while preserving tenant suppression digests. Reporter access and erasure now match
+invitations by normalized email digest; erasure removes delivery addresses, tokens, page context,
+provider/webhook identifiers, errors, and optional Feedback links while retaining only the
+minimized event/idempotency ledger. Verified reporter restrictions suppress new invitations
+before any address, token, or outbox is stored. Workspace exports include campaigns, minimized
+invitations, and suppressions without plaintext recipients, delivery secrets, captured snapshots,
+or provider identifiers. The retention registry, data map, transactional-email inventory, ROPA,
+and Resend governance record document the new processing boundary while keeping lawful basis and
+provider approval pending. Full backend tests, focused privacy integration tests, migration
+up/down/up, and `go vet ./...` pass.
+
 **Autonomy:** AFK
 
 ## Task 50: Prove The Email Feedback Journey
 
 **Depends on:** Tasks 45 through 49
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** The complete customer-event-to-inbox journey is documented, tested, and ready for
 staging validation.
@@ -906,5 +945,164 @@ boundaries work together.
 **Acceptance:** The staging-ready E2E creates a campaign and least-privilege key, retries one event,
 opens without mutation, submits one `email` Feedback with no Issue/Testimonial, and suppresses a
 second recipient; all affected backend/web checks pass.
+
+**Evidence:** `TestEmailFeedbackCampaignHTTPFlow` now creates the sender key through
+`POST /v1/api-keys`, proves that `email_feedback:send` is its only permission, creates and activates
+the campaign, converges an exact event retry, and confirms rating-link GETs create no Feedback. The
+explicit submission creates exactly one `email` Feedback with no Issue or Testimonial. A second
+recipient is delivered an invitation, opts out through the public confirmation endpoint, and a
+later event for the same normalized address is accepted as suppressed without recipient data,
+token, delivery outbox, or email send. The public form was moved to the dynamic route's `index.vue`
+after the combined Playwright gate exposed that Nuxt was treating the opt-out page as an unrendered
+child; production route output now contains independent form and opt-out routes. The integration
+and controlled staging procedure, including credential hygiene, QA evidence, and cleanup, is
+documented in `docs/email-feedback.md`. Full backend tests and vet, 174 web unit tests, typecheck,
+production build, and the complete 322-scenario Playwright suite pass (263 executed, 59
+intentionally skipped), including the 14 desktop/mobile campaign/form/opt-out scenarios. The full
+gate also tightened project-toast and targeting assertions after the campaign readiness status
+made global role selectors ambiguous, and preserved the member email field's accessible name when
+validation help appears.
+
+Controlled staging validation on commit
+`07622eaa31ba6310c606e6d1937b2d65dd0773f7` proved campaign readiness, a short-lived key containing
+only `email_feedback:send`, `201`/`200` exact-retry convergence, one processed provider message,
+scanner-safe rating GETs, one explicit `email` Feedback with the expected response/context and no
+Issue, reporter, Testimonial, or Testimonial candidate, followed by opt-out and a neutral suppressed
+event with no recipient, token, provider message, or outbox row. Cleanup archived Feedback
+`fb_lIy92VAS` and campaign `7a11d5f4-7fd2-453a-affc-c13190def3e3` and revoked the temporary API key.
+Both provider-accepted messages used unique `delivered+label@resend.dev` recipients, which
+[Resend designates](https://resend.com/docs/knowledge-base/what-email-addresses-to-use-for-testing)
+to simulate delivery without affecting sender reputation. The runtime Resend credential correctly
+remains send-only; no broader inspection credential is required. Issue closure remains gated only
+on webhook health. A follow-up confirmed that staging now has a non-empty
+`RESEND_WEBHOOK_SECRET`: an unsigned probe returns `400 webhook signature is invalid`, while a
+validly signed payload using an unmatched provider message returns `200 accepted` without mutating
+tenant data. After correcting the provider endpoint, real Resend callbacks completed bounce
+invitation `27b1cff7-f7b2-44a0-bcca-4afb0cbe3e70` and complaint invitation
+`07693332-6778-407a-8fa6-09c839891ccb`. Both had provider and webhook event IDs, removed their
+recipient and collection token, and persisted the corresponding `bounce` or `complaint`
+suppression. Railway recorded both provider POSTs as `200`; the temporary campaign was restored to
+`archived`, all temporary sender keys were revoked, and the earlier incomplete QA invitation was
+removed. This satisfies the final staging gate for issue #113. The validation also demonstrated
+that Redis queue traffic does not wake a Railway Serverless worker. Serverless was therefore
+disabled exclusively for the staging worker after the run; its service instance now reports
+`sleepApplication=false`.
+
+**Autonomy:** AFK
+
+# Mobile Feedback Sheet Redesign
+
+**Design:** `docs/superpowers/specs/2026-07-30-mobile-feedback-sheet-redesign-design.md`
+
+**Implementation:**
+`docs/superpowers/plans/2026-07-30-mobile-feedback-sheet-redesign-implementation.md`
+
+**Shared context:** The host application owns the trigger. The SDK renders only an explicitly
+opened native sheet and reuses the existing capture-session, dynamic response-block, submission,
+screenshot, privacy, and recurrence contracts. Work is local and staging-only; there are no
+backend, production, infrastructure, provider, or registry changes.
+
+## Task 51: Restore Dismiss And Reopen Semantics
+
+**Depends on:** Task 50
+**Status:** Complete
+
+**Outcome:** Closing the mobile sheet preserves eligibility/session/draft and legacy dismissed
+records can no longer suppress the host trigger.
+
+**Why:** The current dismiss write makes an explicitly controlled mobile trigger unusable before
+the person submits.
+
+**Acceptance:** One focused recurrence/provider test run proves close/reopen with zero storage or
+session churn, clears legacy dismissed state for every recurrence mode, and preserves submitted
+suppression.
+
+**Evidence:** The provider close action now only hides an open sheet and returns it to `ready`;
+submitting cannot be dismissed, and accepted submissions remain the sole recurrence write.
+Component coverage proves close/reopen reuses the same capture session, response draft, screenshot,
+eligibility, and empty storage. Recurrence coverage removes old `dismissed` records and immediately
+restores eligibility for `session`, `cooldown`, and `never`. `pnpm --filter @fidibeki/mobile
+test:unit` passes 70 tests and `pnpm --filter @fidibeki/mobile typecheck` passes.
+
+**Autonomy:** AFK
+
+## Task 52: Render The Compact Native Sheet
+
+**Depends on:** Task 51
+**Status:** Complete
+
+**Outcome:** The current sparse page form is replaced by the approved 75% bottom sheet with fixed
+header/footer, keyboard-safe body, accent stars, and compact dynamic response controls.
+
+**Why:** The functional SDK needs a coherent mobile hierarchy and web-consistent rating behavior.
+
+**Acceptance:** One focused iOS/Android component run proves frame geometry, keyboard expansion,
+cumulative accessible stars with numeric values, dynamic block order, chip states, safe areas, and
+reduced motion.
+
+**Evidence:** The SDK now renders a transparent `overFullScreen` modal with scrim, grabber, compact
+header, 75% bottom-aligned frame, scrolling body, and fixed submit footer. Keyboard events expand
+the frame to the full available safe layout on iOS and Android. Rating is a cumulative five-star
+radiogroup driven by the resolved accent while preserving numeric request values; configured
+reaction/single-choice blocks use compact wrapping chips and every response block remains in
+definition order. Component coverage proves both platform frames, footer separation, keyboard
+transitions, accent precedence, exact radio state, numeric submission, reduced motion, and dark
+appearance. The full 73-test mobile suite and mobile typecheck pass.
+
+**Autonomy:** AFK
+
+## Task 53: Complete Progressive Sections And States
+
+**Depends on:** Task 52
+**Status:** Complete
+
+**Outcome:** Comment/contact/screenshot sections use approved progressive disclosure and every
+validation, loading, retry, success, privacy, theme, and attachment state is polished and safe.
+
+**Why:** Compact geometry is useful only if optional content and failure states remain complete.
+
+**Acceptance:** One focused component/form run proves disclosure and hidden-data behavior,
+screenshot lifecycle, error focus, draft-safe retry, success/warnings, long copy, dark mode, and
+accessible states.
+
+**Evidence:** `allow_comment` now starts behind a localized disclosure that can collapse and reopen
+without losing its value. Valid contact collection starts behind an explicit opt-in and remains
+visible for the draft once opened; configuration reconciliation still removes unavailable contact
+data and clears changed consent. Screenshot add, busy, attached, remove, cancellation, provider
+error, and post-acceptance upload-warning states use compact action rows. Validation scrolls toward
+the first invalid field and focuses text controls where native refs exist. Submit and close expose
+stable disabled/busy states, retryable failures retain the complete expanded draft, AI/privacy copy
+remains visible, and fixed glyphs cannot distort under Dynamic Type. Component coverage proves the
+disclosures, close/reopen persistence, exact retry, screenshot disposal, accepted-feedback upload
+failure, light/dark accents, localization fallbacks, and accessible states. All 79 mobile tests and
+the mobile typecheck pass.
+
+**Autonomy:** AFK
+
+## Task 54: Prove The Native Experience
+
+**Depends on:** Task 53
+**Status:** Complete
+
+**Outcome:** The redesigned SDK is documented, fully tested, and visually verified through the
+host-owned example on available iOS and Android runtimes.
+
+**Why:** Mocked component output alone cannot establish native sheet, keyboard, and viewport
+quality.
+
+**Acceptance:** Complete mobile/package/example gates and inspected runtime screenshots prove
+open/close/reopen, preserved draft, screenshot, keyboard, submit, success, and recurrence with no
+backend or production change.
+
+**Evidence:** The full mobile suite passes 80 tests with 89.28% statement, 83.41% branch, 95.33%
+function, and 91% line coverage; package typecheck, build, pack inspection, and example
+typecheck pass. The debug example built and installed on Android and iOS. Inspected light, dark,
+keyboard, selected-answer, screenshot, standard-phone, and compact-phone states show a 75% sheet,
+stable footer, safe-area containment, readable accent contrast, and no overlap. Android runtime
+submission preserved numeric star values, uploaded and completed the screenshot, produced one
+Feedback, and disabled recurrence only after success. Closing and reopening kept the same session
+and did not submit. The example screenshot provider uses `ArrayBuffer`-backed bytes without the
+React Native `Response.blob()` warning. No backend, deployment, production, or infrastructure
+files changed.
 
 **Autonomy:** AFK

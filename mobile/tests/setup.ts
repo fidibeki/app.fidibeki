@@ -7,6 +7,8 @@ vi.mock('react-native', () => {
   let colorScheme: 'light' | 'dark' | null = 'light'
   let appStateListener: ((state: string) => void) | undefined
   let reduceMotionListener: ((enabled: boolean) => void) | undefined
+  let keyboardShowListener: (() => void) | undefined
+  let keyboardHideListener: (() => void) | undefined
   const platform = { OS: 'ios' as 'ios' | 'android', Version: 'test' }
   const host = (name: string) =>
     React.forwardRef<unknown, Record<string, unknown>>(function Host(props, ref) {
@@ -23,6 +25,13 @@ vi.mock('react-native', () => {
     AppState: {
       addEventListener: vi.fn((_event: string, listener: (state: string) => void) => {
         appStateListener = listener
+        return { remove: vi.fn() }
+      }),
+    },
+    Keyboard: {
+      addListener: vi.fn((event: string, listener: () => void) => {
+        if (event.toLowerCase().includes('show')) keyboardShowListener = listener
+        if (event.toLowerCase().includes('hide')) keyboardHideListener = listener
         return { remove: vi.fn() }
       }),
     },
@@ -43,6 +52,8 @@ vi.mock('react-native', () => {
     useColorScheme: () => colorScheme,
     View: host('View'),
     __emitAppState: (state: string) => appStateListener?.(state),
+    __emitKeyboard: (state: 'show' | 'hide') =>
+      state === 'show' ? keyboardShowListener?.() : keyboardHideListener?.(),
     __setPlatform: (nextPlatform: 'ios' | 'android') => {
       platform.OS = nextPlatform
     },

@@ -35,7 +35,7 @@ const sessionProvider: SessionProvider = async (request) => {
 async function screenshotProvider(): Promise<ScreenshotAsset> {
   const response = await fetch(screenshotURL)
   if (!response.ok) throw new Error(`Screenshot fixture returned ${response.status}`)
-  const blob = await response.blob()
+  const blob = new Blob([await response.arrayBuffer()], { type: 'image/png' })
   return {
     uri: 'memory://host-owned-example-screenshot',
     contentType: 'image/png',

@@ -206,8 +206,11 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 		pendingProvider(
 			"resend_transactional_email", "Resend transactional email", "email",
 			GovernanceBoundaryServiceProvider,
-			"Deliver transactional and lifecycle email to workspace members and reporters.",
-			[]string{"recipient email address", "transactional message content"},
+			"Deliver transactional and lifecycle email, including customer-directed post-transaction feedback invitations, to workspace members and reporters.",
+			[]string{
+				"recipient email address",
+				"transactional and post-transaction feedback invitation content",
+			},
 			"backend/internal/config/config.go (ResendAPIKey)",
 			"EMAIL_DRIVER=resend selects this provider and then requires RESEND_API_KEY",
 			GovernanceEnvironmentConditionalOnDriver, "external_communications",

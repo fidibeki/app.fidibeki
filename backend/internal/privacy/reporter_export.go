@@ -20,6 +20,28 @@ type reporterScope struct {
 }
 
 var reporterExportFiles = []exportFile{
+	{Name: "email-feedback-invitations.jsonl", PortabilityCategories: []PortabilityDataCategory{PortabilityFeedback}, Query: `
+		SELECT jsonb_build_object(
+			'id', invitation.id, 'project_id', invitation.project_id,
+			'campaign_id', invitation.campaign_id, 'feedback_id', invitation.feedback_id,
+			'external_event_id', invitation.external_event_id,
+			'recipient_email', invitation.recipient_email::text,
+			'locale', invitation.locale, 'context_url', invitation.context_url,
+			'status', invitation.status,
+			'sent_at', invitation.sent_at, 'submitted_at', invitation.submitted_at,
+			'suppressed_at', invitation.suppressed_at,
+			'bounced_at', invitation.bounced_at,
+			'complained_at', invitation.complained_at,
+			'failed_at', invitation.failed_at, 'expired_at', invitation.expired_at,
+			'expires_at', invitation.expires_at,
+			'created_at', invitation.created_at, 'updated_at', invitation.updated_at
+		)
+		FROM email_feedback_invitations AS invitation
+		WHERE invitation.tenant_id = $1
+		  AND invitation.recipient_digest = encode(digest($2, 'sha256'), 'hex')
+		  AND invitation.created_at <= $3
+		ORDER BY invitation.created_at, invitation.id
+	`},
 	{Name: "feedback.jsonl", PortabilityCategories: []PortabilityDataCategory{PortabilityFeedback}, Query: `
 		SELECT jsonb_build_object(
 			'id', feedback.id, 'public_id', feedback.public_id,
@@ -433,7 +455,8 @@ func (exporter Exporter) buildReporterArchive(
 			_ = archive.Close()
 			return "", 0, 0, 0, err
 		}
-		if definition.Name == "feedback.jsonl" || definition.Name == "issues.jsonl" {
+		if definition.Name == "email-feedback-invitations.jsonl" ||
+			definition.Name == "feedback.jsonl" || definition.Name == "issues.jsonl" {
 			recordCount += count
 		}
 		manifest.Files = append(manifest.Files, manifestFile{Name: definition.Name, Records: count})

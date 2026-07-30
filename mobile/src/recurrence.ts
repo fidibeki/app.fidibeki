@@ -117,6 +117,10 @@ export class RecurrenceEngine {
     const key = recurrenceStorageKey(projectId, definition.definition_key, screen)
     const record = parseRecord(await this.storage.getItem(key))
     if (!record) return { eligible: true, nextEligibleAt: null }
+    if (record.state === 'dismissed') {
+      await this.storage.removeItem(key)
+      return { eligible: true, nextEligibleAt: null }
+    }
     if (record.state === 'snoozed') {
       if (record.snoozedUntil === undefined || this.now() >= record.snoozedUntil) {
         return { eligible: true, nextEligibleAt: null }
@@ -144,7 +148,7 @@ export class RecurrenceEngine {
     projectId: string,
     definition: MobileWidgetDefinition,
     screen: string,
-    state: Exclude<RecurrenceState, 'snoozed'>,
+    state: 'submitted',
   ): Promise<void> {
     const record: RecurrenceRecord = {
       state,

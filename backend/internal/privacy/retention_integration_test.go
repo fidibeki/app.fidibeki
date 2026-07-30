@@ -71,6 +71,64 @@ func TestRetentionStorePreservesManifestsAndExpiresAccess(t *testing.T) {
 		})
 	}
 
+	retentionFeedbackID := privacyFeedbackID(t, ctx, database, workspaces[0].tenantID)
+	expiredInvitation := seedPrivacyEmailInvitation(
+		t, ctx, database, workspaces[0].tenantID, workspaces[0].memberID,
+		retentionFeedbackID, "expired-invitation@example.test",
+		"expired-invitation", "event-expired-invitation", now,
+	)
+	freshInvitation := seedPrivacyEmailInvitation(
+		t, ctx, database, workspaces[0].tenantID, workspaces[0].memberID,
+		retentionFeedbackID, "fresh-invitation@example.test",
+		"fresh-invitation", "event-fresh-invitation", now,
+	)
+	if _, err := database.Exec(ctx, `
+		UPDATE email_feedback_invitations
+		SET created_at = CASE
+		        WHEN id = $1::uuid THEN $3::timestamptz - interval '120 days'
+		        ELSE created_at
+		    END,
+		    expires_at = CASE
+		        WHEN id = $1::uuid THEN $3::timestamptz - interval '91 days'
+		        ELSE expires_at
+		    END,
+		    cleanup_after = CASE
+		        WHEN id = $1::uuid THEN $3::timestamptz - interval '1 day'
+		        ELSE cleanup_after
+		    END
+		WHERE id IN ($1, $2)
+	`, expiredInvitation.InvitationID, freshInvitation.InvitationID, now); err != nil {
+		t.Fatalf("set email invitation retention boundaries: %v", err)
+	}
+	expiredInvitations, err := store.ExpireEmailFeedbackInvitations(ctx, now, 10)
+	if err != nil || expiredInvitations != 1 {
+		t.Fatalf("ExpireEmailFeedbackInvitations() = %d, error=%v",
+			expiredInvitations, err)
+	}
+	var remainingInvitations int
+	if err := database.QueryRow(ctx, `
+		SELECT count(*)
+		FROM email_feedback_invitations
+		WHERE id IN ($1, $2)
+	`, expiredInvitation.InvitationID, freshInvitation.InvitationID).
+		Scan(&remainingInvitations); err != nil || remainingInvitations != 1 {
+		t.Fatalf("remaining email invitations = %d, error=%v",
+			remainingInvitations, err)
+	}
+	var suppressionSource *string
+	var preservedSuppressionDigest string
+	if err := database.QueryRow(ctx, `
+		SELECT source_invitation_id::text, recipient_digest
+		FROM email_feedback_suppressions
+		WHERE tenant_id = $1 AND recipient_digest = $2
+	`, workspaces[0].tenantID, expiredInvitation.RecipientDigest).Scan(
+		&suppressionSource, &preservedSuppressionDigest,
+	); err != nil || suppressionSource != nil ||
+		preservedSuppressionDigest != expiredInvitation.RecipientDigest {
+		t.Fatalf("preserved suppression source=%v digest=%q error=%v",
+			suppressionSource, preservedSuppressionDigest, err)
+	}
+
 	attachments, err := store.ExpiredAttachments(ctx, now, 100)
 	if err != nil {
 		t.Fatalf("ExpiredAttachments() error = %v", err)
