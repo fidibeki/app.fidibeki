@@ -51,6 +51,14 @@ Expired or denied capture sessions are discarded before another request can be s
 use typed, sanitized messages and never expose capture-provider messages, bearer tokens, reporter
 data, response content, or screenshot bytes.
 
+The host renders the same Compact Progressive sheet under `MaterialApp` and `CupertinoApp`. It uses
+75% of the viewport, expands above the keyboard, keeps its header and submit action fixed, and
+scrolls only the form body. System back and the scrim close an idle draft but cannot dismiss an
+active submission. Required, busy, error, and success states are announced; invalid submission
+scrolls to and focuses the first invalid input where possible. Light/dark mode, orientation,
+reduced motion, and large text use the resolved tenant accent without changing the numeric values
+sent by rating stars.
+
 Screenshot capture is also host-owned and runs only after the user selects the sheet action. The
 provider returns a declared PNG, JPEG, or WebP size plus a bounded byte reader and optional cleanup:
 

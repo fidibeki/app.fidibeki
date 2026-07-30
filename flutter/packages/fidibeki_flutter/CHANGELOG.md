@@ -17,3 +17,6 @@
 - Add process-stable session recurrence, 30-minute background rotation, host-owned session IDs,
   cooldown foreground rechecks, stale-session replacement, async race guards, and provider-error
   redaction.
+- Complete the Compact Progressive sheet with keyboard-safe expansion, fixed controls, validation
+  focus, system-back ownership, Cupertino localization fallback, large-text resilience, localized
+  semantics, and inspected light/dark responsive goldens.

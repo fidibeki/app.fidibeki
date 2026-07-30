@@ -73,6 +73,13 @@ final class _FidibekiFeedbackHostState extends State<FidibekiFeedbackHost>
   }
 
   @override
+  Future<bool> didPopRoute() async {
+    if (!widget.controller.visible) return false;
+    widget.controller.close();
+    return true;
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (_entryInserted) _entry.remove();
@@ -88,6 +95,7 @@ final class _FeedbackSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
     final brightness = MediaQuery.platformBrightnessOf(context);
     final definition = controller.session?.configuration.definition;
     final colors = resolveFidibekiTheme(
@@ -104,166 +112,186 @@ final class _FeedbackSheet extends StatelessWidget {
           controller.locale.toLanguageTag(),
     );
     final prompt = localization?.prompt ?? '';
+    final submitting = controller.status == FidibekiFeedbackStatus.submitting;
+    final sheet = Material(
+      key: const ValueKey('fidibeki-sheet'),
+      color: background,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: <Widget>[
+            const SizedBox(height: 7),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: const SizedBox(width: 36, height: 4),
+            ),
+            const SizedBox(height: 3),
+            Container(
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.only(left: 16, right: 8),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: border, width: 0.5)),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      label: prompt,
+                      child: ExcludeSemantics(
+                        child: Text(
+                          prompt,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: text,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('fidibeki-close'),
+                    tooltip: messages.close,
+                    onPressed: submitting ? null : controller.close,
+                    icon: Icon(Icons.close, color: text),
+                  ),
+                ],
+              ),
+            ),
+            if (controller.status == FidibekiFeedbackStatus.submitted)
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            localization?.successMessage ?? '',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: text,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              height: 1.4,
+                            ),
+                          ),
+                          if (controller.attachmentOutcome?.status ==
+                              FidibekiAttachmentStatus.failed)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Text(
+                                messages.attachmentFailed,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: colors.danger,
+                                  fontSize: 14,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            else if (definition != null && localization != null)
+              Expanded(
+                child: _FeedbackForm(
+                  controller: controller,
+                  definition: definition,
+                  background: background,
+                  text: text,
+                  border: border,
+                  messages: messages,
+                  colors: colors,
+                ),
+              )
+            else
+              const Expanded(child: SizedBox.shrink()),
+          ],
+        ),
+      ),
+    );
+    final localizedSheet =
+        Localizations.of<MaterialLocalizations>(
+              context,
+              MaterialLocalizations,
+            ) ==
+            null
+        ? Localizations.override(
+            context: context,
+            locale: const Locale('en'),
+            delegates: const <LocalizationsDelegate<dynamic>>[
+              DefaultMaterialLocalizations.delegate,
+            ],
+            child: sheet,
+          )
+        : sheet;
 
     return Semantics(
       scopesRoute: true,
       explicitChildNodes: true,
       namesRoute: true,
       label: prompt,
-      child: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          ModalBarrier(
-            color: const Color(0x52000000),
-            dismissible: true,
-            onDismiss: controller.close,
-          ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: FractionallySizedBox(
-              heightFactor: 0.75,
-              widthFactor: 1,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(20),
-                ),
-                child: Material(
-                  key: const ValueKey('fidibeki-sheet'),
-                  color: background,
-                  child: SafeArea(
-                    top: false,
-                    child: Column(
-                      children: <Widget>[
-                        const SizedBox(height: 7),
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: border,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                          child: const SizedBox(width: 36, height: 4),
-                        ),
-                        const SizedBox(height: 3),
-                        Container(
-                          constraints: const BoxConstraints(minHeight: 52),
-                          padding: const EdgeInsets.only(left: 16, right: 8),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(color: border, width: 0.5),
-                            ),
-                          ),
-                          child: Row(
-                            children: <Widget>[
-                              Expanded(
-                                child: Text(
-                                  prompt,
-                                  style: TextStyle(
-                                    color: text,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                    height: 1.3,
-                                  ),
-                                ),
-                              ),
-                              Semantics(
-                                button: true,
-                                label: messages.close,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: controller.close,
-                                  child: SizedBox(
-                                    width: 44,
-                                    height: 44,
-                                    child: Center(
-                                      child: ExcludeSemantics(
-                                        child: Text(
-                                          '×',
-                                          style: TextStyle(
-                                            color: text,
-                                            fontSize: 30,
-                                            height: 1,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (controller.status ==
-                            FidibekiFeedbackStatus.submitted)
-                          Expanded(
-                            child: Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24),
-                                child: Semantics(
-                                  liveRegion: true,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: <Widget>[
-                                      Text(
-                                        localization?.successMessage ?? '',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: text,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                      if (controller
-                                              .attachmentOutcome
-                                              ?.status ==
-                                          FidibekiAttachmentStatus.failed)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 10,
-                                          ),
-                                          child: Text(
-                                            messages.attachmentFailed,
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              color: colors.danger,
-                                              fontSize: 14,
-                                              height: 1.4,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        else if (definition != null && localization != null)
-                          Expanded(
-                            child: _FeedbackForm(
-                              controller: controller,
-                              definition: definition,
-                              background: background,
-                              text: text,
-                              border: border,
-                              messages: messages,
-                              colors: colors,
-                            ),
-                          )
-                        else
-                          const Expanded(child: SizedBox.shrink()),
-                      ],
-                    ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final keyboardInset = media.viewInsets.bottom;
+          final keyboardVisible = keyboardInset > 0;
+          final topInset = keyboardVisible ? media.padding.top : 0.0;
+          final availableHeight =
+              (constraints.maxHeight - keyboardInset - topInset).clamp(
+                0.0,
+                constraints.maxHeight,
+              );
+          final sheetHeight = keyboardVisible
+              ? availableHeight
+              : constraints.maxHeight * 0.75;
+          final duration = media.disableAnimations
+              ? Duration.zero
+              : const Duration(milliseconds: 180);
+          return Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              ModalBarrier(
+                key: const ValueKey('fidibeki-scrim'),
+                color: const Color(0x52000000),
+                dismissible: !submitting,
+                onDismiss: submitting ? null : controller.close,
+              ),
+              AnimatedPositioned(
+                curve: Curves.easeOutCubic,
+                duration: duration,
+                left: 0,
+                right: 0,
+                bottom: keyboardInset,
+                height: sheetHeight,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
                   ),
+                  child: localizedSheet,
                 ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-final class _FeedbackForm extends StatelessWidget {
+final class _FeedbackForm extends StatefulWidget {
   const _FeedbackForm({
     required this.controller,
     required this.definition,
@@ -283,7 +311,130 @@ final class _FeedbackForm extends StatelessWidget {
   final FidibekiResolvedTheme colors;
 
   @override
+  State<_FeedbackForm> createState() => _FeedbackFormState();
+}
+
+final class _FeedbackFormState extends State<_FeedbackForm> {
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _fieldKeys = <String, GlobalKey>{};
+  final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
+
+  GlobalKey _fieldKey(String key) {
+    return _fieldKeys.putIfAbsent(key, GlobalKey.new);
+  }
+
+  FocusNode _focusNode(String key) {
+    return _focusNodes.putIfAbsent(
+      key,
+      () => FocusNode(debugLabel: 'fidibeki-$key'),
+    );
+  }
+
+  Future<void> _submit() async {
+    try {
+      await widget.controller.submit();
+    } on FidibekiException catch (error) {
+      if (error.code == FidibekiErrorCode.validation && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _focusFirstInvalidField();
+        });
+      }
+    }
+  }
+
+  void _focusFirstInvalidField() {
+    final fields = widget.controller.fieldErrors;
+    final orderedKeys = <String>[
+      for (final block in widget.definition.responseBlocks) block.key,
+      'comment',
+      'reporter_email',
+      'consent',
+    ];
+    final first = orderedKeys.where((key) {
+      final errorKey =
+          key == 'comment' || key == 'reporter_email' || key == 'consent'
+          ? key
+          : 'responses.$key';
+      return fields.containsKey(errorKey);
+    }).firstOrNull;
+    if (first == null) return;
+    final context = _fieldKeys[first]?.currentContext;
+    if (context != null) {
+      unawaited(
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.12,
+          curve: Curves.easeOutCubic,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+        ),
+      );
+    }
+    _focusNodes[first]?.requestFocus();
+  }
+
+  Widget _responseField(
+    FidibekiResponseBlock block,
+    FidibekiLocalization localization,
+  ) {
+    final controller = widget.controller;
+    final messages = widget.messages;
+    final colors = widget.colors;
+    final field = switch (block.type) {
+      FidibekiResponseBlockType.rating => _RatingField(
+        controller: controller,
+        block: block,
+        label: localization.blockLabels[block.key] ?? block.key,
+        accent: colors.accent,
+        text: widget.text,
+        messages: messages,
+      ),
+      FidibekiResponseBlockType.freeText => _TextResponseField(
+        controller: controller,
+        block: block,
+        label: localization.blockLabels[block.key] ?? block.key,
+        text: widget.text,
+        border: widget.border,
+        messages: messages,
+        focusNode: _focusNode(block.key),
+      ),
+      FidibekiResponseBlockType.reaction ||
+      FidibekiResponseBlockType.singleChoice => _ChoiceField(
+        controller: controller,
+        block: block,
+        label:
+            localization.blockLabels[block.key] ??
+            _defaultBlockLabel(block.type, messages),
+        optionLabels:
+            localization.optionLabels[block.key] ?? const <String, String>{},
+        accent: colors.accent,
+        text: widget.text,
+        border: widget.border,
+        messages: messages,
+      ),
+    };
+    return KeyedSubtree(key: _fieldKey(block.key), child: field);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    for (final focusNode in _focusNodes.values) {
+      focusNode.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final definition = widget.definition;
+    final background = widget.background;
+    final text = widget.text;
+    final border = widget.border;
+    final messages = widget.messages;
+    final colors = widget.colors;
     final accent = colors.accent;
     final accentForeground = colors.onAccent;
     final localization = definition.localization;
@@ -291,151 +442,133 @@ final class _FeedbackForm extends StatelessWidget {
     return Column(
       children: <Widget>[
         Expanded(
-          child: ListView(
+          child: SingleChildScrollView(
             key: const ValueKey('fidibeki-form-scroll'),
+            controller: _scrollController,
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
-            children: <Widget>[
-              for (final block in definition.responseBlocks)
-                if (block.type == FidibekiResponseBlockType.rating)
-                  _RatingField(
-                    controller: controller,
-                    block: block,
-                    label: localization.blockLabels[block.key] ?? block.key,
-                    accent: accent,
-                    text: text,
-                    messages: messages,
-                  )
-                else if (block.type == FidibekiResponseBlockType.freeText)
-                  _TextResponseField(
-                    controller: controller,
-                    block: block,
-                    label: localization.blockLabels[block.key] ?? block.key,
-                    text: text,
-                    border: border,
-                  )
-                else
-                  _ChoiceField(
-                    controller: controller,
-                    block: block,
-                    label:
-                        localization.blockLabels[block.key] ??
-                        _defaultBlockLabel(block.type, messages),
-                    optionLabels:
-                        localization.optionLabels[block.key] ??
-                        const <String, String>{},
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                for (final block in definition.responseBlocks)
+                  _responseField(block, localization),
+                if (definition.allowComment)
+                  _OptionalAction(
+                    key: const ValueKey('fidibeki-comment-disclosure'),
+                    label: controller.commentExpanded
+                        ? messages.hideMoreContext
+                        : messages.addMoreContext,
+                    expanded: controller.commentExpanded,
+                    onTap: controller.toggleCommentExpanded,
                     accent: accent,
                     text: text,
                     border: border,
                   ),
-              if (definition.allowComment)
-                _OptionalAction(
-                  key: const ValueKey('fidibeki-comment-disclosure'),
-                  label: controller.commentExpanded
-                      ? messages.hideMoreContext
-                      : messages.addMoreContext,
-                  expanded: controller.commentExpanded,
-                  onTap: controller.toggleCommentExpanded,
-                  accent: accent,
-                  text: text,
-                  border: border,
-                ),
-              if (definition.allowComment && controller.commentExpanded)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 18),
-                  child: TextFormField(
-                    key: const ValueKey('fidibeki-comment'),
-                    initialValue: controller.comment,
-                    minLines: 3,
-                    maxLines: 6,
-                    maxLength: 10000,
-                    onChanged: controller.setComment,
-                    style: TextStyle(color: text, fontSize: 16),
-                    decoration: InputDecoration(
-                      hintText: localization.commentPlaceholder,
-                      errorText: controller.fieldErrors['comment'],
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(7),
-                        borderSide: BorderSide(color: border),
+                if (definition.allowComment && controller.commentExpanded)
+                  Padding(
+                    key: _fieldKey('comment'),
+                    padding: const EdgeInsets.only(top: 10, bottom: 18),
+                    child: TextFormField(
+                      key: const ValueKey('fidibeki-comment'),
+                      focusNode: _focusNode('comment'),
+                      initialValue: controller.comment,
+                      minLines: 3,
+                      maxLines: 6,
+                      maxLength: 10000,
+                      onChanged: controller.setComment,
+                      style: TextStyle(color: text, fontSize: 16),
+                      decoration: InputDecoration(
+                        hintText: localization.commentPlaceholder,
+                        errorText: controller.fieldErrors['comment'],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(7),
+                          borderSide: BorderSide(color: border),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              if (definition.collectContact &&
-                  controller.session?.configuration.contactNotice != null &&
-                  !controller.contactExpanded)
-                _OptionalAction(
-                  key: const ValueKey('fidibeki-contact-disclosure'),
-                  label: messages.getUpdates,
-                  expanded: false,
-                  onTap: controller.expandContact,
-                  accent: accent,
-                  text: text,
-                  border: border,
-                ),
-              if (definition.collectContact &&
-                  controller.session?.configuration.contactNotice != null &&
-                  controller.contactExpanded)
-                _ContactFields(
-                  controller: controller,
-                  definition: definition,
-                  accent: accent,
-                  text: text,
-                  border: border,
-                  messages: messages,
-                ),
-              if (controller.canAddScreenshot || controller.readingScreenshot)
-                _ScreenshotAction(
-                  controller: controller,
-                  accent: accent,
-                  text: text,
-                  border: border,
-                  messages: messages,
-                ),
-              if (controller.hasScreenshot)
-                _ScreenshotAttached(
-                  controller: controller,
-                  accent: accent,
-                  text: text,
-                  border: border,
-                  messages: messages,
-                ),
-              if (controller.screenshotNotice case final notice?)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _screenshotNoticeText(notice, messages),
-                    key: const ValueKey('fidibeki-screenshot-message'),
-                    style: TextStyle(
-                      color: text.withValues(alpha: 0.7),
-                      fontSize: 14,
+                if (definition.collectContact &&
+                    controller.session?.configuration.contactNotice != null &&
+                    !controller.contactExpanded)
+                  _OptionalAction(
+                    key: const ValueKey('fidibeki-contact-disclosure'),
+                    label: messages.getUpdates,
+                    expanded: false,
+                    onTap: controller.expandContact,
+                    accent: accent,
+                    text: text,
+                    border: border,
+                  ),
+                if (definition.collectContact &&
+                    controller.session?.configuration.contactNotice != null &&
+                    controller.contactExpanded)
+                  KeyedSubtree(
+                    key: _fieldKey('reporter_email'),
+                    child: _ContactFields(
+                      controller: controller,
+                      definition: definition,
+                      accent: accent,
+                      text: text,
+                      border: border,
+                      messages: messages,
+                      focusNode: _focusNode('reporter_email'),
+                      consentKey: _fieldKey('consent'),
                     ),
                   ),
-                ),
-              if (_disclosesMobileAi(definition))
-                _AiDisclosure(
-                  controller: controller,
-                  definition: definition,
-                  accent: accent,
-                  text: text,
-                  messages: messages,
-                ),
-              if (controller.error != null &&
-                  controller.error!.code != FidibekiErrorCode.validation)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    controller.error!.code ==
-                            FidibekiErrorCode.configurationChanged
-                        ? messages.configurationChanged
-                        : messages.submitFailed,
-                    key: const ValueKey('fidibeki-submit-error'),
-                    style: const TextStyle(
-                      color: Color(0xffb42318),
-                      fontSize: 14,
+                if (controller.canAddScreenshot || controller.readingScreenshot)
+                  _ScreenshotAction(
+                    controller: controller,
+                    accent: accent,
+                    text: text,
+                    border: border,
+                    messages: messages,
+                  ),
+                if (controller.hasScreenshot)
+                  _ScreenshotAttached(
+                    controller: controller,
+                    accent: accent,
+                    text: text,
+                    border: border,
+                    messages: messages,
+                  ),
+                if (controller.screenshotNotice case final notice?)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _screenshotNoticeText(notice, messages),
+                      key: const ValueKey('fidibeki-screenshot-message'),
+                      style: TextStyle(
+                        color: text.withValues(alpha: 0.7),
+                        fontSize: 14,
+                      ),
                     ),
                   ),
-                ),
-            ],
+                if (_disclosesMobileAi(definition))
+                  _AiDisclosure(
+                    controller: controller,
+                    definition: definition,
+                    accent: accent,
+                    text: text,
+                    messages: messages,
+                  ),
+                if (controller.error != null &&
+                    controller.error!.code != FidibekiErrorCode.validation)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        controller.error!.code ==
+                                FidibekiErrorCode.configurationChanged
+                            ? messages.configurationChanged
+                            : messages.submitFailed,
+                        key: const ValueKey('fidibeki-submit-error'),
+                        style: TextStyle(color: colors.danger, fontSize: 14),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
         DecoratedBox(
@@ -448,45 +581,60 @@ final class _FeedbackForm extends StatelessWidget {
             minimum: const EdgeInsets.fromLTRB(16, 12, 16, 12),
             child: SizedBox(
               width: double.infinity,
-              height: 50,
-              child: FilledButton(
-                key: const ValueKey('fidibeki-submit'),
-                onPressed:
-                    controller.status == FidibekiFeedbackStatus.submitting
-                    ? null
-                    : () async {
-                        try {
-                          await controller.submit();
-                        } on FidibekiException {
-                          // The controller exposes the typed failure to the UI.
-                        }
-                      },
-                style: FilledButton.styleFrom(
-                  backgroundColor: accent,
-                  foregroundColor: accentForeground,
-                  disabledBackgroundColor: accent.withValues(alpha: 0.55),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                ),
-                child: controller.status == FidibekiFeedbackStatus.submitting
-                    ? SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: accentForeground,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 50),
+                child: Semantics(
+                  button: true,
+                  enabled:
+                      controller.status != FidibekiFeedbackStatus.submitting,
+                  liveRegion:
+                      controller.status == FidibekiFeedbackStatus.submitting,
+                  label: controller.status == FidibekiFeedbackStatus.submitting
+                      ? messages.sending
+                      : localization.submitLabel,
+                  child: ExcludeSemantics(
+                    child: FilledButton(
+                      key: const ValueKey('fidibeki-submit'),
+                      onPressed:
+                          controller.status == FidibekiFeedbackStatus.submitting
+                          ? null
+                          : _submit,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 12,
                         ),
-                      )
-                    : Text(
-                        controller.status == FidibekiFeedbackStatus.submitting
-                            ? messages.sending
-                            : localization.submitLabel,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                        backgroundColor: accent,
+                        foregroundColor: accentForeground,
+                        disabledBackgroundColor: accent.withValues(alpha: 0.55),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(7),
                         ),
                       ),
+                      child:
+                          controller.status == FidibekiFeedbackStatus.submitting
+                          ? SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: accentForeground,
+                              ),
+                            )
+                          : Text(
+                              localization.submitLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -522,12 +670,18 @@ final class _RatingField extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            block.required ? '$label *' : label,
-            style: TextStyle(
-              color: text,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+          Semantics(
+            label: block.required ? '$label, ${messages.required}' : label,
+            header: true,
+            child: ExcludeSemantics(
+              child: Text(
+                block.required ? '$label *' : label,
+                style: TextStyle(
+                  color: text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -547,13 +701,12 @@ final class _RatingField extends StatelessWidget {
                       height: 44,
                       child: Center(
                         child: ExcludeSemantics(
-                          child: Text(
-                            rating <= selected ? '★' : '☆',
-                            style: TextStyle(
-                              color: rating <= selected ? accent : text,
-                              fontSize: 30,
-                              height: 1,
-                            ),
+                          child: Icon(
+                            rating <= selected
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            color: rating <= selected ? accent : text,
+                            size: 30,
                           ),
                         ),
                       ),
@@ -581,6 +734,8 @@ final class _TextResponseField extends StatelessWidget {
     required this.label,
     required this.text,
     required this.border,
+    required this.messages,
+    required this.focusNode,
   });
 
   final FidibekiFeedbackController controller;
@@ -588,28 +743,35 @@ final class _TextResponseField extends StatelessWidget {
   final String label;
   final Color text;
   final Color border;
+  final FidibekiSystemMessages messages;
+  final FocusNode focusNode;
 
   @override
   Widget build(BuildContext context) {
     final error = controller.fieldErrors['responses.${block.key}'];
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
-      child: TextFormField(
-        key: ValueKey('fidibeki-text-${block.key}'),
-        initialValue: controller.response(block.key) as String? ?? '',
-        minLines: 3,
-        maxLines: 6,
-        keyboardType: TextInputType.multiline,
-        textCapitalization: TextCapitalization.sentences,
-        onChanged: (value) => controller.setText(block.key, value),
-        style: TextStyle(color: text, fontSize: 16),
-        decoration: InputDecoration(
-          labelText: block.required ? '$label *' : label,
-          alignLabelWithHint: true,
-          errorText: error,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: BorderSide(color: border),
+      child: Semantics(
+        label: block.required ? '$label, ${messages.required}' : label,
+        textField: true,
+        child: TextFormField(
+          key: ValueKey('fidibeki-text-${block.key}'),
+          focusNode: focusNode,
+          initialValue: controller.response(block.key) as String? ?? '',
+          minLines: 3,
+          maxLines: 6,
+          keyboardType: TextInputType.multiline,
+          textCapitalization: TextCapitalization.sentences,
+          onChanged: (value) => controller.setText(block.key, value),
+          style: TextStyle(color: text, fontSize: 16),
+          decoration: InputDecoration(
+            labelText: block.required ? '$label *' : label,
+            alignLabelWithHint: true,
+            errorText: error,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(7),
+              borderSide: BorderSide(color: border),
+            ),
           ),
         ),
       ),
@@ -644,6 +806,7 @@ final class _ChoiceField extends StatelessWidget {
     required this.accent,
     required this.text,
     required this.border,
+    required this.messages,
   });
 
   final FidibekiFeedbackController controller;
@@ -653,6 +816,7 @@ final class _ChoiceField extends StatelessWidget {
   final Color accent;
   final Color text;
   final Color border;
+  final FidibekiSystemMessages messages;
 
   @override
   Widget build(BuildContext context) {
@@ -663,12 +827,18 @@ final class _ChoiceField extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            block.required ? '$label *' : label,
-            style: TextStyle(
-              color: text,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
+          Semantics(
+            label: block.required ? '$label, ${messages.required}' : label,
+            header: true,
+            child: ExcludeSemantics(
+              child: Text(
+                block.required ? '$label *' : label,
+                style: TextStyle(
+                  color: text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -792,6 +962,8 @@ final class _ContactFields extends StatelessWidget {
     required this.text,
     required this.border,
     required this.messages,
+    required this.focusNode,
+    required this.consentKey,
   });
 
   final FidibekiFeedbackController controller;
@@ -800,6 +972,8 @@ final class _ContactFields extends StatelessWidget {
   final Color text;
   final Color border;
   final FidibekiSystemMessages messages;
+  final FocusNode focusNode;
+  final Key consentKey;
 
   @override
   Widget build(BuildContext context) {
@@ -822,6 +996,7 @@ final class _ContactFields extends StatelessWidget {
           const SizedBox(height: 10),
           TextFormField(
             key: const ValueKey('fidibeki-reporter-email'),
+            focusNode: focusNode,
             initialValue: controller.reporterEmail,
             keyboardType: TextInputType.emailAddress,
             autofillHints: const <String>[AutofillHints.email],
@@ -840,6 +1015,7 @@ final class _ContactFields extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Row(
+            key: consentKey,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
               Switch(

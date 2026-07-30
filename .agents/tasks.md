@@ -1238,13 +1238,23 @@ session/feedback smoke, and the Android debug APK pass.
 ## Task 60: Reach Compact Progressive Flutter UI Parity
 
 **Depends on:** Task 59
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Material and Cupertino hosts receive the approved accessible, keyboard-safe, 75%
 Compact Progressive sheet with complete states and stable responsive layout.
 
 **Acceptance:** Widget/golden tests and inspected compact/standard light/dark/large-text states show
 no clipping or overlap and preserve the approved visual hierarchy.
+
+**Evidence:** The approved Compact Progressive hierarchy now renders as a bottom-aligned 75% sheet
+and expands above the keyboard to the remaining safe viewport. Header, scroll body, and growing
+footer remain stable; system back, scrim, and close respect the submitting boundary. Validation
+scrolls to and focuses the first invalid input, Material controls receive a localization fallback
+under `CupertinoApp`, and required/busy/error/success states expose localized semantics. Rotation,
+reduced motion, 200% long copy, controller rebuild, screenshot states, and 44-point controls are
+covered. Four inspected goldens prove compact light, standard light, standard dark, and compact
+large-text layouts, including cumulative accent stars and selected chips. Sixty-four Flutter tests,
+fatal analysis, thirty-seven related React Native tests, and the Android debug APK pass.
 
 **Autonomy:** AFK
 
