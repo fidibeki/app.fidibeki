@@ -46,7 +46,7 @@ jobs:
     # only job that sees RAILWAY_PRODUCTION_TOKEN and pushes release tags, so the
     # production deploy path stays off a second vendor's uptime and infrastructure.
     runs-on: warp-ubuntu-latest-x64-4x
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: production
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
@@ -173,13 +173,13 @@ jobs:
             esac
             echo "::group::Deploy $target"
             previous_id=$(latest_deployment "$service" | jq -r '.[0].id // empty')
-            if ! railway up \
+            if ! timeout --signal=TERM --kill-after=10s 120s railway up \
               --ci \
               --project "$RAILWAY_PROJECT_ID" \
               --environment production \
               --service "$service" \
               --message "Production promotion $SHA ($target)"; then
-              echo "::warning::Railway log streaming failed; checking the deployment status directly"
+              echo "::warning::Railway CLI did not confirm the deployment; checking its status directly"
               if ! reconcile_deployment "$service" "$previous_id"; then
                 echo "::endgroup::"
                 exit 1
