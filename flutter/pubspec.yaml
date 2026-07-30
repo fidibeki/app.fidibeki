@@ -1,0 +1,10 @@
+name: fidibeki_flutter_workspace
+publish_to: none
+
+environment:
+  sdk: ">=3.12.0 <4.0.0"
+
+workspace:
+  - packages/fidibeki_flutter
+  - packages/fidibeki_flutter_shared_preferences
+  - example

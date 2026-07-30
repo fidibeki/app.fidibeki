@@ -1,0 +1,27 @@
+name: fidibeki_flutter
+description: Native iOS and Android feedback capture for Fidibeki Flutter hosts.
+version: 0.1.0
+publish_to: none
+homepage: https://fidibeki.com
+repository: https://github.com/fidibeki/app.fidibeki
+issue_tracker: https://github.com/fidibeki/app.fidibeki/issues
+
+environment:
+  sdk: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  uuid: ^4.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: false

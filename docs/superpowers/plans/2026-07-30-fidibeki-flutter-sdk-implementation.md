@@ -4,6 +4,8 @@
 >
 > **Design:** `docs/superpowers/specs/2026-07-30-fidibeki-flutter-sdk-design.md`
 >
+> **Issue:** [#162](https://github.com/fidibeki/app.fidibeki/issues/162)
+>
 > **Boundary:** Flutter iOS/Android client work only. Reuse the deployed mobile capture contract.
 > No backend, production, infrastructure, provider, registry publication, Swift SDK, Kotlin SDK,
 > Flutter Web, desktop, or unrelated React Native changes.

@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "input": "/chart?asset=BAI",
+      "expected": "/chart",
+      "encoded_component": "%2Fchart"
+    },
+    {
+      "input": "/chart/#position",
+      "expected": "/chart",
+      "encoded_component": "%2Fchart"
+    },
+    {
+      "input": "chart///",
+      "expected": "/chart",
+      "encoded_component": "%2Fchart"
+    },
+    {
+      "input": "///checkout//review/?step=payment#card",
+      "expected": "/checkout/review",
+      "encoded_component": "%2Fcheckout%2Freview"
+    },
+    {
+      "input": " / ",
+      "expected": "/",
+      "encoded_component": "%2F"
+    },
+    {
+      "input": "",
+      "expected": "/",
+      "encoded_component": "%2F"
+    }
+  ]
+}

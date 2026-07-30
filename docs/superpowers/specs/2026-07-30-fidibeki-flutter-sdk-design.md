@@ -1,6 +1,7 @@
 # Fidibeki Flutter SDK
 
 **Date:** 2026-07-30
+**Issue:** [#162](https://github.com/fidibeki/app.fidibeki/issues/162)
 **Status:** Approved under the founder's explicit pre-approval
 **Scope:** Flutter applications on iOS and Android
 **Rollout:** Local implementation and validation only; publish-ready but not published
@@ -107,6 +108,8 @@ The primary integration is controller plus host widget:
 ```dart
 final feedback = FidibekiFeedbackController(
   apiBaseUrl: Uri.parse('https://widget.fidibeki.com'),
+  appVersion: '1.2.3',
+  osVersion: Platform.operatingSystemVersion,
   screen: '/checkout/review',
   locale: const Locale('pt', 'PT'),
   sessionProvider: hostBackend.createCaptureSession,
@@ -114,9 +117,12 @@ final feedback = FidibekiFeedbackController(
   screenshotProvider: appScreenshotPicker,
 );
 
-FidibekiFeedbackHost(
-  controller: feedback,
-  child: const ProductApp(),
+MaterialApp(
+  builder: (context, child) => FidibekiFeedbackHost(
+    controller: feedback,
+    child: child ?? const SizedBox.shrink(),
+  ),
+  home: ProductScreen(feedback: feedback),
 );
 
 IconButton(
