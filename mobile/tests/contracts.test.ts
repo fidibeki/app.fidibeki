@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  MobileClient,
   MobileClientError,
+  canonicalRequest,
   normalizeScreen,
   recurrenceStorageKey,
+  type MobileFeedbackRequest,
   validateCaptureSession,
 } from '../src'
 
@@ -34,6 +37,60 @@ describe('shared mobile capture contracts', () => {
       expect(recurrenceStorageKey('project', 'definition', testCase.input)).toContain(
         testCase.encoded_component,
       )
+    }
+  })
+
+  it('uses the shared strict request and accepted response', async () => {
+    const contract = fixture<{
+      request: MobileFeedbackRequest
+      accepted: {
+        feedback_id: string
+        feedback_public_id: string
+        attachments: []
+      }
+    }>('feedback-submit-valid.json')
+    expect(JSON.parse(canonicalRequest(contract.request))).toEqual(contract.request)
+
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: async () => new Response(JSON.stringify(contract.accepted), { status: 201 }),
+    })
+    await expect(
+      client.submitFeedback(
+        validateCaptureSession(fixture('session-valid.json')),
+        contract.request,
+      ),
+    ).resolves.toMatchObject({ feedback_public_id: 'FDBK-FIXTURE' })
+  })
+
+  it('maps every shared backend error fixture', async () => {
+    const request = fixture<{ request: MobileFeedbackRequest }>('feedback-submit-valid.json').request
+    const contract = fixture<{
+      cases: Array<{
+        status: number
+        body: unknown
+        expected_code: string
+        retryable: boolean
+      }>
+    }>('feedback-submit-errors.json')
+
+    for (const testCase of contract.cases) {
+      const client = new MobileClient({
+        apiBaseUrl: 'https://api.example.test',
+        fetch: async () =>
+          new Response(JSON.stringify(testCase.body), {
+            status: testCase.status,
+          }),
+      })
+      await expect(
+        client.submitFeedback(
+          validateCaptureSession(fixture('session-valid.json')),
+          request,
+        ),
+      ).rejects.toMatchObject({
+        code: testCase.expected_code,
+        retryable: testCase.retryable,
+      })
     }
   })
 })

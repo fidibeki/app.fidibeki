@@ -1143,13 +1143,23 @@ infrastructure files changed.
 ## Task 56: Submit One Complete Flutter Feedback
 
 **Depends on:** Task 55
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Rating and text submit through the existing mobile endpoint with validation, exact
 retry, accepted success, and recurrence only after acceptance.
 
 **Acceptance:** Contract/unit/widget/local-smoke tests prove one Feedback, numeric rating, frozen
 idempotent request, coalesced submit, safe errors, and post-submit suppression.
+
+**Evidence:** The strict Dart client sends only the existing mobile schema, retains SHA-256 request
+digests rather than feedback content, coalesces concurrent attempts, and permits only exact bound
+retries after ambiguous results. Shared accepted/error fixtures pass in both Flutter and React
+Native. Twelve core tests, the storage-adapter test, five React Native contract tests, format, and
+fatal analyze gates pass. Widget coverage proves accent stars submit rating `4` as a number,
+required English/Portuguese validation remains local, accepted success stays visible, and
+recurrence is written only after backend acceptance. The real local smoke server observed one
+session and exactly one Feedback request with rating + text; the Android debug APK assembles. No
+Issue, backend, deployment, production, or infrastructure behavior changed.
 
 **Autonomy:** AFK
 

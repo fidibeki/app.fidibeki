@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "configuration_changed",
+          "message": "mobile capture configuration changed"
+        }
+      },
+      "expected_code": "configuration_changed",
+      "retryable": false
+    },
+    {
+      "status": 422,
+      "body": {
+        "error": {
+          "code": "validation_failed",
+          "message": "feedback is invalid",
+          "details": [
+            {
+              "field": "responses.feedback",
+              "message": "is required"
+            }
+          ]
+        }
+      },
+      "expected_code": "validation_error",
+      "retryable": false
+    },
+    {
+      "status": 429,
+      "body": {
+        "error": {
+          "code": "rate_limited",
+          "message": "slow down"
+        }
+      },
+      "expected_code": "network_error",
+      "retryable": true
+    },
+    {
+      "status": 503,
+      "body": {
+        "error": {
+          "code": "service_unavailable",
+          "message": "try again later"
+        }
+      },
+      "expected_code": "network_error",
+      "retryable": true
+    }
+  ]
+}

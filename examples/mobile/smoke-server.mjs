@@ -79,7 +79,16 @@ createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host}`)
   if (request.method === 'POST' && url.pathname === '/session') {
     evidence.session += 1
-    await body(request)
+    const sessionRequest = JSON.parse((await body(request)).toString('utf8'))
+    const sessionDefinition =
+      sessionRequest.application_id === 'com.fidibeki.fidibeki_flutter_example'
+        ? {
+            ...definition,
+            response_blocks: definition.response_blocks.filter(
+              (block) => block.type === 'rating' || block.type === 'free_text',
+            ),
+          }
+        : definition
     return json(response, 200, {
       token: 'fmc_runtime_smoke_capture_token_123456789',
       submit_expires_at: '2099-07-28T22:00:00Z',
@@ -87,7 +96,7 @@ createServer(async (request, response) => {
         schema_version: 1,
         project_id: '44444444-4444-4444-8444-444444444444',
         display_locale: 'en',
-        definition,
+        definition: sessionDefinition,
       },
     })
   }

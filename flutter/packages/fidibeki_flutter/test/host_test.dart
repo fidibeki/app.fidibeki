@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:fidibeki_flutter/fidibeki_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 FidibekiCaptureSession fixtureSession() {
   var directory = Directory.current.absolute;
@@ -75,5 +77,62 @@ void main() {
     expect(sessionRequests, 1);
 
     controller.dispose();
+  });
+
+  testWidgets('submits a numeric star rating and required feedback text', (
+    tester,
+  ) async {
+    late Map<String, Object?> wireRequest;
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      deviceLocale: 'pt-PT',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.android,
+      screen: '/checkout/review',
+      sessionProvider: (_) async => fixtureSession(),
+      storage: MemoryFidibekiStorage(),
+      mobileClient: FidibekiMobileClient(
+        apiBaseUrl: Uri.parse('https://api.example.test'),
+        httpClient: MockClient((request) async {
+          wireRequest = jsonDecode(request.body) as Map<String, Object?>;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'feedback_id': '44444444-4444-4444-8444-444444444444',
+              'feedback_public_id': 'FDBK-WIDGET',
+              'attachments': <Object?>[],
+            }),
+            201,
+          );
+        }),
+      ),
+      feedbackIdGenerator: () => '33333333-3333-4333-8333-333333333333',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FidibekiFeedbackHost(
+          controller: controller,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const SizedBox.expand(),
+      ),
+    );
+    await tester.pump();
+    await controller.open();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('fidibeki-rating-rating-4')));
+    await tester.enterText(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      'The chart labels are difficult to read',
+    );
+    await tester.tap(find.byKey(const ValueKey('fidibeki-submit')));
+    await tester.pumpAndSettle();
+
+    expect(wireRequest['responses'], containsPair('rating', 4));
+    expect(controller.status, FidibekiFeedbackStatus.submitted);
+    expect(find.text('Thanks for the feedback.'), findsOneWidget);
   });
 }

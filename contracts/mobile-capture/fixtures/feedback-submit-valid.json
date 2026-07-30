@@ -1,0 +1,18 @@
+{
+  "request": {
+    "client_feedback_id": "33333333-3333-4333-8333-333333333333",
+    "responses": {
+      "rating": 4,
+      "feedback": "The chart labels are difficult to read"
+    },
+    "comment": "This happens in landscape mode",
+    "app_version": "2.4.0",
+    "os_version": "18.5",
+    "device_locale": "pt-PT"
+  },
+  "accepted": {
+    "feedback_id": "44444444-4444-4444-8444-444444444444",
+    "feedback_public_id": "FDBK-FIXTURE",
+    "attachments": []
+  }
+}
