@@ -20,3 +20,5 @@
 - Complete the Compact Progressive sheet with keyboard-safe expansion, fixed controls, validation
   focus, system-back ownership, Cupertino localization fallback, large-text resilience, localized
   semantics, and inspected light/dark responsive goldens.
+- Add reproducible package gates and an Android/iOS local runtime example that proves draft
+  preservation, explicit screenshot upload, accepted feedback, and recurrence.

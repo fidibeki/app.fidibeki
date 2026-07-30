@@ -40,6 +40,19 @@ Future<FidibekiCaptureSession> createCaptureSession(
   );
 }
 
+Future<FidibekiScreenshotAsset?> captureExampleScreenshot() async {
+  final response = await http.get(Uri.parse('$widgetBaseUrl/fixture.png'));
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw StateError('Screenshot endpoint returned ${response.statusCode}');
+  }
+  final bytes = response.bodyBytes;
+  return FidibekiScreenshotAsset(
+    contentType: 'image/png',
+    sizeBytes: bytes.length,
+    read: (_) async => bytes,
+  );
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(FidibekiExampleApp(storage: SharedPreferencesFidibekiStorage()));
@@ -62,6 +75,7 @@ final class _FidibekiExampleAppState extends State<FidibekiExampleApp> {
     locale: const Locale('en'),
     osVersion: Platform.operatingSystemVersion,
     screen: '/checkout/review',
+    screenshotProvider: captureExampleScreenshot,
     sessionProvider: createCaptureSession,
     storage: widget.storage,
   );

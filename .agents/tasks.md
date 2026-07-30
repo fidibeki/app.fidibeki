@@ -1261,13 +1261,26 @@ fatal analysis, thirty-seven related React Native tests, and the Android debug A
 ## Task 61: Prove Flutter Packages And Native Example
 
 **Depends on:** Task 60
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Package metadata/docs/gates and the host example build and run through the full local
 capture lifecycle on Android and iOS.
 
 **Acceptance:** Format/analyze/coverage/docs/dependency/publish-dry-run gates and both native runtime
 smokes pass without forbidden permissions, sensitive logs, publication, or deployment.
+
+**Evidence:** The workspace now documents reproducible format, fatal analysis, coverage, API docs,
+dependency-resolution, package-validation, and native-smoke commands. A tested LCOV gate reports
+90.24% package line coverage (1517/1681) against an 85% minimum. Sixty-nine Flutter package/example
+tests pass under current dependencies and again after `dart pub downgrade`; `dart pub upgrade`
+restores the lockfile byte-for-byte. Both public libraries generate API docs with zero warnings or
+errors. Android and iOS runtime smokes open, close, and reopen the host-triggered sheet with its
+draft intact, attach the explicit host screenshot, and independently produce one accepted Feedback,
+one 70-byte upload, and one completed attachment without creating an Issue. The Android release APK
+and iOS simulator app build; a tested manifest allowlist permits network access but no camera,
+photo-library, microphone, location, contacts, or storage permission. Source/build scans contain no
+secret literal, and no runtime log contains feedback, bearer tokens, or screenshot bytes. Both
+packages remain `publish_to: none`; dry-runs validate their archives without upload.
 
 **Autonomy:** AFK
 
