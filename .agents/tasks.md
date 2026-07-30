@@ -977,14 +977,15 @@ remains send-only; no broader inspection credential is required. Issue closure r
 on webhook health. A follow-up confirmed that staging now has a non-empty
 `RESEND_WEBHOOK_SECRET`: an unsigned probe returns `400 webhook signature is invalid`, while a
 validly signed payload using an unmatched provider message returns `200 accepted` without mutating
-tenant data. However, controlled bounce invitation `d531fb6a-15d6-4b93-8d4b-0a554d92e736`
-remained `sent` with a provider message and no `webhook_event_id` for more than ten minutes, and
-Railway recorded no provider POST to the endpoint during that window. Closure therefore remains
-gated on confirming that the Resend endpoint is enabled in the same team as the staging send-only
-key, subscribes to `email.bounced` and `email.complained`, and delivers one real test event. The
-temporary campaign was restored to `archived` and all temporary sender keys were revoked. The
-validation also demonstrated that Redis queue traffic does not wake a Railway Serverless worker.
-Serverless was therefore disabled exclusively for the staging worker after the run; its service
-instance now reports `sleepApplication=false`.
+tenant data. After correcting the provider endpoint, real Resend callbacks completed bounce
+invitation `27b1cff7-f7b2-44a0-bcca-4afb0cbe3e70` and complaint invitation
+`07693332-6778-407a-8fa6-09c839891ccb`. Both had provider and webhook event IDs, removed their
+recipient and collection token, and persisted the corresponding `bounce` or `complaint`
+suppression. Railway recorded both provider POSTs as `200`; the temporary campaign was restored to
+`archived`, all temporary sender keys were revoked, and the earlier incomplete QA invitation was
+removed. This satisfies the final staging gate for issue #113. The validation also demonstrated
+that Redis queue traffic does not wake a Railway Serverless worker. Serverless was therefore
+disabled exclusively for the staging worker after the run; its service instance now reports
+`sleepApplication=false`.
 
 **Autonomy:** AFK
