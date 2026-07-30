@@ -76,12 +76,39 @@ async function recoverOwnership() {
 </script>
 <template>
   <section v-if="detail">
-    <p class="eyebrow">Workspace / {{ detail.tenant.slug }}</p><h1 class="title">{{ detail.tenant.name }}</h1>
-    <div class="metrics"><article class="metric"><b>{{ detail.member_count }}</b><span>Members</span></article><article class="metric"><b>{{ detail.project_count }}</b><span>Projects</span></article><article class="metric"><b>{{ detail.feedback_count }}</b><span>Feedback items</span></article><article class="metric"><b>{{ detail.tenant.plan }}</b><span>{{ detail.tenant.status }}</span></article></div>
-    <form class="panel settings-form" @submit.prevent="saveWorkspace"><p class="eyebrow">Workspace controls</p><h2>Lifecycle and plan</h2><label>Name<input v-model="name" required maxlength="120"></label><label>Plan<select v-model="plan"><option value="starter">starter</option><option value="growth">growth</option><option value="scale">scale</option><option value="enterprise">enterprise</option></select></label><label>Status<select v-model="status"><option value="trial">trial</option><option value="active">active</option><option value="suspended">suspended</option><option value="cancelled">cancelled</option></select></label><button class="button" :disabled="saving">{{ saving ? 'Saving…' : 'Save changes' }}</button><p v-if="saveError" class="error" role="alert">{{ saveError }}</p></form>
-    <form class="panel settings-form" @submit.prevent="recoverOwnership"><p class="eyebrow">Ownership recovery</p><h2>Current owner: {{ detail.owner?.email || 'Unassigned' }}</h2><p class="muted">Recovery requires a recently authenticated platform admin, an active member who has signed in, and recorded verification evidence.</p><label>Verified member<select v-model="recoveryMember" required><option value="">Choose an eligible member</option><option v-for="member in eligibleRecoveryMembers" :key="member.id" :value="member.id">{{ member.email }}</option></select></label><button v-if="recoveryCursor" class="button secondary" type="button" :disabled="loadingRecoveryCandidates" @click="loadMoreRecoveryCandidates">{{ loadingRecoveryCandidates ? 'Loading…' : 'Load more eligible members' }}</button><label>Verification reference<input v-model="recoveryReference" required minlength="3"></label><label>Reason<textarea v-model="recoveryReason" required minlength="10" /></label><label>Type {{ detail.tenant.slug }} to confirm<input v-model="recoveryConfirmation" :placeholder="detail.tenant.slug" aria-label="Confirm ownership recovery"></label><button class="button" :disabled="recovering || !canRecover">{{ recovering ? 'Recovering…' : 'Recover ownership' }}</button><p v-if="recoveryError" class="error" role="alert">{{ recoveryError }}</p></form>
-    <section class="panel"><p class="eyebrow">Audit ledger</p><table class="table"><thead><tr><th>Event</th><th>Actor</th><th>Outcome</th><th>When</th></tr></thead><tbody><tr v-for="event in auditEvents" :key="event.id"><td>{{ event.kind }}</td><td>{{ event.actor_type }}</td><td>{{ event.outcome || '—' }}</td><td>{{ new Date(event.created_at).toLocaleString() }}</td></tr></tbody></table><button v-if="auditCursor" class="button" @click="loadMoreAudit">Load more audit events</button></section>
-    <section class="panel action-panel"><p class="eyebrow error">Danger zone</p><h2>Force-delete this workspace</h2><p class="muted">This runs the platform’s audited deletion executor. Type <b>{{ detail.tenant.slug }}</b> exactly to enable it.</p><input v-model="typedSlug" :placeholder="detail.tenant.slug" aria-label="Confirm workspace slug"><button class="button" :disabled="!canDelete || deleting" @click="forceDelete">{{ deleting ? 'Deleting…' : 'Force delete workspace' }}</button><p v-if="deleteError" class="error" role="alert">{{ deleteError }}</p></section>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Workspace / {{ detail.tenant.slug }}</p>
+        <h1 class="title">{{ detail.tenant.name }}</h1>
+        <p class="subtitle">
+          {{ detail.tenant.plan }} · {{ detail.tenant.status }} ·
+          {{ detail.owner ? `owned by ${detail.owner.email}` : 'no owner assigned' }}
+        </p>
+      </div>
+    </header>
+    <div class="metrics"><article class="metric"><b>{{ detail.member_count }}</b><span>Members</span></article><article class="metric"><b>{{ detail.project_count }}</b><span>Projects</span></article><article class="metric"><b>{{ detail.feedback_count }}</b><span>Feedback items</span></article></div>
+
+    <section class="panel"><p class="eyebrow">Audit ledger</p><div class="table-wrap"><table class="table"><thead><tr><th>Event</th><th>Actor</th><th>Outcome</th><th>When</th></tr></thead><tbody><tr v-for="event in auditEvents" :key="event.id"><td>{{ event.kind }}</td><td>{{ event.actor_type }}</td><td>{{ event.outcome || '—' }}</td><td>{{ new Date(event.created_at).toLocaleString() }}</td></tr></tbody></table></div><button v-if="auditCursor" class="button secondary" @click="loadMoreAudit">Load more audit events</button></section>
+
+    <!-- Every mutation lives behind a closed disclosure: the page's default
+         posture is the register, and opening a control is the deliberate act
+         the operating principle asks for. -->
+    <p class="section-note">Change deliberately — open a control to act on this workspace.</p>
+
+    <details class="panel disclosure">
+      <summary><span class="disclosure-head"><span>Lifecycle and plan</span><em>name · plan · status</em></span></summary>
+      <form class="settings-form" @submit.prevent="saveWorkspace"><label>Name<input v-model="name" required maxlength="120"></label><label>Plan<select v-model="plan"><option value="starter">starter</option><option value="growth">growth</option><option value="scale">scale</option><option value="enterprise">enterprise</option></select></label><label>Status<select v-model="status"><option value="trial">trial</option><option value="active">active</option><option value="suspended">suspended</option><option value="cancelled">cancelled</option></select></label><button class="button" :disabled="saving">{{ saving ? 'Saving…' : 'Save changes' }}</button><p v-if="saveError" class="error" role="alert">{{ saveError }}</p></form>
+    </details>
+
+    <details class="panel disclosure">
+      <summary><span class="disclosure-head"><span>Ownership recovery</span><em>{{ detail.owner ? `current: ${detail.owner.email}` : 'no owner assigned' }}</em></span></summary>
+      <form class="settings-form" @submit.prevent="recoverOwnership"><p class="muted">Recovery requires a recently authenticated platform admin, an active member who has signed in, and recorded verification evidence.</p><label>Verified member<select v-model="recoveryMember" required><option value="">Choose an eligible member</option><option v-for="member in eligibleRecoveryMembers" :key="member.id" :value="member.id">{{ member.email }}</option></select></label><button v-if="recoveryCursor" class="button secondary" type="button" :disabled="loadingRecoveryCandidates" @click="loadMoreRecoveryCandidates">{{ loadingRecoveryCandidates ? 'Loading…' : 'Load more eligible members' }}</button><label>Verification reference<input v-model="recoveryReference" required minlength="3"></label><label>Reason<textarea v-model="recoveryReason" required minlength="10" /></label><label>Type {{ detail.tenant.slug }} to confirm<input v-model="recoveryConfirmation" :placeholder="detail.tenant.slug" aria-label="Confirm ownership recovery"></label><button class="button" :disabled="recovering || !canRecover">{{ recovering ? 'Recovering…' : 'Recover ownership' }}</button><p v-if="recoveryError" class="error" role="alert">{{ recoveryError }}</p></form>
+    </details>
+
+    <details class="panel disclosure disclosure--danger">
+      <summary><span class="disclosure-head"><span>Force delete</span><em>runs the audited deletion executor</em></span></summary>
+      <div class="settings-form"><p class="muted">This runs the platform’s audited deletion executor. Type <b>{{ detail.tenant.slug }}</b> exactly to enable it.</p><input v-model="typedSlug" :placeholder="detail.tenant.slug" aria-label="Confirm workspace slug"><button class="button" :disabled="!canDelete || deleting" @click="forceDelete">{{ deleting ? 'Deleting…' : 'Force delete workspace' }}</button><p v-if="deleteError" class="error" role="alert">{{ deleteError }}</p></div>
+    </details>
   </section>
   <section v-else><h1 class="title">Workspace unavailable</h1><p class="error">{{ error ? 'The workspace could not be loaded.' : 'Loading…' }}</p></section>
 </template>
