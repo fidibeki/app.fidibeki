@@ -4575,7 +4575,12 @@ test("organization profile validates identity assets and updates the workspace i
   await expect(organization.getByRole("status")).toHaveText(
     "Workspace logo updated.",
   );
+  // The workspace identity lives in the rail, which folds into a drawer on
+  // mobile — open it to see the refreshed logo the way a user would.
+  const drawered = (page.viewportSize()?.width || 0) <= 700;
+  if (drawered) await page.getByTitle("Open navigation").click();
   await expect(page.locator(".app-tenant-switcher img")).toBeVisible();
+  if (drawered) await page.getByTitle("Close navigation").click();
 
   await organization.getByLabel("Public name").fill("Acme Operations");
   await organization.getByLabel("Default language").selectOption("pt-AO");
