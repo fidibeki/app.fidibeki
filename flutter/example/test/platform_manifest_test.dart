@@ -3,6 +3,14 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('SDK bundles the Material icon font used by its native sheet', () {
+    final manifest = File(
+      'packages/fidibeki_flutter/pubspec.yaml',
+    ).readAsStringSync();
+
+    expect(manifest, contains('uses-material-design: true'));
+  });
+
   test('release host requests network but no sensitive Android permission', () {
     final manifest = File(
       'example/android/app/src/main/AndroidManifest.xml',
