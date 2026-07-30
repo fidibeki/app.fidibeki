@@ -183,6 +183,6 @@ void main() {
         matchesGoldenFile('goldens/sheet_${scenario.name}.png'),
       );
       controller.dispose();
-    });
+    }, tags: 'golden');
   }
 }

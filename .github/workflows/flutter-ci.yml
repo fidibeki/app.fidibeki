@@ -48,6 +48,7 @@ jobs:
           flutter test
           packages/fidibeki_flutter
           packages/fidibeki_flutter_shared_preferences
+          --exclude-tags=golden
           --coverage
           --coverage-path=coverage/lcov.info
       - name: Enforce package coverage
@@ -83,6 +84,7 @@ jobs:
           packages/fidibeki_flutter
           packages/fidibeki_flutter_shared_preferences
           example/test
+          --exclude-tags=golden
 
   android:
     runs-on: warp-ubuntu-latest-x64-4x
@@ -120,6 +122,10 @@ jobs:
           pub-cache: true
       - name: Resolve locked dependencies
         run: dart pub get --enforce-lockfile
+      - name: Validate macOS goldens
+        run: >-
+          flutter test
+          packages/fidibeki_flutter/test/sheet_golden_test.dart
       - name: Build iOS simulator example
         working-directory: flutter/example
         run: flutter build ios --simulator --debug
