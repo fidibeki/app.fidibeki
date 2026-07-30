@@ -552,7 +552,8 @@ final class _FeedbackFormState extends State<_FeedbackForm> {
                     messages: messages,
                   ),
                 if (controller.error != null &&
-                    controller.error!.code != FidibekiErrorCode.validation)
+                    (controller.error!.code != FidibekiErrorCode.validation ||
+                        !_hasVisibleValidationError(controller, definition)))
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Semantics(
@@ -1200,6 +1201,29 @@ bool _disclosesMobileAi(FidibekiWidgetDefinition definition) {
       ai!.inputCategories.any(
         (category) => category == 'feedback_text' || category == 'screenshot',
       );
+}
+
+bool _hasVisibleValidationError(
+  FidibekiFeedbackController controller,
+  FidibekiWidgetDefinition definition,
+) {
+  final fields = controller.fieldErrors;
+  if (definition.responseBlocks.any(
+    (block) => fields.containsKey('responses.${block.key}'),
+  )) {
+    return true;
+  }
+  if (definition.allowComment &&
+      controller.commentExpanded &&
+      fields.containsKey('comment')) {
+    return true;
+  }
+  final contactVisible =
+      definition.collectContact &&
+      controller.session?.configuration.contactNotice != null &&
+      controller.contactExpanded;
+  return contactVisible &&
+      (fields.containsKey('reporter_email') || fields.containsKey('consent'));
 }
 
 final class _AiDisclosure extends StatelessWidget {

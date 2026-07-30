@@ -47,11 +47,14 @@ until the host creates a controller with a new one. Query strings, fragments, re
 and trailing slashes do not create distinct recurrence keys.
 
 The host observes application lifecycle changes and rechecks cooldown eligibility on foreground.
+While the app remains foregrounded, an ineligible controller also wakes at the exact cooldown
+boundary; the timer is suspended in background and recalculated on resume.
 Expired or denied capture sessions are discarded before another request can be sent. Public errors
 use typed, sanitized messages and never expose capture-provider messages, bearer tokens, reporter
 data, response content, server-provided validation copy, or screenshot bytes. Validation field keys
 are accepted only when the active capture session declares them and are mapped to SDK-owned
-localized messages. The stable error codes are `validation`, `network`, `sessionExpired`,
+localized messages; a rejection without a visible field displays one safe generic submit failure.
+The stable error codes are `validation`, `network`, `sessionExpired`,
 `configurationChanged`, `accessDenied`, `attachment`, `invalidResponse`, and
 `retryPayloadChanged`.
 

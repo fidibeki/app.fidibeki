@@ -25,3 +25,5 @@
 - Harden capture-session parsing against unknown fields, sanitize backend validation details into
   SDK-owned messages, verify screenshot byte signatures, and declare the supported package
   platforms explicitly.
+- Wake foreground cooldowns at their eligibility boundary without background traffic, and render a
+  safe generic failure for validation responses that do not map to a visible field.

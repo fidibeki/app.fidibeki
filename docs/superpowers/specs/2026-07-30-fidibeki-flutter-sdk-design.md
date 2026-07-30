@@ -258,6 +258,8 @@ Recurrence matches the corrected React Native behavior:
 - session recurrence compares an anonymous app-session ID;
 - 30 continuous background minutes rotate a generated session ID;
 - cooldown uses the definition's day interval;
+- an ineligible foreground controller wakes at the cooldown boundary without waiting for another
+  lifecycle event; the wake-up is suspended in background and recalculated on resume;
 - never persists until the host clears its configured storage;
 - corrupt or legacy `dismissed` records are deleted and treated as eligible;
 - query/hash/trailing slash variants of the same screen share a key.
@@ -279,7 +281,8 @@ and transport failures remain `network`, so the public API does not add a redund
 
 Exceptions and `toString()` never include bearer tokens, request headers, reporter data, response
 content, server-provided validation copy, or screenshot bytes. Field validation accepts only keys
-declared by the active session and maps them to SDK-owned localized messages.
+declared by the active session and maps them to SDK-owned localized messages. A validation response
+without an error for a currently visible field renders one safe generic submit failure.
 
 - Retryable transport/server errors preserve the exact request and complete draft.
 - `configurationChanged` obtains a new session, reconciles compatible answers, and requires renewed

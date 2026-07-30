@@ -66,6 +66,25 @@ final class WriteFailingStorage implements FidibekiStorage {
   }
 }
 
+final class WriteObservingStorage implements FidibekiStorage {
+  WriteObservingStorage(this.onWrite);
+
+  final void Function() onWrite;
+  final MemoryFidibekiStorage _delegate = MemoryFidibekiStorage();
+
+  @override
+  Future<void> delete(String key) => _delegate.delete(key);
+
+  @override
+  Future<String?> read(String key) => _delegate.read(key);
+
+  @override
+  Future<void> write(String key, String value) async {
+    await _delegate.write(key, value);
+    onWrite();
+  }
+}
+
 void fillRequired(FidibekiFeedbackController controller) {
   controller.setRating('rating', 5);
   controller.setText('feedback', 'Lifecycle test feedback');
@@ -207,6 +226,174 @@ void main() {
       expect(sessionRequests, 2);
       expect(controller.status, FidibekiFeedbackStatus.ready);
       expect(controller.eligible, isTrue);
+    },
+  );
+
+  test('wakes a cooldown while the app remains foregrounded', () async {
+    final storage = MemoryFidibekiStorage();
+    final session = lifecycleSession(
+      recurrenceMode: FidibekiRecurrenceMode.cooldown,
+      recurrenceDays: 1,
+    );
+    final now = DateTime.now().toUtc();
+    final nextEligibleAt = now.add(const Duration(milliseconds: 500));
+    await storage.write(
+      fidibekiRecurrenceStorageKey(
+        session.configuration.projectId,
+        session.configuration.definition.definitionKey,
+        '/checkout',
+      ),
+      jsonEncode(<String, Object?>{
+        'state': 'submitted',
+        'recorded_at': nextEligibleAt
+            .subtract(const Duration(days: 1))
+            .toIso8601String(),
+      }),
+    );
+    var sessionRequests = 0;
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.ios,
+      screen: '/checkout',
+      sessionProvider: (_) async {
+        sessionRequests += 1;
+        return lifecycleSession(
+          recurrenceMode: FidibekiRecurrenceMode.cooldown,
+          recurrenceDays: 1,
+        );
+      },
+      storage: storage,
+    );
+    addTearDown(controller.dispose);
+
+    final becameEligible = Completer<void>();
+    controller.addListener(() {
+      if (controller.eligible && !becameEligible.isCompleted) {
+        becameEligible.complete();
+      }
+    });
+    await controller.initialize();
+
+    expect(controller.status, FidibekiFeedbackStatus.ineligible);
+    expect(controller.nextEligibleAt, nextEligibleAt);
+    await becameEligible.future.timeout(const Duration(seconds: 3));
+
+    expect(sessionRequests, 2);
+    expect(controller.status, FidibekiFeedbackStatus.ready);
+    expect(controller.eligible, isTrue);
+  });
+
+  test('pauses the cooldown wake-up while the app is backgrounded', () async {
+    final storage = MemoryFidibekiStorage();
+    final session = lifecycleSession(
+      recurrenceMode: FidibekiRecurrenceMode.cooldown,
+      recurrenceDays: 1,
+    );
+    final nextEligibleAt = DateTime.now().toUtc().add(
+      const Duration(milliseconds: 500),
+    );
+    await storage.write(
+      fidibekiRecurrenceStorageKey(
+        session.configuration.projectId,
+        session.configuration.definition.definitionKey,
+        '/checkout',
+      ),
+      jsonEncode(<String, Object?>{
+        'state': 'submitted',
+        'recorded_at': nextEligibleAt
+            .subtract(const Duration(days: 1))
+            .toIso8601String(),
+      }),
+    );
+    var sessionRequests = 0;
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.ios,
+      screen: '/checkout',
+      sessionProvider: (_) async {
+        sessionRequests += 1;
+        return lifecycleSession(
+          recurrenceMode: FidibekiRecurrenceMode.cooldown,
+          recurrenceDays: 1,
+        );
+      },
+      storage: storage,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.initialize();
+    await controller.handleAppLifecycleState(AppLifecycleState.paused);
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+
+    expect(sessionRequests, 1);
+    expect(controller.status, FidibekiFeedbackStatus.ineligible);
+
+    await controller.handleAppLifecycleState(AppLifecycleState.resumed);
+
+    expect(sessionRequests, 2);
+    expect(controller.status, FidibekiFeedbackStatus.ready);
+  });
+
+  test(
+    'does not rearm a cooldown when submission completes in background',
+    () async {
+      var now = DateTime.utc(2026, 7, 30);
+      final elapsed = Stopwatch();
+      final storage = WriteObservingStorage(() {
+        now = now.add(
+          const Duration(days: 1) - const Duration(milliseconds: 500),
+        );
+        elapsed.start();
+      });
+      final response = Completer<http.Response>();
+      var sessionRequests = 0;
+      final controller = FidibekiFeedbackController(
+        apiBaseUrl: Uri.parse('https://api.example.test'),
+        appVersion: '2.4.0',
+        locale: const Locale('en'),
+        osVersion: '18.5',
+        platform: FidibekiPlatform.ios,
+        screen: '/checkout',
+        appSessionId: 'host-session',
+        now: () => now.add(elapsed.elapsed),
+        sessionProvider: (_) async {
+          sessionRequests += 1;
+          return lifecycleSession(
+            recurrenceMode: FidibekiRecurrenceMode.cooldown,
+            recurrenceDays: 1,
+          );
+        },
+        storage: storage,
+        mobileClient: FidibekiMobileClient(
+          apiBaseUrl: Uri.parse('https://api.example.test'),
+          now: () => now.add(elapsed.elapsed),
+          httpClient: MockClient((_) => response.future),
+        ),
+      );
+      addTearDown(controller.dispose);
+      await controller.open();
+      fillRequired(controller);
+
+      final submission = controller.submit();
+      await Future<void>.delayed(Duration.zero);
+      await controller.handleAppLifecycleState(AppLifecycleState.paused);
+      response.complete(http.Response(jsonEncode(acceptedJson()), 201));
+      await submission;
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+
+      expect(sessionRequests, 1);
+      expect(controller.status, FidibekiFeedbackStatus.submitted);
+
+      await controller.handleAppLifecycleState(AppLifecycleState.resumed);
+
+      expect(sessionRequests, 2);
+      expect(controller.status, FidibekiFeedbackStatus.ready);
     },
   );
 

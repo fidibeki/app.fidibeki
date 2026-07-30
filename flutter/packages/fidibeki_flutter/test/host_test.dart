@@ -239,6 +239,75 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('renders a generic error for unmapped validation fields', (
+    tester,
+  ) async {
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.android,
+      screen: '/checkout/review',
+      sessionProvider: (_) async => fixtureSession(),
+      storage: MemoryFidibekiStorage(),
+      mobileClient: FidibekiMobileClient(
+        apiBaseUrl: Uri.parse('https://api.example.test'),
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode(<String, Object?>{
+              'error': <String, Object?>{
+                'code': 'validation_failed',
+                'message': 'invalid metadata',
+                'details': <Object?>[
+                  <String, Object?>{
+                    'field': 'app_version',
+                    'message': 'is invalid',
+                  },
+                ],
+              },
+            }),
+            422,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FidibekiFeedbackHost(
+          controller: controller,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const SizedBox.expand(),
+      ),
+    );
+    await tester.pump();
+    await controller.open();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('fidibeki-rating-rating-4')));
+    await tester.tap(
+      find.byKey(const ValueKey('fidibeki-choice-journey-easy')),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      120,
+      scrollable: formScroll(),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      'The chart labels are difficult to read',
+    );
+    await tester.tap(find.byKey(const ValueKey('fidibeki-submit')));
+    await tester.pumpAndSettle();
+
+    expect(controller.fieldErrors, isEmpty);
+    expect(find.text('Feedback could not be sent. Try again.'), findsOneWidget);
+
+    controller.dispose();
+  });
+
   testWidgets('renders dynamic choices and progressive privacy disclosures', (
     tester,
   ) async {

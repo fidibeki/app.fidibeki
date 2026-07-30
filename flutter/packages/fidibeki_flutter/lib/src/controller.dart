@@ -134,8 +134,10 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   bool _readingScreenshot = false;
   int _screenshotGeneration = 0;
   int _acquisitionGeneration = 0;
+  int _eligibilityTimerGeneration = 0;
   bool _sessionAuthorizationValid = false;
   bool _configurationRefreshRequired = false;
+  Timer? _eligibilityTimer;
 
   FidibekiFeedbackStatus _status = FidibekiFeedbackStatus.initializing;
   FidibekiCaptureSession? _session;
@@ -143,6 +145,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   FidibekiException? _error;
   DateTime? _nextEligibleAt;
   bool _eligible = false;
+  bool _foregrounded = true;
   bool _visible = false;
   bool _disposed = false;
   Future<void>? _initialization;
@@ -214,6 +217,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
             ? FidibekiFeedbackStatus.ready
             : FidibekiFeedbackStatus.ineligible;
       });
+      _scheduleEligibilityWakeUp();
     } on FidibekiException catch (error) {
       if (_acceptsAcquisition(generation)) _fail(error);
     } on Object {
@@ -323,6 +327,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
             ? FidibekiFeedbackStatus.open
             : FidibekiFeedbackStatus.ready;
       });
+      _scheduleEligibilityWakeUp();
     } on FidibekiException catch (error) {
       if (!_acceptsAcquisition(generation)) return;
       _setState(() {
@@ -414,6 +419,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
 
   Future<void> _performSessionReplacement({required bool reopen}) async {
     if (_disposed) return;
+    _cancelEligibilityWakeUp();
     final generation = ++_acquisitionGeneration;
     _setState(() {
       _resetDraftForNewSession();
@@ -446,6 +452,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
                   : FidibekiFeedbackStatus.ready
             : FidibekiFeedbackStatus.ineligible;
       });
+      _scheduleEligibilityWakeUp();
     } on FidibekiException catch (error) {
       if (_acceptsAcquisition(generation)) _fail(error);
     } on Object {
@@ -483,10 +490,13 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     if (_disposed) return;
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      _foregrounded = false;
       _recurrence.onBackground();
+      _cancelEligibilityWakeUp();
       return;
     }
     if (state != AppLifecycleState.resumed) return;
+    _foregrounded = true;
 
     final activeSubmission = _submission;
     if (activeSubmission != null) {
@@ -503,7 +513,45 @@ final class FidibekiFeedbackController extends ChangeNotifier {
         nextEligibleAt != null && !_now().toUtc().isBefore(nextEligibleAt);
     if (sessionRotated || cooldownReached) {
       await _replaceCaptureSession(reopen: false);
+    } else {
+      _scheduleEligibilityWakeUp();
     }
+  }
+
+  void _cancelEligibilityWakeUp() {
+    _eligibilityTimerGeneration += 1;
+    _eligibilityTimer?.cancel();
+    _eligibilityTimer = null;
+  }
+
+  void _scheduleEligibilityWakeUp() {
+    _cancelEligibilityWakeUp();
+    final nextEligibleAt = _nextEligibleAt;
+    if (_disposed || !_foregrounded || _eligible || nextEligibleAt == null) {
+      return;
+    }
+    final generation = _eligibilityTimerGeneration;
+    final remaining = nextEligibleAt.difference(_now().toUtc());
+    _eligibilityTimer = Timer(
+      remaining.isNegative ? Duration.zero : remaining,
+      () {
+        _eligibilityTimer = null;
+        unawaited(_wakeEligibility(generation));
+      },
+    );
+  }
+
+  Future<void> _wakeEligibility(int generation) async {
+    if (_disposed || generation != _eligibilityTimerGeneration || _eligible) {
+      return;
+    }
+    final nextEligibleAt = _nextEligibleAt;
+    if (nextEligibleAt == null) return;
+    if (_now().toUtc().isBefore(nextEligibleAt)) {
+      _scheduleEligibilityWakeUp();
+      return;
+    }
+    await _replaceCaptureSession(reopen: false);
   }
 
   Future<void> open() async {
@@ -843,6 +891,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
         _status = FidibekiFeedbackStatus.submitted;
       }
     });
+    _scheduleEligibilityWakeUp();
     try {
       await _recurrence.recordSubmitted(
         current.configuration.projectId,
@@ -859,6 +908,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
           _nextEligibleAt = recurrence.nextEligibleAt;
         }
       });
+      _scheduleEligibilityWakeUp();
     } on Object {
       // Acceptance is authoritative even when recurrence persistence fails.
     }
@@ -967,6 +1017,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   }
 
   void _fail(FidibekiException error) {
+    _cancelEligibilityWakeUp();
     _setState(() {
       _session = null;
       _sessionAuthorizationValid = false;
@@ -989,6 +1040,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     _disposed = true;
     _acquisitionGeneration += 1;
     _screenshotGeneration += 1;
+    _cancelEligibilityWakeUp();
     final screenshot = _screenshot;
     _screenshot = null;
     if (screenshot != null) unawaited(screenshot.dispose());
