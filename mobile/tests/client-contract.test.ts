@@ -448,12 +448,12 @@ describe('mobile backend wire contract', () => {
         error: {
           code: 'validation_failed',
           message: 'invalid',
-          details: [{ field: 'responses.feedback', message: 'is required' }],
+          details: [{ field: 'responses.details', message: 'is required' }],
         },
       },
       {
         code: 'validation_error',
-        fields: { 'responses.feedback': 'is required' },
+        fields: { 'responses.details': 'invalid' },
         retryable: false,
       },
     ],
@@ -468,7 +468,7 @@ describe('mobile backend wire contract', () => {
       },
       {
         code: 'validation_error',
-        fields: { display_locale: 'is unsupported' },
+        fields: {},
         retryable: false,
       },
     ],

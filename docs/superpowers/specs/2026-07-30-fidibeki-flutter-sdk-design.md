@@ -270,10 +270,16 @@ without another network request.
 
 Public `FidibekiException` values contain a stable code, safe message, and `retryable` flag:
 
-`validation | network | sessionExpired | configurationChanged | accessDenied | attachment | server`
+`validation | network | sessionExpired | configurationChanged | accessDenied | attachment |
+invalidResponse | retryPayloadChanged`
+
+`invalidResponse` identifies a malformed response at the trusted API boundary.
+`retryPayloadChanged` rejects reuse of a feedback ID with a different exact payload. Retryable HTTP
+and transport failures remain `network`, so the public API does not add a redundant `server` code.
 
 Exceptions and `toString()` never include bearer tokens, request headers, reporter data, response
-content, or screenshot bytes.
+content, server-provided validation copy, or screenshot bytes. Field validation accepts only keys
+declared by the active session and maps them to SDK-owned localized messages.
 
 - Retryable transport/server errors preserve the exact request and complete draft.
 - `configurationChanged` obtains a new session, reconciles compatible answers, and requires renewed
@@ -292,7 +298,9 @@ clipboard, or arbitrary app-state access.
 Persistent SDK state contains only anonymous recurrence data. Capture tokens remain memory-only.
 The HTTP layer redacts authorization by construction, follows only the bound API/presigned URL
 flow, validates HTTPS for non-local endpoints, rejects unsafe redirects for attachment uploads, and
-does not expose internal response bodies through public errors.
+does not expose internal response bodies through public errors. Capture-session objects reject
+unknown fields at every supported contract level. Screenshot preparation verifies the declared
+PNG, JPEG, or WebP signature before any upload.
 
 The example uses only local fake credentials and fixture data. Shared contract fixtures contain no
 real tenant keys, capture tokens, domains, reporter information, or production endpoints.

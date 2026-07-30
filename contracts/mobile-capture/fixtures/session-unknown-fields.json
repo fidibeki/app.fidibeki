@@ -1,0 +1,45 @@
+{
+  "unknown_field": "unexpected_contract_field",
+  "cases": [
+    {
+      "fixture": "session-valid.json",
+      "target": "session"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "configuration"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "definition"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "response_block"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "response_option"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "localization"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "appearance"
+    },
+    {
+      "fixture": "session-valid.json",
+      "target": "ai_processing"
+    },
+    {
+      "fixture": "session-contact-valid.json",
+      "target": "controller_profile"
+    },
+    {
+      "fixture": "session-contact-valid.json",
+      "target": "contact_notice"
+    }
+  ]
+}

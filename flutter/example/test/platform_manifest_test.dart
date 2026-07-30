@@ -11,6 +11,23 @@ void main() {
     expect(manifest, contains('uses-material-design: true'));
   });
 
+  test('publishable packages declare only supported mobile platforms', () {
+    for (final package in <String>[
+      'fidibeki_flutter',
+      'fidibeki_flutter_shared_preferences',
+    ]) {
+      final manifest = File(
+        'packages/$package/pubspec.yaml',
+      ).readAsStringSync();
+      expect(
+        manifest,
+        matches(
+          RegExp(r'platforms:\s*\n\s+android:\s*\n\s+ios:', multiLine: true),
+        ),
+      );
+    }
+  });
+
   test('release host requests network but no sensitive Android permission', () {
     final manifest = File(
       'example/android/app/src/main/AndroidManifest.xml',

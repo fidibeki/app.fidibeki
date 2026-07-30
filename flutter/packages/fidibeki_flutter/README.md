@@ -49,7 +49,11 @@ and trailing slashes do not create distinct recurrence keys.
 The host observes application lifecycle changes and rechecks cooldown eligibility on foreground.
 Expired or denied capture sessions are discarded before another request can be sent. Public errors
 use typed, sanitized messages and never expose capture-provider messages, bearer tokens, reporter
-data, response content, or screenshot bytes.
+data, response content, server-provided validation copy, or screenshot bytes. Validation field keys
+are accepted only when the active capture session declares them and are mapped to SDK-owned
+localized messages. The stable error codes are `validation`, `network`, `sessionExpired`,
+`configurationChanged`, `accessDenied`, `attachment`, `invalidResponse`, and
+`retryPayloadChanged`.
 
 The host renders the same Compact Progressive sheet under `MaterialApp` and `CupertinoApp`. It uses
 75% of the viewport, expands above the keyboard, keeps its header and submit action fixed, and
@@ -75,8 +79,9 @@ Future<FidibekiScreenshotAsset?> capture() async {
 }
 ```
 
-The SDK accepts no local URI, limits screenshots to 10 MiB, uploads only to the returned safe grant,
-and completes through the existing mobile endpoint. A later upload/completion failure keeps the
-Feedback accepted and exposes only a scoped attachment warning.
+The SDK accepts no local URI, limits screenshots to 10 MiB, verifies the declared PNG, JPEG, or WebP
+signature, uploads only to the returned safe grant, and completes through the existing mobile
+endpoint. A later upload/completion failure keeps the Feedback accepted and exposes only a scoped
+attachment warning.
 
 The package is under active development and is not published.

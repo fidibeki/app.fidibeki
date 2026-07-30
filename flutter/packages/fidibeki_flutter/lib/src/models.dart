@@ -66,6 +66,16 @@ bool _boolean(Object? value, String label) {
   return value;
 }
 
+void _rejectUnknownKeys(
+  Map<String, Object?> value,
+  Set<String> allowed,
+  String label,
+) {
+  if (value.keys.any((key) => !allowed.contains(key))) {
+    invalidCaptureSession('$label contains unknown fields');
+  }
+}
+
 Uri _httpsUri(Object? value, String label) {
   final uri = Uri.tryParse(_string(value, label));
   if (uri == null ||
@@ -92,6 +102,7 @@ final class FidibekiResponseOption {
 
   factory FidibekiResponseOption.fromJson(Object? value) {
     final json = _object(value, 'response option');
+    _rejectUnknownKeys(json, const <String>{'value'}, 'response option');
     return FidibekiResponseOption(
       value: _string(json['value'], 'response option value', maxLength: 64),
     );
@@ -110,6 +121,12 @@ final class FidibekiResponseBlock {
 
   factory FidibekiResponseBlock.fromJson(Object? value) {
     final json = _object(value, 'response block');
+    _rejectUnknownKeys(json, const <String>{
+      'key',
+      'type',
+      'required',
+      'options',
+    }, 'response block');
     final typeValue = _string(json['type'], 'response block type');
     final type = FidibekiResponseBlockType.values
         .where((candidate) => candidate.wireName == typeValue)
@@ -165,6 +182,20 @@ final class FidibekiLocalization {
 
   factory FidibekiLocalization.fromJson(Object? value) {
     final json = _object(value, 'localization');
+    _rejectUnknownKeys(json, const <String>{
+      'launcher_label',
+      'prompt',
+      'comment_placeholder',
+      'contact_label',
+      'consent_label',
+      'submit_label',
+      'success_message',
+      'block_labels',
+      'option_labels',
+      'privacy_purpose_summary',
+      'privacy_lawful_basis_summary',
+      'privacy_retention_summary',
+    }, 'localization');
     final rawOptionLabels = json['option_labels'];
     final optionLabels = <String, Map<String, String>>{};
     if (rawOptionLabels != null) {
@@ -233,6 +264,15 @@ final class FidibekiAppearance {
 
   factory FidibekiAppearance.fromJson(Object? value) {
     final json = _object(value, 'appearance');
+    _rejectUnknownKeys(json, const <String>{
+      'position',
+      'theme',
+      'accent_color',
+      'accent_foreground',
+      'surface_color',
+      'text_color',
+      'logo_url',
+    }, 'appearance');
     final theme = json['theme'];
     if (theme != null &&
         (theme is! String ||
@@ -298,6 +338,19 @@ final class FidibekiControllerNotice {
 
   factory FidibekiControllerNotice.fromJson(Object? value) {
     final json = _object(value, 'controller notice');
+    _rejectUnknownKeys(json, const <String>{
+      'notice_version',
+      'controller_profile_version',
+      'widget_definition_version',
+      'locale',
+      'controller_name',
+      'privacy_contact_email',
+      'privacy_rights_email',
+      'privacy_policy_url',
+      'purpose_summary',
+      'lawful_basis_summary',
+      'retention_summary',
+    }, 'controller notice');
     return FidibekiControllerNotice(
       noticeVersion: _string(json['notice_version'], 'notice version'),
       controllerProfileVersion: _integer(
@@ -346,6 +399,53 @@ final class FidibekiControllerNotice {
   final String retentionSummary;
 }
 
+final class FidibekiControllerProfile {
+  const FidibekiControllerProfile({
+    required this.version,
+    required this.name,
+    required this.privacyContactEmail,
+    required this.privacyRightsEmail,
+    required this.privacyPolicyUrl,
+  });
+
+  factory FidibekiControllerProfile.fromJson(Object? value) {
+    final json = _object(value, 'controller profile');
+    _rejectUnknownKeys(json, const <String>{
+      'version',
+      'name',
+      'privacy_contact_email',
+      'privacy_rights_email',
+      'privacy_policy_url',
+    }, 'controller profile');
+    return FidibekiControllerProfile(
+      version: _integer(
+        json['version'],
+        'controller profile version',
+        minimum: 1,
+      ),
+      name: _string(json['name'], 'controller profile name'),
+      privacyContactEmail: _string(
+        json['privacy_contact_email'],
+        'controller privacy contact email',
+      ),
+      privacyRightsEmail: _string(
+        json['privacy_rights_email'],
+        'controller privacy rights email',
+      ),
+      privacyPolicyUrl: _httpsUri(
+        json['privacy_policy_url'],
+        'controller privacy policy URL',
+      ),
+    );
+  }
+
+  final int version;
+  final String name;
+  final String privacyContactEmail;
+  final String privacyRightsEmail;
+  final Uri privacyPolicyUrl;
+}
+
 final class FidibekiAiProcessing {
   const FidibekiAiProcessing({
     required this.enabled,
@@ -357,6 +457,13 @@ final class FidibekiAiProcessing {
 
   factory FidibekiAiProcessing.fromJson(Object? value) {
     final json = _object(value, 'AI disclosure');
+    _rejectUnknownKeys(json, const <String>{
+      'enabled',
+      'input_categories',
+      'provider',
+      'privacy_policy_url',
+      'policy_version',
+    }, 'AI disclosure');
     final enabled = _boolean(json['enabled'], 'AI disclosure enabled');
     final rawCategories = json['input_categories'];
     final categories = rawCategories == null
@@ -422,6 +529,23 @@ final class FidibekiWidgetDefinition {
 
   factory FidibekiWidgetDefinition.fromJson(Object? value) {
     final json = _object(value, 'widget definition');
+    _rejectUnknownKeys(json, const <String>{
+      'id',
+      'definition_key',
+      'definition_version',
+      'presentation',
+      'launcher_variant',
+      'objective',
+      'recurrence_mode',
+      'recurrence_days',
+      'response_blocks',
+      'localization',
+      'allow_comment',
+      'collect_contact',
+      'can_attach_screenshot',
+      'appearance',
+      'ai_processing',
+    }, 'widget definition');
     final recurrenceValue = _string(json['recurrence_mode'], 'recurrence mode');
     final recurrenceMode = FidibekiRecurrenceMode.values
         .where((candidate) => candidate.wireName == recurrenceValue)
@@ -515,23 +639,37 @@ final class FidibekiCaptureConfiguration {
     required this.projectId,
     required this.displayLocale,
     required this.definition,
+    this.controllerProfile,
     this.contactNotice,
   });
 
   factory FidibekiCaptureConfiguration.fromJson(Object? value) {
     final json = _object(value, 'configuration');
+    _rejectUnknownKeys(json, const <String>{
+      'schema_version',
+      'project_id',
+      'display_locale',
+      'definition',
+      'controller_profile',
+      'contact_notice',
+    }, 'configuration');
     final schemaVersion = json['schema_version'];
     if (schemaVersion != 1) {
       invalidCaptureSession('unsupported schema version');
     }
     final displayLocale = _string(json['display_locale'], 'display locale');
     final definition = FidibekiWidgetDefinition.fromJson(json['definition']);
+    final profile = json['controller_profile'] == null
+        ? null
+        : FidibekiControllerProfile.fromJson(json['controller_profile']);
     final notice = json['contact_notice'] == null
         ? null
         : FidibekiControllerNotice.fromJson(json['contact_notice']);
     if (definition.collectContact) {
       if (notice == null ||
           notice.locale != displayLocale ||
+          (profile != null &&
+              notice.controllerProfileVersion != profile.version) ||
           notice.widgetDefinitionVersion != definition.definitionVersion) {
         invalidCaptureSession(
           'contact collection requires the matching controller notice',
@@ -543,6 +681,7 @@ final class FidibekiCaptureConfiguration {
       projectId: _string(json['project_id'], 'project ID'),
       displayLocale: displayLocale,
       definition: definition,
+      controllerProfile: profile,
       contactNotice: notice,
     );
   }
@@ -551,6 +690,7 @@ final class FidibekiCaptureConfiguration {
   final String projectId;
   final String displayLocale;
   final FidibekiWidgetDefinition definition;
+  final FidibekiControllerProfile? controllerProfile;
   final FidibekiControllerNotice? contactNotice;
 }
 
@@ -562,6 +702,11 @@ final class FidibekiCaptureSession {
   });
 
   factory FidibekiCaptureSession.fromJson(Map<String, Object?> json) {
+    _rejectUnknownKeys(json, const <String>{
+      'token',
+      'submit_expires_at',
+      'configuration',
+    }, 'capture session');
     final token = _string(json['token'], 'capture token');
     if (!token.startsWith('fmc_')) {
       invalidCaptureSession('invalid capture token');

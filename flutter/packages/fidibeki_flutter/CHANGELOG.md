@@ -22,3 +22,6 @@
   semantics, and inspected light/dark responsive goldens.
 - Add reproducible package gates and an Android/iOS local runtime example that proves draft
   preservation, explicit screenshot upload, accepted feedback, and recurrence.
+- Harden capture-session parsing against unknown fields, sanitize backend validation details into
+  SDK-owned messages, verify screenshot byte signatures, and declare the supported package
+  platforms explicitly.

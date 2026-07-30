@@ -8,6 +8,17 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
 
+function rejectUnknownKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const keys = new Set(allowed)
+  if (Object.keys(value).some((key) => !keys.has(key))) {
+    invalidSession(`${label} contains unknown fields`)
+  }
+}
+
 function validateHTTPSURL(value: string, label: string): void {
   let parsed: URL
   try {
@@ -29,6 +40,7 @@ function invalidSession(message: string): never {
 
 function validateResponseBlock(value: unknown): MobileResponseBlock {
   if (!isObject(value)) invalidSession('response block must be an object')
+  rejectUnknownKeys(value, ['key', 'type', 'required', 'options'], 'response block')
   if (!isNonEmptyString(value.key) || value.key.length > 64) invalidSession('invalid response key')
   if (!['rating', 'reaction', 'single_choice', 'free_text'].includes(String(value.type))) {
     invalidSession('unsupported response block')
@@ -43,6 +55,7 @@ function validateResponseBlock(value: unknown): MobileResponseBlock {
       if (!isObject(option) || !isNonEmptyString(option.value) || optionValues.has(option.value)) {
         invalidSession('invalid response option')
       }
+      rejectUnknownKeys(option, ['value'], 'response option')
       optionValues.add(option.value)
     }
   }
@@ -65,6 +78,19 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
   ) {
     invalidSession('missing required fields')
   }
+  rejectUnknownKeys(value, ['token', 'submit_expires_at', 'configuration'], 'capture session')
+  rejectUnknownKeys(
+    configuration,
+    [
+      'schema_version',
+      'project_id',
+      'display_locale',
+      'definition',
+      'controller_profile',
+      'contact_notice',
+    ],
+    'configuration',
+  )
   const definition = configuration.definition
   if (
     !isNonEmptyString(definition.id) ||
@@ -88,7 +114,41 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
   ) {
     invalidSession('invalid widget definition')
   }
+  rejectUnknownKeys(
+    definition,
+    [
+      'id',
+      'definition_key',
+      'definition_version',
+      'presentation',
+      'launcher_variant',
+      'objective',
+      'recurrence_mode',
+      'recurrence_days',
+      'response_blocks',
+      'localization',
+      'allow_comment',
+      'collect_contact',
+      'can_attach_screenshot',
+      'appearance',
+      'ai_processing',
+    ],
+    'widget definition',
+  )
   const appearance = definition.appearance
+  rejectUnknownKeys(
+    appearance,
+    [
+      'position',
+      'theme',
+      'accent_color',
+      'accent_foreground',
+      'surface_color',
+      'text_color',
+      'logo_url',
+    ],
+    'widget appearance',
+  )
   if (
     (appearance.position !== undefined && !['bottom-left', 'bottom-right'].includes(String(appearance.position))) ||
     (appearance.theme !== undefined && !['light', 'dark', 'auto'].includes(String(appearance.theme)))
@@ -128,6 +188,24 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     'success_message',
   ]
   const localization = definition.localization as Record<string, unknown>
+  rejectUnknownKeys(
+    localization,
+    [
+      'launcher_label',
+      'prompt',
+      'comment_placeholder',
+      'contact_label',
+      'consent_label',
+      'submit_label',
+      'success_message',
+      'block_labels',
+      'option_labels',
+      'privacy_purpose_summary',
+      'privacy_lawful_basis_summary',
+      'privacy_retention_summary',
+    ],
+    'localization',
+  )
   if (localizationFields.some((field) => !isNonEmptyString(localization[field]))) {
     invalidSession('incomplete localization')
   }
@@ -148,6 +226,26 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
   } else if (definition.recurrence_days !== undefined && definition.recurrence_days !== null) {
     invalidSession('recurrence days are only valid for cooldown mode')
   }
+  if (configuration.controller_profile !== undefined) {
+    const profile = configuration.controller_profile
+    if (
+      !isObject(profile) ||
+      !Number.isInteger(profile.version) ||
+      Number(profile.version) < 1 ||
+      !isNonEmptyString(profile.name) ||
+      !isNonEmptyString(profile.privacy_contact_email) ||
+      !isNonEmptyString(profile.privacy_rights_email) ||
+      !isNonEmptyString(profile.privacy_policy_url)
+    ) {
+      invalidSession('invalid controller profile')
+    }
+    rejectUnknownKeys(
+      profile,
+      ['version', 'name', 'privacy_contact_email', 'privacy_rights_email', 'privacy_policy_url'],
+      'controller profile',
+    )
+    validateHTTPSURL(profile.privacy_policy_url, 'controller privacy policy')
+  }
   if (definition.collect_contact) {
     const notice = configuration.contact_notice
     if (
@@ -167,8 +265,31 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     ) {
       invalidSession('contact collection requires a complete controller notice')
     }
+    rejectUnknownKeys(
+      notice,
+      [
+        'notice_version',
+        'controller_profile_version',
+        'widget_definition_version',
+        'controller_name',
+        'privacy_contact_email',
+        'privacy_rights_email',
+        'privacy_policy_url',
+        'locale',
+        'purpose_summary',
+        'lawful_basis_summary',
+        'retention_summary',
+      ],
+      'controller notice',
+    )
     if (notice.locale !== configuration.display_locale) {
       invalidSession('contact notice locale must match the display locale')
+    }
+    if (
+      isObject(configuration.controller_profile) &&
+      notice.controller_profile_version !== configuration.controller_profile.version
+    ) {
+      invalidSession('contact notice must match the controller profile')
     }
     validateHTTPSURL(notice.privacy_policy_url, 'privacy policy')
   }
@@ -177,6 +298,11 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     if (!isObject(ai) || typeof ai.enabled !== 'boolean') {
       invalidSession('invalid AI disclosure')
     }
+    rejectUnknownKeys(
+      ai,
+      ['enabled', 'provider', 'privacy_policy_url', 'policy_version', 'input_categories'],
+      'AI disclosure',
+    )
     if (
       ai.enabled &&
       (!isNonEmptyString(ai.provider) ||

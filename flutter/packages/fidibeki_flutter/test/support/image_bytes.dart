@@ -1,0 +1,44 @@
+import 'dart:typed_data';
+
+Uint8List validPngBytes() {
+  return Uint8List.fromList(const <int>[
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+  ]);
+}
+
+Uint8List validJpegBytes() {
+  return Uint8List.fromList(const <int>[
+    0xff,
+    0xd8,
+    0xff,
+    0xe0,
+    0x00,
+    0x00,
+    0xff,
+    0xd9,
+  ]);
+}
+
+Uint8List validWebpBytes() {
+  return Uint8List.fromList(const <int>[
+    0x52,
+    0x49,
+    0x46,
+    0x46,
+    0x04,
+    0x00,
+    0x00,
+    0x00,
+    0x57,
+    0x45,
+    0x42,
+    0x50,
+  ]);
+}

@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fidibeki_flutter/fidibeki_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'support/image_bytes.dart';
 
 Map<String, Object?> fixtureJson(String name) {
   var directory = Directory.current.absolute;
@@ -30,8 +31,8 @@ Future<FidibekiPreparedScreenshot> preparedScreenshot() {
   return prepareFidibekiScreenshot(
     FidibekiScreenshotAsset(
       contentType: 'image/png',
-      sizeBytes: 3,
-      read: (_) async => Uint8List.fromList(<int>[1, 2, 3]),
+      sizeBytes: validPngBytes().length,
+      read: (_) async => validPngBytes(),
     ),
     clientAttachmentIdGenerator: () => '88888888-8888-4888-8888-888888888888',
   );
@@ -73,7 +74,7 @@ void main() {
           'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/complete',
     ]);
     expect(observed[1].method, 'PUT');
-    expect(observed[1].bodyBytes, <int>[1, 2, 3]);
+    expect(observed[1].bodyBytes, validPngBytes());
     expect(observed[1].headers['authorization'], isNull);
     expect(observed[1].headers['content-type'], 'image/png');
     expect(observed[2].headers['authorization'], startsWith('Bearer fmc_'));

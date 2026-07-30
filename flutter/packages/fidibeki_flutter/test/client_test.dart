@@ -216,9 +216,54 @@ void main() {
           isNot(contains('The chart labels are difficult to read')),
         );
         if (testCase['status'] == 422) {
-          expect(error.fields['responses.feedback'], 'is required');
+          expect(error.fields['responses.feedback'], 'Select a valid response');
         }
       }
+    }
+  });
+
+  test('sanitizes validation fields from an untrusted response', () async {
+    const privateResponse =
+        'private-token reporter@example.invalid original-feedback';
+    final fixture = fixtureJson('feedback-submit-valid.json');
+    final request = FidibekiFeedbackRequest.fromJson(
+      fixture['request']! as Map<String, Object?>,
+    );
+    final client = FidibekiMobileClient(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode(<String, Object?>{
+            'error': <String, Object?>{
+              'code': 'validation_failed',
+              'message': privateResponse,
+              'details': <Object?>[
+                <String, Object?>{
+                  'field': 'responses.feedback',
+                  'message': privateResponse,
+                },
+                <String, Object?>{
+                  'field': 'capture_token',
+                  'message': privateResponse,
+                },
+              ],
+            },
+          }),
+          422,
+        ),
+      ),
+    );
+
+    try {
+      await client.submitFeedback(captureSession(), request);
+      fail('Expected validation failure');
+    } on FidibekiException catch (error) {
+      expect(error.message, 'Feedback is invalid.');
+      expect(error.fields, <String, String>{
+        'responses.feedback': 'Select a valid response',
+      });
+      expect(error.toString(), isNot(contains(privateResponse)));
+      expect(error.fields.toString(), isNot(contains(privateResponse)));
     }
   });
 }

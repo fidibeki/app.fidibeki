@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'errors.dart';
+import 'localization.dart';
 import 'models.dart';
 import 'screenshot.dart';
 import 'submission.dart';
@@ -53,27 +54,53 @@ FidibekiException? _terminalStatusError(int status) {
   return null;
 }
 
-Map<String, String> _validationFields(Object? details) {
+Map<String, String> _validationFields(
+  Object? details,
+  FidibekiCaptureSession session,
+) {
   final fields = <String, String>{};
+  final messages = fidibekiSystemMessages(session.configuration.displayLocale);
+  final responseFields = <String>{
+    for (final block in session.configuration.definition.responseBlocks)
+      'responses.${block.key}',
+  };
+
+  String? safeMessage(String field) {
+    if (responseFields.contains(field)) return messages.invalidResponse;
+    return switch (field) {
+      'comment' =>
+        session.configuration.displayLocale.toLowerCase().startsWith('pt')
+            ? 'Introduza um comentário válido.'
+            : 'Enter a valid comment.',
+      'reporter_email' => messages.invalidEmail,
+      'consent' => messages.consentRequired,
+      _ => null,
+    };
+  }
+
+  void addField(Object? field, Object? message) {
+    if (field is! String || message is! String) return;
+    final safe = safeMessage(field);
+    if (safe != null) fields[field] = safe;
+  }
+
   if (details is List) {
     for (final detail in details) {
-      if (detail is Map &&
-          detail['field'] is String &&
-          detail['message'] is String) {
-        fields[detail['field']! as String] = detail['message']! as String;
-      }
+      if (detail is Map) addField(detail['field'], detail['message']);
     }
   } else if (details is Map && details['fields'] is Map) {
     for (final entry in (details['fields']! as Map).entries) {
-      if (entry.key is String && entry.value is String) {
-        fields[entry.key as String] = entry.value as String;
-      }
+      addField(entry.key, entry.value);
     }
   }
   return Map.unmodifiable(fields);
 }
 
-FidibekiException _responseError(int status, Object? body) {
+FidibekiException _responseError(
+  int status,
+  Object? body,
+  FidibekiCaptureSession session,
+) {
   if (body is! Map || body['error'] is! Map) {
     return FidibekiException(
       FidibekiErrorCode.network,
@@ -93,7 +120,7 @@ FidibekiException _responseError(int status, Object? body) {
     return FidibekiException(
       FidibekiErrorCode.validation,
       'Feedback is invalid.',
-      fields: _validationFields(error['details']),
+      fields: _validationFields(error['details'], session),
     );
   }
   return FidibekiException(
@@ -229,7 +256,7 @@ final class FidibekiMobileClient {
           retryable: retryable,
         );
       }
-      final error = _responseError(response.statusCode, errorBody);
+      final error = _responseError(response.statusCode, errorBody, session);
       if (error.retryable) {
         _bindAttempt(attempt);
       } else {

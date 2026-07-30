@@ -170,6 +170,75 @@ void main() {
     expect(find.text('Thanks for the feedback.'), findsOneWidget);
   });
 
+  testWidgets('renders only SDK-owned validation messages', (tester) async {
+    const privateResponse =
+        'private-token reporter@example.invalid original-feedback';
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('en'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.android,
+      screen: '/checkout/review',
+      sessionProvider: (_) async => fixtureSession(),
+      storage: MemoryFidibekiStorage(),
+      mobileClient: FidibekiMobileClient(
+        apiBaseUrl: Uri.parse('https://api.example.test'),
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode(<String, Object?>{
+              'error': <String, Object?>{
+                'code': 'validation_failed',
+                'message': privateResponse,
+                'details': <Object?>[
+                  <String, Object?>{
+                    'field': 'responses.feedback',
+                    'message': privateResponse,
+                  },
+                ],
+              },
+            }),
+            422,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FidibekiFeedbackHost(
+          controller: controller,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const SizedBox.expand(),
+      ),
+    );
+    await tester.pump();
+    await controller.open();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('fidibeki-rating-rating-4')));
+    await tester.tap(
+      find.byKey(const ValueKey('fidibeki-choice-journey-easy')),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      120,
+      scrollable: formScroll(),
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      'The chart labels are difficult to read',
+    );
+    await tester.tap(find.byKey(const ValueKey('fidibeki-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Select a valid response'), findsOneWidget);
+    expect(find.textContaining(privateResponse), findsNothing);
+
+    controller.dispose();
+  });
+
   testWidgets('renders dynamic choices and progressive privacy disclosures', (
     tester,
   ) async {

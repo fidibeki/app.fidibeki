@@ -84,6 +84,44 @@ final class FidibekiPreparedScreenshot {
   }
 }
 
+bool _hasPrefix(Uint8List bytes, List<int> signature) {
+  if (bytes.length < signature.length) return false;
+  for (var index = 0; index < signature.length; index += 1) {
+    if (bytes[index] != signature[index]) return false;
+  }
+  return true;
+}
+
+bool _matchesDeclaredType(Uint8List bytes, String contentType) {
+  return switch (contentType) {
+    'image/png' => _hasPrefix(bytes, const <int>[
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ]),
+    'image/jpeg' =>
+      bytes.length >= 4 &&
+          _hasPrefix(bytes, const <int>[0xff, 0xd8, 0xff]) &&
+          bytes[bytes.length - 2] == 0xff &&
+          bytes.last == 0xd9,
+    'image/webp' =>
+      bytes.length >= 12 &&
+          _hasPrefix(bytes, const <int>[0x52, 0x49, 0x46, 0x46]) &&
+          bytes[8] == 0x57 &&
+          bytes[9] == 0x45 &&
+          bytes[10] == 0x42 &&
+          bytes[11] == 0x50 &&
+          ByteData.sublistView(bytes, 4, 8).getUint32(0, Endian.little) ==
+              bytes.length - 8,
+    _ => false,
+  };
+}
+
 Future<FidibekiPreparedScreenshot> prepareFidibekiScreenshot(
   FidibekiScreenshotAsset asset, {
   String Function()? clientAttachmentIdGenerator,
@@ -111,6 +149,13 @@ Future<FidibekiPreparedScreenshot> prepareFidibekiScreenshot(
     if (bytes.length != asset.sizeBytes ||
         bytes.isEmpty ||
         bytes.length > maxFidibekiScreenshotBytes) {
+      await disposeAsset();
+      throw const FidibekiException(
+        FidibekiErrorCode.attachment,
+        'Screenshot data does not match its declaration.',
+      );
+    }
+    if (!_matchesDeclaredType(bytes, asset.contentType)) {
       await disposeAsset();
       throw const FidibekiException(
         FidibekiErrorCode.attachment,

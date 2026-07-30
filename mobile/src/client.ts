@@ -106,7 +106,42 @@ function errorFromStatus(status: number): MobileClientError | null {
   return null
 }
 
-function errorFromResponse(status: number, body: unknown): MobileClientError {
+function safeValidationFields(
+  details: unknown,
+  session: MobileCaptureSession,
+): Record<string, string> {
+  const allowed = new Set([
+    'comment',
+    'reporter_email',
+    'consent',
+    ...session.configuration.definition.response_blocks.map((block) => `responses.${block.key}`),
+  ])
+  const fields: Record<string, string> = {}
+  const add = (field: unknown, message: unknown): void => {
+    if (typeof field !== 'string' || typeof message !== 'string' || !allowed.has(field)) return
+    fields[field] = field === 'consent' ? 'required' : 'invalid'
+  }
+  if (Array.isArray(details)) {
+    for (const detail of details) {
+      if (typeof detail === 'object' && detail !== null) {
+        const value = detail as Record<string, unknown>
+        add(value.field, value.message)
+      }
+    }
+  } else if (typeof details === 'object' && details !== null) {
+    const rawFields = (details as Record<string, unknown>).fields
+    if (typeof rawFields === 'object' && rawFields !== null) {
+      for (const [field, message] of Object.entries(rawFields)) add(field, message)
+    }
+  }
+  return fields
+}
+
+function errorFromResponse(
+  status: number,
+  body: unknown,
+  session: MobileCaptureSession,
+): MobileClientError {
   const statusError = errorFromStatus(status)
   if (statusError) return statusError
   const envelope = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
@@ -122,40 +157,18 @@ function errorFromResponse(status: number, body: unknown): MobileClientError {
   }
   const code = typeof object.code === 'string' ? object.code : ''
   const reason = typeof object.reason === 'string' ? object.reason : ''
-  const message = typeof object.message === 'string' ? object.message : 'The feedback request was rejected'
   if (status === 409 && code === 'configuration_changed') {
-    return new MobileClientError('configuration_changed', message)
+    return new MobileClientError('configuration_changed', 'The feedback configuration changed')
   }
   if (status === 422) {
-    const details = object.details
-    const fields: Record<string, string> = {}
-    if (Array.isArray(details)) {
-      for (const detail of details) {
-        if (
-          typeof detail === 'object' &&
-          detail !== null &&
-          typeof (detail as Record<string, unknown>).field === 'string' &&
-          typeof (detail as Record<string, unknown>).message === 'string'
-        ) {
-          const field = (detail as { field: string }).field
-          const fieldMessage = (detail as { message: string }).message
-          fields[field] = fieldMessage
-        }
-      }
-    } else if (typeof details === 'object' && details !== null) {
-      const rawFields = (details as Record<string, unknown>).fields
-      if (typeof rawFields === 'object' && rawFields !== null) {
-        for (const [field, fieldMessage] of Object.entries(rawFields)) {
-          if (typeof fieldMessage === 'string') fields[field] = fieldMessage
-        }
-      }
-    }
-    return new MobileClientError('validation_error', message, { fields })
+    return new MobileClientError('validation_error', 'Feedback is invalid', {
+      fields: safeValidationFields(object.details, session),
+    })
   }
   if (code.includes('session_expired') || reason === 'session_expired') {
     return new MobileClientError('session_expired', 'The capture session expired')
   }
-  return new MobileClientError('network_error', message, {
+  return new MobileClientError('network_error', 'Feedback request failed', {
     retryable: isRetryableStatus(status),
   })
 }
@@ -325,7 +338,7 @@ export class MobileClient {
         throw error
       }
       if (!response.ok) {
-        const responseError = errorFromResponse(response.status, body)
+        const responseError = errorFromResponse(response.status, body, session)
         if (responseError.retryable) throw retainRetryableFailure(responseError)
         existing.retain = false
         throw responseError

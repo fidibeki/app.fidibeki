@@ -103,6 +103,13 @@
         "logo_url": "https://assets.example.test/logo.png"
       }
     },
+    "controller_profile": {
+      "version": 3,
+      "name": "Example Controller",
+      "privacy_contact_email": "privacy@example.test",
+      "privacy_rights_email": "rights@example.test",
+      "privacy_policy_url": "https://privacy.example.test/feedback"
+    },
     "contact_notice": {
       "notice_version": "2026-07-controller-v1",
       "controller_profile_version": 3,

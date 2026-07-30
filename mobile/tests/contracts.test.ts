@@ -15,6 +15,30 @@ function fixture<T>(name: string): T {
   return JSON.parse(readFileSync(url, 'utf8')) as T
 }
 
+function unknownFieldTarget(
+  session: Record<string, unknown>,
+  target: string,
+): Record<string, unknown> {
+  const configuration = session.configuration as Record<string, unknown>
+  const definition = configuration.definition as Record<string, unknown>
+  const blocks = definition.response_blocks as Array<Record<string, unknown>>
+  const targets: Record<string, Record<string, unknown>> = {
+    session,
+    configuration,
+    definition,
+    response_block: blocks[0]!,
+    response_option: (blocks[1]!.options as Array<Record<string, unknown>>)[0]!,
+    localization: definition.localization as Record<string, unknown>,
+    appearance: definition.appearance as Record<string, unknown>,
+    ai_processing: definition.ai_processing as Record<string, unknown>,
+    controller_profile: configuration.controller_profile as Record<string, unknown>,
+    contact_notice: configuration.contact_notice as Record<string, unknown>,
+  }
+  const selected = targets[target]
+  if (!selected) throw new Error(`Unknown fixture target: ${target}`)
+  return selected
+}
+
 describe('shared mobile capture contracts', () => {
   it('accepts the versioned valid session fixture', () => {
     const parsed = validateCaptureSession(fixture('session-valid.json'))
@@ -26,6 +50,57 @@ describe('shared mobile capture contracts', () => {
     expect(() => validateCaptureSession(fixture('session-invalid-schema.json'))).toThrowError(
       MobileClientError,
     )
+  })
+
+  it('rejects shared unknown fields at every contract object', () => {
+    const contract = fixture<{
+      unknown_field: string
+      cases: Array<{ fixture: string; target: string }>
+    }>('session-unknown-fields.json')
+
+    for (const testCase of contract.cases) {
+      const session = fixture<Record<string, unknown>>(testCase.fixture)
+      unknownFieldTarget(session, testCase.target)[contract.unknown_field] = 'must be rejected'
+      expect(
+        () => validateCaptureSession(session),
+        `target ${testCase.target}`,
+      ).toThrowError(MobileClientError)
+    }
+  })
+
+  it('sanitizes untrusted validation response content', async () => {
+    const privateResponse = 'private-token reporter@example.invalid original-feedback'
+    const client = new MobileClient({
+      apiBaseUrl: 'https://api.example.test',
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'validation_failed',
+              message: privateResponse,
+              details: [
+                { field: 'responses.feedback', message: privateResponse },
+                { field: 'capture_token', message: privateResponse },
+              ],
+            },
+          }),
+          { status: 422 },
+        ),
+    })
+    const request = fixture<{ request: MobileFeedbackRequest }>('feedback-submit-valid.json').request
+    const failure = client.submitFeedback(
+      validateCaptureSession(fixture('session-valid.json')),
+      request,
+    )
+
+    await expect(failure).rejects.toMatchObject({
+      message: 'Feedback is invalid',
+      fields: { 'responses.feedback': 'invalid' },
+    })
+    await failure.catch((error: unknown) => {
+      expect(String(error)).not.toContain(privateResponse)
+      expect((error as MobileClientError).fields).not.toHaveProperty('capture_token')
+    })
   })
 
   it('normalizes shared screen cases and uses the normalized recurrence component', () => {

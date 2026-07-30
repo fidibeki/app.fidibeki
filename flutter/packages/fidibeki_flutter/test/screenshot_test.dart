@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:fidibeki_flutter/fidibeki_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/image_bytes.dart';
+
 void main() {
   test(
     'prepares bounded supported bytes and disposes the host asset once',
@@ -12,11 +14,11 @@ void main() {
       final prepared = await prepareFidibekiScreenshot(
         FidibekiScreenshotAsset(
           contentType: 'image/png',
-          sizeBytes: 3,
+          sizeBytes: validPngBytes().length,
           read: (maximumBytes) async {
             reads += 1;
             expect(maximumBytes, maxFidibekiScreenshotBytes);
-            return Uint8List.fromList(<int>[1, 2, 3]);
+            return validPngBytes();
           },
           dispose: () async {
             disposals += 1;
@@ -31,7 +33,7 @@ void main() {
         '88888888-8888-4888-8888-888888888888',
       );
       expect(prepared.contentType, 'image/png');
-      expect(prepared.bytes, Uint8List.fromList(<int>[1, 2, 3]));
+      expect(prepared.bytes, validPngBytes());
       expect(() => prepared.bytes[0] = 9, throwsUnsupportedError);
       expect(reads, 1);
       expect(prepared.toString(), isNot(contains('file:')));
@@ -80,6 +82,25 @@ void main() {
     },
   );
 
+  test('accepts signatures for every supported screenshot type', () async {
+    for (final testCase in <(String, Uint8List)>[
+      ('image/png', validPngBytes()),
+      ('image/jpeg', validJpegBytes()),
+      ('image/webp', validWebpBytes()),
+    ]) {
+      final prepared = await prepareFidibekiScreenshot(
+        FidibekiScreenshotAsset(
+          contentType: testCase.$1,
+          sizeBytes: testCase.$2.length,
+          read: (_) async => testCase.$2,
+        ),
+      );
+      expect(prepared.contentType, testCase.$1);
+      expect(prepared.bytes, testCase.$2);
+      await prepared.dispose();
+    }
+  });
+
   test('rejects byte mismatches and reader failures with cleanup', () async {
     var mismatchDisposals = 0;
     await expectLater(
@@ -121,4 +142,39 @@ void main() {
     );
     expect(failureDisposals, 1);
   });
+
+  test(
+    'rejects bytes whose signature does not match the declared type',
+    () async {
+      var disposals = 0;
+      final cases = <(String, List<int>)>[
+        ('image/png', <int>[0xff, 0xd8, 0xff, 0xd9]),
+        ('image/jpeg', <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        ('image/webp', <int>[0x52, 0x49, 0x46, 0x46]),
+      ];
+
+      for (final testCase in cases) {
+        await expectLater(
+          prepareFidibekiScreenshot(
+            FidibekiScreenshotAsset(
+              contentType: testCase.$1,
+              sizeBytes: testCase.$2.length,
+              read: (_) async => Uint8List.fromList(testCase.$2),
+              dispose: () async {
+                disposals += 1;
+              },
+            ),
+          ),
+          throwsA(
+            isA<FidibekiException>().having(
+              (error) => error.code,
+              'code',
+              FidibekiErrorCode.attachment,
+            ),
+          ),
+        );
+      }
+      expect(disposals, cases.length);
+    },
+  );
 }

@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fidibeki_flutter/fidibeki_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'support/image_bytes.dart';
 
 Map<String, Object?> fixtureJson(String name) {
   var directory = Directory.current.absolute;
@@ -142,8 +143,8 @@ void main() {
       sessionProvider: (_) async => screenshotSession(),
       screenshotProvider: () async => FidibekiScreenshotAsset(
         contentType: 'image/png',
-        sizeBytes: 3,
-        read: (_) async => Uint8List.fromList(<int>[1, 2, 3]),
+        sizeBytes: validPngBytes().length,
+        read: (_) async => validPngBytes(),
         dispose: () async {
           disposals += 1;
         },
@@ -203,8 +204,8 @@ void main() {
       sessionProvider: (_) async => screenshotSession(),
       screenshotProvider: () async => FidibekiScreenshotAsset(
         contentType: 'image/png',
-        sizeBytes: 3,
-        read: (_) async => Uint8List.fromList(<int>[1, 2, 3]),
+        sizeBytes: validPngBytes().length,
+        read: (_) async => validPngBytes(),
       ),
       clientAttachmentIdGenerator: () => '88888888-8888-4888-8888-888888888888',
       feedbackIdGenerator: () => '99999999-9999-4999-8999-999999999999',
@@ -260,8 +261,8 @@ void main() {
         sessionProvider: (_) async => screenshotSession(),
         screenshotProvider: () async => FidibekiScreenshotAsset(
           contentType: 'image/png',
-          sizeBytes: 3,
-          read: (_) async => Uint8List.fromList(<int>[1, 2, 3]),
+          sizeBytes: validPngBytes().length,
+          read: (_) async => validPngBytes(),
           dispose: () async {
             disposals += 1;
           },
