@@ -1,62 +1,70 @@
 ---
 skill: review-chain
 version: 1
-date: 2026-07-25
+date: 2026-07-30
 status: final
 ---
 
 # Review Chain Report
 
-**Artifact**: Yearly plan subscription support (branch `feat/yearly-plans`, ~25 files: Go billing backend, migration 000110, Nuxt billing page, marketing pricing data)
-**Date**: 2026-07-25
-**Rounds**: 1 (specialist dispatch: security + correctness + consistency/perf, run in parallel)
-
-## Verdict: FIXED
-
-## Issues Found
-| # | Reviewer | Severity | Confidence | Location | Problem | Status |
-|---|----------|----------|------------|----------|---------|--------|
-| 1 | correctness | major | 7/10 | backend/internal/billing/store.go (ApplyEvent) | `billing_interval` was written from the incoming price on every event, while a downgrade defers the plan via `pending_plan` — a combined downgrade+interval switch would expose a plan/interval pair Stripe isn't actually charging | Fixed — interval now updates only in the branches where `plan` itself updates; NULL-safe via `intervalValue()` |
-| 2 | correctness | minor | 7/10 | infra/migrations/000110 up | No backfill: pre-existing subscribers would show `billing_interval: null` until their next webhook | Fixed — `UPDATE tenants SET billing_interval='monthly' WHERE stripe_subscription_id IS NOT NULL` (all pre-migration subscriptions are monthly by construction) |
-| 3 | consistency | minor | 6/10 (uncertain) | web/pages/billing.vue checkout() | With the yearly toggle active, checkout sent `yearly` even for a plan without a configured yearly price (latent partial-rollout footgun; card already displays the monthly fallback) | Fixed — checkout clamps to `monthly` when the plan has no `yearly_price_cents`, matching the displayed price |
-| 4 | consistency | nit | 5/10 (uncertain) | backend/internal/config/plans_test.go | Self-service plan test did not assert `YearlyPriceCents != nil` | Fixed — assertion added |
-
-Security reviewer: PASS (no findings; independently flagged issue #1 as a non-security observation, corroborating the correctness reviewer).
-
-## Input Quality Assessment
-| Input | Rating | Evidence |
-|-------|--------|----------|
-| Product/domain context | Rich | Existing monthly billing pipeline, marketing pricing data, and plan catalog fully specified the intent |
-| Requirements clarity | Precise | Audit performed first; yearly discounts (7%/14%) already advertised by backend catalog and marketing site |
-| Upstream artifacts | Fresh | Live codebase, tests, and migrations current as of implementation |
-
-## Changes Made
-Interval update in `ApplyEvent` now travels with the plan state machine instead of leading it; migration backfills existing subscribers; web checkout clamps interval to what the card displays; config test hardened. Full backend short suite, web unit tests, web typecheck, marketing tests/typecheck, and the billing Playwright e2e (desktop) re-run green after fixes.
-
-## Reviewer's Summary
-Core interval-aware plumbing (catalog, checkout validation, webhook mapping, migration NULL handling, per-month arithmetic) judged correct and well covered by tests; trust boundaries unchanged — price IDs are resolved exclusively server-side, webhook plan/interval derives from Stripe's own subscription data, and access control middleware is untouched.
-
-## Resolver's Notes
-No findings declined. Integration tests (Docker-based) were updated for the new semantics but could not be executed locally (no Docker daemon); they will run in CI.
-
----
-
-# Review Chain Report: Passwordless Login Abuse Guard
-
-**Artifact**: Issue #155 tenant passwordless-login cooldown and rate budgets
-**Date**: 2026-07-28
+**Artifact**: Issue #162 unpublished Flutter feedback SDK (`529bfc5..d313a37`)
+**Date**: 2026-07-30
 **Rounds**: 2
 
 ## Verdict: FIXED
 
-The first independent security review found one blocking privacy issue: the
-new suppression and dependency-failure logs included the raw tenant ID. The
-handler now logs only the event and suppression reason, while its isolated HTTP
-tests reject raw tenant ID, normalized email, and client IP in both paths. The
-design was updated to match.
+## Issues Found
 
-The second independent review passed with no findings. It confirmed that the
-guard runs before member lookup, magic-link creation, and email scheduling;
-fails closed; applies the intended cooldown and tenant/email, tenant/network,
-and tenant-wide budgets; preserves the generic accepted response on policy
-denial; and does not expose request identities in keys or logs.
+| # | Round | Severity | Problem | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | 1 | major | Backend-controlled 422 messages could cross the SDK trust boundary into public fields and UI | Active field paths now map only to localized SDK-owned copy; adversarial UI and `toString` tests reject leaked text |
+| 2 | 1 | major | Screenshot declarations trusted MIME metadata without validating the byte signature | PNG, JPEG, and WebP signatures are verified before upload, with cross-type, invalid, and cleanup coverage |
+| 3 | 1 | minor | Session parsing did not reject unknown fields consistently or share that failure mode with React Native | Strict unknown-field rejection now covers every contract object in both clients through a shared fixture |
+| 4 | 1 | minor | The public error taxonomy diverged from the approved design | Design, API, and exact enum tests now define one stable typed taxonomy |
+| 5 | 1 | minor | Publishable package metadata omitted the supported platform declarations | Both packages declare Android and iOS only, enforced by a structural test |
+| 6 | 2 | minor | Cooldown eligibility woke only after lifecycle resume, so a continuously foregrounded app could remain stale | A generation-guarded timer wakes in foreground, pauses in background, recalculates on resume, and is race-tested |
+| 7 | 2 | minor | A sanitized 422 field outside the visible form produced no actionable UI error | Unmapped validation now renders safe generic SDK-owned submit guidance, with an adversarial widget test |
+
+All seven findings were fixed. No findings were declined.
+
+## Input Quality Assessment
+
+| Input | Rating | Evidence |
+|-------|--------|----------|
+| Product/domain context | Rich | Approved Flutter design and implementation plan reuse the shipped capture-session, Feedback, recurrence, screenshot, and React Native contracts |
+| Requirements clarity | Precise | Tasks 55-62 define acceptance, boundaries, test gates, supported platforms, and explicit non-goals |
+| Upstream artifacts | Fresh | Design, plan, shared fixtures, React Native implementation, and backend contract were current on 2026-07-30 |
+
+## Changes Made
+
+The final SDK rejects untrusted copy and unknown contract fields, validates screenshot signatures,
+formalizes errors and platforms, wakes cooldowns without lifecycle dependence, and always exposes a
+safe recovery path. CI isolates Flutter on WarpBuild x64 Linux and ARM macOS, runs logical tests and
+coverage independently of rasterization, and keeps four visual snapshots mandatory with a tested
+0.005% renderer-drift ceiling.
+
+Remote Flutter CI
+[`30549838734`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838734)
+passes 9 example tests (1 opt-in smoke skipped), 72 package tests, 81 lowest-dependency tests
+(1 opt-in smoke skipped), 90.93% package line coverage (1624/1786), fatal analysis, API docs,
+unpublished package dry-runs, four macOS goldens, Android release, and iOS simulator builds.
+Mobile CI
+[`30547917774`](https://github.com/fidibeki/app.fidibeki/actions/runs/30547917774)
+and Security CI
+[`30549838762`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838762)
+also pass. Local Android and iOS runtime smokes each completed one rating/text Feedback and one
+70-byte screenshot attachment without duplicate submission.
+
+## Simplifications
+
+No material simplification was accepted. Narrowing the public barrel export was declined because
+host integration intentionally needs the exposed controller, model, theme, storage, and client
+types; changing that surface would be a separate API-design decision. Safe validation-copy
+generation remains centralized at the trust boundary.
+
+## Reviewer Summary
+
+Round 1 found five contract and trust-boundary gaps; round 2 confirmed those fixes and found two
+lifecycle/recovery gaps. The final implementation addresses every finding with focused regression
+coverage, preserves parity with the shared mobile contract, and adds no backend, production,
+deployment, runtime infrastructure, or registry behavior.
