@@ -99,6 +99,12 @@ const actionNotice = ref('')
 const reporterEmail = ref('')
 const reporterAction = ref<ReporterPrivacyAction>('export')
 const expandedRetentionCategories = ref(new Set<string>())
+// Exceptions surface, routine collapses: an operation that missed its window
+// is the only row worth reading before opening the full ledger.
+const retentionHealthExceptions = computed(() =>
+  (data.value?.retentionHealth?.operations || []).filter(operation => operation.state !== 'healthy'))
+const retentionHealthSteady = computed(() =>
+  (data.value?.retentionHealth?.operations || []).filter(operation => operation.state === 'healthy'))
 const anonymizeDialogOpen = ref(false)
 const anonymizeConfirmation = ref('')
 const caseSubjectType = ref<PrivacySubjectType>('reporter')
@@ -1134,7 +1140,14 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
             <div><b>{{ data.dashboard.failed_external }}</b><span>{{ t('admin.privacy.settings.cases.failedExternal') }}</span></div>
             <div><b>{{ data.dashboard.completed }}</b><span>{{ t('admin.privacy.settings.cases.completed') }}</span></div>
           </div>
-          <form class="privacy-case-form" @submit.prevent="createPrivacyCase">
+          <details class="settings-disclosure privacy-case-composer">
+            <summary>
+              <span class="settings-disclosure-head">
+                <div><h3>{{ t('admin.privacy.settings.cases.openCase') }}</h3></div>
+                <em>{{ t('admin.privacy.settings.cases.openCaseHint') }}</em>
+              </span>
+            </summary>
+            <form class="privacy-case-form" @submit.prevent="createPrivacyCase">
             <label>{{ t('admin.privacy.settings.cases.subjectType') }}
               <select v-model="caseSubjectType" class="app-select">
                 <option value="reporter">{{ t('admin.privacy.settings.cases.reporter') }}</option>
@@ -1170,7 +1183,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
             <button class="app-button app-button--primary" type="submit" :disabled="Boolean(actionPending)">
               <ShieldCheck :size="15" />{{ actionPending === 'create-case' ? t('admin.common.queuing') : t('admin.privacy.settings.cases.create') }}
             </button>
-          </form>
+            </form>
+          </details>
           <div v-if="!data.cases.length" class="privacy-empty privacy-empty--compact"><ShieldCheck :size="22" /><h3>{{ t('admin.privacy.settings.cases.empty') }}</h3></div>
           <div v-else class="privacy-table privacy-case-table">
             <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.cases.case') }}</span><span>{{ t('admin.privacy.settings.cases.subject') }}</span><span>{{ t('admin.privacy.settings.columns.status') }}</span><span>{{ t('admin.privacy.settings.cases.deadline') }}</span><span>{{ t('admin.privacy.settings.cases.owner') }}</span><span /></div>
@@ -1643,9 +1657,12 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
               <span><b>{{ data.retentionHealth.summary.failed + data.retentionHealth.summary.overdue }}</b>{{ t('admin.privacy.settings.health.needsAction') }}</span>
               <span><b>{{ data.retentionHealth.summary.not_observed }}</b>{{ t('admin.privacy.settings.health.status.not_observed') }}</span>
             </div>
-            <div class="privacy-retention-health-table">
+            <!-- Only operations that missed their window earn a permanent row;
+                 the routine remainder collapses so a healthy workspace reads
+                 the four counts and stops. -->
+            <div v-if="retentionHealthExceptions.length" class="privacy-retention-health-table privacy-retention-health-exceptions">
               <div
-                v-for="operation in data.retentionHealth.operations"
+                v-for="operation in retentionHealthExceptions"
                 :key="operation.operation"
                 class="privacy-retention-health-row"
               >
@@ -1672,8 +1689,50 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                 </span>
               </div>
             </div>
+            <details v-if="retentionHealthSteady.length" class="settings-disclosure privacy-health-ledger">
+              <summary>
+                <span class="settings-disclosure-head">
+                  <div><h3>{{ plural('admin.privacy.settings.health.steadyOperations', retentionHealthSteady.length, { count: retentionHealthSteady.length }) }}</h3></div>
+                  <em>{{ t('admin.privacy.settings.health.steadyHint') }}</em>
+                </span>
+              </summary>
+              <div class="privacy-retention-health-table">
+                <div
+                  v-for="operation in retentionHealthSteady"
+                  :key="operation.operation"
+                  class="privacy-retention-health-row"
+                >
+                  <span>
+                    <b>{{ retentionOperationLabel(operation.operation) }}</b>
+                    <small>{{ retentionCategoryLabel(operation.category) }}</small>
+                  </span>
+                  <span>
+                    <span class="privacy-status" :data-tone="retentionHealthTone(operation.state)"><i />{{ retentionHealthLabel(operation.state) }}</span>
+                    <small>{{ retentionHealthAlert(operation.alert_reason) }}</small>
+                  </span>
+                  <span>
+                    <b>{{ operation.last_success_at ? dateTime(operation.last_success_at) : t('admin.common.never') }}</b>
+                    <small>{{ t('admin.privacy.settings.health.nextExpected', { date: dateTime(operation.next_expected_at) }) }}</small>
+                  </span>
+                  <span>
+                    <b>{{ decimal(operation.last_processed) }} / {{ decimal(operation.total_processed) }}</b>
+                    <small>{{ t('admin.privacy.settings.health.processed') }}</small>
+                  </span>
+                </div>
+              </div>
+            </details>
           </div>
-          <div class="privacy-table privacy-retention-table">
+          <!-- The register is reference material, not daily work: the summary
+               strip above answers the day-to-day question, so the fourteen
+               category rows only unfold on demand. -->
+          <details class="settings-disclosure privacy-register">
+            <summary>
+              <span class="settings-disclosure-head">
+                <div><h3>{{ t('admin.privacy.settings.register') }}</h3></div>
+                <em>{{ plural('admin.privacy.settings.registerHint', data.retention?.policies.length || 0, { count: data.retention?.policies.length || 0 }) }}</em>
+              </span>
+            </summary>
+            <div class="privacy-table privacy-retention-table">
             <div class="privacy-row privacy-row--head"><span>{{ t('admin.privacy.settings.columns.category') }}</span><span>{{ t('admin.privacy.settings.columns.retention') }}</span><span>{{ t('admin.privacy.settings.columns.lifecycle') }}</span><span>{{ t('admin.privacy.settings.columns.operation') }}</span></div>
             <template v-for="policy in data.retention?.policies || []" :key="policy.category">
               <div class="privacy-row">
@@ -1714,7 +1773,8 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
                 <div><b>{{ t('admin.privacy.settings.detail.control') }}</b><p>{{ policy.implementation || t('admin.privacy.settings.detail.notAutomated') }}</p></div>
               </div>
             </template>
-          </div>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -1865,6 +1925,9 @@ async function finalizeRequest(request: ReporterPrivacyRequest) {
 .privacy-retention-health-row > span { display: grid; min-width: 0; gap: 3px; padding: 9px 15px; }
 .privacy-retention-health-row b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .privacy-retention-health-row small { overflow: hidden; color: var(--muted); font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.privacy-retention-health-exceptions + .privacy-health-ledger { border-top: 1px solid var(--line); }
+.privacy-case-composer { border-bottom: 1px solid var(--line); }
+.privacy-case-composer .privacy-case-form { border-bottom: 0; }
 .privacy-retention-table .privacy-row { grid-template-columns: minmax(190px, 1.15fr) minmax(135px, .7fr) minmax(170px, .9fr) minmax(180px, 1fr); }
 .privacy-retention-lifecycle { display: grid; align-content: center; }
 .privacy-retention-operation { text-align: right; }

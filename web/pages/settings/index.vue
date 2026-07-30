@@ -41,6 +41,7 @@ import type {
   TenantConfiguration,
   WidgetAppearanceOverrides,
 } from '~/types/api'
+import { settingsSectionFromQuery, settingsSectionIDs, settingsSectionRoute } from '~/utils/settings-sections'
 import { apiErrorMessage, apiFieldErrors } from '~/utils/api-fetch'
 import { cleanAppearanceOverrides, defaultWidgetAppearance } from '~/utils/widget-appearance'
 
@@ -53,16 +54,17 @@ const localizedError = useLocalizedAPIError()
 const { currency, date, integer, plural } = useRegionalFormat()
 const { success: showSuccessToast, error: showErrorToast } = useAppToast()
 
-const tabIDs = ['workspace', 'members', 'security', 'sso', 'keys', 'integrations', 'health', 'privacy', 'audit'] as const
-type SettingsTab = typeof tabIDs[number]
-const tabs = computed(() => tabIDs.map(id => ({
-  id,
-  label: t(`admin.settings.tabs.${id}`),
-})))
-
-const activeTab = computed<SettingsTab>(() => {
-  const value = typeof route.query.tab === 'string' ? route.query.tab : 'workspace'
-  return tabIDs.includes(value as SettingsTab) ? value as SettingsTab : 'workspace'
+// Section navigation lives in the global rail (see layouts/default.vue); the
+// page and the rail share one section list so they cannot drift. On narrow
+// viewports the rail folds into a drawer, so the sections resurface here as
+// chips — client-gated, because rendering them alongside the visible rail
+// would put two identically named links in the page.
+const activeTab = computed(() => settingsSectionFromQuery(route.query))
+const narrowViewport = ref(false)
+onMounted(() => {
+  const media = window.matchMedia('(max-width: 700px)')
+  narrowViewport.value = media.matches
+  media.addEventListener('change', (event) => { narrowViewport.value = event.matches })
 })
 
 const { data, status, error, refresh } = await useAsyncData('settings-data', async () => {
@@ -913,16 +915,18 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
       <div><p class="app-eyebrow">{{ t('admin.settings.eyebrow') }}</p><h1>{{ t('admin.settings.title') }}</h1><span>{{ t('admin.settings.description') }}</span></div>
     </header>
 
-    <nav class="settings-tabs" :aria-label="t('admin.settings.sections')">
-      <NuxtLink v-for="tab in tabs" :key="tab.id" :to="{ path: '/settings', query: tab.id === 'workspace' ? {} : { tab: tab.id } }" :data-active="activeTab === tab.id">{{ tab.label }}</NuxtLink>
+    <nav v-if="narrowViewport" class="settings-sections-mobile" :aria-label="t('admin.settings.sections')">
+      <NuxtLink v-for="id in settingsSectionIDs" :key="id" :to="settingsSectionRoute(id)" :data-active="activeTab === id">{{ t(`admin.settings.tabs.${id}`) }}</NuxtLink>
     </nav>
 
     <section v-if="status === 'pending'" class="app-surface app-state"><div><span class="app-spinner" /><h2>{{ t('admin.settings.loading') }}</h2></div></section>
     <section v-else-if="error" class="app-surface app-state"><div><AlertTriangle :size="24" /><h2>{{ t('admin.settings.unavailable') }}</h2><p>{{ localizedError.message(error, 'admin.settings.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('admin.common.tryAgain') }}</button></div></section>
 
     <template v-else-if="data">
+      <!-- State first, controls second: the read-only ledger and entitlements
+           answer "what is this workspace right now"; the two identity forms sit
+           behind closed disclosures because editing them is a deliberate act. -->
       <section v-if="activeTab === 'workspace'" class="settings-workspace">
-        <OrganizationProfile @updated="applyOrganizationProfile" />
         <div class="app-surface settings-section">
           <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.eyebrow') }}</p><h2>{{ data.configuration.tenant.name }}</h2></div><span class="settings-state"><i />{{ statusLabel(data.configuration.tenant.status) }}</span></header>
           <dl class="settings-ledger">
@@ -948,16 +952,27 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
           <label><span><b>{{ t('admin.settings.workspace.reporterProgress') }}</b><small>{{ t('admin.settings.workspace.reporterDescription') }}</small></span><input type="checkbox" :checked="data.configuration.tenant.reporter_access_enabled" :disabled="pending || !canWrite('tenant:update')" :aria-label="t('admin.settings.workspace.reporterProgress')" @change="updateReporterAccess(($event.target as HTMLInputElement).checked)" /></label>
           <p v-if="reporterAccessError" class="settings-form-error" role="alert">{{ reporterAccessError }}</p>
         </div>
-        <form class="app-surface settings-section settings-widget-appearance" @submit.prevent="updateWidgetAppearance">
-          <header><div><p class="app-eyebrow">{{ t('admin.settings.workspace.widgetEyebrow') }}</p><h2>{{ t('admin.settings.workspace.controlledAppearance') }}</h2></div><button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">{{ t('admin.settings.workspace.saveDefaults') }}</button></header>
-          <WidgetAppearanceEditor
-            v-model="workspaceAppearance"
-            :parent="defaultWidgetAppearance"
-            :errors="appearanceFieldErrors"
-            @field-edited="clearAppearanceField"
-          />
-          <p v-if="appearanceFormError" class="settings-form-error" role="alert">{{ appearanceFormError }}</p>
-        </form>
+        <OrganizationProfile @updated="applyOrganizationProfile" />
+        <details class="app-surface settings-disclosure settings-widget-appearance">
+          <summary>
+            <span class="settings-disclosure-head">
+              <div><p class="app-eyebrow">{{ t('admin.settings.workspace.widgetEyebrow') }}</p><h2>{{ t('admin.settings.workspace.controlledAppearance') }}</h2></div>
+              <em>{{ t('admin.settings.workspace.appearanceHint') }}</em>
+            </span>
+          </summary>
+          <form @submit.prevent="updateWidgetAppearance">
+            <WidgetAppearanceEditor
+              v-model="workspaceAppearance"
+              :parent="defaultWidgetAppearance"
+              :errors="appearanceFieldErrors"
+              @field-edited="clearAppearanceField"
+            />
+            <p v-if="appearanceFormError" class="settings-form-error" role="alert">{{ appearanceFormError }}</p>
+            <footer class="settings-appearance-actions">
+              <button class="app-button app-button--primary" type="submit" :disabled="pending || !canWrite('tenant:update')">{{ t('admin.settings.workspace.saveDefaults') }}</button>
+            </footer>
+          </form>
+        </details>
       </section>
 
       <div v-else-if="activeTab === 'members'" class="settings-members-page">
@@ -1216,21 +1231,22 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 </template>
 
 <style scoped>
-.settings-tabs { display: flex; gap: 22px; margin: -4px 0 18px; border-bottom: 1px solid var(--line); }
-.settings-tabs a { position: relative; padding: 0 1px 11px; color: var(--muted); font-size: 11px; font-weight: 750; text-decoration: none; }
-.settings-tabs a[data-active='true'] { color: var(--teal); }
-.settings-tabs a[data-active='true']::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--teal); content: ''; }
+.settings-sections-mobile { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 16px; }
+.settings-sections-mobile a { flex: 0 0 auto; padding: 7px 11px; background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 700; text-decoration: none; }
+.settings-sections-mobile a[data-active='true'] { background: var(--rail-active); color: var(--teal); border-color: var(--teal-line); }
+
 .settings-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
 .settings-reporter-policy { grid-column: 1 / -1; }
 .settings-widget-appearance { grid-column: 1 / -1; }
-.settings-widget-appearance > :deep(.appearance-editor) { padding: 16px; }
+.settings-widget-appearance :deep(.appearance-editor) { padding: 16px; }
+.settings-appearance-actions { display: flex; justify-content: flex-end; padding: 0 16px 16px; }
 .settings-reporter-policy > label { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 16px; }
 .settings-reporter-policy > label > span { display: flex; flex-direction: column; gap: 4px; }
 .settings-reporter-policy b { font-size: 11px; }
 .settings-reporter-policy small { color: var(--muted); font-size: 9px; }
 .settings-reporter-policy input { width: 18px; height: 18px; accent-color: var(--teal); }
 .settings-reporter-policy .settings-form-error { margin: 0 16px 14px; }
-.settings-widget-appearance > .settings-form-error { margin: 0 16px 16px; }
+.settings-widget-appearance .settings-form-error { margin: 0 16px 16px; }
 .settings-members-page { display: grid; gap: 16px; }
 .settings-integrations-page { display: grid; gap: 16px; }
 .settings-section { overflow: hidden; }
@@ -1356,5 +1372,5 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 .settings-secret code { width: 100%; padding: 10px; overflow-wrap: anywhere; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); font-size: 11px; }
 .capitalize { text-transform: capitalize; }
 @media (max-width: 900px) { .settings-workspace { grid-template-columns: 1fr; } .settings-row--head { display: none; } .settings-members .settings-row { grid-template-columns: minmax(0, 1fr) auto minmax(38px, auto); } .settings-keys .settings-row, .settings-integrations .settings-row { grid-template-columns: minmax(0, 1fr) auto; } .settings-row > span:not(:first-child), .settings-row > code { display: none; } .settings-members .settings-row > .settings-member-access, .settings-members .settings-row > .settings-member-actions, .settings-integrations .settings-row > .settings-row-actions { display: flex; } }
-@media (max-width: 650px) { .settings-tabs { flex-wrap: wrap; gap: 8px 15px; overflow-x: visible; } .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-privacy-fields, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
+@media (max-width: 650px) { .settings-entitlements { grid-template-columns: 1fr; } .settings-entitlements > div { min-height: 70px; border-right: 0; border-bottom: 1px solid var(--line); } .settings-entitlements > div:last-child { border-bottom: 0; } .settings-features, .settings-form-grid, .settings-events, .settings-privacy-fields, .settings-domain-form { grid-template-columns: 1fr; } .settings-domain-form .app-button { width: 100%; } }
 </style>

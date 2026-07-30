@@ -1,17 +1,12 @@
 .app-shell {
   --app-topbar: 56px;
-  --app-global-rail: 80px;
-  --app-queue-rail: 216px;
+  --app-global-rail: 236px;
   display: grid;
   min-height: 100vh;
   grid-template-columns: var(--app-global-rail) minmax(0, 1fr);
   grid-template-rows: var(--app-topbar) minmax(0, 1fr);
   background: var(--canvas);
   color: var(--ink);
-}
-
-.app-shell--queues {
-  grid-template-columns: var(--app-global-rail) var(--app-queue-rail) minmax(0, 1fr);
 }
 
 .app-topbar {
@@ -28,9 +23,12 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* Sized so the brand block plus the topbar's own padding and gap end exactly on
+   the rail's right edge: the tenant switcher then starts on the same vertical
+   line the rail ends on, instead of floating a few pixels off it. */
 .app-brand {
   display: flex;
-  width: 150px;
+  width: calc(var(--app-global-rail) - 22px);
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
@@ -74,21 +72,28 @@
   display: block;
 }
 
+/* The workspace identity heads the rail: the tenant owns the navigation it
+   scopes, and the topbar keeps a single brand mark. */
 .app-tenant-switcher {
   display: flex;
-  min-width: 150px;
-  max-width: 220px;
-  min-height: 38px;
+  min-height: 44px;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 0 9px;
+  margin: 2px 0 10px;
+  padding: 0 8px;
   overflow: hidden;
-  background: var(--canvas);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--ink-soft);
+  border-radius: 6px;
+  color: var(--ink);
   text-decoration: none;
+}
+
+.app-tenant-switcher:hover {
+  background: var(--rail-active-soft);
+}
+
+.app-tenant-switcher:hover > svg {
+  color: var(--ink-soft);
 }
 
 .app-tenant-switcher > span {
@@ -106,19 +111,24 @@
 
 .app-tenant-switcher b {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.app-tenant-switcher svg {
+/* The gear announces where the row leads; it stays quiet until intent. */
+.app-tenant-switcher > svg {
   flex: 0 0 auto;
   margin-left: auto;
+  color: var(--muted);
 }
 
 /* The search is the only elastic item in the topbar: every other control is
-   flex: 0 0 auto, so tight widths shrink the input instead of clipping icons. */
-.app-global-search {
+   flex: 0 0 auto, so tight widths shrink the trigger instead of clipping icons.
+   It opens the command palette rather than accepting text inline — the palette
+   is where results, grouping and keyboard motion live. */
+.app-search-trigger {
   display: flex;
   width: min(360px, 31vw);
   min-width: 96px;
@@ -127,25 +137,46 @@
   align-items: center;
   gap: 8px;
   margin-left: 2px;
-  padding: 0 10px;
+  padding: 0 8px 0 10px;
   background: var(--canvas);
   border: 1px solid var(--line);
   border-radius: 5px;
   color: var(--muted);
+  font-size: 12px;
+  text-align: left;
 }
 
-.app-global-search:focus-within {
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+.app-search-trigger:hover {
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
 }
 
-.app-global-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
+.app-search-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-search-trigger .app-kbd {
+  margin-left: auto;
+}
+
+/* Shared by the topbar trigger and the palette's hint bar so a shortcut chip is
+   the same object wherever the app shows one. */
+.app-kbd {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .app-topbar-actions {
@@ -301,47 +332,101 @@
   grid-column: 1;
   grid-row: 2;
   flex-direction: column;
-  align-items: center;
-  padding: 12px 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 10px 18px;
   background: var(--rail);
   border-right: 1px solid var(--line);
 }
 
+/* Primary destinations and the queues nested beneath Feedback share one row
+   shape, so the rail reads as a single list rather than two stacked widgets.
+   Indentation and type size carry the hierarchy instead of a second style. */
 .app-global-rail nav {
   display: flex;
-  width: 100%;
   flex-direction: column;
-  gap: 5px;
+  gap: 1px;
 }
 
 .app-global-rail nav a {
   display: grid;
-  width: 100%;
-  min-height: 54px;
-  grid-template-rows: 20px minmax(20px, auto);
-  place-items: center;
-  align-content: center;
-  gap: 4px;
-  padding: 5px 4px;
-  color: var(--muted);
-  border-radius: 5px;
-  text-align: center;
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  color: var(--ink-soft);
+  border-radius: 6px;
+  font-size: 13px;
   text-decoration: none;
 }
 
 .app-global-rail nav a span {
   min-width: 0;
-  max-width: 100%;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.2;
-  overflow-wrap: break-word;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.app-global-rail nav a:hover,
+.app-global-rail nav a:hover {
+  background: var(--rail-active-soft);
+}
+
 .app-global-rail nav a[data-active='true'] {
   background: var(--rail-active);
   color: var(--teal);
+}
+
+.app-global-rail nav a[data-active='true'] span {
+  font-weight: 750;
+}
+
+.app-rail-section > summary {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding: 0 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.app-rail-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-rail-section > summary:hover {
+  color: var(--ink-soft);
+}
+
+.app-rail-section > summary svg {
+  transition: transform 140ms ease;
+}
+
+.app-rail-section[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+/* One guide line for the group stands in for the reference's ↳ glyph: a marker
+   repeated on every row shouts louder than the nesting it describes. */
+.app-global-rail .app-rail-queues {
+  margin: 1px 0 0 17px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+}
+
+.app-global-rail .app-rail-queues a {
+  min-height: 31px;
+  grid-template-columns: 15px minmax(0, 1fr);
+  gap: 9px;
+  font-size: 12px;
 }
 
 .app-mobile-rail-head,
@@ -350,63 +435,10 @@
   display: none;
 }
 
-.app-queue-rail {
-  position: sticky;
-  top: var(--app-topbar);
-  z-index: 50;
-  height: calc(100vh - var(--app-topbar));
-  grid-column: 2;
-  grid-row: 2;
-  overflow-y: auto;
-  padding: 14px 10px;
-  background: var(--rail-soft);
-  border-right: 1px solid var(--line);
-}
-
-.app-queue-heading {
-  display: flex;
-  height: 35px;
-  align-items: center;
-  padding: 0 7px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.app-queue-rail nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.app-queue-rail nav a {
-  display: grid;
-  min-height: 36px;
-  grid-template-columns: 18px 1fr;
-  align-items: center;
-  gap: 7px;
-  padding: 0 8px;
-  color: var(--ink-soft);
-  border-radius: 4px;
-  font-size: 12px;
-  text-decoration: none;
-}
-
-.app-queue-rail nav a:hover,
-.app-queue-rail nav a[data-active='true'] {
-  background: var(--rail-active-soft);
-  color: var(--teal);
-}
-
 .app-main {
   min-width: 0;
   grid-column: 2;
   grid-row: 2;
-}
-
-.app-shell--queues .app-main {
-  grid-column: 3;
 }
 
 .app-readonly-banner {
@@ -522,6 +554,81 @@
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+/* Settings screens open on their current state; editing and reference detail
+   live behind closed disclosures so a closed control reads as one row. */
+.settings-disclosure {
+  padding: 0;
+}
+
+/* The flex row lives on an inner span: putting display:flex on summary itself
+   strips its disclosure semantics from the accessibility tree in Chromium. */
+.settings-disclosure > summary {
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-disclosure > summary:hover {
+  background: var(--surface-subtle);
+}
+
+.settings-disclosure[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: 6px 6px 0 0;
+}
+
+.settings-disclosure-head {
+  display: flex;
+  min-height: 60px;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 16px;
+}
+
+.settings-disclosure-head::before {
+  flex: 0 0 auto;
+  color: var(--muted);
+  content: '▸';
+  font-size: 10px;
+  transition: transform 140ms ease;
+}
+
+.settings-disclosure[open] .settings-disclosure-head::before {
+  transform: rotate(90deg);
+}
+
+.settings-disclosure-head > div {
+  min-width: 0;
+}
+
+.settings-disclosure-head h2,
+.settings-disclosure-head h3 {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+
+.settings-disclosure-head em {
+  overflow: hidden;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On a phone the hint competes with a wrapping title for the same row. */
+@media (max-width: 540px) {
+  .settings-disclosure-head em {
+    display: none;
+  }
 }
 
 .app-state {
@@ -698,17 +805,8 @@
 }
 
 @media (max-width: 980px) {
-  .app-shell,
-  .app-shell--queues {
-    grid-template-columns: var(--app-global-rail) minmax(0, 1fr);
-  }
-
-  .app-queue-rail {
-    display: none;
-  }
-
-  .app-shell--queues .app-main {
-    grid-column: 2;
+  .app-shell {
+    --app-global-rail: 204px;
   }
 
   .app-brand {
@@ -716,28 +814,17 @@
   }
 
   .app-brand b,
-  .app-tenant-switcher b,
   .app-account-menu summary span {
     display: none;
   }
 
-  /* The workspace name is hidden here, so the pill sizes to the mark plus the
-     gear. A fixed width was narrower than that content and clipped the gear. */
-  .app-tenant-switcher {
-    width: auto;
-    min-width: 0;
-    max-width: none;
-    padding: 0 8px;
-  }
-
-  .app-global-search {
+  .app-search-trigger {
     width: min(420px, 48vw);
   }
 }
 
 @media (max-width: 700px) {
-  .app-shell,
-  .app-shell--queues {
+  .app-shell {
     display: block;
     padding-top: var(--app-topbar);
   }
@@ -764,19 +851,10 @@
     width: 84px;
   }
 
-  .app-tenant-switcher {
-    display: flex;
-    width: 38px;
-    min-width: 38px;
-    padding: 0 6px;
-  }
-
-  .app-tenant-switcher > svg {
-    display: none;
-  }
-
-  .app-global-search {
-    position: relative;
+  /* The trigger collapses to its icon here. The palette it opens is its own
+     full-width surface, so the topbar no longer has to expand a field in place
+     to give the query room. */
+  .app-search-trigger {
     width: 38px;
     min-width: 38px;
     flex: 0 0 38px;
@@ -785,30 +863,9 @@
     padding: 0;
   }
 
-  .app-global-search input {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
-
-  .app-global-search:focus-within {
-    position: absolute;
-    right: 56px;
-    left: 56px;
-    z-index: 85;
-    width: auto;
-    padding: 0 10px;
-    justify-content: flex-start;
-  }
-
-  .app-global-search:focus-within input {
-    position: static;
-    width: 100%;
-    height: auto;
-    opacity: 1;
-    cursor: text;
+  .app-search-trigger > span,
+  .app-search-trigger .app-kbd {
+    display: none;
   }
 
   .app-account-menu summary {
@@ -856,18 +913,11 @@
   }
 
   .app-global-rail nav a {
-    grid-template-columns: 20px minmax(0, 1fr);
-    grid-template-rows: 1fr;
-    justify-items: start;
-    min-height: 44px;
-    gap: 12px;
-    padding: 0 12px;
-    text-align: left;
+    min-height: 42px;
   }
 
-  .app-global-rail nav a span {
-    overflow-wrap: normal;
-    font-size: 12px;
+  .app-global-rail .app-rail-queues a {
+    min-height: 38px;
   }
 
   .app-nav-scrim {
@@ -928,6 +978,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .app-global-rail,
+  .app-rail-section > summary svg,
+  .settings-disclosure-head::before,
   .app-spinner {
     transition: none;
     animation: none;

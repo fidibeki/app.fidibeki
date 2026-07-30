@@ -4,6 +4,9 @@ import type { FeedbackSource } from '~/utils/feedback-source'
 
 const props = defineProps<{
   source?: FeedbackSource
+  /** Icon-only, for dense list rows where the label would repeat down the
+   *  column; the accessible name is unchanged. */
+  compact?: boolean
 }>()
 
 const { t } = useI18n()
@@ -18,9 +21,10 @@ const sourceIcon = computed(() => normalizedSource.value === 'web' ? Monitor : S
     class="feedback-source-badge"
     :data-source="normalizedSource"
     :aria-label="t('feedback.source.accessible', { source: t(`feedback.source.${normalizedSource}`) })"
+    :title="compact ? t(`feedback.source.${normalizedSource}`) : undefined"
   >
     <component :is="sourceIcon" :size="11" aria-hidden="true" />
-    {{ t(`feedback.source.${normalizedSource}`) }}
+    <template v-if="!compact">{{ t(`feedback.source.${normalizedSource}`) }}</template>
   </span>
 </template>
 

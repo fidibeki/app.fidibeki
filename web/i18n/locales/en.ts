@@ -27,6 +27,20 @@ export const englishMessages = {
     workspaceLabel: 'Fidibeki workspace',
     workspaceSettings: 'Workspace settings',
     searchFeedback: 'Search feedback',
+    palette: {
+      title: 'Search and jump to',
+      placeholder: 'Search feedback, or jump to a page…',
+      searchFor: 'Search feedback for “{query}”',
+      empty: 'Nothing matches that.',
+      move: 'Move',
+      select: 'Select',
+      cancel: 'Close',
+      groups: {
+        search: 'Search',
+        pages: 'Go to',
+        account: 'Account',
+      },
+    },
     trial: '{plan} trial · one day | {plan} trial · {count} days',
     feedbackQueues: 'Feedback queues',
     queues: {

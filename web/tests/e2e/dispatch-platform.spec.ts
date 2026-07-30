@@ -4464,6 +4464,7 @@ test("workspace widget defaults can be updated with controlled tokens", async ({
   await openPrimary(page, "Settings");
 
   const appearance = page.locator(".settings-widget-appearance");
+  await appearance.locator("summary").click();
   await appearance.getByLabel("Accent color swatch").fill("#46c754");
   await appearance
     .getByLabel("Logo URL")
@@ -4511,6 +4512,7 @@ test("workspace appearance and reporter policy keep validation in their own form
   await expect(reporterPolicy.getByRole("alert")).toBeVisible();
 
   const appearance = page.locator(".settings-widget-appearance");
+  await appearance.locator("summary").click();
   const logoURL = appearance.getByLabel("Logo URL");
   await logoURL.fill("http://example.test/logo.svg");
   await appearance.getByRole("button", { name: "Save defaults" }).click();
@@ -4549,6 +4551,7 @@ test("organization profile validates identity assets and updates the workspace i
   await expect(
     organization.getByRole("heading", { name: "Identity and public defaults" }),
   ).toBeVisible();
+  await organization.locator("summary").click();
 
   state.failNextIdentityUpload = true;
   await organization.getByLabel("Workspace logo file").setInputFiles({
@@ -4634,6 +4637,7 @@ test("organization identity controls are read-only without workspace update acce
   await authenticate(page, state);
   await openPrimary(page, "Settings");
   const organization = page.locator(".organization-profile");
+  await organization.locator("summary").click();
   await expect(
     organization.getByRole("button", { name: "Save profile" }),
   ).toBeDisabled();
@@ -7878,6 +7882,7 @@ test("data privacy controls cover retention, exports, reporter verification, and
   await expect(
     page.getByRole("heading", { name: "Retention schedule" }),
   ).toBeVisible();
+  await page.locator(".privacy-register > summary").click();
   await expect(page.locator(".privacy-retention-table")).toContainText(
     "Attachments",
   );
@@ -7893,6 +7898,12 @@ test("data privacy controls cover retention, exports, reporter verification, and
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Cleanup health",
   );
+  // Operations that missed their window surface as permanent rows; routine
+  // operations sit behind the steady-operations disclosure.
+  await expect(page.locator(".privacy-retention-health-exceptions")).toContainText(
+    "Platform admin magic links",
+  );
+  await page.locator(".privacy-health-ledger > summary").click();
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Workspace magic links",
   );
@@ -8787,6 +8798,7 @@ test("Portuguese administration preserves permissions and operational mutations"
   await expect(
     page.getByRole("heading", { name: "Calendário de retenção" }),
   ).toBeVisible();
+  await page.locator(".privacy-register > summary").click();
   await expect(page.locator(".privacy-retention-table")).toContainText(
     "90 dias",
   );
@@ -8796,6 +8808,7 @@ test("Portuguese administration preserves permissions and operational mutations"
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Saúde da limpeza",
   );
+  await page.locator(".privacy-health-ledger > summary").click();
   await expect(page.locator(".privacy-retention-health")).toContainText(
     "Magic links do workspace",
   );

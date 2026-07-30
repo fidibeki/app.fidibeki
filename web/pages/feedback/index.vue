@@ -31,6 +31,7 @@ import {
   feedbackContextURL,
   feedbackSource,
 } from '~/utils/feedback-source'
+import { feedbackQueueFromQuery } from '~/utils/feedback-queue'
 
 const route = useRoute()
 const router = useRouter()
@@ -475,6 +476,45 @@ function contextLabel(item: FeedbackItem) {
   return feedbackContextLabel(item) || t('feedback.common.notAvailable')
 }
 
+// The heading stays the page's stable name — arriving from the primary nav
+// must land on a heading that matches the link. The scope line underneath
+// names the queue, so rail and content still agree about where "here" is.
+const queueTitleKeys: Record<string, string> = { open: 'open', moderation: 'moderation', ai_failed: 'aiFailed', replay: 'replay', unlinked: 'unlinked', archived: 'archived' }
+const streamScope = computed(() => {
+  const loaded = plural('feedback.loaded', items.value.length, { count: integer(items.value.length) })
+  const queue = feedbackQueueFromQuery(route.query)
+  return queue ? `${t(`navigation.queues.${queueTitleKeys[queue]}`)} · ${loaded}` : loaded
+})
+
+// Recency sorts group rows under day headings, so the timestamp is stated once
+// per day instead of once per row. Rating sorts interleave days, so there the
+// per-row time stays.
+const showRowTime = computed(() => sort.value === 'rating_low' || sort.value === 'rating_high')
+function dayLabel(value: string) {
+  const days = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 86_400_000)
+  return relativeTime(-days, 'day', { numeric: 'auto' })
+}
+const dayBreaks = computed(() => {
+  const breaks = new Map<string, string>()
+  if (showRowTime.value) return breaks
+  let previous = ''
+  for (const item of items.value) {
+    const label = dayLabel(item.created_at)
+    if (label !== previous) {
+      breaks.set(item.id, label)
+      previous = label
+    }
+  }
+  return breaks
+})
+
+// A single-project workspace repeating its one project name down every row is
+// stating nothing; the name earns its place only once there is a second one.
+const showProjectName = computed(() => (projectData.value?.projects.length ?? 0) > 1)
+function shortContext(item: FeedbackItem) {
+  return contextLabel(item).replace(/^https?:\/\//, '')
+}
+
 function formatAge(value: string) {
   const hours = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000))
   if (hours < 1) return t('feedback.common.now')
@@ -493,7 +533,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
   <div class="feedback-workspace">
     <section class="feedback-stream-panel">
       <header class="feedback-stream-head">
-        <div><p class="app-eyebrow">{{ t('feedback.queueEyebrow') }}</p><h1>{{ t('feedback.title') }}</h1><span>{{ plural('feedback.loaded', items.length, { count: integer(items.length) }) }}</span></div>
+        <div><h1>{{ t('feedback.title') }}</h1><span>{{ streamScope }}</span></div>
         <select v-model="sort" class="app-select" :aria-label="t('feedback.sorting.label')">
           <option value="newest">{{ t('feedback.sorting.newest') }}</option><option value="oldest">{{ t('feedback.sorting.oldest') }}</option>
           <option value="rating_low">{{ t('feedback.sorting.ratingLow') }}</option><option value="rating_high">{{ t('feedback.sorting.ratingHigh') }}</option>
@@ -570,30 +610,33 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
       <div v-else-if="error" class="feedback-list-state" role="alert"><AlertTriangle :size="22" /><p>{{ apiErrorMessage(error, 'feedback.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('feedback.actions.tryAgain') }}</button></div>
       <div v-else-if="items.length === 0" class="feedback-list-state"><Inbox :size="22" /><p>{{ t('feedback.states.noMatches') }}</p><button class="app-button" @click="clearFilters">{{ t('feedback.filters.clear') }}</button></div>
       <div v-else class="feedback-stream" role="list">
-        <article v-for="item in items" :key="item.id" role="listitem" :data-selected="selected?.id === item.id" @click="selectItem(item)">
+        <template v-for="item in items" :key="item.id">
+        <div v-if="dayBreaks.has(item.id)" class="feedback-day-break" role="presentation">{{ dayBreaks.get(item.id) }}</div>
+        <article role="listitem" :data-selected="selected?.id === item.id" @click="selectItem(item)">
           <label v-if="canWrite('feedback:update')" class="feedback-row-check" @click.stop><input type="checkbox" :checked="selectedIds.includes(item.id)" :aria-label="t('feedback.actions.select', { feedback: item.public_id })" @change="toggleSelected(item.id)" /></label>
           <span v-else class="feedback-row-check" aria-hidden="true" />
           <RatingMark :rating="item.rating" compact />
           <div class="feedback-row-copy">
             <strong>{{ copy(item) }}</strong>
             <div class="feedback-row-context">
-              <span>{{ item.public_id }} · {{ item.project_name }}</span>
-              <FeedbackSourceBadge :source="feedbackSource(item)" />
-              <span>{{ contextLabel(item) }}</span>
+              <span class="sr-only">{{ item.public_id }}</span>
+              <span v-if="showProjectName">{{ item.project_name }} ·</span>
+              <FeedbackSourceBadge :source="feedbackSource(item)" compact />
+              <span>{{ shortContext(item) }}</span>
             </div>
           </div>
           <div class="feedback-triage-markers">
             <span v-if="item.priority" class="feedback-priority-mark" :data-priority="item.priority">{{ priorityLabel(item.priority) }}</span>
             <span v-if="item.assignee" class="feedback-assignee-mark" :title="item.assignee.name || item.assignee.email"><MemberAvatar :member-id="item.assignee.id" :name="item.assignee.name" :email="item.assignee.email" :avatar-version="item.assignee.avatar_version" /></span>
             <span v-if="item.tags?.length" class="feedback-tag-marks" :title="item.tags.map(tag => tag.name).join(', ')"><i v-for="tag in item.tags.slice(0, 3)" :key="tag.id" :style="{ backgroundColor: tag.color }" /></span>
-            <span v-if="!item.priority && !item.assignee && !item.tags?.length" class="muted">{{ t('feedback.common.untriaged') }}</span>
           </div>
-          <AttachmentIcons :attachments="item.attachment_kinds" />
+          <span class="feedback-row-evidence"><AttachmentIcons v-if="item.attachment_kinds.length" :attachments="item.attachment_kinds" /></span>
           <span class="status-pill" :class="`status-${item.ai_status}`">{{ statusLabel(item.ai_status) }}</span>
-          <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">{{ t('feedback.common.unlinked') }}</span>
-          <time>{{ formatAge(item.created_at) }}</time>
+          <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else aria-hidden="true" />
+          <time v-if="showRowTime">{{ formatAge(item.created_at) }}</time><span v-else aria-hidden="true" />
           <NuxtLink class="feedback-mobile-open" :to="`/feedback/${item.id}`" :aria-label="t('feedback.actions.open', { feedback: item.public_id })" @click.stop><ChevronRight :size="17" /></NuxtLink>
         </article>
+        </template>
         <button v-if="hasMore" class="feedback-load-more" type="button" :disabled="loadingMore" @click="loadMore">
           <LoaderCircle v-if="loadingMore" :size="15" /> {{ loadingMore ? t('feedback.states.loadingMore') : t('feedback.states.loadMore') }}
         </button>
@@ -667,13 +710,14 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 <style scoped>
 .feedback-workspace { display: grid; min-height: calc(100vh - 56px); grid-template-columns: minmax(520px, 1fr) minmax(330px, 36%); background: var(--surface); }
 .feedback-stream-panel { min-width: 0; border-right: 1px solid var(--line); }
-.feedback-stream-head { display: flex; min-height: 84px; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
-.feedback-stream-head h1 { margin: 2px 0; font-size: 20px; }
-.feedback-stream-head div > span { color: var(--muted); font-size: 10px; }
+.feedback-stream-head { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
+.feedback-stream-head > div { display: flex; align-items: baseline; gap: 10px; }
+.feedback-stream-head h1 { margin: 0; font-size: 17px; }
+.feedback-stream-head div > span { color: var(--muted); font-size: 11px; }
 .feedback-filter-bar { position: sticky; top: 56px; z-index: 30; display: flex; min-height: 54px; align-items: center; gap: 7px; padding: 8px 12px; background: var(--surface-subtle); border-bottom: 1px solid var(--line); }
 .feedback-filter-bar-desktop { display: contents; }
 .feedback-filter-bar select,
-.feedback-filter-bar input { height: 34px; min-width: 0; padding: 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 10px; }
+.feedback-filter-bar input { height: 34px; min-width: 0; padding: 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 11px; }
 .feedback-search { display: flex; width: min(190px, 26%); height: 34px; align-items: center; gap: 6px; padding: 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
 .feedback-search input { width: 100%; height: auto; padding: 0; border: 0; outline: 0; }
 .feedback-more-filters { position: relative; }
@@ -698,30 +742,33 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 .feedback-mobile-filters-actions .app-button--primary { flex: 1; }
 .feedback-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid var(--red-line); font-size: 11px; }
 .feedback-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
-.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) 82px 74px 94px 78px 36px 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.feedback-stream article { display: grid; min-height: 58px; grid-template-columns: 24px 36px minmax(190px, 1fr) auto auto auto auto max-content 22px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.feedback-row-evidence { display: flex; justify-content: flex-end; }
 .feedback-stream article:hover { background: var(--surface-subtle); }
 .feedback-stream article[data-selected='true'] { background: var(--teal-soft); box-shadow: inset 3px 0 var(--teal); }
 .feedback-row-check { display: grid; place-items: center; }
 .feedback-row-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
-.feedback-row-copy > strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-row-copy > strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-row-context { display: flex; min-width: 0; align-items: center; gap: 5px; }
-.feedback-row-context > span { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.feedback-row-context > span { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-row-context > span:first-child { flex: 0 1 auto; }
 .feedback-row-context > span:last-child { flex: 1 1 auto; }
 .feedback-triage-markers { display: flex; min-width: 0; height: 28px; align-items: center; gap: 4px; overflow: hidden; }
-.feedback-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: var(--ink-soft); background: var(--teal-soft); border-radius: 3px; font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.feedback-priority-mark { flex: 0 0 auto; padding: 3px 5px; color: var(--ink-soft); background: var(--teal-soft); border-radius: 3px; font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .feedback-priority-mark[data-priority='high'] { color: var(--amber); background: var(--amber-soft); }
 .feedback-priority-mark[data-priority='urgent'] { color: var(--red); background: var(--red-soft); }
 .feedback-assignee-mark { display: block; width: 23px; height: 23px; flex: 0 0 23px; overflow: hidden; border: 1px solid var(--teal-line); border-radius: 50%; font-size: 8px; }
 .feedback-tag-marks { display: flex; min-width: 10px; gap: 2px; }
 .feedback-tag-marks i { width: 6px; height: 18px; flex: 0 0 6px; border-radius: 2px; }
-.feedback-triage-markers > .muted { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-stream article > .status-pill,
 .feedback-stream article > .issue-label,
 .feedback-stream article > .muted { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-stream article > .status-pill { justify-self: start; overflow: visible; text-overflow: clip; }
-.feedback-stream time { color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; text-align: right; }
+.feedback-stream time { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
 .feedback-mobile-open { display: grid; width: 26px; height: 30px; place-items: center; color: var(--muted); border-radius: 4px; }
+.feedback-day-break { position: sticky; top: 110px; z-index: 20; padding: 7px 12px 5px; background: var(--surface-subtle); color: var(--muted); border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 750; }
+.feedback-day-break::first-letter { text-transform: uppercase; }
+
 .feedback-load-more { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: 7px; background: var(--surface-subtle); color: var(--teal); border: 0; border-top: 1px solid var(--line); font-size: 11px; font-weight: 750; }
 .feedback-load-more svg { animation: app-spin 700ms linear infinite; }
 
@@ -759,10 +806,10 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
 
 @media (max-width: 1240px) {
   .feedback-workspace { grid-template-columns: minmax(480px, 1fr) 320px; }
-  .feedback-stream article { grid-template-columns: 22px 36px minmax(140px, 1fr) 70px 94px 34px 20px; }
-  .feedback-stream article :deep(.attachment-icons) { display: none; }
+  .feedback-stream article { grid-template-columns: 22px 36px minmax(140px, 1fr) auto auto max-content 20px; }
+  .feedback-stream article .feedback-row-evidence,
   .feedback-stream article .issue-label,
-  .feedback-stream article > .muted { display: none; }
+  .feedback-stream article > span[aria-hidden='true'] { display: none; }
 }
 
 @media (max-width: 1100px) {

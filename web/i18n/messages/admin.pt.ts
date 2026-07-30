@@ -137,6 +137,7 @@ export const adminMessages = {
       reporterDescription: 'Aplica-se a todos os projetos, exceto quando um projeto desativa o acesso.',
       widgetEyebrow: 'Predefinições do widget',
       controlledAppearance: 'Aparência controlada',
+      appearanceHint: 'Cor de destaque · posição · logótipo',
       saveDefaults: 'Guardar predefinições',
     },
     members: {
@@ -428,6 +429,7 @@ export const adminMessages = {
   organization: {
     eyebrow: 'Perfil da organização',
     title: 'Identidade e predefinições públicas',
+    summaryHint: 'Nome público · logótipo · idiomas · ligações legais',
     save: 'Guardar perfil',
     loading: 'A carregar perfil da organização',
     unavailable: 'O perfil da organização está indisponível.',
@@ -817,6 +819,8 @@ export const adminMessages = {
       unavailable: 'Controlos de dados indisponíveis',
       policyEyebrow: 'Política efetiva',
       retention: 'Calendário de retenção',
+      register: 'Registo de retenção',
+      registerHint: '{count} categoria de dados · finalidade, gatilho e operação | {count} categorias de dados · finalidade, gatilho e operação',
       plan: 'Plano {plan}',
       readRequired: 'É necessário acesso de leitura ao workspace',
       columns: {
@@ -882,6 +886,8 @@ export const adminMessages = {
         owner: 'Responsável',
         unassigned: 'Sem atribuição',
         create: 'Criar caso',
+        openCase: 'Abrir um caso',
+        openCaseHint: 'Acesso · retificação · apagamento · portabilidade',
         empty: 'Nenhum caso de direitos de dados',
         case: 'Caso',
         subject: 'Titular',
@@ -1140,6 +1146,8 @@ export const adminMessages = {
         nextExpected: 'Próxima execução esperada {date}',
         processed: 'Processados na última / no total',
         consecutiveFailures: '{count} falha consecutiva | {count} falhas consecutivas',
+        steadyOperations: '{count} operação dentro do calendário | {count} operações dentro do calendário',
+        steadyHint: 'Última execução · volumes',
         operation: {
           tenant_magic_links: 'Magic links do workspace',
           platform_admin_magic_links: 'Magic links de administradores da plataforma',

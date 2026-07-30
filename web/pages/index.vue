@@ -154,11 +154,15 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
           <Inbox :size="22" /><p>{{ t('dashboard.noOpenFeedback') }}</p>
         </div>
         <NuxtLink v-for="item in data.feedbacks" :key="item.id" :to="`/feedback/${item.id}`" class="dashboard-work-row">
-          <span class="dashboard-priority" :data-tone="item.moderation_flags.length ? 'critical' : item.ai_status" />
           <RatingMark :rating="item.rating" compact />
           <span class="dashboard-work-copy"><b>{{ feedbackCopy(item) }}</b><small>{{ item.public_id }} · {{ item.project_name }} · {{ item.page_url }}</small></span>
-          <AttachmentIcons :attachments="item.attachment_kinds" />
-          <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span><span v-else class="muted">{{ t('dashboard.unlinked') }}</span>
+          <!-- Only positive signals earn a mark. A row without evidence or a
+               linked issue simply shows nothing there: absence repeated down a
+               list is noise, not information. -->
+          <span class="dashboard-work-signals">
+            <AttachmentIcons v-if="item.attachment_kinds.length" :attachments="item.attachment_kinds" />
+            <span v-if="item.issue_public_id" class="issue-label">{{ item.issue_public_id }}</span>
+          </span>
           <time :datetime="item.created_at" :title="dateTime(item.created_at)">{{ formatAge(item.created_at) }}</time>
           <ChevronRight :size="16" />
         </NuxtLink>
@@ -218,20 +222,16 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
 .dashboard-projects header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
 .dashboard-worklist header a,
 .dashboard-projects header a { display: flex; align-items: center; gap: 4px; color: var(--teal); font-size: 11px; font-weight: 750; text-decoration: none; }
-.dashboard-work-row { display: grid; min-height: 58px; grid-template-columns: 5px 38px minmax(220px, 1fr) 94px 110px 44px 18px; align-items: center; gap: 10px; padding: 0 14px 0 0; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
+.dashboard-work-row { display: grid; min-height: 58px; grid-template-columns: 38px minmax(220px, 1fr) auto max-content 18px; align-items: center; gap: 10px; padding: 0 14px 0 18px; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
+.dashboard-work-signals { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .dashboard-work-row:last-child { border-bottom: 0; }
 .dashboard-work-row:hover { background: var(--surface-subtle); }
-.dashboard-priority { align-self: stretch; background: var(--line); }
-.dashboard-priority[data-tone='critical'],
-.dashboard-priority[data-tone='failed'] { background: var(--red); }
-.dashboard-priority[data-tone='processing'],
-.dashboard-priority[data-tone='pending'] { background: var(--amber); }
 .dashboard-work-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .dashboard-work-copy b,
 .dashboard-work-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-work-copy b { font-size: 12px; }
 .dashboard-work-copy small { color: var(--muted); font-size: 10px; }
-.dashboard-work-row time { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.dashboard-work-row time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dashboard-empty { display: flex; min-height: 100px; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 12px; }
 
 .dashboard-projects > a { display: grid; min-height: 62px; grid-template-columns: 34px minmax(180px, 1fr) minmax(190px, auto) 18px; align-items: center; gap: 12px; padding: 0 18px; color: var(--ink-soft); border-bottom: 1px solid var(--line); text-decoration: none; }
@@ -247,10 +247,8 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
   .dashboard-ledger { grid-template-columns: repeat(3, 1fr); }
   .dashboard-chart-cell { grid-column: 1 / -1; border-top: 1px solid var(--line); }
   .dashboard-ledger article:nth-child(3) { border-right: 0; }
-  .dashboard-work-row { grid-template-columns: 5px 38px minmax(180px, 1fr) 80px 42px 18px; }
-  .dashboard-work-row :deep(.attachment-icons) { display: none; }
-  .dashboard-work-row .issue-label,
-  .dashboard-work-row > .muted { display: none; }
+  .dashboard-work-row { grid-template-columns: 38px minmax(180px, 1fr) max-content 18px; }
+  .dashboard-work-signals { display: none; }
 }
 
 @media (max-width: 700px) {
@@ -258,7 +256,7 @@ useHead(() => ({ title: t('dashboard.pageTitle') }))
   .dashboard-ledger article { min-height: 96px; padding: 12px; }
   .dashboard-ledger strong { font-size: 21px; }
   .dashboard-ledger small { display: none; }
-  .dashboard-work-row { grid-template-columns: 4px 34px minmax(0, 1fr) 35px 16px; gap: 7px; padding-right: 10px; }
+  .dashboard-work-row { grid-template-columns: 34px minmax(0, 1fr) max-content 16px; gap: 7px; padding: 0 10px 0 12px; }
   .dashboard-work-row time { text-align: right; }
   .dashboard-projects > a { grid-template-columns: 32px minmax(0, 1fr) 18px; padding: 0 12px; }
   .dashboard-projects code { display: none; }

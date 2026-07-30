@@ -297,12 +297,16 @@ test('pseudo-locale product surfaces remain responsive and preserve customer con
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Alex')
   await expect(page.getByText('Checkout froze after applying a promotion code.')).toBeVisible()
   await expect(page.getByText('Storefront', { exact: true }).first()).toBeVisible()
+  // The narrow topbar trigger opens the command palette rather than expanding a
+  // field in place, so the assertion is the same one it always was — tapping
+  // search must land the caret somewhere with real room to type.
   if ((page.viewportSize()?.width || 0) <= 700) {
-    const search = page.getByRole('searchbox')
-    await page.getByRole('search').click()
+    await page.locator('.app-search-trigger').click()
+    const search = page.locator('.app-palette__search input')
     await expect(search).toBeFocused()
-    await expect(search).toHaveCSS('opacity', '1')
     expect((await search.boundingBox())?.width).toBeGreaterThan(200)
+    await page.keyboard.press('Escape')
+    await expect(search).toBeHidden()
   }
   expect(await visibleLayoutDefects(page)).toEqual([])
   await page.screenshot({
