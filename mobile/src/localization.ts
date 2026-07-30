@@ -3,6 +3,11 @@ export interface SystemMessages {
   dismiss: string
   optional: string
   required: string
+  addMoreContext: string
+  hideMoreContext: string
+  getUpdates: string
+  sending: string
+  addingScreenshot: string
   addScreenshot: string
   removeScreenshot: string
   screenshotAdded: string
@@ -30,6 +35,11 @@ const english: SystemMessages = {
   dismiss: 'Dismiss',
   optional: 'Optional',
   required: 'Required',
+  addMoreContext: 'Add more context',
+  hideMoreContext: 'Hide more context',
+  getUpdates: 'Get updates',
+  sending: 'Sending...',
+  addingScreenshot: 'Adding screenshot...',
   addScreenshot: 'Add screenshot',
   removeScreenshot: 'Remove screenshot',
   screenshotAdded: 'Screenshot added',
@@ -58,6 +68,11 @@ const portuguese: SystemMessages = {
   dismiss: 'Dispensar',
   optional: 'Opcional',
   required: 'Obrigatório',
+  addMoreContext: 'Adicionar mais contexto',
+  hideMoreContext: 'Ocultar contexto adicional',
+  getUpdates: 'Receber atualizações',
+  sending: 'A enviar...',
+  addingScreenshot: 'A adicionar captura de ecrã...',
   addScreenshot: 'Adicionar captura de ecrã',
   removeScreenshot: 'Remover captura de ecrã',
   screenshotAdded: 'Captura de ecrã adicionada',

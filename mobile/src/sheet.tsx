@@ -2,6 +2,7 @@ import {
   AccessibilityInfo,
   Keyboard,
   KeyboardAvoidingView,
+  type LayoutChangeEvent,
   Linking,
   Modal,
   Platform,
@@ -97,6 +98,56 @@ function FieldError({ message, colors }: { message: string | undefined; colors: 
   )
 }
 
+function ActionRow({
+  label,
+  colors,
+  onPress,
+  rowTestID,
+  disabled = false,
+  busy = false,
+  expanded,
+}: {
+  label: string
+  colors: Colors
+  onPress(): void
+  rowTestID: string
+  disabled?: boolean
+  busy?: boolean
+  expanded?: boolean
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{
+        disabled,
+        busy,
+        ...(expanded === undefined ? {} : { expanded }),
+      }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.actionRow, { borderColor: colors.border }]}
+      testID={rowTestID}
+    >
+      <View style={[styles.actionIcon, { backgroundColor: colors.surface }]}>
+        <Text allowFontScaling={false} style={[styles.actionIconText, { color: colors.accent }]}>
+          {expanded === true ? '−' : '+'}
+        </Text>
+      </View>
+      <Text style={[styles.actionLabel, { color: colors.text }]}>{label}</Text>
+      {expanded === undefined ? null : (
+        <Text
+          accessibilityElementsHidden
+          allowFontScaling={false}
+          style={[styles.disclosureIcon, { color: colors.muted }]}
+        >
+          {expanded ? '⌃' : '⌄'}
+        </Text>
+      )}
+    </Pressable>
+  )
+}
+
 function ResponseField({
   block,
   label,
@@ -105,6 +156,8 @@ function ResponseField({
   error,
   colors,
   onChange,
+  onLayout,
+  inputRef,
 }: {
   block: MobileResponseBlock
   label: string
@@ -113,6 +166,8 @@ function ResponseField({
   error: string | undefined
   colors: Colors
   onChange(value: string | number): void
+  onLayout(event: LayoutChangeEvent): void
+  inputRef(input: TextInput | null): void
 }) {
   const context = useFeedbackContext()
   const fieldLabel = (
@@ -123,7 +178,7 @@ function ResponseField({
   )
   if (block.type === 'free_text') {
     return (
-      <View style={styles.field} testID={`fidibeki-field-${block.key}`}>
+      <View onLayout={onLayout} style={styles.field} testID={`fidibeki-field-${block.key}`}>
         {fieldLabel}
         <TextInput
           accessibilityHint={block.required ? context.messages.required : undefined}
@@ -133,6 +188,7 @@ function ResponseField({
           onChangeText={onChange}
           placeholder={label}
           placeholderTextColor={colors.muted}
+          ref={inputRef}
           style={[
             styles.textArea,
             {
@@ -153,6 +209,7 @@ function ResponseField({
         accessibilityHint={block.required ? context.messages.required : undefined}
         accessibilityRole="radiogroup"
         accessibilityLabel={label}
+        onLayout={onLayout}
         style={styles.field}
         testID={`fidibeki-field-${block.key}`}
       >
@@ -178,6 +235,7 @@ function ResponseField({
                 testID={`fidibeki-rating-${block.key}-${rating}`}
               >
                 <Text
+                  allowFontScaling={false}
                   style={[styles.starIcon, { color: filled ? colors.accent : colors.muted }]}
                   testID={`fidibeki-star-icon-${block.key}-${rating}`}
                 >
@@ -201,6 +259,7 @@ function ResponseField({
       accessibilityHint={block.required ? context.messages.required : undefined}
       accessibilityRole="radiogroup"
       accessibilityLabel={label}
+      onLayout={onLayout}
       style={styles.field}
       testID={`fidibeki-field-${block.key}`}
     >
@@ -280,6 +339,8 @@ export function FeedbackSheet() {
   const colors = useMemo(() => colorsFor(mode, context.theme, appearance), [appearance, context.theme, mode])
   const [form, setForm] = useState<FeedbackFormState>(emptyFormState)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [commentExpanded, setCommentExpanded] = useState(false)
+  const [contactExpanded, setContactExpanded] = useState(false)
   const [screenshot, setScreenshot] = useState<PreparedScreenshot | undefined>()
   const screenshotRef = useRef<PreparedScreenshot | undefined>(undefined)
   const [screenshotMessage, setScreenshotMessage] = useState<string | null>(null)
@@ -288,6 +349,9 @@ export function FeedbackSheet() {
   const previousSession = useRef<typeof session>(null)
   const appliedDraftRevision = useRef(0)
   const screenshotGeneration = useRef(0)
+  const scrollViewRef = useRef<ScrollView>(null)
+  const fieldPositions = useRef<Record<string, number>>({})
+  const inputRefs = useRef<Record<string, TextInput | null>>({})
 
   useEffect(() => {
     screenshotRef.current = screenshot
@@ -315,6 +379,8 @@ export function FeedbackSheet() {
     const resetDraft = context.draftPolicy === 'reset' || !previousDefinition
     if (resetDraft) {
       setForm(emptyFormState())
+      setCommentExpanded(false)
+      setContactExpanded(false)
     } else {
       setForm((current) => ({
         ...current,
@@ -325,6 +391,8 @@ export function FeedbackSheet() {
         reporterEmail: definition.collect_contact && contactNotice ? current.reporterEmail : '',
         consentGranted: false,
       }))
+      if (!definition.allow_comment) setCommentExpanded(false)
+      if (!definition.collect_contact || !contactNotice) setContactExpanded(false)
     }
     setFieldErrors({})
     setScreenshotMessage(null)
@@ -337,6 +405,13 @@ export function FeedbackSheet() {
     }
     previousSession.current = session
   }, [contactNotice, context.draftPolicy, context.draftRevision, definition, session])
+
+  const recordFieldPosition = useCallback(
+    (key: string) => (event: LayoutChangeEvent) => {
+      fieldPositions.current[key] = event.nativeEvent.layout.y
+    },
+    [],
+  )
 
   const updateResponse = useCallback((key: string, value: string | number) => {
     setForm((current) => ({
@@ -378,7 +453,7 @@ export function FeedbackSheet() {
         return
       }
       setScreenshot(prepared)
-      setScreenshotMessage(context.messages.screenshotAdded)
+      setScreenshotMessage(null)
     } catch {
       if (generation === screenshotGeneration.current) {
         setScreenshotMessage(context.messages.screenshotProviderFailed)
@@ -402,6 +477,20 @@ export function FeedbackSheet() {
     const validation = validateForm(definition, form)
     if (!validation.valid) {
       setFieldErrors(validation.fields)
+      const firstInvalidKey = Object.keys(validation.fields)[0]
+      const fieldKey = firstInvalidKey?.startsWith('responses.')
+        ? firstInvalidKey.slice('responses.'.length)
+        : firstInvalidKey
+      if (fieldKey) {
+        const fieldPosition = fieldPositions.current[fieldKey]
+        if (fieldPosition !== undefined) {
+          scrollViewRef.current?.scrollTo({
+            y: Math.max(0, fieldPosition - 12),
+            animated: !reducedMotion,
+          })
+        }
+        inputRefs.current[fieldKey]?.focus()
+      }
       return
     }
     setFieldErrors({})
@@ -416,12 +505,13 @@ export function FeedbackSheet() {
     } catch {
       // The provider exposes a typed error and retains the draft for an exact retry.
     }
-  }, [context, definition, form, screenshot])
+  }, [context, definition, form, reducedMotion, screenshot])
 
   if (!session || !definition) return null
 
   const customerCopy = definition.localization
   const submitting = context.status === 'submitting' || context.status === 'loading' || !context.eligible
+  const busy = context.status === 'submitting' || context.status === 'loading'
   const submitted = context.status === 'submitted'
   const canAddScreenshot = definition.can_attach_screenshot && context.screenshotProvider !== undefined && !screenshot
   const discloseMobileAI =
@@ -445,6 +535,7 @@ export function FeedbackSheet() {
       <SafeAreaView edges={['top']} style={styles.modalRoot}>
         <Pressable
           accessibilityElementsHidden
+          disabled={busy}
           importantForAccessibility="no-hide-descendants"
           onPress={context.dismiss}
           style={[
@@ -487,18 +578,23 @@ export function FeedbackSheet() {
               <Pressable
                 accessibilityLabel={context.messages.close}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: busy }}
+                disabled={busy}
                 hitSlop={12}
                 onPress={context.dismiss}
                 style={styles.iconButton}
                 testID="fidibeki-close"
               >
-                <Text style={[styles.closeIcon, { color: colors.text }]}>×</Text>
+                <Text allowFontScaling={false} style={[styles.closeIcon, { color: colors.text }]}>
+                  ×
+                </Text>
               </Pressable>
             </View>
             <ScrollView
               contentContainerStyle={[styles.content, submitted ? styles.successContent : null]}
               keyboardDismissMode="interactive"
               keyboardShouldPersistTaps="handled"
+              ref={scrollViewRef}
               style={styles.body}
               testID="fidibeki-sheet-body"
             >
@@ -525,118 +621,182 @@ export function FeedbackSheet() {
                       key={block.key}
                       label={customerCopy.block_labels?.[block.key] ?? defaultBlockLabel(block.type, context.messages)}
                       onChange={(value) => updateResponse(block.key, value)}
+                      onLayout={recordFieldPosition(block.key)}
                       optionLabels={Object.fromEntries(
                         (block.options ?? []).map((option) => [
                           option.value,
                           customerCopy.option_labels?.[block.key]?.[option.value] ?? humanizeOption(option.value),
                         ]),
                       )}
+                      inputRef={(input) => {
+                        inputRefs.current[block.key] = input
+                      }}
                       value={form.responses[block.key]}
                     />
                   ))}
                   {definition.allow_comment ? (
-                    <View style={styles.field}>
-                      <TextInput
-                        accessibilityLabel={customerCopy.comment_placeholder}
-                        maxLength={MAX_TEXT_LENGTH}
-                        multiline
-                        onChangeText={(comment) => setForm((current) => ({ ...current, comment }))}
-                        placeholder={customerCopy.comment_placeholder}
-                        placeholderTextColor={colors.muted}
-                        style={[
-                          styles.textArea,
-                          {
-                            borderColor: fieldErrors.comment ? colors.danger : colors.border,
-                            color: colors.text,
-                          },
-                        ]}
-                        value={form.comment}
-                      />
-                      <FieldError
+                    <View onLayout={recordFieldPosition('comment')} style={styles.optionalSection}>
+                      <ActionRow
                         colors={colors}
-                        message={validationMessage('comment', fieldErrors.comment, context.messages)}
+                        expanded={commentExpanded}
+                        label={
+                          commentExpanded ? context.messages.hideMoreContext : context.messages.addMoreContext
+                        }
+                        onPress={() => setCommentExpanded((current) => !current)}
+                        rowTestID="fidibeki-comment-disclosure"
                       />
+                      {commentExpanded ? (
+                        <View style={styles.field}>
+                          <TextInput
+                            accessibilityLabel={customerCopy.comment_placeholder}
+                            maxLength={MAX_TEXT_LENGTH}
+                            multiline
+                            onChangeText={(comment) => setForm((current) => ({ ...current, comment }))}
+                            placeholder={customerCopy.comment_placeholder}
+                            placeholderTextColor={colors.muted}
+                            ref={(input) => {
+                              inputRefs.current.comment = input
+                            }}
+                            style={[
+                              styles.textArea,
+                              {
+                                borderColor: fieldErrors.comment ? colors.danger : colors.border,
+                                color: colors.text,
+                              },
+                            ]}
+                            value={form.comment}
+                          />
+                          <FieldError
+                            colors={colors}
+                            message={validationMessage('comment', fieldErrors.comment, context.messages)}
+                          />
+                        </View>
+                      ) : null}
                     </View>
                   ) : null}
                   {definition.collect_contact && contactNotice ? (
-                    <View style={styles.contactSection}>
-                      <Text style={[styles.label, { color: colors.text }]}>{customerCopy.contact_label}</Text>
-                      <TextInput
-                        accessibilityLabel={customerCopy.contact_label}
-                        autoCapitalize="none"
-                        autoComplete="email"
-                        inputMode="email"
-                        onChangeText={(reporterEmail) => setForm((current) => ({ ...current, reporterEmail }))}
-                        placeholder={context.messages.emailPlaceholder}
-                        placeholderTextColor={colors.muted}
-                        style={[
-                          styles.input,
-                          {
-                            borderColor: fieldErrors.reporter_email ? colors.danger : colors.border,
-                            color: colors.text,
-                          },
-                        ]}
-                        value={form.reporterEmail}
-                      />
-                      <FieldError
-                        colors={colors}
-                        message={validationMessage('reporter_email', fieldErrors.reporter_email, context.messages)}
-                      />
-                      <View style={styles.consentRow}>
-                        <Switch
-                          accessibilityLabel={customerCopy.consent_label}
-                          accessibilityRole="switch"
-                          accessibilityState={{ checked: form.consentGranted }}
-                          onValueChange={(consentGranted) =>
-                            setForm((current) => ({
-                              ...current,
-                              consentGranted,
-                            }))
-                          }
-                          trackColor={{
-                            false: colors.border,
-                            true: colors.accent,
-                          }}
-                          value={form.consentGranted}
+                    <View onLayout={recordFieldPosition('reporter_email')} style={styles.optionalSection}>
+                      {!contactExpanded ? (
+                        <ActionRow
+                          colors={colors}
+                          expanded={false}
+                          label={context.messages.getUpdates}
+                          onPress={() => setContactExpanded(true)}
+                          rowTestID="fidibeki-contact-disclosure"
                         />
-                        <Text style={[styles.consentText, { color: colors.text }]}>{customerCopy.consent_label}</Text>
-                      </View>
-                      <FieldError
-                        colors={colors}
-                        message={validationMessage('consent', fieldErrors.consent, context.messages)}
-                      />
-                      <Text style={[styles.notice, { color: colors.muted }]}>
-                        {contactNotice.purpose_summary} {contactNotice.lawful_basis_summary}{' '}
-                        {contactNotice.retention_summary}
-                      </Text>
-                      <Pressable
-                        accessibilityRole="link"
-                        onPress={() => void Linking.openURL(contactNotice.privacy_policy_url)}
-                      >
-                        <Text style={[styles.link, { color: colors.accent }]}>{context.messages.privacyPolicy}</Text>
-                      </Pressable>
+                      ) : (
+                        <View style={styles.contactSection} testID="fidibeki-contact-section">
+                          <Text style={[styles.sectionLabel, { color: colors.text }]}>
+                            {context.messages.getUpdates}
+                          </Text>
+                          <Text style={[styles.label, { color: colors.text }]}>{customerCopy.contact_label}</Text>
+                          <TextInput
+                            accessibilityLabel={customerCopy.contact_label}
+                            autoCapitalize="none"
+                            autoComplete="email"
+                            inputMode="email"
+                            onChangeText={(reporterEmail) => setForm((current) => ({ ...current, reporterEmail }))}
+                            placeholder={context.messages.emailPlaceholder}
+                            placeholderTextColor={colors.muted}
+                            ref={(input) => {
+                              inputRefs.current.reporter_email = input
+                            }}
+                            style={[
+                              styles.input,
+                              {
+                                borderColor: fieldErrors.reporter_email ? colors.danger : colors.border,
+                                color: colors.text,
+                              },
+                            ]}
+                            value={form.reporterEmail}
+                          />
+                          <FieldError
+                            colors={colors}
+                            message={validationMessage(
+                              'reporter_email',
+                              fieldErrors.reporter_email,
+                              context.messages,
+                            )}
+                          />
+                          <View style={styles.consentRow}>
+                            <Switch
+                              accessibilityLabel={customerCopy.consent_label}
+                              accessibilityRole="switch"
+                              accessibilityState={{ checked: form.consentGranted }}
+                              onValueChange={(consentGranted) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  consentGranted,
+                                }))
+                              }
+                              trackColor={{
+                                false: colors.border,
+                                true: colors.accent,
+                              }}
+                              value={form.consentGranted}
+                            />
+                            <Text style={[styles.consentText, { color: colors.text }]}>
+                              {customerCopy.consent_label}
+                            </Text>
+                          </View>
+                          <FieldError
+                            colors={colors}
+                            message={validationMessage('consent', fieldErrors.consent, context.messages)}
+                          />
+                          <Text style={[styles.notice, { color: colors.muted }]}>
+                            {contactNotice.purpose_summary} {contactNotice.lawful_basis_summary}{' '}
+                            {contactNotice.retention_summary}
+                          </Text>
+                          <Pressable
+                            accessibilityRole="link"
+                            onPress={() => void Linking.openURL(contactNotice.privacy_policy_url)}
+                          >
+                            <Text style={[styles.link, { color: colors.accent }]}>
+                              {context.messages.privacyPolicy}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      )}
                     </View>
                   ) : null}
                   {canAddScreenshot ? (
-                    <Pressable
-                      accessibilityLabel={context.messages.addScreenshot}
-                      accessibilityRole="button"
+                    <ActionRow
+                      busy={readingScreenshot}
+                      colors={colors}
                       disabled={readingScreenshot}
+                      label={
+                        readingScreenshot ? context.messages.addingScreenshot : context.messages.addScreenshot
+                      }
                       onPress={() => void addScreenshot()}
-                      style={[styles.secondaryButton, { borderColor: colors.border }]}
-                    >
-                      <Text style={{ color: colors.text }}>{context.messages.addScreenshot}</Text>
-                    </Pressable>
+                      rowTestID="fidibeki-screenshot-action"
+                    />
                   ) : null}
                   {screenshot ? (
-                    <View style={styles.screenshotRow}>
-                      <Text style={{ color: colors.text }}>{context.messages.screenshotAdded}</Text>
+                    <View
+                      style={[styles.screenshotRow, { borderColor: colors.border }]}
+                      testID="fidibeki-screenshot-attached"
+                    >
+                      <View style={[styles.actionIcon, { backgroundColor: colors.surface }]}>
+                        <Text
+                          allowFontScaling={false}
+                          style={[styles.attachmentIcon, { color: colors.accent }]}
+                        >
+                          ✓
+                        </Text>
+                      </View>
+                      <Text style={[styles.actionLabel, { color: colors.text }]}>
+                        {context.messages.screenshotAdded}
+                      </Text>
                       <Pressable
                         accessibilityLabel={context.messages.removeScreenshot}
                         accessibilityRole="button"
+                        hitSlop={8}
                         onPress={() => void removeScreenshot()}
+                        style={styles.removeButton}
                       >
-                        <Text style={[styles.link, { color: colors.accent }]}>{context.messages.removeScreenshot}</Text>
+                        <Text allowFontScaling={false} style={[styles.removeIcon, { color: colors.muted }]}>
+                          ×
+                        </Text>
                       </Pressable>
                     </View>
                   ) : null}
@@ -680,14 +840,14 @@ export function FeedbackSheet() {
                 <Pressable
                   accessibilityLabel={customerCopy.submit_label}
                   accessibilityRole="button"
-                  accessibilityState={{ disabled: submitting }}
+                  accessibilityState={{ busy, disabled: submitting }}
                   disabled={submitting}
                   onPress={() => void submit()}
                   style={[styles.primaryButton, { backgroundColor: colors.accent }]}
                   testID="fidibeki-submit"
                 >
                   <Text style={[styles.primaryButtonText, { color: colors.onAccent }]}>
-                    {customerCopy.submit_label}
+                    {busy ? context.messages.sending : customerCopy.submit_label}
                   </Text>
                 </Pressable>
               </View>
@@ -802,26 +962,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   choiceText: { fontSize: 15, lineHeight: 20 },
-  contactSection: { gap: 10 },
+  optionalSection: { gap: 10 },
+  actionRow: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  actionIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionIconText: { fontSize: 21, fontWeight: '500', lineHeight: 24 },
+  actionLabel: { flex: 1, fontSize: 15, fontWeight: '600', lineHeight: 20 },
+  disclosureIcon: { fontSize: 17, lineHeight: 20 },
+  contactSection: { gap: 10, paddingTop: 2 },
+  sectionLabel: { fontSize: 16, fontWeight: '700', lineHeight: 22 },
   consentRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   consentText: { flex: 1, fontSize: 14, lineHeight: 20 },
   notice: { fontSize: 13, lineHeight: 19 },
   link: { fontSize: 14, fontWeight: '600', lineHeight: 20 },
-  secondaryButton: {
+  screenshotRow: {
     minHeight: 48,
     borderWidth: 1,
     borderRadius: 6,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  attachmentIcon: { fontSize: 17, fontWeight: '700', lineHeight: 20 },
+  removeButton: {
+    width: 44,
+    height: 44,
+    marginRight: -10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  screenshotRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
+  removeIcon: { fontSize: 25, lineHeight: 28 },
   aiDisclosure: { gap: 8 },
   primaryButton: {
     minHeight: 50,

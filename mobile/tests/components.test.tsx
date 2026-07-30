@@ -147,7 +147,8 @@ describe('native provider, host trigger, and modal sheet', () => {
       ).toHaveLength(3)
       expect(
         renderer.root.findAll((node) => String(node.type) === 'Switch' && node.props.accessibilityRole === 'switch'),
-      ).toHaveLength(1)
+      ).toHaveLength(0)
+      expect(renderer.root.findByProps({ testID: 'fidibeki-contact-disclosure' })).toBeTruthy()
       for (const key of ['rating', 'reaction', 'choice', 'details']) {
         expect(renderer.root.findByProps({ testID: `fidibeki-field-${key}` })).toBeTruthy()
       }
@@ -220,6 +221,7 @@ describe('native provider, host trigger, and modal sheet', () => {
     await act(async () => {
       renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
       await flush()
+      await flush()
     })
     const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1]
     const body = JSON.parse(String(request?.body)) as { responses: Record<string, string | number> }
@@ -290,6 +292,246 @@ describe('native provider, host trigger, and modal sheet', () => {
     const rendered = JSON.stringify(renderer.toJSON())
     expect(rendered.match(/This response is required/g)?.length).toBe(3)
     expect(globalThis.fetch).not.toHaveBeenCalled()
+    renderer.unmount()
+  })
+
+  it('progressively reveals optional context and preserves it across collapse and reopen', async () => {
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Anything else?' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      false,
+    )
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.onChangeText('Keep this context')
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      true,
+    )
+    await act(async () => {
+      pressByLabel(renderer.root, 'Hide more context')
+    })
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Anything else?' })).toHaveLength(0)
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+    })
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Keep this context')
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Keep this context')
+    renderer.unmount()
+  })
+
+  it('reveals contact collection explicitly and keeps the consent section open for the draft', async () => {
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Email for updates' })).toHaveLength(0)
+    const disclosure = renderer.root.findByProps({ testID: 'fidibeki-contact-disclosure' })
+    expect(disclosure.props.accessibilityState.expanded).toBe(false)
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('user@example.test')
+    })
+    expect(renderer.root.findAllByProps({ testID: 'fidibeki-contact-disclosure' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.value).toBe(
+      'user@example.test',
+    )
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.value).toBe(
+      'user@example.test',
+    )
+    renderer.unmount()
+  })
+
+  it('keeps submit and close dimensions stable while exposing a busy submission state', async () => {
+    let resolveRequest!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRequest = resolve
+          }),
+      ),
+    )
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await Promise.resolve()
+    })
+    const submit = renderer.root.findByProps({ testID: 'fidibeki-submit' })
+    expect(submit.props.disabled).toBe(true)
+    expect(submit.props.accessibilityState).toMatchObject({ busy: true, disabled: true })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-close' }).props.disabled).toBe(true)
+    expect(JSON.stringify(renderer.toJSON())).toContain('Sending')
+
+    await act(async () => {
+      resolveRequest(
+        new Response(
+          JSON.stringify({
+            feedback_id: 'feedback-id',
+            feedback_public_id: 'FDBK-42',
+            attachments: [],
+          }),
+          { status: 200 },
+        ),
+      )
+      await flush()
+    })
+    renderer.unmount()
+  })
+
+  it('keeps expanded context and answers intact for an exact retry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              feedback_id: 'feedback-id',
+              feedback_public_id: 'FDBK-42',
+              attachments: [],
+            }),
+            { status: 200 },
+          ),
+        ),
+    )
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add more context')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.onChangeText('Retry context')
+    })
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+    })
+
+    expect(JSON.stringify(renderer.toJSON())).toContain('Feedback could not be sent')
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.value).toBe(
+      'Captured on the current screen',
+    )
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Anything else?' }).props.value).toBe('Retry context')
+    expect(renderer.root.findByProps({ testID: 'fidibeki-comment-disclosure' }).props.accessibilityState.expanded).toBe(
+      true,
+    )
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+      await flush()
+    })
+    expect(JSON.stringify(renderer.toJSON())).toContain('Thanks for the feedback.')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    renderer.unmount()
+  })
+
+  it('releases an attached screenshot and restores the compact add action', async () => {
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const dispose = vi.fn()
+    const renderer = await renderSDK({
+      screenshotProvider: vi.fn<ScreenshotProvider>(async () => ({
+        uri: 'file:///private/user/screenshot.png',
+        contentType: 'image/png',
+        size: screenshotBlob.size,
+        read: async () => screenshotBlob,
+        dispose,
+      })),
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-screenshot-attached' })).toBeTruthy()
+    await act(async () => {
+      pressByLabel(renderer.root, 'Remove screenshot')
+      await flush()
+    })
+    expect(renderer.root.findAllByProps({ testID: 'fidibeki-screenshot-attached' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-screenshot-action' })).toBeTruthy()
+    expect(dispose).toHaveBeenCalledOnce()
+    renderer.unmount()
+  })
+
+  it('keeps accepted feedback visible when the screenshot upload later fails', async () => {
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      if (fetchMock.mock.calls.length === 1) {
+        const body = JSON.parse(String(init?.body)) as {
+          screenshot: { client_attachment_id: string }
+        }
+        return new Response(
+          JSON.stringify({
+            feedback_id: 'feedback-id',
+            feedback_public_id: 'FDBK-42',
+            attachments: [
+              {
+                attachment_id: 'attachment-id',
+                client_attachment_id: body.screenshot.client_attachment_id,
+                presigned_url: 'https://objects.example.test/upload',
+                method: 'PUT',
+                headers: {},
+                complete_token: 'complete-secret',
+                expires_at: '2099-07-28T12:10:00Z',
+              },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      return new Response(null, { status: 503 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const renderer = await renderSDK({
+      screenshotProvider: vi.fn<ScreenshotProvider>(async () => ({
+        uri: 'file:///private/user/screenshot.png',
+        contentType: 'image/png',
+        size: screenshotBlob.size,
+        read: async () => screenshotBlob,
+      })),
+    })
+    await openSheet(renderer)
+    await fillRequiredForm(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+      await flush()
+    })
+    const rendered = JSON.stringify(renderer.toJSON())
+    expect(rendered).toContain('Thanks for the feedback.')
+    expect(rendered).toContain('screenshot could not be uploaded')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     renderer.unmount()
   })
 
@@ -370,6 +612,10 @@ describe('native provider, host trigger, and modal sheet', () => {
       pressByLabel(renderer.root, '5 out of 5')
       pressByLabel(renderer.root, 'Alpha')
       renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this answer')
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('reporter@example.test')
       renderer.root.findByProps({ accessibilityLabel: 'I agree to receive updates' }).props.onValueChange(true)
     })
@@ -431,6 +677,10 @@ describe('native provider, host trigger, and modal sheet', () => {
       pressByLabel(renderer.root, '5 out of 5')
       pressByLabel(renderer.root, 'Alpha')
       renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this answer')
+      pressByLabel(renderer.root, 'Get updates')
+      await flush()
+    })
+    await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: 'Email for updates' }).props.onChangeText('reporter@example.test')
       renderer.root.findByProps({ accessibilityLabel: 'I agree to receive updates' }).props.onValueChange(true)
     })

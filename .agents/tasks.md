@@ -1054,7 +1054,7 @@ appearance. The full 73-test mobile suite and mobile typecheck pass.
 ## Task 53: Complete Progressive Sections And States
 
 **Depends on:** Task 52
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Comment/contact/screenshot sections use approved progressive disclosure and every
 validation, loading, retry, success, privacy, theme, and attachment state is polished and safe.
@@ -1064,6 +1064,18 @@ validation, loading, retry, success, privacy, theme, and attachment state is pol
 **Acceptance:** One focused component/form run proves disclosure and hidden-data behavior,
 screenshot lifecycle, error focus, draft-safe retry, success/warnings, long copy, dark mode, and
 accessible states.
+
+**Evidence:** `allow_comment` now starts behind a localized disclosure that can collapse and reopen
+without losing its value. Valid contact collection starts behind an explicit opt-in and remains
+visible for the draft once opened; configuration reconciliation still removes unavailable contact
+data and clears changed consent. Screenshot add, busy, attached, remove, cancellation, provider
+error, and post-acceptance upload-warning states use compact action rows. Validation scrolls toward
+the first invalid field and focuses text controls where native refs exist. Submit and close expose
+stable disabled/busy states, retryable failures retain the complete expanded draft, AI/privacy copy
+remains visible, and fixed glyphs cannot distort under Dynamic Type. Component coverage proves the
+disclosures, close/reopen persistence, exact retry, screenshot disposal, accepted-feedback upload
+failure, light/dark accents, localization fallbacks, and accessible states. All 79 mobile tests and
+the mobile typecheck pass.
 
 **Autonomy:** AFK
 
