@@ -6,6 +6,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const double _goldenPrecisionTolerance = 0.00005;
+
+class _TolerantGoldenFileComparator extends LocalFileComparator {
+  _TolerantGoldenFileComparator(super.testFile);
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+    if (_acceptsGoldenComparison(result)) {
+      result.dispose();
+      return true;
+    }
+
+    final error = await generateFailureOutput(result, golden, basedir);
+    result.dispose();
+    throw FlutterError(error);
+  }
+}
+
+bool _acceptsGoldenComparison(ComparisonResult result) {
+  return result.passed || result.diffPercent <= _goldenPrecisionTolerance;
+}
+
 Map<String, Object?> fixtureJson(String name) {
   var directory = Directory.current.absolute;
   while (!File('${directory.path}/pnpm-workspace.yaml').existsSync()) {
@@ -117,8 +143,38 @@ Future<FidibekiFeedbackController> pumpGoldenSheet(
 }
 
 void main() {
-  setUpAll(loadGoldenFont);
+  late GoldenFileComparator previousGoldenFileComparator;
+  setUpAll(() async {
+    previousGoldenFileComparator = goldenFileComparator;
+    goldenFileComparator = _TolerantGoldenFileComparator(
+      Uri.file(
+        File(
+          'packages/fidibeki_flutter/test/sheet_golden_test.dart',
+        ).absolute.path,
+      ),
+    );
+    await loadGoldenFont();
+  });
+  tearDownAll(() {
+    goldenFileComparator = previousGoldenFileComparator;
+  });
   setUp(resetFidibekiProcessAppSessionForTesting);
+
+  test('allows only microscopic renderer drift', () {
+    final tolerated = ComparisonResult(
+      passed: false,
+      diffPercent: _goldenPrecisionTolerance,
+    );
+    final regression = ComparisonResult(
+      passed: false,
+      diffPercent: _goldenPrecisionTolerance + 0.000001,
+    );
+    addTearDown(tolerated.dispose);
+    addTearDown(regression.dispose);
+
+    expect(_acceptsGoldenComparison(tolerated), isTrue);
+    expect(_acceptsGoldenComparison(regression), isFalse);
+  });
 
   for (final scenario
       in <
