@@ -989,3 +989,81 @@ disabled exclusively for the staging worker after the run; its service instance 
 `sleepApplication=false`.
 
 **Autonomy:** AFK
+
+# Mobile Feedback Sheet Redesign
+
+**Design:** `docs/superpowers/specs/2026-07-30-mobile-feedback-sheet-redesign-design.md`
+
+**Implementation:**
+`docs/superpowers/plans/2026-07-30-mobile-feedback-sheet-redesign-implementation.md`
+
+**Shared context:** The host application owns the trigger. The SDK renders only an explicitly
+opened native sheet and reuses the existing capture-session, dynamic response-block, submission,
+screenshot, privacy, and recurrence contracts. Work is local and staging-only; there are no
+backend, production, infrastructure, provider, or registry changes.
+
+## Task 51: Restore Dismiss And Reopen Semantics
+
+**Depends on:** Task 50
+**Status:** Pending
+
+**Outcome:** Closing the mobile sheet preserves eligibility/session/draft and legacy dismissed
+records can no longer suppress the host trigger.
+
+**Why:** The current dismiss write makes an explicitly controlled mobile trigger unusable before
+the person submits.
+
+**Acceptance:** One focused recurrence/provider test run proves close/reopen with zero storage or
+session churn, clears legacy dismissed state for every recurrence mode, and preserves submitted
+suppression.
+
+**Autonomy:** AFK
+
+## Task 52: Render The Compact Native Sheet
+
+**Depends on:** Task 51
+**Status:** Pending
+
+**Outcome:** The current sparse page form is replaced by the approved 75% bottom sheet with fixed
+header/footer, keyboard-safe body, accent stars, and compact dynamic response controls.
+
+**Why:** The functional SDK needs a coherent mobile hierarchy and web-consistent rating behavior.
+
+**Acceptance:** One focused iOS/Android component run proves frame geometry, keyboard expansion,
+cumulative accessible stars with numeric values, dynamic block order, chip states, safe areas, and
+reduced motion.
+
+**Autonomy:** AFK
+
+## Task 53: Complete Progressive Sections And States
+
+**Depends on:** Task 52
+**Status:** Pending
+
+**Outcome:** Comment/contact/screenshot sections use approved progressive disclosure and every
+validation, loading, retry, success, privacy, theme, and attachment state is polished and safe.
+
+**Why:** Compact geometry is useful only if optional content and failure states remain complete.
+
+**Acceptance:** One focused component/form run proves disclosure and hidden-data behavior,
+screenshot lifecycle, error focus, draft-safe retry, success/warnings, long copy, dark mode, and
+accessible states.
+
+**Autonomy:** AFK
+
+## Task 54: Prove The Native Experience
+
+**Depends on:** Task 53
+**Status:** Pending
+
+**Outcome:** The redesigned SDK is documented, fully tested, and visually verified through the
+host-owned example on available iOS and Android runtimes.
+
+**Why:** Mocked component output alone cannot establish native sheet, keyboard, and viewport
+quality.
+
+**Acceptance:** Complete mobile/package/example gates and inspected runtime screenshots prove
+open/close/reopen, preserved draft, screenshot, keyboard, submit, success, and recurrence with no
+backend or production change.
+
+**Autonomy:** AFK
