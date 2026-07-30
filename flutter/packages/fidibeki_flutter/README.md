@@ -14,6 +14,10 @@ final feedback = FidibekiFeedbackController(
   screen: '/checkout/review',
   sessionProvider: hostBackend.createCaptureSession,
   storage: appStorage,
+  linkOpener: hostLinks.open,
+  theme: const FidibekiTheme(
+    accent: Color(0xff087f6b),
+  ),
 );
 
 MaterialApp(
@@ -24,5 +28,15 @@ MaterialApp(
   home: ProductScreen(feedback: feedback),
 );
 ```
+
+The capture session controls response blocks, customer-facing copy, recurrence, appearance, contact
+consent, and applicable AI disclosures. The sheet supports rating, reaction, single-choice, and
+free-text responses in definition order, with progressive comment and reporter-contact sections.
+System copy is available in English and Portuguese and falls back to English for other locales.
+
+`refreshConfiguration()` preserves only answers that remain compatible with the new definition and
+always clears the previous consent grant. A `configuration_changed` response performs this refresh
+automatically. Draft content, reporter email, capture tokens, and responses remain in memory; only
+anonymous recurrence state crosses the storage boundary.
 
 The package is under active development and is not published.

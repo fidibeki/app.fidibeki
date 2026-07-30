@@ -4,10 +4,12 @@ import 'package:uuid/uuid.dart';
 
 import 'client.dart';
 import 'errors.dart';
+import 'localization.dart';
 import 'models.dart';
 import 'recurrence.dart';
 import 'storage.dart';
 import 'submission.dart';
+import 'theme.dart';
 
 enum FidibekiFeedbackStatus {
   initializing,
@@ -45,6 +47,8 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     DateTime Function()? now,
     FidibekiMobileClient? mobileClient,
     String Function()? feedbackIdGenerator,
+    this.linkOpener,
+    this.theme,
   }) : platform = platform ?? _runtimePlatform(),
        normalizedScreen = normalizeFidibekiScreen(screen),
        _now = now ?? DateTime.now,
@@ -52,6 +56,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
            mobileClient ??
            FidibekiMobileClient(apiBaseUrl: apiBaseUrl, now: now),
        _ownsMobileClient = mobileClient == null,
+       _feedbackIdGenerator = feedbackIdGenerator ?? const Uuid().v4,
        _feedbackId = (feedbackIdGenerator ?? const Uuid().v4).call(),
        _recurrence = FidibekiRecurrenceEngine(
          storage,
@@ -68,12 +73,20 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   final String screen;
   final String normalizedScreen;
   final FidibekiSessionProvider sessionProvider;
+  final Future<void> Function(Uri url)? linkOpener;
+  final FidibekiTheme? theme;
   final DateTime Function() _now;
   final FidibekiMobileClient _mobileClient;
   final bool _ownsMobileClient;
-  final String _feedbackId;
+  final String Function() _feedbackIdGenerator;
+  String _feedbackId;
   final FidibekiRecurrenceEngine _recurrence;
   final Map<String, Object> _responses = <String, Object>{};
+  String _comment = '';
+  String _reporterEmail = '';
+  bool _consentGranted = false;
+  bool _commentExpanded = false;
+  bool _contactExpanded = false;
 
   FidibekiFeedbackStatus _status = FidibekiFeedbackStatus.initializing;
   FidibekiCaptureSession? _session;
@@ -84,6 +97,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   bool _visible = false;
   bool _disposed = false;
   Future<void>? _initialization;
+  Future<void>? _configurationRefresh;
   Future<FidibekiFeedbackAccepted>? _submission;
 
   FidibekiFeedbackStatus get status => _status;
@@ -93,6 +107,11 @@ final class FidibekiFeedbackController extends ChangeNotifier {
   Map<String, String> get fieldErrors =>
       _error?.fields ?? const <String, String>{};
   Map<String, Object> get responses => Map.unmodifiable(_responses);
+  String get comment => _comment;
+  String get reporterEmail => _reporterEmail;
+  bool get consentGranted => _consentGranted;
+  bool get commentExpanded => _commentExpanded;
+  bool get contactExpanded => _contactExpanded;
   DateTime? get nextEligibleAt => _nextEligibleAt;
   bool get eligible => _eligible;
   bool get visible => _visible;
@@ -109,19 +128,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
       _error = null;
     });
     try {
-      final session = await sessionProvider(
-        FidibekiSessionRequest(
-          platform: platform,
-          screen: normalizedScreen,
-          displayLocale: locale.toLanguageTag(),
-        ),
-      );
-      if (!session.submitExpiresAt.isAfter(_now().toUtc())) {
-        throw const FidibekiException(
-          FidibekiErrorCode.sessionExpired,
-          'The capture session has expired.',
-        );
-      }
+      final session = await _requestCaptureSession();
       final recurrence = await _recurrence.eligibility(
         session.configuration.projectId,
         session.configuration.definition,
@@ -146,6 +153,138 @@ final class FidibekiFeedbackController extends ChangeNotifier {
         ),
       );
     }
+  }
+
+  Future<FidibekiCaptureSession> _requestCaptureSession() async {
+    final session = await sessionProvider(
+      FidibekiSessionRequest(
+        platform: platform,
+        screen: normalizedScreen,
+        displayLocale: locale.toLanguageTag(),
+      ),
+    );
+    if (!session.submitExpiresAt.isAfter(_now().toUtc())) {
+      throw const FidibekiException(
+        FidibekiErrorCode.sessionExpired,
+        'The capture session has expired.',
+      );
+    }
+    return session;
+  }
+
+  Future<void> refreshConfiguration() {
+    return _refreshConfiguration();
+  }
+
+  Future<void> _refreshConfiguration({FidibekiException? reason}) {
+    final active = _configurationRefresh;
+    if (active != null) return active;
+    late final Future<void> tracked;
+    tracked = _performConfigurationRefresh(reason: reason).whenComplete(() {
+      if (identical(_configurationRefresh, tracked)) {
+        _configurationRefresh = null;
+      }
+    });
+    _configurationRefresh = tracked;
+    return tracked;
+  }
+
+  Future<void> _performConfigurationRefresh({FidibekiException? reason}) async {
+    final previous = _session;
+    if (_disposed || previous == null) {
+      throw const FidibekiException(
+        FidibekiErrorCode.accessDenied,
+        'No capture session is available.',
+      );
+    }
+    _setState(() {
+      _status = FidibekiFeedbackStatus.initializing;
+      _error = reason;
+    });
+    try {
+      final next = await _requestCaptureSession();
+      _reconcileDraft(
+        previous.configuration.definition,
+        next.configuration.definition,
+        contactAvailable:
+            next.configuration.definition.collectContact &&
+            next.configuration.contactNotice != null,
+      );
+      _setState(() {
+        _session = next;
+        _feedbackId = _feedbackIdGenerator();
+        _accepted = null;
+        _eligible = true;
+        _nextEligibleAt = null;
+        _error = reason;
+        _status = _visible
+            ? FidibekiFeedbackStatus.open
+            : FidibekiFeedbackStatus.ready;
+      });
+    } on FidibekiException catch (error) {
+      _setState(() {
+        _error = error;
+        _status = _visible
+            ? FidibekiFeedbackStatus.open
+            : FidibekiFeedbackStatus.error;
+      });
+    } on Object {
+      const error = FidibekiException(
+        FidibekiErrorCode.network,
+        'Capture session request failed.',
+        retryable: true,
+      );
+      _setState(() {
+        _error = error;
+        _status = _visible
+            ? FidibekiFeedbackStatus.open
+            : FidibekiFeedbackStatus.error;
+      });
+    }
+  }
+
+  void _reconcileDraft(
+    FidibekiWidgetDefinition previous,
+    FidibekiWidgetDefinition next, {
+    required bool contactAvailable,
+  }) {
+    final previousBlocks = <String, FidibekiResponseBlock>{
+      for (final block in previous.responseBlocks) block.key: block,
+    };
+    final nextBlocks = <String, FidibekiResponseBlock>{
+      for (final block in next.responseBlocks) block.key: block,
+    };
+    _responses.removeWhere((key, value) {
+      final oldBlock = previousBlocks[key];
+      final newBlock = nextBlocks[key];
+      return oldBlock == null ||
+          newBlock == null ||
+          oldBlock.type != newBlock.type ||
+          !_responseValueIsValid(newBlock, value);
+    });
+    if (!next.allowComment) {
+      _comment = '';
+      _commentExpanded = false;
+    }
+    if (!contactAvailable) {
+      _reporterEmail = '';
+      _contactExpanded = false;
+    }
+    _consentGranted = false;
+  }
+
+  bool _responseValueIsValid(FidibekiResponseBlock block, Object value) {
+    return switch (block.type) {
+      FidibekiResponseBlockType.rating =>
+        value is int && value >= 1 && value <= 5,
+      FidibekiResponseBlockType.freeText =>
+        value is String &&
+            value.trim().isNotEmpty &&
+            value.trim().length <= 10000,
+      FidibekiResponseBlockType.reaction ||
+      FidibekiResponseBlockType.singleChoice =>
+        value is String && block.options.any((option) => option.value == value),
+    };
   }
 
   Future<void> open() async {
@@ -183,13 +322,73 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     _setResponse(key, value);
   }
 
-  void _setResponse(String key, Object value) {
-    if (_disposed ||
-        !_visible ||
-        (_status != FidibekiFeedbackStatus.open &&
-            _status != FidibekiFeedbackStatus.error)) {
+  void setChoice(String key, String value) {
+    _setResponse(key, value);
+  }
+
+  void setComment(String value) {
+    if (_canEditDraft()) {
+      _setState(() {
+        _comment = value;
+        _error = null;
+        _status = FidibekiFeedbackStatus.open;
+      });
+    }
+  }
+
+  void setReporterEmail(String value) {
+    if (_canEditDraft()) {
+      _setState(() {
+        _reporterEmail = value;
+        _error = null;
+        _status = FidibekiFeedbackStatus.open;
+      });
+    }
+  }
+
+  void setConsentGranted(bool value) {
+    if (_canEditDraft()) {
+      _setState(() {
+        _consentGranted = value;
+        _error = null;
+        _status = FidibekiFeedbackStatus.open;
+      });
+    }
+  }
+
+  void toggleCommentExpanded() {
+    final definition = _session?.configuration.definition;
+    if (!_canEditDraft() || definition?.allowComment != true) return;
+    _setState(() {
+      _commentExpanded = !_commentExpanded;
+    });
+  }
+
+  void expandContact() {
+    final configuration = _session?.configuration;
+    if (!_canEditDraft() ||
+        configuration?.definition.collectContact != true ||
+        configuration?.contactNotice == null) {
       return;
     }
+    _setState(() {
+      _contactExpanded = true;
+    });
+  }
+
+  Future<void> openLink(Uri url) async {
+    await linkOpener?.call(url);
+  }
+
+  bool _canEditDraft() {
+    return !_disposed &&
+        _visible &&
+        (_status == FidibekiFeedbackStatus.open ||
+            _status == FidibekiFeedbackStatus.error);
+  }
+
+  void _setResponse(String key, Object value) {
+    if (!_canEditDraft()) return;
     _setState(() {
       _responses[key] = value;
       _error = null;
@@ -217,6 +416,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
       );
     }
     final displayLocale = current.configuration.displayLocale;
+    final messages = fidibekiSystemMessages(displayLocale);
     final fields = _validateResponses(
       current.configuration.definition,
       displayLocale,
@@ -224,9 +424,7 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     if (fields.isNotEmpty) {
       final error = FidibekiException(
         FidibekiErrorCode.validation,
-        _usesPortuguese(displayLocale)
-            ? 'Preencha os campos de feedback obrigatórios.'
-            : 'Complete the required feedback fields.',
+        messages.requiredResponse,
         fields: Map.unmodifiable(fields),
       );
       _setState(() {
@@ -239,6 +437,20 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     final allowedKeys = current.configuration.definition.responseBlocks
         .map((block) => block.key)
         .toSet();
+    final definition = current.configuration.definition;
+    final comment = definition.allowComment ? _comment.trim() : '';
+    final contactNotice = current.configuration.contactNotice;
+    final reporterEmail = definition.collectContact && contactNotice != null
+        ? _reporterEmail.trim()
+        : '';
+    final consent = reporterEmail.isEmpty || !_consentGranted
+        ? null
+        : FidibekiReporterConsent(
+            noticeVersion: contactNotice!.noticeVersion,
+            controllerProfileVersion: contactNotice.controllerProfileVersion,
+            widgetDefinitionVersion: definition.definitionVersion,
+            locale: contactNotice.locale,
+          );
     final request = FidibekiFeedbackRequest(
       clientFeedbackId: _feedbackId,
       responses: <String, Object>{
@@ -248,6 +460,10 @@ final class FidibekiFeedbackController extends ChangeNotifier {
       appVersion: appVersion,
       osVersion: osVersion,
       deviceLocale: deviceLocale,
+      comment: comment.isEmpty ? null : comment,
+      reporterEmail: reporterEmail.isEmpty ? null : reporterEmail,
+      notifyReporter: reporterEmail.isNotEmpty,
+      consent: consent,
     );
     _setState(() {
       _error = null;
@@ -277,6 +493,9 @@ final class FidibekiFeedbackController extends ChangeNotifier {
         _error = error;
         _status = FidibekiFeedbackStatus.open;
       });
+      if (error.code == FidibekiErrorCode.configurationChanged) {
+        await _refreshConfiguration(reason: error);
+      }
       rethrow;
     } on Object {
       const error = FidibekiException(
@@ -292,20 +511,14 @@ final class FidibekiFeedbackController extends ChangeNotifier {
     }
   }
 
-  bool _usesPortuguese(String displayLocale) {
-    return displayLocale
-            .trim()
-            .toLowerCase()
-            .split(RegExp('[-_]'))
-            .firstOrNull ==
-        'pt';
-  }
-
   Map<String, String> _validateResponses(
     FidibekiWidgetDefinition definition,
     String displayLocale,
   ) {
-    final portuguese = _usesPortuguese(displayLocale);
+    final messages = fidibekiSystemMessages(displayLocale);
+    final portuguese =
+        displayLocale.trim().toLowerCase().split(RegExp('[-_]')).firstOrNull ==
+        'pt';
     final fields = <String, String>{};
     for (final block in definition.responseBlocks) {
       final value = _responses[block.key];
@@ -325,10 +538,10 @@ final class FidibekiFeedbackController extends ChangeNotifier {
             fields['responses.${block.key}'] = portuguese
                 ? 'Escreva um feedback válido.'
                 : 'Enter valid feedback.';
-          } else if (value is String && value.length > 5000) {
+          } else if (value is String && value.length > 10000) {
             fields['responses.${block.key}'] = portuguese
-                ? 'O feedback não pode exceder 5000 caracteres.'
-                : 'Feedback must not exceed 5000 characters.';
+                ? 'O feedback não pode exceder 10000 caracteres.'
+                : 'Feedback must not exceed 10000 characters.';
           } else if (block.required &&
               (value is! String || value.trim().isEmpty)) {
             fields['responses.${block.key}'] = portuguese
@@ -337,7 +550,36 @@ final class FidibekiFeedbackController extends ChangeNotifier {
           }
         case FidibekiResponseBlockType.reaction:
         case FidibekiResponseBlockType.singleChoice:
-          break;
+          final valid =
+              value is String &&
+              block.options.any((option) => option.value == value);
+          if (value != null && !valid) {
+            fields['responses.${block.key}'] = portuguese
+                ? 'Selecione uma resposta válida.'
+                : 'Select a valid response.';
+          } else if (block.required && !valid) {
+            fields['responses.${block.key}'] = messages.requiredResponse;
+          }
+      }
+    }
+    if (_comment.trim().length > 10000) {
+      fields['comment'] = portuguese
+          ? 'O comentário não pode exceder 10000 caracteres.'
+          : 'Comment must not exceed 10000 characters.';
+    }
+    final contactAvailable =
+        definition.collectContact &&
+        _session?.configuration.contactNotice != null;
+    final reporter = contactAvailable ? _reporterEmail.trim() : '';
+    if (reporter.isNotEmpty) {
+      final validEmail =
+          reporter.length <= 320 &&
+          RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(reporter);
+      if (!validEmail) {
+        fields['reporter_email'] = messages.invalidEmail;
+      }
+      if (!_consentGranted) {
+        fields['consent'] = messages.consentRequired;
       }
     }
     return fields;

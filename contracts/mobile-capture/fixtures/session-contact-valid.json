@@ -1,0 +1,120 @@
+{
+  "token": "fmc_fixture_contact_not_a_real_bearer_000000",
+  "submit_expires_at": "2099-07-30T12:00:00.000Z",
+  "configuration": {
+    "schema_version": 1,
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "display_locale": "pt-PT",
+    "definition": {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "definition_key": "flutter-contact-fixture",
+      "definition_version": 2,
+      "presentation": "prompt",
+      "launcher_variant": "floating_button",
+      "objective": "continuous_feedback",
+      "recurrence_mode": "session",
+      "recurrence_days": null,
+      "response_blocks": [
+        {
+          "key": "rating",
+          "type": "rating",
+          "required": true
+        },
+        {
+          "key": "reaction",
+          "type": "reaction",
+          "required": false,
+          "options": [
+            {
+              "value": "happy"
+            },
+            {
+              "value": "sad"
+            }
+          ]
+        },
+        {
+          "key": "journey",
+          "type": "single_choice",
+          "required": true,
+          "options": [
+            {
+              "value": "easy"
+            },
+            {
+              "value": "blocked"
+            }
+          ]
+        },
+        {
+          "key": "feedback",
+          "type": "free_text",
+          "required": true
+        }
+      ],
+      "localization": {
+        "launcher_label": "Enviar feedback",
+        "prompt": "Como correu o checkout?",
+        "comment_placeholder": "Mais algum contexto?",
+        "contact_label": "Email para atualizações",
+        "consent_label": "Aceito receber atualizações",
+        "submit_label": "Enviar feedback",
+        "success_message": "Obrigado pelo feedback.",
+        "privacy_purpose_summary": "Usamos o email para comunicar a resolução.",
+        "privacy_lawful_basis_summary": "O tratamento depende do seu consentimento.",
+        "privacy_retention_summary": "O contacto segue a retenção configurada.",
+        "block_labels": {
+          "rating": "Classificação",
+          "reaction": "Reação",
+          "journey": "Percurso de checkout",
+          "feedback": "Feedback"
+        },
+        "option_labels": {
+          "reaction": {
+            "happy": "Feliz",
+            "sad": "Triste"
+          },
+          "journey": {
+            "easy": "Fácil",
+            "blocked": "Bloqueado"
+          }
+        }
+      },
+      "allow_comment": true,
+      "collect_contact": true,
+      "can_attach_screenshot": true,
+      "ai_processing": {
+        "enabled": true,
+        "provider": "Example AI",
+        "input_categories": [
+          "feedback_text",
+          "screenshot"
+        ],
+        "privacy_policy_url": "https://privacy.example.test/ai",
+        "policy_version": "fixture-v1"
+      },
+      "appearance": {
+        "position": "bottom-right",
+        "theme": "dark",
+        "accent_color": "#087f6b",
+        "accent_foreground": "#ffffff",
+        "surface_color": "#141716",
+        "text_color": "#f4f7f6",
+        "logo_url": "https://assets.example.test/logo.png"
+      }
+    },
+    "contact_notice": {
+      "notice_version": "2026-07-controller-v1",
+      "controller_profile_version": 3,
+      "widget_definition_version": 2,
+      "locale": "pt-PT",
+      "controller_name": "Example Controller",
+      "privacy_contact_email": "privacy@example.test",
+      "privacy_rights_email": "rights@example.test",
+      "privacy_policy_url": "https://privacy.example.test/feedback",
+      "purpose_summary": "Comunicar atualizações sobre este feedback.",
+      "lawful_basis_summary": "Consentimento do reporter.",
+      "retention_summary": "Retido segundo a política do controller."
+    }
+  }
+}

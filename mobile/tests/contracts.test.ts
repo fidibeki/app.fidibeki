@@ -63,6 +63,15 @@ describe('shared mobile capture contracts', () => {
     ).resolves.toMatchObject({ feedback_public_id: 'FDBK-FIXTURE' })
   })
 
+  it('accepts the shared dynamic form and consent contract', () => {
+    const session = validateCaptureSession(fixture('session-contact-valid.json'))
+    const request = fixture<MobileFeedbackRequest>('feedback-submit-consent.json')
+
+    expect(session.configuration.contact_notice?.locale).toBe('pt-PT')
+    expect(session.configuration.definition.ai_processing?.enabled).toBe(true)
+    expect(JSON.parse(canonicalRequest(request))).toEqual(request)
+  })
+
   it('maps every shared backend error fixture', async () => {
     const request = fixture<{ request: MobileFeedbackRequest }>('feedback-submit-valid.json').request
     const contract = fixture<{

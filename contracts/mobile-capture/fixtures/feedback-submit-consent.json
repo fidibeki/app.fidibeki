@@ -1,0 +1,23 @@
+{
+  "client_feedback_id": "55555555-5555-4555-8555-555555555555",
+  "responses": {
+    "rating": 5,
+    "reaction": "happy",
+    "journey": "easy",
+    "feedback": "O pagamento foi simples"
+  },
+  "comment": "Usei a aplicação em modo escuro",
+  "reporter_email": "reporter@example.test",
+  "notify_reporter": true,
+  "consent": {
+    "purpose": "feedback_updates",
+    "notice_version": "2026-07-controller-v1",
+    "controller_profile_version": 3,
+    "widget_definition_version": 2,
+    "locale": "pt-PT",
+    "granted": true
+  },
+  "app_version": "2.4.0",
+  "os_version": "18.5",
+  "device_locale": "pt-PT"
+}

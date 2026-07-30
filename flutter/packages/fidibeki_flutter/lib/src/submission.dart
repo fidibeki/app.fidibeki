@@ -27,6 +27,78 @@ Map<String, Object?> _requiredObject(Object? value, String field) {
   }
 }
 
+int _requiredInteger(Object? value, String field) {
+  if (value is! int) {
+    throw FidibekiException(
+      FidibekiErrorCode.invalidResponse,
+      'Invalid mobile feedback $field.',
+    );
+  }
+  return value;
+}
+
+bool _requiredBoolean(Object? value, String field) {
+  if (value is! bool) {
+    throw FidibekiException(
+      FidibekiErrorCode.invalidResponse,
+      'Invalid mobile feedback $field.',
+    );
+  }
+  return value;
+}
+
+final class FidibekiReporterConsent {
+  const FidibekiReporterConsent({
+    required this.noticeVersion,
+    required this.controllerProfileVersion,
+    required this.widgetDefinitionVersion,
+    required this.locale,
+  });
+
+  factory FidibekiReporterConsent.fromJson(Object? value) {
+    final json = _requiredObject(value, 'consent');
+    if (_requiredString(json['purpose'], 'consent purpose') !=
+            'feedback_updates' ||
+        !_requiredBoolean(json['granted'], 'consent grant')) {
+      throw const FidibekiException(
+        FidibekiErrorCode.invalidResponse,
+        'Invalid mobile feedback consent.',
+      );
+    }
+    return FidibekiReporterConsent(
+      noticeVersion: _requiredString(
+        json['notice_version'],
+        'consent notice version',
+      ),
+      controllerProfileVersion: _requiredInteger(
+        json['controller_profile_version'],
+        'consent controller profile version',
+      ),
+      widgetDefinitionVersion: _requiredInteger(
+        json['widget_definition_version'],
+        'consent widget definition version',
+      ),
+      locale: _requiredString(json['locale'], 'consent locale'),
+    );
+  }
+
+  final String noticeVersion;
+  final int controllerProfileVersion;
+  final int widgetDefinitionVersion;
+  final String locale;
+
+  Map<String, Object> toWireJson() {
+    return <String, Object>{
+      'purpose': 'feedback_updates',
+      'notice_version': noticeVersion,
+      'controller_profile_version': controllerProfileVersion,
+      'widget_definition_version': widgetDefinitionVersion,
+      'locale': locale,
+      'granted': true,
+    };
+  }
+}
+
 final class FidibekiFeedbackRequest {
   FidibekiFeedbackRequest({
     required this.clientFeedbackId,
@@ -35,7 +107,19 @@ final class FidibekiFeedbackRequest {
     required this.osVersion,
     this.comment,
     this.deviceLocale,
-  }) : responses = Map.unmodifiable(responses);
+    this.reporterEmail,
+    this.notifyReporter = false,
+    this.consent,
+  }) : responses = Map.unmodifiable(responses) {
+    final hasReporter = reporterEmail != null;
+    if (hasReporter != notifyReporter ||
+        hasReporter != (consent != null) ||
+        (notifyReporter && consent == null)) {
+      throw ArgumentError(
+        'Reporter email, notification, and consent must be provided together.',
+      );
+    }
+  }
 
   factory FidibekiFeedbackRequest.fromJson(Map<String, Object?> json) {
     final rawResponses = _requiredObject(json['responses'], 'responses');
@@ -55,6 +139,13 @@ final class FidibekiFeedbackRequest {
       return value == null ? null : _requiredString(value, field);
     }
 
+    final notifyReporter = json['notify_reporter'] == null
+        ? false
+        : _requiredBoolean(json['notify_reporter'], 'notify reporter');
+    final consent = json['consent'] == null
+        ? null
+        : FidibekiReporterConsent.fromJson(json['consent']);
+
     return FidibekiFeedbackRequest(
       clientFeedbackId: _requiredString(
         json['client_feedback_id'],
@@ -65,6 +156,9 @@ final class FidibekiFeedbackRequest {
       appVersion: _requiredString(json['app_version'], 'app version'),
       osVersion: _requiredString(json['os_version'], 'OS version'),
       deviceLocale: optionalString('device_locale'),
+      reporterEmail: optionalString('reporter_email'),
+      notifyReporter: notifyReporter,
+      consent: consent,
     );
   }
 
@@ -74,6 +168,9 @@ final class FidibekiFeedbackRequest {
   final String appVersion;
   final String osVersion;
   final String? deviceLocale;
+  final String? reporterEmail;
+  final bool notifyReporter;
+  final FidibekiReporterConsent? consent;
 
   Map<String, Object> toWireJson() {
     final json = <String, Object>{
@@ -84,6 +181,12 @@ final class FidibekiFeedbackRequest {
     };
     final comment = this.comment;
     if (comment != null) json['comment'] = comment;
+    final reporterEmail = this.reporterEmail;
+    if (reporterEmail != null) {
+      json['reporter_email'] = reporterEmail;
+      json['notify_reporter'] = true;
+      json['consent'] = consent!.toWireJson();
+    }
     final deviceLocale = this.deviceLocale;
     if (deviceLocale != null) json['device_locale'] = deviceLocale;
     return json;

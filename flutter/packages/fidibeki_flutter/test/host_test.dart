@@ -22,6 +22,30 @@ FidibekiCaptureSession fixtureSession() {
   return FidibekiCaptureSession.fromJson(json);
 }
 
+FidibekiCaptureSession contactFixtureSession() {
+  var directory = Directory.current.absolute;
+  while (!File('${directory.path}/pnpm-workspace.yaml').existsSync()) {
+    directory = directory.parent;
+  }
+  final json =
+      jsonDecode(
+            File(
+              '${directory.path}/contracts/mobile-capture/fixtures/session-contact-valid.json',
+            ).readAsStringSync(),
+          )
+          as Map<String, Object?>;
+  return FidibekiCaptureSession.fromJson(json);
+}
+
+Finder formScroll() {
+  return find
+      .descendant(
+        of: find.byKey(const ValueKey('fidibeki-form-scroll')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+}
+
 void main() {
   testWidgets('opens, closes, and reopens with one capture session', (
     tester,
@@ -124,6 +148,14 @@ void main() {
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('fidibeki-rating-rating-4')));
+    await tester.tap(
+      find.byKey(const ValueKey('fidibeki-choice-journey-easy')),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-text-feedback')),
+      120,
+      scrollable: formScroll(),
+    );
     await tester.enterText(
       find.byKey(const ValueKey('fidibeki-text-feedback')),
       'The chart labels are difficult to read',
@@ -134,5 +166,80 @@ void main() {
     expect(wireRequest['responses'], containsPair('rating', 4));
     expect(controller.status, FidibekiFeedbackStatus.submitted);
     expect(find.text('Thanks for the feedback.'), findsOneWidget);
+  });
+
+  testWidgets('renders dynamic choices and progressive privacy disclosures', (
+    tester,
+  ) async {
+    final controller = FidibekiFeedbackController(
+      apiBaseUrl: Uri.parse('https://api.example.test'),
+      appVersion: '2.4.0',
+      locale: const Locale('pt', 'PT'),
+      osVersion: '18.5',
+      platform: FidibekiPlatform.ios,
+      screen: '/checkout',
+      sessionProvider: (_) async => contactFixtureSession(),
+      storage: MemoryFidibekiStorage(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FidibekiFeedbackHost(
+          controller: controller,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const SizedBox.expand(),
+      ),
+    );
+    await tester.pump();
+    await controller.open();
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('fidibeki-choice-reaction-happy')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('fidibeki-choice-journey-easy')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('fidibeki-comment')), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-comment-disclosure')),
+      120,
+      scrollable: formScroll(),
+    );
+    expect(
+      find.byKey(const ValueKey('fidibeki-comment-disclosure')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('fidibeki-comment-disclosure')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fidibeki-comment')), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-contact-disclosure')),
+      120,
+      scrollable: formScroll(),
+    );
+    await tester.drag(formScroll(), const Offset(0, -80));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('fidibeki-contact-disclosure')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('fidibeki-reporter-email')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('fidibeki-consent')), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fidibeki-ai-disclosure')),
+      120,
+      scrollable: formScroll(),
+    );
+    expect(
+      find.byKey(const ValueKey('fidibeki-ai-disclosure')),
+      findsOneWidget,
+    );
   });
 }

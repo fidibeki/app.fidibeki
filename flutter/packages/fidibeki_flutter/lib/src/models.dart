@@ -158,6 +158,9 @@ final class FidibekiLocalization {
     required this.successMessage,
     required this.blockLabels,
     required this.optionLabels,
+    this.privacyPurposeSummary,
+    this.privacyLawfulBasisSummary,
+    this.privacyRetentionSummary,
   });
 
   factory FidibekiLocalization.fromJson(Object? value) {
@@ -185,6 +188,21 @@ final class FidibekiLocalization {
       successMessage: _string(json['success_message'], 'success message'),
       blockLabels: _stringMap(json['block_labels'], 'block labels'),
       optionLabels: Map.unmodifiable(optionLabels),
+      privacyPurposeSummary: json['privacy_purpose_summary'] == null
+          ? null
+          : _string(json['privacy_purpose_summary'], 'privacy purpose summary'),
+      privacyLawfulBasisSummary: json['privacy_lawful_basis_summary'] == null
+          ? null
+          : _string(
+              json['privacy_lawful_basis_summary'],
+              'privacy lawful basis summary',
+            ),
+      privacyRetentionSummary: json['privacy_retention_summary'] == null
+          ? null
+          : _string(
+              json['privacy_retention_summary'],
+              'privacy retention summary',
+            ),
     );
   }
 
@@ -197,15 +215,20 @@ final class FidibekiLocalization {
   final String successMessage;
   final Map<String, String> blockLabels;
   final Map<String, Map<String, String>> optionLabels;
+  final String? privacyPurposeSummary;
+  final String? privacyLawfulBasisSummary;
+  final String? privacyRetentionSummary;
 }
 
 final class FidibekiAppearance {
   const FidibekiAppearance({
+    this.position,
     this.theme,
     this.accentColor,
     this.accentForeground,
     this.surfaceColor,
     this.textColor,
+    this.logoUrl,
   });
 
   factory FidibekiAppearance.fromJson(Object? value) {
@@ -227,22 +250,35 @@ final class FidibekiAppearance {
     }
 
     final logo = json['logo_url'];
-    if (logo != null) _httpsUri(logo, 'logo URL');
+    final logoUrl = logo == null ? null : _httpsUri(logo, 'logo URL');
+    final position = json['position'];
+    if (position != null &&
+        (position is! String ||
+            !const <String>{
+              'bottom-left',
+              'bottom-right',
+            }.contains(position))) {
+      invalidCaptureSession('invalid appearance position');
+    }
 
     return FidibekiAppearance(
+      position: position as String?,
       theme: theme as String?,
       accentColor: color('accent_color'),
       accentForeground: color('accent_foreground'),
       surfaceColor: color('surface_color'),
       textColor: color('text_color'),
+      logoUrl: logoUrl,
     );
   }
 
+  final String? position;
   final String? theme;
   final String? accentColor;
   final String? accentForeground;
   final String? surfaceColor;
   final String? textColor;
+  final Uri? logoUrl;
 }
 
 final class FidibekiControllerNotice {
@@ -252,7 +288,12 @@ final class FidibekiControllerNotice {
     required this.widgetDefinitionVersion,
     required this.locale,
     required this.controllerName,
+    required this.privacyContactEmail,
+    required this.privacyRightsEmail,
     required this.privacyPolicyUrl,
+    required this.purposeSummary,
+    required this.lawfulBasisSummary,
+    required this.retentionSummary,
   });
 
   factory FidibekiControllerNotice.fromJson(Object? value) {
@@ -271,10 +312,24 @@ final class FidibekiControllerNotice {
       ),
       locale: _string(json['locale'], 'notice locale'),
       controllerName: _string(json['controller_name'], 'controller name'),
+      privacyContactEmail: _string(
+        json['privacy_contact_email'],
+        'privacy contact email',
+      ),
+      privacyRightsEmail: _string(
+        json['privacy_rights_email'],
+        'privacy rights email',
+      ),
       privacyPolicyUrl: _httpsUri(
         json['privacy_policy_url'],
         'privacy policy URL',
       ),
+      purposeSummary: _string(json['purpose_summary'], 'purpose summary'),
+      lawfulBasisSummary: _string(
+        json['lawful_basis_summary'],
+        'lawful basis summary',
+      ),
+      retentionSummary: _string(json['retention_summary'], 'retention summary'),
     );
   }
 
@@ -283,7 +338,70 @@ final class FidibekiControllerNotice {
   final int widgetDefinitionVersion;
   final String locale;
   final String controllerName;
+  final String privacyContactEmail;
+  final String privacyRightsEmail;
   final Uri privacyPolicyUrl;
+  final String purposeSummary;
+  final String lawfulBasisSummary;
+  final String retentionSummary;
+}
+
+final class FidibekiAiProcessing {
+  const FidibekiAiProcessing({
+    required this.enabled,
+    required this.inputCategories,
+    this.provider,
+    this.privacyPolicyUrl,
+    this.policyVersion,
+  });
+
+  factory FidibekiAiProcessing.fromJson(Object? value) {
+    final json = _object(value, 'AI disclosure');
+    final enabled = _boolean(json['enabled'], 'AI disclosure enabled');
+    final rawCategories = json['input_categories'];
+    final categories = rawCategories == null
+        ? const <String>[]
+        : _list(rawCategories, 'AI input categories')
+              .map((category) => _string(category, 'AI input category'))
+              .toList(growable: false);
+    if (categories.any(
+      (category) => !const <String>{
+        'feedback_text',
+        'screenshot',
+        'audio',
+        'video',
+      }.contains(category),
+    )) {
+      invalidCaptureSession('invalid AI input category');
+    }
+    final provider = json['provider'];
+    final privacyPolicyUrl = json['privacy_policy_url'];
+    final policyVersion = json['policy_version'];
+    if (enabled &&
+        (provider == null ||
+            privacyPolicyUrl == null ||
+            policyVersion == null ||
+            rawCategories == null)) {
+      invalidCaptureSession('incomplete AI disclosure');
+    }
+    return FidibekiAiProcessing(
+      enabled: enabled,
+      provider: provider == null ? null : _string(provider, 'AI provider'),
+      privacyPolicyUrl: privacyPolicyUrl == null
+          ? null
+          : _httpsUri(privacyPolicyUrl, 'AI privacy policy URL'),
+      policyVersion: policyVersion == null
+          ? null
+          : _string(policyVersion, 'AI policy version'),
+      inputCategories: List.unmodifiable(categories),
+    );
+  }
+
+  final bool enabled;
+  final String? provider;
+  final Uri? privacyPolicyUrl;
+  final String? policyVersion;
+  final List<String> inputCategories;
 }
 
 final class FidibekiWidgetDefinition {
@@ -299,6 +417,7 @@ final class FidibekiWidgetDefinition {
     required this.collectContact,
     required this.canAttachScreenshot,
     required this.appearance,
+    this.aiProcessing,
   });
 
   factory FidibekiWidgetDefinition.fromJson(Object? value) {
@@ -348,29 +467,6 @@ final class FidibekiWidgetDefinition {
     }
 
     final ai = json['ai_processing'];
-    if (ai != null) {
-      final aiJson = _object(ai, 'AI disclosure');
-      final enabled = _boolean(aiJson['enabled'], 'AI disclosure enabled');
-      if (enabled) {
-        _string(aiJson['provider'], 'AI provider');
-        _httpsUri(aiJson['privacy_policy_url'], 'AI privacy policy URL');
-        _string(aiJson['policy_version'], 'AI policy version');
-        final categories = _list(
-          aiJson['input_categories'],
-          'AI input categories',
-        );
-        if (categories.any(
-          (category) => !const <String>{
-            'feedback_text',
-            'screenshot',
-            'audio',
-            'video',
-          }.contains(category),
-        )) {
-          invalidCaptureSession('invalid AI input category');
-        }
-      }
-    }
 
     return FidibekiWidgetDefinition(
       id: _string(json['id'], 'definition ID'),
@@ -395,6 +491,7 @@ final class FidibekiWidgetDefinition {
         'can attach screenshot',
       ),
       appearance: FidibekiAppearance.fromJson(json['appearance']),
+      aiProcessing: ai == null ? null : FidibekiAiProcessing.fromJson(ai),
     );
   }
 
@@ -409,6 +506,7 @@ final class FidibekiWidgetDefinition {
   final bool collectContact;
   final bool canAttachScreenshot;
   final FidibekiAppearance appearance;
+  final FidibekiAiProcessing? aiProcessing;
 }
 
 final class FidibekiCaptureConfiguration {
