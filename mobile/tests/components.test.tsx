@@ -18,6 +18,7 @@ interface NativeTestControls {
   __setReducedMotion(enabled: boolean): void
   __setColorScheme(colorScheme: 'light' | 'dark' | null): void
   __emitAppState(state: 'active' | 'background'): void
+  __emitKeyboard(state: 'show' | 'hide'): void
 }
 
 async function flush(): Promise<void> {
@@ -78,6 +79,11 @@ function pressByLabel(root: ReactTestInstance, label: string): void {
   root.findByProps({ accessibilityLabel: label }).props.onPress()
 }
 
+function flattenedStyle(style: unknown): Record<string, unknown> {
+  const styles = Array.isArray(style) ? style.flat(Infinity) : [style]
+  return Object.assign({}, ...styles.filter((value) => value && typeof value === 'object'))
+}
+
 async function fillRequiredForm(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => {
     pressByLabel(renderer.root, '5 out of 5')
@@ -119,11 +125,23 @@ describe('native provider, host trigger, and modal sheet', () => {
       native.__setPlatform(platform)
       const renderer = await renderSDK()
       await openSheet(renderer)
-      expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(true)
+      const modal = renderer.root.findByProps({ testID: 'fidibeki-modal' })
+      expect(modal.props.visible).toBe(true)
+      expect(modal.props.transparent).toBe(true)
+      expect(modal.props.presentationStyle).toBe('overFullScreen')
       expect(renderer.root.findByProps({ testID: `fidibeki-keyboard-${platform}` }).props.behavior).toBe(
         platform === 'ios' ? 'padding' : 'height',
       )
       expect(renderer.root.findAll((node) => String(node.type) === 'SafeAreaView')).toHaveLength(1)
+      expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+        '75%',
+      )
+      expect(renderer.root.findByProps({ testID: 'fidibeki-sheet-grabber' })).toBeTruthy()
+      expect(renderer.root.findByProps({ testID: 'fidibeki-sheet-header' })).toBeTruthy()
+      const body = renderer.root.findByProps({ testID: 'fidibeki-sheet-body' })
+      const footer = renderer.root.findByProps({ testID: 'fidibeki-sheet-footer' })
+      expect(body.findAllByProps({ testID: 'fidibeki-submit' })).toHaveLength(0)
+      expect(footer.findByProps({ testID: 'fidibeki-submit' })).toBeTruthy()
       expect(
         renderer.root.findAll((node) => String(node.type) === 'View' && node.props.accessibilityRole === 'radiogroup'),
       ).toHaveLength(3)
@@ -137,6 +155,77 @@ describe('native provider, host trigger, and modal sheet', () => {
       renderer.unmount()
     },
   )
+
+  it.each(['ios', 'android'] as const)('expands the sheet while the keyboard is visible on %s', async (platform) => {
+    const native = (await import('react-native')) as unknown as NativeTestControls
+    native.__setPlatform(platform)
+    const renderer = await renderSDK()
+    await openSheet(renderer)
+
+    await act(async () => {
+      native.__emitKeyboard('show')
+      await flush()
+    })
+    expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+      '100%',
+    )
+
+    await act(async () => {
+      native.__emitKeyboard('hide')
+      await flush()
+    })
+    expect(flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' }).props.style).height).toBe(
+      '75%',
+    )
+    renderer.unmount()
+  })
+
+  it('renders cumulative accent stars while submitting the numeric rating value', async () => {
+    const current = session({
+      configuration: {
+        ...session().configuration,
+        definition: definition({
+          appearance: { accent_color: '#d9485f' },
+        }),
+      },
+    })
+    const renderer = await renderSDK({
+      sessionProvider: vi.fn(async () => current),
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      pressByLabel(renderer.root, '4 out of 5')
+      pressByLabel(renderer.root, 'Alpha')
+      renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Numeric contract')
+    })
+
+    for (const rating of [1, 2, 3, 4]) {
+      expect(
+        flattenedStyle(renderer.root.findByProps({ testID: `fidibeki-star-icon-rating-${rating}` }).props.style).color,
+      ).toBe('#d9485f')
+    }
+    expect(
+      flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-star-icon-rating-5' }).props.style).color,
+    ).not.toBe('#d9485f')
+    expect(renderer.root.findByProps({ testID: 'fidibeki-rating-rating-4' }).props.accessibilityState.checked).toBe(
+      true,
+    )
+    expect(renderer.root.findByProps({ testID: 'fidibeki-rating-rating-3' }).props.accessibilityState.checked).toBe(
+      false,
+    )
+    expect(
+      flattenedStyle(renderer.root.findByProps({ testID: 'fidibeki-choice-choice-a' }).props.style).backgroundColor,
+    ).toBe('#d9485f')
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'fidibeki-submit' }).props.onPress()
+      await flush()
+    })
+    const request = vi.mocked(globalThis.fetch).mock.calls[0]?.[1]
+    const body = JSON.parse(String(request?.body)) as { responses: Record<string, string | number> }
+    expect(body.responses.rating).toBe(4)
+    renderer.unmount()
+  })
 
   it('uses no modal transition when reduced motion is enabled', async () => {
     const native = (await import('react-native')) as unknown as NativeTestControls
@@ -720,8 +809,8 @@ describe('native provider, host trigger, and modal sheet', () => {
       sessionProvider: vi.fn(async () => automatic),
     })
     await openSheet(renderer)
-    const safeArea = renderer.root.find((node) => String(node.type) === 'SafeAreaView')
-    expect(Object.assign({}, ...safeArea.props.style).backgroundColor).toBe('#141716')
+    const sheet = renderer.root.findByProps({ testID: 'fidibeki-sheet-frame' })
+    expect(flattenedStyle(sheet.props.style).backgroundColor).toBe('#141716')
     renderer.unmount()
   })
 

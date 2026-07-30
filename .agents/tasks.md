@@ -1029,7 +1029,7 @@ test:unit` passes 70 tests and `pnpm --filter @fidibeki/mobile typecheck` passes
 ## Task 52: Render The Compact Native Sheet
 
 **Depends on:** Task 51
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** The current sparse page form is replaced by the approved 75% bottom sheet with fixed
 header/footer, keyboard-safe body, accent stars, and compact dynamic response controls.
@@ -1039,6 +1039,15 @@ header/footer, keyboard-safe body, accent stars, and compact dynamic response co
 **Acceptance:** One focused iOS/Android component run proves frame geometry, keyboard expansion,
 cumulative accessible stars with numeric values, dynamic block order, chip states, safe areas, and
 reduced motion.
+
+**Evidence:** The SDK now renders a transparent `overFullScreen` modal with scrim, grabber, compact
+header, 75% bottom-aligned frame, scrolling body, and fixed submit footer. Keyboard events expand
+the frame to the full available safe layout on iOS and Android. Rating is a cumulative five-star
+radiogroup driven by the resolved accent while preserving numeric request values; configured
+reaction/single-choice blocks use compact wrapping chips and every response block remains in
+definition order. Component coverage proves both platform frames, footer separation, keyboard
+transitions, accent precedence, exact radio state, numeric submission, reduced motion, and dark
+appearance. The full 73-test mobile suite and mobile typecheck pass.
 
 **Autonomy:** AFK
 

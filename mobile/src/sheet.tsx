@@ -1,5 +1,6 @@
 import {
   AccessibilityInfo,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -13,7 +14,7 @@ import {
   useColorScheme,
   View,
 } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFeedbackContext } from './context'
 import { EMPTY_FORM_STATE, MAX_TEXT_LENGTH, reconcileResponses, validateForm } from './form-state'
@@ -69,6 +70,24 @@ function useReducedMotion(): boolean {
   return reducedMotion
 }
 
+function useKeyboardVisible(sheetVisible: boolean): boolean {
+  const [keyboardVisible, setKeyboardVisible] = useState(false)
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide'
+    const show = Keyboard.addListener(showEvent, () => setKeyboardVisible(true))
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false))
+    return () => {
+      show.remove()
+      hide.remove()
+    }
+  }, [])
+  useEffect(() => {
+    if (!sheetVisible && keyboardVisible) setKeyboardVisible(false)
+  }, [keyboardVisible, sheetVisible])
+  return keyboardVisible
+}
+
 function FieldError({ message, colors }: { message: string | undefined; colors: Colors }) {
   if (!message) return null
   return (
@@ -96,12 +115,18 @@ function ResponseField({
   onChange(value: string | number): void
 }) {
   const context = useFeedbackContext()
-  const displayedLabel = `${label}${block.required ? ` (${context.messages.required})` : ''}`
+  const fieldLabel = (
+    <Text style={[styles.label, { color: colors.text }]}>
+      {label}
+      {block.required ? <Text style={{ color: colors.danger }}> *</Text> : null}
+    </Text>
+  )
   if (block.type === 'free_text') {
     return (
       <View style={styles.field} testID={`fidibeki-field-${block.key}`}>
-        <Text style={[styles.label, { color: colors.text }]}>{displayedLabel}</Text>
+        {fieldLabel}
         <TextInput
+          accessibilityHint={block.required ? context.messages.required : undefined}
           accessibilityLabel={label}
           multiline
           maxLength={MAX_TEXT_LENGTH}
@@ -121,26 +146,65 @@ function ResponseField({
       </View>
     )
   }
-  const choices =
-    block.type === 'rating'
-      ? [1, 2, 3, 4, 5].map((rating) => ({
-          value: rating,
-          label: String(rating),
-          accessibilityLabel: context.messages.ratingValue(rating),
-        }))
-      : (block.options ?? []).map((option) => ({
-          value: option.value,
-          label: optionLabels[option.value] ?? option.value,
-          accessibilityLabel: optionLabels[option.value] ?? option.value,
-        }))
+  if (block.type === 'rating') {
+    const selectedRating = typeof value === 'number' ? value : 0
+    return (
+      <View
+        accessibilityHint={block.required ? context.messages.required : undefined}
+        accessibilityRole="radiogroup"
+        accessibilityLabel={label}
+        style={styles.field}
+        testID={`fidibeki-field-${block.key}`}
+      >
+        {fieldLabel}
+        <View style={styles.ratingRow}>
+          {[1, 2, 3, 4, 5].map((rating) => {
+            const selected = rating === selectedRating
+            const filled = rating <= selectedRating
+            return (
+              <Pressable
+                accessibilityLabel={context.messages.ratingValue(rating)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                key={rating}
+                onPress={() => onChange(rating)}
+                style={[
+                  styles.starButton,
+                  {
+                    backgroundColor: selected ? colors.surface : 'transparent',
+                    borderColor: selected ? colors.accent : 'transparent',
+                  },
+                ]}
+                testID={`fidibeki-rating-${block.key}-${rating}`}
+              >
+                <Text
+                  style={[styles.starIcon, { color: filled ? colors.accent : colors.muted }]}
+                  testID={`fidibeki-star-icon-${block.key}-${rating}`}
+                >
+                  ★
+                </Text>
+              </Pressable>
+            )
+          })}
+        </View>
+        <FieldError message={error} colors={colors} />
+      </View>
+    )
+  }
+  const choices = (block.options ?? []).map((option) => ({
+    value: option.value,
+    label: optionLabels[option.value] ?? option.value,
+    accessibilityLabel: optionLabels[option.value] ?? option.value,
+  }))
   return (
     <View
+      accessibilityHint={block.required ? context.messages.required : undefined}
       accessibilityRole="radiogroup"
       accessibilityLabel={label}
       style={styles.field}
       testID={`fidibeki-field-${block.key}`}
     >
-      <Text style={[styles.label, { color: colors.text }]}>{displayedLabel}</Text>
+      {fieldLabel}
       <View style={styles.choiceRow}>
         {choices.map((choice) => {
           const selected = choice.value === value
@@ -152,14 +216,17 @@ function ResponseField({
               key={String(choice.value)}
               onPress={() => onChange(choice.value)}
               style={[
-                styles.choice,
+                styles.choiceChip,
                 {
                   backgroundColor: selected ? colors.accent : colors.surface,
                   borderColor: selected ? colors.accent : colors.border,
                 },
               ]}
+              testID={`fidibeki-choice-${block.key}-${choice.value}`}
             >
-              <Text style={{ color: selected ? colors.onAccent : colors.text }}>{choice.label}</Text>
+              <Text style={[styles.choiceText, { color: selected ? colors.onAccent : colors.text }]}>
+                {choice.label}
+              </Text>
             </Pressable>
           )
         })}
@@ -199,6 +266,8 @@ export function FeedbackSheet() {
   const definition = session?.configuration.definition
   const contactNotice = session?.configuration.contact_notice
   const reducedMotion = useReducedMotion()
+  const keyboardVisible = useKeyboardVisible(context.visible)
+  const safeAreaInsets = useSafeAreaInsets()
   const appearance = definition?.appearance ?? {}
   const systemMode = useColorScheme()
   const configuredMode =
@@ -366,19 +435,52 @@ export function FeedbackSheet() {
       accessibilityViewIsModal
       animationType={reducedMotion ? 'none' : 'slide'}
       onRequestClose={context.dismiss}
-      presentationStyle="pageSheet"
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
       supportedOrientations={['portrait', 'landscape']}
       testID="fidibeki-modal"
+      transparent
       visible={context.visible}
     >
-      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
-            style={styles.keyboardLayout}
-            testID={`fidibeki-keyboard-${Platform.OS}`}
+      <SafeAreaView edges={['top']} style={styles.modalRoot}>
+        <Pressable
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          onPress={context.dismiss}
+          style={[
+            styles.scrim,
+            {
+              backgroundColor: mode === 'dark' ? 'rgba(0, 0, 0, 0.68)' : 'rgba(8, 18, 16, 0.38)',
+            },
+          ]}
+          testID="fidibeki-sheet-scrim"
+        />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+          pointerEvents="box-none"
+          style={styles.keyboardLayout}
+          testID={`fidibeki-keyboard-${Platform.OS}`}
+        >
+          <View
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+                height: keyboardVisible ? '100%' : '75%',
+              },
+            ]}
+            testID="fidibeki-sheet-frame"
           >
-            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View
+              style={[styles.grabber, { backgroundColor: colors.border }]}
+              testID="fidibeki-sheet-grabber"
+            />
+            <View
+              style={[styles.header, { borderBottomColor: colors.border }]}
+              testID="fidibeki-sheet-header"
+            >
               <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>
                 {customerCopy.prompt}
               </Text>
@@ -394,9 +496,11 @@ export function FeedbackSheet() {
               </Pressable>
             </View>
             <ScrollView
-              contentContainerStyle={styles.content}
+              contentContainerStyle={[styles.content, submitted ? styles.successContent : null]}
               keyboardDismissMode="interactive"
               keyboardShouldPersistTaps="handled"
+              style={styles.body}
+              testID="fidibeki-sheet-body"
             >
               {submitted ? (
                 <View accessibilityLiveRegion="polite" style={styles.success}>
@@ -559,42 +663,85 @@ export function FeedbackSheet() {
                         : context.messages.submitFailed}
                     </Text>
                   ) : null}
-                  <Pressable
-                    accessibilityLabel={customerCopy.submit_label}
-                    accessibilityRole="button"
-                    accessibilityState={{ disabled: submitting }}
-                    disabled={submitting}
-                    onPress={() => void submit()}
-                    style={[styles.primaryButton, { backgroundColor: colors.accent }]}
-                    testID="fidibeki-submit"
-                  >
-                    <Text style={[styles.primaryButtonText, { color: colors.onAccent }]}>
-                      {customerCopy.submit_label}
-                    </Text>
-                  </Pressable>
                 </>
               )}
             </ScrollView>
-          </KeyboardAvoidingView>
+            {!submitted ? (
+              <View
+                style={[
+                  styles.footer,
+                  {
+                    borderTopColor: colors.border,
+                    paddingBottom: keyboardVisible ? 12 : Math.max(12, safeAreaInsets.bottom),
+                  },
+                ]}
+                testID="fidibeki-sheet-footer"
+              >
+                <Pressable
+                  accessibilityLabel={customerCopy.submit_label}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: submitting }}
+                  disabled={submitting}
+                  onPress={() => void submit()}
+                  style={[styles.primaryButton, { backgroundColor: colors.accent }]}
+                  testID="fidibeki-submit"
+                >
+                  <Text style={[styles.primaryButtonText, { color: colors.onAccent }]}>
+                    {customerCopy.submit_label}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   )
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  keyboardLayout: { flex: 1 },
+  modalRoot: { flex: 1 },
+  scrim: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  keyboardLayout: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    width: '100%',
+    maxHeight: '100%',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+  },
+  grabber: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    marginTop: 7,
+    marginBottom: 3,
+  },
   header: {
-    minHeight: 60,
+    minHeight: 52,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 12,
   },
-  title: { flex: 1, fontSize: 20, fontWeight: '700', lineHeight: 26 },
+  title: { flex: 1, fontSize: 18, fontWeight: '700', lineHeight: 24 },
   iconButton: {
     width: 44,
     height: 44,
@@ -602,11 +749,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   closeIcon: { fontSize: 30, lineHeight: 32 },
-  content: { padding: 20, paddingBottom: 40, gap: 20 },
+  body: { flex: 1 },
+  content: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 20, gap: 16 },
+  successContent: { flexGrow: 1 },
   field: { gap: 8 },
   label: { fontSize: 15, fontWeight: '600', lineHeight: 20 },
   textArea: {
-    minHeight: 104,
+    minHeight: 88,
     borderWidth: 1,
     borderRadius: 6,
     paddingHorizontal: 12,
@@ -622,8 +771,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 16,
   },
+  ratingRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  starButton: {
+    flex: 1,
+    minWidth: 44,
+    maxWidth: 56,
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  starIcon: {
+    fontSize: 29,
+    lineHeight: 34,
+  },
   choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  choice: {
+  choiceChip: {
     minWidth: 44,
     minHeight: 44,
     borderWidth: 1,
@@ -632,6 +801,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  choiceText: { fontSize: 15, lineHeight: 20 },
   contactSection: { gap: 10 },
   consentRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   consentText: { flex: 1, fontSize: 14, lineHeight: 20 },
@@ -661,6 +831,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   primaryButtonText: { fontSize: 16, fontWeight: '700' },
+  footer: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+  },
   errorText: { fontSize: 13, lineHeight: 18 },
   success: {
     minHeight: 200,
