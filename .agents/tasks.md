@@ -1005,7 +1005,7 @@ backend, production, infrastructure, provider, or registry changes.
 ## Task 51: Restore Dismiss And Reopen Semantics
 
 **Depends on:** Task 50
-**Status:** Pending
+**Status:** Complete
 
 **Outcome:** Closing the mobile sheet preserves eligibility/session/draft and legacy dismissed
 records can no longer suppress the host trigger.
@@ -1016,6 +1016,13 @@ the person submits.
 **Acceptance:** One focused recurrence/provider test run proves close/reopen with zero storage or
 session churn, clears legacy dismissed state for every recurrence mode, and preserves submitted
 suppression.
+
+**Evidence:** The provider close action now only hides an open sheet and returns it to `ready`;
+submitting cannot be dismissed, and accepted submissions remain the sole recurrence write.
+Component coverage proves close/reopen reuses the same capture session, response draft, screenshot,
+eligibility, and empty storage. Recurrence coverage removes old `dismissed` records and immediately
+restores eligibility for `session`, `cooldown`, and `never`. `pnpm --filter @fidibeki/mobile
+test:unit` passes 70 tests and `pnpm --filter @fidibeki/mobile typecheck` passes.
 
 **Autonomy:** AFK
 

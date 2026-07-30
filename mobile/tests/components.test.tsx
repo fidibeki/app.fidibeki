@@ -148,6 +148,49 @@ describe('native provider, host trigger, and modal sheet', () => {
     renderer.unmount()
   })
 
+  it('closes and reopens with the same session, draft, screenshot, and eligibility', async () => {
+    const storage = new MemoryStorage()
+    const setItem = vi.spyOn(storage, 'setItem')
+    const removeItem = vi.spyOn(storage, 'removeItem')
+    const sessionProvider = vi.fn<SessionProvider>(async () => session())
+    const screenshotBlob = new Blob(['png'], { type: 'image/png' })
+    const screenshotProvider = vi.fn<ScreenshotProvider>(async () => ({
+      uri: 'file:///private/user/screenshot.png',
+      contentType: 'image/png',
+      size: screenshotBlob.size,
+      read: async () => screenshotBlob,
+    }))
+    const renderer = await renderSDK({
+      screenshotProvider,
+      sessionProvider,
+      storage,
+    })
+    await openSheet(renderer)
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.onChangeText('Keep this draft')
+      pressByLabel(renderer.root, 'Add screenshot')
+      await flush()
+    })
+
+    await act(async () => {
+      pressByLabel(renderer.root, 'Close')
+      await flush()
+    })
+    expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(false)
+    expect(renderer.root.findByProps({ testID: 'host-feedback-trigger' }).props.disabled).toBe(false)
+    expect(sessionProvider).toHaveBeenCalledOnce()
+    expect(setItem).not.toHaveBeenCalled()
+    expect(removeItem).not.toHaveBeenCalled()
+
+    await openSheet(renderer)
+    expect(renderer.root.findByProps({ testID: 'fidibeki-modal' }).props.visible).toBe(true)
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Details' }).props.value).toBe('Keep this draft')
+    expect(JSON.stringify(renderer.toJSON())).toContain('Screenshot added')
+    expect(sessionProvider).toHaveBeenCalledOnce()
+    expect(screenshotProvider).toHaveBeenCalledOnce()
+    renderer.unmount()
+  })
+
   it('shows localized validation errors before any network request', async () => {
     const renderer = await renderSDK()
     await openSheet(renderer)

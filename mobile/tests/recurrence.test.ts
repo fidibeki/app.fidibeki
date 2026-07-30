@@ -40,7 +40,7 @@ describe('recurrence engine', () => {
       now: () => now,
       randomBytes: deterministicRandom(3),
     })
-    await engine.record('project', definition(), '/checkout', 'dismissed')
+    await engine.record('project', definition(), '/checkout', 'submitted')
     engine.onBackground()
     now += BACKGROUND_SESSION_RESET_MS - 1
     expect(engine.onForeground()).toBe(false)
@@ -89,13 +89,42 @@ describe('recurrence engine', () => {
       nextEligibleAt: null,
     })
     const never = definition({ recurrence_mode: 'never' })
-    await engine.record('project', never, '/never', 'dismissed')
+    await engine.record('project', never, '/never', 'submitted')
     now = Number.MAX_SAFE_INTEGER
     expect(await engine.eligibility('project', never, '/never')).toEqual({
       eligible: false,
       nextEligibleAt: null,
     })
   })
+
+  it.each(['session', 'cooldown', 'never'] as const)(
+    'clears legacy dismissed records for %s recurrence',
+    async (recurrenceMode) => {
+      const storage = new MemoryStorage()
+      const current = definition({
+        recurrence_mode: recurrenceMode,
+        ...(recurrenceMode === 'cooldown' ? { recurrence_days: 30 } : {}),
+      })
+      const key = recurrenceStorageKey('project', current.definition_key, '/checkout')
+      storage.values.set(
+        key,
+        JSON.stringify({
+          state: 'dismissed',
+          recordedAt: Date.now(),
+          appSessionId: 'host-session',
+        }),
+      )
+      const removeItem = vi.spyOn(storage, 'removeItem')
+      const engine = new RecurrenceEngine(storage, { appSessionId: 'host-session' })
+
+      expect(await engine.eligibility('project', current, '/checkout')).toEqual({
+        eligible: true,
+        nextEligibleAt: null,
+      })
+      expect(removeItem).toHaveBeenCalledWith(key)
+      expect(storage.values.has(key)).toBe(false)
+    },
+  )
 
   it('ignores malformed snooze timestamps instead of scheduling them', async () => {
     const storage = new MemoryStorage()

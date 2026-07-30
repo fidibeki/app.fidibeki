@@ -223,24 +223,10 @@ export function FidibekiProvider({
   }, [acquireSession, visible])
 
   const dismiss = useCallback(() => {
-    const current = sessionRef.current
+    if (!sessionRef.current || !visible || status === 'submitting') return
     setVisible(false)
-    if (!current || !visible || status === 'submitted' || status === 'loading' || status === 'error') return
-    eligibleRef.current = false
-    setEligible(false)
-    setStatus('ineligible')
-    void (async () => {
-      await recurrence.record(current.configuration.project_id, current.configuration.definition, screen, 'dismissed')
-      const recurrenceEligibility = await recurrence.eligibility(
-        current.configuration.project_id,
-        current.configuration.definition,
-        screen,
-      )
-      if (mounted.current && sessionRef.current === current) {
-        setNextEligibleAt(recurrenceEligibility.nextEligibleAt)
-      }
-    })()
-  }, [recurrence, screen, status, visible])
+    if (status === 'open') setStatus('ready')
+  }, [status, visible])
 
   const submit = useCallback(
     async (state: FeedbackFormState, screenshot?: PreparedScreenshot): Promise<MobileSubmissionResult> => {
