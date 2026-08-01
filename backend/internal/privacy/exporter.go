@@ -352,7 +352,7 @@ var workspaceExportFiles = []exportFile{
 			'ended_at', session.ended_at, 'events_count', session.events_count,
 			'batches_count', session.batches_count, 'rrweb_version', session.rrweb_version,
 			'merged_at', session.merged_at, 'merge_attempts', session.merge_attempts,
-			'merge_error', session.merge_error, 'created_at', session.created_at,
+			'failure_code', session.failure_code, 'created_at', session.created_at,
 			'object_availability', CASE WHEN session.storage_key IS NULL THEN 'unavailable' ELSE 'available_not_included' END
 		)
 		FROM sessions AS session

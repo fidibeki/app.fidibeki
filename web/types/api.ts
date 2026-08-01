@@ -631,7 +631,11 @@ export interface FeedbackSession {
   batches_count: number
   rrweb_version: string
   replay_ready: boolean
-  merge_error?: string
+  failure?: {
+    code: 'contract_violation' | 'unsafe_payload' | 'upload_expired' | 'processing_failed' | 'unavailable'
+    message: string
+    retryable: boolean
+  }
   retention_deleted_at?: string
   replay_url?: string
 }

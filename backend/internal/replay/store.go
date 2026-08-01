@@ -282,6 +282,99 @@ func (Store) GetSession(
 	`, tenantID, sessionID))
 }
 
+func (Store) GetFailureDetail(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	session Session,
+) (*FailureDetail, error) {
+	if session.Status() != "failed" || session.FailureCode == nil {
+		return nil, nil
+	}
+	retryable := false
+	if *session.FailureCode == FailureProcessingFailed && session.MergedAt == nil &&
+		session.RetentionDeletedAt == nil && session.EndedAt != nil &&
+		session.MergeRequestedAt != nil && session.MergeAttempts >= terminalMergeAttempts {
+		if err := query.QueryRow(ctx, `
+			SELECT EXISTS (
+			           SELECT 1 FROM session_batches
+			           WHERE tenant_id = $1 AND session_id = $2 AND safety_status = 'safe'
+			       )
+			       AND NOT EXISTS (
+			           SELECT 1 FROM session_batches
+			           WHERE tenant_id = $1 AND session_id = $2 AND safety_status <> 'safe'
+			       )
+		`, tenantID, session.ID).Scan(&retryable); err != nil {
+			return nil, fmt.Errorf("inspect replay failure retryability: %w", err)
+		}
+	}
+	return FailureDetailForCode(*session.FailureCode, retryable), nil
+}
+
+func (store Store) RetrySession(
+	ctx context.Context,
+	query db.Querier,
+	tenantID string,
+	sessionID string,
+) (Session, bool, error) {
+	var endedAt, mergedAt, mergeRequestedAt, retentionDeletedAt *time.Time
+	var failureCode *string
+	var mergeAttempts, mergeGeneration int
+	err := query.QueryRow(ctx, `
+		SELECT ended_at, merged_at, merge_requested_at, retention_deleted_at,
+		       failure_code, merge_attempts, merge_generation
+		FROM sessions
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, sessionID).Scan(
+		&endedAt, &mergedAt, &mergeRequestedAt, &retentionDeletedAt,
+		&failureCode, &mergeAttempts, &mergeGeneration,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, false, ErrNotFound
+	}
+	if err != nil {
+		return Session{}, false, fmt.Errorf("lock replay session for retry: %w", err)
+	}
+	if mergedAt == nil && retentionDeletedAt == nil && endedAt != nil &&
+		mergeRequestedAt != nil && failureCode == nil && mergeGeneration > 1 &&
+		mergeAttempts < terminalMergeAttempts {
+		found, getErr := store.GetSession(ctx, query, tenantID, sessionID)
+		return found, false, getErr
+	}
+	if mergedAt != nil || retentionDeletedAt != nil || endedAt == nil ||
+		mergeRequestedAt == nil || failureCode == nil ||
+		*failureCode != string(FailureProcessingFailed) ||
+		mergeAttempts < terminalMergeAttempts {
+		return Session{}, false, ErrNotRetryable
+	}
+	var safe, other int
+	if err := query.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE safety_status = 'safe'),
+		       count(*) FILTER (WHERE safety_status <> 'safe')
+		FROM session_batches
+		WHERE session_id = $1
+	`, sessionID).Scan(&safe, &other); err != nil {
+		return Session{}, false, fmt.Errorf("inspect replay retry batches: %w", err)
+	}
+	if safe == 0 || other != 0 {
+		return Session{}, false, ErrNotRetryable
+	}
+	if _, err := query.Exec(ctx, `
+		UPDATE sessions
+		SET merge_generation = merge_generation + 1,
+		    merge_attempts = 0,
+		    merge_error = NULL,
+		    failure_code = NULL,
+		    merge_enqueued_at = NULL
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, sessionID); err != nil {
+		return Session{}, false, fmt.Errorf("reset replay session for retry: %w", err)
+	}
+	found, err := store.GetSession(ctx, query, tenantID, sessionID)
+	return found, true, err
+}
+
 func (Store) DeleteSession(
 	ctx context.Context,
 	query db.Querier,
@@ -547,17 +640,18 @@ func (store Store) Finalize(
 		found, getErr := store.GetSession(ctx, query, tenantID, sessionID)
 		return found, false, getErr
 	}
-	var pending, quarantined, invalid, completed int
+	var pending, quarantined, rejected, expired, completed int
 	if err := query.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE safety_status IN ('pending', 'cleaning')),
 		       count(*) FILTER (WHERE safety_status = 'quarantined'),
-		       count(*) FILTER (WHERE safety_status IN ('rejected', 'expired')),
+		       count(*) FILTER (WHERE safety_status = 'rejected'),
+		       count(*) FILTER (WHERE safety_status = 'expired'),
 		       count(*) FILTER (WHERE safety_status = 'safe')
 		FROM session_batches WHERE session_id = $1
-	`, sessionID).Scan(&pending, &quarantined, &invalid, &completed); err != nil {
+	`, sessionID).Scan(&pending, &quarantined, &rejected, &expired, &completed); err != nil {
 		return Session{}, false, fmt.Errorf("inspect replay batches before finalization: %w", err)
 	}
-	if pending > 0 || invalid > 0 || completed+quarantined == 0 {
+	if pending > 0 || completed+quarantined+rejected+expired == 0 {
 		return Session{}, false, ErrIncompleteBatches
 	}
 	ended := now.UTC()
@@ -567,6 +661,34 @@ func (store Store) Finalize(
 	}
 	if ended.Before(startedAt) {
 		ended = startedAt
+	}
+	if rejected+expired > 0 {
+		fallbackCode := FailureUploadExpired
+		if rejected > 0 {
+			fallbackCode = FailureUnsafePayload
+		}
+		if _, err := query.Exec(ctx, `
+			UPDATE sessions
+			SET finalize_requested_at = COALESCE(finalize_requested_at, $4),
+			    ended_at = $4, merge_requested_at = NULL,
+			    merge_enqueued_at = NULL, merge_error = $5,
+			    merge_attempts = $6,
+			    failure_code = CASE
+			        WHEN failure_code = 'contract_violation' THEN failure_code
+			        WHEN $7::text = 'contract_violation' THEN $7::text
+			        WHEN failure_code = 'unsafe_payload' THEN failure_code
+			        WHEN $7::text = 'unsafe_payload' THEN $7::text
+			        WHEN failure_code = 'upload_expired' THEN failure_code
+			        WHEN $7::text = 'upload_expired' THEN $7::text
+			        ELSE COALESCE(failure_code, $7::text)
+			    END
+			WHERE tenant_id = $1 AND project_id = $2 AND id = $3
+		`, tenantID, projectID, sessionID, ended, unavailableReplayMessage,
+			terminalMergeAttempts, string(fallbackCode)); err != nil {
+			return Session{}, false, fmt.Errorf("fail invalid replay session: %w", err)
+		}
+		found, err := store.GetSession(ctx, query, tenantID, sessionID)
+		return found, false, err
 	}
 	if quarantined > 0 {
 		if _, err := query.Exec(ctx, `
@@ -583,7 +705,7 @@ func (store Store) Finalize(
 		UPDATE sessions
 		SET finalize_requested_at = COALESCE(finalize_requested_at, $4),
 		    ended_at = $4, merge_requested_at = $4,
-		    merge_enqueued_at = NULL, merge_error = NULL
+		    merge_enqueued_at = NULL, merge_error = NULL, failure_code = NULL
 		WHERE tenant_id = $1 AND project_id = $2 AND id = $3
 	`, tenantID, projectID, sessionID, ended); err != nil {
 		return Session{}, false, fmt.Errorf("finalize replay session: %w", err)
@@ -605,16 +727,20 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 			       ) AS ended_at,
 			       activity.last_activity_at,
 			       activity.safe_count,
-			       activity.invalid_count
+			       activity.invalid_count,
+			       activity.rejected_count
 			FROM sessions AS session
 			CROSS JOIN LATERAL (
 				SELECT count(*) FILTER (WHERE batch.safety_status = 'safe') AS safe_count,
 				       count(*) FILTER (
 				           WHERE batch.safety_status IN ('pending', 'cleaning', 'quarantined')
 				       ) AS unresolved_count,
-				       count(*) FILTER (
-				           WHERE batch.safety_status IN ('rejected', 'expired')
-				       ) AS invalid_count,
+			       count(*) FILTER (
+			           WHERE batch.safety_status IN ('rejected', 'expired')
+			       ) AS invalid_count,
+			       count(*) FILTER (
+			           WHERE batch.safety_status = 'rejected'
+			       ) AS rejected_count,
 				       COALESCE(
 				           max(GREATEST(batch.upload_refreshed_at, COALESCE(batch.completed_at, batch.upload_refreshed_at))),
 				           session.started_at
@@ -645,6 +771,16 @@ func (s Store) RecoverAbandoned(ctx context.Context, staleBefore time.Time, now 
 		    merge_attempts = CASE
 		        WHEN candidates.safe_count = 0 OR candidates.invalid_count > 0 THEN $5
 		        ELSE session.merge_attempts
+		    END,
+		    failure_code = CASE
+		        WHEN candidates.invalid_count > 0 THEN CASE
+		            WHEN session.failure_code = 'contract_violation' THEN session.failure_code
+		            WHEN session.failure_code = 'unsafe_payload' THEN session.failure_code
+		            WHEN candidates.rejected_count > 0 THEN 'unsafe_payload'
+		            ELSE 'upload_expired'
+		        END
+		        WHEN candidates.safe_count = 0 THEN 'unavailable'
+		        ELSE NULL
 		    END
 		FROM candidates
 		WHERE session.id = candidates.id AND session.ended_at IS NULL
@@ -689,21 +825,31 @@ func (s Store) PendingMerges(ctx context.Context, limit int, staleBefore time.Ti
 	return sessions, nil
 }
 
-func (s Store) MarkMergeEnqueued(ctx context.Context, sessionID string, now time.Time) error {
+func (s Store) MarkMergeEnqueued(
+	ctx context.Context,
+	sessionID string,
+	generation int,
+	now time.Time,
+) error {
 	if _, err := s.Database.Exec(ctx, `
-		UPDATE sessions SET merge_enqueued_at = $2
-		WHERE id = $1 AND merged_at IS NULL
-	`, sessionID, now.UTC()); err != nil {
+		UPDATE sessions SET merge_enqueued_at = $3
+		WHERE id = $1 AND merge_generation = $2 AND merged_at IS NULL
+	`, sessionID, generation, now.UTC()); err != nil {
 		return fmt.Errorf("mark replay merge enqueued: %w", err)
 	}
 	return nil
 }
 
-func (s Store) LoadMerge(ctx context.Context, sessionID string) (Session, []Batch, error) {
+func (s Store) LoadMerge(
+	ctx context.Context,
+	sessionID string,
+	generation int,
+) (Session, []Batch, error) {
 	found, err := scanSessionRow(s.Database.QueryRow(ctx, sessionSelect+`
 		WHERE session.id = $1 AND session.merge_requested_at IS NOT NULL
 		  AND session.replay_privacy_version = $2
-	`, sessionID, CurrentReplayPrivacyVersion))
+		  AND session.merge_generation = $3
+	`, sessionID, CurrentReplayPrivacyVersion, generation))
 	if err != nil {
 		return Session{}, nil, err
 	}
@@ -776,7 +922,8 @@ func (s Store) MarkMerged(
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE sessions
 		SET storage_key = $2, events_count = $3, merged_at = $4,
-		    merge_error = NULL, merge_attempts = merge_attempts + 1
+		    merge_error = NULL, failure_code = NULL,
+		    merge_attempts = merge_attempts + 1
 		WHERE id = $1
 	`, sessionID, storageKey, eventsCount, now.UTC()); err != nil {
 		return fmt.Errorf("mark replay merged: %w", err)
@@ -791,9 +938,13 @@ func (s Store) MarkMergeFailed(ctx context.Context, sessionID string, message st
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE sessions
 		SET merge_error = $2, merge_attempts = merge_attempts + 1,
-		    merge_enqueued_at = NULL
+		    merge_enqueued_at = NULL,
+		    failure_code = CASE
+		        WHEN merge_attempts + 1 >= $3 THEN 'processing_failed'
+		        ELSE NULL
+		    END
 		WHERE id = $1 AND merged_at IS NULL
-	`, sessionID, message); err != nil {
+	`, sessionID, message, terminalMergeAttempts); err != nil {
 		return fmt.Errorf("mark replay merge failed: %w", err)
 	}
 	return nil
@@ -802,7 +953,8 @@ func (s Store) MarkMergeFailed(ctx context.Context, sessionID string, message st
 func (s Store) MarkUnavailable(ctx context.Context, sessionID string) error {
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE sessions
-		SET merge_error = $2, merge_attempts = $3, merge_enqueued_at = NULL
+		SET merge_error = $2, merge_attempts = $3, merge_enqueued_at = NULL,
+		    failure_code = 'unavailable'
 		WHERE id = $1 AND merged_at IS NULL
 	`, sessionID, unavailableReplayMessage, terminalMergeAttempts); err != nil {
 		return fmt.Errorf("mark replay unavailable: %w", err)
@@ -833,7 +985,8 @@ const sessionSelect = `
 	       session.events_count, session.batches_count, session.storage_key,
 	       session.rrweb_version, session.merged_at, session.merge_requested_at,
 	       session.finalize_requested_at, session.merge_enqueued_at,
-	       session.merge_attempts, session.merge_error,
+	       session.merge_attempts, session.merge_error, session.merge_generation,
+	       session.failure_code,
 	       session.retention_deleted_at, session.replay_privacy_version,
 	       session.max_duration_seconds, session.max_events, session.replay_consent_id,
 	       session.created_at
@@ -870,6 +1023,7 @@ func scanSessionRow(row rowScanner) (Session, error) {
 		&found.EventsCount, &found.BatchesCount, &found.StorageKey,
 		&found.RRWebVersion, &found.MergedAt, &found.MergeRequestedAt,
 		&found.FinalizeRequestedAt, &found.MergeEnqueuedAt, &found.MergeAttempts, &found.MergeError,
+		&found.MergeGeneration, &found.FailureCode,
 		&found.RetentionDeletedAt, &found.PrivacyVersion,
 		&found.MaxDurationSeconds, &found.MaxEvents, &found.ReplayConsentID, &found.CreatedAt,
 	)

@@ -831,6 +831,14 @@ func TestReplayHTTPFlow(t *testing.T) {
 		t.Fatalf("complete rejected replay status = %d, body = %s",
 			rejectedCompletion.Code, rejectedCompletion.Body.String())
 	}
+	rejectedPendingFinalize := replayRequest(router, http.MethodPost,
+		"/v1/replay/sessions/"+rejectedSession.ID+"/finalize?key="+publicKey,
+		`{}`, publicKey, "https://example.com")
+	if rejectedPendingFinalize.Code != http.StatusAccepted ||
+		!strings.Contains(rejectedPendingFinalize.Body.String(), `"status":"processing"`) {
+		t.Fatalf("quarantined rejected replay finalize = %d, body = %s",
+			rejectedPendingFinalize.Code, rejectedPendingFinalize.Body.String())
+	}
 	rejectedTask := mergeQueue.verificationTasks[len(mergeQueue.verificationTasks)-1]
 	rejectedPayload, err := json.Marshal(rejectedTask)
 	if err != nil {
@@ -845,20 +853,29 @@ func TestReplayHTTPFlow(t *testing.T) {
 	); err != nil {
 		t.Fatalf("reject unsafe replay batch: %v", err)
 	}
-	var rejectedStatus, rejectedReason string
-	var rejectedEnqueuedAt *time.Time
+	var rejectedStatus, rejectedReason, rejectedFailureCode string
+	var rejectedEnqueuedAt, rejectedEndedAt *time.Time
+	var rejectedMergeAttempts int
 	if err := root.QueryRow(ctx, `
-		SELECT safety_status::text, safety_error_reason, verification_enqueued_at
-		FROM session_batches WHERE session_id = $1 AND batch_index = 0
+		SELECT batch.safety_status::text, batch.safety_error_reason,
+		       batch.verification_enqueued_at, session.failure_code,
+		       session.ended_at, session.merge_attempts
+		FROM session_batches AS batch
+		JOIN sessions AS session ON session.id = batch.session_id
+		WHERE batch.session_id = $1 AND batch.batch_index = 0
 	`, rejectedSession.ID).Scan(
-		&rejectedStatus, &rejectedReason, &rejectedEnqueuedAt,
+		&rejectedStatus, &rejectedReason, &rejectedEnqueuedAt, &rejectedFailureCode,
+		&rejectedEndedAt, &rejectedMergeAttempts,
 	); err != nil {
 		t.Fatalf("read rejected replay batch: %v", err)
 	}
 	if rejectedStatus != string(BatchSafetyRejected) ||
-		rejectedReason != "invalid_event" || rejectedEnqueuedAt == nil {
-		t.Fatalf("rejected replay state = %s/%s/%v",
-			rejectedStatus, rejectedReason, rejectedEnqueuedAt)
+		rejectedReason != "invalid_event" || rejectedEnqueuedAt == nil ||
+		rejectedFailureCode != string(FailureUnsafePayload) || rejectedEndedAt == nil ||
+		rejectedMergeAttempts != terminalMergeAttempts {
+		t.Fatalf("rejected replay state = %s/%s/%v/%s/%v/%d",
+			rejectedStatus, rejectedReason, rejectedEnqueuedAt, rejectedFailureCode,
+			rejectedEndedAt, rejectedMergeAttempts)
 	}
 	if _, exists := storageClient.objects[rejectedKey]; exists {
 		t.Fatal("unsafe replay object was not removed")
@@ -866,7 +883,8 @@ func TestReplayHTTPFlow(t *testing.T) {
 	rejectedFinalize := replayRequest(router, http.MethodPost,
 		"/v1/replay/sessions/"+rejectedSession.ID+"/finalize?key="+publicKey,
 		`{}`, publicKey, "https://example.com")
-	if rejectedFinalize.Code != http.StatusConflict {
+	if rejectedFinalize.Code != http.StatusAccepted ||
+		!strings.Contains(rejectedFinalize.Body.String(), `"status":"failed"`) {
 		t.Fatalf("rejected replay finalize = %d, body = %s",
 			rejectedFinalize.Code, rejectedFinalize.Body.String())
 	}
@@ -905,21 +923,9 @@ func TestReplayHTTPFlow(t *testing.T) {
 		"/v1/replay/sessions/"+rejectedSession.ID+"/batches?key="+publicKey,
 		fmt.Sprintf(`{"batch_index":0,"events_count":1,"size_bytes":%d}`, len(rejectedData)),
 		publicKey, "https://example.com")
-	if redeclaredRejected.Code != http.StatusCreated {
+	if redeclaredRejected.Code != http.StatusConflict {
 		t.Fatalf("redeclare rejected replay after cleanup = %d, body = %s",
 			redeclaredRejected.Code, redeclaredRejected.Body.String())
-	}
-	var redeclaredStatus string
-	var redeclaredGeneration int
-	if err := root.QueryRow(ctx, `
-		SELECT safety_status::text, verification_generation
-		FROM session_batches WHERE session_id = $1 AND batch_index = 0
-	`, rejectedSession.ID).Scan(&redeclaredStatus, &redeclaredGeneration); err != nil {
-		t.Fatalf("read redeclared replay batch: %v", err)
-	}
-	if redeclaredStatus != string(BatchSafetyPending) ||
-		redeclaredGeneration != cleanupTask.Generation+1 {
-		t.Fatalf("redeclared replay state = %s/%d", redeclaredStatus, redeclaredGeneration)
 	}
 	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, rejectedSession.ID); err != nil {
 		t.Fatalf("delete rejected replay session: %v", err)
@@ -1004,7 +1010,7 @@ func TestReplayHTTPFlow(t *testing.T) {
 		INSERT INTO tenant_members (tenant_id, email, permissions)
 		VALUES (
 			$1, 'replay@acme.test',
-			ARRAY['session:read', 'session:delete', 'widget_rule:read']
+			ARRAY['session:read', 'session:delete', 'widget_rule:read', 'feedback:update']
 		) RETURNING id
 	`, tenantID).Scan(&replayMemberID); err != nil {
 		t.Fatalf("create replay member: %v", err)
@@ -1022,14 +1028,15 @@ func TestReplayHTTPFlow(t *testing.T) {
 	}
 	accessToken, _, err := jwtManager.IssueTenant(replayMemberID, tenantID, []string{
 		string(auth.PermissionSessionRead), string(auth.PermissionSessionDelete),
-		string(auth.PermissionWidgetRuleRead),
+		string(auth.PermissionWidgetRuleRead), string(auth.PermissionFeedbackUpdate),
 	})
 	if err != nil {
 		t.Fatalf("issue tenant access token: %v", err)
 	}
 	tenantRoutes := chi.NewRouter()
 	RegisterTenantRoutes(tenantRoutes, TenantHTTPOptions{
-		Store: Store{}, JWT: jwtManager, Storage: storageClient, Now: func() time.Time { return now },
+		Store: Store{}, JWT: jwtManager, Storage: storageClient, Scheduler: &scheduler,
+		Now: func() time.Time { return now },
 	})
 	controlPlaneLimiter := &replayAPIKeyLimiterStub{counts: map[string]int{}}
 	tenantHandler := appmiddleware.TenantAPIKeyRateLimit(
@@ -1663,8 +1670,77 @@ func TestReplayHTTPFlow(t *testing.T) {
 	if mergeAttempts != 1 || mergeError == nil || !strings.Contains(*mergeError, "event_count_mismatch") {
 		t.Errorf("failed merge attempts/error = %d/%v", mergeAttempts, mergeError)
 	}
-	if _, err := root.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, failedSessionID); err != nil {
-		t.Fatalf("delete failed merge session: %v", err)
+	for mergeAttempts < terminalMergeAttempts {
+		if err := retentionStore.MarkMergeFailed(ctx, failedSessionID, "storage unavailable"); err != nil {
+			t.Fatalf("exhaust failed replay merge: %v", err)
+		}
+		mergeAttempts++
+	}
+	failedDetail := tenantReplayRequest(
+		tenantHandler, http.MethodGet, "/v1/sessions/"+failedSessionID, accessToken,
+	)
+	if failedDetail.Code != http.StatusOK ||
+		!strings.Contains(failedDetail.Body.String(), `"status":"failed"`) ||
+		!strings.Contains(failedDetail.Body.String(),
+			`"failure":{"code":"processing_failed","message":"Replay processing failed after several attempts. The recorded data is still available.","retryable":true}`) ||
+		strings.Contains(failedDetail.Body.String(), "merge_error") ||
+		strings.Contains(failedDetail.Body.String(), "storage unavailable") {
+		t.Fatalf("failed replay detail = %d/%s", failedDetail.Code, failedDetail.Body.String())
+	}
+	deniedRetryQueueBefore := len(mergeQueue.sessionIDs)
+	deniedRetry := tenantReplayRequest(
+		tenantHandler, http.MethodPost, "/v1/sessions/"+failedSessionID+"/retry", controlAPIKey,
+	)
+	if deniedRetry.Code != http.StatusForbidden ||
+		len(mergeQueue.sessionIDs) != deniedRetryQueueBefore {
+		t.Fatalf("permission-denied replay retry = %d/%s queue %#v",
+			deniedRetry.Code, deniedRetry.Body.String(), mergeQueue.sessionIDs)
+	}
+	retryQueueBefore := len(mergeQueue.sessionIDs)
+	retryResponse := tenantReplayRequest(
+		tenantHandler, http.MethodPost, "/v1/sessions/"+failedSessionID+"/retry", accessToken,
+	)
+	if retryResponse.Code != http.StatusAccepted ||
+		!strings.Contains(retryResponse.Body.String(), `"status":"processing"`) {
+		t.Fatalf("retry failed replay = %d/%s", retryResponse.Code, retryResponse.Body.String())
+	}
+	var retriedAttempts, retriedGeneration int
+	var retriedError, retriedFailure *string
+	if err := root.QueryRow(ctx, `
+		SELECT merge_attempts, merge_error, failure_code, merge_generation
+		FROM sessions WHERE id = $1
+	`, failedSessionID).Scan(
+		&retriedAttempts, &retriedError, &retriedFailure, &retriedGeneration,
+	); err != nil {
+		t.Fatalf("read retried replay state: %v", err)
+	}
+	if retriedAttempts != 0 || retriedError != nil || retriedFailure != nil || retriedGeneration != 2 ||
+		len(mergeQueue.sessionIDs) != retryQueueBefore+1 ||
+		mergeQueue.generations[len(mergeQueue.generations)-1] != 2 {
+		t.Fatalf("retried replay = attempts %d error %v failure %v generation %d queue %#v/%#v",
+			retriedAttempts, retriedError, retriedFailure, retriedGeneration,
+			mergeQueue.sessionIDs, mergeQueue.generations)
+	}
+	repeatedRetry := tenantReplayRequest(
+		tenantHandler, http.MethodPost, "/v1/sessions/"+failedSessionID+"/retry", accessToken,
+	)
+	if repeatedRetry.Code != http.StatusAccepted || len(mergeQueue.sessionIDs) != retryQueueBefore+1 {
+		t.Fatalf("repeated replay retry = %d/%s queue %#v",
+			repeatedRetry.Code, repeatedRetry.Body.String(), mergeQueue.sessionIDs)
+	}
+	if err := processor.MergeHandler()(ctx, failedTask); err == nil || !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("stale replay merge task error = %v, want SkipRetry", err)
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE session_batches SET events_count = 1 WHERE session_id = $1
+	`, failedSessionID); err != nil {
+		t.Fatalf("repair retry fixture batch manifest: %v", err)
+	}
+	currentTask := asynq.NewTask(TaskMerge, []byte(fmt.Sprintf(
+		`{"session_id":%q,"generation":2}`, failedSessionID,
+	)))
+	if err := processor.MergeHandler()(ctx, currentTask); err != nil {
+		t.Fatalf("merge manually retried replay: %v", err)
 	}
 	delete(storageClient.objects, failedBatchKey)
 	delete(storageClient.contentTypes, failedBatchKey)
@@ -1980,6 +2056,7 @@ func (s *replayStorageStub) RemoveObject(_ context.Context, key string) error {
 
 type replayMergeQueueStub struct {
 	sessionIDs        []string
+	generations       []int
 	verificationTasks []BatchVerificationTask
 }
 
@@ -2024,8 +2101,9 @@ func (stub *replayDiagnosticRecorderStub) Record(
 	return nil
 }
 
-func (s *replayMergeQueueStub) EnqueueMerge(_ context.Context, sessionID string) error {
+func (s *replayMergeQueueStub) EnqueueMerge(_ context.Context, sessionID string, generation int) error {
 	s.sessionIDs = append(s.sessionIDs, sessionID)
+	s.generations = append(s.generations, generation)
 	return nil
 }
 

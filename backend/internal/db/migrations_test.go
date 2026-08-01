@@ -23,7 +23,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 135
+	const latestMigrationVersion = 136
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -75,6 +75,16 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 			t.Errorf("close migration connection: %v", err)
 		}
 	})
+	var replayRecoveryColumns int
+	if err := root.QueryRow(ctx, `
+		SELECT count(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'sessions'
+		  AND column_name IN ('failure_code', 'merge_generation')
+	`).Scan(&replayRecoveryColumns); err != nil || replayRecoveryColumns != 2 {
+		t.Fatalf("replay recovery columns = %d, error = %v, want 2",
+			replayRecoveryColumns, err)
+	}
 	for role, wantBypassRLS := range map[string]bool{
 		"fidibeki_app": false, "fidibeki_admin": true,
 	} {

@@ -34,14 +34,15 @@ type BatchVerificationTask struct {
 
 type BatchVerificationWork struct {
 	Batch
-	PageURL string
+	PageURL      string
+	RRWebVersion string
 }
 
 type BatchVerificationStore interface {
 	Claim(context.Context, BatchVerificationTask) (BatchVerificationWork, error)
 	MarkSafe(context.Context, BatchVerificationWork, string, time.Time) error
 	CompleteSafeCleanup(context.Context, BatchVerificationWork, time.Time) error
-	MarkRejected(context.Context, BatchVerificationWork, string, time.Time) error
+	MarkRejected(context.Context, BatchVerificationWork, FailureCode, string, time.Time) error
 	CompleteRejectedCleanup(context.Context, BatchVerificationWork, time.Time) error
 }
 
@@ -59,6 +60,7 @@ type BatchVerificationProcessor struct {
 	Store       BatchVerificationStore
 	Storage     BatchVerificationStorage
 	Diagnostics BatchDiagnosticRecorder
+	Reporter    FailureReporter
 	Now         func() time.Time
 	Logger      *slog.Logger
 }
@@ -203,8 +205,21 @@ func (processor BatchVerificationProcessor) rejectUnsafe(
 	if !errors.As(verifyErr, &unsafe) {
 		return verifyErr
 	}
-	if err := processor.Store.MarkRejected(ctx, work, unsafe.reason, processor.now()); err != nil {
+	reason := unsafe.reason
+	if unsafe.violationCode != "" {
+		reason = string(unsafe.violationCode)
+	}
+	if err := processor.Store.MarkRejected(
+		ctx, work, unsafe.code(), reason, processor.now(),
+	); err != nil {
 		return err
+	}
+	if unsafe.code() == FailureContractViolation && processor.Reporter != nil {
+		processor.Reporter.ReportReplayFailure(ctx, FailureReport{
+			Operation: FailureOperationVerifyBatch, Code: unsafe.code(),
+			Violation: unsafe.violationCode, RRWebVersion: work.RRWebVersion,
+			EventType: unsafe.eventType, IncrementalSource: unsafe.incrementalSource,
+		})
 	}
 	if err := processor.Storage.RemoveObject(ctx, work.StorageKey); err != nil {
 		return err
@@ -214,7 +229,9 @@ func (processor BatchVerificationProcessor) rejectUnsafe(
 			return err
 		}
 	}
-	processor.recordRejected(ctx, work, unsafe.reason)
+	if unsafe.code() != FailureContractViolation {
+		processor.recordRejected(ctx, work, unsafe.reason)
+	}
 	return nil
 }
 
@@ -262,12 +279,27 @@ func (processor BatchVerificationProcessor) logger() *slog.Logger {
 }
 
 type unsafeReplayBatch struct {
-	reason string
+	reason            string
+	failureCode       FailureCode
+	violationCode     ViolationCode
+	eventType         int
+	incrementalSource int
 }
 
 func (failure unsafeReplayBatch) Error() string {
 	return failure.reason
 }
+
+func (failure unsafeReplayBatch) code() FailureCode {
+	if failure.failureCode == "" {
+		return FailureUnsafePayload
+	}
+	return failure.failureCode
+}
+
+type ViolationCode string
+
+const ViolationMediaFieldsNotSupported ViolationCode = "media_fields_not_supported"
 
 func decodeVerifiedBatch(
 	reader io.Reader,
@@ -301,8 +333,8 @@ func decodeVerifiedBatch(
 		if err := decoder.Decode(&event); err != nil {
 			return 0, unsafeReplayBatch{reason: "invalid_json"}
 		}
-		if !validRRWebEvent(event, expectedPageURL) {
-			return 0, unsafeReplayBatch{reason: "invalid_event"}
+		if violation := validateRRWebEvent(event, expectedPageURL); violation != nil {
+			return 0, *violation
 		}
 		if consume != nil {
 			if err := consume(event); err != nil {
@@ -327,6 +359,30 @@ func decodeVerifiedBatch(
 }
 
 func validRRWebEvent(raw json.RawMessage, expectedPageURL string) bool {
+	return validateRRWebEvent(raw, expectedPageURL) == nil
+}
+
+func validateRRWebEvent(raw json.RawMessage, expectedPageURL string) *unsafeReplayBatch {
+	if validRRWebEventShape(raw, expectedPageURL) {
+		return nil
+	}
+	if event, ok := decodeReplayObject(raw); ok &&
+		hasOnlyKeys(event, "type", "timestamp", "data") &&
+		positiveReplayNumber(event["timestamp"]) {
+		eventType, typeOK := replayInteger(event["type"])
+		data, dataOK := replayObject(event["data"])
+		if typeOK && eventType == 3 && dataOK && replayMediaContractDrift(data) {
+			return &unsafeReplayBatch{
+				reason: "contract_violation", failureCode: FailureContractViolation,
+				violationCode: ViolationMediaFieldsNotSupported,
+				eventType:     eventType, incrementalSource: 7,
+			}
+		}
+	}
+	return &unsafeReplayBatch{reason: "invalid_event", failureCode: FailureUnsafePayload}
+}
+
+func validRRWebEventShape(raw json.RawMessage, expectedPageURL string) bool {
 	event, ok := decodeReplayObject(raw)
 	if !ok || !hasOnlyKeys(event, "type", "timestamp", "data") {
 		return false
@@ -363,6 +419,37 @@ func validRRWebEvent(raw json.RawMessage, expectedPageURL string) bool {
 	default:
 		return false
 	}
+}
+
+func replayMediaContractDrift(data map[string]any) bool {
+	const mediaSource = 7
+	source, ok := replayInteger(data["source"])
+	if !ok || source != mediaSource || hasOnlyKeys(
+		data, "source", "type", "id", "currentTime", "volume", "muted", "playbackRate", "loop",
+	) {
+		return false
+	}
+	known := make(map[string]any, 8)
+	knownKeys := map[string]struct{}{}
+	for _, key := range []string{
+		"source", "type", "id", "currentTime", "volume", "muted", "playbackRate", "loop",
+	} {
+		knownKeys[key] = struct{}{}
+		if value, exists := data[key]; exists {
+			known[key] = value
+		}
+	}
+	for key, value := range data {
+		if _, exists := knownKeys[key]; exists {
+			continue
+		}
+		switch value.(type) {
+		case nil, bool, json.Number:
+		default:
+			return false
+		}
+	}
+	return validReplayMediaData(known)
 }
 
 func decodeReplayObject(raw []byte) (map[string]any, bool) {
@@ -1115,18 +1202,22 @@ func validReplayInputData(data map[string]any) bool {
 }
 
 func validReplayMediaData(data map[string]any) bool {
-	if !hasOnlyKeys(data, "source", "type", "id", "currentTime", "volume", "muted") {
+	if !hasOnlyKeys(
+		data, "source", "type", "id", "currentTime", "volume", "muted", "playbackRate", "loop",
+	) {
 		return false
 	}
-	for _, key := range []string{"source", "type", "id", "currentTime", "volume"} {
+	for _, key := range []string{"source", "type", "id", "currentTime", "volume", "playbackRate"} {
 		if value, exists := data[key]; exists {
 			if _, ok := replayNumber(value); !ok {
 				return false
 			}
 		}
 	}
-	if value, exists := data["muted"]; exists && !replayBoolean(value) {
-		return false
+	for _, key := range []string{"muted", "loop"} {
+		if value, exists := data[key]; exists && !replayBoolean(value) {
+			return false
+		}
 	}
 	return true
 }

@@ -922,10 +922,11 @@ func assertTenantFeedbackReadFlow(
 	if err := root.QueryRow(ctx, `
 		INSERT INTO sessions (
 			tenant_id, project_id, feedback_id, session_id, started_at, ended_at,
-			rrweb_version, merge_attempts, merge_error, max_duration_seconds, max_events
+			rrweb_version, merge_attempts, merge_error, failure_code,
+			max_duration_seconds, max_events
 		) VALUES (
 			$1, $2, $3, gen_random_uuid(), $4, $4, '2.1.1', 12,
-			'No replay events were uploaded before the recording ended.', 1800, 50000
+			'No replay events were uploaded before the recording ended.', 'unavailable', 1800, 50000
 		) RETURNING id
 	`, tenantID, projectID, secondFeedbackID, now.Add(-time.Hour)).Scan(&unavailableSessionID); err != nil {
 		t.Fatalf("create unavailable feedback replay: %v", err)
@@ -1094,9 +1095,46 @@ func assertTenantFeedbackReadFlow(
 	unavailableSession := unavailableDetailEnvelope.Feedback.Session
 	if unavailableDetailResponse.Code != http.StatusOK || unavailableSession == nil ||
 		unavailableSession.Status != "failed" || unavailableSession.ReplayReady ||
-		unavailableSession.MergeError == nil || unavailableSession.ReplayURL != nil {
-		t.Fatalf("unavailable tenant feedback replay = %d %#v",
-			unavailableDetailResponse.Code, unavailableSession)
+		unavailableSession.ReplayURL != nil ||
+		unavailableSession.Failure == nil || unavailableSession.Failure.Code != "unavailable" ||
+		unavailableSession.Failure.Message != "No usable replay data is available for this session." ||
+		unavailableSession.Failure.Retryable ||
+		strings.Contains(unavailableDetailResponse.Body.String(), "merge_error") {
+		t.Fatalf("unavailable tenant feedback replay = %d %#v body=%s",
+			unavailableDetailResponse.Code, unavailableSession, unavailableDetailResponse.Body.String())
+	}
+	if _, err := root.Exec(ctx, `
+		UPDATE sessions
+		SET failure_code = 'processing_failed', merge_requested_at = ended_at
+		WHERE id = $1
+	`, unavailableSessionID); err != nil {
+		t.Fatalf("prepare retryable replay failure: %v", err)
+	}
+	if _, err := root.Exec(ctx, `
+		INSERT INTO session_batches (
+			tenant_id, project_id, session_id, batch_index, storage_key,
+			events_count, size_bytes, completed_at, created_at,
+			safety_status, safety_checked_at
+		) VALUES ($1, $2, $3, 0, 'feedback/retry.verified-1-1', 1, 2, $4, $4, 'safe', $4)
+	`, tenantID, projectID, unavailableSessionID, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("create retained replay retry batch: %v", err)
+	}
+	retryableDetailResponse := performTenantFeedbackRequest(
+		handler, http.MethodGet, "/v1/feedbacks/"+secondFeedbackID, "", ownerToken,
+	)
+	var retryableDetailEnvelope struct {
+		Feedback Detail `json:"feedback"`
+	}
+	decodeFeedbackResponse(t, retryableDetailResponse, &retryableDetailEnvelope)
+	retryableSession := retryableDetailEnvelope.Feedback.Session
+	if retryableDetailResponse.Code != http.StatusOK ||
+		retryableSession == nil || retryableSession.Failure == nil ||
+		retryableSession.Failure.Code != "processing_failed" ||
+		retryableSession.Failure.Message != "Replay processing failed after several attempts. The recorded data is still available." ||
+		!retryableSession.Failure.Retryable ||
+		strings.Contains(retryableDetailResponse.Body.String(), "merge_error") {
+		t.Fatalf("retryable tenant feedback replay = %d %s",
+			retryableDetailResponse.Code, retryableDetailResponse.Body.String())
 	}
 
 	streamStorage := &attachmentStreamStorageStub{data: []byte("audio-evidence")}

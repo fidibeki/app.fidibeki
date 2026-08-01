@@ -1,6 +1,13 @@
 package observability
 
-import "github.com/getsentry/sentry-go"
+import (
+	"regexp"
+	"strconv"
+
+	"github.com/getsentry/sentry-go"
+)
+
+var replaySemanticVersion = regexp.MustCompile(`^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(?:-[0-9A-Za-z.-]{1,32})?$`)
 
 // RedactedTelemetryValue replaces every free-text Sentry value ScrubEvent cannot prove is free of
 // customer data: a recovered panic's message/error text. Go error strings are unstructured and may
@@ -21,8 +28,9 @@ const RedactedTelemetryValue = "[fidibeki] value removed before Sentry send; see
 // Genericized: Message and Exception[].Value (replaced with RedactedTelemetryValue when set).
 //
 // Always dropped: Request (URL/method/data/query/cookies/headers/env), User (id/email/IP/
-// username/name/data), Breadcrumbs (message and data), Contexts, Tags, ServerName, Sdk, Modules,
-// thread names, frame absolute paths/source context/locals, and mechanism free text/data.
+// username/name/data), Breadcrumbs (message and data), Contexts, non-allowlisted tags, ServerName,
+// Sdk, Modules, thread names, frame absolute paths/source context/locals, and mechanism free
+// text/data. Only bounded replay diagnostic tags survive.
 func ScrubEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	if event == nil {
 		return nil
@@ -38,11 +46,70 @@ func ScrubEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 		Type:        event.Type,
 		Threads:     scrubThreads(event.Threads),
 		Exception:   scrubExceptions(event.Exception),
+		Tags:        scrubReplayTags(event.Tags),
+	}
+	if scrubbed.Tags["operation"] != "" && scrubbed.Tags["failure_code"] != "" {
+		scrubbed.Fingerprint = replayFailureFingerprint(scrubbed.Tags)
 	}
 	if event.Message != "" {
 		scrubbed.Message = RedactedTelemetryValue
 	}
 	return scrubbed
+}
+
+func scrubReplayTags(tags map[string]string) map[string]string {
+	if tags["subsystem"] != "replay" {
+		return nil
+	}
+	kept := map[string]string{"subsystem": "replay"}
+	keepReplayTag(kept, tags, "operation", func(value string) bool {
+		return value == "verify_batch" || value == "merge"
+	})
+	keepReplayTag(kept, tags, "failure_code", func(value string) bool {
+		switch value {
+		case "contract_violation", "unsafe_payload", "upload_expired", "processing_failed", "unavailable":
+			return true
+		default:
+			return false
+		}
+	})
+	keepReplayTag(kept, tags, "violation_code", func(value string) bool {
+		return value == "media_fields_not_supported"
+	})
+	keepReplayTag(kept, tags, "rrweb_version", func(value string) bool {
+		return len(value) <= 64 && replaySemanticVersion.MatchString(value)
+	})
+	keepReplayTag(kept, tags, "event_type", func(value string) bool {
+		parsed, err := strconv.Atoi(value)
+		return err == nil && parsed >= 0 && parsed <= 5
+	})
+	keepReplayTag(kept, tags, "incremental_source", func(value string) bool {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return false
+		}
+		switch parsed {
+		case 0, 1, 2, 3, 4, 5, 6, 7, 12, 14:
+			return true
+		default:
+			return false
+		}
+	})
+	keepReplayTag(kept, tags, "retry_exhausted", func(value string) bool {
+		return value == "true" || value == "false"
+	})
+	return kept
+}
+
+func keepReplayTag(
+	destination map[string]string,
+	source map[string]string,
+	key string,
+	valid func(string) bool,
+) {
+	if value, exists := source[key]; exists && valid(value) {
+		destination[key] = value
+	}
 }
 
 func scrubThreads(threads []sentry.Thread) []sentry.Thread {

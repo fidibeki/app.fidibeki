@@ -155,7 +155,8 @@ func (store Store) Claim(
 		       claimed.completed_at, claimed.safety_status, claimed.upload_expires_at,
 		       claimed.safety_checked_at, claimed.safety_error_reason,
 		       claimed.verification_generation, claimed.verification_enqueued_at,
-		       claimed.verification_attempts, COALESCE(session.page_url, '')
+		       claimed.verification_attempts, COALESCE(session.page_url, ''),
+		       session.rrweb_version
 		FROM claimed
 		JOIN sessions AS session ON session.id = claimed.session_id
 	`, task.TenantID, task.BatchID, task.Generation).Scan(
@@ -164,7 +165,7 @@ func (store Store) Claim(
 		&work.CompleteTokenHash, &work.CompletedAt, &work.SafetyStatus,
 		&work.UploadExpiresAt, &work.SafetyCheckedAt, &work.SafetyErrorReason,
 		&work.Generation, &work.VerificationEnqueuedAt, &work.VerificationTries,
-		&work.PageURL,
+		&work.PageURL, &work.RRWebVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BatchVerificationWork{}, ErrNoBatchVerificationWork
@@ -245,7 +246,8 @@ func (store Store) FinalizeRequestedSession(ctx context.Context, sessionID strin
 		    ),
 		    merge_requested_at = session.finalize_requested_at,
 		    merge_enqueued_at = NULL,
-		    merge_error = NULL
+		    merge_error = NULL,
+		    failure_code = NULL
 		WHERE session.id = $1
 		  AND session.finalize_requested_at IS NOT NULL
 		  AND session.ended_at IS NULL
@@ -294,7 +296,8 @@ func (store Store) FinalizeReadySessions(ctx context.Context, limit int) error {
 		    ),
 		    merge_requested_at = session.finalize_requested_at,
 		    merge_enqueued_at = NULL,
-		    merge_error = NULL
+		    merge_error = NULL,
+		    failure_code = NULL
 		FROM candidates
 		WHERE session.id = candidates.id
 	`, limit); err != nil {
@@ -306,22 +309,69 @@ func (store Store) FinalizeReadySessions(ctx context.Context, limit int) error {
 func (store Store) MarkRejected(
 	ctx context.Context,
 	work BatchVerificationWork,
+	failureCode FailureCode,
 	reason string,
 	checkedAt time.Time,
 ) error {
-	tag, err := store.Database.Exec(ctx, `
-		UPDATE session_batches
-		SET safety_status = 'rejected',
-		    safety_checked_at = $4,
-		    safety_error_reason = $5
-		WHERE tenant_id = $1 AND id = $2
-		  AND verification_generation = $3
-		  AND safety_status = 'quarantined'
-	`, work.TenantID, work.ID, work.Generation, checkedAt.UTC(), reason)
+	var updated int
+	err := store.Database.QueryRow(ctx, `
+		WITH updated_batch AS (
+			UPDATE session_batches
+			SET safety_status = 'rejected',
+			    safety_checked_at = $4,
+			    safety_error_reason = $5
+			WHERE tenant_id = $1 AND id = $2
+			  AND verification_generation = $3
+			  AND safety_status = 'quarantined'
+			RETURNING session_id
+		),
+		updated_session AS (
+			UPDATE sessions AS session
+			SET ended_at = CASE
+			        WHEN session.finalize_requested_at IS NOT NULL AND session.ended_at IS NULL
+			            THEN LEAST(
+			                GREATEST(session.started_at, session.finalize_requested_at),
+			                session.started_at + session.max_duration_seconds * interval '1 second'
+			            )
+			        ELSE session.ended_at
+			    END,
+			    merge_requested_at = CASE
+			        WHEN session.finalize_requested_at IS NOT NULL AND session.ended_at IS NULL
+			            THEN NULL
+			        ELSE session.merge_requested_at
+			    END,
+			    merge_enqueued_at = CASE
+			        WHEN session.finalize_requested_at IS NOT NULL AND session.ended_at IS NULL
+			            THEN NULL
+			        ELSE session.merge_enqueued_at
+			    END,
+			    merge_error = CASE
+			        WHEN session.finalize_requested_at IS NOT NULL AND session.ended_at IS NULL
+			            THEN $7
+			        ELSE session.merge_error
+			    END,
+			    merge_attempts = CASE
+			        WHEN session.finalize_requested_at IS NOT NULL AND session.ended_at IS NULL
+			            THEN $8
+			        ELSE session.merge_attempts
+			    END,
+			    failure_code = CASE
+			        WHEN session.failure_code = 'contract_violation' THEN session.failure_code
+			        WHEN $6::text = 'contract_violation' THEN $6::text
+			        WHEN session.failure_code = 'unsafe_payload' THEN session.failure_code
+			        WHEN $6::text = 'unsafe_payload' THEN $6::text
+			        ELSE COALESCE(session.failure_code, $6::text)
+			    END
+			FROM updated_batch AS batch
+			WHERE session.id = batch.session_id
+		)
+		SELECT count(*) FROM updated_batch
+	`, work.TenantID, work.ID, work.Generation, checkedAt.UTC(), reason,
+		string(failureCode), unavailableReplayMessage, terminalMergeAttempts).Scan(&updated)
 	if err != nil {
 		return fmt.Errorf("reject replay batch verification: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
+	if updated != 1 {
 		return ErrNoBatchVerificationWork
 	}
 	return nil
@@ -411,19 +461,34 @@ func (store Store) CompleteBatchExpiry(
 	upload ExpiredBatchUpload,
 	expiredAt time.Time,
 ) error {
-	tag, err := store.Database.Exec(ctx, `
-		UPDATE session_batches
-		SET safety_status = 'expired',
-		    safety_checked_at = $3,
-		    safety_error_reason = 'upload_expired',
-		    verification_enqueued_at = NULL
-		WHERE tenant_id = $1 AND id = $2
-		  AND safety_status = 'cleaning'
-	`, upload.TenantID, upload.BatchID, expiredAt.UTC())
+	var updated int
+	err := store.Database.QueryRow(ctx, `
+		WITH updated_batch AS (
+			UPDATE session_batches
+			SET safety_status = 'expired',
+			    safety_checked_at = $3,
+			    safety_error_reason = 'upload_expired',
+			    verification_enqueued_at = NULL
+			WHERE tenant_id = $1 AND id = $2
+			  AND safety_status = 'cleaning'
+			RETURNING session_id
+		),
+		updated_session AS (
+			UPDATE sessions AS session
+			SET failure_code = CASE
+			        WHEN session.failure_code IN ('contract_violation', 'unsafe_payload')
+			            THEN session.failure_code
+			        ELSE 'upload_expired'
+			    END
+			FROM updated_batch AS batch
+			WHERE session.id = batch.session_id
+		)
+		SELECT count(*) FROM updated_batch
+	`, upload.TenantID, upload.BatchID, expiredAt.UTC()).Scan(&updated)
 	if err != nil {
 		return fmt.Errorf("complete expired replay batch cleanup: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
+	if updated != 1 {
 		return ErrNoBatchVerificationWork
 	}
 	return nil

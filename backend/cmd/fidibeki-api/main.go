@@ -539,7 +539,8 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		BaseDomain: settings.BaseDomain, From: settings.ResendAuthFrom, Logger: logger,
 	})
 	replay.RegisterTenantRoutes(tenantRoutes, replay.TenantHTTPOptions{
-		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage, Logger: logger,
+		Store: replay.Store{}, JWT: jwtManager, Storage: objectStorage,
+		Scheduler: replayScheduler, Logger: logger,
 	})
 	accessaudit.RegisterTenantRoutes(tenantRoutes, accessaudit.HTTPOptions{
 		Store: accessaudit.Store{}, JWT: jwtManager, Logger: logger,
@@ -854,11 +855,14 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Store: replayStore, Queue: replayQueue, VerificationQueue: replayQueue,
 		Storage: objectStorage, Logger: logger,
 	}
-	replayProcessor := replay.Processor{Store: replayStore, Storage: objectStorage}
+	replayFailureReporter := observability.SentryReplayFailureReporter{}
+	replayProcessor := replay.Processor{
+		Store: replayStore, Storage: objectStorage, Reporter: replayFailureReporter,
+	}
 	replayVerificationProcessor := replay.BatchVerificationProcessor{
 		Store: replayStore, Storage: objectStorage,
 		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
-		Logger:      logger,
+		Reporter:    replayFailureReporter, Logger: logger,
 	}
 	retentionHealth := retentionhealth.Store{Database: pools.Admin}
 	replayCleaner := replay.Cleaner{
@@ -1027,6 +1031,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		PipelineHandler: aiScheduler.PipelineHandler(), TextHandler: processor.TextHandler(),
 		AttachmentHandler: processor.AttachmentHandler(), FileDeleteHandler: fileDeleteHandler,
 		AIErrorHandler:                processor.ErrorHandler(),
+		ReplayErrorHandler:            replayProcessor.ErrorHandler(),
 		ReporterHandler:               reporterHandler.Handler(),
 		RecipientHandler:              recipientHandler.Handler(),
 		CaseCommunicationHandler:      caseCommunicationHandler.Handler(),

@@ -36,6 +36,7 @@ type Options struct {
 	AttachmentHandler             asynq.HandlerFunc
 	FileDeleteHandler             asynq.HandlerFunc
 	AIErrorHandler                asynq.ErrorHandler
+	ReplayErrorHandler            asynq.ErrorHandler
 	ReporterHandler               asynq.HandlerFunc
 	RecipientHandler              asynq.HandlerFunc
 	CaseCommunicationHandler      asynq.HandlerFunc
@@ -79,7 +80,8 @@ func New(options Options) (*Worker, error) {
 	}
 	if options.PipelineHandler == nil || options.TextHandler == nil ||
 		options.AttachmentHandler == nil || options.FileDeleteHandler == nil ||
-		options.AIErrorHandler == nil || options.ReporterHandler == nil ||
+		options.AIErrorHandler == nil || options.ReplayErrorHandler == nil ||
+		options.ReporterHandler == nil ||
 		options.RecipientHandler == nil || options.CaseCommunicationHandler == nil ||
 		options.ControllerNotificationHandler == nil ||
 		options.LifecycleHandler == nil || options.EmailFeedbackHandler == nil ||
@@ -140,7 +142,7 @@ func New(options Options) (*Worker, error) {
 		}),
 		domainServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.DomainConcurrency, Queues: map[string]int{outbox.QueueName: 1},
-			Logger: options.Logger,
+			ErrorHandler: options.ReplayErrorHandler, Logger: options.Logger,
 		}),
 		mediaServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.MediaConcurrency,
@@ -150,7 +152,7 @@ func New(options Options) (*Worker, error) {
 				// nothing a person is waiting on should queue behind it.
 				testimonial.TranscodeQueueName: 1,
 			},
-			Logger: options.Logger,
+			ErrorHandler: options.ReplayErrorHandler, Logger: options.Logger,
 		}),
 		privacyServer: asynq.NewServer(redisOptions, asynq.Config{
 			Concurrency: options.PrivacyConcurrency,
