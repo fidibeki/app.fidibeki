@@ -107,6 +107,9 @@ def main() -> int:
     today = now.date().isoformat()
     sent_today = sum(1 for row in register if row.get("sent_at_utc", "").startswith(today) and row.get("send_status", "").startswith("accepted_by_smtp_scheduled"))
     slots = max(0, DAILY_LIMIT - sent_today)
+    if slots == 0:
+        print("scheduled_outreach=daily_limit_reached")
+        return 0
     candidates: list[dict[str, str]] = []
     for item in queue:
         required = {"recipient", "company", "source_url", "subject", "body", "footer", "state"}

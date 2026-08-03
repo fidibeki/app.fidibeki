@@ -66,6 +66,35 @@ class ScheduledDispatchTests(unittest.TestCase):
             self.assertIn("would_send=next@example.com", output.getvalue())
             self.assertNotIn("already@example.com subject=", output.getvalue())
 
+    def test_dry_run_does_not_select_a_candidate_after_daily_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            private = Path(directory)
+            queue = private / "queue.json"
+            register = private / "register.csv"
+            suppression = private / "suppression.csv"
+            queue.write_text(json.dumps([{"recipient": "next@example.com", "company": "Next", "source_url": "https://example.com", "subject": "Next", "body": "Hi", "footer": "Footer", "state": "ready"}]))
+            with register.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["recipient", "sent_at_utc", "send_status"])
+                writer.writeheader()
+                for recipient in ("first@example.com", "second@example.com"):
+                    writer.writerow({"recipient": recipient, "sent_at_utc": "2026-08-05T09:00:00Z", "send_status": "accepted_by_smtp_scheduled_initial_touch"})
+            suppression.write_text("email\n")
+
+            originals = (DISPATCH.QUEUE_PATH, DISPATCH.REGISTER_PATH, DISPATCH.SUPPRESSION_PATH, DISPATCH.datetime, sys.argv[:])
+            try:
+                DISPATCH.QUEUE_PATH = queue
+                DISPATCH.REGISTER_PATH = register
+                DISPATCH.SUPPRESSION_PATH = suppression
+                DISPATCH.datetime = WednesdayDatetime
+                sys.argv = [str(SCRIPT), "--dry-run"]
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(DISPATCH.main(), 0)
+            finally:
+                DISPATCH.QUEUE_PATH, DISPATCH.REGISTER_PATH, DISPATCH.SUPPRESSION_PATH, DISPATCH.datetime, sys.argv = originals
+
+            self.assertNotIn("would_send=", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
