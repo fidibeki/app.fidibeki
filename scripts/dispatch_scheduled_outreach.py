@@ -115,8 +115,12 @@ def main() -> int:
         recipient = item["recipient"].strip().lower()
         if item["state"] != "ready":
             continue
-        if recipient in suppressed or recipient in contacted:
-            raise ValueError(f"unsafe scheduled recipient: {recipient}")
+        if recipient in suppressed:
+            print(f"scheduled_outreach=skipped_suppressed recipient={item['recipient']}")
+            continue
+        if recipient in contacted:
+            print(f"scheduled_outreach=skipped_already_contacted recipient={item['recipient']}")
+            continue
         candidates.append(item)
         if len(candidates) >= slots:
             break
