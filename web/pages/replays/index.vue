@@ -52,11 +52,21 @@ const { data: projectData } = await useAsyncData(
     : Promise.resolve({ projects: [] }),
 )
 
+// Like the feedback stream, the page opens with a session already selected and
+// a reloaded list snaps the selection to its first row. The one exception is
+// the initial load of a deep-linked id: it may legitimately live pages away,
+// and the detail fetch below supplies it instead of the first row stealing it.
+let hydratedSelection = false
 watch(data, (page) => {
   sessions.value = page?.sessions || []
   nextCursor.value = page?.pagination.next_cursor || null
   hasMore.value = page?.pagination.has_more || false
   loadMoreError.value = ''
+  const deepLinked = !hydratedSelection && Boolean(selectedId.value)
+  hydratedSelection = true
+  if (!deepLinked && !sessions.value.some(item => item.id === selectedId.value)) {
+    selectedId.value = sessions.value[0]?.id || ''
+  }
 }, { immediate: true })
 
 // The address bar mirrors the filters and selection so a filtered view or an
