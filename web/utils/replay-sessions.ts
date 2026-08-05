@@ -23,6 +23,25 @@ export function replaySessionDurationSeconds(startedAt: string, endedAt: string 
   return Math.max(0, Math.round(elapsed))
 }
 
+// Mirrors the feedback stream's day grouping: the list is newest-first, so the
+// first session of each consecutive same-day run carries the heading and the
+// rows below it state no timestamp of their own.
+export function replaySessionDayBreaks(
+  sessions: Array<{ id: string, started_at: string }>,
+  labelFor: (startedAt: string) => string,
+): Map<string, string> {
+  const breaks = new Map<string, string>()
+  let previous = ''
+  for (const session of sessions) {
+    const label = labelFor(session.started_at)
+    if (label !== previous) {
+      breaks.set(session.id, label)
+      previous = label
+    }
+  }
+  return breaks
+}
+
 const statusClasses: Record<string, string> = {
   ready: 'status-completed',
   recording: 'status-processing',

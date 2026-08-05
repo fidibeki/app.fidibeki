@@ -9,6 +9,7 @@ import {
 } from '@lucide/vue'
 import type { Project, ReplaySessionItem, ReplaySessionPage } from '~/types/api'
 import {
+  replaySessionDayBreaks,
   replaySessionDurationSeconds,
   replaySessionListQuery,
   replaySessionStatusClass,
@@ -159,6 +160,14 @@ function formatAge(value: string) {
   return relativeTime(-Math.floor(hours / 24), 'day', { numeric: 'always', style: 'short' })
 }
 
+// The list is always newest-first, so rows group under day headings the way
+// the feedback stream does and no row carries its own timestamp.
+function dayLabel(value: string) {
+  const days = Math.floor(Math.max(0, Date.now() - new Date(value).getTime()) / 86_400_000)
+  return relativeTime(-days, 'day', { numeric: 'auto' })
+}
+const dayBreaks = computed(() => replaySessionDayBreaks(sessions.value, dayLabel))
+
 function durationLabel(item: ReplaySessionItem) {
   const seconds = replaySessionDurationSeconds(item.started_at, item.ended_at || null)
   if (seconds === null) return t('replays.common.inProgress')
@@ -203,9 +212,9 @@ useHead(() => ({ title: t('replays.pageTitle') }))
       <div v-else-if="error" class="replays-list-state" role="alert"><AlertTriangle :size="22" /><p>{{ apiErrorMessage(error, 'replays.errors.load') }}</p><button class="app-button" @click="refresh()">{{ t('replays.actions.tryAgain') }}</button></div>
       <div v-else-if="sessions.length === 0" class="replays-list-state"><MonitorPlay :size="22" /><p>{{ t('replays.states.empty') }}</p><button v-if="project || sessionStatus || feedback" class="app-button" @click="clearFilters">{{ t('replays.filters.clear') }}</button></div>
       <div v-else class="replays-stream" role="list">
+        <template v-for="item in sessions" :key="item.id">
+        <div v-if="dayBreaks.has(item.id)" class="replays-day-break" role="presentation">{{ dayBreaks.get(item.id) }}</div>
         <article
-          v-for="item in sessions"
-          :key="item.id"
           role="listitem"
           :data-selected="selectedId === item.id"
           @click="selectedId = item.id"
@@ -227,9 +236,9 @@ useHead(() => ({ title: t('replays.pageTitle') }))
           >{{ t('replays.common.feedbackLinked') }}</NuxtLink>
           <span v-else class="replays-feedback-none">{{ t('replays.common.noFeedback') }}</span>
           <span class="status-pill" :class="replaySessionStatusClass(item.status)">{{ statusLabel(item.status) }}</span>
-          <time>{{ formatAge(item.started_at) }}</time>
           <span class="replays-row-open" aria-hidden="true"><ChevronRight :size="16" /></span>
         </article>
+        </template>
         <button v-if="hasMore" class="replays-load-more" type="button" :disabled="loadingMore" @click="loadMore">
           <LoaderCircle v-if="loadingMore" :size="15" /> {{ loadingMore ? t('replays.states.loadingMore') : t('replays.states.loadMore') }}
         </button>
@@ -281,7 +290,9 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 .replays-filter-bar select { height: 34px; min-width: 0; padding: 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); font-size: 11px; }
 .replays-inline-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 9px 12px; background: var(--red-soft); color: var(--red); border-bottom: 1px solid var(--red-line); font-size: 11px; }
 .replays-list-state { display: flex; min-height: 330px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 11px; text-align: center; }
-.replays-stream article { display: grid; min-height: 58px; grid-template-columns: 34px minmax(190px, 1fr) auto auto max-content 22px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.replays-day-break { position: sticky; top: 110px; z-index: 20; padding: 7px 12px 5px; background: var(--surface-subtle); color: var(--muted); border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 750; }
+.replays-day-break::first-letter { text-transform: uppercase; }
+.replays-stream article { display: grid; min-height: 58px; grid-template-columns: 34px minmax(190px, 1fr) auto max-content 22px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .replays-stream article:hover { background: var(--surface-subtle); }
 .replays-stream article[data-selected='true'] { background: var(--teal-soft); box-shadow: inset 3px 0 var(--teal); }
 .replays-row-icon { display: grid; place-items: center; color: var(--muted); }
@@ -293,7 +304,6 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 .replays-feedback-link:hover { color: var(--teal); }
 .replays-feedback-none { color: var(--muted); font-size: 11px; }
 .replays-stream article > .status-pill { justify-self: start; }
-.replays-stream time { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
 .replays-row-open { display: grid; width: 26px; height: 30px; place-items: center; color: var(--muted); }
 .replays-load-more { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: 7px; background: var(--surface-subtle); color: var(--teal); border: 0; border-top: 1px solid var(--line); font-size: 11px; font-weight: 750; }
 .replays-load-more svg { animation: app-spin 700ms linear infinite; }
@@ -316,7 +326,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 
 @media (max-width: 1240px) {
   .replays-workspace { grid-template-columns: minmax(420px, 1fr) 330px; }
-  .replays-stream article { grid-template-columns: 30px minmax(140px, 1fr) auto max-content 20px; }
+  .replays-stream article { grid-template-columns: 30px minmax(140px, 1fr) auto 20px; }
   .replays-stream article .replays-feedback-none { display: none; }
 }
 
@@ -336,7 +346,6 @@ useHead(() => ({ title: t('replays.pageTitle') }))
   .replays-filter-bar select { flex: 0 0 auto; }
   .replays-stream article { grid-template-columns: 30px minmax(0, 1fr) 20px; gap: 7px; padding: 0 8px; }
   .replays-stream article .status-pill,
-  .replays-stream article time,
   .replays-stream article .replays-feedback-link,
   .replays-stream article .replays-feedback-none { display: none; }
 }

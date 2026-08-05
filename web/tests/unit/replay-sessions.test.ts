@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  replaySessionDayBreaks,
   replaySessionDurationSeconds,
   replaySessionListQuery,
   replaySessionStatusClass,
@@ -39,6 +40,29 @@ describe('replaySessionDurationSeconds', () => {
     expect(replaySessionDurationSeconds(
       '2026-08-01T10:00:00Z', '2026-08-01T09:59:00Z',
     )).toBe(0)
+  })
+})
+
+describe('replaySessionDayBreaks', () => {
+  const labelFor = (startedAt: string) => startedAt.slice(0, 10)
+
+  it('marks the first session of each day run', () => {
+    const breaks = replaySessionDayBreaks([
+      { id: 'a', started_at: '2026-08-05T10:00:00Z' },
+      { id: 'b', started_at: '2026-08-05T08:00:00Z' },
+      { id: 'c', started_at: '2026-08-04T22:00:00Z' },
+      { id: 'd', started_at: '2026-08-04T09:00:00Z' },
+      { id: 'e', started_at: '2026-08-01T09:00:00Z' },
+    ], labelFor)
+    expect([...breaks.entries()]).toEqual([
+      ['a', '2026-08-05'],
+      ['c', '2026-08-04'],
+      ['e', '2026-08-01'],
+    ])
+  })
+
+  it('is empty for an empty list', () => {
+    expect(replaySessionDayBreaks([], labelFor).size).toBe(0)
   })
 })
 
