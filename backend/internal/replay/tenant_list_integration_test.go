@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,27 @@ func TestTenantReplaySessionList(t *testing.T) {
 		}
 		return id
 	}
+	var otherTenantID, otherProjectID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Rival', 'rival', 'growth', 'active') RETURNING id
+	`).Scan(&otherTenantID); err != nil {
+		t.Fatalf("create second tenant: %v", err)
+	}
+	if err := root.QueryRow(ctx, `
+		INSERT INTO projects (tenant_id, name, public_key, allowed_domains)
+		VALUES ($1, 'Rival Web', 'pk_live_LISTCCCCCCCCCCCCCCCCCC', '{rival.example}') RETURNING id
+	`, otherTenantID).Scan(&otherProjectID); err != nil {
+		t.Fatalf("create second tenant project: %v", err)
+	}
+	var starterTenantID string
+	if err := root.QueryRow(ctx, `
+		INSERT INTO tenants (name, slug, plan, status)
+		VALUES ('Frugal', 'frugal', 'starter', 'active') RETURNING id
+	`).Scan(&starterTenantID); err != nil {
+		t.Fatalf("create starter tenant: %v", err)
+	}
+
 	expiredID := insertSession(projectOneID, base, `
 		UPDATE sessions SET retention_deleted_at = now() WHERE id = $1`)
 	failedID := insertSession(projectTwoID, base.Add(time.Hour), `
@@ -143,6 +165,16 @@ func TestTenantReplaySessionList(t *testing.T) {
 			feedback_id = (SELECT id FROM feedbacks LIMIT 1)
 		WHERE id = $1`)
 	recordingID := insertSession(projectOneID, base.Add(3*time.Hour), "")
+	tieOneID := insertSession(projectTwoID, base.Add(30*time.Minute), "")
+	tieTwoID := insertSession(projectTwoID, base.Add(30*time.Minute), "")
+	if _, err := root.Exec(ctx, `
+		INSERT INTO sessions (
+			tenant_id, project_id, session_id, page_url, started_at,
+			rrweb_version, max_duration_seconds, max_events, replay_privacy_version
+		) VALUES ($1, $2, gen_random_uuid(), 'https://rival.example/', $3, '2.1.1', 1800, 50000, 2)
+	`, otherTenantID, otherProjectID, base.Add(4*time.Hour)); err != nil {
+		t.Fatalf("insert second tenant session: %v", err)
+	}
 
 	var listMemberID, restrictedMemberID string
 	if err := root.QueryRow(ctx, `
@@ -193,17 +225,22 @@ func TestTenantReplaySessionList(t *testing.T) {
 		return response
 	}
 
-	t.Run("lists every session newest first", func(t *testing.T) {
+	tieHighID, tieLowID := tieOneID, tieTwoID
+	if tieTwoID > tieOneID {
+		tieHighID, tieLowID = tieTwoID, tieOneID
+	}
+	order := []string{recordingID, readyID, failedID, tieHighID, tieLowID, expiredID}
+	statuses := []string{"recording", "ready", "failed", "recording", "recording", "expired"}
+
+	t.Run("lists every session of the tenant newest first", func(t *testing.T) {
 		recorder := tenantReplayRequest(handler, http.MethodGet, "/v1/sessions", accessToken)
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("list status = %d, body = %s", recorder.Code, recorder.Body.String())
 		}
 		response := decodeList(t, recorder.Body.String())
-		if len(response.Sessions) != 4 || response.Pagination.HasMore {
+		if len(response.Sessions) != len(order) || response.Pagination.HasMore {
 			t.Fatalf("list response = %#v", response)
 		}
-		order := []string{recordingID, readyID, failedID, expiredID}
-		statuses := []string{"recording", "ready", "failed", "expired"}
 		for index, item := range response.Sessions {
 			if item.ID != order[index] || item.Status != statuses[index] {
 				t.Fatalf("item %d = %#v", index, item)
@@ -216,7 +253,7 @@ func TestTenantReplaySessionList(t *testing.T) {
 		if ready.FeedbackID == nil || *ready.FeedbackID != feedbackID {
 			t.Fatalf("ready feedback_id = %#v", ready.FeedbackID)
 		}
-		for _, index := range []int{0, 2, 3} {
+		for _, index := range []int{0, 2, 3, 4, 5} {
 			if response.Sessions[index].ReplayURL != nil {
 				t.Fatalf("session %d has replay_url", index)
 			}
@@ -225,8 +262,9 @@ func TestTenantReplaySessionList(t *testing.T) {
 			}
 		}
 		if strings.Contains(recorder.Body.String(), "storage_key") ||
-			strings.Contains(recorder.Body.String(), "merge_error") {
-			t.Fatalf("list leaked internal fields: %s", recorder.Body.String())
+			strings.Contains(recorder.Body.String(), "merge_error") ||
+			strings.Contains(recorder.Body.String(), "rival.example") {
+			t.Fatalf("list leaked internal fields or foreign sessions: %s", recorder.Body.String())
 		}
 	})
 
@@ -235,8 +273,9 @@ func TestTenantReplaySessionList(t *testing.T) {
 			handler, http.MethodGet, "/v1/sessions?project_id="+projectTwoID, accessToken,
 		)
 		response := decodeList(t, recorder.Body.String())
-		if recorder.Code != http.StatusOK || len(response.Sessions) != 1 ||
-			response.Sessions[0].ID != failedID {
+		if recorder.Code != http.StatusOK || len(response.Sessions) != 3 ||
+			response.Sessions[0].ID != failedID ||
+			response.Sessions[1].ID != tieHighID || response.Sessions[2].ID != tieLowID {
 			t.Fatalf("project filter = %d/%#v", recorder.Code, response)
 		}
 	})
@@ -257,7 +296,7 @@ func TestTenantReplaySessionList(t *testing.T) {
 			handler, http.MethodGet, "/v1/sessions?feedback=unlinked", accessToken,
 		)
 		response := decodeList(t, recorder.Body.String())
-		if recorder.Code != http.StatusOK || len(response.Sessions) != 3 {
+		if recorder.Code != http.StatusOK || len(response.Sessions) != 5 {
 			t.Fatalf("unlinked filter = %d/%#v", recorder.Code, response)
 		}
 		linked := tenantReplayRequest(
@@ -270,19 +309,56 @@ func TestTenantReplaySessionList(t *testing.T) {
 		}
 	})
 
-	t.Run("paginates with a cursor", func(t *testing.T) {
-		first := tenantReplayRequest(handler, http.MethodGet, "/v1/sessions?limit=3", accessToken)
+	t.Run("paginates with a cursor across a started_at tie", func(t *testing.T) {
+		// A limit of 4 puts the page boundary between the two sessions that share
+		// a started_at, so a cursor that ignored the id tie-breaker would either
+		// repeat or skip the second one.
+		first := tenantReplayRequest(handler, http.MethodGet, "/v1/sessions?limit=4", accessToken)
 		firstResponse := decodeList(t, first.Body.String())
-		if first.Code != http.StatusOK || len(firstResponse.Sessions) != 3 ||
+		if first.Code != http.StatusOK || len(firstResponse.Sessions) != 4 ||
 			!firstResponse.Pagination.HasMore || firstResponse.Pagination.NextCursor == nil {
 			t.Fatalf("first page = %d/%#v", first.Code, firstResponse)
 		}
 		second := tenantReplayRequest(handler, http.MethodGet,
-			"/v1/sessions?limit=3&cursor="+*firstResponse.Pagination.NextCursor, accessToken)
+			"/v1/sessions?limit=4&cursor="+*firstResponse.Pagination.NextCursor, accessToken)
 		secondResponse := decodeList(t, second.Body.String())
-		if second.Code != http.StatusOK || len(secondResponse.Sessions) != 1 ||
-			secondResponse.Sessions[0].ID != expiredID || secondResponse.Pagination.HasMore {
+		if second.Code != http.StatusOK || len(secondResponse.Sessions) != 2 ||
+			secondResponse.Pagination.HasMore {
 			t.Fatalf("second page = %d/%#v", second.Code, secondResponse)
+		}
+		var paged []string
+		for _, item := range append(firstResponse.Sessions, secondResponse.Sessions...) {
+			paged = append(paged, item.ID)
+		}
+		for index, id := range order {
+			if paged[index] != id {
+				t.Fatalf("paged order = %#v, want %#v", paged, order)
+			}
+		}
+	})
+
+	t.Run("requires the replay plan feature", func(t *testing.T) {
+		var starterMemberID string
+		if err := root.QueryRow(ctx, `
+			INSERT INTO tenant_members (tenant_id, email, permissions)
+			VALUES ($1, 'replay-list@frugal.test', ARRAY['session:read']) RETURNING id
+		`, starterTenantID).Scan(&starterMemberID); err != nil {
+			t.Fatalf("create starter member: %v", err)
+		}
+		starterToken, _, err := jwtManager.IssueTenant(starterMemberID, starterTenantID, []string{
+			string(auth.PermissionSessionRead),
+		})
+		if err != nil {
+			t.Fatalf("issue starter access token: %v", err)
+		}
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://frugal.localhost/v1/sessions", nil)
+		request.Host = "frugal.localhost"
+		request.Header.Set("Authorization", "Bearer "+starterToken)
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusPaymentRequired ||
+			!strings.Contains(recorder.Body.String(), "plan_feature_unavailable") {
+			t.Fatalf("starter list = %d/%s", recorder.Code, recorder.Body.String())
 		}
 	})
 

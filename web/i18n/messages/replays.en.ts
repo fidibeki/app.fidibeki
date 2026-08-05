@@ -29,6 +29,7 @@ export const replayMessages = {
   },
   errors: {
     load: 'The session replays could not be loaded.',
+    loadMore: 'More sessions could not be loaded.',
   },
   actions: {
     tryAgain: 'Try again',

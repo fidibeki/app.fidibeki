@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -52,10 +53,19 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	handler := &TenantHTTPHandler{options: options, logger: logger}
+	// The plan gate guards only the standalone list: replays reached through a
+	// feedback stay readable after a downgrade, matching the session detail and
+	// stream routes below, but the browse-all surface is part of the paid
+	// session_replay feature.
 	router.With(
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionRead),
+		appmiddleware.RequirePlanLimit(appmiddleware.PlanLimitOptions{
+			Feature:    config.FeatureReplay,
+			UpgradeURL: "/v1/billing",
+			Logger:     logger,
+		}),
 	).Get("/v1/sessions", handler.listSessions)
 	router.With(
 		appmiddleware.RequireActive,

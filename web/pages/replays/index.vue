@@ -57,7 +57,8 @@ watch(data, (page) => {
 }, { immediate: true })
 
 // The address bar mirrors the filters and selection so a filtered view or an
-// open session survives a reload and can be shared as a link.
+// open session survives a reload and can be shared as a link — and external
+// navigation onto this page (palette, back button) flows back into the state.
 watch([project, sessionStatus, feedback, selectedId], () => {
   const query: Record<string, string> = {}
   if (project.value) query.project_id = project.value
@@ -66,22 +67,56 @@ watch([project, sessionStatus, feedback, selectedId], () => {
   if (selectedId.value) query.id = selectedId.value
   void router.replace({ query })
 })
+watch(() => route.query, (query) => {
+  project.value = typeof query.project_id === 'string' ? query.project_id : ''
+  sessionStatus.value = typeof query.status === 'string' ? query.status : ''
+  feedback.value = typeof query.feedback === 'string' ? query.feedback : ''
+  selectedId.value = typeof query.id === 'string' ? query.id : ''
+})
 
-const selected = computed(() => sessions.value.find(item => item.id === selectedId.value) || null)
+// The selected session usually sits in the loaded list, but a shared link can
+// point at one that is pages away — then the detail endpoint supplies it.
+const selected = ref<ReplaySessionItem | null>(null)
+watch([selectedId, sessions], async () => {
+  if (!selectedId.value) {
+    selected.value = null
+    return
+  }
+  const found = sessions.value.find(item => item.id === selectedId.value)
+  if (found) {
+    selected.value = found
+    return
+  }
+  if (selected.value?.id === selectedId.value) return
+  try {
+    selected.value = await $apiFetch<ReplaySessionItem>(`/v1/sessions/${selectedId.value}`)
+  } catch {
+    selected.value = null
+  }
+}, { immediate: true })
 
+const loadMoreError = ref('')
 async function loadMore() {
   if (!nextCursor.value || loadingMore.value) return
+  const requestQuery = filterQuery.value
+  const cursor = nextCursor.value
   loadingMore.value = true
+  loadMoreError.value = ''
   try {
     const page = await $apiFetch<ReplaySessionPage>(`/v1/sessions?${replaySessionListQuery({
       projectId: project.value,
       status: sessionStatus.value,
       feedback: feedback.value,
-      cursor: nextCursor.value,
+      cursor,
     })}`)
+    // A filter change while this page was in flight owns the list now; merging
+    // this response would mix results from two different queries.
+    if (filterQuery.value !== requestQuery || nextCursor.value !== cursor) return
     sessions.value = [...sessions.value, ...page.sessions]
     nextCursor.value = page.pagination.next_cursor || null
     hasMore.value = page.pagination.has_more
+  } catch (error) {
+    loadMoreError.value = apiErrorMessage(error, 'replays.errors.loadMore')
   } finally {
     loadingMore.value = false
   }
@@ -185,6 +220,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
           <time>{{ formatAge(item.started_at) }}</time>
           <ChevronRight :size="16" aria-hidden="true" />
         </article>
+        <p v-if="loadMoreError" class="replays-inline-error" role="alert"><AlertTriangle :size="14" /> {{ loadMoreError }}</p>
         <button v-if="hasMore" class="replays-load-more" type="button" :disabled="loadingMore" @click="loadMore">
           <LoaderCircle v-if="loadingMore" :size="15" /> {{ loadingMore ? t('replays.states.loadingMore') : t('replays.states.loadMore') }}
         </button>
@@ -282,6 +318,14 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 .replays-feedback-link { font-size: 0.78rem; text-decoration: underline; }
 .replays-feedback-none { font-size: 0.78rem; color: var(--color-text-muted); }
 .replays-stream time { font-size: 0.78rem; color: var(--color-text-muted); white-space: nowrap; }
+.replays-inline-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--color-danger, #c0392b);
+  font-size: 0.8rem;
+}
 .replays-load-more {
   display: inline-flex;
   align-items: center;
