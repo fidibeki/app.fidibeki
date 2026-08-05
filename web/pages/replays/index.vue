@@ -394,7 +394,11 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 
 @media (max-width: 1240px) {
   .replays-workspace { grid-template-columns: minmax(420px, 1fr) 330px; }
+  /* Four columns from here down, so the feedback cell goes entirely — a row
+     that kept its link would carry five children and wrap. The link stays
+     reachable as the inspector's open-feedback action. */
   .replays-stream article { grid-template-columns: 30px minmax(140px, 1fr) auto 20px; }
+  .replays-stream article .replays-feedback-link,
   .replays-stream article .replays-feedback-none { display: none; }
 }
 
@@ -438,8 +442,6 @@ useHead(() => ({ title: t('replays.pageTitle') }))
   .replays-filter-bar { overflow-x: auto; }
   .replays-filter-bar select { flex: 0 0 auto; }
   .replays-stream article { grid-template-columns: 30px minmax(0, 1fr) 20px; gap: 7px; padding: 0 8px; }
-  .replays-stream article .status-pill,
-  .replays-stream article .replays-feedback-link,
-  .replays-stream article .replays-feedback-none { display: none; }
+  .replays-stream article .status-pill { display: none; }
 }
 </style>
