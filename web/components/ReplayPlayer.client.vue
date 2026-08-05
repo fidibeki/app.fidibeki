@@ -178,9 +178,17 @@ onBeforeUnmount(() => {
 .replay-player-state h3 { color: var(--ink); font-size: 13px; }
 .replay-player-state p { max-width: 480px; font-size: 10px; line-height: 1.5; }
 .replay-player-target { display: grid; min-width: 0; min-height: 430px; place-items: center; padding: 14px; overflow: hidden; }
-.replay-player-count { position: absolute; top: 9px; right: 9px; z-index: 3; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; background: rgb(255 255 255 / 90%); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
+.replay-player-count { position: absolute; top: 9px; right: 9px; z-index: 3; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line); border-radius: 4px; font-size: 9px; }
 .replay-player-target :deep(.rr-player) { float: none; box-shadow: none; }
-.replay-player-target :deep(.rr-controller) { background: var(--surface); }
+/* rrweb-player ships light-only controller chrome (near-black glyphs and
+   timestamps, a white progress gutter). Restating it in theme tokens keeps the
+   controls legible on the dark surface too. */
+.replay-player-target :deep(.rr-controller) { background: var(--surface); color: var(--ink); }
+.replay-player-target :deep(.rr-timeline__time) { color: var(--ink-soft); }
+.replay-player-target :deep(.rr-controller__btns button) { color: var(--ink); }
+.replay-player-target :deep(.rr-controller__btns button svg) { fill: currentColor; }
+.replay-player-target :deep(.rr-controller__btns button.active) { color: var(--on-accent); }
+.replay-player-target :deep(.rr-progress) { background: var(--surface-soft); border-top-color: var(--surface); border-bottom-color: var(--surface); }
 .replay-player--fullscreen { display: flex; min-height: 0; background: #000; }
 .replay-player--fullscreen .replay-player-target { flex: 1; min-height: 0; height: 100%; }
 .replay-player--fullscreen .replay-player-target :deep(.rr-player) { max-width: 100%; max-height: 100%; }
