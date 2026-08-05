@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
 )
@@ -263,18 +264,24 @@ type AttachmentObject struct {
 }
 
 type SessionDetail struct {
-	ID                 string     `json:"id"`
-	Status             string     `json:"status"`
-	PageURL            *string    `json:"page_url,omitempty"`
-	StartedAt          time.Time  `json:"started_at"`
-	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	EventsCount        int        `json:"events_count"`
-	BatchesCount       int        `json:"batches_count"`
-	RRWebVersion       string     `json:"rrweb_version"`
-	ReplayReady        bool       `json:"replay_ready"`
-	MergeError         *string    `json:"merge_error,omitempty"`
-	RetentionDeletedAt *time.Time `json:"retention_deleted_at,omitempty"`
-	ReplayURL          *string    `json:"replay_url,omitempty"`
+	ID                 string          `json:"id"`
+	Status             string          `json:"status"`
+	PageURL            *string         `json:"page_url,omitempty"`
+	StartedAt          time.Time       `json:"started_at"`
+	EndedAt            *time.Time      `json:"ended_at,omitempty"`
+	EventsCount        int             `json:"events_count"`
+	BatchesCount       int             `json:"batches_count"`
+	RRWebVersion       string          `json:"rrweb_version"`
+	ReplayReady        bool            `json:"replay_ready"`
+	Failure            *SessionFailure `json:"failure,omitempty"`
+	RetentionDeletedAt *time.Time      `json:"retention_deleted_at,omitempty"`
+	ReplayURL          *string         `json:"replay_url,omitempty"`
+}
+
+type SessionFailure = replay.FailureDetail
+
+func sessionFailureDetail(code string, retryable bool) *SessionFailure {
+	return replay.FailureDetailForCode(replay.FailureCode(code), retryable)
 }
 
 type Item struct {

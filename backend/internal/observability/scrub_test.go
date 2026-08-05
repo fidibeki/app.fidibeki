@@ -3,6 +3,7 @@ package observability_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,66 @@ func TestScrubEventRemovesRequestUserBreadcrumbsContextsAndTags(t *testing.T) {
 		if strings.Contains(string(serialized), leak) {
 			t.Errorf("scrubbed event serialization contains %q: %s", leak, serialized)
 		}
+	}
+}
+
+func TestScrubEventKeepsOnlyValidatedReplayTelemetryTags(t *testing.T) {
+	t.Parallel()
+
+	event := &sentry.Event{
+		Tags: map[string]string{
+			"subsystem":          "replay",
+			"operation":          "verify_batch",
+			"failure_code":       "contract_violation",
+			"violation_code":     "media_fields_not_supported",
+			"rrweb_version":      "2.1.1",
+			"event_type":         "3",
+			"incremental_source": "7",
+			"retry_exhausted":    "false",
+			"customer_id":        "acme-sensitive",
+		},
+		Fingerprint: []string{"attacker-controlled", "person@example.com"},
+	}
+
+	scrubbed := observability.ScrubEvent(event, nil)
+	want := map[string]string{
+		"subsystem":          "replay",
+		"operation":          "verify_batch",
+		"failure_code":       "contract_violation",
+		"violation_code":     "media_fields_not_supported",
+		"rrweb_version":      "2.1.1",
+		"event_type":         "3",
+		"incremental_source": "7",
+		"retry_exhausted":    "false",
+	}
+	if !reflect.DeepEqual(scrubbed.Tags, want) {
+		t.Fatalf("Tags = %#v, want %#v", scrubbed.Tags, want)
+	}
+	if !reflect.DeepEqual(scrubbed.Fingerprint, []string{
+		"replay", "verify_batch", "contract_violation", "media_fields_not_supported",
+	}) {
+		t.Fatalf("Fingerprint = %#v", scrubbed.Fingerprint)
+	}
+}
+
+func TestScrubEventDropsMalformedReplayTelemetryTags(t *testing.T) {
+	t.Parallel()
+
+	event := &sentry.Event{Tags: map[string]string{
+		"subsystem":          "replay-other",
+		"operation":          "merge/customer-1",
+		"failure_code":       "database_error",
+		"violation_code":     "field-person@example.com",
+		"rrweb_version":      "2.1.1+customer@example.com",
+		"event_type":         "300",
+		"incremental_source": "-1",
+		"retry_exhausted":    "yes",
+	}}
+
+	scrubbed := observability.ScrubEvent(event, nil)
+	if scrubbed.Tags != nil || scrubbed.Fingerprint != nil {
+		t.Fatalf("malformed replay telemetry survived: tags=%#v fingerprint=%#v",
+			scrubbed.Tags, scrubbed.Fingerprint)
 	}
 }
 

@@ -1,5 +1,6 @@
 import { feedbackMessages } from '../messages/feedback.en'
 import { adminMessages } from '../messages/admin.en'
+import { replayMessages } from '../messages/replays.en'
 
 export const englishMessages = {
   common: {
@@ -10,6 +11,7 @@ export const englishMessages = {
   navigation: {
     overview: 'Overview',
     feedback: 'Feedback',
+    replays: 'Session Replays',
     issues: 'Issues',
     notifications: 'Notifications',
     notificationPreferences: 'Notification preferences',
@@ -472,6 +474,7 @@ export const englishMessages = {
   },
   feedback: feedbackMessages,
   admin: adminMessages,
+  replays: replayMessages,
   triage: {
     eyebrow: 'Operational triage',
     title: 'Ownership and priority',

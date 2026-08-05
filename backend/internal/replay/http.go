@@ -43,7 +43,7 @@ type ObjectStorage interface {
 }
 
 type MergeScheduler interface {
-	Schedule(context.Context, string) error
+	Schedule(context.Context, string, int) error
 }
 
 type BatchVerificationScheduler interface {
@@ -629,7 +629,9 @@ func (h *HTTPHandler) finalizeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	committed = true
 	if changed && h.options.Scheduler != nil {
-		if err := h.options.Scheduler.Schedule(context.WithoutCancel(r.Context()), session.ID); err != nil {
+		if err := h.options.Scheduler.Schedule(
+			context.WithoutCancel(r.Context()), session.ID, session.MergeGeneration,
+		); err != nil {
 			h.logger.ErrorContext(r.Context(), "schedule replay merge", "error", err, "session_id", session.ID)
 		}
 	}

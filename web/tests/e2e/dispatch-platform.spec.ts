@@ -924,6 +924,9 @@ function createMockState() {
     },
     billingDeletionRequestedAt: null as string | null,
     failedReplayFeedbackIDs: new Set<string>(),
+    retryableReplayFeedbackIDs: new Set<string>(),
+    processingReplayFeedbackIDs: new Set<string>(),
+    expiredReplayFeedbackIDs: new Set<string>(),
     failNextBulkFeedbackUpdate: false,
     bulkFeedbackRequests: [] as Array<Record<string, unknown>>,
     analyticsMode: "data" as "data" | "empty" | "error",
@@ -1188,6 +1191,16 @@ function feedbackDetail(state: MockState, id: string) {
     state.feedback.find((candidate) => candidate.id === id) ||
     state.feedback[0];
   const replayFailed = state.failedReplayFeedbackIDs.has(id);
+  const replayRetryable = state.retryableReplayFeedbackIDs.has(id);
+  const replayProcessing = state.processingReplayFeedbackIDs.has(id);
+  const replayExpired = state.expiredReplayFeedbackIDs.has(id);
+  const replayStatus = replayExpired
+    ? "expired"
+    : replayFailed
+      ? "failed"
+      : replayProcessing
+        ? "processing"
+        : "ready";
   return {
     ...item,
     dom_snapshot_html: undefined,
@@ -1230,20 +1243,29 @@ function feedbackDetail(state: MockState, id: string) {
       id === "feedback-1"
         ? {
             id: "session-1",
-            status: replayFailed ? "failed" : "ready",
+            status: replayStatus,
             page_url: item.page_url,
             started_at: "2026-07-21T09:58:00.000Z",
             ended_at: "2026-07-21T10:00:00.000Z",
-            events_count: replayFailed ? 0 : 3,
-            batches_count: replayFailed ? 0 : 1,
-            rrweb_version: "2.0",
-            replay_ready: !replayFailed,
-            replay_url: replayFailed
+            events_count: replayFailed || replayProcessing ? 0 : 3,
+            batches_count: replayFailed || replayProcessing ? 0 : 1,
+            rrweb_version: "2.1.1",
+            replay_ready: !replayFailed && !replayProcessing && !replayExpired,
+            replay_url: replayFailed || replayProcessing || replayExpired
               ? undefined
               : "/v1/sessions/session-1/replay",
-            merge_error: replayFailed
-              ? "No replay events were uploaded before the recording ended."
+            failure: replayFailed
+              ? {
+                  code: replayRetryable
+                    ? "processing_failed"
+                    : "unavailable",
+                  message: replayRetryable
+                    ? "Replay processing failed after several attempts. The recorded data is still available."
+                    : "No usable replay data is available for this session.",
+                  retryable: replayRetryable,
+                }
               : undefined,
+            retention_deleted_at: replayExpired ? now : undefined,
           }
         : undefined,
     ai_processed_at: now,
@@ -1988,6 +2010,12 @@ async function installMockAPI(page: Page, state: MockState) {
       return json(route, {}, 202);
     if (/^\/v1\/attachments\/[^/]+\/retry$/.test(path) && method === "POST")
       return json(route, {}, 202);
+    if (path === "/v1/sessions/session-1/retry" && method === "POST") {
+      state.failedReplayFeedbackIDs.delete("feedback-1");
+      state.retryableReplayFeedbackIDs.delete("feedback-1");
+      state.processingReplayFeedbackIDs.add("feedback-1");
+      return json(route, { id: "session-1", status: "processing" }, 202);
+    }
     if (path === "/v1/sessions/session-1/replay" && method === "GET")
       return json(route, replayEvents);
 
@@ -6182,16 +6210,94 @@ test("terminal replay failures are shown as unavailable", async ({
     page.getByRole("heading", { name: "Session replay unavailable" }),
   ).toBeVisible();
   await expect(
-    page.getByText("The replay will appear after its batches are merged."),
+    page.getByText("No usable replay data is available for this session."),
   ).toBeVisible();
   await expect(
-    page.getByText(
-      "No replay events were uploaded before the recording ended.",
-    ),
+    page.getByText("The replay will appear after its batches are merged."),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Retry processing" }),
   ).toHaveCount(0);
   await expect(
     page.locator(".feedback-replay-surface .status-pill"),
   ).toHaveText("Failed");
+});
+
+test("retained terminal replay failures can be retried", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "Replay retry behavior is viewport independent",
+  );
+  const state = createMockState();
+  state.failedReplayFeedbackIDs.add("feedback-1");
+  state.retryableReplayFeedbackIDs.add("feedback-1");
+  const retryRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST") {
+      const path = new URL(request.url()).pathname;
+      if (path === "/v1/sessions/session-1/retry") retryRequests.push(path);
+    }
+  });
+  await authenticate(page, state);
+  await openPrimary(page, "Feedback");
+  await page.getByTitle("Open full detail").click();
+  await page.getByRole("button", { name: "Replay", exact: true }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Session replay processing failed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Replay processing failed after several attempts. The recorded data is still available.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry processing" }).click();
+
+  await expect(page.getByRole("status")).toHaveText(
+    "Replay processing retry queued.",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Replay is still processing" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The replay will appear after its batches are merged."),
+  ).toBeVisible();
+  expect(retryRequests).toEqual(["/v1/sessions/session-1/retry"]);
+});
+
+test("retention-expired replays are not shown as processing", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "Replay expiry behavior is viewport independent",
+  );
+  const state = createMockState();
+  state.expiredReplayFeedbackIDs.add("feedback-1");
+  await authenticate(page, state);
+  await openPrimary(page, "Feedback");
+  await page.getByTitle("Open full detail").click();
+  await page.getByRole("button", { name: "Replay", exact: true }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Session replay expired" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "This replay was removed according to your workspace retention policy.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The replay will appear after its batches are merged."),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Retry processing" }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".feedback-replay-surface .status-pill"),
+  ).toHaveText("Expired");
 });
 
 test("session replay fits its surface across responsive viewports", async ({

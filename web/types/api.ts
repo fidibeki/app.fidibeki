@@ -631,9 +631,39 @@ export interface FeedbackSession {
   batches_count: number
   rrweb_version: string
   replay_ready: boolean
-  merge_error?: string
+  failure?: {
+    code: 'contract_violation' | 'unsafe_payload' | 'upload_expired' | 'processing_failed' | 'unavailable'
+    message: string
+    retryable: boolean
+  }
   retention_deleted_at?: string
   replay_url?: string
+}
+
+export interface ReplaySessionItem {
+  id: string
+  project_id: string
+  session_id: string
+  page_url?: string | null
+  started_at: string
+  ended_at?: string | null
+  events_count: number
+  batches_count: number
+  rrweb_version: string
+  merged_at?: string | null
+  status: 'recording' | 'processing' | 'ready' | 'failed' | 'expired'
+  feedback_id?: string | null
+  retention_deleted_at?: string | null
+  replay_url?: string
+}
+
+export interface ReplaySessionPage {
+  sessions: ReplaySessionItem[]
+  pagination: {
+    next_cursor?: string | null
+    has_more: boolean
+    limit: number
+  }
 }
 
 export interface FeedbackDetail extends FeedbackItem {

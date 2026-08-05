@@ -11,6 +11,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/activity"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
+	"github.com/acidiney/app.fidibeki/backend/internal/replay"
 	"github.com/acidiney/app.fidibeki/backend/internal/triage"
 	"github.com/jackc/pgx/v5"
 )
@@ -898,21 +899,37 @@ func getTenantSession(
 ) (SessionDetail, error) {
 	var session SessionDetail
 	var mergedAt *time.Time
+	var failureCode *string
+	var retryable bool
 	err := query.QueryRow(ctx, `
 		SELECT id, page_url, started_at, ended_at, events_count, batches_count,
-		       rrweb_version, merged_at, merge_error, retention_deleted_at,
+		       rrweb_version, merged_at, retention_deleted_at, failure_code,
+		       failure_code = 'processing_failed'
+		           AND merged_at IS NULL
+		           AND retention_deleted_at IS NULL
+		           AND ended_at IS NOT NULL
+		           AND merge_requested_at IS NOT NULL
+		           AND merge_attempts >= 12
+		           AND EXISTS (
+		               SELECT 1 FROM session_batches AS batch
+		               WHERE batch.session_id = sessions.id AND batch.safety_status = 'safe'
+		           )
+		           AND NOT EXISTS (
+		               SELECT 1 FROM session_batches AS batch
+		               WHERE batch.session_id = sessions.id AND batch.safety_status <> 'safe'
+		           ) AS retryable,
 		       CASE
-		           WHEN retention_deleted_at IS NOT NULL THEN 'expired'
-		           WHEN merged_at IS NOT NULL THEN 'ready'
-		           WHEN merge_error IS NOT NULL AND merge_attempts >= 12 THEN 'failed'
-		           WHEN ended_at IS NOT NULL THEN 'processing'
+		           WHEN retention_deleted_at IS NOT NULL OR replay_privacy_version < $3 THEN 'expired'
+		           WHEN merged_at IS NOT NULL AND storage_key IS NOT NULL THEN 'ready'
+		           WHEN ended_at IS NOT NULL AND failure_code IS NOT NULL THEN 'failed'
+		           WHEN ended_at IS NOT NULL OR finalize_requested_at IS NOT NULL THEN 'processing'
 		           ELSE 'recording'
 		       END
 		FROM sessions WHERE tenant_id = $1 AND id = $2
-	`, tenantID, sessionID).Scan(
+	`, tenantID, sessionID, replay.CurrentReplayPrivacyVersion).Scan(
 		&session.ID, &session.PageURL, &session.StartedAt, &session.EndedAt,
 		&session.EventsCount, &session.BatchesCount, &session.RRWebVersion,
-		&mergedAt, &session.MergeError, &session.RetentionDeletedAt, &session.Status,
+		&mergedAt, &session.RetentionDeletedAt, &failureCode, &retryable, &session.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionDetail{}, ErrNotFound
@@ -921,5 +938,8 @@ func getTenantSession(
 		return SessionDetail{}, fmt.Errorf("get tenant feedback session: %w", err)
 	}
 	session.ReplayReady = session.Status == "ready"
+	if session.Status == "failed" && failureCode != nil {
+		session.Failure = sessionFailureDetail(*failureCode, retryable)
+	}
 	return session, nil
 }

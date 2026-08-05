@@ -41,17 +41,20 @@ func NewQueue(client taskClient) *Queue {
 	return &Queue{client: client}
 }
 
-func (q *Queue) EnqueueMerge(ctx context.Context, sessionID string) error {
-	payload, err := json.Marshal(map[string]string{"session_id": sessionID})
+func (q *Queue) EnqueueMerge(ctx context.Context, sessionID string, generation int) error {
+	payload, err := json.Marshal(struct {
+		SessionID  string `json:"session_id"`
+		Generation int    `json:"generation"`
+	}{SessionID: sessionID, Generation: generation})
 	if err != nil {
 		return fmt.Errorf("encode replay merge task: %w", err)
 	}
 	_, err = q.client.EnqueueContext(
 		ctx,
 		asynq.NewTask(TaskMerge, payload),
-		asynq.TaskID("replay:merge:"+sessionID),
+		asynq.TaskID(fmt.Sprintf("replay:merge:%s:%d", sessionID, generation)),
 		asynq.Queue(QueueName),
-		asynq.MaxRetry(terminalMergeAttempts),
+		asynq.MaxRetry(terminalMergeAttempts-1),
 		asynq.Timeout(10*time.Minute),
 		asynq.Retention(24*time.Hour),
 	)
@@ -95,7 +98,7 @@ func (q *Queue) Close() error {
 }
 
 type MergeQueue interface {
-	EnqueueMerge(context.Context, string) error
+	EnqueueMerge(context.Context, string, int) error
 }
 
 type BatchVerificationQueue interface {
@@ -115,11 +118,11 @@ type Scheduler struct {
 	Now               func() time.Time
 }
 
-func (s Scheduler) Schedule(ctx context.Context, sessionID string) error {
-	if err := s.Queue.EnqueueMerge(ctx, sessionID); err != nil {
+func (s Scheduler) Schedule(ctx context.Context, sessionID string, generation int) error {
+	if err := s.Queue.EnqueueMerge(ctx, sessionID, generation); err != nil {
 		return err
 	}
-	return s.Store.MarkMergeEnqueued(ctx, sessionID, s.now())
+	return s.Store.MarkMergeEnqueued(ctx, sessionID, generation, s.now())
 }
 
 func (s Scheduler) ScheduleBatch(ctx context.Context, task BatchVerificationTask) error {
@@ -186,7 +189,7 @@ func (s Scheduler) ReconcileOnce(ctx context.Context) error {
 		return errors.Join(result, err)
 	}
 	for _, session := range sessions {
-		if err := s.Schedule(ctx, session.ID); err != nil {
+		if err := s.Schedule(ctx, session.ID, session.MergeGeneration); err != nil {
 			result = errors.Join(result, err)
 		}
 	}

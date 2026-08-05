@@ -87,6 +87,38 @@ func TestDecodeVerifiedBatchRejectsUntrustedSessionLocation(t *testing.T) {
 	}
 }
 
+func TestDecodeVerifiedBatchClassifiesRecognizedMediaSchemaDrift(t *testing.T) {
+	body := `[{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"currentTime":12.5,"volume":0.5,"muted":true,"playbackRate":1,"loop":true,"futureMediaState":false}}]`
+	_, err := decodeVerifiedBatch(
+		strings.NewReader(body),
+		Batch{Index: 1, SizeBytes: int64(len(body)), EventsCount: 1},
+		"https://example.com/chart",
+		nil,
+	)
+	var violation unsafeReplayBatch
+	if err == nil || !errors.As(err, &violation) ||
+		violation.failureCode != FailureContractViolation ||
+		violation.violationCode != ViolationMediaFieldsNotSupported ||
+		violation.eventType != 3 || violation.incrementalSource != 7 {
+		t.Fatalf("decodeVerifiedBatch() violation = %#v, error = %v", violation, err)
+	}
+}
+
+func TestDecodeVerifiedBatchTreatsArbitraryMediaTextAsUnsafe(t *testing.T) {
+	body := `[{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"playbackRate":1,"loop":true,"futureMediaState":"person@example.com"}}]`
+	_, err := decodeVerifiedBatch(
+		strings.NewReader(body),
+		Batch{Index: 1, SizeBytes: int64(len(body)), EventsCount: 1},
+		"https://example.com/chart",
+		nil,
+	)
+	var unsafe unsafeReplayBatch
+	if err == nil || !errors.As(err, &unsafe) || unsafe.code() != FailureUnsafePayload ||
+		unsafe.violationCode != "" {
+		t.Fatalf("decodeVerifiedBatch() error = %#v, want unsafe payload", err)
+	}
+}
+
 func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -202,6 +234,19 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 			valid: true,
 		},
 		{
+			name:  "rrweb media playback state",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"currentTime":12.5,"volume":0.5,"muted":true,"playbackRate":1,"loop":true}}`,
+			valid: true,
+		},
+		{
+			name:  "media playback rate must be numeric",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"playbackRate":"1","loop":true}}`,
+		},
+		{
+			name:  "media loop must be boolean",
+			event: `{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"playbackRate":1,"loop":"yes"}}`,
+		},
+		{
 			name:  "selection",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":14,"ranges":[{"start":2,"startOffset":0,"end":2,"endOffset":4}]}}`,
 			valid: true,
@@ -292,6 +337,39 @@ func TestBatchVerificationProcessorRejectsIdentityBearingBatch(t *testing.T) {
 			"identity batch state = rejected %q safe %v removed %t",
 			store.rejectedReason, store.safeAt, storage.removed,
 		)
+	}
+}
+
+func TestBatchVerificationProcessorPersistsContractFailureClassification(t *testing.T) {
+	body := []byte(`[{"type":3,"timestamp":1784800000000,"data":{"source":7,"type":0,"id":2,"playbackRate":1,"loop":true,"futureMediaState":false}}]`)
+	store := &batchVerificationStoreStub{work: BatchVerificationWork{Batch: Batch{
+		ID: "batch", TenantID: "tenant", ProjectID: "project", SessionID: "session",
+		Index: 0, StorageKey: "batch.json", EventsCount: 1, SizeBytes: int64(len(body)),
+		SafetyStatus: BatchSafetyQuarantined, Generation: 1,
+	}, PageURL: "https://example.com/chart", RRWebVersion: "2.1.1"}}
+	storage := &batchVerificationStorageStub{body: body}
+	reporter := &failureReporterStub{}
+	processor := BatchVerificationProcessor{Store: store, Storage: storage, Reporter: reporter}
+	task := asynq.NewTask(TaskVerifyBatch, []byte(
+		`{"tenant_id":"tenant","batch_id":"batch","generation":1}`,
+	))
+	if err := processor.Handler()(context.Background(), task); err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	if store.rejectedCode != FailureContractViolation ||
+		store.rejectedReason != string(ViolationMediaFieldsNotSupported) || !storage.removed {
+		t.Fatalf(
+			"contract rejection = code %q reason %q removed %t",
+			store.rejectedCode, store.rejectedReason, storage.removed,
+		)
+	}
+	if len(reporter.reports) != 1 ||
+		reporter.reports[0].Operation != FailureOperationVerifyBatch ||
+		reporter.reports[0].Code != FailureContractViolation ||
+		reporter.reports[0].Violation != ViolationMediaFieldsNotSupported ||
+		reporter.reports[0].RRWebVersion != "2.1.1" ||
+		reporter.reports[0].EventType != 3 || reporter.reports[0].IncrementalSource != 7 {
+		t.Fatalf("contract telemetry = %#v", reporter.reports)
 	}
 }
 
@@ -449,6 +527,7 @@ type batchVerificationStoreStub struct {
 	safeAt              *time.Time
 	safeKey             string
 	rejectedReason      string
+	rejectedCode        FailureCode
 	cleanupComplete     bool
 	safeCleanupComplete bool
 }
@@ -485,9 +564,11 @@ func (store *batchVerificationStoreStub) CompleteSafeCleanup(
 func (store *batchVerificationStoreStub) MarkRejected(
 	_ context.Context,
 	_ BatchVerificationWork,
+	code FailureCode,
 	reason string,
 	_ time.Time,
 ) error {
+	store.rejectedCode = code
 	store.rejectedReason = reason
 	return nil
 }
@@ -510,6 +591,14 @@ type batchVerificationStorageStub struct {
 }
 
 type batchDiagnosticRecorderFunc func(context.Context, abuse.DiagnosticEvent) error
+
+type failureReporterStub struct {
+	reports []FailureReport
+}
+
+func (reporter *failureReporterStub) ReportReplayFailure(_ context.Context, report FailureReport) {
+	reporter.reports = append(reporter.reports, report)
+}
 
 func (record batchDiagnosticRecorderFunc) Record(
 	ctx context.Context,

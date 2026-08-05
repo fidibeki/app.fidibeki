@@ -107,6 +107,9 @@ def main() -> int:
     today = now.date().isoformat()
     sent_today = sum(1 for row in register if row.get("sent_at_utc", "").startswith(today) and row.get("send_status", "").startswith("accepted_by_smtp_scheduled"))
     slots = max(0, DAILY_LIMIT - sent_today)
+    if slots == 0:
+        print("scheduled_outreach=daily_limit_reached")
+        return 0
     candidates: list[dict[str, str]] = []
     for item in queue:
         required = {"recipient", "company", "source_url", "subject", "body", "footer", "state"}
@@ -115,8 +118,12 @@ def main() -> int:
         recipient = item["recipient"].strip().lower()
         if item["state"] != "ready":
             continue
-        if recipient in suppressed or recipient in contacted:
-            raise ValueError(f"unsafe scheduled recipient: {recipient}")
+        if recipient in suppressed:
+            print(f"scheduled_outreach=skipped_suppressed recipient={item['recipient']}")
+            continue
+        if recipient in contacted:
+            print(f"scheduled_outreach=skipped_already_contacted recipient={item['recipient']}")
+            continue
         candidates.append(item)
         if len(candidates) >= slots:
             break

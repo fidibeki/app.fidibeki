@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
@@ -23,20 +24,38 @@ type MergeStorage interface {
 }
 
 type Processor struct {
-	Store   Store
-	Storage MergeStorage
-	Now     func() time.Time
+	Store    Store
+	Storage  MergeStorage
+	Reporter FailureReporter
+	Now      func() time.Time
+}
+
+type MergeTask struct {
+	SessionID  string `json:"session_id"`
+	Generation int    `json:"generation,omitempty"`
+}
+
+func decodeMergeTask(payload []byte) (MergeTask, error) {
+	var task MergeTask
+	if err := json.Unmarshal(payload, &task); err != nil {
+		return MergeTask{}, err
+	}
+	if strings.TrimSpace(task.SessionID) == "" || task.Generation < 0 {
+		return MergeTask{}, errors.New("replay merge task is invalid")
+	}
+	if task.Generation == 0 {
+		task.Generation = 1
+	}
+	return task, nil
 }
 
 func (p Processor) MergeHandler() asynq.HandlerFunc {
 	return func(ctx context.Context, task *asynq.Task) error {
-		var payload struct {
-			SessionID string `json:"session_id"`
-		}
-		if err := json.Unmarshal(task.Payload(), &payload); err != nil || payload.SessionID == "" {
+		payload, err := decodeMergeTask(task.Payload())
+		if err != nil {
 			return fmt.Errorf("decode replay merge task: %w", asynq.SkipRetry)
 		}
-		session, batches, err := p.Store.LoadMerge(ctx, payload.SessionID)
+		session, batches, err := p.Store.LoadMerge(ctx, payload.SessionID, payload.Generation)
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("replay merge session no longer exists: %w", asynq.SkipRetry)
 		}
@@ -86,6 +105,46 @@ func (p Processor) MergeHandler() asynq.HandlerFunc {
 		}
 		return nil
 	}
+}
+
+func (p Processor) ErrorHandler() asynq.ErrorHandler {
+	return asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, failure error) {
+		if p.Reporter == nil {
+			return
+		}
+		retryCount, retryCountKnown := asynq.GetRetryCount(ctx)
+		maxRetry, maxRetryKnown := asynq.GetMaxRetry(ctx)
+		report, ok := replayTaskFailureReport(
+			task, failure, retryCount, maxRetry, retryCountKnown && maxRetryKnown,
+		)
+		if ok {
+			p.Reporter.ReportReplayFailure(ctx, report)
+		}
+	})
+}
+
+func replayTaskFailureReport(
+	task *asynq.Task,
+	failure error,
+	retryCount int,
+	maxRetry int,
+	retryKnown bool,
+) (FailureReport, bool) {
+	if task == nil || errors.Is(failure, asynq.SkipRetry) || errors.Is(failure, asynq.RevokeTask) {
+		return FailureReport{}, false
+	}
+	report := FailureReport{RetryExhausted: retryKnown && retryCount >= maxRetry}
+	switch task.Type() {
+	case TaskMerge:
+		report.Operation = FailureOperationMerge
+		report.Code = FailureProcessingFailed
+	case TaskVerifyBatch:
+		report.Operation = FailureOperationVerifyBatch
+		report.Code = FailureUnavailable
+	default:
+		return FailureReport{}, false
+	}
+	return report, true
 }
 
 func (p Processor) mergeBatches(

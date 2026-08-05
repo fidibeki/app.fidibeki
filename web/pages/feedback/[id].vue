@@ -28,7 +28,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const { $apiFetch } = useNuxtApp()
-const { canWrite } = useAuth()
+const { can, canWrite } = useAuth()
 const { t, te } = useI18n()
 const { message: apiErrorMessage } = useLocalizedAPIError()
 const { dateTime, decimal, integer, plural } = useRegionalFormat()
@@ -63,6 +63,42 @@ const retryableAttachments = computed(() => feedback.value?.attachments.filter((
   item.safety_status === 'safe' && item.processing_status === 'failed' && Boolean(item.completed_at)
 )) || [])
 const replayStatus = computed(() => feedback.value?.session?.status || 'processing')
+const replayFailure = computed(() => feedback.value?.session?.failure)
+const replayFailureKeys: Record<string, string> = {
+  contract_violation: 'contractViolation',
+  unsafe_payload: 'unsafePayload',
+  upload_expired: 'uploadExpired',
+  processing_failed: 'processingFailed',
+  unavailable: 'unavailable',
+}
+const replayFailureMessage = computed(() => {
+  const key = replayFailureKeys[replayFailure.value?.code || '']
+  return key
+    ? t(`feedback.detail.replayFailures.${key}`)
+    : t('feedback.detail.replayFailureFallback')
+})
+const replayPlaceholderTitle = computed(() => {
+  if (replayStatus.value === 'failed') {
+    return replayFailure.value?.code === 'processing_failed'
+      ? t('feedback.detail.replayProcessingFailed')
+      : t('feedback.detail.replayUnavailable')
+  }
+  return replayStatus.value === 'expired'
+    ? t('feedback.detail.replayExpired')
+    : t('feedback.detail.replayProcessing')
+})
+const replayPlaceholderMessage = computed(() => {
+  if (replayStatus.value === 'failed') return replayFailureMessage.value
+  return replayStatus.value === 'expired'
+    ? t('feedback.detail.replayExpiredDescription')
+    : t('feedback.detail.replayPending')
+})
+const canRetryReplay = computed(() => (
+  replayStatus.value === 'failed'
+  && replayFailure.value?.retryable === true
+  && canWrite('feedback:update')
+  && can('session:read')
+))
 const aiEnabled = computed(() => configuration.value?.plan.features.ai === true)
 const hasReprocessableEvidence = computed(() => feedback.value?.attachments.some((item) => (
   item.kind !== 'replay' && item.safety_status === 'safe' && Boolean(item.completed_at)
@@ -206,6 +242,23 @@ async function retryAttachment(id: string) {
   }
 }
 
+async function retryReplay() {
+  const session = feedback.value?.session
+  if (!session || !canRetryReplay.value || mutationPending.value) return
+  mutationPending.value = true
+  mutationError.value = ''
+  try {
+    await $apiFetch(`/v1/sessions/${session.id}/retry`, { method: 'POST' })
+    notice.value = t('feedback.notices.replayRetry')
+    await refresh()
+  } catch (retryError) {
+    mutationError.value = apiErrorMessage(retryError, 'feedback.errors.replayRetry')
+  } finally {
+    mutationPending.value = false
+    window.setTimeout(() => { notice.value = '' }, 3000)
+  }
+}
+
 function formatDate(value?: string) {
   if (!value) return t('feedback.common.notAvailable')
   return dateTime(value, { dateStyle: 'medium', timeStyle: 'short' })
@@ -314,7 +367,7 @@ useHead(() => ({
             <section v-if="feedback.session" class="feedback-replay-surface">
               <header><div><h2>{{ t('feedback.detail.sessionReplay') }}</h2><p>{{ t('feedback.detail.replayVersion', { events: plural('feedback.replay.events', feedback.session.events_count, { count: integer(feedback.session.events_count) }), version: feedback.session.rrweb_version }) }}</p></div><span class="status-pill" :class="replayStatus === 'ready' ? 'status-completed' : `status-${replayStatus === 'recording' ? 'processing' : replayStatus}`">{{ statusLabel(replayStatus) }}</span></header>
               <ReplayPlayer v-if="feedback.session.replay_ready && feedback.session.replay_url" :url="feedback.session.replay_url" :viewport-width="feedback.viewport_width" :viewport-height="feedback.viewport_height" />
-              <div v-else class="feedback-replay-placeholder"><MonitorPlay :size="34" /><h3>{{ replayStatus === 'failed' ? t('feedback.detail.replayUnavailable') : t('feedback.detail.replayProcessing') }}</h3><p>{{ t('feedback.detail.replayPending') }}</p></div>
+              <div v-else class="feedback-replay-placeholder" :data-failed="replayStatus === 'failed' || replayStatus === 'expired'" aria-live="polite"><AlertTriangle v-if="replayStatus === 'failed' || replayStatus === 'expired'" :size="34" /><MonitorPlay v-else :size="34" /><h3>{{ replayPlaceholderTitle }}</h3><p>{{ replayPlaceholderMessage }}</p><button v-if="canRetryReplay" type="button" class="app-button app-button--primary" :disabled="mutationPending" @click="retryReplay"><RotateCcw :size="14" /> {{ mutationPending ? t('feedback.actions.retryingProcessing') : t('feedback.actions.retryProcessing') }}</button></div>
             </section>
             <section v-else class="feedback-evidence-empty"><MonitorPlay :size="28" /><h2>{{ t('feedback.detail.noReplay') }}</h2><p>{{ t('feedback.detail.noReplayDescription') }}</p></section>
           </template>
@@ -407,8 +460,9 @@ useHead(() => ({
 .feedback-replay-placeholder { display: grid; min-height: 420px; place-items: center; align-content: center; gap: 10px; padding: 30px; background: var(--surface-soft); color: var(--muted); text-align: center; }
 .feedback-replay-placeholder h3,
 .feedback-replay-placeholder p { margin: 0; }
-.feedback-replay-placeholder h3 { color: var(--ink); font-size: 14px; }
-.feedback-replay-placeholder p { max-width: 520px; font-size: 10px; line-height: 1.55; }
+.feedback-replay-placeholder[data-failed='true'] > svg { color: var(--red); }
+.feedback-replay-placeholder h3 { color: var(--ink); font-size: 15px; }
+.feedback-replay-placeholder p { max-width: 65ch; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
 .feedback-environment { padding: 18px; }
 .feedback-environment dl { margin: 14px 0 0; }
 .feedback-environment dl div { display: grid; min-height: 42px; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 18px; border-bottom: 1px solid var(--line); }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -141,7 +142,7 @@ func TestCleanerRemovesObjectsBeforePreservingManifests(t *testing.T) {
 func TestSessionStatus(t *testing.T) {
 	now := time.Now()
 	key := "replay.json"
-	message := "failed"
+	failure := FailureProcessingFailed
 	tests := []struct {
 		name    string
 		session Session
@@ -150,9 +151,12 @@ func TestSessionStatus(t *testing.T) {
 		{name: "recording", session: Session{PrivacyVersion: CurrentReplayPrivacyVersion}, want: "recording"},
 		{name: "processing", session: Session{EndedAt: &now, PrivacyVersion: CurrentReplayPrivacyVersion}, want: "processing"},
 		{name: "failed", session: Session{
-			EndedAt: &now, MergeError: &message, MergeAttempts: 12,
+			EndedAt: &now, FailureCode: &failure,
 			PrivacyVersion: CurrentReplayPrivacyVersion,
 		}, want: "failed"},
+		{name: "capture winding down after a batch failure", session: Session{
+			FailureCode: &failure, PrivacyVersion: CurrentReplayPrivacyVersion,
+		}, want: "recording"},
 		{name: "ready", session: Session{
 			MergedAt: &now, StorageKey: &key, PrivacyVersion: CurrentReplayPrivacyVersion,
 		}, want: "ready"},
@@ -180,14 +184,63 @@ func TestMergeHandlerRejectsMalformedTask(t *testing.T) {
 	}
 }
 
+func TestReplayErrorHandlerReportsUnexpectedFailuresWithoutPayloadMetadata(t *testing.T) {
+	reporter := &failureReporterStub{}
+	processor := Processor{Reporter: reporter}
+	processor.ErrorHandler().HandleError(
+		context.Background(),
+		asynq.NewTask(TaskMerge, []byte(`{"session_id":"customer-session-secret","generation":2}`)),
+		errors.New("storage error containing customer content"),
+	)
+	if len(reporter.reports) != 1 {
+		t.Fatalf("failure reports = %#v", reporter.reports)
+	}
+	report := reporter.reports[0]
+	if report.Operation != FailureOperationMerge || report.Code != FailureProcessingFailed ||
+		report.RetryExhausted {
+		t.Fatalf("merge failure report = %#v", report)
+	}
+
+	processor.ErrorHandler().HandleError(
+		context.Background(), asynq.NewTask(TaskMerge, nil),
+		fmt.Errorf("expected terminal policy outcome: %w", asynq.SkipRetry),
+	)
+	if len(reporter.reports) != 1 {
+		t.Fatalf("SkipRetry failure reports = %#v", reporter.reports)
+	}
+}
+
+func TestReplayTaskFailureReportMarksTerminalAttempt(t *testing.T) {
+	report, ok := replayTaskFailureReport(
+		asynq.NewTask(TaskMerge, nil), errors.New("failed"), 11, 11, true,
+	)
+	if !ok || !report.RetryExhausted {
+		t.Fatalf("terminal task failure report = %#v/%t", report, ok)
+	}
+}
+
+func TestDecodeMergeTaskSupportsGeneratedAndLegacyPayloads(t *testing.T) {
+	generated, err := decodeMergeTask([]byte(`{"session_id":"session","generation":4}`))
+	if err != nil || generated.SessionID != "session" || generated.Generation != 4 {
+		t.Fatalf("decodeMergeTask(generated) = %#v, %v", generated, err)
+	}
+	legacy, err := decodeMergeTask([]byte(`{"session_id":"legacy"}`))
+	if err != nil || legacy.SessionID != "legacy" || legacy.Generation != 1 {
+		t.Fatalf("decodeMergeTask(legacy) = %#v, %v", legacy, err)
+	}
+	if _, err := decodeMergeTask([]byte(`{"session_id":"session","generation":-1}`)); err == nil {
+		t.Fatal("decodeMergeTask(negative generation) error = nil")
+	}
+}
+
 func TestReplayQueueEnqueuesDeterministically(t *testing.T) {
 	client := &taskClientStub{}
 	queue := NewQueue(client)
-	if err := queue.EnqueueMerge(context.Background(), "session-id"); err != nil {
+	if err := queue.EnqueueMerge(context.Background(), "session-id", 3); err != nil {
 		t.Fatalf("EnqueueMerge() error = %v", err)
 	}
 	if client.task == nil || client.task.Type() != TaskMerge ||
-		string(client.task.Payload()) != `{"session_id":"session-id"}` {
+		string(client.task.Payload()) != `{"session_id":"session-id","generation":3}` {
 		t.Fatalf("enqueued task = %#v payload %s", client.task, client.task.Payload())
 	}
 	verification := BatchVerificationTask{
@@ -202,14 +255,14 @@ func TestReplayQueueEnqueuesDeterministically(t *testing.T) {
 		t.Fatalf("verification task = %#v payload %s", client.task, client.task.Payload())
 	}
 	client.enqueueErr = asynq.ErrTaskIDConflict
-	if err := queue.EnqueueMerge(context.Background(), "session-id"); err != nil {
+	if err := queue.EnqueueMerge(context.Background(), "session-id", 3); err != nil {
 		t.Fatalf("EnqueueMerge(conflict) error = %v", err)
 	}
 	if err := queue.EnqueueVerification(context.Background(), verification); err != nil {
 		t.Fatalf("EnqueueVerification(conflict) error = %v", err)
 	}
 	client.enqueueErr = errors.New("redis unavailable")
-	if err := queue.EnqueueMerge(context.Background(), "session-id"); err == nil ||
+	if err := queue.EnqueueMerge(context.Background(), "session-id", 3); err == nil ||
 		!strings.Contains(err.Error(), "enqueue replay merge") {
 		t.Fatalf("EnqueueMerge(failure) error = %v", err)
 	}
@@ -238,7 +291,7 @@ func TestOpenQueueValidatesURL(t *testing.T) {
 
 func TestSchedulerReturnsQueueFailure(t *testing.T) {
 	want := errors.New("queue unavailable")
-	err := (Scheduler{Queue: mergeQueueFailureStub{err: want}}).Schedule(context.Background(), "session")
+	err := (Scheduler{Queue: mergeQueueFailureStub{err: want}}).Schedule(context.Background(), "session", 1)
 	if !errors.Is(err, want) {
 		t.Fatalf("Schedule() error = %v, want %v", err, want)
 	}
@@ -248,7 +301,7 @@ func TestSchedulerReturnsStoreFailure(t *testing.T) {
 	want := errors.New("database unavailable")
 	err := (Scheduler{
 		Store: Store{Database: errorQuerier{err: want}}, Queue: mergeQueueFailureStub{},
-	}).Schedule(context.Background(), "session")
+	}).Schedule(context.Background(), "session", 1)
 	if !errors.Is(err, want) {
 		t.Fatalf("Schedule() error = %v, want %v", err, want)
 	}
@@ -574,7 +627,7 @@ type mergeQueueFailureStub struct {
 	err error
 }
 
-func (s mergeQueueFailureStub) EnqueueMerge(context.Context, string) error {
+func (s mergeQueueFailureStub) EnqueueMerge(context.Context, string, int) error {
 	return s.err
 }
 

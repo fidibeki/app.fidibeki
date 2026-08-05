@@ -25,7 +25,8 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 		Logger:                 &testAsynqLogger{},
 		Sender:                 testSender{}, PipelineHandler: handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
-		ReporterHandler: handler, RecipientHandler: handler,
+		ReplayErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
+		ReporterHandler:    handler, RecipientHandler: handler,
 		CaseCommunicationHandler: handler, ControllerNotificationHandler: handler,
 		LifecycleHandler:     handler,
 		EmailFeedbackHandler: handler,
@@ -46,6 +47,11 @@ func TestWorkerValidatesConstruction(t *testing.T) {
 	invalid.PipelineHandler = nil
 	if _, err := New(invalid); err == nil {
 		t.Error("New(nil handler) error = nil")
+	}
+	invalid = valid
+	invalid.ReplayErrorHandler = nil
+	if _, err := New(invalid); err == nil {
+		t.Error("New(nil replay error handler) error = nil")
 	}
 	invalid = valid
 	invalid.Sender = nil
@@ -101,7 +107,8 @@ func TestWorkerStartsEveryQueueAndStops(t *testing.T) {
 		Logger:                 logger,
 		PipelineHandler:        handler, TextHandler: handler, AttachmentHandler: handler,
 		FileDeleteHandler: handler, AIErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
-		ReporterHandler: handler, RecipientHandler: handler,
+		ReplayErrorHandler: asynq.ErrorHandlerFunc(func(context.Context, *asynq.Task, error) {}),
+		ReporterHandler:    handler, RecipientHandler: handler,
 		CaseCommunicationHandler: handler, ControllerNotificationHandler: handler,
 		LifecycleHandler:     handler,
 		EmailFeedbackHandler: handler,

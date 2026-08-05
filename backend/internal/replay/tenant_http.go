@@ -12,6 +12,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/accessaudit"
 	"github.com/acidiney/app.fidibeki/backend/internal/api"
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -28,12 +29,17 @@ type ReplayStorage interface {
 	RemoveObject(context.Context, string) error
 }
 
+type TenantMergeScheduler interface {
+	Schedule(context.Context, string, int) error
+}
+
 type TenantHTTPOptions struct {
-	Store   Store
-	JWT     TenantTokenVerifier
-	Storage ReplayStorage
-	Logger  *slog.Logger
-	Now     func() time.Time
+	Store     Store
+	JWT       TenantTokenVerifier
+	Storage   ReplayStorage
+	Scheduler TenantMergeScheduler
+	Logger    *slog.Logger
+	Now       func() time.Time
 }
 
 type TenantHTTPHandler struct {
@@ -47,11 +53,32 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	handler := &TenantHTTPHandler{options: options, logger: logger}
+	// The plan gate guards only the standalone list: replays reached through a
+	// feedback stay readable after a downgrade, matching the session detail and
+	// stream routes below, but the browse-all surface is part of the paid
+	// session_replay feature.
+	router.With(
+		appmiddleware.RequireActive,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionSessionRead),
+		appmiddleware.RequirePlanLimit(appmiddleware.PlanLimitOptions{
+			Feature:    config.FeatureReplay,
+			UpgradeURL: "/v1/billing",
+			Logger:     logger,
+		}),
+	).Get("/v1/sessions", handler.listSessions)
 	router.With(
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionRead),
 	).Get("/v1/sessions/{sessionID}", handler.getSession)
+	router.With(
+		appmiddleware.RequireActive,
+		appmiddleware.RequireWritable,
+		appmiddleware.RequireTenantMember(options.JWT),
+		appmiddleware.RequirePermission(auth.PermissionSessionRead),
+		appmiddleware.RequirePermission(auth.PermissionFeedbackUpdate),
+	).Post("/v1/sessions/{sessionID}/retry", handler.retrySession)
 	router.With(
 		appmiddleware.RequireActive,
 		appmiddleware.RequireTenantMember(options.JWT),
@@ -66,6 +93,44 @@ func RegisterTenantRoutes(router chi.Router, options TenantHTTPOptions) {
 		appmiddleware.RequireTenantMember(options.JWT),
 		appmiddleware.RequirePermission(auth.PermissionSessionDelete),
 	).Delete("/v1/sessions/{sessionID}", handler.deleteSession)
+}
+
+func (h *TenantHTTPHandler) retrySession(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK || h.options.Scheduler == nil {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	session, changed, err := h.options.Store.RetrySession(
+		r.Context(), query, resolved.ID, sessionID,
+	)
+	if errors.Is(err, ErrNotFound) {
+		writeTenantReplayNotFound(w)
+		return
+	}
+	if errors.Is(err, ErrNotRetryable) {
+		api.WriteError(
+			w, http.StatusConflict, api.CodeConflict, "replay session cannot be retried", nil,
+		)
+		return
+	}
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if changed && !appmiddleware.AfterTenantCommit(r.Context(), func(ctx context.Context) error {
+		return h.options.Scheduler.Schedule(ctx, session.ID, session.MergeGeneration)
+	}) {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	api.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "processing"})
 }
 
 func (h *TenantHTTPHandler) getConsentDiagnostic(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +173,28 @@ func (h *TenantHTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	response := map[string]any{
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	failure, err := h.options.Store.GetFailureDetail(
+		r.Context(), query, resolved.ID, session,
+	)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	response := tenantSessionResource(session)
+	if failure != nil {
+		response["failure"] = failure
+	}
+	api.WriteJSON(w, http.StatusOK, response)
+}
+
+func tenantSessionResource(session Session) map[string]any {
+	resource := map[string]any{
 		"id": session.ID, "project_id": session.ProjectID,
 		"session_id": session.ClientSessionID, "page_url": session.PageURL,
 		"started_at": session.StartedAt, "ended_at": session.EndedAt,
@@ -118,9 +204,54 @@ func (h *TenantHTTPHandler) getSession(w http.ResponseWriter, r *http.Request) {
 		"retention_deleted_at": session.RetentionDeletedAt,
 	}
 	if session.Status() == "ready" {
-		response["replay_url"] = "/v1/sessions/" + session.ID + "/replay"
+		resource["replay_url"] = "/v1/sessions/" + session.ID + "/replay"
 	}
-	api.WriteJSON(w, http.StatusOK, response)
+	return resource
+}
+
+func (h *TenantHTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
+	options, fields := parseTenantSessionListOptions(r)
+	if len(fields) > 0 {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation,
+			"request validation failed", map[string]any{"fields": fields})
+		return
+	}
+	resolved, tenantOK := appmiddleware.TenantFromContext(r.Context())
+	query, queryOK := appmiddleware.QuerierFromContext(r.Context())
+	if !tenantOK || !queryOK {
+		api.WriteError(w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil)
+		return
+	}
+	sessions, err := h.options.Store.ListSessions(r.Context(), query, resolved.ID, options)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	hasMore := len(sessions) > options.Limit
+	if hasMore {
+		sessions = sessions[:options.Limit]
+	}
+	var nextCursor *string
+	if hasMore && len(sessions) > 0 {
+		encoded, err := encodeTenantSessionCursor(sessions[len(sessions)-1])
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		nextCursor = &encoded
+	}
+	resources := make([]map[string]any, 0, len(sessions))
+	for _, session := range sessions {
+		resources = append(resources, tenantSessionResource(session))
+	}
+	api.WriteJSON(w, http.StatusOK, map[string]any{
+		"sessions": resources,
+		"pagination": map[string]any{
+			"next_cursor": nextCursor,
+			"has_more":    hasMore,
+			"limit":       options.Limit,
+		},
+	})
 }
 
 func (h *TenantHTTPHandler) deleteSession(w http.ResponseWriter, r *http.Request) {
