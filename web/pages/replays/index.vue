@@ -348,8 +348,14 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 </template>
 
 <style scoped>
-.replays-workspace { display: grid; min-height: calc(100vh - 56px); grid-template-columns: minmax(520px, 1fr) minmax(330px, 40%); background: var(--surface); }
-.replays-stream-panel { min-width: 0; border-right: 1px solid var(--line); }
+/* The inspector column exists only while an inspector does — closed, the
+   stream owns the full width instead of facing a dead track. The track pair
+   keeps matching shapes (percent to percent, px to px below 1240) so the
+   width change interpolates and the stream glides rather than jumps. */
+.replays-workspace { display: grid; min-height: calc(100vh - 56px); grid-template-columns: minmax(520px, 1fr) 0%; transition: grid-template-columns 200ms ease; background: var(--surface); }
+.replays-workspace:has(.replays-inspector) { grid-template-columns: minmax(520px, 1fr) 40%; }
+.replays-stream-panel { min-width: 0; }
+.replays-workspace:has(.replays-inspector) .replays-stream-panel { border-right: 1px solid var(--line); }
 .replays-stream-head { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
 .replays-stream-head > div { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
 .replays-stream-head h1 { margin: 0; flex: 0 0 auto; font-size: 17px; }
@@ -376,7 +382,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 .replays-load-more { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: 7px; background: var(--surface-subtle); color: var(--teal); border: 0; border-top: 1px solid var(--line); font-size: 11px; font-weight: 750; }
 .replays-load-more svg { animation: app-spin 700ms linear infinite; }
 
-.replays-inspector { position: sticky; top: 56px; display: flex; height: calc(100vh - 56px); min-width: 0; flex-direction: column; background: var(--surface); }
+.replays-inspector { position: sticky; top: 56px; display: flex; height: calc(100vh - 56px); min-width: 0; flex-direction: column; overflow: hidden; background: var(--surface); }
 .replays-inspector > header { display: flex; min-height: 65px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .replays-inspector-title { min-width: 0; }
 .replays-inspector h2 { margin: 3px 0 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
@@ -393,7 +399,8 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 .replays-placeholder p { max-width: 280px; margin: 0; font-size: 11px; line-height: 1.5; }
 
 @media (max-width: 1240px) {
-  .replays-workspace { grid-template-columns: minmax(420px, 1fr) 330px; }
+  .replays-workspace { grid-template-columns: minmax(420px, 1fr) 0px; }
+  .replays-workspace:has(.replays-inspector) { grid-template-columns: minmax(420px, 1fr) 330px; }
   /* Four columns from here down, so the feedback cell goes entirely — a row
      that kept its link would carry five children and wrap. The link stays
      reachable as the inspector's open-feedback action. */
