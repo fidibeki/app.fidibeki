@@ -30,6 +30,7 @@ const sessions = ref<ReplaySessionItem[]>([])
 const nextCursor = ref<string | null>(null)
 const hasMore = ref(false)
 const loadingMore = ref(false)
+const loadMoreError = ref('')
 
 const filterQuery = computed(() => replaySessionListQuery({
   projectId: project.value,
@@ -54,6 +55,7 @@ watch(data, (page) => {
   sessions.value = page?.sessions || []
   nextCursor.value = page?.pagination.next_cursor || null
   hasMore.value = page?.pagination.has_more || false
+  loadMoreError.value = ''
 }, { immediate: true })
 
 // The address bar mirrors the filters and selection so a filtered view or an
@@ -78,24 +80,29 @@ watch(() => route.query, (query) => {
 // point at one that is pages away — then the detail endpoint supplies it.
 const selected = ref<ReplaySessionItem | null>(null)
 watch([selectedId, sessions], async () => {
-  if (!selectedId.value) {
+  const id = selectedId.value
+  if (!id) {
     selected.value = null
     return
   }
-  const found = sessions.value.find(item => item.id === selectedId.value)
+  const found = sessions.value.find(item => item.id === id)
   if (found) {
     selected.value = found
     return
   }
-  if (selected.value?.id === selectedId.value) return
+  if (selected.value?.id === id) return
+  // The previous selection must not linger while a different one loads, and a
+  // fetch that finishes after the user moved on must not overwrite where they
+  // went — the id check after the await keeps only the current request's result.
+  selected.value = null
   try {
-    selected.value = await $apiFetch<ReplaySessionItem>(`/v1/sessions/${selectedId.value}`)
+    const fetched = await $apiFetch<ReplaySessionItem>(`/v1/sessions/${id}`)
+    if (selectedId.value === id) selected.value = fetched
   } catch {
-    selected.value = null
+    // A vanished or foreign id simply leaves the inspector closed.
   }
 }, { immediate: true })
 
-const loadMoreError = ref('')
 async function loadMore() {
   if (!nextCursor.value || loadingMore.value) return
   const requestQuery = filterQuery.value
@@ -116,7 +123,11 @@ async function loadMore() {
     nextCursor.value = page.pagination.next_cursor || null
     hasMore.value = page.pagination.has_more
   } catch (error) {
-    loadMoreError.value = apiErrorMessage(error, 'replays.errors.loadMore')
+    // An error from a superseded request would sit under a list it never
+    // belonged to; only the request that still owns the list may report.
+    if (filterQuery.value === requestQuery && nextCursor.value === cursor) {
+      loadMoreError.value = apiErrorMessage(error, 'replays.errors.loadMore')
+    }
   } finally {
     loadingMore.value = false
   }
