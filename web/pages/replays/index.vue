@@ -27,6 +27,12 @@ const project = ref(typeof route.query.project_id === 'string' ? route.query.pro
 const sessionStatus = ref(typeof route.query.status === 'string' ? route.query.status : '')
 const feedback = ref(typeof route.query.feedback === 'string' ? route.query.feedback : '')
 const selectedId = ref(typeof route.query.id === 'string' ? route.query.id : '')
+// On narrow viewports the inspector is a fly-in over the stream, and only a
+// deliberate act — tapping a row, following an ?id= link — may open it. The
+// automatic first-row selection still highlights the list on every viewport,
+// but silently sliding a panel over the page the moment it loads is not what
+// anyone asked for. Desktop ignores this flag entirely.
+const userOpened = ref(Boolean(selectedId.value))
 const sessions = ref<ReplaySessionItem[]>([])
 const nextCursor = ref<string | null>(null)
 const hasMore = ref(false)
@@ -66,6 +72,7 @@ watch(data, (page) => {
   hydratedSelection = true
   if (!deepLinked && !sessions.value.some(item => item.id === selectedId.value)) {
     selectedId.value = sessions.value[0]?.id || ''
+    userOpened.value = false
   }
 }, { immediate: true })
 
@@ -84,7 +91,11 @@ watch(() => route.query, (query) => {
   project.value = typeof query.project_id === 'string' ? query.project_id : ''
   sessionStatus.value = typeof query.status === 'string' ? query.status : ''
   feedback.value = typeof query.feedback === 'string' ? query.feedback : ''
-  selectedId.value = typeof query.id === 'string' ? query.id : ''
+  const id = typeof query.id === 'string' ? query.id : ''
+  if (id !== selectedId.value) {
+    selectedId.value = id
+    userOpened.value = Boolean(id)
+  }
 })
 
 // The selected session usually sits in the loaded list, but a shared link can
@@ -113,6 +124,45 @@ watch([selectedId, sessions], async () => {
     // A vanished or foreign id simply leaves the inspector closed.
   }
 }, { immediate: true })
+
+// Initialized false so server and client render the same tree; the real value
+// lands after mount, the same way the layout tracks its own drawer breakpoint.
+const narrowViewport = ref(false)
+const inspectorCloseButton = ref<HTMLButtonElement | null>(null)
+onMounted(() => {
+  const media = window.matchMedia('(max-width: 1100px)')
+  narrowViewport.value = media.matches
+  media.addEventListener('change', (event) => { narrowViewport.value = event.matches })
+  window.addEventListener('keydown', handleInspectorKey)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleInspectorKey)
+})
+const flyInOpen = computed(() => narrowViewport.value && userOpened.value && Boolean(selected.value))
+
+function openSession(item: ReplaySessionItem) {
+  selectedId.value = item.id
+  userOpened.value = true
+  if (narrowViewport.value) {
+    void nextTick(() => inspectorCloseButton.value?.focus())
+  }
+}
+
+// On a narrow viewport closing only slides the panel away — the row stays
+// selected, ready to reopen. On desktop the aside and the selection are the
+// same thing, so closing clears both.
+function closeInspector() {
+  if (narrowViewport.value) {
+    userOpened.value = false
+    return
+  }
+  selectedId.value = ''
+}
+
+function handleInspectorKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !flyInOpen.value) return
+  closeInspector()
+}
 
 async function loadMore() {
   if (!nextCursor.value || loadingMore.value) return
@@ -196,7 +246,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
 
 <template>
   <div class="replays-workspace">
-    <section class="replays-stream-panel">
+    <section class="replays-stream-panel" :inert="flyInOpen">
       <header class="replays-stream-head">
         <div><h1>{{ t('replays.title') }}</h1><span>{{ scopeLine }}</span></div>
       </header>
@@ -227,7 +277,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
         <article
           role="listitem"
           :data-selected="selectedId === item.id"
-          @click="selectedId = item.id"
+          @click="openSession(item)"
         >
           <span class="replays-row-icon"><MonitorPlay :size="16" /></span>
           <div class="replays-row-copy">
@@ -255,7 +305,15 @@ useHead(() => ({ title: t('replays.pageTitle') }))
       </div>
     </section>
 
-    <aside v-if="selected" class="replays-inspector">
+    <div v-if="flyInOpen" class="replays-inspector-scrim" aria-hidden="true" @click="closeInspector" />
+    <aside
+      v-if="selected"
+      class="replays-inspector"
+      :data-user-opened="userOpened"
+      :role="flyInOpen ? 'dialog' : undefined"
+      :aria-modal="flyInOpen ? 'true' : undefined"
+      :aria-label="pageLabel(selected)"
+    >
       <header>
         <div class="replays-inspector-title">
           <span class="app-eyebrow">{{ statusLabel(selected.status) }}</span>
@@ -268,7 +326,7 @@ useHead(() => ({ title: t('replays.pageTitle') }))
             :title="t('replays.actions.openFeedback')"
             :aria-label="t('replays.actions.openFeedback')"
           ><ExternalLink :size="16" /></NuxtLink>
-          <button type="button" :title="t('replays.actions.close')" :aria-label="t('replays.actions.close')" @click="selectedId = ''"><X :size="16" /></button>
+          <button ref="inspectorCloseButton" type="button" :title="t('replays.actions.close')" :aria-label="t('replays.actions.close')" @click="closeInspector"><X :size="16" /></button>
         </div>
       </header>
       <div class="replays-inspector-body">
@@ -340,14 +398,39 @@ useHead(() => ({ title: t('replays.pageTitle') }))
   .replays-stream article .replays-feedback-none { display: none; }
 }
 
+.replays-inspector-scrim { display: none; }
+
 @media (max-width: 1100px) {
   /* Replays have no standalone detail page, so unlike the feedback workspace
-     the inspector cannot disappear on narrow viewports — it stacks under the
-     stream instead and keeps the player reachable. */
+     the inspector cannot disappear on narrow viewports — it becomes a fly-in
+     over the stream, sliding like the layout's mobile navigation drawer. */
   .replays-workspace { display: block; min-height: 0; }
   .replays-stream-panel { border: 0; }
-  .replays-inspector { position: static; height: auto; border-top: 2px solid var(--line-strong); }
-  .replays-inspector-body { overflow: visible; }
+  .replays-inspector {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 110;
+    width: min(480px, 92vw);
+    height: 100dvh;
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-overlay);
+    visibility: hidden;
+    transform: translateX(105%);
+    transition: transform 160ms ease, visibility 0s linear 160ms;
+  }
+  .replays-inspector[data-user-opened='true'] {
+    visibility: visible;
+    transform: translateX(0);
+    transition-delay: 0s;
+  }
+  .replays-inspector-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: block;
+    background: var(--scrim);
+  }
 }
 
 @media (max-width: 700px) {
