@@ -640,6 +640,32 @@ export interface FeedbackSession {
   replay_url?: string
 }
 
+export interface ReplaySessionItem {
+  id: string
+  project_id: string
+  session_id: string
+  page_url?: string | null
+  started_at: string
+  ended_at?: string | null
+  events_count: number
+  batches_count: number
+  rrweb_version: string
+  merged_at?: string | null
+  status: 'recording' | 'processing' | 'ready' | 'failed' | 'expired'
+  feedback_id?: string | null
+  retention_deleted_at?: string | null
+  replay_url?: string
+}
+
+export interface ReplaySessionPage {
+  sessions: ReplaySessionItem[]
+  pagination: {
+    next_cursor?: string | null
+    has_more: boolean
+    limit: number
+  }
+}
+
 export interface FeedbackDetail extends FeedbackItem {
   dom_snapshot_html?: string
   dom_snapshot_styles?: string

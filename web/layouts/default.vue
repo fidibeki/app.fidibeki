@@ -21,6 +21,7 @@ import {
   LogOut,
   Menu,
   MessageSquareQuote,
+  MonitorPlay,
   PanelRightOpen,
   Scale,
   ScrollText,
@@ -95,6 +96,7 @@ const trialLabel = computed(() => trialDays.value === null
 const primaryNavigation = [
   { labelKey: 'navigation.overview', to: '/', icon: House, permissions: ['feedback:read', 'issue:read'] },
   { labelKey: 'navigation.feedback', to: '/feedback', icon: Inbox, permissions: ['feedback:read'] },
+  { labelKey: 'navigation.replays', to: '/replays', icon: MonitorPlay, permissions: ['session:read'], feature: 'session_replay' as const },
   { labelKey: 'navigation.issues', to: '/issues', icon: LayoutList, permissions: ['issue:read'] },
   { labelKey: 'navigation.notifications', to: '/notifications', icon: Bell, permissions: ['issue:read'] },
   { labelKey: 'navigation.testimonials', to: '/testimonials', icon: MessageSquareQuote, permissions: ['testimonial:read'], feature: 'testimonials' as const },

@@ -1,6 +1,7 @@
 const workspaceDestinations = [
   { path: '/', permissions: ['feedback:read', 'issue:read'] },
   { path: '/feedback', permissions: ['feedback:read'] },
+  { path: '/replays', permissions: ['session:read'] },
   { path: '/issues', permissions: ['issue:read'] },
   { path: '/analytics', permissions: ['project:read'] },
   { path: '/projects', permissions: ['project:read'] },
