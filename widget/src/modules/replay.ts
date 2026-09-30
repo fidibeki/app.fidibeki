@@ -52,6 +52,12 @@ interface PendingBatch {
   eventsCount: number
 }
 
+class ReplayHTTPError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(`${message} with status ${status}`)
+  }
+}
+
 export async function startReplayCapture(options: ReplayCaptureOptions): Promise<ReplayCapture | null> {
   const sampled = options.rule.replay_mode === 'full' ||
     (options.rule.replay_mode === 'sampling' &&
@@ -65,6 +71,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
   const uploadAbortController = new AbortController()
   let stopped = false
   let revoked = false
+  let uploadFailed = false
   let stopPromise: Promise<void> | null = null
   let eventCount = 0
   let batchIndex = 0
@@ -92,9 +99,21 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
     serializedEvents = []
     serializedBytes = 2
     uploadChain = uploadChain.then(async () => {
-      if (revoked) return
-      await uploadBatch(options, session.id, batch, uploadAbortController.signal)
-      completedBatches++
+      if (revoked || uploadFailed) return
+      try {
+        await uploadBatch(options, session.id, batch, uploadAbortController.signal)
+        completedBatches++
+      } catch (error) {
+        if (revoked) return
+        uploadFailed = true
+        if (!stopped) {
+          stopped = true
+          cleanup()
+        }
+        serializedEvents = []
+        serializedBytes = 2
+        options.onError?.(error)
+      }
     })
   }
 
@@ -167,12 +186,14 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   function stop(): Promise<void> {
     if (stopPromise) return stopPromise
-    stopped = true
-    cleanup()
-    enqueueBatch()
+    if (!stopped) {
+      stopped = true
+      cleanup()
+      enqueueBatch()
+    }
     stopPromise = uploadChain
       .then(async () => {
-        if (completedBatches > 0) await finalizeSession(options, session.id)
+        if (!revoked && !uploadFailed && completedBatches > 0) await finalizeSession(options, session.id)
       })
       .catch((error: unknown) => {
         options.onError?.(error)
@@ -223,7 +244,7 @@ async function uploadBatch(
   batch: PendingBatch,
   signal: AbortSignal,
 ): Promise<void> {
-  await retry(async () => {
+  const upload = await retry(async () => {
     const declared = await widgetFetch(options, `replay/sessions/${sessionID}/batches`, {
       method: 'POST',
       signal,
@@ -233,8 +254,10 @@ async function uploadBatch(
         size_bytes: batch.body.size,
       }),
     })
-    if (!declared.ok) throw new Error(`replay batch declaration failed with status ${declared.status}`)
-    const upload = await declared.json() as BatchResponse
+    if (!declared.ok) throw new ReplayHTTPError('replay batch declaration failed', declared.status)
+    return await declared.json() as BatchResponse
+  }, signal)
+  await retry(async () => {
     const stored = await fetch(upload.presigned_url, {
       method: upload.method,
       headers: upload.headers,
@@ -242,16 +265,18 @@ async function uploadBatch(
       signal,
       credentials: 'omit',
     })
-    if (!stored.ok) throw new Error(`replay batch upload failed with status ${stored.status}`)
+    if (!stored.ok) throw new ReplayHTTPError('replay batch upload failed', stored.status)
+  }, signal)
+  await retry(async () => {
     const completed = await widgetFetch(
       options,
       `replay/sessions/${sessionID}/batches/${batch.index}/complete`,
       { method: 'POST', signal, body: JSON.stringify({ complete_token: upload.complete_token }) },
     )
-		// A lost 204 response makes the retry observe an already-completed batch.
-		if (!completed.ok && completed.status !== 409) {
-			throw new Error(`replay batch completion failed with status ${completed.status}`)
-		}
+    // A lost 204 response makes the retry observe an already-completed batch.
+    if (!completed.ok && completed.status !== 409) {
+      throw new ReplayHTTPError('replay batch completion failed', completed.status)
+    }
   }, signal)
 }
 
@@ -260,7 +285,7 @@ async function finalizeSession(options: ReplayCaptureOptions, sessionID: string)
     const response = await widgetFetch(options, `replay/sessions/${sessionID}/finalize`, {
       method: 'POST', body: '{}', keepalive: true,
     })
-    if (!response.ok) throw new Error(`replay finalization failed with status ${response.status}`)
+    if (!response.ok) throw new ReplayHTTPError('replay finalization failed', response.status)
   })
 }
 
@@ -279,17 +304,21 @@ function widgetFetch(options: ReplayCaptureOptions, path: string, init: RequestI
   })
 }
 
-async function retry(operation: () => Promise<void>, signal?: AbortSignal): Promise<void> {
+async function retry<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   let lastError: unknown
   for (const delay of retryDelays) {
     throwIfAborted(signal)
     if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay))
     throwIfAborted(signal)
     try {
-      await operation()
-      return
+      return await operation()
     } catch (error) {
       throwIfAborted(signal)
+      // Replay is best effort. Stop on throttling or a permanent rejection;
+      // immediate retries only spend more budget and inflate abuse diagnostics.
+      if (error instanceof ReplayHTTPError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        throw error
+      }
       lastError = error
     }
   }

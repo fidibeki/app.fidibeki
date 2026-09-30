@@ -980,7 +980,7 @@ test('customer-managed replay stays dormant until a structured grant and stops o
         body: JSON.stringify({
           token: body.grant_token,
           state: 'active',
-          expires_at: '2026-08-23T12:00:00Z',
+          expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
         }),
       })
     }
@@ -1087,7 +1087,7 @@ test('revocation discards a replay capture that finishes starting after withdraw
       body: JSON.stringify({
         token: request.grant_token,
         state: 'active',
-        expires_at: '2026-08-23T12:00:00Z',
+        expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
       }),
     })
   })
@@ -1207,7 +1207,7 @@ test('managed replay consent supports reject, accept, persistence, version chang
         body: JSON.stringify({
           state: body.state === 'denied' ? 'denied' : 'active',
           ...(body.state === 'granted' ? { token: body.grant_token } : {}),
-          expires_at: '2026-08-23T12:00:00Z',
+          expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
         }),
       })
     }
@@ -1417,7 +1417,7 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
       body: JSON.stringify({
         state: body.state === 'denied' ? 'denied' : 'active',
         ...(body.state === 'granted' ? { token: body.grant_token } : {}),
-        expires_at: '2026-08-23T12:00:00Z',
+        expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
       }),
     })
   })
@@ -1433,7 +1433,7 @@ test('managed analytics and replay purposes share one prompt with per-purpose ch
         body: JSON.stringify({
           state: body.state === 'denied' ? 'denied' : 'active',
           ...(body.state === 'granted' ? { token: body.grant_token } : {}),
-          expires_at: '2026-08-23T12:00:00Z',
+          expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
         }),
       })
     }
@@ -1611,7 +1611,7 @@ test('managed replay consent renders the supported Portuguese notice', async ({ 
       contentType: 'application/json',
       body: JSON.stringify({
         state: 'denied',
-        expires_at: '2026-08-23T12:00:00Z',
+        expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
       }),
     })
   })
@@ -1666,7 +1666,7 @@ test('customer-managed analytics stays dormant until a structured grant, then wi
     return route.fulfill({
       status: 201,
       contentType: 'application/json',
-      body: JSON.stringify({ token: body.grant_token, state: 'active', expires_at: '2026-08-23T12:00:00Z' }),
+      body: JSON.stringify({ token: body.grant_token, state: 'active', expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString() }),
     })
   })
 

@@ -115,22 +115,36 @@ var ReplayStartPolicy = Policy{
 }
 
 var ReplayBatchPolicy = Policy{
-	Name: "replay-batch", Version: 1, Reason: ReasonReplayRateLimited,
+	Name: "replay-batch", Version: 2, Reason: ReasonReplayRateLimited,
 	FailureMode: FailClosed,
 	Rules: []Rule{
 		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 2000, Period: time.Hour}},
-		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 200, Period: time.Hour}},
+		// One network must be able to upload a full, bounded 1000-batch session.
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 1000, Period: time.Hour}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 1000, Period: time.Hour}},
+	},
+}
+
+// Completing an admitted upload must not spend the declaration budget again.
+var ReplayBatchCompletionPolicy = Policy{
+	Name: "replay-batch-completion", Version: 1, Reason: ReasonReplayRateLimited,
+	FailureMode: FailClosed,
+	Rules: []Rule{
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 2000, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 1000, Period: time.Hour}},
 		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 1000, Period: time.Hour}},
 	},
 }
 
 var ReplayBytePolicy = Policy{
-	Name: "replay-mebibytes", Version: 1, Reason: ReasonReplayRateLimited,
+	// Round each batch to KiB so small flushes do not each consume a whole MiB.
+	// A separate namespace keeps old MiB counters out of the new unit system.
+	Name: "replay-kibibytes", Version: 1, Reason: ReasonReplayRateLimited,
 	FailureMode: FailClosed,
 	Rules: []Rule{
-		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 4096, Period: time.Hour}},
-		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 512, Period: time.Hour}},
-		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 128, Period: time.Hour}},
+		{Scope: ScopeProject, Window: ratelimit.Window{Limit: 4096 * 1024, Period: time.Hour}},
+		{Scope: ScopeNetwork, Window: ratelimit.Window{Limit: 512 * 1024, Period: time.Hour}},
+		{Scope: ScopeSession, Window: ratelimit.Window{Limit: 128 * 1024, Period: time.Hour}},
 	},
 }
 

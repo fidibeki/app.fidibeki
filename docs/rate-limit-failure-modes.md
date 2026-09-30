@@ -17,6 +17,27 @@ Widget analytics is lower-cost and bounded per batch, but it remains public writ
 must fail closed when the distributed limiter cannot make a decision. API-key quota details are in
 [`api-key-quotas.md`](api-key-quotas.md).
 
+## Replay budgets
+
+Replay capture begins after consent for an eligible rule, without requiring a feedback
+submission. Page changes can produce batches while the widget is closed. The recorder flushes
+nonempty batches every 15 seconds or after 50 events, and stops after five minutes without
+pointer, keyboard, scroll, or touch activity.
+
+Batch declarations and completions have separate hourly budgets, each allowing 1000 requests
+per network and session and 2000 per project. This accommodates the existing 1000-batch session
+cap without charging a declaration twice. Byte budgets retain their 128 MiB session, 512 MiB
+network, and 4 GiB project ceilings, with each batch rounded up to KiB. Charging small batches
+as whole MiB previously exhausted the session byte budget after just 128 batches.
+
+The widget stops capture and discards queued uploads on `429` or other permanent HTTP
+rejections. It retries transient failures only at the failed declaration, upload, or completion
+step. An upload failure does not repeat a successful declaration or reserve its bytes again.
+
+The dashboard's Rate limits total counts rejected requests over the selected period, including
+replay requests and their retries. It is not a count of visitors or an indication of current
+traffic. Historical rejections remain visible until they leave that period.
+
 ## Observability
 
 Normal public-feedback quota exhaustion returns `429` and records the hourly abuse diagnostic

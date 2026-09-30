@@ -404,9 +404,9 @@ func (h *HTTPHandler) declareBatch(w http.ResponseWriter, r *http.Request) {
 	); !allowed {
 		return
 	}
-	mebibytes := int((request.SizeBytes + (1 << 20) - 1) / (1 << 20))
+	kibibytes := int((request.SizeBytes + (1 << 10) - 1) / (1 << 10))
 	if _, allowed := h.enforceAbusePolicy(
-		w, r, configuration, origin, "", sessionID, abuse.ReplayBytePolicy, mebibytes,
+		w, r, configuration, origin, "", sessionID, abuse.ReplayBytePolicy, kibibytes,
 	); !allowed {
 		return
 	}
@@ -481,7 +481,7 @@ func (h *HTTPHandler) completeBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, allowed := h.enforceAbusePolicy(
-		w, r, configuration, origin, "", sessionID, abuse.ReplayBatchPolicy, 1,
+		w, r, configuration, origin, "", sessionID, abuse.ReplayBatchCompletionPolicy, 1,
 	); !allowed {
 		return
 	}

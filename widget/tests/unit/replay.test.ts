@@ -413,7 +413,78 @@ describe('rrweb replay capture', () => {
     expect(declarationCount).toBe(1)
   })
 
-  it('retries a failed upload and treats an already-complete response as success', async () => {
+  it.each(['declaration', 'upload', 'completion'] as const)(
+    'stops queued uploads after rate-limited %s without retrying',
+    async (rejectedStage) => {
+      vi.useFakeTimers()
+      const attempts = { declaration: 0, upload: 0, completion: 0 }
+      const onError = vi.fn()
+      vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+        const url = input.toString()
+        if (url.endsWith('/replay/sessions?key=key')) {
+          return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+        }
+        const stage = url.endsWith('/batches?key=key') ? 'declaration'
+          : url.startsWith('https://storage.example/') ? 'upload' : 'completion'
+        attempts[stage]++
+        if (stage === rejectedStage) {
+          return new Response(null, { status: 429, headers: { 'Retry-After': '60' } })
+        }
+        if (stage === 'declaration') {
+          return jsonResponse({
+            presigned_url: 'https://storage.example/batch', method: 'PUT', headers: {}, complete_token: 'token',
+          }, 201)
+        }
+        return new Response(null, { status: stage === 'upload' ? 200 : 204 })
+      }))
+      const capture = await startReplayCapture({
+        rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+        consentToken: 'consent-token', onError,
+      })
+      const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+      for (let index = 0; index < 101; index++) emit({ type: 0, timestamp: index, data: {} })
+      const stopped = capture?.stop()
+      await vi.advanceTimersByTimeAsync(2_000)
+      await stopped
+
+      expect(attempts[rejectedStage]).toBe(1)
+      expect(attempts.declaration).toBe(1)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: expect.stringContaining('429') }))
+    },
+  )
+
+  it.each([401, 429, 503])('stops the recorder and reports a background upload failure once for status %s', async (status) => {
+    vi.useFakeTimers()
+    const onError = vi.fn()
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: URL | RequestInfo) => {
+      const url = input.toString()
+      requests.push(url)
+      if (url.endsWith('/replay/sessions?key=key')) {
+        return jsonResponse({ id: 'session', rrweb_version: '2.1.1', max_duration_seconds: 1800, max_events: 50000 }, 201)
+      }
+      return new Response(null, { status })
+    }))
+    const capture = await startReplayCapture({
+      rule: replayRule(), publicKey: 'key', apiBase: new URL('https://widget.example/v1/'),
+      consentToken: 'consent-token', onError,
+    })
+    const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
+    for (let index = 0; index < 101; index++) emit({ type: 0, timestamp: index, data: {} })
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    expect(recordMock.mock.results[recordMock.mock.results.length - 1]?.value).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: expect.stringContaining(String(status)) }))
+    for (let index = 0; index < 50; index++) emit({ type: 0, timestamp: index, data: {} })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await capture?.stop()
+    expect(requests.filter(url => url.includes('/batches?'))).toHaveLength(status === 503 ? 3 : 1)
+    expect(requests.some(url => url.includes('/finalize?'))).toBe(false)
+    expect(onError).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['upload', 'completion'] as const)('retries only the failed %s without spending another declaration', async (failedStage) => {
     let declarations = 0
     let uploads = 0
     let completions = 0
@@ -430,11 +501,11 @@ describe('rrweb replay capture', () => {
       }
       if (url === 'https://storage.example/batch') {
         uploads++
-        return new Response(null, { status: uploads === 1 ? 503 : 200 })
+        return new Response(null, { status: failedStage === 'upload' && uploads === 1 ? 503 : 200 })
       }
       if (url.includes('/complete?')) {
         completions++
-        return new Response(null, { status: 409 })
+        return new Response(null, { status: failedStage === 'completion' && completions === 1 ? 503 : 409 })
       }
       if (url.includes('/finalize?')) return jsonResponse({}, 202)
       throw new Error(`unexpected request ${url} ${String(init.body)}`)
@@ -446,9 +517,9 @@ describe('rrweb replay capture', () => {
     const emit = recordMock.mock.calls[0]?.[0]?.emit as ((event: unknown) => void)
     emit({ type: 0, timestamp: 1, data: {} })
     await capture?.stop()
-    expect(declarations).toBe(2)
-    expect(uploads).toBe(2)
-    expect(completions).toBe(1)
+    expect(declarations).toBe(1)
+    expect(uploads).toBe(failedStage === 'upload' ? 2 : 1)
+    expect(completions).toBe(failedStage === 'completion' ? 2 : 1)
   })
 
   it('reports incompatible session responses without starting rrweb', async () => {
