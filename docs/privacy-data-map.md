@@ -1,6 +1,6 @@
 # Fidibeki Technical Privacy Data Map
 
-**Last technical review:** 2026-07-24
+**Last technical review:** 2026-10-01
 
 This document is an engineering inventory for founder and legal review. It is not a published
 privacy policy, data processing agreement, residency commitment, legal opinion, or guarantee.
@@ -9,8 +9,8 @@ customer-facing claims.
 
 ## Executable Retention Registry
 
-`GET /v1/privacy/retention` is backed by registry version 1. Its 34 lifecycle categories cover
-every one of the 96 PostgreSQL tables created by current migrations exactly once, plus the known
+`GET /v1/privacy/retention` is backed by registry version 1. Its 36 lifecycle categories cover
+every one of the 103 PostgreSQL tables created by current migrations exactly once, plus the known
 object-prefix, queue, browser-key, and provider boundaries. Automated validation rejects duplicate
 resources and rejects `enforced` or `configurable` claims without a bounded lifecycle and a real
 implementation reference.
@@ -35,14 +35,14 @@ and mobile-capture-session cleaners; the ledger stores schedule metadata, last a
 budget exhaustion, and only the generic failure code `cleanup_failed`. It stores no tenant, person,
 credential, token, IP/user-agent, or raw error data and no append-only run history. Health is derived
 as `healthy`, `attention`, `failed`, `overdue`, or `not_observed` from each operation's schedule and
-15-minute grace window. The bilingual Data & privacy surface shows the thirteen tracked operations,
+15-minute grace window. The bilingual Data & privacy surface shows the sixteen tracked operations,
 their last success, next expected run, counts, and alert reason. Every enforced cleaner now reports
 into this ledger; categories without a cleaner still have no health row and are not represented
 as healthy.
 
 ## Records Of Processing Activities (ROPA) And DPIA Screening
 
-`backend/internal/privacy/ropa_registry.go` groups the retention registry's 34 categories into 21
+`backend/internal/privacy/ropa_registry.go` groups the retention registry's 36 categories into 21
 code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
 more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
 validated against, the retention registry rather than hand-duplicated), data-subject (including a
@@ -96,6 +96,14 @@ processing-instruction and safeguards framework, not itself an Article 6 lawful 
 | Personal-data breach register | Incident facts and affected tenant references; authority/high-risk/communication assessments; chronology; containment controls; post-incident actions, owners, deadlines, outcomes, corrective references, opaque evidence references; frozen processor-to-controller notification/contact snapshots; delivery attempts and restricted outbox evidence; external-provider incident notices with frozen code-owned governance facts, affected data-flow categories, and incident-scoped tenant mappings | Preserve restricted decision and response evidence, deliver explicitly queued, minimized controller notifications without exposing the workflow to the tenant runtime role, record bounded external-provider notices without asserting a legal subprocessor classification, and let a platform admin download a frozen notification snapshot or a deterministic point-in-time post-incident report (JSON or Markdown) rendered read-only from these same facts | PostgreSQL through the platform-admin-only connection boundary; configured transactional email provider after an explicit platform-admin queue command | `decision_required`: incident/action/content/provider snapshots and delivery attempts are append-only, notification delivery state is narrowly mutable, and every table is excluded from `fidibeki_app`; the register's maximum period and legal-hold behavior require founder/legal approval. Exports add no storage and no new lifecycle |
 | Audit and observability | Actor/resource IDs, change metadata, request/error telemetry | Security investigation, accountability, and service operation | PostgreSQL and configured telemetry provider | `decision_required` for database security evidence. Telemetry-provider *retention* remains `external_control`, pending founder/legal/provider evidence. Outgoing Sentry error events are technically scrubbed on both the backend and widget by a deterministic `BeforeSend`/`beforeSend` allowlist (`backend/internal/observability/scrub.go`, `widget/src/modules/error-reporting.ts`): only exception type/structural stack frames/timestamp/release/environment (plus a known widget phase and bounded `project_id`/`widget_rule_id`) leave the application; request URL/headers/cookies/body, user/IP/user-agent, frame absolute paths/source context/locals, breadcrumbs, arbitrary contexts/tags, and the free-text exception/message value itself are always removed or replaced with a fixed placeholder — see `docs/superpowers/specs/2026-07-24-sentry-telemetry-scrubbing-design.md` |
 | Privacy cases, jobs, and requests | Case subject/right/evidence, hashed reporter verification token, one-way email digest, job state, counts, private archive key | Verified reporter/member access, assessed portability, anonymization execution, retry, and audit | PostgreSQL, Asynq/Redis, private object storage | Archives are enforced at 7 days; unverified reporter requests at 48 hours; verified reporter access at 30 days. The privacy-case evidence maximum period is `decision_required` |
+
+## Tenant website conversations
+
+`website_chat_visitors` and `website_chat_messages` hold anonymous, tenant/project-bound conversations started by a tenant operator. A visitor cannot start a thread or access another visitor's messages with the public project key. PostgreSQL stores a SHA-256 credential hash, origin, sequence/read markers, operator identity and message content; the browser's `fidibeki:chat:<project>` entry stores only the 24-hour opaque credential. The host logout reset clears that entry and attempts server revocation. Transcript download is a direct, bounded browser download and creates no export archive.
+
+The `website_chat` retention category deletes conversations 180 days after their last message and unused visitor records 24 hours after credential expiry, with tenant-wide legal holds respected. The `website_chat_presence` category covers per-tab Redis presence (60-second TTL), its index (120-second TTL), and the expiring browser credential. Presence contains only anonymous IDs, active/idle state and an existing-rule-projected page location without query strings/fragments. Unmatched pages expose only the origin. No message content is sent in Pub/Sub invalidations or access-audit metadata. Both categories belong to the processor-role feedback workflow processing activity. The dedicated worker operation reports to retention health and resumes exhausted batches promptly.
+
+See [Website conversations](website-chat.md) for permissions, host logout integration and the independent platform-support boundary.
 
 ## Technical Data Flows
 

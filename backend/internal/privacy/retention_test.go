@@ -29,11 +29,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 34 {
+		len(starter.Policies) != 36 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 13, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
+		Enforced: 15, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -107,8 +107,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 101 {
-		t.Fatalf("migration table count = %d, want 101", len(migrated))
+	if len(migrated) != 103 {
+		t.Fatalf("migration table count = %d, want 103", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(
@@ -146,6 +146,7 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 			kind: RetentionBrowserKey,
 			want: []string{
 				"fidibeki:analytics-consent:v1:*", "fidibeki:analytics-outbox:v2:*",
+				"fidibeki:chat-reset:*", "fidibeki:chat:*",
 				"fidibeki:policy-visit:v1:*", "fidibeki:replay-consent:v1:*",
 				"fidibeki:session:v1", "fidibeki:state:v1:*", "fidibeki:state:v2:*",
 				"fidibeki:visitor:v1",

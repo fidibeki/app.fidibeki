@@ -1,3 +1,4 @@
+import { chatMessages } from '../messages/chat.en'
 import { feedbackMessages } from '../messages/feedback.en'
 import { adminMessages } from '../messages/admin.en'
 import { replayMessages } from '../messages/replays.en'
@@ -5,12 +6,14 @@ import { supportMessages } from '../messages/support.en'
 
 export const englishMessages = {
   support: supportMessages,
+  chat: chatMessages,
   common: {
     workspace: 'Workspace',
     account: 'Account',
     cancel: 'Cancel',
   },
   navigation: {
+    conversations: 'Conversations',
     overview: 'Overview',
     feedback: 'Feedback',
     replays: 'Session Replays',

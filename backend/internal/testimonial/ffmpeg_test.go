@@ -15,6 +15,10 @@ import (
 // requiring a working ffmpeg on the machine running the tests. The script
 // records the arguments it was handed so a test can assert on the command line
 // we actually build, which is the part that goes wrong in practice.
+//
+// Callers must run serially: parallel write/exec operations can inherit another
+// test's writable descriptor and fail with ETXTBSY on Linux, even with CLOEXEC.
+// See https://github.com/golang/go/issues/22315.
 func stubBinary(t *testing.T, body string) (path, recorded string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -95,7 +99,6 @@ func TestParseProbe(t *testing.T) {
 }
 
 func TestFFmpegProbeAsksFFprobeForTheResolvedShape(t *testing.T) {
-	t.Parallel()
 	path, recorded := stubBinary(t,
 		`printf '{"streams":[{"width":1080,"height":1920}],"format":{"duration":"4.0"}}'`+"\n")
 	probed, err := FFmpeg{FFprobePath: path}.Probe(context.Background(), "/tmp/clip.mp4")
@@ -117,7 +120,6 @@ func TestFFmpegProbeAsksFFprobeForTheResolvedShape(t *testing.T) {
 }
 
 func TestFFmpegProbeSurfacesABinaryThatFailed(t *testing.T) {
-	t.Parallel()
 	path, _ := stubBinary(t, "exit 3\n")
 	if _, err := (FFmpeg{FFprobePath: path}).Probe(context.Background(), "/tmp/clip.mp4"); err == nil {
 		t.Fatal("a probe whose binary exits non-zero must fail")
@@ -125,7 +127,6 @@ func TestFFmpegProbeSurfacesABinaryThatFailed(t *testing.T) {
 }
 
 func TestFFmpegEncodeVideoBuildsTheRenditionCommand(t *testing.T) {
-	t.Parallel()
 	path, recorded := stubBinary(t, "")
 	target := Dimensions{Width: 406, Height: 720}
 	err := FFmpeg{FFmpegPath: path}.EncodeVideo(context.Background(), "/in.mov", "/out.mp4", target)
@@ -147,7 +148,6 @@ func TestFFmpegEncodeVideoBuildsTheRenditionCommand(t *testing.T) {
 }
 
 func TestFFmpegExtractPosterSkipsTheFirstSecond(t *testing.T) {
-	t.Parallel()
 	path, recorded := stubBinary(t, "")
 	if err := (FFmpeg{FFmpegPath: path}).ExtractPoster(context.Background(), "/in.mov", "/out.jpg"); err != nil {
 		t.Fatalf("ExtractPoster: %v", err)
@@ -163,7 +163,6 @@ func TestFFmpegExtractPosterSkipsTheFirstSecond(t *testing.T) {
 }
 
 func TestRunCarriesStderrIntoTheError(t *testing.T) {
-	t.Parallel()
 	path, _ := stubBinary(t, "echo 'moov atom not found' >&2\nexit 1\n")
 	err := run(context.Background(), path)
 	if err == nil {

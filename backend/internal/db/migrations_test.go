@@ -23,7 +23,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 138
+	const latestMigrationVersion = 139
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -2853,9 +2853,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	var retentionHealthRows int
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 15 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 16 {
 		t.Fatalf(
-			"retention health row count = %d, error = %v, want 15",
+			"retention health row count = %d, error = %v, want 16",
 			retentionHealthRows, err,
 		)
 	}
@@ -2878,6 +2878,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		"saml_auth_artifacts":        {category: "auth_magic_links", interval: 3600},
 		"mobile_capture_sessions":    {category: "mobile_capture_credentials", interval: 3600},
 		"support_conversations":      {category: "platform_support", interval: 86400},
+		"website_chat_conversations": {category: "website_chat", interval: 86400},
 	}
 	retentionSeedRows, err := root.Query(ctx, `
 		SELECT operation_key, category, expected_interval_seconds,
@@ -3030,9 +3031,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 15 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 16 {
 		t.Fatalf(
-			"retention health rows after 108 replay = %d, error = %v, want 15",
+			"retention health rows after 108 replay = %d, error = %v, want 16",
 			retentionHealthRows, err,
 		)
 	}
@@ -3053,9 +3054,9 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	if err := root.QueryRow(ctx, `
 		SELECT count(*) FROM retention_maintenance_status
-		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 15 {
+		`).Scan(&retentionHealthRows); err != nil || retentionHealthRows != 16 {
 		t.Fatalf(
-			"retention health rows after down/up = %d, error = %v, want 15",
+			"retention health rows after down/up = %d, error = %v, want 16",
 			retentionHealthRows, err,
 		)
 	}

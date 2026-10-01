@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "infra/caddy/Dockerfile",
-    "watchPatterns": ["widget/**", "infra/Caddyfile", "infra/caddy/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
+    "watchPatterns": ["widget/**", "shared/**", "infra/Caddyfile", "infra/caddy/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]
   },
   "deploy": {
     "healthcheckPath": "/healthz",

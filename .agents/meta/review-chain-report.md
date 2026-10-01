@@ -5,72 +5,34 @@ date: 2026-10-01
 status: final
 ---
 
-# Live support review
+# Tenant website chat review
 
-Artifact: first-party presence, staff-initiated conversations and the shared app
-support launcher. Branch `feat/live-support`, based on `f9ced0e`.
-Requirements: `docs/superpowers/specs/2026-10-01-live-support-design.md`.
-Two review rounds, with independent security, performance and correctness agents.
+Artifact: `feat/tenant-live-chat`, tenant dashboard conversations and the website chat/feedback embed, migration 139 and the isolated integration/browser tests.
+Requirements: [tenant website chat design](../../docs/superpowers/specs/2026-10-01-tenant-website-chat-design.md). The tenant contacts visitors to its own website; visitors can reply only after the tenant initiates.
+
+Two independent security, correctness and performance review rounds, with a separate read-only resolver. No third round was used.
 
 ## Verdict: FIXED
 
-All findings were resolved. Performance and correctness reviewers returned PASS
-in round two. The security reviewer approved the application corrections and
-identified two test-fixture isolation issues; both received the requested narrow
-fixes, verified locally. No third review round was used.
+Eight confirmed findings were resolved. Correctness and performance returned PASS in round two. Security confirmed its original permission finding resolved, then identified one remaining offline-reset case. A durable reset marker and the requested navigation regression test resolve that final finding.
 
 | Finding | Severity | Confidence | Resolution |
 |---|---|---|---|
-| Operator-managed member exports could disclose private support transcripts | Major | 10/10 | Removed private support from member/workspace archives; participant-only paged download with completeness, cutoff, cancellation and size checks. Real archive integration proves exclusion. |
-| Presence heartbeats refreshed every staff inbox and selected history | Major | 9/10 | Separate Redis/SSE presence event refreshes only the online list. |
-| Reconnect could leave an inaccessible history gap, including when send completed before catch-up | Major | 10/10 | Validate adjacency after merging; replace disconnected windows with authoritative pageable history. Reject stale, disconnected older pages. Regression tests cover both cases. |
-| Older cached inbox entries retained stale unread counts or deleted conversations | Minor | 10/10 | Authoritative inbox refresh replaces its first page and resets pagination. |
-| Redis subscription delay could extend streams past token expiry | Minor | 10/10 | Absolute context/write deadline, pre-send expiry checks and cleanup through response wrappers. |
-| Member export query lacked a participant-leading message index | Minor | 10/10 | Removed that query with the private archive fix; download reuses indexed conversation history. |
-| Inherited Compose project name could target development services | Major | 10/10 | Unique explicit project argument for startup and cleanup. Verified with an inherited conflicting COMPOSE_PROJECT_NAME. |
-| Browser fixture defaulted to development database and deleted a workspace by slug | Major | 10/10 | Explicit isolated-run marker and dedicated loopback port 54339 database required; no deletion by slug; cleanup uses generated IDs only. |
-| App panel stacked below the topbar, and initial mobile evidence captured a transition | Minor | 9/10 | Panel at z-index90, above topbar80 and below mobile navigation100/110. Final screenshots disable transitions. Existing app button styling and resize scroll anchoring applied. |
-
-## Validation
-
-- Real-stack browser journey passes against production Go/Nuxt/widget bundles,
-  PostgreSQL and Redis: staff initiation, incoming preview, reply, reload,
-  disconnect recovery, multiple tabs, transcript download, actual feedback
-  submission, Escape/focus return, desktop/mobile overflow checks.
-- Real backend integration covers migration up/down/up, RLS, member/tenant
-  isolation, machine credentials, staff read-only permissions, revoked access,
-  suspension and two-factor policy, ordering, idempotency, read positions,
-  pagination, live streaming, presence, cascading deletion and retention holds.
-- Operator member export integration confirms support content is absent.
-- Frontend: 197 app unit tests, 9 backoffice unit tests, 370 widget unit tests;
-  37 relevant app browser tests passed with 1 existing desktop-only skip on mobile,
-  4 backoffice browser tests, 72 widget Chromium browser tests. Support has 14
-  targeted unit cases. All three frontend type checks pass.
-- App, backoffice and widget production builds pass. App and backoffice Docker
-  builds include shared source and pass. API image passes; all backend packages pass. Internal coverage is 80.0%,
-  with support at 79.3% and response wrappers at 94.3%. Final gate recorded in `docs/evidence/live-support-validation.md`.
-- Formatting, go vet, golangci-lint with zero findings, privacy governance checks, Compose security checks and
-  git diff whitespace checks pass.
-- Independent Impeccable detector returned no findings. Four responsive images
-  live at `docs/evidence/live-support-*.png`; final images dated 18:01 include
-  the corrected app button and scroll behavior.
+| Host logout reset was a no-op before chat mounted | Major | 9/10 | Loader-level reset invalidates pending mounts, clears project credentials independently of the view, revokes captured credentials and prevents stale initialization reconnecting. Browser regression resets on `fidibeki:ready`. |
+| A six-permission subset could silently grant chat access to a custom role | Major | 9/10 | Migration requires the entire prior administrator permission set and increments authorization version. Migration test verifies full administrators and two partial roles. |
+| Slow request bodies could hold the shared database pool | Major | 9/10 | Read at most 20,001 bytes before authorization; reject over 20,000. A streaming-body regression verifies no database acquisition before input completes. |
+| Retention capped total cleanup at 1,000 visitors per day | Major | 10/10 | Full bounded sweeps resume after one second. Test drains 2,200 records over three sweeps and checks failure health reporting. |
+| Changing selection during older-history loading left the new thread disabled | Minor | 10/10 | Reset selection-owned flags and reject old asynchronous results. Desktop/mobile browser tests switch visitors with the old request pending. |
+| Refresh discarded loaded inbox pages and raced pagination | Minor | 10/10 | One shared refresh promise retrieves the user-requested page window and atomically replaces it. The browser regression preserves 52 rows through refresh. |
+| Chat feedback reserved an automatic rule permanently | Minor | 9/10 | Internal mounts no longer reserve automatic rules; host explicit mounts retain that behavior. Browser regression opens feedback, disables chat and verifies automatic feedback returns. |
+| Configuration failure during unmounted reset could restore a prior transcript after navigation | Major | 9/10 | Persist a public-key-scoped reset marker synchronously; consume it before reading any credential on later loads. Marker expires after the credential's maximum 24-hour lifetime. Browser regression simulates configuration failure, reset, navigation and recovery and rejects old history credentials. |
 
 ## Input quality
 
-| Input | Rating | Evidence |
-|---|---|---|
-| Product context | Rich | Existing app, backoffice, auth, privacy and widget contracts inspected. |
-| Requirements | Precise | Explicit staff-only initiation and launch acceptance spec. |
-| Artifacts | Fresh | Current source and spec dated 2026-10-01. |
+Product context was initially wrong: the preceding feature addressed first-party platform support. The user's correction explicitly requires the B2B tenant-to-own-website boundary. The new same-day design records that boundary, reply-only behavior, permissions, anonymous identity and retention. Requirements are precise for this release; upstream artifacts are fresh. Existing platform support is separate and covered by the same real-stack regression suite.
 
-## Simplifications and limits
+## Resolution notes
 
-Transcript download reuses the scoped member history API, avoiding a new export
-job system. Inbox invalidation resets older cached pages instead of maintaining
-an inconsistent partial cache. No findings were declined. The final linter also required explicitly ignoring
-the existing development seed connection-close error, a one-line cleanup. Tests are local;
-production edge verification remains a release step. No load benchmark or
-production deployment was performed during the review. The subsequent release
-passed full CI and production smoke testing; evidence is in
-`docs/evidence/live-support-production.md`. The rollout and data-preserving
-rollback procedure is in `docs/live-support.md`.
+No findings declined. Existing full administrators receive permissions; custom roles, including any customized owner role, remain unchanged. The fixes preserve row-level tenant/project/visitor isolation, credential expiry, bounded streams, message ordering/idempotency, and legal holds. The browser credential/reset marker is also included in the executable privacy inventory.
+
+See [Website conversations](../../docs/website-chat.md) for product behavior and host integration. Validation evidence is recorded with the feature's release record.

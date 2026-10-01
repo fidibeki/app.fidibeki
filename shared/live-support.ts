@@ -52,7 +52,7 @@ export function mergeMessages(current: SupportMessage[], incoming: SupportMessag
 // that window so Load earlier messages can retrieve the missing middle.
 export function reconcileThread(current: SupportThread, incoming: SupportThread): SupportThread {
   if (!incoming.conversation || current.conversation?.id !== incoming.conversation.id || !current.messages.length) return incoming
-  const latest = current.messages.at(-1)!.sequence
+  const latest = current.messages[current.messages.length - 1]!.sequence
   const oldestIncoming = incoming.messages[0]?.sequence
   if (oldestIncoming === undefined || oldestIncoming > latest + 1) return incoming
   // A slower snapshot must not undo a newer one.
@@ -64,7 +64,7 @@ export function reconcileThread(current: SupportThread, incoming: SupportThread)
 
 export function prependHistory(current: SupportThread, older: SupportThread): SupportThread {
   if (!current.conversation || current.conversation.id !== older.conversation?.id) return current
-  const end = older.messages.at(-1)?.sequence
+  const end = older.messages[older.messages.length - 1]?.sequence
   if (end === undefined || end + 1 < (current.messages[0]?.sequence ?? 0)) return current
   return { ...current, messages: mergeMessages(older.messages, current.messages), has_more: older.has_more }
 }
@@ -95,6 +95,7 @@ export async function watchSupport(options: {
   onPresence?(): void
   onState(state: LiveState): void
   fetcher?: typeof fetch
+  headers?(): Record<string, string>
 }) {
   let failures = 0
   const fetcher = options.fetcher ?? fetch
@@ -108,7 +109,7 @@ export async function watchSupport(options: {
       const token = options.token()
       if (!token) return
       const response = await fetcher(options.url, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+        headers: { ...(options.headers?.() ?? { Authorization: `Bearer ${token}` }), Accept: 'text/event-stream' },
         credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
       })
       if (response.status === 401) {

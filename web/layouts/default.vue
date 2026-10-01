@@ -21,6 +21,7 @@ import {
   LogOut,
   Menu,
   MessageSquareQuote,
+  MessageCircle,
   MonitorPlay,
   PanelRightOpen,
   Scale,
@@ -77,6 +78,7 @@ const trialLabel = computed(() => trialDays.value === null
 // pill; once /v1/config carries it — that call is already made above — a badge
 // here is free.
 const primaryNavigation = [
+  { labelKey: 'navigation.conversations', to: '/conversations', icon: MessageCircle, permissions: ['chat:read', 'project:read'] },
   { labelKey: 'navigation.overview', to: '/', icon: House, permissions: ['feedback:read', 'issue:read'] },
   { labelKey: 'navigation.feedback', to: '/feedback', icon: Inbox, permissions: ['feedback:read'] },
   { labelKey: 'navigation.replays', to: '/replays', icon: MonitorPlay, permissions: ['session:read'], feature: 'session_replay' as const },

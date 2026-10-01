@@ -39,7 +39,13 @@ type HTTPHandler struct {
 	authorizer ProjectAuthorizer
 }
 
+type ChatConfiguration struct {
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+}
+
 type ConfigurationResponse struct {
+	Chat                *ChatConfiguration         `json:"chat,omitempty"`
 	SchemaVersion       int                        `json:"schema_version"`
 	ProjectID           string                     `json:"project_id"`
 	DefaultLocale       string                     `json:"default_locale"`
@@ -173,7 +179,12 @@ func (h *HTTPHandler) configuration(w http.ResponseWriter, r *http.Request) {
 	}
 	SetCORSHeaders(w, origin)
 	w.Header().Set("Cache-Control", "no-store")
+	var chat *ChatConfiguration
+	if configuration.ChatEnabled && configuration.DeletionRequestedAt == nil {
+		chat = &ChatConfiguration{Enabled: true, Name: configuration.ProjectName}
+	}
 	api.WriteJSON(w, http.StatusOK, ConfigurationResponse{
+		Chat:          chat,
 		SchemaVersion: 3, ProjectID: configuration.ProjectID,
 		DefaultLocale:     configuration.DefaultLocale,
 		ControllerProfile: configuration.ControllerProfile, Features: definition.Features,

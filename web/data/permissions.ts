@@ -1,4 +1,5 @@
 export const tenantPermissionGroups = [
+  { label: 'Conversations', permissions: ['chat:read', 'chat:write', 'chat:delete'] },
   {
     label: 'Projects',
     permissions: ['project:create', 'project:read', 'project:update', 'project:delete'],
@@ -64,6 +65,7 @@ export const allTenantPermissions = tenantPermissionGroups.flatMap((group) => [.
 export const permissionPresets = {
   admin: allTenantPermissions,
   editor: [
+    'chat:read', 'chat:write',
     'project:create', 'project:read', 'project:update',
     'widget_rule:create', 'widget_rule:read', 'widget_rule:update',
     'feedback:read', 'feedback:update',
@@ -73,6 +75,7 @@ export const permissionPresets = {
     'tenant:read',
   ],
   viewer: [
+    'chat:read',
     'project:read', 'widget_rule:read', 'feedback:read', 'issue:read',
     'session:read', 'member:read', 'integration:read', 'billing:read', 'tenant:read',
   ],

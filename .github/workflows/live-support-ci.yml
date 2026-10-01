@@ -37,4 +37,5 @@ jobs:
           name: live-support-evidence
           path: |
             docs/evidence/live-support-*.png
+            docs/evidence/website-chat-*.png
             backoffice/test-results/

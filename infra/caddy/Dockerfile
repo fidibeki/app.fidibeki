@@ -8,6 +8,7 @@ COPY widget/package.json widget/package.json
 RUN pnpm install --frozen-lockfile --filter @fidibeki/widget...
 
 COPY contracts contracts
+COPY shared shared
 COPY widget widget
 RUN pnpm --filter @fidibeki/widget build
 
