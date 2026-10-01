@@ -40,6 +40,7 @@ const (
 	RetentionObjectPrefix  RetentionResourceKind = "object_prefix"
 	RetentionQueue         RetentionResourceKind = "queue"
 	RetentionBrowserKey    RetentionResourceKind = "browser_key"
+	RetentionRedisKey      RetentionResourceKind = "redis_key"
 	RetentionProvider      RetentionResourceKind = "provider"
 )
 

@@ -204,6 +204,18 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 
 	return []ProcessingActivityRecord{
 		{
+			ActivityID: "platform_support_conversations", Version: 1,
+			Label: "First-party live support", Purpose: "Let platform staff contact signed-in members and receive their replies.",
+			Role:                RetentionRoleController,
+			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers, ROPADataSubjectPlatformAdmins, ROPADataSubjectThirdParties},
+			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryIdentityContact, ROPADataCategoryContentCommunications, ROPADataCategoryTechnicalUsage},
+			RetentionCategories: []string{"platform_support", "support_presence"},
+			SecurityControls:    []string{"Member-scoped forced RLS; separate platform read and write permissions", "Authenticated expiring streams; content-free Redis notifications", "Member access exports and case-aware bounded retention"},
+			LawfulBasis:         LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
+			DPIA: DPIAScreening{Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned},
+		},
+		{
 			ActivityID: "workspace_identity_and_access", Version: 1,
 			Label:   "Workspace identity and access administration",
 			Purpose: "Operate tenant identity, membership, projects, access, targeting, and widget configuration.",

@@ -1,70 +1,74 @@
 ---
 skill: review-chain
 version: 1
-date: 2026-07-30
+date: 2026-10-01
 status: final
 ---
 
-# Review Chain Report
+# Live support review
 
-**Artifact**: Issue #162 unpublished Flutter feedback SDK (`529bfc5..d313a37`)
-**Date**: 2026-07-30
-**Rounds**: 2
+Artifact: first-party presence, staff-initiated conversations and the shared app
+support launcher. Branch `feat/live-support`, based on `f9ced0e`.
+Requirements: `docs/superpowers/specs/2026-10-01-live-support-design.md`.
+Two review rounds, with independent security, performance and correctness agents.
 
 ## Verdict: FIXED
 
-## Issues Found
+All findings were resolved. Performance and correctness reviewers returned PASS
+in round two. The security reviewer approved the application corrections and
+identified two test-fixture isolation issues; both received the requested narrow
+fixes, verified locally. No third review round was used.
 
-| # | Round | Severity | Problem | Resolution |
-|---|-------|----------|---------|------------|
-| 1 | 1 | major | Backend-controlled 422 messages could cross the SDK trust boundary into public fields and UI | Active field paths now map only to localized SDK-owned copy; adversarial UI and `toString` tests reject leaked text |
-| 2 | 1 | major | Screenshot declarations trusted MIME metadata without validating the byte signature | PNG, JPEG, and WebP signatures are verified before upload, with cross-type, invalid, and cleanup coverage |
-| 3 | 1 | minor | Session parsing did not reject unknown fields consistently or share that failure mode with React Native | Strict unknown-field rejection now covers every contract object in both clients through a shared fixture |
-| 4 | 1 | minor | The public error taxonomy diverged from the approved design | Design, API, and exact enum tests now define one stable typed taxonomy |
-| 5 | 1 | minor | Publishable package metadata omitted the supported platform declarations | Both packages declare Android and iOS only, enforced by a structural test |
-| 6 | 2 | minor | Cooldown eligibility woke only after lifecycle resume, so a continuously foregrounded app could remain stale | A generation-guarded timer wakes in foreground, pauses in background, recalculates on resume, and is race-tested |
-| 7 | 2 | minor | A sanitized 422 field outside the visible form produced no actionable UI error | Unmapped validation now renders safe generic SDK-owned submit guidance, with an adversarial widget test |
+| Finding | Severity | Confidence | Resolution |
+|---|---|---|---|
+| Operator-managed member exports could disclose private support transcripts | Major | 10/10 | Removed private support from member/workspace archives; participant-only paged download with completeness, cutoff, cancellation and size checks. Real archive integration proves exclusion. |
+| Presence heartbeats refreshed every staff inbox and selected history | Major | 9/10 | Separate Redis/SSE presence event refreshes only the online list. |
+| Reconnect could leave an inaccessible history gap, including when send completed before catch-up | Major | 10/10 | Validate adjacency after merging; replace disconnected windows with authoritative pageable history. Reject stale, disconnected older pages. Regression tests cover both cases. |
+| Older cached inbox entries retained stale unread counts or deleted conversations | Minor | 10/10 | Authoritative inbox refresh replaces its first page and resets pagination. |
+| Redis subscription delay could extend streams past token expiry | Minor | 10/10 | Absolute context/write deadline, pre-send expiry checks and cleanup through response wrappers. |
+| Member export query lacked a participant-leading message index | Minor | 10/10 | Removed that query with the private archive fix; download reuses indexed conversation history. |
+| Inherited Compose project name could target development services | Major | 10/10 | Unique explicit project argument for startup and cleanup. Verified with an inherited conflicting COMPOSE_PROJECT_NAME. |
+| Browser fixture defaulted to development database and deleted a workspace by slug | Major | 10/10 | Explicit isolated-run marker and dedicated loopback port 54339 database required; no deletion by slug; cleanup uses generated IDs only. |
+| App panel stacked below the topbar, and initial mobile evidence captured a transition | Minor | 9/10 | Panel at z-index90, above topbar80 and below mobile navigation100/110. Final screenshots disable transitions. Existing app button styling and resize scroll anchoring applied. |
 
-All seven findings were fixed. No findings were declined.
+## Validation
 
-## Input Quality Assessment
+- Real-stack browser journey passes against production Go/Nuxt/widget bundles,
+  PostgreSQL and Redis: staff initiation, incoming preview, reply, reload,
+  disconnect recovery, multiple tabs, transcript download, actual feedback
+  submission, Escape/focus return, desktop/mobile overflow checks.
+- Real backend integration covers migration up/down/up, RLS, member/tenant
+  isolation, machine credentials, staff read-only permissions, revoked access,
+  suspension and two-factor policy, ordering, idempotency, read positions,
+  pagination, live streaming, presence, cascading deletion and retention holds.
+- Operator member export integration confirms support content is absent.
+- Frontend: 197 app unit tests, 9 backoffice unit tests, 370 widget unit tests;
+  37 relevant app browser tests passed with 1 existing desktop-only skip on mobile,
+  4 backoffice browser tests, 72 widget Chromium browser tests. Support has 14
+  targeted unit cases. All three frontend type checks pass.
+- App, backoffice and widget production builds pass. App and backoffice Docker
+  builds include shared source and pass. API image passes; all backend packages pass. Internal coverage is 80.0%,
+  with support at 79.3% and response wrappers at 94.3%. Final gate recorded in `docs/evidence/live-support-validation.md`.
+- Formatting, go vet, golangci-lint with zero findings, privacy governance checks, Compose security checks and
+  git diff whitespace checks pass.
+- Independent Impeccable detector returned no findings. Four responsive images
+  live at `docs/evidence/live-support-*.png`; final images dated 18:01 include
+  the corrected app button and scroll behavior.
+
+## Input quality
 
 | Input | Rating | Evidence |
-|-------|--------|----------|
-| Product/domain context | Rich | Approved Flutter design and implementation plan reuse the shipped capture-session, Feedback, recurrence, screenshot, and React Native contracts |
-| Requirements clarity | Precise | Tasks 55-62 define acceptance, boundaries, test gates, supported platforms, and explicit non-goals |
-| Upstream artifacts | Fresh | Design, plan, shared fixtures, React Native implementation, and backend contract were current on 2026-07-30 |
+|---|---|---|
+| Product context | Rich | Existing app, backoffice, auth, privacy and widget contracts inspected. |
+| Requirements | Precise | Explicit staff-only initiation and launch acceptance spec. |
+| Artifacts | Fresh | Current source and spec dated 2026-10-01. |
 
-## Changes Made
+## Simplifications and limits
 
-The final SDK rejects untrusted copy and unknown contract fields, validates screenshot signatures,
-formalizes errors and platforms, wakes cooldowns without lifecycle dependence, and always exposes a
-safe recovery path. CI isolates Flutter on WarpBuild x64 Linux and ARM macOS, runs logical tests and
-coverage independently of rasterization, and keeps four visual snapshots mandatory with a tested
-0.005% renderer-drift ceiling.
-
-Remote Flutter CI
-[`30549838734`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838734)
-passes 9 example tests (1 opt-in smoke skipped), 72 package tests, 81 lowest-dependency tests
-(1 opt-in smoke skipped), 90.93% package line coverage (1624/1786), fatal analysis, API docs,
-unpublished package dry-runs, four macOS goldens, Android release, and iOS simulator builds.
-Mobile CI
-[`30547917774`](https://github.com/fidibeki/app.fidibeki/actions/runs/30547917774)
-and Security CI
-[`30549838762`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838762)
-also pass. Local Android and iOS runtime smokes each completed one rating/text Feedback and one
-70-byte screenshot attachment without duplicate submission.
-
-## Simplifications
-
-No material simplification was accepted. Narrowing the public barrel export was declined because
-host integration intentionally needs the exposed controller, model, theme, storage, and client
-types; changing that surface would be a separate API-design decision. Safe validation-copy
-generation remains centralized at the trust boundary.
-
-## Reviewer Summary
-
-Round 1 found five contract and trust-boundary gaps; round 2 confirmed those fixes and found two
-lifecycle/recovery gaps. The final implementation addresses every finding with focused regression
-coverage, preserves parity with the shared mobile contract, and adds no backend, production,
-deployment, runtime infrastructure, or registry behavior.
+Transcript download reuses the scoped member history API, avoiding a new export
+job system. Inbox invalidation resets older cached pages instead of maintaining
+an inconsistent partial cache. No findings were declined. The final linter also required explicitly ignoring
+the existing development seed connection-close error, a one-line cleanup. Tests are local;
+production edge verification remains a release step. No load benchmark or
+production deployment was performed. The rollout and data-preserving rollback
+procedure is in `docs/live-support.md`.

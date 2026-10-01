@@ -51,6 +51,8 @@ const (
 )
 
 const (
+	PermissionPlatformSupportRead   Permission = "platform:support:read"
+	PermissionPlatformSupportWrite  Permission = "platform:support:write"
 	PermissionPlatformTenantCreate  Permission = "platform:tenant:create"
 	PermissionPlatformTenantRead    Permission = "platform:tenant:read"
 	PermissionPlatformTenantUpdate  Permission = "platform:tenant:update"
@@ -77,6 +79,8 @@ const (
 )
 
 var AllPlatformPermissions = []Permission{
+	PermissionPlatformSupportRead,
+	PermissionPlatformSupportWrite,
 	PermissionPlatformTenantCreate,
 	PermissionPlatformTenantRead,
 	PermissionPlatformTenantUpdate,

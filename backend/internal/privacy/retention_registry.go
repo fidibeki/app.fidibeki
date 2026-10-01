@@ -48,6 +48,26 @@ type retentionDefinition struct {
 func retentionRegistry() []retentionDefinition {
 	return []retentionDefinition{
 		{
+			Category: "platform_support", Label: "Private platform support conversations",
+			Purpose: "Exchange first-party support messages between staff and signed-in members.",
+			Role:    RetentionRoleController, Status: RetentionEnforced,
+			DurationKind: retentionDurationFixed, Duration: "180 days after the last message", DurationDays: days(180),
+			Source: "Platform default", Trigger: "Last message timestamp.",
+			Action:  "Delete the conversation and messages; member and workspace deletion also cascade.",
+			Cadence: "Daily", HoldBehavior: RetentionHoldCaseScoped, Implementation: "support.Maintainer",
+			Resources: combine(tables("support_conversations", "support_messages"), resource(RetentionDatabaseScope, "retention_maintenance_status:support_conversations")),
+		},
+		{
+			Category: "support_presence", Label: "Live member presence",
+			Purpose: "Show staff active or idle members and an allowlisted app section.",
+			Role:    RetentionRoleController, Status: RetentionEnforced,
+			DurationKind: retentionDurationConfigured, Duration: "60 seconds for presence; 120 seconds for the index without heartbeats",
+			Source: "Platform default", Trigger: "Last browser-tab heartbeat.",
+			Action: "Redis expiry; explicit tab removal on logout.", Cadence: "Redis key expiry",
+			HoldBehavior: RetentionHoldNotApplicable, Implementation: "support.Live",
+			Resources: resource(RetentionRedisKey, "support:presence:*"),
+		},
+		{
 			Category: "workspace_configuration", Label: "Workspace and collection configuration",
 			Purpose: "Operate tenant identity, projects, access, targeting, and configuration.",
 			Role:    "controller_and_processor", Status: RetentionDecisionRequired,
@@ -682,7 +702,7 @@ func validateRetentionRegistry(definitions []retentionDefinition) error {
 			}
 			switch resource.Kind {
 			case RetentionPostgresTable, RetentionDatabaseScope, RetentionObjectPrefix,
-				RetentionQueue, RetentionBrowserKey, RetentionProvider:
+				RetentionQueue, RetentionBrowserKey, RetentionRedisKey, RetentionProvider:
 			default:
 				return fmt.Errorf(
 					"retention category %q has unknown resource kind %q",

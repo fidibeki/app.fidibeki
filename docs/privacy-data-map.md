@@ -9,7 +9,7 @@ customer-facing claims.
 
 ## Executable Retention Registry
 
-`GET /v1/privacy/retention` is backed by registry version 1. Its 30 lifecycle categories cover
+`GET /v1/privacy/retention` is backed by registry version 1. Its 34 lifecycle categories cover
 every one of the 96 PostgreSQL tables created by current migrations exactly once, plus the known
 object-prefix, queue, browser-key, and provider boundaries. Automated validation rejects duplicate
 resources and rejects `enforced` or `configurable` claims without a bounded lifecycle and a real
@@ -42,7 +42,7 @@ as healthy.
 
 ## Records Of Processing Activities (ROPA) And DPIA Screening
 
-`backend/internal/privacy/ropa_registry.go` groups the retention registry's 30 categories into 19
+`backend/internal/privacy/ropa_registry.go` groups the retention registry's 34 categories into 21
 code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
 more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
 validated against, the retention registry rather than hand-duplicated), data-subject (including a
@@ -75,6 +75,7 @@ processing-instruction and safeguards framework, not itself an Article 6 lawful 
 | Workspace identity | Workspace name, slug, plan, status | Tenant routing, authorization, billing state | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
 | Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Login and invitation magic links (`tenant_magic_links`, `platform_admin_magic_links`) are hard-deleted, consumed or not, within 1 hour of their configured expiry (default 10 minutes) by bounded hourly maintainers; each deletion records a non-content audit event (`auth.magic_link_expired` in `tenant_access_events`, or `auth.platform_magic_link_expired` in the global `platform_security_events` ledger for platform-admin links). `retention_maintenance_status` retains only the current non-personal aggregate health of the enforced cleaners (these two included) and drives overdue/failure/budget alerts in Data & privacy. Those minimized security events themselves, and other authentication/security records (sessions, platform admins, reporter access tokens), remain `decision_required`; no maximum period is claimed |
 | Projects and widget configuration | Domains, rules, targeting, appearance, form blocks | Decide where and how feedback is collected | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
+| Private platform support | Member/staff messages, sequence and read positions; ephemeral active/idle section | Staff-initiated support inside the app | PostgreSQL messages; Redis presence | Conversations deleted 180 days after their last message, subject to member privacy holds; member/workspace deletion cascades. Presence expires after 60 seconds and index after 120 seconds without heartbeats. Participant-only transcript download; workspace/operator member exports omit private chats. See [live support](live-support.md) |
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | `decision_required`: supported subject anonymization is narrower than a general workflow-retention policy |
 | Email feedback invitations | Customer event ID, normalized recipient while delivery requires it, one-way recipient/request/token digests, locale, privacy-safe context URL, captured configuration, delivery state, and optional Feedback link | Send a customer-directed post-transaction solicitation, enforce idempotency, and collect Feedback only after an explicit form submission | PostgreSQL, Asynq/Redis, configured email provider | Plaintext recipient data is removed after successful delivery or terminal failure. Reporter access/erasure/restriction matches the normalized recipient digest. The remaining invitation and associated outbox event are hard-deleted by a bounded daily maintainer 90 days after invitation expiry |
 | Email feedback suppressions | One-way recipient digest, opt-out/bounce/complaint reason, and lifecycle timestamps | Prevent unwanted solicitation from resuming | PostgreSQL | Retained until the customer removes the workspace or an approved policy changes; deleting it earlier would resume unwanted email. Workspace deletion cascades to the ledger |

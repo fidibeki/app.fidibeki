@@ -19,7 +19,7 @@ export function loaderScriptURL(widgetUrl: string, key: string): string {
  * survives client-side navigation, so the second call has to find the first
  * one's tag rather than trust a variable that a page reload resets.
  */
-export function mountFeedbackWidget(document: Document, widgetUrl: string, key: string): boolean {
+export function mountFeedbackWidget(document: Document, widgetUrl: string, key: string, manual = false): boolean {
   const source = loaderScriptURL(widgetUrl, key)
   if (!source) return false
   if (document.querySelector('script[data-fidibeki-key]')) return false
@@ -27,6 +27,7 @@ export function mountFeedbackWidget(document: Document, widgetUrl: string, key: 
   script.async = true
   script.src = source
   script.dataset.fidibekiKey = key.trim()
+  if (manual) script.dataset.fidibekiManual = 'true'
   document.head.append(script)
   return true
 }

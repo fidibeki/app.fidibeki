@@ -140,7 +140,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let automaticRuleID: string | null = null
   let configurationRequest: Promise<WidgetConfiguration> | null = null
   const explicitRuleIDs = new Set<string>()
-  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null }>()
+  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null; inline?: boolean }>()
   const explicitGenerations = new WeakMap<HTMLElement, number>()
   const durableStorage = storageOrMemory(() => window.localStorage)
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
@@ -436,6 +436,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
 			}
       await synchronizeReplay(configuration, rule)
 			if (currentEvaluation !== evaluation) return
+      // Host applications can supply one shared support launcher. Feedback is
+      // then explicitly mounted through Fidibeki.feedback.mount, never doubled
+      // with an automatic launcher or popup.
+      if (loaderScript.dataset.fidibekiManual === 'true') return
       if (!rule) return
       const privacyLocation = privacySafeLocation(evaluationURL, rule)
       if (!privacyLocation) return
@@ -501,13 +505,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     }
   }
 
-  const mountExplicit = async (target: HTMLElement, reference: string): Promise<ExplicitMountResult> => {
+  const mountExplicit = async (target: HTMLElement, reference: string, inline = false): Promise<ExplicitMountResult> => {
     const generation = (explicitGenerations.get(target) ?? 0) + 1
     explicitGenerations.set(target, generation)
     const normalizedReference = reference.trim()
     const previous = explicitTargets.get(target)
     previous?.unmount?.()
-    explicitTargets.set(target, { reference: normalizedReference, unmount: null })
+    explicitTargets.set(target, { reference: normalizedReference, unmount: null, inline })
     if (!normalizedReference) return explicitResult(false, 'not_found')
     try {
       const configuration = await loadConfiguration(false)
@@ -553,7 +557,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       const hostID = `fidibeki-widget-host-${randomID()}`
       holdFeedbackWidget()
       const unmount = module.mountWidget({
-        configuration, rule, publicKey: key, apiBase: assetBase, assetBase,
+        configuration, rule: inline ? { ...rule, presentation: 'inline' } : rule, publicKey: key, apiBase: assetBase, assetBase,
         pageURL: privacyLocation.target,
         replaySessionID: replayCapture?.sessionID ?? null,
         privacy,
@@ -569,7 +573,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'dismissed')
         },
       })
-      explicitTargets.set(target, { reference: normalizedReference, unmount })
+      explicitTargets.set(target, { reference: normalizedReference, unmount, inline })
       return { mounted: true, unmount: () => unmountExplicitTarget(target) }
     } catch (error) {
       void report(error, 'mount')
@@ -771,7 +775,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   window.addEventListener('fidibeki:navigation', () => {
     void evaluate()
     for (const [target, mounted] of explicitTargets) {
-      if (target.isConnected) void mountExplicit(target, mounted.reference)
+      if (target.isConnected) void mountExplicit(target, mounted.reference, mounted.inline)
       else unmountExplicitTarget(target)
     }
   })
@@ -785,6 +789,20 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   })
   window.addEventListener('pagehide', () => analyticsOutbox?.flushOnHide())
   window.setInterval(() => void evaluate(true), 5 * 60 * 1000)
+  const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
+  namespace.feedback = {
+    async mount(target: HTMLElement): Promise<ExplicitMountResult> {
+      const configuration = await loadConfiguration(false)
+      const rule = await matchRule((configuration.definitions ?? configuration.rules).filter(definitionIsActive), window.location.href, {
+        loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
+        onError: error => void report(error, 'targeting'),
+      })
+      if (!rule) return explicitResult(false, 'not_targeted')
+      return mountExplicit(target, rule.id, true)
+    },
+  }
+  ;(window as unknown as { Fidibeki: Record<string, unknown> }).Fidibeki = namespace
+  window.dispatchEvent(new Event('fidibeki:ready'))
   await evaluate()
 }
 

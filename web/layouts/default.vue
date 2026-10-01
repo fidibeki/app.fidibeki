@@ -43,24 +43,7 @@ const { t } = useI18n()
 const { can, member, tenant } = useAuth()
 const { plural } = useRegionalFormat()
 const { $apiFetch, $clearSession } = useNuxtApp()
-const runtime = useRuntimeConfig()
 const mobileNavOpen = ref(false)
-
-// We use our own product. The widget is mounted from this layout rather than a
-// global plugin so it stays on the signed-in workspace: the pages that opt out
-// of this layout are somebody else's — a reporter reading their issue, an author
-// giving a testimonial, a person exercising a privacy right — and our feedback
-// launcher does not belong on any of them.
-//
-// Nothing is torn down on unmount, because that is how a customer integrates it
-// and running it any other way would be testing something we do not ship.
-onMounted(() => {
-  mountFeedbackWidget(
-    document,
-    String(runtime.public.widgetUrl || ''),
-    String(runtime.public.widgetKey || ''),
-  )
-})
 const paletteOpen = ref(false)
 const queuesOpen = ref(true)
 const loggingOut = ref(false)
@@ -409,5 +392,6 @@ watch(
     </main>
     <AppCommandPalette v-if="can('feedback:read')" :open="paletteOpen" :options="commandOptions" @close="paletteOpen = false" />
     <AppToast />
+    <SupportPanel v-if="member && !tenant?.deletion_requested_at" :inert="mobileNavOpen" />
   </div>
 </template>

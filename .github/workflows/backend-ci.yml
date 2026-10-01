@@ -10,6 +10,7 @@ on:
     # across push and pull_request because Actions does not support YAML anchors.
     paths:
       - "backend/**"
+      - "infra/migrations/**"
       - "contracts/**"
       - "Makefile"
       - "infra/docker-compose.yml"
@@ -19,6 +20,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "infra/migrations/**"
       - "contracts/**"
       - "Makefile"
       - "infra/docker-compose.yml"

@@ -1,8 +1,10 @@
 import { feedbackMessages } from '../messages/feedback.en'
 import { adminMessages } from '../messages/admin.en'
 import { replayMessages } from '../messages/replays.en'
+import { supportMessages } from '../messages/support.en'
 
 export const englishMessages = {
+  support: supportMessages,
   common: {
     workspace: 'Workspace',
     account: 'Account',

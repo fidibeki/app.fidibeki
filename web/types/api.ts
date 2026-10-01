@@ -1284,7 +1284,7 @@ export interface RetentionPolicy {
   hold_behavior: 'case_scoped' | 'supported' | 'not_applicable' | 'decision_required'
   implementation?: string
   resource_counts: Array<{
-    kind: 'postgres_table' | 'database_scope' | 'object_prefix' | 'queue' | 'browser_key' | 'provider'
+    kind: 'postgres_table' | 'database_scope' | 'object_prefix' | 'queue' | 'browser_key' | 'redis_key' | 'provider'
     count: number
   }>
 }
