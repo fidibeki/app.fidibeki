@@ -5,6 +5,7 @@ on:
     paths:
       - "contracts/**"
       - "widget/**"
+      - "shared/**"
       - "infra/Caddyfile"
       - "infra/caddy/**"
       - "railway.widget.json"
@@ -17,6 +18,7 @@ on:
     paths:
       - "contracts/**"
       - "widget/**"
+      - "shared/**"
       - "infra/Caddyfile"
       - "infra/caddy/**"
       - "railway.widget.json"
