@@ -21,6 +21,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--fb-fg); 
 .launcher svg { width: 21px; height: 21px; flex: none; }
 .badge { min-width: 20px; padding: 1px 6px; border-radius: 12px; background: var(--fb-bg); color: var(--fb-fg); font-size: 12px; text-align: center; }
 .panel { position: absolute; bottom: 58px; right: 0; width: 380px; height: min(620px, calc(100dvh - 110px - var(--fidibeki-chat-bottom-offset, 0px))); display: flex; flex-direction: column; background: var(--fb-bg); color: var(--fb-fg); border-radius: 14px; box-shadow: 0 12px 48px #0004; overflow: hidden; }
+:host([data-open=true][data-view=feedback]) .launcher { display: none; }
+:host([data-view=feedback]) .panel { bottom: 0; height: auto; max-height: calc(var(--viewport-height, 100dvh) - 40px - var(--fidibeki-chat-bottom-offset, 0px)); overflow-y: auto; overscroll-behavior: contain; }
 :host([data-side=left]) .panel, :host([data-side=left]) .preview { left: 0; right: auto; }
 .head { flex: none; padding: 12px 14px 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -50,7 +52,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--fb-fg); 
 .link { border: 0; background: transparent; color: var(--action-ink); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; padding: 10px; }
 .reset { flex: none; color: var(--fb-muted); padding: 12px 20px; }
 .notice { flex: none; font-size: 12px; color: var(--fb-muted); padding: 8px 20px; margin: 0; }
-.feedback { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.feedback { flex: none; overflow: visible; }
 .feedback-state { padding: 20px; color: var(--fb-muted); }
 .tools { display: flex; flex: none; justify-content: space-between; flex-wrap: wrap; padding: 0 10px; }
 .preview { position: absolute; right: 0; bottom: 58px; width: 310px; background: var(--fb-bg); color: var(--fb-fg); box-shadow: 0 6px 28px #0003; border-radius: 12px; padding: 16px; }
@@ -68,6 +70,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--fb-fg); 
   .badge { position: absolute; top: -4px; right: -4px; box-shadow: 0 2px 8px #0002; }
   :host([data-open=true]) .launcher { display: none; }
   .panel, :host([data-side=left]) .panel { position: fixed; left: 8px; right: 8px; width: auto; bottom: calc(var(--keyboard-inset, 0px) + max(8px, env(safe-area-inset-bottom))); height: min(620px, calc(var(--viewport-height, 100dvh) - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))); }
+  :host([data-view=feedback]) .panel { bottom: calc(var(--keyboard-inset, 0px) + max(8px, env(safe-area-inset-bottom))); height: auto; max-height: calc(var(--viewport-height, 100dvh) - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .preview { max-width: calc(100vw - 24px); bottom: 64px; }
   .compose textarea { font-size: 16px; max-height: 80px; }
   .compose small { max-width: 16ch; }

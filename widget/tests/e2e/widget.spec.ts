@@ -2975,3 +2975,62 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(chat.getByRole('button', { name: 'Forget this chat on this browser' })).toBeVisible()
   })
 }
+
+test('feedback panel grows with the complete form and shrinks after submission', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1100 })
+  const rule: WidgetRule = {
+    ...browserRule, theme: 'dark', can_attach_screenshot: true,
+    ai_processing: { enabled: true, input_categories: ['feedback_text'], privacy_policy_url: 'https://example.test/privacy' },
+  }
+  const configuration = browserConfiguration(rule)
+  configuration.features.audio = true
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...configuration, chat: { enabled: true, name: 'Store team' } } }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.route('**/v1/feedback?*', route => route.fulfill({ status: 201, json: { feedback_id: 'content-height-feedback', attachments: [] } }))
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  const panel = chat.locator('section.panel').first()
+  const messageHeight = (await panel.boundingBox())!.height
+  await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+  const feedback = chat.locator('[data-embedded-chat]')
+  await expect(feedback.getByRole('button', { name: 'Record audio' })).toBeVisible()
+  await expect(feedback.getByRole('button', { name: 'Capture screenshot' })).toBeVisible()
+  const field = feedback.getByRole('textbox', { name: 'Feedback', exact: true })
+  const initialHeight = (await panel.boundingBox())!.height
+  // A visitor can resize this textarea; the surrounding form must follow it.
+  await field.evaluate(element => { element.style.height = '320px' })
+  const expandedHeight = (await panel.boundingBox())!.height
+  expect(expandedHeight).toBeGreaterThan(initialHeight + 100)
+  expect(expandedHeight).toBeGreaterThan(messageHeight)
+  expect(await panel.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
+  await expect(chat.locator('.feedback')).toHaveCSS('overflow-y', 'visible')
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+  await panel.screenshot({ path: '../docs/evidence/website-chat-content-height-desktop.png', animations: 'disabled' })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await field.evaluate(element => { element.style.height = '' })
+  expect(await panel.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await panel.screenshot({ path: '../docs/evidence/website-chat-content-height-mobile.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 320, height: 420 })
+  await feedback.getByRole('button', { name: 'Send feedback' }).scrollIntoViewIfNeeded()
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await field.fill('The panel follows the form height.')
+  await feedback.getByRole('button', { name: 'Send feedback' }).click()
+  await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+  expect((await panel.boundingBox())!.height).toBeLessThan(initialHeight)
+  await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+  await chat.getByRole('button', { name: 'Messages', exact: true }).click()
+  await page.setViewportSize({ width: 1280, height: 1100 })
+  expect((await panel.boundingBox())!.height).toBe(messageHeight)
+})
