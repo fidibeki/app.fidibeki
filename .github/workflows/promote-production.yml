@@ -75,7 +75,7 @@ jobs:
         run: |
           sha=$(git rev-parse HEAD)
           case "$SERVICES" in
-            all) targets="api worker backoffice web widget" ;;
+            all) targets="api worker widget backoffice web" ;;
             backend) targets="api worker" ;;
             api|worker|backoffice|web|widget) targets="$SERVICES" ;;
             *) echo "Unknown services selection: $SERVICES" >&2; exit 1 ;;
