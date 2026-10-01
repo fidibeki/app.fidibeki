@@ -2899,3 +2899,79 @@ test('logout reset survives unavailable configuration and a subsequent page navi
   expect(historyTokens).not.toContain(oldToken)
   expect(await page.evaluate(() => localStorage.getItem('fidibeki:chat-reset:pk_live_browser_contract'))).toBeNull()
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`chat and feedback share one frame and theme on desktop and mobile (${theme})`, async ({ page }) => {
+    const rule = { ...browserRule, theme, accent_color: '#216e59', can_record_audio: false, can_record_video: false } satisfies WidgetRule
+    const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+    let submitted: { text: string; rating: number } | undefined
+    await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(rule), chat: { enabled: true, name: 'Store team' } } }))
+    await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+    await page.route('**/v1/widget/chat/**', route => {
+      const path = new URL(route.request().url()).pathname
+      if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+      if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+      if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+      return route.fulfill({ status: 204 })
+    })
+    await page.route('**/v1/feedback?*', route => {
+      submitted = route.request().postDataJSON()
+      return route.fulfill({ status: 201, json: { feedback_id: 'integrated-feedback', attachments: [] } })
+    })
+    await page.goto('/sample.html')
+    const chat = page.locator('#fidibeki-chat')
+    const launcher = chat.getByRole('button', { name: 'Messages & feedback', exact: true })
+    await launcher.click()
+    await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+    const feedback = chat.locator('[data-embedded-chat]')
+    await expect(feedback.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+    await expect(chat.getByRole('button', { name: /Close/ })).toHaveCount(1)
+    await expect(chat.getByRole('button', { name: 'Forget this chat on this browser' })).toBeHidden()
+    await expect(feedback.locator('[data-panel]')).toHaveCSS('border-top-width', '0px')
+    await expect(feedback.locator('form')).toHaveCSS('overflow-y', 'visible')
+    await expect(chat.locator('section.panel').first()).toHaveCSS('background-color', theme === 'dark' ? 'rgb(23, 25, 24)' : 'rgb(255, 255, 255)')
+    await expect(feedback.locator('textarea')).toHaveCSS('background-color', theme === 'dark' ? 'rgb(23, 25, 24)' : 'rgb(255, 255, 255)')
+    await chat.locator('section.panel').first().screenshot({ path: `../docs/evidence/website-chat-integrated-${theme}-desktop.png`, animations: 'disabled' })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(() => {
+      const nav = document.createElement('nav'); nav.id = 'mobile-site-nav'; nav.setAttribute('aria-label', 'Website navigation')
+      nav.textContent = 'Home     Markets     Portfolio     More'
+      nav.style.cssText = 'position:fixed;inset:auto 0 0;height:64px;background:#151a18;color:white;display:grid;place-items:center;z-index:100;font:14px sans-serif'
+      document.body.append(nav)
+    })
+    await expect(launcher).toBeHidden()
+    await chat.getByRole('button', { name: 'Close conversation', exact: true }).click()
+    await expect(launcher).toBeVisible()
+    const launcherBounds = await launcher.boundingBox(), navBounds = await page.locator('#mobile-site-nav').boundingBox()
+    expect(launcherBounds!.width).toBeLessThanOrEqual(56)
+    expect(launcherBounds!.y + launcherBounds!.height).toBeLessThan(navBounds!.y)
+    await page.evaluate(() => document.documentElement.style.setProperty('--fidibeki-chat-bottom-offset', '96px'))
+    expect((await launcher.boundingBox())!.y).toBe(launcherBounds!.y - 32)
+    await page.evaluate(() => document.documentElement.style.removeProperty('--fidibeki-chat-bottom-offset'))
+    await page.screenshot({ path: `../docs/evidence/website-chat-launcher-${theme}-mobile.png`, animations: 'disabled' })
+
+    await launcher.click()
+    await expect(feedback.getByRole('heading')).toBeVisible()
+    await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+    await feedback.getByRole('button', { name: '5 out of 5' }).click()
+    await feedback.getByRole('textbox', { name: 'Feedback', exact: true }).fill('One integrated panel, including on mobile.')
+    await chat.locator('section.panel').first().screenshot({ path: `../docs/evidence/website-chat-integrated-${theme}-mobile.png`, animations: 'disabled' })
+    await page.setViewportSize({ width: 320, height: 420 })
+    await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+    await feedback.getByRole('button', { name: 'Send feedback' }).scrollIntoViewIfNeeded()
+    await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.clock.install()
+    await feedback.getByRole('button', { name: 'Send feedback' }).click()
+    await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+    await page.clock.fastForward(4000)
+    await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+    expect(submitted).toMatchObject({ text: 'One integrated panel, including on mobile.', rating: 5 })
+    await page.evaluate(nextTheme => document.documentElement.setAttribute('data-theme', nextTheme), theme === 'dark' ? 'light' : 'dark')
+    await expect(chat.locator('section.panel').first()).toHaveCSS('background-color', theme === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(23, 25, 24)')
+    await chat.getByRole('button', { name: 'Messages', exact: true }).click()
+    await expect(chat.getByText('Your conversations live here.')).toBeVisible()
+    await expect(chat.getByRole('button', { name: 'Forget this chat on this browser' })).toBeVisible()
+  })
+}

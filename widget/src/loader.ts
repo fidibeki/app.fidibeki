@@ -54,6 +54,7 @@ interface WidgetModule {
     onClosed(): void
     target?: HTMLElement
     hostID?: string
+    embeddedInChat?: boolean
     // Priority 1 source for the theme: the `theme` attribute on the custom
     // element. `null` when the widget is mounted from a `<script>` tag.
     themeAttribute?: string | null
@@ -149,7 +150,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let automaticRuleID: string | null = null
   let configurationRequest: Promise<WidgetConfiguration> | null = null
   const explicitRuleIDs = new Set<string>()
-  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null; inline?: boolean; reserveAutomatic?: boolean }>()
+  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null; inline?: boolean; context: 'chat' | undefined }>()
   const explicitGenerations = new WeakMap<HTMLElement, number>()
   const durableStorage = storageOrMemory(() => window.localStorage)
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
@@ -471,7 +472,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
               const feedbackRule = await matchRule((latest.definitions ?? latest.rules).filter(definitionIsActive), window.location.href, {
                 loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
               })
-              return feedbackRule ? mountExplicit(target, feedbackRule.id, true, false) : explicitResult(false, 'not_targeted')
+              return feedbackRule ? mountExplicit(target, feedbackRule.id, true, 'chat') : explicitResult(false, 'not_targeted')
             },
           })
         }
@@ -543,13 +544,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     }
   }
 
-  const mountExplicit = async (target: HTMLElement, reference: string, inline = false, reserveAutomatic = true): Promise<ExplicitMountResult> => {
+  const mountExplicit = async (target: HTMLElement, reference: string, inline = false, context?: 'chat'): Promise<ExplicitMountResult> => {
     const generation = (explicitGenerations.get(target) ?? 0) + 1
     explicitGenerations.set(target, generation)
     const normalizedReference = reference.trim()
     const previous = explicitTargets.get(target)
     previous?.unmount?.()
-    explicitTargets.set(target, { reference: normalizedReference, unmount: null, inline, reserveAutomatic })
+    explicitTargets.set(target, { reference: normalizedReference, unmount: null, inline, context })
     if (!normalizedReference) return explicitResult(false, 'not_found')
     try {
       const configuration = await loadConfiguration(false)
@@ -559,7 +560,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         candidate.id === normalizedReference || candidate.definition_key === normalizedReference)
       if (!rule) return explicitResult(false, 'not_found')
       if (!definitionIsActive(rule)) return explicitResult(false, 'inactive')
-      if (reserveAutomatic) {
+      if (context !== 'chat') {
         explicitRuleIDs.add(rule.id)
         if (rule.definition_key) explicitRuleIDs.add(rule.definition_key)
         if (automaticRuleID === rule.id) {
@@ -603,6 +604,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         privacy,
         onClosed: releaseFeedbackWidget,
         target, hostID,
+        embeddedInChat: context === 'chat',
         themeAttribute: target.getAttribute('theme'),
         onVisible: () => recordAnalytics('impression', rule),
         onInteraction: () => recordAnalytics('interaction', rule),
@@ -613,7 +615,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'dismissed')
         },
       })
-      explicitTargets.set(target, { reference: normalizedReference, unmount, inline, reserveAutomatic })
+      explicitTargets.set(target, { reference: normalizedReference, unmount, inline, context })
       return { mounted: true, unmount: () => unmountExplicitTarget(target) }
     } catch (error) {
       void report(error, 'mount')
@@ -815,7 +817,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   window.addEventListener('fidibeki:navigation', () => {
     void evaluate()
     for (const [target, mounted] of explicitTargets) {
-      if (target.isConnected) void mountExplicit(target, mounted.reference, mounted.inline, mounted.reserveAutomatic ?? true)
+      if (target.isConnected) void mountExplicit(target, mounted.reference, mounted.inline, mounted.context)
       else unmountExplicitTarget(target)
     }
   })

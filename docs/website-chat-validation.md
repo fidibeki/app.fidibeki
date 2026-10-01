@@ -31,8 +31,35 @@ Backend package tests pass after updating the expected browser-key inventory for
 
 Linux CI passed all 78 widget browser tests, including Firefox, and both real-stack journeys. Its widget image build detected a missing `COPY shared shared`; the Dockerfile is corrected and the image now builds locally and serves `/v1/chat.js`. The edge CI gate explicitly checks that entry point.
 
-The pull request's required CI checks run the full backend coverage gates, both browser engines, tenant web/backoffice regressions and the isolated real-stack journeys against the committed artifact.
+## Final CI results
+
+[PR #178](https://github.com/fidibeki/app.fidibeki/pull/178) merged as `4a697c01bd61e51a1eac014f3ccf8c845fb226e5`. Its tree is identical to the tested pull-request merge tree (`546e4b563dd17dc30fb774d41f66a5455f97eabe`). Every check passed:
+
+- [Backend](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465727): full integration suite, 80.1% overall coverage, 85.1% website-chat coverage, formatting/lint, Compose policy and API image.
+- [Widget](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465704): 374 unit tests, 78 browser tests across Chromium/Firefox, image build and edge routing including `/v1/chat.js`.
+- [Tenant web](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465780): 197 unit tests; browser suite reported 266 passed, 61 skipped and one existing login test that passed on its configured retry. Type checks and image build passed.
+- [Backoffice](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465881): regression checks passed.
+- [Real-stack journeys](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465694): tenant-to-website chat and platform support both passed.
+- [Security](https://github.com/fidibeki/app.fidibeki/actions/runs/36919465931): configured vulnerability and secret checks passed.
+
+## Production release
+
+[Production promotion](https://github.com/fidibeki/app.fidibeki/actions/runs/36921072777) deployed the tested merged revision to API, worker, widget, backoffice and tenant web, then tagged `v0.3.0` on 1 October 2026. The backoffice had already auto-deployed the same revision, so Railway skipped its identical promotion build. API database/Redis/storage readiness and backoffice health passed, and the public widget served `/v1/chat.js` successfully.
+
+## Integrated feedback and mobile refinement
+
+The follow-up removes the nested feedback frame, duplicate branding/close button and nested scrolling. Chat adopts the configured feedback appearance and live theme changes. Feedback confirmation stays visible after submission; the chat reset action stays in Messages. The mobile launcher is a 52px button above a 64px navigation allowance plus the device safe area, with a documented offset override. The expanded panel follows the visible viewport and hides the launcher.
+
+Validation: 374 widget unit tests, 77 Chromium browser tests, type checking and production build passed. Both isolated real-stack journeys passed again. Added browser coverage checks light/dark surfaces, a single close control and scroll area, theme changes, successful feedback submission, persistent confirmation, bottom-navigation clearance, custom placement offset, and a 320×420 viewport. Software-keyboard placement uses the Visual Viewport API; the reduced-height browser test does not emulate a physical iOS keyboard.
+
+- [Integrated feedback, dark desktop](evidence/website-chat-integrated-dark-desktop.png)
+- [Integrated feedback, dark mobile](evidence/website-chat-integrated-dark-mobile.png)
+- [Compact launcher above mobile navigation](evidence/website-chat-launcher-dark-mobile.png)
+- [Integrated feedback, light desktop](evidence/website-chat-integrated-light-desktop.png)
+- [Integrated feedback, light mobile](evidence/website-chat-integrated-light-mobile.png)
+
+The design detector reported the intentionally hidden, configuration-populated logo and the pre-existing standalone widget accent border. The embedded feedback presentation removes that border. Rendered light/dark and desktop/mobile evidence was inspected directly.
 
 ## Existing Linux test fixture correction
 
-The full backend CI gate twice failed `TestFFmpegExtractPosterSkipsTheFirstSecond` with `ETXTBSY` while every website-chat test passed. A Linux/ARM64 container reproduced 22 failures across 200 repeated FFmpeg test groups. The five tests wrote executable shell scripts and invoked them in parallel, matching the [Go write/exec descriptor race](https://github.com/golang/go/issues/22315). Those five fixture consumers now run serially; all argument/error assertions remain intact, with no production-code retry or skip. The corrected group passed 1,000 Linux repetitions. The complete backend gate is rerun after this correction.
+The full backend CI gate twice failed `TestFFmpegExtractPosterSkipsTheFirstSecond` with `ETXTBSY` while every website-chat test passed. A Linux/ARM64 container reproduced 22 failures across 200 repeated FFmpeg test groups. The five tests wrote executable shell scripts and invoked them in parallel, matching the [Go write/exec descriptor race](https://github.com/golang/go/issues/22315). Those five fixture consumers now run serially; all argument/error assertions remain intact, with no production-code retry or skip. The corrected group passed 1,000 Linux repetitions and the complete backend CI gate.
