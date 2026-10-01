@@ -75,3 +75,5 @@ jobs:
 
           curl --fail --silent --show-error \
             --header 'Host: widget.example.test' http://127.0.0.1:8097/v1/widget.js >/dev/null
+          curl --fail --silent --show-error \
+            --header 'Host: widget.example.test' http://127.0.0.1:8097/v1/chat.js >/dev/null

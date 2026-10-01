@@ -23,8 +23,12 @@ Independent review: [two-round review report](../.agents/meta/review-chain-repor
 - Widget unit tests: 374 passed; existing coverage gates pass (86.52% statements).
 - Widget Chromium browser tests: 75 passed. Three pre-existing Firefox attachment tests could not launch on this macOS host (`sandbox_extension_issue_file_to_process` / `RenderCompositorSWGL`); the complete Firefox suite remains enabled in Linux CI.
 - Tenant web unit tests: 197 passed. New inbox/history regressions pass on desktop and mobile.
-- Backoffice unit tests: 9 passed.
+- Backoffice tests: 9 unit and 4 browser tests passed.
 - Tenant web, widget and backoffice type checks pass; production builds for the changed web/widget surfaces pass.
 - Go formatting, vet and privacy governance checks pass.
+
+Backend package tests pass after updating the expected browser-key inventory for the new credential/reset keys. Combined coverage from the full run and corrected privacy-package rerun is 80.1% overall and 85.1% for website chat; the 80% overall and 60% package gates pass. The four web permission-editor assertions were updated for the added chat permission group and pass on desktop/mobile.
+
+Linux CI passed all 78 widget browser tests, including Firefox, and both real-stack journeys. Its widget image build detected a missing `COPY shared shared`; the Dockerfile is corrected and the image now builds locally and serves `/v1/chat.js`. The edge CI gate explicitly checks that entry point.
 
 The pull request's required CI checks run the full backend coverage gates, both browser engines, tenant web/backoffice regressions and the isolated real-stack journeys against the committed artifact.
