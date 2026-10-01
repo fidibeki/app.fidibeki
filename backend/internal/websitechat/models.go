@@ -28,7 +28,8 @@ type Message struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 type Thread struct {
-	Conversation *Conversation `json:"conversation"`
-	Messages     []Message     `json:"messages"`
-	HasMore      bool          `json:"has_more"`
+	AllowVisitorMessages bool          `json:"allow_visitor_messages"`
+	Conversation         *Conversation `json:"conversation"`
+	Messages             []Message     `json:"messages"`
+	HasMore              bool          `json:"has_more"`
 }

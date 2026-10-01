@@ -47,7 +47,7 @@ type scope struct {
 	rules                                                 []project.WidgetRule
 	tx                                                    db.Transaction
 	tenantID, projectID, visitorID, actorID, name, origin string
-	operator, enabled, notify                             bool
+	operator, enabled, notify, allowVisitorMessages       bool
 	expires                                               time.Time
 }
 type failure struct {
@@ -224,7 +224,7 @@ func (h *Handler) authorize(r *http.Request, operator bool, permission auth.Perm
 			return nil, denied()
 		}
 	}
-	err = tx.QueryRow(ctx, `SELECT chat_enabled FROM projects WHERE tenant_id=$1 AND id=$2`, s.tenantID, s.projectID).Scan(&s.enabled)
+	err = tx.QueryRow(ctx, `SELECT chat_enabled,chat_allow_visitor_messages FROM projects WHERE tenant_id=$1 AND id=$2`, s.tenantID, s.projectID).Scan(&s.enabled, &s.allowVisitorMessages)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, missing()
 	}
@@ -319,7 +319,11 @@ func (h *Handler) notify(ctx context.Context, s *scope) {
 	defer cancel()
 	_, err := h.options.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		p.Publish(ctx, "website-chat:operators:"+s.tenantID+":"+s.projectID, "change")
-		p.Publish(ctx, "website-chat:visitor:"+s.tenantID+":"+s.projectID+":"+s.visitorID, "change")
+		if s.visitorID == "" {
+			p.Publish(ctx, settingsChannel(s), "change")
+		} else {
+			p.Publish(ctx, visitorChannel(s), "change")
+		}
 		return nil
 	})
 	if err != nil {
@@ -354,21 +358,21 @@ func (h *Handler) preflight(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) settings(r *http.Request, s *scope) (any, error) {
 	if r.Method == http.MethodPut {
 		var input struct {
-			Enabled *bool `json:"enabled"`
+			Enabled              *bool `json:"enabled"`
+			AllowVisitorMessages *bool `json:"allow_visitor_messages"`
 		}
-		if decode(r, &input) != nil || input.Enabled == nil {
+		if decode(r, &input) != nil || (input.Enabled == nil && input.AllowVisitorMessages == nil) {
 			return nil, invalid()
 		}
-		if _, err := s.tx.Exec(r.Context(), `UPDATE projects SET chat_enabled=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2`, s.tenantID, s.projectID, *input.Enabled); err != nil {
+		if err := s.tx.QueryRow(r.Context(), `UPDATE projects SET chat_enabled=COALESCE($3,chat_enabled),chat_allow_visitor_messages=COALESCE($4,chat_allow_visitor_messages),updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING chat_enabled,chat_allow_visitor_messages`, s.tenantID, s.projectID, input.Enabled, input.AllowVisitorMessages).Scan(&s.enabled, &s.allowVisitorMessages); err != nil {
 			return nil, err
 		}
-		s.enabled = *input.Enabled
 		if err := h.audit(r, s, "settings_updated", auth.PermissionProjectUpdate); err != nil {
 			return nil, err
 		}
 		s.notify = true
 	}
-	return map[string]any{"enabled": s.enabled}, nil
+	return map[string]any{"enabled": s.enabled, "allow_visitor_messages": s.allowVisitorMessages}, nil
 }
 func (h *Handler) session(r *http.Request, s *scope) (any, error) {
 	var input struct{}

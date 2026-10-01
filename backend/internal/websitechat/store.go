@@ -38,7 +38,7 @@ func (h *Handler) thread(r *http.Request, s *scope) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	thread := Thread{Messages: []Message{}}
+	thread := Thread{Messages: []Message{}, AllowVisitorMessages: s.allowVisitorMessages}
 	if c.LastSequence == 0 {
 		return thread, nil
 	}
@@ -90,7 +90,7 @@ func (h *Handler) send(r *http.Request, s *scope) (any, error) {
 	if !time.Now().Before(c.ExpiresAt) {
 		return nil, failure{409, api.CodeConflict, "visitor session has ended"}
 	}
-	if !s.operator && c.LastSequence == 0 {
+	if !s.operator && c.LastSequence == 0 && !s.allowVisitorMessages {
 		return nil, denied()
 	}
 	kind := "visitor"

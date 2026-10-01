@@ -42,7 +42,7 @@ func (h *Handler) events(operator bool) http.HandlerFunc {
 		}
 		streamContext, cancel := context.WithDeadline(r.Context(), endsAt)
 		defer cancel()
-		channels := []string{visitorChannel(s)}
+		channels := []string{visitorChannel(s), settingsChannel(s)}
 		if operator {
 			channels = []string{operatorChannel(s), operatorChannel(s) + ":presence"}
 		}
