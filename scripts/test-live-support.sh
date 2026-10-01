@@ -31,10 +31,12 @@ export DATABASE_URL_ADMIN='postgres://fidibeki_admin:fidibeki-admin-local@127.0.
 export DATABASE_URL_DIRECT='postgres://postgres:postgres@127.0.0.1:54339/fidibeki?sslmode=disable'
 export REDIS_URL=redis://127.0.0.1:6389/0
 export S3_ENDPOINT=http://127.0.0.1:9009 S3_PUBLIC_ENDPOINT=http://localhost:9009 S3_REGION=us-east-1 S3_BUCKET=fidibeki
-export S3_ACCESS_KEY=fidibeki-local S3_SECRET_KEY=fidibeki-local-secret S3_AUTO_CREATE_BUCKET=true
+# This journey submits text feedback; attachment/storage tests run separately.
+export S3_ACCESS_KEY=fidibeki-local S3_SECRET_KEY=fidibeki-local-secret S3_AUTO_CREATE_BUCKET=false
 export JWT_SECRET=local-only-jwt-secret-change-before-production INTERNAL_PROXY_SECRET=local-only-internal-proxy-secret-change-me
-export INTEGRATION_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-export TWO_FACTOR_ENCRYPTION_KEY=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=
+INTEGRATION_ENCRYPTION_KEY="$(node -p "require('node:crypto').randomBytes(32).toString('base64')")"
+TWO_FACTOR_ENCRYPTION_KEY="$(node -p "require('node:crypto').randomBytes(32).toString('base64')")"
+export INTEGRATION_ENCRYPTION_KEY TWO_FACTOR_ENCRYPTION_KEY
 export EMAIL_TASK_SIGNING_KEY=ZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWU=
 export EMAIL_DRIVER=capture EMAIL_CAPTURE_DIR="$task_tmp/emails" MIGRATIONS_PATH="$task_root/infra/migrations"
 "$task_tmp/api" migrate up >"$task_tmp/migrate.log" 2>&1

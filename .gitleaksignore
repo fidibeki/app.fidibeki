@@ -86,3 +86,8 @@ a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_int
 a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_integration_test.go:generic-api-key:117
 a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_integration_test.go:generic-api-key:152
 2ef6a8bc65e87a8745b98767b3da682d9ef0d50c:web/tests/e2e/email-feedback-opt-out.spec.ts:generic-api-key:5
+
+# Live support: synthetic local-only AES fixtures from the initial feature
+# commit, now replaced with random per-run keys. Neither value was deployed.
+54487de11d2c2e895442a5f4c6caf7eadd81029a:scripts/test-live-support.sh:generic-api-key:36
+54487de11d2c2e895442a5f4c6caf7eadd81029a:scripts/test-live-support.sh:generic-api-key:37
