@@ -1,6 +1,9 @@
 import { chatStorageKey, readChatCredential, forgetChatCredential, type ChatCredential } from './chat-session'
 import { emptyChat, exportChat, prependChat, reconcileChat, watchSupport, type ChatMessage, type ChatThread, type LiveState } from '../../shared/website-chat'
 import { privacySafeLocation } from './privacy-location'
+import { contrastRatio, resolveAccentForeground } from './appearance'
+import { resolveTheme, subscribeToHostDataTheme, subscribeToSystemTheme } from './theme-resolver'
+import { chatStyles } from './chat-styles'
 import type { StorageLike } from './storage'
 import type { WidgetConfiguration, WidgetRule } from './types'
 
@@ -48,16 +51,9 @@ export function mountChat(options: ChatOptions) {
   host.setAttribute('data-fidibeki-block', '')
   host.className = 'rr-block'
   const shadow = host.attachShadow({ mode: 'open' })
-  shadow.innerHTML = `<style>
-:host{all:initial;font:14px/1.5 system-ui,-apple-system,sans-serif;color:#172a2a;--bg:#fff;--ink:#172a2a;--muted:#637171;--line:#dce5e3;--soft:#f1f6f5;--accent:#08796d;--on-accent:#fff;position:fixed;bottom:20px;right:20px;z-index:2147483000;color-scheme:light}
-*{box-sizing:border-box}button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.55}button:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}
-.launcher{display:flex;align-items:center;gap:8px;border:0;border-radius:24px;background:var(--accent);color:var(--on-accent);padding:12px 18px;box-shadow:0 3px 18px #0002;font-weight:650;min-height:44px}.badge{background:var(--bg);color:var(--accent);border-radius:16px;padding:0 6px;font-size:12px}
-.panel{position:absolute;bottom:60px;right:0;width:370px;height:min(600px,calc(100dvh - 110px));display:flex;flex-direction:column;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 48px #0003;overflow:hidden}.head{padding:18px;display:flex;align-items:center;justify-content:space-between;gap:12px}.head strong{font-size:17px}.icon{border:0;background:none;color:var(--ink);width:38px;height:38px;font-size:23px}.tabs{display:flex;gap:20px;padding:0 18px;border-bottom:1px solid var(--line)}.tabs button{padding:10px 0;border:0;background:none;color:var(--muted)}.tabs button[aria-pressed=true]{color:var(--accent);box-shadow:0 2px var(--accent)}.messages{flex:1;min-height:0;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:15px;overscroll-behavior:contain}.empty{margin:auto;text-align:center;color:var(--muted)}.empty strong{display:block;color:var(--ink);font-size:16px;margin-bottom:8px}.bubble{max-width:90%;align-self:flex-start}.bubble.own{align-self:flex-end}.bubble b,.bubble time{display:block;font-size:11px;font-weight:500;color:var(--muted)}.bubble p{padding:10px 12px;margin:5px 0;background:var(--soft);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.bubble.own p{background:#dff3ee;color:#173b34}.compose{padding:12px 16px;border-top:1px solid var(--line)}.compose label{display:block;font-size:12px;margin-bottom:5px}.compose textarea{display:block;width:100%;min-height:64px;max-height:120px;resize:vertical;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--bg);color:var(--ink)}.compose footer{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px}.compose small{color:var(--muted);font-size:11px}.send{background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;padding:9px 13px;min-height:40px}.link{border:0;background:none;color:var(--accent);font-size:12px;text-decoration:underline;padding:8px}.notice{font-size:12px;color:var(--muted);padding:8px 16px;margin:0}.feedback{flex:1;min-height:0;overflow:auto;padding:12px}.tools{display:flex;justify-content:space-between;flex-wrap:wrap}.preview{position:absolute;right:0;bottom:60px;width:310px;background:var(--bg);color:var(--ink);box-shadow:0 4px 25px #0003;border:1px solid var(--line);border-radius:12px;padding:16px}.preview .dismiss{position:absolute;right:3px;top:3px}.preview-open{text-align:left;border:0;background:none;color:inherit;padding:0;width:100%}.preview-open strong{display:block;padding-right:24px}.preview-open p{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;margin:8px 0}.preview-open small{color:var(--accent)}
-@media(prefers-color-scheme:dark){:host{--bg:#182323;--ink:#eef5f3;--muted:#a9bbb7;--line:#3b4e49;--soft:#263933;--accent:#81d9c4;--on-accent:#122a24;color-scheme:dark}}
-@media(max-width:430px){:host{bottom:max(12px,env(safe-area-inset-bottom));right:12px}.panel{width:calc(100vw - 24px);height:min(600px,calc(100dvh - 100px))}.preview{max-width:calc(100vw - 24px)}}
-</style>
-<button class="launcher" type="button" aria-expanded="false"><span class="launcher-label"></span><span class="badge" hidden></span></button>
-<section class="panel" hidden role="dialog" aria-modal="false"><header class="head"><strong class="name"></strong><button class="icon close" type="button">×</button></header><nav class="tabs"><button class="tab-messages" type="button"></button><button class="tab-feedback" type="button"></button></nav><p class="notice connection" role="status" hidden></p><div class="messages" role="log" aria-live="polite"></div><div class="tools"><button class="link older" type="button" hidden></button><button class="link download" type="button" hidden></button></div><p class="notice error" role="alert" hidden></p><button class="link retry" type="button" hidden></button><form class="compose" hidden><label for="chat-reply"></label><textarea id="chat-reply" rows="2" maxlength="8000"></textarea><footer><small></small><button class="send" type="submit"></button></footer></form><div class="feedback" hidden></div><button class="link reset" type="button"></button></section>
+  shadow.innerHTML = `<style>${chatStyles}</style>
+<button class="launcher" type="button" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-8 8H4v-8a8 8 0 1 1 16 0Z"/><path d="M8 9h8M8 13h5"/></svg><span class="launcher-label"></span><span class="badge" hidden></span></button>
+<section class="panel" hidden role="dialog" aria-modal="false"><header class="head"><div class="identity"><img class="brand" alt="" referrerpolicy="no-referrer" hidden><strong class="name"></strong></div><button class="icon close" type="button">×</button></header><nav class="tabs"><button class="tab-messages" type="button"></button><button class="tab-feedback" type="button"></button></nav><p class="notice connection" role="status" hidden></p><div class="messages" role="log" aria-live="polite"></div><div class="tools"><button class="link older" type="button" hidden></button><button class="link download" type="button" hidden></button></div><p class="notice error" role="alert" hidden></p><button class="link retry" type="button" hidden></button><form class="compose" hidden><label for="chat-reply"></label><textarea id="chat-reply" rows="2" maxlength="8000"></textarea><footer><small></small><button class="send" type="submit"></button></footer></form><div class="feedback" hidden></div><button class="link reset" type="button"></button></section>
 <aside class="preview" hidden><button class="icon dismiss" type="button">×</button><button class="preview-open" type="button"><strong></strong><p></p><small></small></button></aside>`
   const node = <T extends HTMLElement = HTMLElement>(selector: string) => shadow.querySelector<T>(selector)!
   const launcher = node<HTMLButtonElement>('.launcher')
@@ -66,6 +62,8 @@ export function mountChat(options: ChatOptions) {
   const input = node<HTMLTextAreaElement>('textarea')
   const submit = node<HTMLButtonElement>('.send')
   node('.launcher-label').textContent = text.launcher
+  launcher.setAttribute('aria-label', text.launcher)
+  launcher.title = text.launcher
   node('.name').textContent = options.configuration.chat?.name || 'Messages'
   panel.setAttribute('aria-label', options.configuration.chat?.name || text.messages)
   node('.close').setAttribute('aria-label', text.close)
@@ -82,6 +80,40 @@ export function mountChat(options: ChatOptions) {
   node('.preview-open small').textContent = text.open
   messages.setAttribute('aria-label', text.messages)
   document.body.append(host)
+
+  function applyAppearance() {
+    const appearance = currentRule?.appearance
+    const dark = resolveTheme({ fallback: appearance?.theme ?? currentRule?.theme ?? 'auto' }) === 'dark'
+    const accent = appearance?.accent_color ?? currentRule?.accent_color ?? '#147d64'
+    const background = appearance?.surface_color ?? (dark ? '#171918' : '#ffffff')
+    const foreground = appearance?.text_color ?? (dark ? '#f5f7f6' : '#171a19')
+    const variables = {
+      '--fb-bg': background, '--fb-fg': foreground,
+      '--fb-muted': dark ? '#aeb8b4' : '#63706b', '--fb-line': dark ? '#3b413e' : '#d9dfdc',
+      '--fb-accent': accent, '--fb-on-accent': appearance?.accent_foreground ?? resolveAccentForeground(accent),
+      '--action-ink': contrastRatio(accent, background) >= 4.5 ? accent : foreground,
+    }
+    for (const [key, value] of Object.entries(variables)) host.style.setProperty(key, value)
+    host.style.colorScheme = dark ? 'dark' : 'light'
+    host.dataset.side = (appearance?.position ?? currentRule?.position) === 'bottom-left' ? 'left' : 'right'
+    const logo = node<HTMLImageElement>('.brand')
+    logo.hidden = !appearance?.logo_url
+    if (appearance?.logo_url) logo.src = appearance.logo_url
+    else logo.removeAttribute('src')
+  }
+  function fitViewport() {
+    const viewport = window.visualViewport
+    host.dataset.compact = String((viewport?.height ?? window.innerHeight) <= 480)
+    host.style.setProperty('--viewport-height', `${viewport?.height ?? window.innerHeight}px`)
+    host.style.setProperty('--keyboard-inset', `${Math.max(0, window.innerHeight - (viewport?.height ?? window.innerHeight) - (viewport?.offsetTop ?? 0))}px`)
+  }
+  applyAppearance(); fitViewport()
+  node<HTMLImageElement>('.brand').onerror = () => { node('.brand').hidden = true }
+  const stopSystemTheme = subscribeToSystemTheme(applyAppearance)
+  const stopHostTheme = subscribeToHostDataTheme(applyAppearance)
+  window.addEventListener('resize', fitViewport)
+  window.visualViewport?.addEventListener('resize', fitViewport)
+  window.visualViewport?.addEventListener('scroll', fitViewport)
 
   function error(message = '') { node('.error').textContent = message; node('.error').hidden = !message }
   function storeCredential(value: Credential | null) { credential = value; try { if (value) options.storage.setItem(storageKey, JSON.stringify(value)); else options.storage.removeItem(storageKey) } catch { /* In-memory chat remains available. */ } }
@@ -108,15 +140,17 @@ export function mountChat(options: ChatOptions) {
     const unread = thread.conversation?.unread ?? 0
     node('.badge').textContent = String(unread); node('.badge').hidden = !unread
     panel.hidden = !open; launcher.setAttribute('aria-expanded', String(open))
+    host.dataset.open = String(open)
     node('.tab-messages').setAttribute('aria-pressed', String(tab === 'messages'))
     node('.tab-feedback').setAttribute('aria-pressed', String(tab === 'feedback'))
     messages.hidden = tab !== 'messages'; node('.tools').hidden = tab !== 'messages'; node('.feedback').hidden = tab !== 'feedback'
+    node('.reset').hidden = tab !== 'messages'
     node('.compose').hidden = tab !== 'messages' || !thread.conversation || state === 'forbidden'
     node('.download').hidden = !thread.conversation; node('.older').hidden = !thread.has_more
     input.disabled = sending; submit.disabled = sending || !input.value.trim() || Array.from(input.value.trim()).length > 4000
     submit.textContent = sending ? text.sending : text.send
     node('.connection').textContent = state === 'forbidden' ? text.unavailable : text.reconnecting
-    node('.connection').hidden = state === 'connected' || state === 'connecting'
+    node('.connection').hidden = tab !== 'messages' || state === 'connected' || state === 'connecting'
     messages.replaceChildren()
     if (!thread.messages.length) {
       const empty = document.createElement('div'); empty.className = 'empty'
@@ -178,13 +212,13 @@ export function mountChat(options: ChatOptions) {
   async function showFeedback() {
     const version = ++feedbackGeneration
     unmountFeedback?.(); unmountFeedback = null
-    const target = node('.feedback'); target.replaceChildren(); target.textContent = text.loading
+    const target = node('.feedback'); target.replaceChildren(); target.classList.add('feedback-state'); target.textContent = text.loading
     try {
       target.textContent = ''
       const result = await options.mountFeedback(target)
       if (lifetime.signal.aborted || version !== feedbackGeneration) { result.unmount(); return }
       if (!result.mounted) target.textContent = text.feedbackUnavailable
-      else unmountFeedback = result.unmount
+      else { target.classList.remove('feedback-state'); unmountFeedback = result.unmount }
     } catch { if (version === feedbackGeneration) target.textContent = text.feedbackUnavailable }
   }
   function setOpen(value: boolean) {
@@ -247,7 +281,7 @@ export function mountChat(options: ChatOptions) {
   render(); void start()
   return {
     reset,
-    update(configuration: WidgetConfiguration, rule: WidgetRule | null) { currentConfiguration = configuration; currentRule = rule; node('.name').textContent = currentConfiguration.chat?.name || text.messages; void heartbeat() },
-    destroy() { hide(); lifetime.abort(); stream?.abort(); generation++; feedbackGeneration++; unmountFeedback?.(); clearInterval(timer); document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', hide); window.removeEventListener('storage', storageChanged); host.remove() },
+    update(configuration: WidgetConfiguration, rule: WidgetRule | null) { currentConfiguration = configuration; currentRule = rule; node('.name').textContent = currentConfiguration.chat?.name || text.messages; panel.setAttribute('aria-label', currentConfiguration.chat?.name || text.messages); applyAppearance(); void heartbeat() },
+    destroy() { hide(); lifetime.abort(); stream?.abort(); generation++; feedbackGeneration++; unmountFeedback?.(); clearInterval(timer); stopSystemTheme(); stopHostTheme(); window.removeEventListener('resize', fitViewport); window.visualViewport?.removeEventListener('resize', fitViewport); window.visualViewport?.removeEventListener('scroll', fitViewport); document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', hide); window.removeEventListener('storage', storageChanged); host.remove() },
   }
 }

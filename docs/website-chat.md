@@ -24,6 +24,21 @@ Wait for `fidibeki:ready` if the embed has not initialized. Reset also works bef
 
 The browser stores only the opaque credential, not message transcripts. Website owners should include the feature in their own disclosures and integrate logout reset where relevant. The manual embed mode (`data-fidibeki-manual="true"`) continues to delegate the launcher to its host application; normal website embeds show the chat launcher.
 
+## Appearance and mobile placement
+
+Messages and feedback share one panel and the matching feedback rule's colors, logo, position and theme. The feedback tab has one scroll area and keeps the submission confirmation visible. The chat reset action appears in Messages.
+
+On screens up to 600px wide, the launcher becomes a compact chat button and leaves 64px of space for a website's bottom navigation, plus the device safe area. Opening the panel hides the launcher; the panel follows the visible viewport when the keyboard opens. Sites with a different navigation height can set the additional bottom offset on their page:
+
+```css
+/* Use your bottom navigation height; use 0px if the page has none. */
+@media (max-width: 600px) {
+  :root { --fidibeki-chat-bottom-offset: 80px; }
+}
+```
+
+The offset is added to the normal edge margin and mobile safe area. The desktop default is 0px.
+
 ## Data boundaries
 
 Tenant/project/visitor scope is enforced by API authorization and PostgreSQL row-level security. A public project key alone cannot read a conversation or reply. Server-sent events carry invalidations, and authenticated requests fetch the actual content. Member permission, two-factor, tenant status, origin and visitor expiry checks apply on reconnect. API keys cannot act as human chat operators.

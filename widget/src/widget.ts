@@ -60,6 +60,8 @@ interface MountOptions {
   onClosed?(): void;
   target?: HTMLElement;
   hostID?: string;
+  // The conversation panel owns the frame, branding, close control and scrolling.
+  embeddedInChat?: boolean;
   // Priority 1 source for the theme: the `theme` attribute on the custom
   // element. Passed by the loader when mounting via `<fidibeki-widget>`; `null`
   // when the widget is mounted imperatively from a `<script>` tag.
@@ -119,6 +121,7 @@ export function mountWidget(options: MountOptions): () => void {
   // Excluded from replay recording: rrweb serializes blocked hosts as placeholders, so the
   // widget's own shadow DOM never reaches the anonymity pipeline or the batch verifier.
   host.dataset.fidibekiBlock = "";
+  if (options.embeddedInChat) host.setAttribute("data-embedded-chat", "");
   const shadow = host.attachShadow({ mode: "open" });
   const appearance = options.rule.appearance;
   const accent =
@@ -744,7 +747,7 @@ export function mountWidget(options: MountOptions): () => void {
           ? `<span>${escapeHTML(attachmentWarning.message || localization.system.attachmentError)}</span>`
           : "";
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(localization.content.success_message)}</strong>${warningDetail}</div>`;
-        window.setTimeout(destroy, attachmentWarning ? 3200 : 1800);
+        if (!options.embeddedInChat) window.setTimeout(destroy, attachmentWarning ? 3200 : 1800);
       } catch (error) {
         const publicFailure =
           error instanceof PublicAPIResponseError
@@ -756,7 +759,7 @@ export function mountWidget(options: MountOptions): () => void {
           ? publicFailureMessage(publicFailure, localization.system)
           : localization.system.attachmentError;
         form.innerHTML = `<div class="success" role="status"><strong>${escapeHTML(structured ? localization.content.success_message : "Feedback received.")}</strong><span>${escapeHTML(detail)}</span></div>`;
-        window.setTimeout(destroy, 3200);
+        if (!options.embeddedInChat) window.setTimeout(destroy, 3200);
         void reportError(options, error, "attachments");
       }
     } catch (error) {
@@ -1332,7 +1335,19 @@ function styles(
   @media(max-width:700px){.panel .body{flex-direction:column}.panel .privacy-column{flex:none;border-left:0;border-top:1px solid var(--fb-line);padding-top:12px}}
   @media(max-width:480px){.panel:not(.inline){bottom:12px;left:12px;right:12px;width:auto}.launcher{bottom:12px;left:auto;right:auto;${side}:12px}
   .launcher.edge-tab{top:auto;bottom:30%;left:auto;right:auto;${side}:0;transform:none;width:auto;max-width:128px;min-width:44px;min-height:44px;max-height:none;padding:10px 14px;border-radius:${exposedRadius};white-space:normal;line-height:1.25;overflow:visible}}
-  @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}`;
+  @media(prefers-reduced-motion:no-preference){.panel{animation:fb-enter .22s ease-out both}@keyframes fb-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}}
+  :host([data-embedded-chat]){--fb-accent:inherit;--fb-on-accent:inherit;--fb-bg:inherit;--fb-fg:inherit;--fb-muted:inherit;--fb-line:inherit}
+  :host([data-embedded-chat]) .panel{position:relative;inset:auto;width:100%;max-width:none;max-height:none;border:0;border-radius:0;box-shadow:none;background:transparent;overflow:visible;animation:none}
+  :host([data-embedded-chat]) .panel>header{padding:20px 20px 12px}
+  :host([data-embedded-chat]) .panel>header .brand,:host([data-embedded-chat]) .panel>header .eyebrow,:host([data-embedded-chat]) .panel>header>[data-close]{display:none}
+  :host([data-embedded-chat]) .body{display:block}
+  :host([data-embedded-chat]) form{overflow:visible;padding:0 20px 20px}
+  :host([data-embedded-chat]) .privacy-column{overflow:visible;border-left:0;border-top:1px solid var(--fb-line);padding:16px 20px}
+  :host([data-embedded-chat]) .managed-by{padding:12px 20px;border:0}
+  :host([data-embedded-chat]) .primary,:host([data-embedded-chat]) .secondary{min-height:42px}
+  :host([data-embedded-chat]) .success{padding:24px 0}
+  :host([data-embedded-chat]) .success strong{color:var(--fb-fg)}
+  @media(max-width:600px){:host([data-embedded-chat]) textarea,:host([data-embedded-chat]) input[type=email],:host([data-embedded-chat]) select{font-size:16px}}`;
 }
 
 function requiredElement<T extends Element>(
