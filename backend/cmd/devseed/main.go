@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect: %v", err)
 	}
-	defer connection.Close(ctx)
+	defer func() { _ = connection.Close(ctx) }()
 
 	var tenantID string
 	if err := connection.QueryRow(ctx, `

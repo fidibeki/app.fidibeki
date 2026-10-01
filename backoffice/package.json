@@ -8,6 +8,7 @@
     "dev": "nuxt dev",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:live-support": "playwright test --config playwright.live-support.config.ts",
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {

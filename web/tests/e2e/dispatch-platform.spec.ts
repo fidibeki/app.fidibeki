@@ -6,6 +6,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { allTenantPermissions } from "../../data/permissions";
+import { mockSupportRequest } from "./support-fixture";
 import type {
   PrivacyCase,
   PrivacyCaseCommunication,
@@ -1389,6 +1390,7 @@ async function installMockAPI(page: Page, state: MockState) {
     if (request.resourceType() === "document") return route.continue();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (await mockSupportRequest(route)) return;
     const method = request.method();
     const body = () => request.postDataJSON() as Record<string, unknown>;
 

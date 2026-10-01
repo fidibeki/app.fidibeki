@@ -8,6 +8,7 @@ COPY backoffice/package.json backoffice/package.json
 RUN pnpm install --frozen-lockfile --filter @fidibeki/backoffice...
 
 COPY web/assets/css/main.css web/assets/css/main.css
+COPY shared shared
 COPY backoffice backoffice
 RUN pnpm --filter @fidibeki/backoffice build
 

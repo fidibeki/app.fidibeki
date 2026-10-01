@@ -141,8 +141,13 @@ func TestJWTManagerValidatesConstructionAndIssueInputs(t *testing.T) {
 func TestPlatformPermissionsAreExplicit(t *testing.T) {
 	t.Parallel()
 	permissions := PlatformPermissionStrings()
-	if len(permissions) != 14 {
-		t.Fatalf("platform permission count = %d, want 14", len(permissions))
+	if len(permissions) != 16 {
+		t.Fatalf("platform permission count = %d, want 16", len(permissions))
+	}
+	for _, permission := range []Permission{PermissionPlatformSupportRead, PermissionPlatformSupportWrite} {
+		if !HasPermission(permissions, permission) {
+			t.Errorf("missing support permission %s", permission)
+		}
 	}
 	if !HasPermission(permissions, PermissionPlatformQueueRun) {
 		t.Error("platform:queue:run is missing from the platform permission set")

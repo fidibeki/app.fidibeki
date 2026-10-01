@@ -43,6 +43,15 @@ func TestMemberAccessExportTracer(t *testing.T) {
 	`, tenantID).Scan(&otherMemberID); err != nil {
 		t.Fatalf("create colleague: %v", err)
 	}
+	// Workspace operators may export a member's workspace data, but never
+	// their private conversation with platform staff.
+	if _, err := database.Exec(ctx, `WITH conversation AS (
+        INSERT INTO support_conversations(tenant_id,member_id,last_sequence)
+        VALUES($1,$2,1) RETURNING id)
+        INSERT INTO support_messages(tenant_id,member_id,conversation_id,sequence,client_id,sender_type,sender_id,sender_name,body)
+        SELECT $1,$2,id,1,gen_random_uuid(),'member',$2,'Export Subject','private-platform-chat-marker' FROM conversation`, tenantID, memberID); err != nil {
+		t.Fatal(err)
+	}
 	refreshHash := strings.Repeat("a", 64)
 	magicLinkHash := strings.Repeat("b", 64)
 	if _, err := database.Exec(ctx, `
@@ -232,6 +241,9 @@ func TestMemberAccessExportTracer(t *testing.T) {
 		t.Fatalf("member export handler: %v", err)
 	}
 	files := readPrivacyArchive(t, storage.body)
+	if _, exists := files["support-messages.jsonl"]; exists {
+		t.Fatal("workspace operator archive exposes private support")
+	}
 	for _, filename := range []string{
 		"member.json", "sessions.jsonl", "magic-links.jsonl",
 		"issue-updates.jsonl", "issue-comments.jsonl", "issue-activity.jsonl",
@@ -257,7 +269,7 @@ func TestMemberAccessExportTracer(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		refreshHash, magicLinkHash, "Other member confidential body",
+		refreshHash, magicLinkHash, "Other member confidential body", "private-platform-chat-marker",
 		"Other member activity secret", "raw_payload_secret",
 		"must-not-leak", "colleague@member-access.test",
 		otherTenantID, otherTenantMemberID,

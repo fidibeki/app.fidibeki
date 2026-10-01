@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestRecoveryReplacesPartialResponsesWithAnInternalError(t *testing.T) {
@@ -81,6 +82,32 @@ func TestRecoveryReportsPanicAndReturnsSentryEventID(t *testing.T) {
 }
 
 type panicReporterFunc func(context.Context, any) string
+
+func TestRecoveryFlushesExplicitStreamsAndAbortsPanicsAfterCommit(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	router := chi.NewRouter()
+	router.Use(appmiddleware.RequestLogger(logger))
+	router.Use(appmiddleware.Recovery(logger))
+	router.Get("/stream", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: first\n\n"))
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte("data: second\n\n"))
+		panic("after streaming began")
+	})
+	recorder := httptest.NewRecorder()
+	defer func() {
+		if recovered := recover(); recovered != http.ErrAbortHandler {
+			t.Errorf("panic = %v", recovered)
+		}
+		if !recorder.Flushed || recorder.Body.String() != "data: first\n\ndata: second\n\n" {
+			t.Errorf("stream = %q, flushed = %v", recorder.Body.String(), recorder.Flushed)
+		}
+	}()
+	router.ServeHTTP(recorder, httptest.NewRequest("GET", "/stream", nil))
+}
 
 func (f panicReporterFunc) CapturePanic(ctx context.Context, recovered any) string {
 	return f(ctx, recovered)

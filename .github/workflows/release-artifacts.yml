@@ -33,7 +33,7 @@ jobs:
         id: frontend
         run: |
           if git diff --name-only HEAD^ HEAD \
-            | grep -qE '^(web/|widget/|contracts/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)'; then
+            | grep -qE '^(shared/|web/|widget/|contracts/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

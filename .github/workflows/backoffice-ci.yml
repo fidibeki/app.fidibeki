@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "backoffice/**"
+      - "shared/**"
       - "web/assets/css/main.css"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -14,6 +15,7 @@ on:
     branches: [main]
     paths:
       - "backoffice/**"
+      - "shared/**"
       - "web/assets/css/main.css"
       - "package.json"
       - "pnpm-lock.yaml"

@@ -504,6 +504,7 @@ func (exporter Exporter) buildWorkspaceArchive(ctx context.Context, job Job) (st
 		Files:            []manifestFile{{Name: "workspace.json", Records: 1}},
 		BinaryDataPolicy: "Attachment and replay binaries are not copied; their manifests describe current availability.",
 		SensitiveOmissions: []string{
+			"private platform support conversations; available to the participant through their own support transcript download",
 			"API keys and token hashes", "authentication sessions and magic links",
 			"encrypted integration credentials", "billing provider identifiers", "internal queue payloads",
 			"plaintext invitation recipient addresses, invitation request hashes, delivery token hashes, provider message and webhook identifiers, and captured snapshots",

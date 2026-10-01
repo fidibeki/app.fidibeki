@@ -46,6 +46,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/samlsso"
 	"github.com/acidiney/app.fidibeki/backend/internal/server"
 	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/acidiney/app.fidibeki/backend/internal/support"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantapi"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenantmember"
@@ -392,6 +393,12 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	// The Nuxt backoffice consumes this read-only JSON representation. The
 	// browser-only legacy monitor above remains mounted at its existing path.
 	queueMonitor.RegisterBackofficeRoutes(platformRoutes, jwtManager)
+	supportHandler := support.NewHandler(support.HTTPOptions{
+		AppBegin: db.BeginFromPool(pools.App), AdminBegin: db.BeginFromPool(pools.Admin),
+		Resolver: tenant.PostgresResolver{Admin: pools.Admin}, BaseDomain: settings.BaseDomain,
+		JWT: jwtManager, Live: support.Live{Redis: redisClient.Client()}, Limiter: publicLimiter, Logger: logger,
+	})
+	supportHandler.RegisterPlatformRoutes(platformRoutes)
 	billing.RegisterPlatformRoutes(platformRoutes, billing.HTTPOptions{Service: billingService, JWT: jwtManager})
 	identity.RegisterPublicRoutes(platformRoutes, identity.HTTPOptions{
 		Store: identity.Store{Database: pools.Admin}, Storage: objectStorage, Logger: logger,
@@ -577,6 +584,7 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 		Logger:     logger,
 	})(tenantRoutes)
 	tenantRoot := chi.NewRouter()
+	supportHandler.RegisterTenantRoutes(tenantRoot)
 	issue.RegisterReporterProgressRoutes(tenantRoot, reporterProgressOptions)
 	// Also mounted on the tenant host: the collection page is served from the
 	// workspace domain the author was linked to, so a platform-only registration
@@ -865,6 +873,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Reporter:    replayFailureReporter, Logger: logger,
 	}
 	retentionHealth := retentionhealth.Store{Database: pools.Admin}
+	supportRetention := support.Maintainer{Database: pools.Admin, Health: retentionHealth, Logger: logger}
 	replayCleaner := replay.Cleaner{
 		Store: replayStore, Storage: objectStorage, Health: retentionHealth, Logger: logger,
 	}
@@ -1054,7 +1063,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	const backgroundWorkers = 21
+	const backgroundWorkers = 22
 	backgroundDone := make(chan error, backgroundWorkers)
 	go func() { backgroundDone <- dispatcher.Run(workerCtx, 2*time.Second) }()
 	go func() { backgroundDone <- breachNotificationDispatcher.Run(workerCtx, 2*time.Second) }()
@@ -1071,6 +1080,7 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	go func() { backgroundDone <- identityMaintainer.Run(workerCtx, time.Minute) }()
 	go func() { backgroundDone <- tenantAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- platformAuthRetention.Run(workerCtx, time.Hour) }()
+	go func() { backgroundDone <- supportRetention.Run(workerCtx, 24*time.Hour) }()
 	go func() { backgroundDone <- samlAuthRetention.Run(workerCtx, time.Hour) }()
 	go func() { backgroundDone <- testimonialScoring.Run(workerCtx, 15*time.Minute) }()
 	go func() { backgroundDone <- testimonialMediaCleanup.Run(workerCtx, time.Hour) }()

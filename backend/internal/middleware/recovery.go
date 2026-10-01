@@ -21,7 +21,7 @@ func Recovery(logger *slog.Logger, reporters ...PanicReporter) func(http.Handler
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			buffer := httpx.NewResponseBuffer()
+			buffer := httpx.NewRecoverableResponse(w)
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					eventID := ""
@@ -34,12 +34,15 @@ func Recovery(logger *slog.Logger, reporters ...PanicReporter) func(http.Handler
 						"path", r.URL.Path,
 						"sentry_event_id", eventID,
 					)
+					if buffer.Committed() {
+						panic(http.ErrAbortHandler)
+					}
 					api.WriteErrorWithEventID(
 						w, http.StatusInternalServerError, api.CodeInternal, "internal server error", nil, eventID,
 					)
 					return
 				}
-				buffer.FlushTo(w)
+				buffer.Finish()
 			}()
 
 			next.ServeHTTP(buffer, r)

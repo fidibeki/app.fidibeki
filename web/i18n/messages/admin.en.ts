@@ -1230,6 +1230,7 @@ export const adminMessages = {
         object_prefix: '{count} object prefix | {count} object prefixes',
         queue: '{count} queue | {count} queues',
         browser_key: '{count} browser key | {count} browser keys',
+        redis_key: '{count} Redis key pattern | {count} Redis key patterns',
         provider: '{count} provider boundary | {count} provider boundaries',
       },
       notices: {
