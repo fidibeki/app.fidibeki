@@ -3,6 +3,9 @@ package auth
 type Permission string
 
 const (
+	PermissionChatRead            Permission = "chat:read"
+	PermissionChatWrite           Permission = "chat:write"
+	PermissionChatDelete          Permission = "chat:delete"
 	PermissionProjectCreate       Permission = "project:create"
 	PermissionProjectRead         Permission = "project:read"
 	PermissionProjectUpdate       Permission = "project:update"
@@ -98,6 +101,7 @@ var AllPlatformPermissions = []Permission{
 }
 
 var AllTenantPermissions = []Permission{
+	PermissionChatRead, PermissionChatWrite, PermissionChatDelete,
 	PermissionProjectCreate, PermissionProjectRead, PermissionProjectUpdate, PermissionProjectDelete,
 	PermissionWidgetRuleCreate, PermissionWidgetRuleRead, PermissionWidgetRuleUpdate, PermissionWidgetRuleDelete,
 	PermissionFeedbackRead, PermissionFeedbackUpdate, PermissionFeedbackDelete,

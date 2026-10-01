@@ -2820,3 +2820,82 @@ test('preserves the complete draft and offers retry after a public rate decision
   expect(payloads[1]?.attachments).toEqual(payloads[0]?.attachments)
   expect(payloads[1]?.attachments).toHaveLength(1)
 })
+
+test('website chat reset on ready forgets the previous browser user before loading history', async ({ page }) => {
+  const oldToken = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const freshToken = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+  const historyTokens: string[] = [], revoked: string[] = []
+  await page.addInitScript(({ token }) => {
+    localStorage.setItem('fidibeki:chat:project-browser', JSON.stringify({ token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() }))
+    window.addEventListener('fidibeki:ready', () => { void (window as any).Fidibeki.chat.reset() }, { once: true })
+  }, { token: oldToken })
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    const token = route.request().headers()['x-fidibeki-chat-token'] || ''
+    if (path.endsWith('/session/revoke')) { revoked.push(token); return route.fulfill({ status: 204 }) }
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token: freshToken, visitor_id: freshToken.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) { historyTokens.push(token); return route.fulfill({ json: { conversation: null, messages: [], has_more: false } }) }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: 'event: change\ndata: {}\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  await expect(page.locator('#fidibeki-chat')).toBeVisible()
+  await expect.poll(() => historyTokens.length).toBeGreaterThan(0)
+  expect(historyTokens).not.toContain(oldToken)
+  expect(revoked).toContain(oldToken)
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fidibeki:chat:project-browser')!).token)).toBe(freshToken)
+})
+
+test('opening chat feedback does not suppress automatic feedback after chat is turned off', async ({ page }) => {
+  let enabled = true
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+  await expect(chat.getByText('How clear was checkout?', { exact: true })).toBeVisible()
+  enabled = false
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?', exact: true })).toBeVisible()
+})
+
+test('logout reset survives unavailable configuration and a subsequent page navigation', async ({ page }) => {
+  let available = false
+  const oldToken = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const newToken = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+  const historyTokens: string[] = []
+  await page.addInitScript(({ token }) => {
+    if (sessionStorage.getItem('reset-fixture-seeded')) return
+    sessionStorage.setItem('reset-fixture-seeded', 'true')
+    localStorage.setItem('fidibeki:chat:project-browser', JSON.stringify({ token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() }))
+    window.addEventListener('fidibeki:ready', () => { void (window as any).Fidibeki.chat.reset().catch(() => {}) }, { once: true })
+  }, { token: oldToken })
+  await page.route('**/v1/widget/config*', route => available
+    ? route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } })
+    : route.fulfill({ status: 503, json: {} }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token: newToken, visitor_id: newToken.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) { historyTokens.push(route.request().headers()['x-fidibeki-chat-token'] || ''); return route.fulfill({ json: { conversation: null, messages: [], has_more: false } }) }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: 'event: change\ndata: {}\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  await expect.poll(() => page.evaluate(() => Number(localStorage.getItem('fidibeki:chat-reset:pk_live_browser_contract')))).toBeGreaterThan(Date.now())
+  available = true
+  await page.reload()
+  await expect(page.locator('#fidibeki-chat')).toBeVisible()
+  await expect.poll(() => historyTokens.length).toBeGreaterThan(0)
+  expect(historyTokens).not.toContain(oldToken)
+  expect(await page.evaluate(() => localStorage.getItem('fidibeki:chat-reset:pk_live_browser_contract'))).toBeNull()
+})

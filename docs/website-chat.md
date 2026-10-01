@@ -1,0 +1,39 @@
+# Website conversations
+
+Each Fidibeki workspace can see visitors on its own website and start conversations with them. Open **Conversations** in the tenant dashboard, select a website project, and choose **Enable website chat**. Chat is off by default. The existing Fidibeki website embed picks up the setting; reload the website after enabling it.
+
+The Online list shows anonymous visitors, active/idle status, and a privacy-filtered page location. Choose a visitor and send a message. It appears immediately in the website's **Messages & feedback** widget, with a preview the visitor can open or dismiss. Visitors can reply only after your team sends the first message. Feedback stays in a separate tab of the same widget and submits through the existing feedback form.
+
+Conversations remain in Inbox after visitors leave. Team members can read older messages, see unread replies, download a complete JSON transcript, and delete a conversation if they have permission. Sending is disabled once the visitor credential expires. Reconnecting or reopening the page recovers persisted messages and does not resend a successfully accepted message.
+
+## Access and identity
+
+- `project:read` and `chat:read` allow access to Conversations.
+- `chat:write` allows sending messages. `project:update` controls the project chat setting.
+- `chat:delete` allows deleting a conversation, with confirmation. Active tenant privacy holds block deletion.
+- Existing full administrators inherit the three new permissions. Custom roles retain their existing permissions; an administrator can grant chat access explicitly.
+- Visitors have anonymous project- and origin-bound credentials, valid for 24 hours. Multiple tabs share the browser identity. The widget does not infer a name or email from a website login.
+
+A website that supports login/logout or account switching should reset chat at that boundary:
+
+```js
+await window.Fidibeki.chat.reset()
+```
+
+Wait for `fidibeki:ready` if the embed has not initialized. Reset also works before the chat panel mounts and while chat is turned off. It immediately forgets the previous browser credential, clears the visible history and drafts, and attempts to revoke the credential on the server. Visitors can do the same with **Forget this chat on this browser**. Reset does not erase the tenant's conversation record; use the dashboard's deletion action for that.
+
+The browser stores only the opaque credential, not message transcripts. Website owners should include the feature in their own disclosures and integrate logout reset where relevant. The manual embed mode (`data-fidibeki-manual="true"`) continues to delegate the launcher to its host application; normal website embeds show the chat launcher.
+
+## Data boundaries
+
+Tenant/project/visitor scope is enforced by API authorization and PostgreSQL row-level security. A public project key alone cannot read a conversation or reply. Server-sent events carry invalidations, and authenticated requests fetch the actual content. Member permission, two-factor, tenant status, origin and visitor expiry checks apply on reconnect. API keys cannot act as human chat operators.
+
+Presence expires after 60 seconds without a heartbeat; its Redis index expires after 120 seconds. Current page locations omit query strings and fragments and use the existing project targeting privacy projection; unmatched pages show only the origin. Chat content is blocked from the session replay recorder.
+
+Message history is retained for 180 days after the last message. Unused visitor records become eligible for deletion 24 hours after credential expiry. Cleanup runs daily, continues full batches promptly, cascades to message rows, and records retention health. Any active tenant legal hold preserves anonymous conversation records because they cannot be reliably matched to a named privacy case.
+
+## Operations and tests
+
+Deploy migration 139 with the API, then the worker, widget assets and tenant web application. Disable chat per project to stop new website conversations; authorized team members can still read retained history. Platform backoffice support is a separate feature and uses separate tables and permissions.
+
+`pnpm test:live-support` runs an isolated PostgreSQL/Redis/API/widget/web/backoffice stack. Its website-chat journey uses a tenant dashboard and a separate storefront origin, checks live delivery and replies, reconnect recovery, multi-tab presence, transcript download, feedback submission and reset. It never connects to production. Backend integration tests cover isolation, permissions, expiry, pagination, retention and legal holds. Browser regression tests cover reset before mounting, feedback after disabling chat, inbox refresh and switching while older history is loading.

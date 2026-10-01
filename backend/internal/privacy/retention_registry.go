@@ -48,6 +48,25 @@ type retentionDefinition struct {
 func retentionRegistry() []retentionDefinition {
 	return []retentionDefinition{
 		{
+			Category: "website_chat", Label: "Website visitor conversations",
+			Purpose: "Let tenants initiate conversations with visitors to their own websites.",
+			Role:    RetentionRoleProcessor, Status: RetentionEnforced,
+			DurationKind: retentionDurationFixed, Duration: "180 days after the last message; unused credentials 24 hours after expiry", DurationDays: days(180),
+			Source: "Product default", Trigger: "Last message timestamp or unused credential expiry.",
+			Action:  "Delete visitor credentials and messages; project and workspace deletion cascade.",
+			Cadence: "Daily", HoldBehavior: RetentionHoldCaseScoped, Implementation: "websitechat.Maintainer",
+			Resources: combine(tables("website_chat_visitors", "website_chat_messages"), resource(RetentionDatabaseScope, "retention_maintenance_status:website_chat_conversations")),
+		},
+		{
+			Category: "website_chat_presence", Label: "Website visitor presence",
+			Purpose: "Show tenants anonymous active or idle visitors and configured page locations.",
+			Role:    RetentionRoleProcessor, Status: RetentionEnforced,
+			DurationKind: retentionDurationConfigured, Duration: "60 seconds for presence; 120 seconds for the project index; browser credentials and reset markers expire after 24 hours",
+			Source: "Product default", Trigger: "Last browser-tab heartbeat.",
+			Action: "Redis expiry or explicit tab removal; browser credentials and reset markers are rejected and removed on read after expiry.", Cadence: "Redis expiry", HoldBehavior: RetentionHoldNotApplicable, Implementation: "websitechat.Handler",
+			Resources: combine(resource(RetentionRedisKey, "website-chat:presence:*"), resource(RetentionBrowserKey, "fidibeki:chat:*"), resource(RetentionBrowserKey, "fidibeki:chat-reset:*")),
+		},
+		{
 			Category: "platform_support", Label: "Private platform support conversations",
 			Purpose: "Exchange first-party support messages between staff and signed-in members.",
 			Role:    RetentionRoleController, Status: RetentionEnforced,

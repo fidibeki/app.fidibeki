@@ -387,6 +387,7 @@ export const adminMessages = {
       viewer: 'Leitor',
     },
     groups: {
+      chat: 'conversas',
       project: 'Projetos',
       widget_rule: 'Regras do widget',
       feedback: 'Feedback',
@@ -403,6 +404,7 @@ export const adminMessages = {
       tenant: 'Conta',
     },
     resources: {
+      chat: 'conversas',
       project: 'projeto',
       widget_rule: 'regra do widget',
       feedback: 'feedback',

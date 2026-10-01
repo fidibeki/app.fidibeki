@@ -1,3 +1,4 @@
+import { forgetChatCredential, chatResetPending as storedChatResetPending, markChatReset } from './chat-session'
 import {
   cacheIsFresh,
   fetchConfiguration,
@@ -57,6 +58,10 @@ interface WidgetModule {
     // element. `null` when the widget is mounted from a `<script>` tag.
     themeAttribute?: string | null
   }): WidgetUnmount
+}
+
+interface ChatModule {
+ mountChat(options: {configuration: WidgetConfiguration; rule: WidgetRule | null; publicKey: string; apiBase: URL; storage: StorageLike; mountFeedback(target: HTMLElement): Promise<ExplicitMountResult>}): { destroy(): void; reset(): Promise<void>; update(configuration: WidgetConfiguration, rule: WidgetRule | null): void }
 }
 
 interface ExplicitMountResult {
@@ -122,6 +127,10 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   const configurationEndpoint = new URL('widget/config', assetBase)
   const connectionEndpoint = new URL('widget/connected', assetBase)
   const analyticsEndpoint = new URL('widget/events', assetBase)
+  let chat: ReturnType<ChatModule["mountChat"]> | null = null
+  let chatGeneration = 0
+  let chatResetPending = false
+  let chatResetPromise: Promise<void> | null = null
   let cache: ConfigCache | null = null
   let cleanupTrigger: TriggerCleanup | null = null
   let unmountWidget: WidgetUnmount | null = null
@@ -140,7 +149,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   let automaticRuleID: string | null = null
   let configurationRequest: Promise<WidgetConfiguration> | null = null
   const explicitRuleIDs = new Set<string>()
-  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null; inline?: boolean }>()
+  const explicitTargets = new Map<HTMLElement, { reference: string; unmount: WidgetUnmount | null; inline?: boolean; reserveAutomatic?: boolean }>()
   const explicitGenerations = new WeakMap<HTMLElement, number>()
   const durableStorage = storageOrMemory(() => window.localStorage)
   const sessionStorage = storageOrMemory(() => window.sessionStorage)
@@ -416,6 +425,16 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     try {
       const configuration = await loadConfiguration(forceRefresh)
       if (currentEvaluation !== evaluation) return
+      if (chatResetPromise) {
+        await chatResetPromise.catch(() => {})
+        if (currentEvaluation !== evaluation) return
+      }
+      if (chatResetPending || storedChatResetPending(durableStorage, key)) {
+        await forgetChatCredential({ storage: durableStorage, projectID: configuration.project_id, publicKey: key, apiBase: assetBase })
+        if (currentEvaluation !== evaluation) return
+        chatResetPending = false
+        markChatReset(durableStorage, key, false)
+      }
       const declaredReferences = new Set(Array.from(
         document.querySelectorAll<HTMLElement>('fidibeki-widget[rule]'),
         element => element.getAttribute('rule')?.trim() ?? '',
@@ -440,6 +459,25 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
       // then explicitly mounted through Fidibeki.feedback.mount, never doubled
       // with an automatic launcher or popup.
       if (loaderScript.dataset.fidibekiManual === 'true') return
+      if (configuration.chat?.enabled) {
+        if (chat) chat.update(configuration, rule)
+        else {
+          const chatVersion = ++chatGeneration
+          const module = await import(new URL('chat.js', assetBase).href) as ChatModule
+          if (currentEvaluation !== evaluation || chatVersion !== chatGeneration) return
+          chat = module.mountChat({ configuration, rule, publicKey: key, apiBase: assetBase, storage: durableStorage,
+            mountFeedback: async target => {
+              const latest = await loadConfiguration(false)
+              const feedbackRule = await matchRule((latest.definitions ?? latest.rules).filter(definitionIsActive), window.location.href, {
+                loadRegex: () => import(new URL('targeting-regex.js', assetBase).href) as Promise<TargetingRegexModule>,
+              })
+              return feedbackRule ? mountExplicit(target, feedbackRule.id, true, false) : explicitResult(false, 'not_targeted')
+            },
+          })
+        }
+        return
+      }
+      chatGeneration++; chat?.destroy(); chat = null
       if (!rule) return
       const privacyLocation = privacySafeLocation(evaluationURL, rule)
       if (!privacyLocation) return
@@ -505,13 +543,13 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
     }
   }
 
-  const mountExplicit = async (target: HTMLElement, reference: string, inline = false): Promise<ExplicitMountResult> => {
+  const mountExplicit = async (target: HTMLElement, reference: string, inline = false, reserveAutomatic = true): Promise<ExplicitMountResult> => {
     const generation = (explicitGenerations.get(target) ?? 0) + 1
     explicitGenerations.set(target, generation)
     const normalizedReference = reference.trim()
     const previous = explicitTargets.get(target)
     previous?.unmount?.()
-    explicitTargets.set(target, { reference: normalizedReference, unmount: null, inline })
+    explicitTargets.set(target, { reference: normalizedReference, unmount: null, inline, reserveAutomatic })
     if (!normalizedReference) return explicitResult(false, 'not_found')
     try {
       const configuration = await loadConfiguration(false)
@@ -521,12 +559,14 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
         candidate.id === normalizedReference || candidate.definition_key === normalizedReference)
       if (!rule) return explicitResult(false, 'not_found')
       if (!definitionIsActive(rule)) return explicitResult(false, 'inactive')
-      explicitRuleIDs.add(rule.id)
-      if (rule.definition_key) explicitRuleIDs.add(rule.definition_key)
-      if (automaticRuleID === rule.id) {
-        unmountWidget?.()
-        unmountWidget = null
-        automaticRuleID = null
+      if (reserveAutomatic) {
+        explicitRuleIDs.add(rule.id)
+        if (rule.definition_key) explicitRuleIDs.add(rule.definition_key)
+        if (automaticRuleID === rule.id) {
+          unmountWidget?.()
+          unmountWidget = null
+          automaticRuleID = null
+        }
       }
       const currentURL = window.location.href
       currentPageView = pageViews.visit(currentURL)
@@ -573,7 +613,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
           persistState(durableStorage, configuration, rule, currentURL, widgetSessionID, 'dismissed')
         },
       })
-      explicitTargets.set(target, { reference: normalizedReference, unmount, inline })
+      explicitTargets.set(target, { reference: normalizedReference, unmount, inline, reserveAutomatic })
       return { mounted: true, unmount: () => unmountExplicitTarget(target) }
     } catch (error) {
       void report(error, 'mount')
@@ -775,7 +815,7 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   window.addEventListener('fidibeki:navigation', () => {
     void evaluate()
     for (const [target, mounted] of explicitTargets) {
-      if (target.isConnected) void mountExplicit(target, mounted.reference, mounted.inline)
+      if (target.isConnected) void mountExplicit(target, mounted.reference, mounted.inline, mounted.reserveAutomatic ?? true)
       else unmountExplicitTarget(target)
     }
   })
@@ -790,6 +830,27 @@ async function bootstrap(loaderScript: HTMLScriptElement, key: string): Promise<
   window.addEventListener('pagehide', () => analyticsOutbox?.flushOnHide())
   window.setInterval(() => void evaluate(true), 5 * 60 * 1000)
   const namespace = (window as unknown as { Fidibeki?: Record<string, unknown> }).Fidibeki ?? {}
+  namespace.chat = {
+    reset(): Promise<void> {
+      if (chatResetPromise) return chatResetPromise
+      markChatReset(durableStorage, key, true)
+      chatResetPending = true; evaluation++; chatGeneration++
+      const mounted = chat; chat = null
+      const mountedReset = mounted?.reset()
+      mounted?.destroy()
+      const operation = (async () => {
+        if (mounted) await mountedReset
+        else {
+          const configuration = await loadConfiguration(false)
+          await forgetChatCredential({ storage: durableStorage, projectID: configuration.project_id, publicKey: key, apiBase: assetBase })
+        }
+        chatResetPending = false
+        markChatReset(durableStorage, key, false)
+      })()
+      chatResetPromise = operation.finally(() => { chatResetPromise = null; void evaluate() })
+      return chatResetPromise
+    },
+  }
   namespace.feedback = {
     async mount(target: HTMLElement): Promise<ExplicitMountResult> {
       const configuration = await loadConfiguration(false)
