@@ -141,6 +141,7 @@ export function mountChat(options: ChatOptions) {
     node('.badge').textContent = String(unread); node('.badge').hidden = !unread
     panel.hidden = !open; launcher.setAttribute('aria-expanded', String(open))
     host.dataset.open = String(open)
+    host.dataset.view = tab
     node('.tab-messages').setAttribute('aria-pressed', String(tab === 'messages'))
     node('.tab-feedback').setAttribute('aria-pressed', String(tab === 'feedback'))
     messages.hidden = tab !== 'messages'; node('.tools').hidden = tab !== 'messages'; node('.feedback').hidden = tab !== 'feedback'

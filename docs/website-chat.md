@@ -26,7 +26,7 @@ The browser stores only the opaque credential, not message transcripts. Website 
 
 ## Appearance and mobile placement
 
-Messages and feedback share one panel and the matching feedback rule's colors, logo, position and theme. The feedback tab has one scroll area and keeps the submission confirmation visible. The chat reset action appears in Messages.
+Messages and feedback share one panel and the matching feedback rule's colors, logo, position and theme. The feedback panel sizes itself to the complete form, grows when fields expand, and shrinks to the submission confirmation. The launcher is hidden while feedback is open so the panel can use that space. There is no separate scrolling area inside the feedback form; if the complete panel exceeds the visible screen, the panel itself scrolls to keep every control reachable. The chat reset action appears in Messages.
 
 On screens up to 600px wide, the launcher becomes a compact chat button and leaves 64px of space for a website's bottom navigation, plus the device safe area. Opening the panel hides the launcher; the panel follows the visible viewport when the keyboard opens. Sites with a different navigation height can set the additional bottom offset on their page:
 

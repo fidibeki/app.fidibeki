@@ -60,6 +60,15 @@ Validation: 374 widget unit tests, 77 Chromium browser tests, type checking and 
 
 The design detector reported the intentionally hidden, configuration-populated logo and the pre-existing standalone widget accent border. The embedded feedback presentation removes that border. Rendered light/dark and desktop/mobile evidence was inspected directly.
 
+## Content-sized feedback follow-up
+
+Feedback now uses its natural content height instead of the chat transcript's 620px height. It can grow to the available viewport, including the area previously reserved for the launcher, and contracts when submission replaces the form with its confirmation. The feedback form has no inner scrolling region. Viewports shorter than the complete form use scrolling on the whole panel as an accessibility fallback.
+
+Browser regression coverage uses a form with rating, written feedback, page-element/audio/screenshot attachments and an AI-processing notice. It checks growth when the visitor resizes the textarea, no overflow when the form fits on desktop or mobile, access to submission at 320×420, contraction after submission and restoration of the message view's height.
+
+- [Expanded form on desktop](evidence/website-chat-content-height-desktop.png)
+- [Complete form on mobile](evidence/website-chat-content-height-mobile.png)
+
 ## Existing Linux test fixture correction
 
 The full backend CI gate twice failed `TestFFmpegExtractPosterSkipsTheFirstSecond` with `ETXTBSY` while every website-chat test passed. A Linux/ARM64 container reproduced 22 failures across 200 repeated FFmpeg test groups. The five tests wrote executable shell scripts and invoked them in parallel, matching the [Go write/exec descriptor race](https://github.com/golang/go/issues/22315). Those five fixture consumers now run serially; all argument/error assertions remain intact, with no production-code retry or skip. The corrected group passed 1,000 Linux repetitions and the complete backend CI gate.
