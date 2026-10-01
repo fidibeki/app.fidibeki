@@ -146,6 +146,7 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 			kind: RetentionBrowserKey,
 			want: []string{
 				"fidibeki:analytics-consent:v1:*", "fidibeki:analytics-outbox:v2:*",
+				"fidibeki:chat-reset:*", "fidibeki:chat:*",
 				"fidibeki:policy-visit:v1:*", "fidibeki:replay-consent:v1:*",
 				"fidibeki:session:v1", "fidibeki:state:v1:*", "fidibeki:state:v2:*",
 				"fidibeki:visitor:v1",
