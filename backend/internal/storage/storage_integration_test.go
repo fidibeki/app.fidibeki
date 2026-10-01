@@ -21,10 +21,13 @@ func TestStorageCreatesAndChecksBucketAgainstMinIO(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping MinIO integration test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	container, err := testcontainers.Run(ctx, "minio/minio:RELEASE.2025-09-07T16-13-09Z",
+	container, err := testcontainers.Run(ctx, "",
+		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
+			Context: "testdata/minio",
+		}),
 		testcontainers.WithExposedPorts("9000/tcp"),
 		testcontainers.WithEnv(map[string]string{
 			"MINIO_ROOT_USER":     "fidibeki-test",

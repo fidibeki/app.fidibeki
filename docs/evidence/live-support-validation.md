@@ -42,6 +42,18 @@ unchanged coverage gate passed that combined current profile.
 
 ## Reproduction and limits
 
+Release CI exposed launcher collisions with project actions and the feedback
+inspector. The launcher now occupies the app header; the conversation panel
+remains beside the page. All nine affected desktop/mobile regressions pass
+(one existing desktop-only fullscreen case is skipped on mobile), as does the
+real-stack journey. The screenshots above reflect this correction. Legacy
+mocked page journeys now provide the new support endpoints explicitly.
+
+The upstream MinIO container used by storage integration tests was removed.
+Those tests now build the same release from its pinned source commit instead
+of depending on the removed image. The support journey submits text feedback
+and only requires PostgreSQL and Redis.
+
 Run `pnpm test:live-support` from the repository root, then the checks in
 [the release runbook](../live-support.md). The runner creates a unique Docker
 project and requires a dedicated loopback fixture database; it cannot fall back

@@ -2,7 +2,7 @@
 
 Platform staff open **Conversations** in the backoffice, choose an online member,
 and send a personal message. A member receives a dismissible preview in the app's
-**Messages & feedback** launcher. Members can reply after staff start a thread,
+**Messages & feedback** button in the app header. Members can reply after staff start a thread,
 including while staff are away. They cannot initiate a chat. Give feedback keeps
 the existing structured feedback workflow.
 

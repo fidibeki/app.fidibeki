@@ -2,7 +2,7 @@
 THESIS: A personal conversation stays beside the user's work and never interrupts it.
 OWN-WORLD: Existing Avenir typography, teal actions, solid surfaces, and six-pixel corners.
 STORY: Notice a message, read it, reply, or give structured feedback from one launcher.
-FIRST VIEWPORT: A bottom-right launcher; a quiet preview only for unread staff messages.
+FIRST VIEWPORT: A header message button; a quiet preview only for unread staff messages.
 FORM: Scoped extension of the app shell. A compact conversation panel and two explicit tabs.
 -->
 <script setup lang="ts">
@@ -121,18 +121,17 @@ onBeforeUnmount(() => {
         <div ref="feedbackTarget" />
       </div>
     </section>
-    <button ref="launcher" type="button" class="support-launcher" aria-controls="fidibeki-support" :aria-expanded="open" @click="open ? close() : open = true">
-      <MessageCircle :size="20" /><span>{{ t('support.launcher') }}</span><span v-if="unread" class="support-badge" :aria-label="t('support.unread', { count: unread })">{{ unread > 99 ? '99+' : unread }}</span>
+    <button ref="launcher" type="button" class="support-launcher app-icon-button" :title="t('support.launcher')" :aria-label="t('support.launcher')" aria-controls="fidibeki-support" :aria-expanded="open" @click="open ? close() : open = true">
+      <MessageCircle :size="20" /><span v-if="unread" class="support-badge" :aria-label="t('support.unread', { count: unread })">{{ unread > 99 ? '99+' : unread }}</span>
     </button>
   </div>
 </template>
 
 <style scoped>
-.support-root { position: fixed; right: 20px; bottom: 20px; z-index: 90; font-size: 14px; }
-.support-launcher { display: flex; align-items: center; gap: 9px; margin-left: auto; min-height: 46px; padding: 0 16px; border: 0; border-radius: var(--radius); background: var(--teal-fill); color: var(--on-accent); font: inherit; font-weight: 650; cursor: pointer; }
-.support-launcher:hover { background: var(--teal-fill-strong); }
-.support-badge { display: grid; min-width: 22px; height: 22px; padding: 0 5px; place-items: center; border-radius: 20px; background: var(--on-accent); color: var(--teal-fill); font-size: 12px; }
-.support-panel { display: flex; flex-direction: column; width: 380px; height: min(620px, calc(100dvh - 100px)); margin-bottom: 12px; border-radius: 10px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-overlay); overflow: hidden; }
+.support-root { font-size: 14px; }
+.support-launcher { position: relative; }
+.support-badge { position: absolute; top: -3px; right: -5px; display: grid; min-width: 17px; height: 17px; padding: 0 3px; place-items: center; border-radius: 20px; background: var(--teal-fill); color: var(--on-accent); font-size: 10px; }
+.support-panel { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: flex; flex-direction: column; width: 380px; height: min(620px, calc(100dvh - 100px)); border-radius: 10px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow-overlay); overflow: hidden; }
 .support-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 20px 14px; }
 .support-head strong { font-size: 17px; }
 .support-head p { margin: 4px 0 0; color: var(--ink-soft); font-size: 12px; }
@@ -163,7 +162,7 @@ onBeforeUnmount(() => {
 .support-notice { padding: 10px 16px; margin: 0; background: var(--surface-soft); color: var(--ink-soft); font-size: 12px; }
 .support-notice button, .support-feedback button, .support-older { border: 0; background: transparent; color: var(--teal); text-decoration: underline; cursor: pointer; }
 .support-feedback { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
-.support-preview { position: relative; width: 310px; margin: 0 0 12px auto; background: var(--surface); box-shadow: var(--shadow-overlay); border-radius: 10px; }
+.support-preview { position: fixed; top: 68px; right: 20px; z-index: 90; width: 310px; background: var(--surface); box-shadow: var(--shadow-overlay); border-radius: 10px; }
 .support-preview-dismiss { position: absolute; right: 5px; top: 5px; }
 .support-preview-message { display: block; width: 100%; padding: 18px; border: 0; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
 .support-preview-message strong { display: block; padding-right: 24px; font-size: 12px; }
@@ -171,8 +170,7 @@ onBeforeUnmount(() => {
 .support-preview-message small { color: var(--teal); font-weight: 650; }
 button:focus-visible, textarea:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 @media (max-width: 480px) {
-  .support-root { right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); left: 12px; }
-  .support-panel { width: 100%; height: min(620px, calc(100dvh - 92px)); }
-  .support-preview { max-width: 100%; }
+  .support-panel { right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); left: 12px; width: auto; height: min(620px, calc(100dvh - 92px)); }
+  .support-preview { right: 12px; max-width: calc(100vw - 24px); }
 }
 </style>

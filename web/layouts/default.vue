@@ -290,6 +290,7 @@ watch(
         <kbd class="app-kbd">{{ shortcutHint }}</kbd>
       </button>
       <div class="app-topbar-actions">
+        <SupportPanel v-if="member && !tenant?.deletion_requested_at" />
         <NuxtLink v-if="tenant?.status === 'trial'" to="/billing" class="app-trial-status">
           <i /> {{ trialLabel }}
         </NuxtLink>
@@ -392,6 +393,5 @@ watch(
     </main>
     <AppCommandPalette v-if="can('feedback:read')" :open="paletteOpen" :options="commandOptions" @close="paletteOpen = false" />
     <AppToast />
-    <SupportPanel v-if="member && !tenant?.deletion_requested_at" :inert="mobileNavOpen" />
   </div>
 </template>

@@ -1,6 +1,7 @@
 import { expect, test, type Route } from '@playwright/test'
 import { allTenantPermissions } from '../../data/permissions'
 import { visibleLayoutDefects } from './layout-assertions'
+import { mockSupportRequest } from './support-fixture'
 
 const tenantOrigin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = '2026-07-21T12:00:00.000Z'
@@ -188,6 +189,7 @@ test('pseudo-locale product surfaces remain responsive and preserve customer con
     const request = route.request()
     if (request.resourceType() === 'document') return route.continue()
     const path = new URL(request.url()).pathname
+    if (await mockSupportRequest(route)) return
     if ((path === '/auth/verify' || path === '/auth/refresh') && request.method() === 'POST') {
       return json(route, {
         access_token: 'pseudo-access-token',
