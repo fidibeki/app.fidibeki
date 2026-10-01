@@ -1,6 +1,6 @@
 # Tenant website chat validation
 
-Scope: tenant dashboard → visitors on that tenant's own website, using the existing embed. Operator starts each conversation; visitors can only reply. Platform backoffice support remains separate.
+Scope: tenant dashboard → visitors on that tenant's own website, using the existing embed. Operator-first is the default; a project flag now permits visitors to start conversations. Platform backoffice support remains separate. The current release is covered by the [v0.4.0 launch audit](evidence/website-chat-launch-audit.md). The sections below preserve the earlier release history.
 
 The isolated real-stack fixture uses PostgreSQL 16, Redis 7, the real Go API, Nuxt tenant dashboard, built widget assets and a separate storefront origin. It creates unique fixture accounts and cleans up by generated IDs. It never uses a production database.
 
@@ -15,7 +15,7 @@ Backend integration tests exercise authorization and forced RLS across tenants/p
 
 Browser regressions cover pre-mount logout reset, reset with configuration failure and navigation, feedback restoration after chat is disabled, preserving loaded inbox pages through refresh, and changing conversations while an older-history request remains pending.
 
-Independent review: [two-round review report](../.agents/meta/review-chain-report.md). All eight confirmed findings were resolved.
+Independent review: [two-round review report](https://github.com/fidibeki/app.fidibeki/blob/4a697c01bd61e51a1eac014f3ccf8c845fb226e5/.agents/meta/review-chain-report.md). All eight confirmed findings were resolved.
 
 ## Local results
 
