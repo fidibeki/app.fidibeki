@@ -70,5 +70,7 @@ job system. Inbox invalidation resets older cached pages instead of maintaining
 an inconsistent partial cache. No findings were declined. The final linter also required explicitly ignoring
 the existing development seed connection-close error, a one-line cleanup. Tests are local;
 production edge verification remains a release step. No load benchmark or
-production deployment was performed. The rollout and data-preserving rollback
-procedure is in `docs/live-support.md`.
+production deployment was performed during the review. The subsequent release
+passed full CI and production smoke testing; evidence is in
+`docs/evidence/live-support-production.md`. The rollout and data-preserving
+rollback procedure is in `docs/live-support.md`.
