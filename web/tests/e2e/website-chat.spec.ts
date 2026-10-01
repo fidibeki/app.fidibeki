@@ -60,3 +60,48 @@ test('inbox refresh preserves loaded pages and older history remains usable afte
   await expect(page.getByRole('log')).not.toContainText('History 51')
   await expect(older).toBeEnabled()
 })
+
+test('visitor-start setting is saved per project and failed changes remain off', async ({ page }) => {
+  const allowed: Record<string, boolean> = { 'project-chat': false, 'project-other': false }
+  let failNext = false
+  await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async route => {
+    const path = new URL(route.request().url()).pathname
+    if (route.request().resourceType() === 'document') return route.continue()
+    if (await mockSupportRequest(route)) return
+    if (path === '/v1/config') return route.fulfill({ json: { tenant, plan: { plan: 'growth', limits: {}, features: {} } } })
+    if (path === '/auth/refresh' || path === '/auth/verify') return route.fulfill({ json: { access_token: 'chat-test', token_type: 'Bearer', expires_in: 900, member, tenant } })
+    if (path === '/v1/projects') return route.fulfill({ json: { projects: [{ id: 'project-chat', name: 'Acme store' }, { id: 'project-other', name: 'Other site' }] } })
+    if (path.endsWith('/chat/settings')) {
+      const id = path.split('/')[3]!
+      if (route.request().method() === 'PUT') {
+        if (failNext) { failNext = false; return route.fulfill({ status: 503, json: {} }) }
+        allowed[id] = route.request().postDataJSON().allow_visitor_messages
+      }
+      return route.fulfill({ json: { enabled: true, allow_visitor_messages: allowed[id] } })
+    }
+    if (path.endsWith('/chat/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    if (path.endsWith('/chat/online')) return route.fulfill({ json: { visitors: [], truncated: false } })
+    if (path.endsWith('/chat/conversations')) return route.fulfill({ json: { conversations: [], next_cursor: '' } })
+    return route.fulfill({ json: {} })
+  })
+  await page.goto(`${origin}/auth/verify?return_to=%2Fconversations#token=chat-test`)
+  const toggle = page.getByRole('switch', { name: 'Allow visitors to start conversations', exact: true })
+  await expect(toggle).not.toBeChecked()
+  await toggle.click()
+  await expect(toggle).toBeChecked()
+  await expect.poll(() => allowed['project-chat']).toBe(true)
+  await page.reload()
+  await expect(toggle).toBeChecked()
+  await page.getByLabel('Website project', { exact: true }).selectOption('project-other')
+  await expect(toggle).not.toBeChecked()
+  failNext = true
+  await toggle.click()
+  await expect(page.getByRole('alert')).toContainText('Chat settings could not be saved.')
+  await expect(toggle).not.toBeChecked()
+  expect(allowed['project-other']).toBe(false)
+  await page.getByLabel('Website project', { exact: true }).selectOption('project-chat')
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await expect.poll(() => allowed['project-chat']).toBe(false)
+  await expect(toggle).not.toBeChecked()
+})

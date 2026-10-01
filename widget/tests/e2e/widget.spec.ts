@@ -3034,3 +3034,50 @@ test('feedback panel grows with the complete form and shrinks after submission',
   await page.setViewportSize({ width: 1280, height: 1100 })
   expect((await panel.boundingBox())!.height).toBe(messageHeight)
 })
+
+test('visitors can start a chat when enabled and keep replying after it is disabled', async ({ page }) => {
+  let allowed = false
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const messages: Record<string, unknown>[] = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { allow_visitor_messages: allowed, conversation: messages.length ? { id: token.split('.')[0], project_id: 'project-browser', last_sequence: messages.length, visitor_read_sequence: messages.length, unread: 0 } : null, messages, has_more: false } })
+    if (path.endsWith('/messages')) {
+      const body = route.request().postDataJSON()
+      if (!messages.length && !allowed) return route.fulfill({ status: 403, json: {} })
+      const message = { ...body, id: body.client_id, sequence: messages.length + 1, sender_type: 'visitor', sender_name: 'Visitor', created_at: new Date().toISOString() }
+      messages.push(message)
+      return route.fulfill({ json: { message } })
+    }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  await expect(chat.getByRole('textbox')).toBeHidden()
+  allowed = true
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat.getByText('Send us a message.', { exact: true })).toBeVisible()
+  await chat.getByRole('textbox', { name: 'Your message', exact: true }).fill('Can I ask something?')
+  // A setting change can race a send. The server still owns the permission.
+  allowed = false
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(chat.getByRole('alert')).toContainText('Your draft is still here.')
+  await expect(chat.getByRole('textbox')).toBeHidden()
+  expect(messages).toHaveLength(0)
+  allowed = true
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat.getByRole('textbox')).toHaveValue('Can I ask something?')
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(chat.getByRole('log')).toContainText('Can I ask something?')
+  expect(messages).toHaveLength(1)
+  allowed = false
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await chat.getByRole('textbox', { name: 'Your reply', exact: true }).fill('Here is some more detail.')
+  await chat.getByRole('button', { name: 'Send reply', exact: true }).click()
+  await expect(chat.getByRole('log')).toContainText('Here is some more detail.')
+  expect(messages).toHaveLength(2)
+})

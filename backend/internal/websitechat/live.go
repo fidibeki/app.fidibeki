@@ -25,6 +25,9 @@ type Presence struct {
 func operatorChannel(s *scope) string {
 	return "website-chat:operators:" + s.tenantID + ":" + s.projectID
 }
+func settingsChannel(s *scope) string {
+	return "website-chat:settings:" + s.tenantID + ":" + s.projectID
+}
 func visitorChannel(s *scope) string {
 	return "website-chat:visitor:" + s.tenantID + ":" + s.projectID + ":" + s.visitorID
 }

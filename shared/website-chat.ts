@@ -21,7 +21,7 @@ export interface ChatConversation {
   unread: number
   preview: string
 }
-export interface ChatThread { conversation: ChatConversation | null; messages: ChatMessage[]; has_more: boolean }
+export interface ChatThread { allow_visitor_messages?: boolean; conversation: ChatConversation | null; messages: ChatMessage[]; has_more: boolean }
 export interface ChatVisitor { id: string; name: string; page_url: string; state: 'active' | 'idle'; last_seen: string }
 export const emptyChat = (): ChatThread => ({ conversation: null, messages: [], has_more: false })
 export function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {

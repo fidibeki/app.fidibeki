@@ -2,14 +2,14 @@
 
 Each Fidibeki workspace can see visitors on its own website and start conversations with them. Open **Conversations** in the tenant dashboard, select a website project, and choose **Enable website chat**. Chat is off by default. The existing Fidibeki website embed picks up the setting; reload the website after enabling it.
 
-The Online list shows anonymous visitors, active/idle status, and a privacy-filtered page location. Choose a visitor and send a message. It appears immediately in the website's **Messages & feedback** widget, with a preview the visitor can open or dismiss. Visitors can reply only after your team sends the first message. Feedback stays in a separate tab of the same widget and submits through the existing feedback form.
+The Online list shows anonymous visitors, active/idle status, and a privacy-filtered page location. Choose a visitor and send a message. It appears immediately in the website's **Messages & feedback** widget, with a preview the visitor can open or dismiss. By default, visitors can reply only after your team sends the first message. Turn on **Allow visitors to start conversations** in Conversations for the selected website project to accept first messages, including while your team is away. The switch is off by default for every project. Turning it off blocks new visitor-started chats and keeps existing conversations open. The permission is enforced by the API and updates open widgets in real time. Feedback stays in a separate tab of the same widget and submits through the existing feedback form.
 
 Conversations remain in Inbox after visitors leave. Team members can read older messages, see unread replies, download a complete JSON transcript, and delete a conversation if they have permission. Sending is disabled once the visitor credential expires. Reconnecting or reopening the page recovers persisted messages and does not resend a successfully accepted message.
 
 ## Access and identity
 
 - `project:read` and `chat:read` allow access to Conversations.
-- `chat:write` allows sending messages. `project:update` controls the project chat setting.
+- `chat:write` allows sending messages. `project:update` controls both project chat settings.
 - `chat:delete` allows deleting a conversation, with confirmation. Active tenant privacy holds block deletion.
 - Existing full administrators inherit the three new permissions. Custom roles retain their existing permissions; an administrator can grant chat access explicitly.
 - Visitors have anonymous project- and origin-bound credentials, valid for 24 hours. Multiple tabs share the browser identity. The widget does not infer a name or email from a website login.
@@ -49,6 +49,6 @@ Message history is retained for 180 days after the last message. Unused visitor 
 
 ## Operations and tests
 
-Deploy migration 139 with the API, then the worker, widget assets and tenant web application. Disable chat per project to stop new website conversations; authorized team members can still read retained history. Platform backoffice support is a separate feature and uses separate tables and permissions.
+Deploy migrations through 140 with the API before updating widget assets and the tenant web application. Migration 140 adds the visitor-initiation flag with a default of false. Disable chat per project to stop new website conversations; authorized team members can still read retained history. Platform backoffice support is a separate feature and uses separate tables and permissions.
 
-`pnpm test:live-support` runs an isolated PostgreSQL/Redis/API/widget/web/backoffice stack. Its website-chat journey uses a tenant dashboard and a separate storefront origin, checks live delivery and replies, reconnect recovery, multi-tab presence, transcript download, feedback submission and reset. It never connects to production. Backend integration tests cover isolation, permissions, expiry, pagination, retention and legal holds. Browser regression tests cover reset before mounting, feedback after disabling chat, inbox refresh and switching while older history is loading.
+`pnpm test:live-support` runs an isolated PostgreSQL/Redis/API/widget/web/backoffice stack. Its website-chat journey uses a tenant dashboard and a separate storefront origin, checks live delivery and replies, reconnect recovery, multi-tab presence, transcript download, feedback submission and reset. It also enables visitor initiation from the dashboard, sends a visitor's first message into Inbox, and verifies that disabling the flag preserves existing replies while blocking new conversations. It never connects to production. Backend integration tests cover isolation, permissions, expiry, pagination, retention and legal holds. Browser regression tests cover reset before mounting, feedback after disabling chat, inbox refresh, switching while older history is loading, per-project settings, failed saves and preserved drafts when the flag changes before sending.

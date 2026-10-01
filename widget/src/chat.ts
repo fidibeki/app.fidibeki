@@ -18,8 +18,8 @@ interface ChatOptions {
 }
 type Credential = ChatCredential
 const copy = {
-  en: { launcher: 'Messages & feedback', messages: 'Messages', feedback: 'Give feedback', close: 'Close conversation', waiting: 'Your conversations live here.', waitingBody: 'The team can send you a message while you visit. You can reply after they start a conversation.', reply: 'Your reply', placeholder: 'Write a reply…', send: 'Send reply', sending: 'Sending…', later: 'Replies may come later.', download: 'Download conversation', older: 'Load earlier messages', unavailable: 'Chat is unavailable right now.', retry: 'Try again', error: 'We could not confirm your message. Your draft is still here.', feedbackUnavailable: 'There is no feedback form for this page.', reconnecting: 'Reconnecting…', open: 'Open conversation', dismiss: 'Dismiss preview', downloadError: 'The download could not be completed. Try again.', reset: 'Forget this chat on this browser', you: 'You', loading: 'Loading…' },
-  pt: { launcher: 'Mensagens e feedback', messages: 'Mensagens', feedback: 'Dar feedback', close: 'Fechar conversa', waiting: 'As suas conversas ficam aqui.', waitingBody: 'A equipa pode enviar-lhe uma mensagem durante a visita. Pode responder depois de a equipa iniciar uma conversa.', reply: 'A sua resposta', placeholder: 'Escreva uma resposta…', send: 'Enviar resposta', sending: 'A enviar…', later: 'A resposta pode demorar.', download: 'Descarregar conversa', older: 'Carregar mensagens anteriores', unavailable: 'O chat está indisponível de momento.', retry: 'Tentar novamente', error: 'Não foi possível confirmar a mensagem. O rascunho foi guardado.', feedbackUnavailable: 'Não existe um formulário de feedback para esta página.', reconnecting: 'A restabelecer ligação…', open: 'Abrir conversa', dismiss: 'Fechar pré-visualização', downloadError: 'Não foi possível descarregar a conversa. Tente novamente.', reset: 'Esquecer este chat neste navegador', you: 'Você', loading: 'A carregar…' },
+  en: { launcher: 'Messages & feedback', messages: 'Messages', feedback: 'Give feedback', close: 'Close conversation', start: 'Send us a message.', startBody: 'Leave a message and the team will reply when they can.', message: 'Your message', messagePlaceholder: 'Write a message…', startSend: 'Send message', waiting: 'Your conversations live here.', waitingBody: 'The team can send you a message while you visit. You can reply after they start a conversation.', reply: 'Your reply', placeholder: 'Write a reply…', send: 'Send reply', sending: 'Sending…', later: 'Replies may come later.', download: 'Download conversation', older: 'Load earlier messages', unavailable: 'Chat is unavailable right now.', retry: 'Try again', error: 'We could not confirm your message. Your draft is still here.', feedbackUnavailable: 'There is no feedback form for this page.', reconnecting: 'Reconnecting…', open: 'Open conversation', dismiss: 'Dismiss preview', downloadError: 'The download could not be completed. Try again.', reset: 'Forget this chat on this browser', you: 'You', loading: 'Loading…' },
+  pt: { launcher: 'Mensagens e feedback', messages: 'Mensagens', feedback: 'Dar feedback', close: 'Fechar conversa', start: 'Envie-nos uma mensagem.', startBody: 'Deixe uma mensagem e a equipa responderá quando puder.', message: 'A sua mensagem', messagePlaceholder: 'Escreva uma mensagem…', startSend: 'Enviar mensagem', waiting: 'As suas conversas ficam aqui.', waitingBody: 'A equipa pode enviar-lhe uma mensagem durante a visita. Pode responder depois de a equipa iniciar uma conversa.', reply: 'A sua resposta', placeholder: 'Escreva uma resposta…', send: 'Enviar resposta', sending: 'A enviar…', later: 'A resposta pode demorar.', download: 'Descarregar conversa', older: 'Carregar mensagens anteriores', unavailable: 'O chat está indisponível de momento.', retry: 'Tentar novamente', error: 'Não foi possível confirmar a mensagem. O rascunho foi guardado.', feedbackUnavailable: 'Não existe um formulário de feedback para esta página.', reconnecting: 'A restabelecer ligação…', open: 'Abrir conversa', dismiss: 'Fechar pré-visualização', downloadError: 'Não foi possível descarregar a conversa. Tente novamente.', reset: 'Esquecer este chat neste navegador', you: 'Você', loading: 'A carregar…' },
 }
 
 export function mountChat(options: ChatOptions) {
@@ -135,6 +135,7 @@ export function mountChat(options: ChatOptions) {
     })().finally(() => { sessionPromise = null })
     return sessionPromise
   }
+  function canSend() { return state !== 'forbidden' && Boolean(thread.conversation || thread.allow_visitor_messages) }
   function render() {
     const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80
     const unread = thread.conversation?.unread ?? 0
@@ -146,17 +147,19 @@ export function mountChat(options: ChatOptions) {
     node('.tab-feedback').setAttribute('aria-pressed', String(tab === 'feedback'))
     messages.hidden = tab !== 'messages'; node('.tools').hidden = tab !== 'messages'; node('.feedback').hidden = tab !== 'feedback'
     node('.reset').hidden = tab !== 'messages'
-    node('.compose').hidden = tab !== 'messages' || !thread.conversation || state === 'forbidden'
+    node('.compose').hidden = tab !== 'messages' || !canSend()
+    node('label').textContent = thread.conversation ? text.reply : text.message
+    input.placeholder = thread.conversation ? text.placeholder : text.messagePlaceholder
     node('.download').hidden = !thread.conversation; node('.older').hidden = !thread.has_more
     input.disabled = sending; submit.disabled = sending || !input.value.trim() || Array.from(input.value.trim()).length > 4000
-    submit.textContent = sending ? text.sending : text.send
+    submit.textContent = sending ? text.sending : thread.conversation ? text.send : text.startSend
     node('.connection').textContent = state === 'forbidden' ? text.unavailable : text.reconnecting
     node('.connection').hidden = tab !== 'messages' || state === 'connected' || state === 'connecting'
     messages.replaceChildren()
     if (!thread.messages.length) {
       const empty = document.createElement('div'); empty.className = 'empty'
-      const title = document.createElement('strong'); title.textContent = text.waiting
-      const body = document.createElement('p'); body.textContent = text.waitingBody
+      const title = document.createElement('strong'); title.textContent = thread.allow_visitor_messages ? text.start : text.waiting
+      const body = document.createElement('p'); body.textContent = thread.allow_visitor_messages ? text.startBody : text.waitingBody
       empty.append(title, body); messages.append(empty)
     }
     for (const message of thread.messages) {
@@ -238,14 +241,14 @@ export function mountChat(options: ChatOptions) {
   input.onkeydown = event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); node<HTMLFormElement>('form').requestSubmit() } }
   node<HTMLFormElement>('form').onsubmit = async event => {
     event.preventDefault(); const body = input.value.trim()
-    if (sending || !thread.conversation || !body || Array.from(body).length > 4000) return
+    if (sending || !canSend() || !body || Array.from(body).length > 4000) return
     if (!pending || pending.body !== body) pending = { body, client_id: crypto.randomUUID() }
     sending = true; error(); render(); const version = generation
     try {
       await request<{ message: ChatMessage }>('messages', 'POST', pending)
       if (version !== generation || lifetime.signal.aborted) return
       input.value = ''; pending = null; await refresh(); messages.scrollTop = messages.scrollHeight
-    } catch { if (version === generation && !lifetime.signal.aborted) error(text.error) }
+    } catch { if (version === generation && !lifetime.signal.aborted) { error(text.error); await refresh() } }
     finally { sending = false; if (!lifetime.signal.aborted) { render(); input.focus() } }
   }
   node<HTMLButtonElement>('.older').onclick = async () => {

@@ -71,7 +71,7 @@ func TestWebsiteChatJourney(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 	t.Run("permission migration grants only full administrators", func(t *testing.T) {
-		if err := migrator.Steps(-1); err != nil {
+		if err := migrator.Migrate(138); err != nil {
 			t.Fatal(err)
 		}
 		var tid string
@@ -319,6 +319,14 @@ func TestWebsiteChatJourney(t *testing.T) {
 		event()
 		request("POST", base+"/visitors/"+visitorID+"/messages", token, payload("A live update"), 200)
 		event()
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": true}, 200)
+		event()
+		updated := request("GET", "/v1/widget/chat/conversation", visitorToken, nil, 200)
+		if string(updated["allow_visitor_messages"]) != "true" {
+			t.Fatal("live setting change missing")
+		}
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": false}, 200)
+		event()
 	})
 
 	t.Run("tenant project visitor origin and permission boundaries", func(t *testing.T) {
@@ -330,6 +338,12 @@ func TestWebsiteChatJourney(t *testing.T) {
 		if _, err = pool.Exec(ctx, `INSERT INTO projects(id,tenant_id,name,public_key,allowed_domains,chat_enabled) VALUES($1,$2,'Other site',$3,ARRAY['shop.test'],true)`, otherProject, tenantID, otherKey); err != nil {
 			t.Fatal(err)
 		}
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": true}, 200)
+		otherSettings := request("GET", "/v1/projects/"+otherProject+"/chat/settings", token, nil, 200)
+		if string(otherSettings["allow_visitor_messages"]) != "false" {
+			t.Fatal("setting crossed project boundary")
+		}
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": false}, 200)
 		request("GET", "/v1/widget/chat/conversation", visitorToken, nil, 403, map[string]string{"Origin": "https://evil.test"})
 		request("GET", "/v1/widget/chat/conversation", visitorToken, nil, 403, map[string]string{widgetapi.PublicKeyHeader: ""})
 		request("GET", "/v1/widget/chat/conversation?key=different", visitorToken, nil, 403)
@@ -357,6 +371,7 @@ func TestWebsiteChatJourney(t *testing.T) {
 		request("GET", base+"/visitors/"+visitorID, token, nil, 200)
 		request("POST", base+"/visitors/"+visitorID+"/messages", token, payload("cannot send"), 403)
 		request("PUT", base+"/settings", token, map[string]any{"enabled": false}, 403)
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": true}, 403)
 		if _, err = pool.Exec(ctx, `UPDATE tenant_members SET permissions=$2 WHERE id=$1`, memberID, auth.TenantPermissionStrings()); err != nil {
 			t.Fatal(err)
 		}
@@ -501,6 +516,57 @@ func TestWebsiteChatJourney(t *testing.T) {
 		if err = maintainer.Run(runCtx, 0); err != nil {
 			t.Fatal(err)
 		}
+	})
+
+	t.Run("visitors can start only when the project allows it", func(t *testing.T) {
+		settings := request("GET", base+"/settings", token, nil, 200)
+		if string(settings["allow_visitor_messages"]) != "false" {
+			t.Fatal("visitor initiation must default off")
+		}
+		settings = request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": true}, 200)
+		if string(settings["enabled"]) != "true" || string(settings["allow_visitor_messages"]) != "true" {
+			t.Fatal("partial setting update did not persist")
+		}
+		disabled := request("PUT", base+"/settings", token, map[string]any{"enabled": false}, 200)
+		if string(disabled["allow_visitor_messages"]) != "true" {
+			t.Fatal("chat toggle erased initiation preference")
+		}
+		request("POST", "/v1/widget/chat/session", "", map[string]any{}, 403)
+		request("PUT", base+"/settings", token, map[string]any{"enabled": true}, 200)
+		fresh := request("POST", "/v1/widget/chat/session", "", map[string]any{}, 201)
+		var cred, id string
+		_ = json.Unmarshal(fresh["token"], &cred)
+		_ = json.Unmarshal(fresh["visitor_id"], &id)
+		empty := request("GET", "/v1/widget/chat/conversation", cred, nil, 200)
+		if string(empty["allow_visitor_messages"]) != "true" || string(empty["conversation"]) != "null" {
+			t.Fatal("new visitor cannot see the current permission")
+		}
+		first := payload("A visitor starts this conversation")
+		request("POST", "/v1/widget/chat/messages", cred, first, 200)
+		request("POST", "/v1/widget/chat/messages", cred, first, 200)
+		thread := request("GET", base+"/visitors/"+id, token, nil, 200)
+		var rows []Message
+		_ = json.Unmarshal(thread["messages"], &rows)
+		if len(rows) != 1 || rows[0].SenderType != "visitor" || rows[0].Sequence != 1 {
+			t.Fatal("visitor first message missing or duplicated")
+		}
+		inbox := request("GET", base+"/conversations", token, nil, 200)
+		var conversations []Conversation
+		_ = json.Unmarshal(inbox["conversations"], &conversations)
+		found := false
+		for _, c := range conversations {
+			if c.ID == id && c.Unread == 1 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("visitor-started conversation missing from unread inbox")
+		}
+		request("PUT", base+"/settings", token, map[string]any{"allow_visitor_messages": false}, 200)
+		request("POST", "/v1/widget/chat/messages", cred, payload("Existing conversation can continue"), 200)
+		fresh = request("POST", "/v1/widget/chat/session", "", map[string]any{}, 201)
+		_ = json.Unmarshal(fresh["token"], &cred)
+		request("POST", "/v1/widget/chat/messages", cred, payload("A new conversation is blocked"), 403)
 	})
 
 }
