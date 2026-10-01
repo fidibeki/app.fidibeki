@@ -1,7 +1,9 @@
 # Live support launch validation
 
-Date: 2026-10-01. Branch: `feat/live-support`. Base: `f9ced0e`.
+Date: 2026-10-01. Branch: `feat/live-support`. Final base: `8cc0a41`.
+Release: `v0.2.0`, commit `67cf1c6e9270ed7d70fbcc621ce6e5b0065667bf`.
 All accounts, workspaces and conversation text in browser evidence are synthetic.
+Production verification is recorded separately in [the release evidence](live-support-production.md).
 
 | Check | Result |
 |---|---|
@@ -16,9 +18,9 @@ All accounts, workspaces and conversation text in browser evidence are synthetic
 | App unit suite | 197 passed, including 14 support cases |
 | Backoffice unit suite | 9 passed |
 | Widget unit suite | 370 passed, 86.52% statement coverage |
-| App browser regressions | 37 passed; one existing desktop-only assertion skipped on mobile |
+| App browser regressions | Final full CI: 265 passed, 61 existing conditional skips |
 | Backoffice browser regressions | 4 passed |
-| Widget Chromium regressions | 72 passed |
+| Widget Chromium regressions | Final full CI: 75 passed |
 | Type checks and production bundles | App, backoffice and widget passed |
 | Docker images | API, app and backoffice passed |
 | Static checks | Formatting, go vet, privacy governance, Compose loopback security and whitespace checks passed |
@@ -59,7 +61,8 @@ Run `pnpm test:live-support` from the repository root, then the checks in
 project and requires a dedicated loopback fixture database; it cannot fall back
 to the ordinary development database. Cleanup deletes only generated fixture IDs.
 
-The review report is at `.agents/meta/review-chain-report.md`. All checks were
-local. Production deployment, smoke testing through the production edge, and a
-capacity benchmark were not performed. The launch runbook includes deployment
-order, required permissions, retention health and a rollback that preserves data.
+The review report is at `.agents/meta/review-chain-report.md`. The final feature
+passed full GitHub CI and production smoke testing through the production edge;
+see [the release evidence](live-support-production.md). No capacity benchmark was
+performed. The launch runbook includes deployment order, required permissions,
+retention health and a rollback that preserves data.
