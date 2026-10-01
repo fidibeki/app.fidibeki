@@ -80,8 +80,8 @@ make coverage
 make format-check lint governance-check
 ```
 
-The browser script starts an isolated PostgreSQL/Redis/MinIO stack and production
-Go, app, widget and backoffice servers on loopback ports 54339, 6389, 9009, 8089,
+The browser script starts isolated PostgreSQL and Redis services and production
+Go, app, widget and backoffice servers on loopback ports 54339, 6389, 8089,
 4329, 4180 and 4179. It uses synthetic accounts and no external email delivery.
 It checks staff initiation, member replies, durable reload, reconnect, multiple
 tabs, transcript download, structured feedback submission, keyboard focus and
