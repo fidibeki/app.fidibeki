@@ -32,3 +32,7 @@ Backend package tests pass after updating the expected browser-key inventory for
 Linux CI passed all 78 widget browser tests, including Firefox, and both real-stack journeys. Its widget image build detected a missing `COPY shared shared`; the Dockerfile is corrected and the image now builds locally and serves `/v1/chat.js`. The edge CI gate explicitly checks that entry point.
 
 The pull request's required CI checks run the full backend coverage gates, both browser engines, tenant web/backoffice regressions and the isolated real-stack journeys against the committed artifact.
+
+## Existing Linux test fixture correction
+
+The full backend CI gate twice failed `TestFFmpegExtractPosterSkipsTheFirstSecond` with `ETXTBSY` while every website-chat test passed. A Linux/ARM64 container reproduced 22 failures across 200 repeated FFmpeg test groups. The five tests wrote executable shell scripts and invoked them in parallel, matching the [Go write/exec descriptor race](https://github.com/golang/go/issues/22315). Those five fixture consumers now run serially; all argument/error assertions remain intact, with no production-code retry or skip. The corrected group passed 1,000 Linux repetitions. The complete backend gate is rerun after this correction.
