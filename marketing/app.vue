@@ -52,7 +52,6 @@ useHead({
 
 .app-main {
   flex: 1;
-  /* The fixed header sits above the flow; keep content clear of it. */
-  padding-top: var(--header-height);
+  min-width: 0;
 }
 </style>

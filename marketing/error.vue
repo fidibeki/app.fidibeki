@@ -6,7 +6,9 @@ const props = defineProps<{ error: NuxtError }>()
 const is404 = computed(() => props.error.statusCode === 404)
 
 useHead({
-  title: is404.value ? 'Page not found · Fidibeki' : 'Something went wrong · Fidibeki',
+  title: is404.value
+    ? 'Page not found · Fidibeki'
+    : 'Something went wrong · Fidibeki',
   meta: [{ name: 'robots', content: 'noindex' }],
 })
 </script>
@@ -18,7 +20,9 @@ useHead({
     <main id="main" class="error-main">
       <div class="container error-inner">
         <p class="eyebrow">{{ error.statusCode }}</p>
-        <h1>{{ is404 ? 'This page does not exist' : 'Something went wrong' }}</h1>
+        <h1>
+          {{ is404 ? 'This page does not exist' : 'Something went wrong' }}
+        </h1>
         <p class="lede">
           {{
             is404
@@ -47,7 +51,6 @@ useHead({
   flex: 1;
   display: flex;
   align-items: center;
-  padding-top: var(--header-height);
 }
 
 .error-inner {
@@ -56,6 +59,7 @@ useHead({
 
 .error-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.85rem;
   margin-top: 1.5rem;
 }

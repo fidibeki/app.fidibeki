@@ -8,7 +8,9 @@ defineProps<{
   <nav class="breadcrumbs" aria-label="Breadcrumb">
     <ol>
       <li v-for="(item, index) in items" :key="item.path">
-        <NuxtLink v-if="index < items.length - 1" :to="item.path">{{ item.name }}</NuxtLink>
+        <NuxtLink v-if="index < items.length - 1" :to="item.path">{{
+          item.name
+        }}</NuxtLink>
         <span v-else aria-current="page">{{ item.name }}</span>
       </li>
     </ol>
@@ -51,6 +53,6 @@ defineProps<{
 
 .breadcrumbs span[aria-current] {
   color: var(--ink-soft);
-  font-weight: 600;
+  font-weight: 400;
 }
 </style>

@@ -12,6 +12,10 @@ const representativeRoutes = [
   '/use-cases',
   '/use-cases/bug-reports',
   '/privacy',
+  '/tos',
+  '/dpa',
+  '/contact',
+  '/support',
   '/security',
   '/sign-up',
 ]

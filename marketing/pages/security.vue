@@ -34,7 +34,7 @@ onMounted(() => {
     {
       rootMargin: '-20% 0px -70% 0px',
       threshold: 0,
-    }
+    },
   )
   for (const heading of securityHeadings) {
     const element = document.getElementById(heading.id)
@@ -109,7 +109,12 @@ const widgetPoints = [
       lede="Fidibeki holds your customers’ words and your product’s context. Here is precisely how it is protected: no vague badges, just implemented behavior."
     >
       <template #breadcrumbs>
-        <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Security', path: '/security' }]" />
+        <Breadcrumbs
+          :items="[
+            { name: 'Home', path: '/' },
+            { name: 'Security', path: '/security' },
+          ]"
+        />
       </template>
     </PageHero>
 
@@ -119,11 +124,11 @@ const widgetPoints = [
           <div
             v-for="pillar in pillars"
             :key="pillar.title"
-            class="card pillar-card"
+            class="pillar-card"
           >
             <span class="pillar-icon"
-              ><component :is="pillar.icon" :size="22" aria-hidden="true" /></span
-            >
+              ><component :is="pillar.icon" :size="22" aria-hidden="true"
+            /></span>
             <h2>{{ pillar.title }}</h2>
             <p>{{ pillar.body }}</p>
           </div>
@@ -136,7 +141,8 @@ const widgetPoints = [
         <div class="section-head">
           <h2>The widget on your page</h2>
           <p class="lede">
-            The embed script runs on your site, so its behavior is a security question too.
+            The embed script runs on your site, so its behavior is a security
+            question too.
           </p>
         </div>
         <ul class="widget-list">
@@ -154,7 +160,11 @@ const widgetPoints = [
           <div class="compliance-nav-sticky">
             <ul class="compliance-nav-list">
               <li v-for="heading in securityHeadings" :key="heading.id">
-                <a :href="`#${heading.id}`" :class="{ active: activeId === heading.id }">{{ heading.label }}</a>
+                <a
+                  :href="`#${heading.id}`"
+                  :class="{ active: activeId === heading.id }"
+                  >{{ heading.label }}</a
+                >
               </li>
             </ul>
           </div>
@@ -162,55 +172,75 @@ const widgetPoints = [
 
         <div class="prose compliance-notice">
           <details class="last-updated">
-            <summary>Last updated: 23 July 2026</summary>
+            <summary>Last updated: 26 July 2026</summary>
             <p>
-              This is the current version of the security page. Previous versions will be
-              archived here when the page changes materially.
+              This is the current version of the security page. Previous
+              versions will be archived here when the page changes materially.
             </p>
           </details>
 
           <h2 id="infrastructure">Infrastructure and access</h2>
           <p>
-            Fidibeki runs on managed cloud infrastructure. We do not own or have physical access to
-            the underlying data centers. Production access is limited to designated operators, uses
-            multi factor authentication, and is logged. We deploy through an automated pipeline with
-            required review, continuous integration, and dependency scanning.
+            Fidibeki runs on managed cloud infrastructure. We do not own or have
+            physical access to the underlying data centers. Production access is
+            limited to designated operators, uses multi factor authentication,
+            and is logged. We deploy through an automated pipeline with required
+            review, continuous integration, and dependency scanning.
           </p>
 
           <h2 id="encryption">Encryption and data protection</h2>
           <ul>
-            <li>All traffic between browsers, APIs, and integrations uses TLS.</li>
-            <li>Integration secrets and webhook headers are encrypted at rest with AES-256-GCM.</li>
-            <li>Object storage is private by default; direct links are never exposed to users.</li>
-            <li>Session replay and attachment playback stream through the authenticated API.</li>
+            <li>
+              All traffic between browsers, APIs, and integrations uses TLS.
+            </li>
+            <li>
+              Integration secrets and webhook headers are encrypted at rest with
+              AES-256-GCM.
+            </li>
+            <li>
+              Object storage is private by default; direct links are never
+              exposed to users.
+            </li>
+            <li>
+              Session replay and attachment playback stream through the
+              authenticated API.
+            </li>
           </ul>
 
           <h2 id="application-security">Application security</h2>
           <ul>
             <li>All code changes are reviewed before merging;</li>
-            <li>Automated tests, linting, and vulnerability scanning run in CI;</li>
+            <li>
+              Automated tests, linting, and vulnerability scanning run in CI;
+            </li>
             <li>No production secrets are stored in source code;</li>
-            <li>Error telemetry is scrubbed to avoid collecting PII or secrets.</li>
+            <li>
+              Error telemetry is scrubbed to avoid collecting PII or secrets.
+            </li>
           </ul>
 
           <h2 id="incident-response">Incident response and disclosure</h2>
           <p>
-            We maintain an incident response runbook and an internal breach register that records
-            incident facts, assessments, chronology, and containment behind a platform-administration
-            boundary. For personal data breaches, we notify affected customer/controllers without
-            undue delay, and what we owe you is set out in the
-            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>. To report a security issue or
-            vulnerability, email us at
-            <a href="mailto:security@fidibeki.com">security@fidibeki.com</a>. Please include a
-            proof of concept and do not test against customer workspaces or production data.
+            We maintain an incident response runbook and an internal breach
+            register that records incident facts, assessments, chronology, and
+            containment behind a platform-administration boundary. For personal
+            data breaches, we notify affected customer/controllers without undue
+            delay, and what we owe you is set out in the
+            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>. To report a
+            security issue or vulnerability, email us at
+            <a href="mailto:security@fidibeki.com">security@fidibeki.com</a>.
+            Please include a proof of concept and do not test against customer
+            workspaces or production data.
           </p>
 
           <h2 id="certifications">Certifications and compliance claims</h2>
           <p>
-            Fidibeki does not currently hold SOC 2, ISO 27001, or similar certifications, and we
-            will not imply otherwise. If your security review needs specific answers, questionnaire
-            responses, or roadmap commitments,
-            <a :href="links.demo" rel="noopener" target="_blank">book a demo</a>.
+            Fidibeki does not currently hold SOC 2, ISO 27001, or similar
+            certifications, and we will not imply otherwise. If your security
+            review needs specific answers, questionnaire responses, or roadmap
+            commitments,
+            <a :href="links.demo" rel="noopener" target="_blank">book a demo</a
+            >.
           </p>
         </div>
       </div>
@@ -226,219 +256,54 @@ const widgetPoints = [
 <style scoped>
 .pillar-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 40px 80px;
 }
-
-.pillar-card h2 {
-  font-size: 1.15rem;
-  margin: 0.6rem 0 0.35rem;
+.pillar-card {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
 }
-
-.pillar-card p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.94rem;
-}
-
 .pillar-icon {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  margin-bottom: 24px;
 }
-
+.pillar-card h2 {
+  font-size: 23px;
+  margin-bottom: 16px;
+}
+.pillar-card p {
+  color: var(--muted);
+  font-size: 15px;
+  margin: 0;
+}
 .widget-section {
-  padding-top: 0;
+  padding-top: 24px;
 }
-
 .widget-list {
   list-style: none;
   margin: 0;
   padding: 0;
+  max-width: 704px;
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.8rem;
-  max-width: 44rem;
+  gap: 20px;
 }
-
 .widget-list li {
   display: flex;
-  gap: 0.6rem;
+  gap: 12px;
   align-items: flex-start;
   color: var(--ink-soft);
-  font-size: 0.98rem;
 }
-
 .widget-check {
-  color: var(--accent);
   flex-shrink: 0;
-  margin-top: 0.2rem;
+  margin-top: 5px;
 }
-
 .compliance-section {
-  padding-top: 2rem;
-  background: var(--surface-soft);
+  padding-top: 24px;
 }
-
-.compliance-layout {
-  display: grid;
-  gap: 2rem;
-}
-
-.compliance-nav {
-  order: -1;
-}
-
-.compliance-nav-sticky {
-  position: sticky;
-  top: calc(var(--header-height, 72px) + 1.5rem);
-}
-
-.compliance-nav-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.compliance-nav-list a {
-  display: block;
-  padding: 0.35rem 0.65rem;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-  font-size: 0.85rem;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.compliance-nav-list a:hover,
-.compliance-nav-list a.active {
-  border-color: var(--accent);
-  color: var(--accent-text);
-}
-
-.compliance-notice {
-  padding-top: 0.25rem;
-}
-
-.last-updated {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 1.8em;
-}
-
-.last-updated summary {
-  cursor: pointer;
-  list-style: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-weight: 500;
-}
-
-.last-updated summary::marker,
-.last-updated summary::-webkit-details-marker {
-  display: none;
-}
-
-.last-updated summary::after {
-  content: '›';
-  display: inline-block;
-  transform: rotate(90deg);
-  transition: transform 160ms ease;
-  color: var(--accent-text);
-}
-
-.last-updated[open] summary::after {
-  transform: rotate(-90deg);
-}
-
-.last-updated p {
-  margin-top: 0.6rem;
-  max-width: 44rem;
-}
-
-.compliance-notice h2 {
-  font-size: 1.35rem;
-  margin-top: 2.2em;
-}
-
-.compliance-notice h3 {
-  font-size: 1.1rem;
-  margin-top: 1.6em;
-  color: var(--ink-soft);
-}
-
-.compliance-notice p,
-.compliance-notice ul {
-  color: var(--ink-soft);
-}
-
-.compliance-notice li {
-  margin-bottom: 0.45em;
-}
-
-.compliance-notice p,
-.compliance-notice ul {
-  color: var(--ink-soft);
-}
-
-.compliance-notice li {
-  margin-bottom: 0.45em;
-}
-
-@media (min-width: 900px) {
-  .compliance-layout {
-    grid-template-columns: 14rem 1fr;
-    gap: 3rem;
-  }
-
-  .compliance-nav {
-    order: 0;
-  }
-
-  .compliance-nav-list {
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-
-  .compliance-nav-list a {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    padding: 0.35rem 0;
-    white-space: normal;
-  }
-
-  .compliance-nav-list a.active {
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
-  }
-
-  .compliance-nav-list a:hover {
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
-  }
-}
-
-@media (min-width: 760px) {
+@media (max-width: 700px) {
   .pillar-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (min-width: 1080px) {
-  .pillar-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
   }
 }
 </style>
