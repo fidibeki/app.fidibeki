@@ -47,7 +47,7 @@ func testIssueLinks(t *testing.T, ctx context.Context, pool *pgxpool.Pool, begin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `SELECT set_config('app.tenant_id',$1,true)`, tenantID); err != nil {
 		t.Fatal(err)
 	}

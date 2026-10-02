@@ -55,7 +55,7 @@ func retentionRegistry() []retentionDefinition {
 			Source: "Product default", Trigger: "Last message timestamp or unused credential expiry.",
 			Action:  "Delete visitor credentials and messages; project and workspace deletion cascade.",
 			Cadence: "Daily", HoldBehavior: RetentionHoldCaseScoped, Implementation: "websitechat.Maintainer",
-			Resources: combine(tables("website_chat_visitors", "website_chat_messages"), resource(RetentionDatabaseScope, "retention_maintenance_status:website_chat_conversations")),
+			Resources: combine(tables("website_chat_visitors", "website_chat_messages", "website_chat_issue_links"), resource(RetentionDatabaseScope, "retention_maintenance_status:website_chat_conversations")),
 		},
 		{
 			Category: "website_chat_presence", Label: "Website visitor presence",
