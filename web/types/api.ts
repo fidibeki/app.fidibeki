@@ -298,7 +298,12 @@ export interface ReplayConsentConfig {
 export interface AIProcessingConfig {
   enabled: boolean
   policy_version?: string
-  provider?: 'google_gemini'
+  provider?: AIProviderID
+  provider_label?: string
+  billing_mode?: 'managed' | 'customer'
+  connection_id?: string
+  config_version?: number
+  model?: string
   purposes?: string[]
   input_categories?: AIInputCategory[]
   privacy_policy_url?: string
@@ -1675,4 +1680,16 @@ export interface TestimonialPublishResult {
   skipped: number
   public_id: string
   published_at: string
+}
+
+export type AIProviderID = 'google_gemini' | 'openai' | 'anthropic' | 'amazon_bedrock' | 'openai_compatible' | 'anthropic_compatible'
+export interface AIModel { id: string; name: string; input_categories: AIInputCategory[]; validated: boolean }
+export interface AIProvider { id: AIProviderID; name: string; protocol: string; input_categories: AIInputCategory[]; custom_endpoint: boolean; enabled: boolean }
+export interface AIProviderCatalog { providers: AIProvider[]; managed: { available: boolean; model: string }; aws_caller_arn: string }
+export interface AIConnection {
+  id: string; name: string; provider: AIProviderID; base_url?: string; region?: string
+  auth_mode: 'api_key' | 'role'; role_arn?: string; external_id?: string
+  config_version: number; credential_version: number; revision: number; enabled: boolean
+  rpm: number; concurrency: number; default_model?: string; is_default: boolean
+  models: AIModel[]; health: string; credential_expires_at?: string; updated_at: string
 }

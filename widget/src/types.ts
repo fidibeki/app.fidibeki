@@ -51,7 +51,8 @@ export interface ReplayConsentConfig {
 
 export interface AIProcessingConfig {
   enabled: boolean
-  provider?: 'google_gemini'
+  provider?: string
+  provider_label?: string
   input_categories?: AIInputCategory[]
   privacy_policy_url?: string
   policy_version?: string

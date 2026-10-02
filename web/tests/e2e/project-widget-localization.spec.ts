@@ -136,6 +136,9 @@ const rule = {
 }
 
 interface Captured {
+  aiConnections?: Array<Record<string, unknown>>
+  aiCredential?: string
+  aiValidation?: Record<string, unknown>
   createProjectBody?: { name: string, allowed_domains: string[] }
   createdProject?: typeof project
   updateProjectBody?: Record<string, unknown>
@@ -182,6 +185,23 @@ async function installAPI(page: Page, state: Captured) {
     if ((path === '/auth/verify' || path === '/auth/refresh') && method === 'POST') {
       return json(route, authResponse())
     }
+    if (path === '/v1/ai/providers') return json(route, { providers: [{id: 'openai', name: 'OpenAI', enabled: true, input_categories: ['feedback_text', 'screenshot']}], managed: {available: true, model: 'gemini-test'} })
+    if (path === '/v1/ai/connections' && method === 'GET') return json(route, { connections: state.aiConnections || [] })
+    if (path === '/v1/ai/connections' && method === 'POST') {
+      const { credential, ...input } = request.postDataJSON()
+      state.aiCredential = credential
+      const connection = {...input, id: 'created-connection', revision: 1, config_version: 1, models: [], health: 'unvalidated'}
+      state.aiConnections = [connection]
+      return json(route, { connection }, 201)
+    }
+    if (path === '/v1/ai/connections/created-connection/validate') {
+      state.aiValidation = request.postDataJSON()
+      state.aiConnections![0]!.models = [{id: state.aiValidation!.model, name: state.aiValidation!.model, input_categories: ['feedback_text'], validated: true}]
+      return json(route, {valid: true})
+    }
+    if (path === '/v1/ai/connections/created-connection' && method === 'DELETE') {state.aiConnections = []; return json(route, {status: 'cleanup_pending'})}
+    const settingsLists: Record<string, string> = {'/v1/members': 'members', '/v1/member-domains': 'member_domains', '/v1/api-keys': 'api_keys', '/v1/integrations': 'integrations', '/v1/issue-trackers': 'issue_trackers'}
+    if (settingsLists[path]) return json(route, {[settingsLists[path]!]: []})
     if (path === '/v1/config' && method === 'GET') {
       return json(route, configuration)
     }
@@ -471,7 +491,7 @@ test('AI analysis requires an explicit governed decision and remains usable on m
   await page.getByRole('link', { name: 'Loja Central' }).click()
   await page.waitForURL(`${tenantOrigin}/projects/project-1`)
 
-  await page.getByRole('checkbox', { name: /^Ativar análise Gemini/ }).click()
+  await page.getByRole('checkbox', { name: /^Ativar análise de IA/ }).click()
   const dialog = page.getByRole('dialog', { name: 'Ativar análise por AI' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Processamento Google Gemini')).toBeVisible()
@@ -501,7 +521,64 @@ test('AI analysis requires an explicit governed decision and remains usable on m
     acknowledged: true,
   })
 
-  await page.getByRole('checkbox', { name: /^Ativar análise Gemini/ }).uncheck()
+  await page.getByRole('checkbox', { name: /^Ativar análise de IA/ }).uncheck()
   await page.getByRole('button', { name: 'Guardar regra' }).click()
   await expect.poll(() => state.updateRuleBody?.ai_processing).toEqual({ enabled: false })
+})
+
+
+test('customer model selection pins the consent contract and resets authorization when the provider changes', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
+  const state: Captured = { aiConnections: [{ id: 'connection-1', name: 'Company OpenAI', provider: 'openai', enabled: true, is_default: true, default_model: 'unvalidated-preference', config_version: 3, models: [{id: 'chosen-model', name: 'Chosen model', validated: true, input_categories: ['feedback_text']}]}] }
+  await installAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=customer-ai-token`)
+  await page.waitForURL(`${tenantOrigin}/`)
+  await openProjects(page, testInfo)
+  await page.getByRole('link', {name: 'Loja Central'}).click()
+  await page.getByRole('checkbox', {name: /^Ativar análise de IA/}).click()
+  const dialog = page.getByRole('dialog', {name: 'Ativar análise por AI'})
+  await dialog.getByLabel('Conta de IA').selectOption('connection-1')
+  await expect(dialog.getByText('Processamento OpenAI')).toBeVisible()
+  await expect(dialog.getByLabel('Modelo', {exact: true})).toHaveValue('chosen-model')
+  await dialog.getByLabel('URL do aviso de privacidade do cliente').fill('https://loja.ao/privacidade')
+  await dialog.getByRole('checkbox', {name: /Confirmo que este workspace/}).check()
+  await dialog.getByLabel('Conta de IA').selectOption('managed')
+  await expect(dialog.getByRole('checkbox', {name: /Confirmo que este workspace/})).not.toBeChecked()
+  await dialog.getByLabel('Conta de IA').selectOption('connection-1')
+  await dialog.getByRole('checkbox', {name: /Confirmo que este workspace/}).check()
+  await dialog.getByRole('button', {name: 'Ativar análise por AI'}).click()
+  await page.getByRole('button', {name: 'Guardar regra'}).click()
+  await expect.poll(() => state.updateRuleBody?.ai_processing).toMatchObject({billing_mode: 'customer', connection_id: 'connection-1', config_version: 3, model: 'chosen-model', provider: 'openai', policy_version: '2026-10-02', acknowledged: true})
+  await page.screenshot({ path: testInfo.outputPath('customer-ai-selection.png'), fullPage: true })
+})
+
+
+test('administrator connects, validates and removes an API account without revealing its saved credential', async ({page}, testInfo) => {
+  test.setTimeout(60_000)
+  const state: Captured = {}
+  await installAPI(page, state)
+  await page.goto(`${tenantOrigin}/auth/verify#token=ai-settings-token`)
+  await page.waitForURL(`${tenantOrigin}/`)
+  await page.goto(`${tenantOrigin}/settings?tab=ai`)
+  await page.getByRole('button', {name: 'Adicionar ligação'}).click()
+  await expect(page.getByLabel('Nome da ligação')).toBeFocused()
+  await page.getByLabel('Nome da ligação').fill('Company OpenAI')
+  await page.getByLabel('Credencial da API').fill('fixture-write-only-secret')
+  await page.getByRole('button', {name: 'Guardar ligação', exact: true}).click()
+  await expect.poll(() => state.aiCredential).toBe('fixture-write-only-secret')
+  await expect(page.getByText('Company OpenAI', {exact: true})).toBeVisible()
+  await page.getByLabel(/^Modelo/).fill('customer-model')
+  await page.getByRole('button', {name: 'Validar modelo', exact: true}).last().click()
+  await expect(page.getByRole('status').filter({hasText: 'Modelo validado.'})).toBeVisible()
+  await expect.poll(() => state.aiValidation?.model).toBe('customer-model')
+  await page.getByRole('button', {name: 'Editar ligação', exact: true}).click()
+  await expect(page.getByLabel('Credencial da API')).toHaveValue('')
+  await page.getByRole('button', {name: 'Cancelar', exact: true}).click()
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({path: testInfo.outputPath('ai-settings.png'), fullPage: true})
+  const bounds = await page.locator('.ai-settings').boundingBox()
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  await page.getByRole('button', {name: 'Eliminar ligação', exact: true}).click()
+  await page.getByRole('button', {name: 'Confirmar eliminação', exact: true}).click()
+  await expect(page.getByRole('status')).toContainText('limpeza de ficheiros temporários está pendente')
 })

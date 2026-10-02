@@ -61,6 +61,16 @@ void main() {
       );
     });
 
+    test('accepts the customer provider label', () {
+      final candidate = fixtureJson('session-valid.json');
+      unknownFieldTarget(candidate, 'ai_processing')['provider_label'] = 'OpenAI';
+      final session = FidibekiCaptureSession.fromJson(candidate);
+      expect(
+        session.configuration.definition.aiProcessing!.providerLabel,
+        'OpenAI',
+      );
+    });
+
     test('rejects an unsupported session schema', () {
       expect(
         () => FidibekiCaptureSession.fromJson(

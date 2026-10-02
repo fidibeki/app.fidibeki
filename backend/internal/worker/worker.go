@@ -160,7 +160,7 @@ func New(options Options) (*Worker, error) {
 			Logger:      options.Logger,
 		}),
 		aiServer: asynq.NewServer(redisOptions, asynq.Config{
-			Concurrency: options.AIConcurrency, Queues: map[string]int{ai.QueueName: 1},
+			Concurrency: options.AIConcurrency, Queues: map[string]int{ai.QueueName: 1, ai.LegacyQueueName: 1}, RetryDelayFunc: ai.RetryDelay,
 			ErrorHandler: options.AIErrorHandler, Logger: options.Logger,
 		}),
 		emailMux: emailMux, domainMux: domainMux, mediaMux: mediaMux,

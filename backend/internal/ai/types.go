@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	QueueName             = "ai-pool"
+	QueueName             = "ai-pool-v2"
+	LegacyQueueName       = "ai-pool"
 	TaskTextProcess       = "ai.text_process"
 	TaskAttachmentProcess = "ai.attachment_process"
 	TaskGeminiFileDelete  = "ai.gemini_file_delete"
@@ -44,6 +45,8 @@ type PreparedTask struct {
 }
 
 type TextWork struct {
+	Execution Execution
+
 	TenantID      string
 	ProjectID     string
 	FeedbackID    string
@@ -55,6 +58,10 @@ type TextWork struct {
 }
 
 type AttachmentWork struct {
+	Execution          Execution
+	CredentialVersion  int64
+	CredentialEnvelope []byte
+
 	TenantID      string
 	ProjectID     string
 	FeedbackID    string
@@ -69,13 +76,26 @@ type AttachmentWork struct {
 }
 
 type GeminiFileWork struct {
+	ConnectionID       string
+	CredentialVersion  int64
+	CredentialEnvelope []byte
+
 	ID       string
 	TenantID string
 	FileName string
 	Attempt  int
 }
 
+type Usage struct {
+	Input     *int64 `json:"input_tokens,omitempty"`
+	Output    *int64 `json:"output_tokens,omitempty"`
+	Cache     *int64 `json:"cache_tokens,omitempty"`
+	Reasoning *int64 `json:"reasoning_tokens,omitempty"`
+}
+
 type Result struct {
+	Usage           Usage          `json:"-"`
+	ResolvedModel   string         `json:"-"`
 	Transcription   string         `json:"transcription"`
 	CleanedText     string         `json:"cleaned_text"`
 	SentimentScore  float64        `json:"sentiment_score"`
@@ -156,9 +176,6 @@ func truncateError(err error) string {
 	if err == nil {
 		return ""
 	}
-	message := err.Error()
-	if len(message) > 2000 {
-		message = message[:2000]
-	}
-	return message
+	// Persist classifications only; provider errors can contain prompts, URLs or credentials.
+	return providerDiagnosticReason(err)
 }

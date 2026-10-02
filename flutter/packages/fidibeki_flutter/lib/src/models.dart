@@ -451,6 +451,7 @@ final class FidibekiAiProcessing {
     required this.enabled,
     required this.inputCategories,
     this.provider,
+    this.providerLabel,
     this.privacyPolicyUrl,
     this.policyVersion,
   });
@@ -461,6 +462,7 @@ final class FidibekiAiProcessing {
       'enabled',
       'input_categories',
       'provider',
+      'provider_label',
       'privacy_policy_url',
       'policy_version',
     }, 'AI disclosure');
@@ -494,6 +496,9 @@ final class FidibekiAiProcessing {
     return FidibekiAiProcessing(
       enabled: enabled,
       provider: provider == null ? null : _string(provider, 'AI provider'),
+      providerLabel: json['provider_label'] == null
+          ? null
+          : _string(json['provider_label'], 'AI provider label'),
       privacyPolicyUrl: privacyPolicyUrl == null
           ? null
           : _httpsUri(privacyPolicyUrl, 'AI privacy policy URL'),
@@ -506,6 +511,7 @@ final class FidibekiAiProcessing {
 
   final bool enabled;
   final String? provider;
+  final String? providerLabel;
   final Uri? privacyPolicyUrl;
   final String? policyVersion;
   final List<String> inputCategories;

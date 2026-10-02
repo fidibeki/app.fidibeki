@@ -97,8 +97,25 @@ func (s Store) AuthorizeTextForProvider(
 	if err != nil {
 		return false, err
 	}
+	tenantEligible := eligible
+	if eligible {
+		eligible, err = executionEligible(ctx, tx, work.TenantID, work.RuleID, "feedback_text", work.Execution)
+		if err != nil {
+			return false, err
+		}
+	}
+	if eligible {
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feedbacks WHERE tenant_id=$1 AND id=$2 AND text_processing_generation=$3 AND text_process_status='processing' AND NOT fidibeki_privacy_feedback_restricted(tenant_id,id,'ai'))`, work.TenantID, work.FeedbackID, work.Generation).Scan(&eligible)
+		if err != nil {
+			return false, err
+		}
+	}
 	if !eligible {
-		if err := cancelTextForTenantLifecycle(
+		cancelWork := cancelTextForTenantLifecycle
+		if tenantEligible {
+			cancelWork = cancelStaleText
+		}
+		if err := cancelWork(
 			ctx, tx, work.TenantID, work.FeedbackID, work.Generation, now,
 		); err != nil {
 			return false, err
@@ -124,8 +141,25 @@ func (s Store) AuthorizeAttachmentForProvider(
 	if err != nil {
 		return false, err
 	}
+	tenantEligible := eligible
+	if eligible {
+		eligible, err = executionEligible(ctx, tx, work.TenantID, work.RuleID, work.Kind, work.Execution)
+		if err != nil {
+			return false, err
+		}
+	}
+	if eligible {
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM attachments WHERE tenant_id=$1 AND id=$2 AND processing_attempts=$3 AND processing_status='processing' AND safety_status='safe' AND NOT fidibeki_privacy_feedback_restricted(tenant_id,feedback_id,'ai'))`, work.TenantID, work.AttachmentID, work.Attempt).Scan(&eligible)
+		if err != nil {
+			return false, err
+		}
+	}
 	if !eligible {
-		if err := cancelAttachmentForTenantLifecycle(
+		cancelWork := cancelAttachmentForTenantLifecycle
+		if tenantEligible {
+			cancelWork = cancelStaleAttachment
+		}
+		if err := cancelWork(
 			ctx, tx, work.TenantID, work.AttachmentID, work.Attempt, now,
 		); err != nil {
 			return false, err
@@ -376,6 +410,13 @@ func refundReservedWork(
 	resourceID string,
 	generation int64,
 ) error {
+	var dispatched bool
+	if err := query.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ai_processing_runs WHERE tenant_id=$1 AND dispatched_at IS NOT NULL AND (($2='text' AND feedback_id=$3 AND attachment_id IS NULL AND generation=$4) OR ($2='attachment' AND attachment_id=$3 AND attempt=$4)))`, tenantID, kind, resourceID, generation).Scan(&dispatched); err != nil {
+		return err
+	}
+	if dispatched {
+		return nil
+	}
 	var projectID string
 	var usageDate time.Time
 	err := query.QueryRow(ctx, `
@@ -395,4 +436,19 @@ func refundReservedWork(
 		TenantID: tenantID, ProjectID: projectID, Kind: kind,
 		ResourceID: resourceID, Generation: generation, UsageDate: usageDate,
 	})
+}
+
+func cancelStaleText(ctx context.Context, q db.Querier, tenant, id string, generation int64, now time.Time) error {
+	if err := cancelTextForTenantLifecycle(ctx, q, tenant, id, generation, now); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `UPDATE ai_processing_runs SET failure_reason='configuration_changed' WHERE tenant_id=$1 AND feedback_id=$2 AND attachment_id IS NULL AND generation=$3 AND status='discarded'`, tenant, id, generation)
+	return err
+}
+func cancelStaleAttachment(ctx context.Context, q db.Querier, tenant, id string, attempt int, now time.Time) error {
+	if err := cancelAttachmentForTenantLifecycle(ctx, q, tenant, id, attempt, now); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `UPDATE ai_processing_runs SET failure_reason='configuration_changed' WHERE tenant_id=$1 AND attachment_id=$2 AND attempt=$3 AND status='discarded'`, tenant, id, attempt)
+	return err
 }

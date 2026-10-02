@@ -1300,8 +1300,9 @@ function aiDisclosureCopy(
   const categories = (rule.ai_processing?.input_categories ?? [])
     .map((category) => localization.system.aiInputNames[category])
     .filter(Boolean);
-  if (categories.length === 0) return localization.system.aiDisclosure;
-  return `${localization.system.aiDisclosure} ${localization.system.aiScope.replace(
+  const disclosure = localization.system.aiDisclosure.replace("{provider}", rule.ai_processing?.provider_label || "Google Gemini");
+  if (categories.length === 0) return disclosure;
+  return `${disclosure} ${localization.system.aiScope.replace(
     "{categories}",
     categories.join(", "),
   )}`;

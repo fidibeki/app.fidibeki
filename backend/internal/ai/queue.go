@@ -20,8 +20,13 @@ type TaskQueue interface {
 	Enqueue(context.Context, PreparedTask) error
 }
 
+type legacyTaskInspector interface {
+	GetTaskInfo(string, string) (*asynq.TaskInfo, error)
+	Close() error
+}
 type Queue struct {
 	client taskClient
+	legacy legacyTaskInspector
 }
 
 func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
@@ -29,7 +34,7 @@ func OpenQueue(redisURL string, caCertificates ...string) (*Queue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse AI queue Redis URL: %w", err)
 	}
-	return &Queue{client: asynq.NewClient(options)}, nil
+	return &Queue{client: asynq.NewClient(options), legacy: asynq.NewInspector(options)}, nil
 }
 
 func NewQueue(client taskClient) *Queue {
@@ -45,6 +50,17 @@ type taskPayload struct {
 }
 
 func (q *Queue) Enqueue(ctx context.Context, prepared PreparedTask) error {
+	// Reconciliation must not clone work still owned by the legacy queue during
+	// the drain. New jobs always go to v2, beyond the reach of old workers.
+	if q.legacy != nil {
+		_, err := q.legacy.GetTaskInfo(LegacyQueueName, TaskID(prepared))
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, asynq.ErrTaskNotFound) && !errors.Is(err, asynq.ErrQueueNotFound) {
+			return fmt.Errorf("inspect legacy AI task: %w", err)
+		}
+	}
 	payload, err := json.Marshal(taskPayload{
 		TenantID: prepared.TenantID, ProjectID: prepared.ProjectID, ResourceID: prepared.ResourceID,
 		Attempt: prepared.Attempt, Generation: prepared.Generation,
@@ -77,6 +93,9 @@ func (q *Queue) Enqueue(ctx context.Context, prepared PreparedTask) error {
 }
 
 func (q *Queue) Close() error {
+	if q.legacy != nil {
+		defer q.legacy.Close()
+	}
 	if err := q.client.Close(); err != nil {
 		return fmt.Errorf("close AI queue: %w", err)
 	}

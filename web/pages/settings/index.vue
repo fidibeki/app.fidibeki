@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AIProviders from '~/components/settings/AIProviders.vue'
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -1077,6 +1078,7 @@ useHead(() => ({ title: t('admin.settings.pageTitle') }))
 
       <TwoFactorSecurity v-else-if="activeTab === 'security'" />
       <SingleSignOn v-else-if="activeTab === 'sso'" />
+      <AIProviders v-else-if="activeTab === 'ai'" />
       <SubmissionHealth v-else-if="activeTab === 'health'" :projects="data.projects" />
       <AccessAuditLog v-else-if="activeTab === 'audit'" />
       <DataPrivacy v-else :members="data.members" @member-changed="updatePrivacyMember" />

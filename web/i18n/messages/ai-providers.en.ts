@@ -1,0 +1,13 @@
+export const aiProviderMessages = {
+  endpointPlaceholder: 'https://api.example.com/v1',
+  title: 'AI providers', description: 'Connect an API account billed directly by your provider. Choose a validated model when enabling AI on a widget.',
+  add: 'Add connection', edit: 'Edit connection', empty: 'No customer AI accounts connected.', managed: 'Fidibeki managed Gemini', customer: 'Your provider bills API usage. Fidibeki plan limits still apply.',
+  forbidden: 'You need permission to read AI connections.', unavailable: 'Customer AI connections are not enabled for this workspace yet.', loading: 'Loading AI connections…', retry: 'Retry',
+  name: 'Connection name', provider: 'Provider', endpoint: 'HTTPS API base URL', credential: 'API credential', keepCredential: 'Leave empty to keep the current credential.', secretNote: 'Credentials are encrypted and are never returned after saving.',
+  region: 'AWS region', auth: 'Authentication', role: 'IAM role (recommended)', pilot: 'Bedrock API key (pilot)', roleARN: 'Customer role ARN', externalID: 'External ID', callerARN: 'Fidibeki caller ARN', expires: 'Key expiry (UTC)', trust: 'Require this external ID and the Fidibeki caller in the IAM role trust policy, then validate a model.',
+  rpm: 'Requests per minute', concurrency: 'Concurrent requests', enabled: 'Enabled', default: 'Default for new widgets', defaultModel: 'Preferred model ID',
+  save: 'Save connection', saving: 'Saving…', cancel: 'Cancel', remove: 'Delete connection', deleteConfirm: 'Delete this connection? Widgets using it will stop AI processing. Temporary provider files remain scheduled for deletion.', confirmDelete: 'Confirm deletion',
+  model: 'Model', modelHint: 'Select a discovered model or enter its exact ID. Validation sends synthetic content and may incur a small provider charge.', discover: 'Discover models', validate: 'Validate model', validating: 'Validating…', valid: 'Model validated. It is available for the selected content types.', failed: 'Validation failed ({code}). Check the credential, model access and supported content types.',
+  discoveryFailed: 'Model discovery is unavailable. Enter the exact model ID to validate it.', selectModel: 'Choose a validated model to continue.', selectConnection: 'AI account', setup: 'Manage AI connections in settings', unsupported: 'This content type has not been validated for the selected model.',
+  stopped: 'Disabled', ready: 'Validated', unvalidated: 'Validation required', saved: 'Connection saved. Validate models before using it.', deleted: 'Connection deleted.', cleanupPending: 'Connection deleted. Temporary provider file cleanup is pending.', readOnly: 'You can view connections. Managing them requires additional permission.',
+}

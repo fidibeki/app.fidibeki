@@ -3,6 +3,8 @@ package auth
 type Permission string
 
 const (
+	PermissionAIConnectionRead    Permission = "ai_connection:read"
+	PermissionAIConnectionManage  Permission = "ai_connection:manage"
 	PermissionProjectCreate       Permission = "project:create"
 	PermissionProjectRead         Permission = "project:read"
 	PermissionProjectUpdate       Permission = "project:update"
@@ -94,6 +96,7 @@ var AllPlatformPermissions = []Permission{
 }
 
 var AllTenantPermissions = []Permission{
+	PermissionAIConnectionRead, PermissionAIConnectionManage,
 	PermissionProjectCreate, PermissionProjectRead, PermissionProjectUpdate, PermissionProjectDelete,
 	PermissionWidgetRuleCreate, PermissionWidgetRuleRead, PermissionWidgetRuleUpdate, PermissionWidgetRuleDelete,
 	PermissionFeedbackRead, PermissionFeedbackUpdate, PermissionFeedbackDelete,

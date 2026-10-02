@@ -75,6 +75,7 @@ export const adminMessages = {
     loading: 'Loading settings',
     unavailable: 'Settings unavailable',
     tabs: {
+        ai: 'AI providers',
       workspace: 'Workspace',
       members: 'Members',
       security: 'Security',

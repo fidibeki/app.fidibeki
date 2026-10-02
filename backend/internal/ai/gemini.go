@@ -2,15 +2,17 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/aiprovider"
+	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/hibiken/asynq"
 	"google.golang.org/genai"
 )
@@ -128,6 +130,10 @@ func NewGeminiAnalyzer(
 	fileLedger geminiFileLedger,
 	logger *slog.Logger,
 ) (*GeminiAnalyzer, error) {
+	return newGeminiAnalyzerWithClient(ctx, apiKey, model, fileLedger, logger, outboundhttp.Policy{}.NewClient(2*time.Minute))
+}
+
+func newGeminiAnalyzerWithClient(ctx context.Context, apiKey, model string, fileLedger geminiFileLedger, logger *slog.Logger, httpClient *http.Client) (*GeminiAnalyzer, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, ErrUnavailable
 	}
@@ -138,7 +144,7 @@ func NewGeminiAnalyzer(
 		return nil, fmt.Errorf("gemini file ledger is required")
 	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: apiKey, Backend: genai.BackendGeminiAPI,
+		APIKey: apiKey, Backend: genai.BackendGeminiAPI, HTTPClient: httpClient, HTTPOptions: genai.HTTPOptions{BaseURL: "https://generativelanguage.googleapis.com/", APIVersion: "v1beta"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Gemini client: %w", err)
@@ -176,13 +182,20 @@ func (a *GeminiAnalyzer) AnalyzeAttachment(
 	if err != nil {
 		return Result{}, classifyGeminiError(fmt.Errorf("upload attachment to Gemini: %w", err))
 	}
+	if file == nil || file.Name == "" {
+		return Result{}, permanent(&aiprovider.Failure{Code: "invalid_upload_response"})
+	}
 	if a.fileLedger == nil {
 		_, cleanupErr := a.deleteFileWithRetry(file.Name)
 		return Result{}, errors.Join(fmt.Errorf("gemini file ledger is required"), cleanupErr)
 	}
+	// Upload may finish just as the processing context is cancelled. Persist
+	// the deletion capability independently so cancellation cannot orphan it.
+	ledgerContext, ledgerCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	trackedID, err := a.fileLedger.TrackGeminiFile(
-		ctx, work, file.Name, time.Now().UTC().Add(15*time.Minute),
+		ledgerContext, work, file.Name, time.Now().UTC().Add(15*time.Minute),
 	)
+	ledgerCancel()
 	if err != nil {
 		_, cleanupErr := a.deleteFileWithRetry(file.Name)
 		return Result{}, errors.Join(err, cleanupErr)
@@ -258,12 +271,14 @@ func (a *GeminiAnalyzer) generate(ctx context.Context, contents []*genai.Content
 	if strings.TrimSpace(raw) == "" {
 		return Result{}, permanent(fmt.Errorf("%w: empty structured analysis", ErrUnsafeAIResult))
 	}
-	var result Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	result, err := decodeProviderResult(raw)
+	if err != nil {
 		return Result{}, permanent(fmt.Errorf("%w: invalid structured analysis", ErrUnsafeAIResult))
 	}
-	if err := result.Normalize(); err != nil {
-		return Result{}, permanent(fmt.Errorf("%w: invalid structured analysis", ErrUnsafeAIResult))
+	result.ResolvedModel = response.ModelVersion
+	if u := response.UsageMetadata; u != nil {
+		input, output, cache, reasoning := int64(u.PromptTokenCount), int64(u.CandidatesTokenCount), int64(u.CachedContentTokenCount), int64(u.ThoughtsTokenCount)
+		result.Usage = Usage{Input: &input, Output: &output, Cache: &cache, Reasoning: &reasoning}
 	}
 	return result, nil
 }
@@ -378,7 +393,7 @@ func UnavailableFileDeleteHandler(store geminiFileDeleteStore) asynq.HandlerFunc
 
 func (a *GeminiAnalyzer) logCleanupError(message, fileName string, err error) {
 	if err != nil && a.logger != nil {
-		a.logger.Error(message, "file_name", fileName, "error", err)
+		a.logger.Error(message, "file_name", fileName, "error", safeProviderError(err))
 	}
 }
 

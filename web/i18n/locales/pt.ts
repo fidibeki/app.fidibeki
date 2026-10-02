@@ -1,8 +1,10 @@
+import { aiProviderMessages } from '../messages/ai-providers.pt'
 import { feedbackMessages } from '../messages/feedback.pt'
 import { adminMessages } from '../messages/admin.pt'
 import { replayMessages } from '../messages/replays.pt'
 
 export const portugueseMessages = {
+  aiProviders: aiProviderMessages,
   common: {
     workspace: 'Workspace',
     account: 'Conta',
@@ -898,13 +900,13 @@ export const portugueseMessages = {
       },
       ai: {
         title: 'Análise por AI',
-        toggle: 'Ativar análise Gemini',
+        toggle: 'Ativar análise de IA',
         toggleHint: 'Transcrição, limpeza e triagem consultivas',
         review: 'Rever processamento por AI',
         eyebrow: 'Governação de AI',
         dialogTitle: 'Ativar análise por AI',
-        providerTitle: 'Processamento Google Gemini',
-        providerDescription: 'O conteúdo selecionado é enviado ao Google Gemini para transcrição, limpeza, moderação, sentimento e recomendações de triagem. Os ficheiros temporários no fornecedor são eliminados após o processamento.',
+        providerTitle: 'Processamento {provider}',
+        providerDescription: 'O conteúdo selecionado é enviado ao {provider} para transcrição, limpeza, moderação, sentimento e recomendações de triagem. Os ficheiros temporários no fornecedor são eliminados após o processamento.',
         inputTitle: 'Conteúdo autorizado para processamento',
         inputs: {
           feedback_text: 'Texto do feedback',
@@ -917,7 +919,7 @@ export const portugueseMessages = {
         policyDescription: 'A Fidibeki minimiza o conteúdo e oculta dados sensíveis detetados. Resultados inseguros ficam em quarentena em vez de serem aplicados.',
         advisoryTitle: 'As recomendações são apenas consultivas',
         advisoryDescription: 'A AI não cria issues nem executa ações de workflow automaticamente.',
-        acknowledgment: 'Confirmo que este workspace está autorizado a enviar o conteúdo selecionado ao Google Gemini, atualizou o seu aviso de privacidade e assume a responsabilidade pela recolha e utilização lícitas.',
+        acknowledgment: 'Confirmo que este workspace está autorizado a enviar o conteúdo selecionado ao {provider}, atualizou o seu aviso de privacidade e assume a responsabilidade pela recolha e utilização lícitas.',
         acknowledgmentRequired: 'Confirme a autorização acima para continuar.',
         selectContent: 'Selecione pelo menos um tipo de conteúdo para processar.',
         privacyURLInvalid: 'Indique o aviso de privacidade do cliente como URL HTTPS.',

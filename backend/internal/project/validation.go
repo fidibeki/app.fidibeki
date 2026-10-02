@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/aiprovider"
 	"github.com/acidiney/app.fidibeki/backend/internal/config"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
@@ -286,11 +287,22 @@ func validateAIProcessing(values WidgetRuleValues, resolved tenant.Tenant, field
 	if !configuration.Acknowledged {
 		fields["ai_processing.acknowledged"] = "must be explicitly acknowledged"
 	}
-	if configuration.PolicyVersion != AIProcessingPolicyVersion {
+	expectedPolicy := AIProcessingPolicyVersion
+	if configuration.BillingMode == aiprovider.Customer {
+		expectedPolicy = "2026-10-02"
+	}
+	if configuration.PolicyVersion != expectedPolicy {
 		fields["ai_processing.policy_version"] = "must acknowledge the current policy version"
 	}
-	if configuration.Provider != AIProviderGoogleGemini {
-		fields["ai_processing.provider"] = "must use the configured Google Gemini provider"
+	if configuration.BillingMode == aiprovider.Customer {
+		if _, ok := aiprovider.Lookup(configuration.Provider); !ok {
+			fields["ai_processing.provider"] = "must use a supported provider"
+		}
+		if !aiprovider.ValidModelID(configuration.Model, false) || configuration.ConnectionID == "" || configuration.ConfigVersion < 1 {
+			fields["ai_processing.connection_id"] = "select a validated connection and model"
+		}
+	} else if (configuration.BillingMode != "" && configuration.BillingMode != aiprovider.Managed) || configuration.Provider != AIProviderGoogleGemini || configuration.ConnectionID != "" {
+		fields["ai_processing.provider"] = "managed processing must use Google Gemini"
 	}
 	if configuration.SensitiveDataMode != AISensitiveDataProhibit {
 		fields["ai_processing.sensitive_data_mode"] = "must prohibit and quarantine sensitive data"

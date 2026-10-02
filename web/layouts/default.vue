@@ -132,6 +132,7 @@ const settingsSectionIcons: Record<string, typeof Settings> = {
   sso: Fingerprint,
   keys: KeyRound,
   integrations: Blocks,
+  ai: KeyRound,
   health: Activity,
   privacy: Scale,
   audit: ScrollText,

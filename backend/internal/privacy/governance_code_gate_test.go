@@ -32,7 +32,11 @@ type providerCodeSignal struct {
 }
 
 var governedGoDependencies = map[string]dependencyClassification{
-	"github.com/Eyevinn/mp4ff": {Class: dependencyApplication},
+	"github.com/aws/aws-sdk-go-v2":             {Class: dependencyProvider, ProviderIDs: []string{"amazon_bedrock_api"}},
+	"github.com/aws/aws-sdk-go-v2/credentials": {Class: dependencyProvider, ProviderIDs: []string{"amazon_bedrock_api"}},
+	"github.com/aws/aws-sdk-go-v2/service/sts": {Class: dependencyProvider, ProviderIDs: []string{"amazon_bedrock_api"}},
+	"github.com/aws/smithy-go":                 {Class: dependencyProvider, ProviderIDs: []string{"amazon_bedrock_api"}},
+	"github.com/Eyevinn/mp4ff":                 {Class: dependencyApplication},
 	// Used only by internal/samlsso's test identity provider, which mints
 	// genuinely signed assertions so the signature path is exercised for real.
 	"github.com/beevik/etree":                                      {Class: dependencyBuildTest},
@@ -98,6 +102,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 }
 
 var governedHTTPCallSites = map[string][]string{
+	"backend/internal/ai/provider_http.go":  {"openai_api", "anthropic_api", "amazon_bedrock_api", "customer_ai_endpoint"},
 	"backend/internal/billing/turnstile.go": {"cloudflare_turnstile"},
 	"backend/internal/email/resend.go":      {"resend_transactional_email"},
 	"backend/internal/integration/delivery.go": {
@@ -112,6 +117,10 @@ var governedHTTPCallSites = map[string][]string{
 }
 
 var governedProviderCodeSignals = map[string][]providerCodeSignal{
+	"openai_api":           {{Path: "backend/internal/ai/provider_http.go", Contains: "api.openai.com"}},
+	"anthropic_api":        {{Path: "backend/internal/ai/provider_http.go", Contains: "api.anthropic.com"}},
+	"amazon_bedrock_api":   {{Path: "backend/internal/ai/provider_bedrock.go", Contains: "sts.NewFromConfig"}},
+	"customer_ai_endpoint": {{Path: "backend/internal/ai/provider_http.go", Contains: "p.connection.BaseURL"}},
 	"postgresql_runtime": {
 		{Path: "backend/internal/db/pools.go", Contains: "pgxpool.NewWithConfig"},
 	},

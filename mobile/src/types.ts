@@ -48,6 +48,7 @@ export interface MobileControllerNotice {
 export interface MobileAIDisclosure {
   enabled: boolean
   provider?: string
+  provider_label?: string
   privacy_policy_url?: string
   policy_version?: string
   input_categories?: Array<'feedback_text' | 'screenshot' | 'audio' | 'video'>

@@ -316,6 +316,13 @@ var workspaceExportFiles = []exportFile{
 		WHERE attachment.tenant_id = $1
 		ORDER BY attachment.created_at, attachment.id
 	`},
+	{Name: "ai-connections.jsonl", Query: `
+        SELECT jsonb_build_object('id',id,'name',name,'provider',provider,
+            'base_url',base_url,'region',region,'enabled',enabled,'deleted',deleted,
+            'config_version',config_version,'credential_version',credential_version,
+            'default_model',default_model,'is_default',is_default,'health',health,'updated_at',updated_at)
+        FROM ai_connections WHERE tenant_id=$1 ORDER BY id
+    `},
 	{Name: "ai-processing-runs.jsonl", Query: `
 		SELECT jsonb_build_object(
 			'id', run.id, 'project_id', run.project_id, 'feedback_id', run.feedback_id,
@@ -323,6 +330,10 @@ var workspaceExportFiles = []exportFile{
 			'generation', run.generation, 'attempt', run.attempt,
 			'policy_version', run.policy_version, 'provider', run.provider,
 			'model', run.model, 'purpose', run.purpose,
+            'billing_mode', run.billing_mode, 'connection_id', run.connection_id,
+            'config_version', run.config_version, 'credential_version', run.credential_version,
+            'resolved_model', run.resolved_model, 'token_usage', run.token_usage,
+            'provider_attempts', run.provider_attempts,
 			'input_category', run.input_category, 'status', run.status,
 			'redaction_manifest', run.redaction_manifest,
 			'failure_reason', run.failure_reason, 'started_at', run.started_at,

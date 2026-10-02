@@ -103,7 +103,7 @@ func TestWorkspaceExportTracer(t *testing.T) {
 
 	files := readPrivacyArchive(t, storage.body)
 	wantFiles := []string{
-		"ai-processing-runs.jsonl", "attachments.jsonl", "email-feedback-campaigns.jsonl",
+		"ai-connections.jsonl", "ai-processing-runs.jsonl", "attachments.jsonl", "email-feedback-campaigns.jsonl",
 		"email-feedback-invitations.jsonl", "email-feedback-suppressions.jsonl",
 		"feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
 		"issue-activities.jsonl", "issue-comments.jsonl", "issue-tags.jsonl", "issue-updates.jsonl",

@@ -36,6 +36,10 @@ export const tenantPermissionGroups = [
     permissions: ['email_feedback:send'],
   },
   {
+    label: 'AI connections',
+    permissions: ['ai_connection:read', 'ai_connection:manage'],
+  },
+  {
     label: 'Integrations',
     permissions: ['integration:create', 'integration:read', 'integration:update', 'integration:delete'],
   },
@@ -70,7 +74,7 @@ export const permissionPresets = {
     'issue:read', 'issue:update', 'issue:merge',
     'session:read',
     'integration:create', 'integration:read', 'integration:update',
-    'tenant:read',
+    'tenant:read', 'ai_connection:read',
   ],
   viewer: [
     'project:read', 'widget_rule:read', 'feedback:read', 'issue:read',

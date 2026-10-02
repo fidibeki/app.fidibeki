@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"time"
 
+	"github.com/acidiney/app.fidibeki/backend/internal/aiprovider"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	"github.com/acidiney/app.fidibeki/backend/internal/identity"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
@@ -173,6 +175,10 @@ func (Store) CreateWidgetRule(
 	values WidgetRuleValues,
 	actorMemberID string,
 ) (WidgetRule, error) {
+	if err := validateAIConnection(ctx, query, tenantID, &values.AIProcessing); err != nil {
+		return WidgetRule{}, err
+	}
+
 	values.AIProcessing = finalizeAIProcessing(values.AIProcessing, actorMemberID, time.Now().UTC())
 	arguments, err := widgetRuleArguments(tenantID, projectID, values)
 	if err != nil {
@@ -304,6 +310,10 @@ func (Store) UpdateWidgetRule(
 	values WidgetRuleValues,
 	actorMemberID string,
 ) (WidgetRule, error) {
+	if err := validateAIConnection(ctx, query, tenantID, &values.AIProcessing); err != nil {
+		return WidgetRule{}, err
+	}
+
 	var previousReplayMode ReplayMode
 	var previousReplayConsent ReplayConsentConfig
 	var previousAIProcessing AIProcessingConfig
@@ -989,4 +999,35 @@ func scanWidgetRule(row rowScanner) (WidgetRule, error) {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func validateAIConnection(ctx context.Context, q db.Querier, tenant string, c *AIProcessingConfig) error {
+	if !c.Enabled {
+		return nil
+	}
+	inputs := make([]string, len(c.InputCategories))
+	for i, v := range c.InputCategories {
+		inputs[i] = string(v)
+	}
+	selection := aiprovider.Selection{BillingMode: c.BillingMode, ConnectionID: c.ConnectionID, ConfigVersion: c.ConfigVersion, Provider: c.Provider, Model: c.Model}
+	if err := aiprovider.ValidateSelection(ctx, q, tenant, selection, inputs); err != nil {
+		return err
+	}
+	c.ProviderLabel = ""
+	if c.BillingMode == aiprovider.Customer {
+		connection, err := (aiprovider.Store{}).Get(ctx, q, tenant, c.ConnectionID)
+		if err != nil {
+			return err
+		}
+		p, _ := aiprovider.Lookup(connection.Provider)
+		c.ProviderLabel = p.Name
+		if p.Custom {
+			u, err := url.Parse(connection.BaseURL)
+			if err != nil {
+				return err
+			}
+			c.ProviderLabel = "AI service at " + u.Hostname()
+		}
+	}
+	return nil
 }
