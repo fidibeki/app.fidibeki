@@ -6,6 +6,8 @@ FIRST VIEWPORT: Quiet navigation above a modest centered question and a working 
 FORM: User-pinned OpenAI interaction-first homepage. Replaces the rejected headline/dashboard compositions. No seed selection; the reference is explicit.
 -->
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import {
   ArrowRight,
   ArrowUpRight,
@@ -23,8 +25,8 @@ const config = useRuntimeConfig()
 const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 const widgetTestimonialsKey = config.public.widgetTestimonialsKey
 const starter = plans.find((plan) => plan.id === 'starter')!
-useSiteMeta({
-  title: 'Product feedback that finishes the job',
+useSiteMeta(() => ({
+  title: 'Website feedback widget & live chat',
   description: siteDescription,
   path: '/',
   structuredData: [
@@ -40,13 +42,13 @@ useSiteMeta({
         .filter((plan) => plan.monthlyPriceCents !== null)
         .map((plan) => ({
           '@type': 'Offer',
-          name: `${plan.name} plan`,
+          name: copy('{plan} plan', { plan: plan.name }),
           price: (plan.monthlyPriceCents! / 100).toFixed(2),
           priceCurrency: 'USD',
         })),
     },
   ],
-})
+}))
 if (widgetTestimonialsKey) {
   useHead({
     script: [
@@ -67,144 +69,172 @@ if (widgetTestimonialsKey) {
     <div class="home-width">
       <section class="home-stories" aria-labelledby="stories-heading">
         <div class="home-section-heading">
-          <h2 id="stories-heading">A closer look at Fidibeki</h2>
-          <NuxtLink to="/features"
-            >Explore the product <ArrowRight :size="16" aria-hidden="true"
-          /></NuxtLink>
+          <h2 id="stories-heading">{{ copy('A closer look at Fidibeki') }}</h2>
+          <NuxtLinkLocale to="/features"
+            >{{ copy('Explore the product') }}
+            <ArrowRight :size="16" aria-hidden="true"
+          /></NuxtLinkLocale>
         </div>
-        <NuxtLink
+        <NuxtLinkLocale
           to="/use-cases/customer-support"
           class="home-conversation-story"
         >
           <img
             src="/images/home/conversation.jpg"
-            alt="Two people talking across a table by a café window"
+            :alt="copy('Two people talking across a table by a café window')"
             width="1600"
             height="1067"
             loading="lazy"
           />
           <div class="home-conversation-copy">
-            <span>Website conversations</span>
+            <span>{{ copy('Website conversations') }}</span>
             <h3>
-              <span>Meet your users.</span><span>Right where they are.</span>
+              <span>{{ copy('Meet your users.') }}</span
+              ><span>{{ copy('Right where they are.') }}</span>
             </h3>
             <span class="home-story-action"
-              >Start a conversation <ArrowUpRight :size="19" aria-hidden="true"
+              >{{ copy('Start a conversation') }}
+              <ArrowUpRight :size="19" aria-hidden="true"
             /></span>
           </div>
-        </NuxtLink>
+        </NuxtLinkLocale>
         <div class="home-story-caption">
           <p>
-            See who's on your website. Offer help, ask a question, or let
-            visitors message your team. All through the same widget they use for
-            feedback.
+            {{
+              copy(
+                "See who's on your website. Offer help, ask a question, or let visitors message your team. All through the same widget they use for feedback.",
+              )
+            }}
           </p>
-          <NuxtLink
+          <NuxtLinkLocale
             to="/use-cases/customer-support"
-            aria-label="Learn about website conversations"
+            :aria-label="copy('Learn about website conversations')"
             ><ArrowUpRight :size="24" aria-hidden="true"
-          /></NuxtLink>
+          /></NuxtLinkLocale>
         </div>
 
         <div class="home-editorial-pair">
           <article class="home-editorial">
-            <NuxtLink
+            <NuxtLinkLocale
               to="/features/feedback-widget"
               class="home-context-art"
-              aria-label="Explore feedback with screenshots and audio"
+              :aria-label="copy('Explore feedback with screenshots and audio')"
             >
               <div class="home-report-example">
                 <div class="home-example-head">
-                  <BrandMark /><span>Your feedback</span
-                  ><span class="home-example-label">Example</span>
+                  <BrandMark /><span>{{ copy('Your feedback') }}</span
+                  ><span class="home-example-label">{{ copy('Example') }}</span>
                 </div>
                 <p class="home-example-report">
-                  The button disappears<br />on my phone.
+                  {{ copy('The button disappears') }}<br />{{
+                    copy('on my phone.')
+                  }}
                 </p>
                 <div class="home-example-attachments">
                   <span
                     ><Image :size="18" aria-hidden="true" />
-                    screenshot.png</span
+                    {{ copy('screenshot.png') }}</span
                   ><span><Play :size="14" aria-hidden="true" /> 0:12</span>
                 </div>
                 <div class="home-example-bottom">
                   <span
-                    ><Paperclip :size="15" aria-hidden="true" /> Context
-                    included</span
+                    ><Paperclip :size="15" aria-hidden="true" />
+                    {{ copy('Context included') }}</span
                   ><span class="home-example-check"
                     ><Check :size="15" aria-hidden="true"
                   /></span>
                 </div>
               </div>
-            </NuxtLink>
+            </NuxtLinkLocale>
             <div class="home-editorial-copy">
-              <span>Feedback with context</span>
+              <span>{{ copy('Feedback with context') }}</span>
               <h3>
-                <NuxtLink to="/features/feedback-widget"
-                  >Less back-and-forth.<br />More to
+                <NuxtLinkLocale to="/features/feedback-widget"
+                  >{{ copy('Less back-and-forth.') }}<br />{{
+                    copy('More to')
+                  }}
                   <span class="home-keep-together"
-                    >go on. <ArrowUpRight :size="21" aria-hidden="true" /></span
-                ></NuxtLink>
+                    >{{ copy('go on.') }}
+                    <ArrowUpRight :size="21" aria-hidden="true" /></span
+                ></NuxtLinkLocale>
               </h3>
               <p>
-                A screenshot, a voice note, or a session replay can help explain
-                what happened. Your users choose what to share.
+                {{
+                  copy(
+                    'A screenshot, a voice note, or a session replay can help explain what happened. Your users choose what to share.',
+                  )
+                }}
               </p>
             </div>
           </article>
           <article class="home-editorial">
-            <NuxtLink
+            <NuxtLinkLocale
               to="/features/reporter-loop"
               class="home-resolution-art"
-              aria-label="Explore updates to feedback reporters"
+              :aria-label="copy('Explore updates to feedback reporters')"
             >
               <div class="home-resolution-message">
                 <span
-                  ><CheckCheck :size="22" aria-hidden="true" /> Resolved</span
+                  ><CheckCheck :size="22" aria-hidden="true" />
+                  {{ copy('Resolved') }}</span
                 >
-                <p>It's fixed.<br />Thanks for<br />flagging it.</p>
+                <p>{{ copy("It's fixed. Thanks for flagging it.") }}</p>
                 <span class="home-resolution-from"
-                  ><BrandMark /> Your team <span>Example update</span></span
+                  ><BrandMark /> {{ copy('Your team') }}
+                  <span>{{ copy('Example update') }}</span></span
                 >
               </div>
-            </NuxtLink>
+            </NuxtLinkLocale>
             <div class="home-editorial-copy">
-              <span>The follow-through</span>
+              <span>{{ copy('The follow-through') }}</span>
               <h3>
-                <NuxtLink to="/features/reporter-loop"
-                  >They spoke up.<br />Keep them in the
+                <NuxtLinkLocale to="/features/reporter-loop"
+                  >{{ copy('They spoke up.') }}<br />{{
+                    copy('Keep them in the')
+                  }}
                   <span class="home-keep-together"
-                    >loop. <ArrowUpRight :size="21" aria-hidden="true" /></span
-                ></NuxtLink>
+                    >{{ copy('loop.') }}
+                    <ArrowUpRight :size="21" aria-hidden="true" /></span
+                ></NuxtLinkLocale>
               </h3>
               <p>
-                Turn feedback into tracked issues. When the work is done, send
-                an update to the people who opted in.
+                {{
+                  copy(
+                    'Turn feedback into tracked issues. When the work is done, send an update to the people who opted in.',
+                  )
+                }}
               </p>
             </div>
           </article>
         </div>
       </section>
 
-      <section class="home-customer" aria-label="Customers using Fidibeki">
-        <p>Helping teams listen.<br />Including the people behind</p>
+      <section
+        class="home-customer"
+        :aria-label="copy('Customers using Fidibeki')"
+      >
+        <p>
+          {{ copy('Helping teams listen.') }}<br />{{
+            copy('Including the people behind')
+          }}
+        </p>
         <a
           v-for="customer in customers"
           :key="customer.name"
           :href="customer.url"
           target="_blank"
           rel="noopener"
-          :aria-label="`Visit ${customer.name}`"
+          :aria-label="copy('Visit {name}', { name: customer.name })"
           ><img
             class="home-customer-light"
             :src="customer.logoLight"
-            :alt="customer.name"
+            :alt="copy(customer.name)"
             width="176"
             height="48"
             loading="lazy" /><img
             class="home-customer-dark"
             :src="customer.logoDark"
-            :alt="customer.name"
+            :alt="copy(customer.name)"
             width="176"
             height="48"
             loading="lazy" /><ArrowUpRight :size="19" aria-hidden="true"
@@ -217,19 +247,28 @@ if (widgetTestimonialsKey) {
         class="home-testimonials"
         aria-labelledby="testimonials-heading"
       >
-        <h2 id="testimonials-heading">From the teams using Fidibeki</h2>
+        <h2 id="testimonials-heading">
+          {{ copy('From the teams using Fidibeki') }}
+        </h2>
         <fidibeki-wall :wall="widgetTestimonialsKey" />
       </section>
 
       <section class="home-closing" aria-labelledby="closing-heading">
-        <h2 id="closing-heading">Make it better.<br />Start by listening.</h2>
+        <h2 id="closing-heading">
+          {{ copy('Make it better.') }}<br />{{ copy('Start by listening.') }}
+        </h2>
         <a :href="links.signUp" class="home-button"
-          >Start free trial <ArrowUpRight :size="17" aria-hidden="true"
+          >{{ copy('Start free trial') }}
+          <ArrowUpRight :size="17" aria-hidden="true"
         /></a>
         <p>
-          {{ trialDays }} days free. No credit card required.<br />Plans from
-          {{ formatPrice(starter.monthlyPriceCents) }}/month.
-          <NuxtLink to="/pricing">See pricing</NuxtLink>
+          {{ copy(trialDays) }} {{ copy('days free. No credit card required.')
+          }}<br />{{ copy('Plans from') }}
+          {{ copy(formatPrice(starter.monthlyPriceCents))
+          }}{{ copy('/month.') }}
+          <NuxtLinkLocale to="/pricing">{{
+            copy('See pricing')
+          }}</NuxtLinkLocale>
         </p>
       </section>
     </div>

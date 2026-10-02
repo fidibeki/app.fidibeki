@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { ArrowUpRight } from '@lucide/vue'
 import { useCases } from '~/data/use-cases'
 import { useCasePhotography } from '~/data/photography'
@@ -18,9 +20,13 @@ useSiteMeta({
 <template>
   <div>
     <PageHero
-      eyebrow="Use cases"
-      title="One workflow, different jobs"
-      lede="A bug to reproduce. An idea to consider. A customer who needs an answer. Start with the work your team does."
+      :eyebrow="copy('Use cases')"
+      :title="copy('One workflow, different jobs')"
+      :lede="
+        copy(
+          'A bug to reproduce. An idea to consider. A customer who needs an answer. Start with the work your team does.',
+        )
+      "
     >
       <template #breadcrumbs
         ><Breadcrumbs
@@ -30,9 +36,9 @@ useSiteMeta({
           ]"
       /></template>
     </PageHero>
-    <section class="section catalog-section" aria-label="Use cases">
+    <section class="section catalog-section" :aria-label="copy('Use cases')">
       <div class="container usecase-grid">
-        <NuxtLink
+        <NuxtLinkLocale
           v-for="useCase in useCases"
           :key="useCase.slug"
           :to="`/use-cases/${useCase.slug}`"
@@ -43,13 +49,14 @@ useSiteMeta({
             decorative
             ratio="8 / 5"
           />
-          <span class="usecase-audience">{{ useCase.audience }}</span>
-          <h2>{{ useCase.name }}</h2>
-          <p>{{ useCase.summary }}</p>
+          <span class="usecase-audience">{{ copy(useCase.audience) }}</span>
+          <h2>{{ copy(useCase.name) }}</h2>
+          <p>{{ copy(useCase.summary) }}</p>
           <span class="usecase-link"
-            >Explore the workflow <ArrowUpRight :size="18" aria-hidden="true"
+            >{{ copy('Explore the workflow') }}
+            <ArrowUpRight :size="18" aria-hidden="true"
           /></span>
-        </NuxtLink>
+        </NuxtLinkLocale>
       </div>
     </section>
     <CtaSection />

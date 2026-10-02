@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { ArrowUpRight } from '@lucide/vue'
 import { features } from '~/data/features'
 import { photography } from '~/data/photography'
@@ -18,9 +20,13 @@ useSiteMeta({
 <template>
   <div>
     <PageHero
-      eyebrow="Features"
-      title="Every stage of the workflow, covered"
-      lede="Collect feedback with context, decide what to work on, and let people know what changed."
+      :eyebrow="copy('Features')"
+      :title="copy('Every stage of the workflow, covered')"
+      :lede="
+        copy(
+          'Collect feedback with context, decide what to work on, and let people know what changed.',
+        )
+      "
     >
       <template #breadcrumbs
         ><Breadcrumbs
@@ -33,23 +39,24 @@ useSiteMeta({
         ><EditorialPhoto :photo="photography.collaboration" eager
       /></template>
     </PageHero>
-    <section class="section catalog-section" aria-label="Features">
+    <section class="section catalog-section" :aria-label="copy('Features')">
       <div class="container">
-        <NuxtLink
+        <NuxtLinkLocale
           v-for="feature in features"
           :key="feature.slug"
           :to="`/features/${feature.slug}`"
           class="catalog-row"
         >
           <div>
-            <h2>{{ feature.name }}</h2>
+            <h2>{{ copy(feature.name) }}</h2>
             <span class="catalog-meta"
-              >{{ feature.loopStage }} · {{ feature.availability }}</span
+              >{{ copy(feature.loopStage) }} ·
+              {{ copy(feature.availability) }}</span
             >
           </div>
-          <p>{{ feature.summary }}</p>
+          <p>{{ copy(feature.summary) }}</p>
           <ArrowUpRight :size="22" aria-hidden="true" />
-        </NuxtLink>
+        </NuxtLinkLocale>
       </div>
     </section>
     <CtaSection />

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "nuxt generate && node scripts/generate-sitemap.mjs",
+    "build": "nuxt generate && node scripts/generate-sitemap.mjs && node scripts/generate-markdown.mjs",
     "dev": "nuxt dev",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -17,7 +17,9 @@
     "vue": "3.5.40"
   },
   "devDependencies": {
+    "@nuxtjs/i18n": "10.6.0",
     "@playwright/test": "1.61.1",
+    "turndown": "7.2.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10",
     "vue-tsc": "3.2.5"

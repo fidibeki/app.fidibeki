@@ -256,8 +256,14 @@
 .home-editorial-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 28px;
+  gap: 0 28px;
   margin-top: 44px;
+}
+.home-editorial {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 2;
+  min-width: 0;
 }
 .home-context-art,
 .home-resolution-art {
@@ -345,7 +351,8 @@
   color: #514538 !important;
 }
 .home-resolution-message {
-  width: min(100%, 330px);
+  width: min(100%, 400px);
+  container-type: inline-size;
 }
 .home-resolution-message > span:first-child {
   display: flex;
@@ -355,7 +362,8 @@
 }
 .home-resolution-message > p {
   margin-top: 22px;
-  font-size: clamp(38px, 4.4vw, 61px);
+  font-size: clamp(30px, 12cqi, 50px);
+  text-wrap: balance;
   line-height: 1.03;
   letter-spacing: -0.04em;
   font-weight: 500;
@@ -518,7 +526,7 @@
     font-size: 24px;
   }
   .home-resolution-message > p {
-    font-size: 47px;
+    font-size: clamp(30px, 12cqi, 50px);
   }
 }
 @media (max-width: 600px) {
@@ -610,6 +618,10 @@
     gap: 46px;
     margin-top: 28px;
   }
+  .home-editorial {
+    display: block;
+    grid-row: auto;
+  }
   .home-context-art,
   .home-resolution-art {
     min-height: 345px;
@@ -622,10 +634,10 @@
     font-size: 26px;
   }
   .home-resolution-message {
-    max-width: 250px;
+    max-width: 400px;
   }
   .home-resolution-message > p {
-    font-size: 54px;
+    font-size: clamp(30px, 12cqi, 50px);
   }
   .home-editorial-copy h3 {
     font-size: 27px;

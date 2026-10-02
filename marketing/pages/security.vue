@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import {
   Check,
   Database,
@@ -104,9 +106,13 @@ const widgetPoints = [
 <template>
   <div>
     <PageHero
-      eyebrow="Trust"
-      title="Security"
-      lede="Fidibeki holds your customers’ words and your product’s context. Here is precisely how it is protected: no vague badges, just implemented behavior."
+      :eyebrow="copy('Trust')"
+      :title="copy('Security')"
+      :lede="
+        copy(
+          'Fidibeki holds your customers’ words and your product’s context. Here is precisely how it is protected: no vague badges, just implemented behavior.',
+        )
+      "
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -129,8 +135,8 @@ const widgetPoints = [
             <span class="pillar-icon"
               ><component :is="pillar.icon" :size="22" aria-hidden="true"
             /></span>
-            <h2>{{ pillar.title }}</h2>
-            <p>{{ pillar.body }}</p>
+            <h2>{{ copy(pillar.title) }}</h2>
+            <p>{{ copy(pillar.body) }}</p>
           </div>
         </div>
       </div>
@@ -139,16 +145,19 @@ const widgetPoints = [
     <section class="section widget-section">
       <div class="container">
         <div class="section-head">
-          <h2>The widget on your page</h2>
+          <h2>{{ copy('The widget on your page') }}</h2>
           <p class="lede">
-            The embed script runs on your site, so its behavior is a security
-            question too.
+            {{
+              copy(
+                'The embed script runs on your site, so its behavior is a security question too.',
+              )
+            }}
           </p>
         </div>
         <ul class="widget-list">
           <li v-for="point in widgetPoints" :key="point">
             <Check :size="17" aria-hidden="true" class="widget-check" />
-            <span>{{ point }}</span>
+            <span>{{ copy(point) }}</span>
           </li>
         </ul>
       </div>
@@ -156,14 +165,14 @@ const widgetPoints = [
 
     <section class="section compliance-section">
       <div class="container compliance-layout">
-        <nav class="compliance-nav" aria-label="Security sections">
+        <nav class="compliance-nav" :aria-label="copy('Security sections')">
           <div class="compliance-nav-sticky">
             <ul class="compliance-nav-list">
               <li v-for="heading in securityHeadings" :key="heading.id">
                 <a
                   :href="`#${heading.id}`"
                   :class="{ active: activeId === heading.id }"
-                  >{{ heading.label }}</a
+                  >{{ copy(heading.label) }}</a
                 >
               </li>
             </ul>
@@ -172,74 +181,116 @@ const widgetPoints = [
 
         <div class="prose compliance-notice">
           <details class="last-updated">
-            <summary>Last updated: 26 July 2026</summary>
+            <summary>{{ copy('Last updated: 26 July 2026') }}</summary>
             <p>
-              This is the current version of the security page. Previous
-              versions will be archived here when the page changes materially.
+              {{
+                copy(
+                  'This is the current version of the security page. Previous versions will be archived here when the page changes materially.',
+                )
+              }}
             </p>
           </details>
 
-          <h2 id="infrastructure">Infrastructure and access</h2>
+          <h2 id="infrastructure">{{ copy('Infrastructure and access') }}</h2>
           <p>
-            Fidibeki runs on managed cloud infrastructure. We do not own or have
-            physical access to the underlying data centers. Production access is
-            limited to designated operators, uses multi factor authentication,
-            and is logged. We deploy through an automated pipeline with required
-            review, continuous integration, and dependency scanning.
+            {{
+              copy(
+                'Fidibeki runs on managed cloud infrastructure. We do not own or have physical access to the underlying data centers. Production access is limited to designated operators, uses multi factor authentication, and is logged. We deploy through an automated pipeline with required review, continuous integration, and dependency scanning.',
+              )
+            }}
           </p>
 
-          <h2 id="encryption">Encryption and data protection</h2>
+          <h2 id="encryption">{{ copy('Encryption and data protection') }}</h2>
           <ul>
             <li>
-              All traffic between browsers, APIs, and integrations uses TLS.
+              {{
+                copy(
+                  'All traffic between browsers, APIs, and integrations uses TLS.',
+                )
+              }}
             </li>
             <li>
-              Integration secrets and webhook headers are encrypted at rest with
-              AES-256-GCM.
+              {{
+                copy(
+                  'Integration secrets and webhook headers are encrypted at rest with AES-256-GCM.',
+                )
+              }}
             </li>
             <li>
-              Object storage is private by default; direct links are never
-              exposed to users.
+              {{
+                copy(
+                  'Object storage is private by default; direct links are never exposed to users.',
+                )
+              }}
             </li>
             <li>
-              Session replay and attachment playback stream through the
-              authenticated API.
+              {{
+                copy(
+                  'Session replay and attachment playback stream through the authenticated API.',
+                )
+              }}
             </li>
           </ul>
 
-          <h2 id="application-security">Application security</h2>
+          <h2 id="application-security">{{ copy('Application security') }}</h2>
           <ul>
-            <li>All code changes are reviewed before merging;</li>
+            <li>{{ copy('All code changes are reviewed before merging;') }}</li>
             <li>
-              Automated tests, linting, and vulnerability scanning run in CI;
+              {{
+                copy(
+                  'Automated tests, linting, and vulnerability scanning run in CI;',
+                )
+              }}
             </li>
-            <li>No production secrets are stored in source code;</li>
             <li>
-              Error telemetry is scrubbed to avoid collecting PII or secrets.
+              {{ copy('No production secrets are stored in source code;') }}
+            </li>
+            <li>
+              {{
+                copy(
+                  'Error telemetry is scrubbed to avoid collecting PII or secrets.',
+                )
+              }}
             </li>
           </ul>
 
-          <h2 id="incident-response">Incident response and disclosure</h2>
+          <h2 id="incident-response">
+            {{ copy('Incident response and disclosure') }}
+          </h2>
           <p>
-            We maintain an incident response runbook and an internal breach
-            register that records incident facts, assessments, chronology, and
-            containment behind a platform-administration boundary. For personal
-            data breaches, we notify affected customer/controllers without undue
-            delay, and what we owe you is set out in the
-            <NuxtLink to="/dpa">Data Processing Addendum</NuxtLink>. To report a
-            security issue or vulnerability, email us at
-            <a href="mailto:security@fidibeki.com">security@fidibeki.com</a>.
-            Please include a proof of concept and do not test against customer
-            workspaces or production data.
+            {{
+              copy(
+                'We maintain an incident response runbook and an internal breach register that records incident facts, assessments, chronology, and containment behind a platform-administration boundary. For personal data breaches, we notify affected customer/controllers without undue delay, and what we owe you is set out in the',
+              )
+            }}
+            <NuxtLinkLocale to="/dpa">{{
+              copy('Data Processing Addendum')
+            }}</NuxtLinkLocale
+            >{{
+              copy('. To report a security issue or vulnerability, email us at')
+            }}
+            <a href="mailto:security@fidibeki.com">{{
+              copy('security@fidibeki.com')
+            }}</a
+            >{{
+              copy(
+                '. Please include a proof of concept and do not test against customer workspaces or production data.',
+              )
+            }}
           </p>
 
-          <h2 id="certifications">Certifications and compliance claims</h2>
+          <h2 id="certifications">
+            {{ copy('Certifications and compliance claims') }}
+          </h2>
           <p>
-            Fidibeki does not currently hold SOC 2, ISO 27001, or similar
-            certifications, and we will not imply otherwise. If your security
-            review needs specific answers, questionnaire responses, or roadmap
-            commitments,
-            <a :href="links.demo" rel="noopener" target="_blank">book a demo</a
+            {{
+              copy(
+                'Fidibeki does not currently hold SOC 2, ISO 27001, or similar certifications, and we will not imply otherwise. If your security review needs specific answers, questionnaire responses, or roadmap commitments,',
+              )
+            }}
+            <a :href="links.demo" rel="noopener" target="_blank">{{
+              copy('book a demo')
+            }}</a
             >.
           </p>
         </div>
@@ -247,8 +298,12 @@ const widgetPoints = [
     </section>
 
     <CtaSection
-      title="Have a security question?"
-      body="Book a demo and bring your security checklist. We would rather answer it before you buy than after."
+      :title="copy('Have a security question?')"
+      :body="
+        copy(
+          'Book a demo and bring your security checklist. We would rather answer it before you buy than after.',
+        )
+      "
     />
   </div>
 </template>

@@ -20,11 +20,11 @@ Visitors evaluate the product before starting a trial or booking a demo. Existin
 
 ## Capabilities and Constraints
 
-Use the checked-in feature and pricing catalogs as the source of product facts. Screenshots, audio, replay and AI depend on configuration, permissions, consent and plan eligibility. Chat is project-scoped. Do not invent customer counts, testimonials, benchmarks or unverified claims. The approved homepage design now extends to every marketing route. Preserve route content, pricing, installation instructions, legal terms and functionality. Run on a local dev server; do not deploy.
+Use the checked-in feature and pricing catalogs as the source of product facts. Screenshots, audio, replay and AI depend on configuration, permissions, consent and plan eligibility. Chat is project-scoped. Do not invent customer counts, testimonials, benchmarks or unverified claims. The approved homepage design now extends to every marketing route. Preserve route content, pricing, installation instructions, legal terms and functionality. Keep a local development preview available. The user authorized deploying the completed translations, SEO and navigation fixes to production on 2 October 2026.
 
 ## Brand Commitments
 
-Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing website as the reference for clean typography, spacious composition and dynamic presentation. The previous homepage's visual treatment is being replaced for this local concept.
+Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing website as the reference for clean typography, spacious composition and dynamic presentation. The previous homepage's visual treatment is being replaced across the marketing site.
 
 ## Evidence on Hand
 
@@ -36,3 +36,7 @@ Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing 
 - Keep customer words and choices central.
 - Distinguish illustration from customer evidence.
 - Make the trial and product details easy to find.
+
+## Languages and discovery
+
+English is the unprefixed default; Portuguese, Spanish and French use `/pt`, `/es` and `/fr`. All 35 pages are available in all four languages, including documentation and policies. Use European Portuguese. Preserve pricing and product facts across translations. Each page has localized metadata, a canonical URL, reciprocal language links and a generated Markdown version. The curated `/llms.txt` links to those versions. These files support content discovery; they do not promise search rankings or AI citations.

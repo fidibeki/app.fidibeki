@@ -1,7 +1,8 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { Check, Minus } from '@lucide/vue'
 import {
-  formatLimit,
   formatPrice,
   planComparisonRows,
   plans,
@@ -13,9 +14,12 @@ const links = useAppLinks()
 const config = useRuntimeConfig()
 const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 
-useSiteMeta({
+useSiteMeta(() => ({
   title: 'Pricing',
-  description: `Fidibeki plans from ${formatPrice(999)}/month with a ${trialDays}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.`,
+  description: copy(
+    'Fidibeki plans from {price}/month with a {days}-day free trial and no credit card required. Compare Starter, Growth, Scale, and Enterprise.',
+    { price: copy(formatPrice(999)), days: copy(trialDays) },
+  ),
   path: '/pricing',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -33,27 +37,51 @@ useSiteMeta({
         .filter((plan) => plan.monthlyPriceCents !== null)
         .map((plan) => ({
           '@type': 'Offer',
-          name: `${plan.name} plan`,
+          name: copy('{plan} plan', { plan: plan.name }),
           price: (plan.monthlyPriceCents! / 100).toFixed(2),
           priceCurrency: 'USD',
           url: `${siteUrl}/pricing`,
         })),
     },
   ],
-})
+}))
+
+function countLabel(
+  value: number,
+  singular: string,
+  plural: string,
+  unlimited: string,
+) {
+  return value === -1
+    ? copy(unlimited)
+    : copy(value === 1 ? singular : plural, { count: copy(value) })
+}
 
 function planLimitLabel(plan: (typeof plans)[number]) {
+  const { projects, feedbackPerMonth, users, storageDays } = plan.limits
   return {
-    projects: formatLimit(plan.limits.projects, 'project'),
+    projects: countLabel(
+      projects,
+      '{count} project',
+      '{count} projects',
+      'Unlimited projects',
+    ),
     feedbackPerMonth:
-      plan.limits.feedbackPerMonth === -1
-        ? 'Unlimited feedback'
-        : `${plan.limits.feedbackPerMonth.toLocaleString('en-US')} feedback / month`,
-    users: formatLimit(plan.limits.users, 'team member'),
-    storageDays:
-      plan.limits.storageDays === -1
-        ? 'Unlimited'
-        : `${plan.limits.storageDays} days`,
+      feedbackPerMonth === -1
+        ? copy('Unlimited feedback')
+        : copy('{count} feedback / month', { count: copy(feedbackPerMonth) }),
+    users: countLabel(
+      users,
+      '{count} team member',
+      '{count} team members',
+      'Unlimited team members',
+    ),
+    retention:
+      storageDays === -1
+        ? copy('Unlimited stored replays & attachments')
+        : copy('{count} days of stored replays & attachments', {
+            count: copy(storageDays),
+          }),
   }
 }
 
@@ -61,23 +89,32 @@ function comparisonValue(
   plan: (typeof plans)[number],
   key: (typeof planComparisonRows)[number]['key'],
 ) {
-  if (key === 'projects') return formatLimit(plan.limits.projects, 'project')
+  if (key === 'projects') return planLimitLabel(plan).projects
   if (key === 'feedbackPerMonth')
     return plan.limits.feedbackPerMonth === -1
-      ? 'Unlimited'
-      : plan.limits.feedbackPerMonth.toLocaleString('en-US')
-  if (key === 'users') return formatLimit(plan.limits.users, 'member')
+      ? copy('Unlimited')
+      : copy(plan.limits.feedbackPerMonth)
+  if (key === 'users')
+    return countLabel(
+      plan.limits.users,
+      '{count} member',
+      '{count} members',
+      'Unlimited members',
+    )
   if (key === 'storageDays')
     return plan.limits.storageDays === -1
-      ? 'Unlimited'
-      : `${plan.limits.storageDays} days`
+      ? copy('Unlimited')
+      : copy('{count} days', { count: copy(plan.limits.storageDays) })
   return plan.features[key]
 }
 
 const faq = [
   {
     question: 'How does the free trial work?',
-    answer: `Every new workspace starts with a ${trialDays}-day free trial. No credit card is required to sign up. You pick a plan when the trial ends.`,
+    answer: copy(
+      'Every new workspace starts with a {days}-day free trial. No credit card is required to sign up. You pick a plan when the trial ends.',
+      { days: copy(trialDays) },
+    ),
   },
   {
     question: 'What happens to replays and attachments over time?',
@@ -100,9 +137,15 @@ const faq = [
 <template>
   <div>
     <PageHero
-      eyebrow="Pricing"
-      :title="`Simple plans, ${trialDays}-day free trial`"
-      lede="Start free, no credit card. Upgrade once the workflow proves its value. Prices shown are monthly; yearly billing is discounted."
+      :eyebrow="copy('Pricing')"
+      :title="
+        copy('Simple plans, {days}-day free trial', { days: copy(trialDays) })
+      "
+      :lede="
+        copy(
+          'Start free, no credit card. Upgrade once the workflow proves its value. Prices shown are monthly; yearly billing is discounted.',
+        )
+      "
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -124,35 +167,38 @@ const faq = [
             :class="{ highlighted: plan.highlighted }"
           >
             <div class="plan-head">
-              <h2>{{ plan.name }}</h2>
-              <span v-if="plan.highlighted" class="badge">Most popular</span>
+              <h2>{{ copy(plan.name) }}</h2>
+              <span v-if="plan.highlighted" class="badge">{{
+                copy('Most popular')
+              }}</span>
             </div>
-            <p class="plan-blurb">{{ plan.blurb }}</p>
+            <p class="plan-blurb">{{ copy(plan.blurb) }}</p>
             <p class="plan-price">
               <span class="plan-amount">{{
-                formatPrice(plan.monthlyPriceCents)
+                copy(formatPrice(plan.monthlyPriceCents))
               }}</span>
-              <span v-if="plan.monthlyPriceCents !== null" class="plan-period"
-                >/month</span
+              <span
+                v-if="plan.monthlyPriceCents !== null"
+                class="plan-period"
+                >{{ copy('/month') }}</span
               >
             </p>
             <p v-if="plan.yearlyDiscountPercent" class="plan-yearly">
-              Save {{ plan.yearlyDiscountPercent }}% with yearly billing
+              {{
+                copy('Save {percent}% with yearly billing', {
+                  percent: copy(plan.yearlyDiscountPercent),
+                })
+              }}
             </p>
             <p v-else-if="!plan.selfServe" class="plan-yearly">
-              Custom terms &amp; invoicing
+              {{ copy('Custom terms & invoicing') }}
             </p>
             <ul class="plan-limits">
               <li>{{ planLimitLabel(plan).projects }}</li>
               <li>{{ planLimitLabel(plan).feedbackPerMonth }}</li>
               <li>{{ planLimitLabel(plan).users }}</li>
               <li>
-                {{
-                  planLimitLabel(plan).storageDays === 'Unlimited'
-                    ? 'Unlimited'
-                    : `${planLimitLabel(plan).storageDays} of`
-                }}
-                stored replays &amp; attachments
+                {{ planLimitLabel(plan).retention }}
               </li>
             </ul>
             <a
@@ -161,7 +207,7 @@ const faq = [
               class="btn btn-large plan-cta"
               :class="plan.highlighted ? 'btn-primary' : 'btn-ghost'"
             >
-              Start free trial
+              {{ copy('Start free trial') }}
             </a>
             <a
               v-else
@@ -170,13 +216,17 @@ const faq = [
               rel="noopener"
               target="_blank"
             >
-              Book a demo
+              {{ copy('Book a demo') }}
             </a>
           </div>
         </div>
         <p class="plans-note">
-          All prices in USD. Each plan includes a {{ trialDays }}-day free
-          trial. No credit card required.
+          {{
+            copy(
+              'All prices in USD. Each plan includes a {days}-day free trial. No credit card required.',
+              { days: copy(trialDays) },
+            )
+          }}
         </p>
       </div>
     </section>
@@ -187,31 +237,35 @@ const faq = [
     >
       <div class="container">
         <div class="section-head">
-          <h2 id="comparison-heading">Compare plans</h2>
+          <h2 id="comparison-heading">{{ copy('Compare plans') }}</h2>
         </div>
         <div
           class="table-scroll"
           tabindex="0"
           role="region"
-          aria-label="Plan comparison, scroll horizontally on smaller screens"
+          :aria-label="
+            copy('Plan comparison, scroll horizontally on smaller screens')
+          "
         >
           <table class="comparison-table">
             <caption class="visually-hidden">
-              Feature and limit comparison across Fidibeki plans
+              {{
+                copy('Feature and limit comparison across Fidibeki plans')
+              }}
             </caption>
             <thead>
               <tr>
                 <th scope="col">
-                  <span class="visually-hidden">Capability</span>
+                  <span class="visually-hidden">{{ copy('Capability') }}</span>
                 </th>
                 <th v-for="plan in plans" :key="plan.id" scope="col">
-                  {{ plan.name }}
+                  {{ copy(plan.name) }}
                 </th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in planComparisonRows" :key="row.key">
-                <th scope="row">{{ row.label }}</th>
+                <th scope="row">{{ copy(row.label) }}</th>
                 <td v-for="plan in plans" :key="plan.id">
                   <template
                     v-if="typeof comparisonValue(plan, row.key) === 'boolean'"
@@ -229,13 +283,15 @@ const faq = [
                       class="check-no"
                     />
                     <span class="visually-hidden">{{
-                      comparisonValue(plan, row.key)
-                        ? 'Included'
-                        : 'Not included'
+                      copy(
+                        comparisonValue(plan, row.key)
+                          ? 'Included'
+                          : 'Not included',
+                      )
                     }}</span>
                   </template>
                   <template v-else>{{
-                    comparisonValue(plan, row.key)
+                    copy(comparisonValue(plan, row.key))
                   }}</template>
                 </td>
               </tr>
@@ -248,8 +304,8 @@ const faq = [
     <section class="section faq-section" aria-labelledby="faq-heading">
       <div class="container">
         <div class="section-head">
-          <h2 id="faq-heading">Pricing questions</h2>
-          <p>Trial, billing, and your data.</p>
+          <h2 id="faq-heading">{{ copy('Pricing questions') }}</h2>
+          <p>{{ copy('Trial, billing, and your data.') }}</p>
         </div>
         <div class="faq-list">
           <details
@@ -260,11 +316,11 @@ const faq = [
             :open="index === 0"
           >
             <summary>
-              <span>{{ item.question }}</span
+              <span>{{ copy(item.question) }}</span
               ><span class="faq-toggle" aria-hidden="true" />
             </summary>
             <div class="faq-answer">
-              <p>{{ item.answer }}</p>
+              <p>{{ copy(item.answer) }}</p>
             </div>
           </details>
         </div>
@@ -285,8 +341,10 @@ const faq = [
   gap: 16px;
 }
 .plan-card {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 6;
+  row-gap: 0;
   padding: 28px 20px;
   border-top: 1px solid var(--line);
 }
@@ -551,6 +609,9 @@ const faq = [
     min-height: 0;
   }
   .plan-card {
+    display: flex;
+    flex-direction: column;
+    grid-row: auto;
     padding: 28px 20px;
   }
   .plans-note {

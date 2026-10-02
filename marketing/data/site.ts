@@ -8,14 +8,37 @@ export const siteName = 'Fidibeki'
 export const siteTagline = 'Product feedback that finishes the job.'
 
 export const siteDescription =
-  'The fastest path from “I found a bug” to “we fixed it.” Fidibeki lets reporters add screenshots, audio, or session replay from inside your product, so your team can triage, track, and update them in one workflow.'
+  'Collect website feedback and talk with visitors. Add screenshots and session replay, track issues, and update users from one shared workspace.'
 
 export const loopStages = [
-  { key: 'capture', label: 'Collect', blurb: 'Reporters submit feedback and add context on their terms.' },
-  { key: 'analyze', label: 'Understand', blurb: 'On eligible plans, AI can clean, transcribe, and score reports before your team reads them.' },
-  { key: 'decide', label: 'Decide', blurb: 'Triage the inbox, link related reports to one issue, and merge duplicates.' },
-  { key: 'track', label: 'Track', blurb: 'Follow statuses, priorities, and an immutable history until resolution.' },
-  { key: 'communicate', label: 'Close the loop', blurb: 'Send updates to the reporters who opted in.' },
+  {
+    key: 'capture',
+    label: 'Collect',
+    blurb: 'Reporters submit feedback and add context on their terms.',
+  },
+  {
+    key: 'analyze',
+    label: 'Understand',
+    blurb:
+      'On eligible plans, AI can clean, transcribe, and score reports before your team reads them.',
+  },
+  {
+    key: 'decide',
+    label: 'Decide',
+    blurb:
+      'Triage the inbox, link related reports to one issue, and merge duplicates.',
+  },
+  {
+    key: 'track',
+    label: 'Track',
+    blurb:
+      'Follow statuses, priorities, and an immutable history until resolution.',
+  },
+  {
+    key: 'communicate',
+    label: 'Close the loop',
+    blurb: 'Send updates to the reporters who opted in.',
+  },
 ] as const
 
 /** Real customers only — never add a logo without the founder's confirmation. */

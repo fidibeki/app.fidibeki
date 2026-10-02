@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { useCaseBySlug } from '~/data/use-cases'
 import { useCasePhotography } from '~/data/photography'
 import { features } from '~/data/features'
@@ -36,9 +38,9 @@ useSiteMeta({
   <div v-if="useCase">
     <PageHero
       show-eyebrow
-      :eyebrow="useCase.audience"
-      :title="useCase.name"
-      :lede="useCase.tagline"
+      :eyebrow="copy(useCase.audience)"
+      :title="copy(useCase.name)"
+      :lede="copy(useCase.tagline)"
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -50,13 +52,15 @@ useSiteMeta({
         />
       </template>
       <template #actions>
-        <a :href="links.signUp" class="btn btn-primary">Start free trial</a>
+        <a :href="links.signUp" class="btn btn-primary">{{
+          copy('Start free trial')
+        }}</a>
         <a
           :href="links.demo"
           class="btn btn-ghost"
           rel="noopener"
           target="_blank"
-          >Book a demo</a
+          >{{ copy('Book a demo') }}</a
         >
       </template>
       <template #media
@@ -67,17 +71,19 @@ useSiteMeta({
     <section class="section">
       <div class="container detail-grid">
         <div>
-          <p class="lede">{{ useCase.summary }}</p>
+          <p class="lede">{{ copy(useCase.summary) }}</p>
           <DetailSections :sections="useCase.sections" />
         </div>
         <aside class="detail-aside">
           <div class="aside-section">
-            <h2 class="aside-heading">Features in this workflow</h2>
+            <h2 class="aside-heading">
+              {{ copy('Features in this workflow') }}
+            </h2>
             <ul class="aside-related">
               <li v-for="entry in relatedFeatures" :key="entry.slug">
-                <NuxtLink :to="`/features/${entry.slug}`">{{
-                  entry.name
-                }}</NuxtLink>
+                <NuxtLinkLocale :to="`/features/${entry.slug}`">{{
+                  copy(entry.name)
+                }}</NuxtLinkLocale>
               </li>
             </ul>
           </div>

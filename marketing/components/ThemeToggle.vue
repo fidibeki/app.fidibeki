@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { Moon, Sun } from '@lucide/vue'
 
 const { theme, toggle, syncFromDocument } = useTheme()
@@ -11,7 +13,13 @@ const label = computed(() =>
 </script>
 
 <template>
-  <button type="button" class="theme-toggle" :aria-label="label" :title="label" @click="toggle">
+  <button
+    type="button"
+    class="theme-toggle"
+    :aria-label="copy(label)"
+    :title="copy(label)"
+    @click="toggle"
+  >
     <Sun v-if="theme === 'dark'" :size="18" aria-hidden="true" />
     <Moon v-else :size="18" aria-hidden="true" />
   </button>
@@ -29,7 +37,9 @@ const label = computed(() =>
   background: transparent;
   color: var(--ink-soft);
   cursor: pointer;
-  transition: border-color 140ms ease, color 140ms ease;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
 .theme-toggle:hover {

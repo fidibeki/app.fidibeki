@@ -1,0 +1,41 @@
+# Fidibeki
+
+> Fidibeki is a website feedback and visitor conversation service for product, engineering, support, and research teams. A widget on a customer's website connects visitor reports and conversations to that customer's workspace.
+
+Teams can collect written feedback and, when enabled and supported by the plan, screenshots, audio, video, page elements, and consented session replays. They can triage feedback, link reports to issues, track work, and send updates to reporters who opted in. Teams can start website conversations; each tenant can choose whether visitors may start conversations too.
+
+The linked Markdown pages are generated from the same published content as the website. Pricing is in USD. Plan availability, consent requirements, and the limits described in the security and data-processing documents apply. Session replays are never sent to AI providers. No SOC 2 or ISO 27001 certification is claimed.
+
+## Product
+
+- [Product overview](https://fidibeki.com/index.md): Website feedback, visitor conversations, and the path from a report to an update.
+- [Features](https://fidibeki.com/features.md): Capture, analysis, issue tracking, and reporter updates, with plan availability.
+- [Pricing](https://fidibeki.com/pricing.md): Starter, Growth, Scale, and Enterprise prices, limits, retention, and the free trial.
+- [Use cases](https://fidibeki.com/use-cases.md): Engineering, product, support, and research workflows.
+- [Integrations](https://fidibeki.com/integrations.md): Jira, Linear, Slack, Microsoft Teams, and signed webhooks.
+
+## Documentation
+
+- [Documentation overview](https://fidibeki.com/docs.md): Installation and configuration guides.
+- [Install the widget](https://fidibeki.com/docs/installation.md): Project setup, allowed origins, and the asynchronous script tag.
+- [Widget rules](https://fidibeki.com/docs/widget-rules.md): Targeting, objectives, appearance, attachments, and consent.
+- [Webhooks](https://fidibeki.com/docs/webhooks.md): Events, signatures, delivery attempts, and verification.
+
+## Privacy and security
+
+- [Security](https://fidibeki.com/security.md): Implemented controls, work in progress, and reporting vulnerabilities.
+- [Privacy notice](https://fidibeki.com/privacy.md): Collection, purposes, retention, subprocessors, and data rights.
+- [Data processing addendum](https://fidibeki.com/dpa.md): Controller and processor roles, instructions, safeguards, and unresolved provider details.
+- [Terms of service](https://fidibeki.com/tos.md): Operator identity, billing, cancellation, acceptable use, and contractual terms.
+
+## Languages
+
+- [English](https://fidibeki.com/index.md): English is the default; pages use unprefixed paths.
+- [Português](https://fidibeki.com/pt/index.md): Portuguese pages are under /pt. Example: /pt/pricing.md.
+- [Español](https://fidibeki.com/es/index.md): Spanish pages are under /es. Example: /es/pricing.md.
+- [Français](https://fidibeki.com/fr/index.md): French pages are under /fr. Example: /fr/pricing.md.
+
+## Optional
+
+- [Support](https://fidibeki.com/support.md): Troubleshooting and what to include in a support request.
+- [Contact](https://fidibeki.com/contact.md): Support, security, privacy, and sales contact details.

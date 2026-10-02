@@ -1,4 +1,5 @@
 import { marketingRoutes } from './data/site'
+import { marketingLocales, localizedPath } from './utils/locale'
 
 const siteUrl = process.env.NUXT_PUBLIC_SITE_URL || 'https://fidibeki.com'
 // The existing application serves signup at the base domain and sign-in on each
@@ -21,7 +22,20 @@ export default defineNuxtConfig({
     '~/assets/css/reading.css',
   ],
   devtools: { enabled: false },
-  modules: [],
+  modules: ['@nuxtjs/i18n'],
+  i18n: {
+    defaultLocale: 'en',
+    strategy: 'prefix_except_default',
+    baseUrl: siteUrl,
+    locales: marketingLocales.map((locale) => ({ ...locale })),
+    vueI18n: './i18n.config.ts',
+    detectBrowserLanguage: {
+      useCookie: true,
+      cookieKey: 'fidibeki-locale',
+      redirectOn: 'root',
+      fallbackLocale: 'en',
+    },
+  },
   app: {
     head: {
       htmlAttrs: { lang: 'en' },
@@ -40,7 +54,9 @@ export default defineNuxtConfig({
   nitro: {
     prerender: {
       crawlLinks: true,
-      routes: marketingRoutes,
+      routes: marketingLocales.flatMap((locale) =>
+        marketingRoutes.map((route) => localizedPath(route, locale.code)),
+      ),
       failOnError: true,
     },
   },

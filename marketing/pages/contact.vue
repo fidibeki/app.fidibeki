@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import {
   ArrowUpRight,
   Briefcase,
@@ -38,9 +40,13 @@ const specialistIcons = {
 <template>
   <div>
     <PageHero
-      eyebrow="Contact"
-      title="Reach a person"
-      lede="No ticket portal, no queue position, no bot asking you to rephrase the question. Four addresses, one calendar, and a plain statement of who is on the other side."
+      :eyebrow="copy('Contact')"
+      :title="copy('Reach a person')"
+      :lede="
+        copy(
+          'No ticket portal, no queue position, no bot asking you to rephrase the question. Four addresses, one calendar, and a plain statement of who is on the other side.',
+        )
+      "
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -54,7 +60,7 @@ const specialistIcons = {
         ><EditorialPhoto
           :photo="photography.aveiro"
           ratio="5 / 4"
-          caption="Aveiro, Portugal"
+          :caption="copy('Aveiro, Portugal')"
           eager
       /></template>
     </PageHero>
@@ -62,21 +68,22 @@ const specialistIcons = {
     <section class="section switchboard-section">
       <div class="container switchboard">
         <a :href="`mailto:${primaryChannel.email}`" class="primary-panel">
-          <span class="panel-label">Start here</span>
-          <h2>{{ primaryChannel.label }}</h2>
-          <p>{{ primaryChannel.blurb }}</p>
+          <span class="panel-label">{{ copy('Start here') }}</span>
+          <h2>{{ copy(primaryChannel.label) }}</h2>
+          <p>{{ copy(primaryChannel.blurb) }}</p>
           <span class="panel-address">
-            {{ primaryChannel.email }}
+            {{ copy(primaryChannel.email) }}
             <ArrowUpRight :size="18" aria-hidden="true" />
           </span>
-          <span class="panel-note"
-            >Answered by the person who built the thing you are asking
-            about.</span
-          >
+          <span class="panel-note">{{
+            copy(
+              'Answered by the person who built the thing you are asking about.',
+            )
+          }}</span>
         </a>
 
         <div class="specialist-list">
-          <span class="specialist-heading">Or go direct</span>
+          <span class="specialist-heading">{{ copy('Or go direct') }}</span>
           <a
             v-for="channel in specialistChannels"
             :key="channel.key"
@@ -91,9 +98,9 @@ const specialistIcons = {
               />
             </span>
             <span class="specialist-body">
-              <span class="specialist-label">{{ channel.label }}</span>
-              <span class="specialist-blurb">{{ channel.blurb }}</span>
-              <span class="specialist-address">{{ channel.email }}</span>
+              <span class="specialist-label">{{ copy(channel.label) }}</span>
+              <span class="specialist-blurb">{{ copy(channel.blurb) }}</span>
+              <span class="specialist-address">{{ copy(channel.email) }}</span>
             </span>
             <ArrowUpRight
               :size="16"
@@ -112,10 +119,13 @@ const specialistIcons = {
             ><CalendarClock :size="18" aria-hidden="true"
           /></span>
           <div class="path-copy">
-            <h2>Book a demo</h2>
+            <h2>{{ copy('Book a demo') }}</h2>
             <p>
-              Thirty minutes, screen shared, your questions rather than our
-              slides. Usually an enterprise scope or a security review.
+              {{
+                copy(
+                  'Thirty minutes, screen shared, your questions rather than our slides. Usually an enterprise scope or a security review.',
+                )
+              }}
             </p>
             <a
               :href="links.demo"
@@ -123,7 +133,8 @@ const specialistIcons = {
               rel="noopener"
               target="_blank"
             >
-              Find a time <ArrowUpRight :size="14" aria-hidden="true" />
+              {{ copy('Find a time') }}
+              <ArrowUpRight :size="14" aria-hidden="true" />
             </a>
           </div>
         </div>
@@ -133,11 +144,13 @@ const specialistIcons = {
             ><MessageSquare :size="18" aria-hidden="true"
           /></span>
           <div class="path-copy">
-            <h2>Use the widget</h2>
+            <h2>{{ copy('Use the widget') }}</h2>
             <p>
-              This site runs the same widget we sell, so the fastest way to
-              report something about Fidibeki is to report it with Fidibeki. It
-              loads once you accept it in the banner.
+              {{
+                copy(
+                  'This site runs the same widget we sell, so the fastest way to report something about Fidibeki is to report it with Fidibeki. It loads once you accept it in the banner.',
+                )
+              }}
             </p>
             <a
               :href="linkedInUrl"
@@ -145,7 +158,7 @@ const specialistIcons = {
               rel="noopener"
               target="_blank"
             >
-              Or find us on LinkedIn
+              {{ copy('Or find us on LinkedIn') }}
               <ArrowUpRight :size="14" aria-hidden="true" />
             </a>
           </div>
@@ -156,34 +169,49 @@ const specialistIcons = {
     <section class="section imprint-section">
       <div class="container">
         <div class="imprint">
-          <span class="imprint-label">Who you are contacting</span>
+          <span class="imprint-label">{{
+            copy('Who you are contacting')
+          }}</span>
           <p class="imprint-lede">
-            Fidibeki is a service operated by
-            <strong>ACIDINEY ALVARO CARVALHO SOARES DIAS</strong>, an
-            independent service provider established in Portugal. Fidibeki is
-            the name of the service, not a company or a separate legal entity.
+            {{ copy('Fidibeki is a service operated by') }}
+            <strong>{{ copy('ACIDINEY ALVARO CARVALHO SOARES DIAS') }}</strong
+            >{{
+              copy(
+                ', an independent service provider established in Portugal. Fidibeki is the name of the service, not a company or a separate legal entity.',
+              )
+            }}
           </p>
           <div class="imprint-grid">
             <div class="imprint-field">
-              <span class="imprint-key">Established</span>
+              <span class="imprint-key">{{ copy('Established') }}</span>
               <address class="imprint-value">
-                Travessa Quinta do Casal 18<br />
-                3810-928 Aveiro<br />
-                Portugal
+                {{ copy('Travessa Quinta do Casal 18') }}<br />
+                {{ copy('3810-928 Aveiro') }}<br />
+                {{ copy('Portugal') }}
               </address>
             </div>
             <div class="imprint-field">
-              <span class="imprint-key">Tax and registration</span>
+              <span class="imprint-key">{{
+                copy('Tax and registration')
+              }}</span>
               <p class="imprint-value">
-                On every invoice we issue, and on request.
+                {{ copy('On every invoice we issue, and on request.') }}
               </p>
             </div>
             <div class="imprint-field">
-              <span class="imprint-key">The paperwork</span>
+              <span class="imprint-key">{{ copy('The paperwork') }}</span>
               <p class="imprint-value">
-                <NuxtLink to="/tos">Terms of service</NuxtLink><br />
-                <NuxtLink to="/privacy">Privacy notice</NuxtLink><br />
-                <NuxtLink to="/support">Support guides</NuxtLink>
+                <NuxtLinkLocale to="/tos">{{
+                  copy('Terms of service')
+                }}</NuxtLinkLocale
+                ><br />
+                <NuxtLinkLocale to="/privacy">{{
+                  copy('Privacy notice')
+                }}</NuxtLinkLocale
+                ><br />
+                <NuxtLinkLocale to="/support">{{
+                  copy('Support guides')
+                }}</NuxtLinkLocale>
               </p>
             </div>
           </div>
@@ -192,8 +220,12 @@ const specialistIcons = {
     </section>
 
     <CtaSection
-      title="Rather just try it?"
-      body="Start a free trial and write in when you hit something. Questions from inside the product are easier to answer than questions about it."
+      :title="copy('Rather just try it?')"
+      :body="
+        copy(
+          'Start a free trial and write in when you hit something. Questions from inside the product are easier to answer than questions about it.',
+        )
+      "
     />
   </div>
 </template>

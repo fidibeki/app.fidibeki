@@ -1,21 +1,28 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { Check, ExternalLink } from '@lucide/vue'
 import { trialDays } from '~/data/pricing'
 
 const links = useAppLinks()
 
-useSiteMeta({
+useSiteMeta(() => ({
   title: 'Sign up',
-  description: `Create a Fidibeki workspace in about a minute. ${trialDays}-day free trial, no credit card required.`,
+  description: copy(
+    'Create a Fidibeki workspace in about a minute. {days}-day free trial, no credit card required.',
+    { days: copy(trialDays) },
+  ),
   path: '/sign-up',
   breadcrumbs: [
     { name: 'Home', path: '/' },
     { name: 'Sign up', path: '/sign-up' },
   ],
-})
+}))
 
 const included = [
-  `${trialDays} day free trial, no credit card required`,
+  copy('{days} day free trial, no credit card required', {
+    days: copy(trialDays),
+  }),
   'Your own workspace at your-team.fidibeki.com',
   'Feedback widget, issue triage, and reporter update tools from day one',
   'Passwordless sign-in for you and your team',
@@ -28,28 +35,38 @@ const included = [
       <div class="container auth-inner">
         <div class="auth-card">
           <BrandMark class="auth-mark" />
-          <h1>Create your workspace</h1>
+          <h1>{{ copy('Create your workspace') }}</h1>
           <p class="lede">
-            Pick a workspace name, verify your email, and start capturing
-            feedback.
+            {{
+              copy(
+                'Pick a workspace name, verify your email, and start capturing feedback.',
+              )
+            }}
           </p>
           <ul class="auth-list">
             <li v-for="item in included" :key="item">
               <Check :size="16" aria-hidden="true" class="auth-check" />
-              <span>{{ item }}</span>
+              <span>{{ copy(item) }}</span>
             </li>
           </ul>
           <a :href="links.signUp" class="btn btn-primary btn-large auth-cta">
-            Continue to sign up <ExternalLink :size="16" aria-hidden="true" />
+            {{ copy('Continue to sign up') }}
+            <ExternalLink :size="16" aria-hidden="true" />
           </a>
           <p class="auth-legal">
-            By creating a workspace you agree to our
-            <NuxtLink to="/tos">Terms of Service</NuxtLink> and
-            <NuxtLink to="/privacy">Privacy notice</NuxtLink>.
+            {{ copy('By creating a workspace you agree to our') }}
+            <NuxtLinkLocale to="/tos">{{
+              copy('Terms of Service')
+            }}</NuxtLinkLocale>
+            {{ copy('and') }}
+            <NuxtLinkLocale to="/privacy">{{
+              copy('Privacy notice')
+            }}</NuxtLinkLocale
+            >.
           </p>
           <p class="auth-alt">
-            Already have a workspace?
-            <a :href="links.signIn">Sign in</a>
+            {{ copy('Already have a workspace?') }}
+            <a :href="links.signIn">{{ copy('Sign in') }}</a>
           </p>
         </div>
       </div>

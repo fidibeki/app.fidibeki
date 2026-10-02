@@ -188,7 +188,9 @@ test('integration previews show the right workflow, destination and plan', async
     ['Webhooks', 'webhooks', 'Explore webhooks', 'Scale & Enterprise'],
   ]) {
     const button = choices.getByRole('button', { name: label, exact: true })
+    await expect(button).toBeEnabled()
     await button.focus()
+    await expect(button).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(button).toHaveAttribute('aria-pressed', 'true')
     await expect(

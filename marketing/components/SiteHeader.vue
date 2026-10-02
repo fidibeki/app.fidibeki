@@ -1,11 +1,18 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { ArrowUpRight, Menu, X } from '@lucide/vue'
 import { primaryNav } from '~/data/site'
+import { unlocalizedPath } from '~/utils/locale'
 
 const links = useAppLinks()
 const menuOpen = ref(false)
 const menuButton = ref<HTMLButtonElement | null>(null)
-const route = useRoute()
+const router = useRouter()
+// Global navigation follows the committed URL, without waiting for NuxtPage to finish rendering.
+const sectionPath = computed(() =>
+  unlocalizedPath(router.currentRoute.value.path),
+)
 
 function closeMenu(returnFocus = false) {
   menuOpen.value = false
@@ -13,7 +20,7 @@ function closeMenu(returnFocus = false) {
 }
 
 watch(
-  () => route.fullPath,
+  () => router.currentRoute.value.fullPath,
   () => closeMenu(),
 )
 </script>
@@ -21,38 +28,44 @@ watch(
 <template>
   <header class="home-header" @keydown.esc="closeMenu(true)">
     <div class="home-width home-header-inner">
-      <NuxtLink to="/" class="home-brand" aria-label="Fidibeki home">
-        <BrandMark /> <span>fidibeki</span>
-      </NuxtLink>
-      <nav class="home-nav" aria-label="Primary">
-        <NuxtLink
+      <NuxtLinkLocale
+        to="/"
+        class="home-brand"
+        :aria-label="copy('Fidibeki home')"
+      >
+        <BrandMark /> <span>{{ copy('fidibeki') }}</span>
+      </NuxtLinkLocale>
+      <nav class="home-nav" :aria-label="copy('Primary')">
+        <NuxtLinkLocale
           v-for="item in primaryNav"
           :key="item.to"
           :to="item.to"
           :class="{
             'section-active':
-              route.path === item.to || route.path.startsWith(`${item.to}/`),
+              sectionPath === item.to || sectionPath.startsWith(`${item.to}/`),
           }"
           :aria-current="
-            route.path === item.to
+            sectionPath === item.to
               ? 'page'
-              : route.path.startsWith(`${item.to}/`)
+              : sectionPath.startsWith(`${item.to}/`)
                 ? 'location'
                 : undefined
           "
-          >{{ item.label }}</NuxtLink
+          >{{ copy(item.label) }}</NuxtLinkLocale
         >
       </nav>
       <div class="home-header-actions">
-        <a :href="links.signIn" class="home-signin">Log in</a>
+        <LanguageSwitcher class="header-language" />
+        <a :href="links.signIn" class="home-signin">{{ copy('Log in') }}</a>
         <a :href="links.signUp" class="home-button home-header-cta"
-          >Start free trial <ArrowUpRight :size="15" aria-hidden="true"
+          >{{ copy('Start free trial') }}
+          <ArrowUpRight :size="15" aria-hidden="true"
         /></a>
         <button
           ref="menuButton"
           class="home-menu-toggle"
           type="button"
-          :aria-label="menuOpen ? 'Close menu' : 'Open menu'"
+          :aria-label="copy(menuOpen ? 'Close menu' : 'Open menu')"
           :aria-expanded="menuOpen"
           aria-controls="home-mobile-nav"
           @click="menuOpen = !menuOpen"
@@ -66,32 +79,35 @@ watch(
       v-if="menuOpen"
       id="home-mobile-nav"
       class="home-mobile-nav"
-      aria-label="Mobile"
+      :aria-label="copy('Mobile')"
     >
       <div class="home-width home-mobile-links">
-        <NuxtLink
+        <LanguageSwitcher />
+        <NuxtLinkLocale
           v-for="item in primaryNav"
           :key="item.to"
           :to="item.to"
           :class="{
             'section-active':
-              route.path === item.to || route.path.startsWith(`${item.to}/`),
+              sectionPath === item.to || sectionPath.startsWith(`${item.to}/`),
           }"
           :aria-current="
-            route.path === item.to
+            sectionPath === item.to
               ? 'page'
-              : route.path.startsWith(`${item.to}/`)
+              : sectionPath.startsWith(`${item.to}/`)
                 ? 'location'
                 : undefined
           "
-          >{{ item.label }}</NuxtLink
+          >{{ copy(item.label) }}</NuxtLinkLocale
         >
-        <a :href="links.signIn">Log in</a>
+        <a :href="links.signIn">{{ copy('Log in') }}</a>
         <a :href="links.signUp"
-          >Start free trial <ArrowUpRight :size="17" aria-hidden="true"
+          >{{ copy('Start free trial') }}
+          <ArrowUpRight :size="17" aria-hidden="true"
         /></a>
         <a :href="links.demo" target="_blank" rel="noopener"
-          >Book a demo <ArrowUpRight :size="17" aria-hidden="true"
+          >{{ copy('Book a demo') }}
+          <ArrowUpRight :size="17" aria-hidden="true"
         /></a>
       </div>
     </nav>
@@ -109,7 +125,7 @@ watch(
 .home-header-inner {
   display: flex;
   align-items: center;
-  gap: 42px;
+  gap: 28px;
   min-height: 80px;
   padding-block: 16px;
 }
@@ -137,7 +153,7 @@ watch(
 .home-nav {
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: 20px;
   font-size: 14px;
 }
 .home-nav a,
@@ -151,7 +167,7 @@ watch(
 .home-header-actions {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
   margin-left: auto;
   font-size: 14px;
 }
@@ -197,7 +213,7 @@ watch(
     gap: 18px;
   }
 }
-@media (max-width: 899px) {
+@media (max-width: 1100px) {
   .home-nav,
   .home-signin {
     display: none;
@@ -236,7 +252,7 @@ watch(
     height: 27px;
   }
 }
-@media (min-width: 900px) {
+@media (min-width: 1101px) {
   .home-mobile-nav {
     display: none;
   }
@@ -249,9 +265,17 @@ watch(
     gap: 4px;
   }
   .home-header .home-header-cta {
-    padding-inline: 12px;
+    padding-inline: 10px;
   }
   .home-header-cta :deep(svg) {
+    display: none;
+  }
+}
+</style>
+
+<style scoped>
+@media (max-width: 1100px) {
+  .header-language {
     display: none;
   }
 }

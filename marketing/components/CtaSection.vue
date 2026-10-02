@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 withDefaults(
   defineProps<{
     title?: string
@@ -17,19 +19,19 @@ const links = useAppLinks()
   <section class="cta-final">
     <div class="container cta-inner">
       <div class="cta-copy">
-        <h2>{{ title }}</h2>
-        <p class="cta-body">{{ body }}</p>
+        <h2>{{ copy(title) }}</h2>
+        <p class="cta-body">{{ copy(body) }}</p>
       </div>
       <div class="cta-actions">
-        <a :href="links.signUp" class="btn btn-primary btn-large"
-          >Start free trial</a
-        >
+        <a :href="links.signUp" class="btn btn-primary btn-large">{{
+          copy('Start free trial')
+        }}</a>
         <a
           :href="links.demo"
           class="btn btn-ghost btn-large"
           rel="noopener"
           target="_blank"
-          >Book a demo</a
+          >{{ copy('Book a demo') }}</a
         >
       </div>
     </div>

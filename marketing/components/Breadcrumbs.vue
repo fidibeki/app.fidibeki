@@ -1,17 +1,19 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 defineProps<{
   items: { name: string; path: string }[]
 }>()
 </script>
 
 <template>
-  <nav class="breadcrumbs" aria-label="Breadcrumb">
+  <nav class="breadcrumbs" :aria-label="copy('Breadcrumb')">
     <ol>
       <li v-for="(item, index) in items" :key="item.path">
-        <NuxtLink v-if="index < items.length - 1" :to="item.path">{{
-          item.name
-        }}</NuxtLink>
-        <span v-else aria-current="page">{{ item.name }}</span>
+        <NuxtLinkLocale v-if="index < items.length - 1" :to="item.path">{{
+          copy(item.name)
+        }}</NuxtLinkLocale>
+        <span v-else aria-current="page">{{ copy(item.name) }}</span>
       </li>
     </ol>
   </nav>

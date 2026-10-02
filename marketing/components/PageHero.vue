@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 defineProps<{
   eyebrow: string
   title: string
@@ -14,10 +16,10 @@ defineProps<{
       <div class="hero-layout" :class="{ 'hero-with-media': $slots.media }">
         <div class="hero-copy">
           <p v-if="showEyebrow || !$slots.breadcrumbs" class="eyebrow">
-            {{ eyebrow }}
+            {{ copy(eyebrow) }}
           </p>
-          <h1>{{ title }}</h1>
-          <p class="lede">{{ lede }}</p>
+          <h1>{{ copy(title) }}</h1>
+          <p class="lede">{{ copy(lede) }}</p>
           <div v-if="$slots.actions" class="hero-actions">
             <slot name="actions" />
           </div>

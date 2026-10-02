@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 defineProps<{ compact?: boolean }>()
 import {
   ArrowRight,
@@ -52,6 +54,10 @@ const destinations = [
     link: 'Explore webhooks',
   },
 ] as const
+const ready = ref(false)
+onMounted(() => {
+  ready.value = true
+})
 const selected = ref<string>('slack')
 const destination = computed(
   () => destinations.find((item) => item.slug === selected.value)!,
@@ -67,40 +73,49 @@ const exampleTitle = 'Checkout button does not respond on mobile'
     class="home-connections"
     :class="{ 'connections-compact': compact }"
     :aria-labelledby="compact ? undefined : 'connections-heading'"
-    :aria-label="compact ? 'Integration example' : undefined"
+    :aria-label="copy(compact ? 'Integration example' : undefined)"
   >
     <div v-if="!compact" class="connections-intro">
-      <h2 id="connections-heading">Feedback, wherever<br />your team works.</h2>
+      <h2 id="connections-heading">
+        {{ copy('Feedback, wherever') }}<br />{{ copy('your team works.') }}
+      </h2>
       <p>
-        Send updates to a channel. Turn reports into issues. Bring the context
-        with you.
+        {{
+          copy(
+            'Send updates to a channel. Turn reports into issues. Bring the context with you.',
+          )
+        }}
       </p>
-      <NuxtLink to="/integrations" class="home-text-link"
-        >Browse integrations <ArrowRight :size="16" aria-hidden="true"
-      /></NuxtLink>
+      <NuxtLinkLocale to="/integrations" class="home-text-link"
+        >{{ copy('Browse integrations') }}
+        <ArrowRight :size="16" aria-hidden="true"
+      /></NuxtLinkLocale>
     </div>
     <div class="connections-example">
       <div
         class="connections-switcher"
         role="group"
-        aria-label="Preview an integration"
+        :aria-label="copy('Preview an integration')"
       >
         <button
           v-for="item in destinations"
           :key="item.slug"
           type="button"
+          :disabled="!ready"
           :aria-pressed="selected === item.slug"
           aria-controls="integration-preview"
           @click="selected = item.slug"
         >
-          {{ item.label }}
+          {{ copy(item.label) }}
         </button>
       </div>
       <div
         id="integration-preview"
         class="connection-preview"
         role="region"
-        :aria-label="`${destination.label} example`"
+        :aria-label="
+          copy('{destination} example', { destination: destination.label })
+        "
       >
         <div class="connection-window-heading">
           <span
@@ -113,37 +128,44 @@ const exampleTitle = 'Checkout button does not respond on mobile'
               :size="15"
               aria-hidden="true"
             /><Link v-else :size="15" aria-hidden="true" />{{
-              destination.heading
+              copy(destination.heading)
             }}</span
-          ><span>Example</span>
+          ><span>{{ copy('Example') }}</span>
         </div>
         <div :key="selected" class="connection-message">
           <template v-if="destination.kind === 'notification'">
             <div class="connection-sender">
-              <BrandMark /><strong>Fidibeki</strong><span>App</span>
+              <BrandMark /><strong>{{ copy('Fidibeki') }}</strong
+              ><span>{{ copy('App') }}</span>
             </div>
             <div class="connection-message-body">
-              <span class="connection-event-label">New feedback</span>
-              <p>{{ exampleTitle }}</p>
-              <span class="connection-context"
-                >“The checkout button isn't working on my phone.”</span
+              <span class="connection-event-label">{{
+                copy('New feedback')
+              }}</span>
+              <p>{{ copy(exampleTitle) }}</p>
+              <span class="connection-context">{{
+                copy("“The checkout button isn't working on my phone.”")
+              }}</span
               ><span class="connection-source"
-                >View feedback in Fidibeki
+                >{{ copy('View feedback in Fidibeki') }}
                 <ArrowUpRight :size="13" aria-hidden="true"
               /></span>
             </div>
           </template>
           <template v-else-if="destination.kind === 'issue'">
             <span class="connection-issue-key"
-              >DEMO-24 <span>Issue linked to Fidibeki</span></span
+              >{{ copy('DEMO-24') }}
+              <span>{{ copy('Issue linked to Fidibeki') }}</span></span
             >
-            <p class="connection-issue-title">{{ exampleTitle }}</p>
+            <p class="connection-issue-title">{{ copy(exampleTitle) }}</p>
             <div class="connection-issue-meta">
-              <span><span class="connection-status-dot" /> Todo</span
-              ><span>High priority</span><span>Bug</span>
+              <span
+                ><span class="connection-status-dot" /> {{ copy('Todo') }}</span
+              ><span>{{ copy('High priority') }}</span
+              ><span>{{ copy('Bug') }}</span>
             </div>
             <span class="connection-source"
-              ><BrandMark /> Original feedback attached</span
+              ><BrandMark /> {{ copy('Original feedback attached') }}</span
             >
           </template>
           <template v-else>
@@ -153,14 +175,17 @@ const exampleTitle = 'Checkout button does not respond on mobile'
               >
             </div>
             <p class="connection-event-copy">
-              A new report, ready for your workflow.
+              {{ copy('A new report, ready for your workflow.') }}
             </p>
             <div class="connection-event-details">
-              <span>Payload <strong>Signed JSON</strong></span
+              <span
+                >{{ copy('Payload') }}
+                <strong>{{ copy('Signed JSON') }}</strong></span
               ><span
-                >Delivery
+                >{{ copy('Delivery') }}
                 <strong
-                  ><Check :size="13" aria-hidden="true" /> Logged</strong
+                  ><Check :size="13" aria-hidden="true" />
+                  {{ copy('Logged') }}</strong
                 ></span
               >
             </div>
@@ -168,30 +193,34 @@ const exampleTitle = 'Checkout button does not respond on mobile'
         </div>
       </div>
       <div class="connection-caption" aria-live="polite">
-        <p>{{ destination.note }}</p>
+        <p>{{ copy(destination.note) }}</p>
         <div>
-          <NuxtLink :to="`/integrations/${destination.slug}`"
-            >{{ destination.link }}
-            <ArrowUpRight :size="14" aria-hidden="true" /></NuxtLink
-          ><span>{{ availability }}</span>
+          <NuxtLinkLocale :to="`/integrations/${destination.slug}`"
+            >{{ copy(destination.link) }}
+            <ArrowUpRight :size="14" aria-hidden="true" /></NuxtLinkLocale
+          ><span>{{ copy(availability) }}</span>
         </div>
       </div>
     </div>
     <div v-if="!compact" class="connections-details">
-      <NuxtLink to="/features/ai-analysis"
-        ><h3>Help with the first read.</h3>
-        <p>AI-assisted text cleanup, transcription, and sentiment.</p>
+      <NuxtLinkLocale to="/features/ai-analysis"
+        ><h3>{{ copy('Help with the first read.') }}</h3>
+        <p>
+          {{ copy('AI-assisted text cleanup, transcription, and sentiment.') }}
+        </p>
         <span
-          >Explore AI analysis
+          >{{ copy('Explore AI analysis') }}
           <ArrowUpRight :size="15" aria-hidden="true" /></span
-      ></NuxtLink>
-      <NuxtLink to="/security"
-        ><h3>Shared on their terms.</h3>
-        <p>Your users choose the context they share with your team.</p>
+      ></NuxtLinkLocale>
+      <NuxtLinkLocale to="/security"
+        ><h3>{{ copy('Shared on their terms.') }}</h3>
+        <p>
+          {{ copy('Your users choose the context they share with your team.') }}
+        </p>
         <span
-          >Privacy and security
+          >{{ copy('Privacy and security') }}
           <ArrowUpRight :size="15" aria-hidden="true" /></span
-      ></NuxtLink>
+      ></NuxtLinkLocale>
     </div>
   </section>
 </template>

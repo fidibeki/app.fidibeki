@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { footerGroups } from '~/data/site'
 import { ArrowUpRight } from '@lucide/vue'
 const links = useAppLinks()
@@ -8,55 +10,66 @@ const links = useAppLinks()
   <footer class="home-footer home-width">
     <div class="home-footer-main">
       <div class="home-footer-brand">
-        <NuxtLink to="/" aria-label="Fidibeki"
-          ><BrandMark /><span>fidibeki</span></NuxtLink
+        <NuxtLinkLocale to="/" :aria-label="copy('Fidibeki')"
+          ><BrandMark /><span>{{ copy('fidibeki') }}</span></NuxtLinkLocale
         >
-        <p>Listen. Make it better.<br />Let them know.</p>
+        <p>
+          {{ copy('Listen. Make it better.') }}<br />{{
+            copy('Let them know.')
+          }}
+        </p>
         <a
           :href="links.demo"
           class="home-footer-demo"
           target="_blank"
           rel="noopener"
-          >Book a demo <ArrowUpRight :size="14" aria-hidden="true"
+          >{{ copy('Book a demo') }}
+          <ArrowUpRight :size="14" aria-hidden="true"
         /></a>
       </div>
       <nav
         v-for="group in footerGroups"
         :key="group.heading"
-        :aria-label="group.heading"
+        :aria-label="copy(group.heading)"
       >
-        <h2>{{ group.heading }}</h2>
-        <NuxtLink v-for="item in group.links" :key="item.to" :to="item.to">{{
-          item.label
-        }}</NuxtLink>
-        <a v-if="group.heading === 'Get started'" :href="links.signIn"
-          >Sign in</a
+        <h2>{{ copy(group.heading) }}</h2>
+        <NuxtLinkLocale
+          v-for="item in group.links"
+          :key="item.to"
+          :to="item.to"
+          >{{ copy(item.label) }}</NuxtLinkLocale
         >
+        <a v-if="group.heading === 'Get started'" :href="links.signIn">{{
+          copy('Sign in')
+        }}</a>
         <a
           v-if="group.heading === 'Get started'"
           :href="links.demo"
           target="_blank"
           rel="noopener"
-          >Book a demo</a
+          >{{ copy('Book a demo') }}</a
         >
       </nav>
     </div>
     <div class="home-footer-bottom">
-      <span>© {{ new Date().getFullYear() }} Fidibeki</span>
-      <a href="mailto:support@fidibeki.com">Get in touch</a>
+      <span
+        >© {{ copy(new Date().getFullYear()) }} {{ copy('Fidibeki') }}</span
+      >
+      <a href="mailto:support@fidibeki.com">{{ copy('Get in touch') }}</a>
       <a
         href="https://www.producthunt.com/products/fidibeki"
         target="_blank"
         rel="noopener"
-        >On Product Hunt</a
+        >{{ copy('On Product Hunt') }}</a
       >
       <a
         href="https://www.linkedin.com/company/fidibeki"
         target="_blank"
         rel="noopener"
-        >LinkedIn</a
+        >{{ copy('LinkedIn') }}</a
       >
       <StatusPill />
+      <LanguageSwitcher />
       <ThemeToggle />
     </div>
   </footer>

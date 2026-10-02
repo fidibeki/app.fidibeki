@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import type { EditorialImage } from '~/data/photography'
 
 withDefaults(
@@ -28,20 +30,22 @@ withDefaults(
         sizes="(min-width: 1264px) 568px, (min-width: 900px) 46vw, (min-width: 600px) calc(100vw - 48px), calc(100vw - 40px)"
         :width="photo.width"
         :height="photo.height"
-        :alt="decorative ? '' : photo.alt"
+        :alt="copy(decorative ? '' : photo.alt)"
         :loading="eager ? 'eager' : 'lazy'"
         :fetchpriority="eager ? 'high' : 'auto'"
         decoding="async"
       />
     </div>
     <figcaption v-if="caption">
-      <span>{{ caption }}</span>
+      <span>{{ copy(caption) }}</span>
       <a
         :href="photo.source"
         target="_blank"
         rel="noopener"
-        :aria-label="`Photo by ${photo.photographer} on Unsplash`"
-        >{{ photo.photographer }} ↗</a
+        :aria-label="
+          copy('Photo by {name} on Unsplash', { name: photo.photographer })
+        "
+        >{{ copy(photo.photographer) }} ↗</a
       >
     </figcaption>
   </figure>

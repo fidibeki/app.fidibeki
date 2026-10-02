@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { highlightCode } from '~/utils/highlight'
 
 const props = defineProps<{ code: string; language?: string }>()
@@ -16,7 +18,7 @@ const rendered = computed(() => highlightCode(props.code, props.language || ''))
     class="code-block"
     tabindex="0"
     role="region"
-    aria-label="Code example"
+    :aria-label="copy('Code example')"
   ><code v-html="rendered" /></pre>
 </template>
 

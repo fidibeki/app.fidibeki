@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import {
   ArrowRight,
   ArrowUp,
@@ -17,6 +19,7 @@ import {
 // One bounded story, started by the visitor. Keep every step readable throughout;
 // motion only shows the handoff, and never advances to another screen.
 const links = useAppLinks()
+const ready = ref(false)
 const draft = ref('')
 const submitted = ref('')
 const step = ref(0)
@@ -46,7 +49,7 @@ const samples = [
 ]
 const scenario = computed(
   () =>
-    samples.find((sample) => sample.text === submitted.value)?.kind ??
+    samples.find((sample) => copy(sample.text) === submitted.value)?.kind ??
     'feedback',
 )
 const isQuestion = computed(() => scenario.value === 'question')
@@ -140,7 +143,7 @@ function togglePlayback() {
   }
 }
 function useSample(text: string) {
-  draft.value = text
+  draft.value = copy(text)
   feedbackInput.value?.focus()
 }
 async function previewFeedback() {
@@ -170,6 +173,7 @@ function onMotionChange() {
   }
 }
 onMounted(() => {
+  ready.value = true
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
   onMotionChange()
   motionQuery.addEventListener('change', onMotionChange)
@@ -199,36 +203,40 @@ onBeforeUnmount(() => {
       class="home-prompt"
       :class="{ 'demo-is-sent': submitted }"
     >
-      <h1 id="home-title">What could be better?</h1>
+      <h1 id="home-title">{{ copy('What could be better?') }}</h1>
       <p class="home-intro">
-        Feedback and conversations, right inside your product.
+        {{ copy('Feedback and conversations, right inside your product.') }}
       </p>
       <form
         v-if="!submitted"
         class="home-composer"
         @submit.prevent="previewFeedback"
       >
-        <label for="home-feedback" class="home-visually-hidden"
-          >Try an example feedback report</label
-        >
+        <label for="home-feedback" class="home-visually-hidden">{{
+          copy('Try an example feedback report')
+        }}</label>
         <textarea
           id="home-feedback"
           ref="feedbackInput"
           v-model="draft"
+          :disabled="!ready"
           maxlength="500"
           rows="2"
-          placeholder="A small frustration. An idea. Something worth fixing."
+          :placeholder="
+            copy('A small frustration. An idea. Something worth fixing.')
+          "
           aria-describedby="demo-disclaimer"
         />
         <div class="home-composer-bottom">
           <span
-            ><MessageCircle :size="16" aria-hidden="true" /> Try Fidibeki</span
+            ><MessageCircle :size="16" aria-hidden="true" />
+            {{ copy('Try Fidibeki') }}</span
           >
           <button
             class="home-send"
             type="submit"
-            :disabled="!draft.trim()"
-            aria-label="Preview feedback flow"
+            :disabled="!ready || !draft.trim()"
+            :aria-label="copy('Preview feedback flow')"
           >
             <ArrowUp :size="20" aria-hidden="true" />
           </button>
@@ -239,25 +247,29 @@ onBeforeUnmount(() => {
         ref="journey"
         class="feedback-journey"
         role="region"
-        aria-label="Your feedback journey"
+        :aria-label="copy('Your feedback journey')"
         tabindex="-1"
         :data-playback="playback"
         :data-step="step"
       >
         <div class="journey-message">
           <div class="journey-message-heading">
-            <span>Your {{ isQuestion ? 'question' : 'feedback' }}</span>
+            <span>{{
+              copy(isQuestion ? 'Your question' : 'Your feedback')
+            }}</span>
             <div class="journey-message-controls">
               <button
                 v-if="!reducedMotion"
                 type="button"
                 class="journey-control"
                 :aria-label="
-                  playback === 'complete'
-                    ? 'Replay animation'
-                    : playback === 'playing'
-                      ? 'Pause animation'
-                      : 'Resume animation'
+                  copy(
+                    playback === 'complete'
+                      ? 'Replay animation'
+                      : playback === 'playing'
+                        ? 'Pause animation'
+                        : 'Resume animation',
+                  )
                 "
                 @click="
                   playback === 'complete' ? startStory() : togglePlayback()
@@ -272,19 +284,21 @@ onBeforeUnmount(() => {
                   :size="13"
                   aria-hidden="true"
                 /><Play v-else :size="13" aria-hidden="true" />{{
-                  playback === 'complete'
-                    ? 'Replay'
-                    : playback === 'playing'
-                      ? 'Pause'
-                      : 'Resume'
+                  copy(
+                    playback === 'complete'
+                      ? 'Replay'
+                      : playback === 'playing'
+                        ? 'Pause'
+                        : 'Resume',
+                  )
                 }}</button
               ><button
                 type="button"
                 class="journey-control"
-                aria-label="Edit your feedback"
+                :aria-label="copy('Edit your feedback')"
                 @click="resetDemo"
               >
-                <Pencil :size="13" aria-hidden="true" /> Edit
+                <Pencil :size="13" aria-hidden="true" /> {{ copy('Edit') }}
               </button>
             </div>
           </div>
@@ -307,8 +321,8 @@ onBeforeUnmount(() => {
                 :size="15" /><component :is="item.icon" v-else :size="15"
             /></span>
             <div class="journey-copy">
-              <h2>{{ item.title }}</h2>
-              <p>{{ item.detail }}</p>
+              <h2>{{ copy(item.title) }}</h2>
+              <p>{{ copy(item.detail) }}</p>
             </div>
           </li>
         </ol>
@@ -318,50 +332,60 @@ onBeforeUnmount(() => {
           :aria-hidden="step !== 2"
         >
           <div class="journey-reply-heading">
-            <span class="journey-reply-sender">Your team</span>
-            <span class="journey-reply-example">Example reply</span>
+            <span class="journey-reply-sender">{{ copy('Your team') }}</span>
+            <span class="journey-reply-example">{{
+              copy('Example reply')
+            }}</span>
           </div>
-          <p>{{ exampleReply }}</p>
+          <p>{{ copy(exampleReply) }}</p>
         </div>
         <div class="journey-toolbar">
           <span>{{
-            playback === 'complete'
-              ? 'The whole loop, in one place.'
-              : 'Following your feedback…'
+            copy(
+              playback === 'complete'
+                ? 'The whole loop, in one place.'
+                : 'Following your feedback…',
+            )
           }}</span>
         </div>
         <p class="home-visually-hidden" role="status">
-          {{ steps[step]?.title }} {{ step === 2 ? exampleReply : '' }}
+          {{ copy(steps[step]?.title) }}
+          {{ copy(step === 2 ? exampleReply : '') }}
         </p>
       </div>
       <div
         v-if="!submitted"
         class="home-suggestions"
         role="group"
-        aria-label="Example feedback"
+        :aria-label="copy('Example feedback')"
       >
         <button
           v-for="sample in samples"
           :key="sample.label"
           type="button"
+          :disabled="!ready"
           @click="useSample(sample.text)"
         >
-          {{ sample.label }} <ArrowUpRight :size="13" aria-hidden="true" />
+          {{ copy(sample.label) }}
+          <ArrowUpRight :size="13" aria-hidden="true" />
         </button>
       </div>
       <div v-else class="journey-after">
         <button class="journey-control" type="button" @click="resetDemo">
-          Try another example
+          {{ copy('Try another example') }}
           <ArrowRight :size="14" aria-hidden="true" /></button
         ><a :href="links.signUp"
-          >Try it with your product <ArrowUpRight :size="14" aria-hidden="true"
+          >{{ copy('Try it with your product') }}
+          <ArrowUpRight :size="14" aria-hidden="true"
         /></a>
       </div>
       <p id="demo-disclaimer" class="home-demo-note">
         {{
-          submitted
-            ? 'An example of the workflow. Nothing has been sent.'
-            : 'An interactive example. Nothing you type is sent.'
+          copy(
+            submitted
+              ? 'An example of the workflow. Nothing has been sent.'
+              : 'An interactive example. Nothing you type is sent.',
+          )
         }}
       </p>
     </div>

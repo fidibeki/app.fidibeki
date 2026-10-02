@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { Check } from '@lucide/vue'
 import { featureBySlug, features } from '~/data/features'
 import { featurePhotography } from '~/data/photography'
@@ -36,9 +38,9 @@ useSiteMeta({
   <div v-if="feature">
     <PageHero
       show-eyebrow
-      :eyebrow="`${feature.loopStage} · ${feature.availability}`"
-      :title="feature.name"
-      :lede="feature.tagline"
+      :eyebrow="`${copy(feature.loopStage)} · ${copy(feature.availability)}`"
+      :title="copy(feature.name)"
+      :lede="copy(feature.tagline)"
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -50,8 +52,12 @@ useSiteMeta({
         />
       </template>
       <template #actions>
-        <a :href="links.signUp" class="btn btn-primary">Start free trial</a>
-        <NuxtLink to="/docs" class="btn btn-ghost">Read the docs</NuxtLink>
+        <a :href="links.signUp" class="btn btn-primary">{{
+          copy('Start free trial')
+        }}</a>
+        <NuxtLinkLocale to="/docs" class="btn btn-ghost">{{
+          copy('Read the docs')
+        }}</NuxtLinkLocale>
       </template>
       <template v-if="featurePhotography[feature.slug]" #media
         ><EditorialPhoto :photo="featurePhotography[feature.slug]!" eager
@@ -61,26 +67,26 @@ useSiteMeta({
     <section class="section feature-detail">
       <div class="container detail-grid">
         <div>
-          <p class="lede">{{ feature.summary }}</p>
+          <p class="lede">{{ copy(feature.summary) }}</p>
           <DetailSections :sections="feature.sections" />
         </div>
         <aside class="detail-aside">
           <div class="aside-section">
-            <h2 class="aside-heading">At a glance</h2>
+            <h2 class="aside-heading">{{ copy('At a glance') }}</h2>
             <ul class="aside-list">
               <li v-for="highlight in feature.highlights" :key="highlight">
                 <Check :size="16" aria-hidden="true" class="aside-check" />
-                <span>{{ highlight }}</span>
+                <span>{{ copy(highlight) }}</span>
               </li>
             </ul>
           </div>
           <div v-if="related.length" class="aside-section">
-            <h2 class="aside-heading">Related</h2>
+            <h2 class="aside-heading">{{ copy('Related') }}</h2>
             <ul class="aside-related">
               <li v-for="entry in related" :key="entry.slug">
-                <NuxtLink :to="`/features/${entry.slug}`">{{
-                  entry.name
-                }}</NuxtLink>
+                <NuxtLinkLocale :to="`/features/${entry.slug}`">{{
+                  copy(entry.name)
+                }}</NuxtLinkLocale>
               </li>
             </ul>
           </div>

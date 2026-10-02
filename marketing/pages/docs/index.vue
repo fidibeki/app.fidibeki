@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { ArrowUpRight, Check, Copy } from '@lucide/vue'
 import { docs } from '~/data/docs'
 
@@ -38,9 +40,13 @@ useSiteMeta({
 <template>
   <div>
     <PageHero
-      eyebrow="Documentation"
-      title="From script tag to first feedback"
-      lede="Install the widget, choose when it appears, and connect feedback to your team's workflow."
+      :eyebrow="copy('Documentation')"
+      :title="copy('From script tag to first feedback')"
+      :lede="
+        copy(
+          'Install the widget, choose when it appears, and connect feedback to your team\'s workflow.',
+        )
+      "
     >
       <template #breadcrumbs
         ><Breadcrumbs
@@ -56,21 +62,24 @@ useSiteMeta({
     >
       <div class="container quickstart-layout">
         <div class="quickstart-copy">
-          <p class="quickstart-label">Quick start</p>
-          <h2 id="quickstart-title">One script tag.</h2>
+          <p class="quickstart-label">{{ copy('Quick start') }}</p>
+          <h2 id="quickstart-title">{{ copy('One script tag.') }}</h2>
           <p>
-            Create a project, allow your domain, then add the widget to your
-            site.
+            {{
+              copy(
+                'Create a project, allow your domain, then add the widget to your site.',
+              )
+            }}
           </p>
-          <NuxtLink to="/docs/installation" class="quickstart-link">
-            Read the installation guide
+          <NuxtLinkLocale to="/docs/installation" class="quickstart-link">
+            {{ copy('Read the installation guide') }}
             <ArrowUpRight :size="16" aria-hidden="true" />
-          </NuxtLink>
+          </NuxtLinkLocale>
         </div>
         <div class="quickstart-example">
           <div class="snippet-frame">
             <div class="snippet-toolbar">
-              <span>HTML</span>
+              <span>{{ copy('HTML') }}</span>
               <button v-if="canCopy" type="button" @click="copySnippet">
                 <Check
                   v-if="copyState === 'copied'"
@@ -78,7 +87,7 @@ useSiteMeta({
                   aria-hidden="true"
                 />
                 <Copy v-else :size="15" aria-hidden="true" />
-                {{ copyState === 'copied' ? 'Copied' : 'Copy code' }}
+                {{ copy(copyState === 'copied' ? 'Copied' : 'Copy code') }}
               </button>
             </div>
             <CodeBlock :code="quickstartSnippet" language="html" />
@@ -89,43 +98,54 @@ useSiteMeta({
             role="status"
           >
             {{
-              copyState === 'error'
-                ? "Couldn't copy. Select and copy the code above."
-                : copyState === 'copied'
-                  ? 'Code copied to clipboard.'
-                  : ''
+              copy(
+                copyState === 'error'
+                  ? "Couldn't copy. Select and copy the code above."
+                  : copyState === 'copied'
+                    ? 'Code copied to clipboard.'
+                    : '',
+              )
             }}
           </p>
           <p class="quickstart-note">
-            The loader is async, renders in a shadow root, and checks the
-            browser origin against your allowed domains.
+            {{
+              copy(
+                'The loader is async, renders in a shadow root, and checks the browser origin against your allowed domains.',
+              )
+            }}
           </p>
         </div>
       </div>
     </section>
     <section class="section guides-section" aria-labelledby="guides-title">
       <div class="container">
-        <h2 id="guides-title">Guides</h2>
+        <h2 id="guides-title">{{ copy('Guides') }}</h2>
         <div class="docs-guides">
-          <NuxtLink
+          <NuxtLinkLocale
             v-for="doc in docs"
             :key="doc.slug"
             :to="`/docs/${doc.slug}`"
             class="doc-entry"
           >
             <div class="doc-heading">
-              <h3>{{ doc.title }}</h3>
+              <h3>{{ copy(doc.title) }}</h3>
               <ArrowUpRight :size="20" aria-hidden="true" />
             </div>
-            <p>{{ doc.description }}</p>
-            <span class="doc-time">{{ doc.minutes }} min read</span>
-          </NuxtLink>
+            <p>{{ copy(doc.description) }}</p>
+            <span class="doc-time">{{
+              copy('{minutes} min read', { minutes: copy(doc.minutes) })
+            }}</span>
+          </NuxtLinkLocale>
         </div>
       </div>
     </section>
     <CtaSection
-      title="Stuck on setup?"
-      body="Book a demo and we will install it with you. Or start a free trial and follow the in-app getting started checklist."
+      :title="copy('Stuck on setup?')"
+      :body="
+        copy(
+          'Book a demo and we will install it with you. Or start a free trial and follow the in-app getting started checklist.',
+        )
+      "
     />
   </div>
 </template>

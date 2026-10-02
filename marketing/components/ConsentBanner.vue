@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import type { ConsentSelections } from '~/utils/consent-choices'
 
 const { pending, accept, decline, save, initialize } = useConsent()
@@ -27,37 +29,49 @@ const selections = reactive<ConsentSelections>({
 
 // The widget purposes are grants forwarded to the widget, so without the
 // feedback widget itself there is nothing to grant.
-watch(() => selections.widget, (enabled) => {
-  if (!enabled) {
-    selections.widgetAnalytics = false
-    selections.sessionReplay = false
-  }
-})
+watch(
+  () => selections.widget,
+  (enabled) => {
+    if (!enabled) {
+      selections.widgetAnalytics = false
+      selections.sessionReplay = false
+    }
+  },
+)
 </script>
 
 <template>
-  <aside v-if="visible" class="consent-banner" aria-label="Privacy choices">
+  <aside
+    v-if="visible"
+    class="consent-banner"
+    :aria-label="copy('Privacy choices')"
+  >
     <p class="consent-text">
-      We use privacy-friendly analytics (Umami) and our own feedback widget to see what's working
-      and hear from you. Allowing covers Umami plus the widget's usage analytics, session replay,
-      and AI-assisted analysis of feedback you send — nothing loads or records before you agree.
-      <NuxtLink to="/privacy">Learn more</NuxtLink>
+      {{
+        copy(
+          "We use privacy-friendly analytics (Umami) and our own feedback widget to see what's working and hear from you. Allowing covers Umami plus the widget's usage analytics, session replay, and AI-assisted analysis of feedback you send — nothing loads or records before you agree.",
+        )
+      }}
+      <NuxtLinkLocale to="/privacy">{{ copy('Learn more') }}</NuxtLinkLocale>
     </p>
     <fieldset v-if="expanded" class="consent-options">
-      <legend class="sr-only">Choose what to allow</legend>
+      <legend class="sr-only">{{ copy('Choose what to allow') }}</legend>
       <label class="consent-option">
-        <input v-model="selections.umami" type="checkbox">
+        <input v-model="selections.umami" type="checkbox" />
         <span>
-          <strong>Site analytics</strong>
-          Cookieless Umami page statistics; no personal data.
+          <strong>{{ copy('Site analytics') }}</strong>
+          {{ copy('Cookieless Umami page statistics; no personal data.') }}
         </span>
       </label>
       <label class="consent-option">
-        <input v-model="selections.widget" type="checkbox">
+        <input v-model="selections.widget" type="checkbox" />
         <span>
-          <strong>Feedback widget</strong>
-          The in-page form for sending us feedback. Submissions may be analysed with AI, as
-          disclosed in the form.
+          <strong>{{ copy('Feedback widget') }}</strong>
+          {{
+            copy(
+              'The in-page form for sending us feedback. Submissions may be analysed with AI, as disclosed in the form.',
+            )
+          }}
         </span>
       </label>
       <label class="consent-option consent-suboption">
@@ -65,31 +79,45 @@ watch(() => selections.widget, (enabled) => {
           v-model="selections.widgetAnalytics"
           type="checkbox"
           :disabled="!selections.widget"
-        >
+        />
         <span>
-          <strong>Widget usage analytics</strong>
-          How the feedback widget is used — shown, opened, submitted.
+          <strong>{{ copy('Widget usage analytics') }}</strong>
+          {{
+            copy('How the feedback widget is used — shown, opened, submitted.')
+          }}
         </span>
       </label>
       <label class="consent-option consent-suboption">
-        <input v-model="selections.sessionReplay" type="checkbox" :disabled="!selections.widget">
+        <input
+          v-model="selections.sessionReplay"
+          type="checkbox"
+          :disabled="!selections.widget"
+        />
         <span>
-          <strong>Session replay</strong>
-          Records your interactions on the page to help us reproduce issues.
+          <strong>{{ copy('Session replay') }}</strong>
+          {{
+            copy(
+              'Records your interactions on the page to help us reproduce issues.',
+            )
+          }}
         </span>
       </label>
     </fieldset>
     <div class="consent-actions">
-      <button type="button" class="btn btn-ghost consent-btn" @click="decline">Decline</button>
+      <button type="button" class="btn btn-ghost consent-btn" @click="decline">
+        {{ copy('Decline') }}
+      </button>
       <button
         v-if="expanded"
         type="button"
         class="btn btn-ghost consent-btn"
         @click="save({ ...selections })"
       >
-        Save choices
+        {{ copy('Save choices') }}
       </button>
-      <button type="button" class="btn btn-primary consent-btn" @click="accept">Accept All</button>
+      <button type="button" class="btn btn-primary consent-btn" @click="accept">
+        {{ copy('Accept All') }}
+      </button>
     </div>
     <button
       v-if="!expanded"
@@ -98,7 +126,7 @@ watch(() => selections.widget, (enabled) => {
       aria-expanded="false"
       @click="expanded = true"
     >
-      More options
+      {{ copy('More options') }}
     </button>
   </aside>
 </template>

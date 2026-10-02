@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { ArrowRight, Check } from '@lucide/vue'
 import { contactChannels } from '~/data/site'
 import { trialDays } from '~/data/pricing'
@@ -47,9 +49,13 @@ const includeInReport = [
 <template>
   <div>
     <PageHero
-      eyebrow="Support"
-      title="Help, and how to get it quickly"
-      lede="Most questions have a written answer already. For the rest, there is a real person at the other end of the address — and a short list of details that turns one slow exchange into one useful reply."
+      :eyebrow="copy('Support')"
+      :title="copy('Help, and how to get it quickly')"
+      :lede="
+        copy(
+          'Most questions have a written answer already. For the rest, there is a real person at the other end of the address — and a short list of details that turns one slow exchange into one useful reply.',
+        )
+      "
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -64,31 +70,38 @@ const includeInReport = [
     <section class="section">
       <div class="container">
         <div class="section-head">
-          <h2>Start with the guides</h2>
+          <h2>{{ copy('Start with the guides') }}</h2>
           <p class="lede">
-            These three cover most of what people write in about. They are
-            short, and they are honest about the parts that trip people up.
+            {{
+              copy(
+                'These three cover most of what people write in about. They are short, and they are honest about the parts that trip people up.',
+              )
+            }}
           </p>
         </div>
 
         <div class="start-grid">
-          <NuxtLink
+          <NuxtLinkLocale
             v-for="item in startingPoints"
             :key="item.to"
             :to="item.to"
             class="start-card"
           >
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
+            <h3>{{ copy(item.title) }}</h3>
+            <p>{{ copy(item.body) }}</p>
             <span class="start-meta"
-              >Read the guide <ArrowRight :size="14" aria-hidden="true"
+              >{{ copy('Read the guide') }}
+              <ArrowRight :size="14" aria-hidden="true"
             /></span>
-          </NuxtLink>
+          </NuxtLinkLocale>
         </div>
 
         <p class="start-all">
-          Everything else lives in
-          <NuxtLink to="/docs">the documentation</NuxtLink>.
+          {{ copy('Everything else lives in') }}
+          <NuxtLinkLocale to="/docs">{{
+            copy('the documentation')
+          }}</NuxtLinkLocale
+          >.
         </p>
       </div>
     </section>
@@ -96,10 +109,13 @@ const includeInReport = [
     <section class="section channels-section">
       <div class="container">
         <div class="section-head">
-          <h2>Write to the right address</h2>
+          <h2>{{ copy('Write to the right address') }}</h2>
           <p class="lede">
-            Four mailboxes, so your message lands with whoever can actually act
-            on it. If you are unsure, use support and we will route it.
+            {{
+              copy(
+                'Four mailboxes, so your message lands with whoever can actually act on it. If you are unsure, use support and we will route it.',
+              )
+            }}
           </p>
         </div>
 
@@ -109,10 +125,10 @@ const includeInReport = [
             :key="channel.key"
             class="channel-card"
           >
-            <h3>{{ channel.label }}</h3>
-            <p>{{ channel.blurb }}</p>
+            <h3>{{ copy(channel.label) }}</h3>
+            <p>{{ copy(channel.blurb) }}</p>
             <a :href="`mailto:${channel.email}`" class="channel-email">{{
-              channel.email
+              copy(channel.email)
             }}</a>
           </div>
         </div>
@@ -122,40 +138,47 @@ const includeInReport = [
     <section class="section">
       <div class="container support-columns">
         <div class="include-card">
-          <h2>What to include</h2>
+          <h2>{{ copy('What to include') }}</h2>
           <p class="include-intro">
-            None of this is mandatory. All of it removes a round trip.
+            {{
+              copy('None of this is mandatory. All of it removes a round trip.')
+            }}
           </p>
           <ul class="include-list">
             <li v-for="item in includeInReport" :key="item">
               <Check :size="16" aria-hidden="true" class="include-check" />
-              <span>{{ item }}</span>
+              <span>{{ copy(item) }}</span>
             </li>
           </ul>
         </div>
 
         <div class="expect-card">
-          <h2>What to expect</h2>
+          <h2>{{ copy('What to expect') }}</h2>
           <p>
-            We aim to reply within one business day. That is a target we work
-            to, not a contractual service level — self-serve plans do not carry
-            one, and we would rather say so than publish a number we cannot
-            stand behind. Enterprise agreements can include a commitment.
+            {{
+              copy(
+                'We aim to reply within one business day. That is a target we work to, not a contractual service level — self-serve plans do not carry one, and we would rather say so than publish a number we cannot stand behind. Enterprise agreements can include a commitment.',
+              )
+            }}
           </p>
           <p>
-            When something is broken, we will tell you it is broken. When
-            something is not going to be fixed soon, we will tell you that too,
-            rather than leaving the thread open and quiet.
+            {{
+              copy(
+                'When something is broken, we will tell you it is broken. When something is not going to be fixed soon, we will tell you that too, rather than leaving the thread open and quiet.',
+              )
+            }}
           </p>
           <p class="expect-note">
-            Security reports follow their own path — see
-            <NuxtLink to="/security">how Fidibeki is secured</NuxtLink> before
-            you send one.
+            {{ copy('Security reports follow their own path — see') }}
+            <NuxtLinkLocale to="/security">{{
+              copy('how Fidibeki is secured')
+            }}</NuxtLinkLocale>
+            {{ copy('before you send one.') }}
           </p>
           <div class="expect-status">
-            <span class="expect-status-label"
-              >Before you write, check live status:</span
-            >
+            <span class="expect-status-label">{{
+              copy('Before you write, check live status:')
+            }}</span>
             <StatusPill variant="block" />
           </div>
         </div>
@@ -165,23 +188,30 @@ const includeInReport = [
     <section class="section trial-section">
       <div class="container">
         <div class="trial-card">
-          <h2>Not a customer yet?</h2>
+          <h2>{{ copy('Not a customer yet?') }}</h2>
           <p>
-            Setup questions before you buy are still support questions. Start
-            the
-            {{ trialDays }}-day trial and write in, or bring your list to a demo
-            and we will install the widget with you.
+            {{
+              copy(
+                'Setup questions before you buy are still support questions. Start the',
+              )
+            }}
+            {{ copy(trialDays)
+            }}{{
+              copy(
+                '-day trial and write in, or bring your list to a demo and we will install the widget with you.',
+              )
+            }}
           </p>
           <div class="trial-actions">
-            <NuxtLink to="/sign-up" class="btn btn-primary"
-              >Start free trial</NuxtLink
-            >
+            <NuxtLinkLocale to="/sign-up" class="btn btn-primary">{{
+              copy('Start free trial')
+            }}</NuxtLinkLocale>
             <a
               :href="links.demo"
               class="btn btn-ghost"
               rel="noopener"
               target="_blank"
-              >Book a demo</a
+              >{{ copy('Book a demo') }}</a
             >
           </div>
         </div>
@@ -190,12 +220,17 @@ const includeInReport = [
 
     <section class="section support-close">
       <div class="container">
-        <h2>Still stuck?</h2>
+        <h2>{{ copy('Still stuck?') }}</h2>
         <p>
-          The person answering is the person who built the thing you are asking
-          about.
+          {{
+            copy(
+              'The person answering is the person who built the thing you are asking about.',
+            )
+          }}
         </p>
-        <a href="mailto:support@fidibeki.com">support@fidibeki.com</a>
+        <a href="mailto:support@fidibeki.com">{{
+          copy('support@fidibeki.com')
+        }}</a>
       </div>
     </section>
   </div>

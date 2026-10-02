@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { integrationBySlug } from '~/data/integrations'
 
 const route = useRoute()
@@ -14,8 +16,8 @@ if (!integration) {
 
 const links = useAppLinks()
 
-useSiteMeta({
-  title: `${integration.name} integration`,
+useSiteMeta(() => ({
+  title: copy('{name} integration', { name: integration.name }),
   description: integration.tagline,
   path: `/integrations/${integration.slug}`,
   breadcrumbs: [
@@ -23,16 +25,16 @@ useSiteMeta({
     { name: 'Integrations', path: '/integrations' },
     { name: integration.name, path: `/integrations/${integration.slug}` },
   ],
-})
+}))
 </script>
 
 <template>
   <div v-if="integration">
     <PageHero
       show-eyebrow
-      :eyebrow="integration.availability"
-      :title="`${integration.name} integration`"
-      :lede="integration.tagline"
+      :eyebrow="copy(integration.availability)"
+      :title="copy('{name} integration', { name: integration.name })"
+      :lede="copy(integration.tagline)"
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -51,7 +53,7 @@ useSiteMeta({
           v-if="integration.status === 'available'"
           :href="links.signUp"
           class="btn btn-primary"
-          >Start free trial</a
+          >{{ copy('Start free trial') }}</a
         >
         <a
           v-else
@@ -59,23 +61,23 @@ useSiteMeta({
           class="btn btn-primary"
           rel="noopener"
           target="_blank"
-          >Tell us you need this</a
+          >{{ copy('Tell us you need this') }}</a
         >
-        <NuxtLink to="/docs/webhooks" class="btn btn-ghost"
-          >Webhook docs</NuxtLink
-        >
+        <NuxtLinkLocale to="/docs/webhooks" class="btn btn-ghost">{{
+          copy('Webhook docs')
+        }}</NuxtLinkLocale>
       </template>
     </PageHero>
 
     <section class="section">
       <div class="container detail-grid">
         <div>
-          <p class="lede">{{ integration.summary }}</p>
+          <p class="lede">{{ copy(integration.summary) }}</p>
           <DetailSections :sections="integration.sections" />
         </div>
         <aside v-if="integration.events" class="detail-aside">
           <div class="aside-section">
-            <h2 class="aside-heading">Subscribable events</h2>
+            <h2 class="aside-heading">{{ copy('Subscribable events') }}</h2>
             <ul class="event-list">
               <li v-for="event in integration.events" :key="event">
                 <code>{{ event }}</code>

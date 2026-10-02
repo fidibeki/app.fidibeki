@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { sectionAnchor } from '~/utils/section-anchor'
 import { docBySlug, docs } from '~/data/docs'
 
@@ -44,9 +46,11 @@ useSiteMeta({
   <div v-if="doc">
     <PageHero
       show-eyebrow
-      :eyebrow="`Docs · ${doc.minutes} min read`"
-      :title="doc.title"
-      :lede="doc.description"
+      :eyebrow="
+        copy('Docs · {minutes} min read', { minutes: copy(doc.minutes) })
+      "
+      :title="copy(doc.title)"
+      :lede="copy(doc.description)"
     >
       <template #breadcrumbs>
         <Breadcrumbs
@@ -63,12 +67,12 @@ useSiteMeta({
       <div class="container detail-grid">
         <div>
           <details class="mobile-contents">
-            <summary>On this page</summary>
-            <nav aria-label="Article sections">
+            <summary>{{ copy('On this page') }}</summary>
+            <nav :aria-label="copy('Article sections')">
               <ul class="aside-related">
                 <li v-for="section in doc.sections" :key="section.heading">
                   <a :href="`#${sectionAnchor(section.heading)}`">{{
-                    section.heading
+                    copy(section.heading)
                   }}</a>
                 </li>
               </ul>
@@ -77,23 +81,26 @@ useSiteMeta({
           <DetailSections :sections="doc.sections" />
         </div>
         <aside class="detail-aside">
-          <nav aria-label="On this page" class="aside-section desktop-contents">
-            <h2 class="aside-heading">On this page</h2>
+          <nav
+            :aria-label="copy('On this page')"
+            class="aside-section desktop-contents"
+          >
+            <h2 class="aside-heading">{{ copy('On this page') }}</h2>
             <ul class="aside-related">
               <li v-for="section in doc.sections" :key="section.heading">
                 <a :href="`#${sectionAnchor(section.heading)}`">{{
-                  section.heading
+                  copy(section.heading)
                 }}</a>
               </li>
             </ul>
           </nav>
           <div class="aside-section">
-            <h2 class="aside-heading">More guides</h2>
+            <h2 class="aside-heading">{{ copy('More guides') }}</h2>
             <ul class="aside-related">
               <li v-for="entry in otherDocs" :key="entry.slug">
-                <NuxtLink :to="`/docs/${entry.slug}`">{{
-                  entry.title
-                }}</NuxtLink>
+                <NuxtLinkLocale :to="`/docs/${entry.slug}`">{{
+                  copy(entry.title)
+                }}</NuxtLinkLocale>
               </li>
             </ul>
           </div>
@@ -102,8 +109,12 @@ useSiteMeta({
     </section>
 
     <CtaSection
-      title="Ready to try it on your own site?"
-      body="Start a free trial, create a project, and the in-app checklist walks you through your first live connection."
+      :title="copy('Ready to try it on your own site?')"
+      :body="
+        copy(
+          'Start a free trial, create a project, and the in-app checklist walks you through your first live connection.',
+        )
+      "
     />
   </div>
 </template>

@@ -1,6 +1,6 @@
 ---
 name: Fidibeki marketing site
-description: The approved homepage direction extended across the marketing site, previewed locally.
+description: The approved homepage direction extended across the marketing site, available in English, Portuguese, Spanish and French.
 colors:
   canvas: "#ffffff"
   ink: "#191919"
@@ -72,4 +72,8 @@ The approved header and footer are shared across all routes. All page containers
 
 ## Do's and Don'ts
 
-Preserve real product facts, prices and links. Use the existing mark. Avoid fabricated social proof, decorative dashboards, dense card grids, generic abstract technology imagery and copied OpenAI assets. No production deployment. Legal and security text is preserved during the visual redesign.
+Preserve real product facts, prices and links. Use the existing mark. Avoid fabricated social proof, decorative dashboards, dense card grids, generic abstract technology imagery and copied OpenAI assets. The user authorized production deployment after translation, SEO and navigation checks on 2 October 2026. Preserve the meaning of legal and security text in every language.
+
+## Localization
+
+Support English, European Portuguese, Spanish and French across every marketing route. Keep the shared composition across languages. Translate complete sentences with named parameters for quantities. Format numbers and prices for the current locale. Allow natural wrapping without clipping, shrinking all translated text, or forcing English line breaks onto another language. Paired illustrations and pricing rows share their sizing so translated copy does not misalign adjacent content. Use compact, faithful translated headings where space is limited. The mobile header must fit at 320px. Locale selection preserves the current page, query and anchor; navigation state updates on the first click.
