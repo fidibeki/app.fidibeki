@@ -20,6 +20,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/auth"
 	"github.com/acidiney/app.fidibeki/backend/internal/db"
 	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 )
@@ -54,10 +55,13 @@ func TestCustomerConnectionHTTPPermissionsAndSafeValidationStatus(t *testing.T) 
 	}
 	router := chi.NewRouter()
 	tester := &rejectedValidation{}
+	limiter := &setupLimiter{}
+	allowed := true
+	plan := tenant.PlanGrowth
 	cs := aiprovider.Store{Database: pool, Keys: keys}
-	aiprovider.RegisterRoutes(router, aiprovider.HTTPOptions{Store: cs, JWT: jwt, Tester: tester, Allowed: func(string, string) bool { return true }, ManagedAvailable: true})
+	aiprovider.RegisterRoutes(router, aiprovider.HTTPOptions{Store: cs, JWT: jwt, Tester: tester, Limiter: limiter, Allowed: func(string, string) bool { return allowed }, ManagedAvailable: true})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{BaseDomain: "localhost", Resolver: tenant.ResolverFunc(func(context.Context, string) (tenant.Tenant, error) {
-		return tenant.Tenant{ID: testTenantID, Slug: "ai-tenant", Plan: tenant.PlanGrowth, Status: tenant.StatusActive}, nil
+		return tenant.Tenant{ID: testTenantID, Slug: "ai-tenant", Plan: plan, Status: tenant.StatusActive}, nil
 	}), Begin: db.BeginFromPool(pool)})(router)
 	permissions := []string{string(auth.PermissionAIConnectionRead), string(auth.PermissionAIConnectionManage)}
 	if _, err = pool.Exec(ctx, `UPDATE tenant_members SET permissions=$2 WHERE id=$1`, testMemberID, permissions); err != nil {
@@ -160,6 +164,42 @@ func TestCustomerConnectionHTTPPermissionsAndSafeValidationStatus(t *testing.T) 
 	if err != nil || secret.Value != "never-return-this-secret" || c.Name != input.Name {
 		t.Fatalf("blank credential changed secret: %v", err)
 	}
+	for _, method := range []string{"PATCH", "DELETE"} {
+		response = request(method, "/v1/ai/connections/bad-id", body, permissions)
+		if response.Code != 404 {
+			t.Fatalf("invalid connection ID: %d", response.Code)
+		}
+	}
+	response = request("PATCH", "/v1/ai/connections/"+c.ID, `{"unexpected":true}`, permissions)
+	if response.Code != 400 {
+		t.Fatalf("unknown update property: %d", response.Code)
+	}
+	limiter.blocked = true
+	response = request("GET", "/v1/ai/connections/"+c.ID+"/models", "", permissions)
+	if response.Code != 429 {
+		t.Fatalf("setup rate limit: %d", response.Code)
+	}
+	limiter.blocked = false
+	allowed = false
+	response = request("GET", "/v1/ai/connections/"+c.ID+"/models", "", permissions)
+	if response.Code != 422 {
+		t.Fatalf("disabled rollout discovered models: %d", response.Code)
+	}
+	response = request("POST", "/v1/ai/connections", body, permissions)
+	if response.Code != 422 {
+		t.Fatalf("disabled rollout created connection: %d", response.Code)
+	}
+	response = request("PATCH", "/v1/ai/connections/"+c.ID, body, permissions)
+	if response.Code != 422 {
+		t.Fatalf("disabled rollout enabled connection: %d", response.Code)
+	}
+	allowed = true
+	plan = tenant.PlanStarter
+	response = request("GET", "/v1/ai/connections", "", permissions)
+	if response.Code != 402 {
+		t.Fatalf("starter plan accessed AI credentials: %d", response.Code)
+	}
+	plan = tenant.PlanGrowth
 	response = request("DELETE", "/v1/ai/connections/"+c.ID, "", permissions)
 	if response.Code != 200 {
 		t.Fatalf("delete: %d %s", response.Code, response.Body)
@@ -353,4 +393,10 @@ func TestValidatedDestinationChangesRequireFreshAuthorization(t *testing.T) {
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type setupLimiter struct{ blocked bool }
+
+func (l *setupLimiter) Allow(context.Context, string, ratelimit.Window) (ratelimit.Decision, error) {
+	return ratelimit.Decision{Allowed: !l.blocked}, nil
 }
