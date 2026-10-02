@@ -1130,7 +1130,7 @@ useHead(() => ({
                 </label>
                 <label class="wide">
                   {{ t('projects.editor.replay.maskSelector') }}
-                  <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" disabled v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
+                  <input v-model="ruleForm.replay_mask_text_selector" class="app-input" placeholder=".private, [data-sensitive]" v-bind="ruleFieldAttributes('replay_mask_text_selector')" />
                   <small>{{ t('projects.editor.replay.maskSelectorHint') }}</small>
                   <small v-if="ruleFieldError('replay_mask_text_selector')" :id="ruleErrorID('replay_mask_text_selector')" class="rule-field-error">{{ ruleFieldError('replay_mask_text_selector') }}</small>
                 </label>

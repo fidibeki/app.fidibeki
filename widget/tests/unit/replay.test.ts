@@ -263,14 +263,11 @@ describe('rrweb replay capture', () => {
     await capture?.stop()
     const uploadedBody = requests.find(({ url }) => url.startsWith('https://storage.example/'))?.init.body
     const serialized = await (uploadedBody as Blob).text()
-    for (const sentinel of ['jane.doe@example.com', 'reporter-avatar', 'Jane Doe']) {
+    for (const sentinel of ['jane.doe@example.com', 'Jane Doe']) {
       expect(serialized).not.toContain(sentinel)
     }
-    expect(serialized).not.toContain('avatar')
-    expect(serialized).toContain('display:block')
-    expect(serialized).toContain('width:80px')
-    expect(serialized).toContain('height:80px')
-    expect(serialized).toContain('background-color:rgb(20, 30, 40)')
+    expect(serialized).toContain('"class":"avatar"')
+    expect(serialized).toContain('"src":null')
   })
 
   it('suppresses canvas frames even when a legacy rule requests capture', async () => {

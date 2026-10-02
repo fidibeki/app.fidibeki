@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
+import { writeFile } from 'node:fs/promises'
 import type { WidgetConfiguration, WidgetPresentation, WidgetRule } from '../../src/types'
 
 const rrwebBrowserBundle = fileURLToPath(
@@ -1898,7 +1899,7 @@ test('anonymous replay suppresses canvas pixels even when a legacy rule requests
   const canvasMutations = events.filter(event => event.type === 3 && event.data?.source === 9)
   expect((serialized.match(/"tagName":"canvas"/g) ?? []).length).toBe(1)
   expect(serialized).not.toContain('"property":"drawImage"')
-  expect(serialized).not.toContain('included-replay-canvas')
+  expect(serialized).toContain('included-replay-canvas')
   expect(serialized).not.toContain('blocked-replay-canvas')
   expect(canvasMutations).toHaveLength(0)
   expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
@@ -1919,7 +1920,7 @@ for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
   const sentinels = [
     'SENTINEL-TEXT-Jane-Doe', 'SENTINEL-INPUT-jane.doe@example.com',
     'SENTINEL-TITLE-Jane', 'SENTINEL-ARIA-Jane', 'SENTINEL-ALT-Jane',
-    'SENTINEL-AVATAR-jane', 'SENTINEL-ID-jane-42', 'SENTINEL-DATA-jane',
+    'SENTINEL-AVATAR-jane', 'SENTINEL-DATA-jane',
     'SENTINEL-QUERY-jane.doe', 'SENTINEL-QUERY-TOKEN', 'SENTINEL-HASH-fragment',
     'SENTINEL-PATH-jane-private', 'SENTINEL-NAV-SECRET', 'SENTINEL-NAV-HASH',
   ]
@@ -1933,6 +1934,7 @@ for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
 
       const text = document.createElement('p')
       text.textContent = 'SENTINEL-TEXT-Jane-Doe'
+      text.setAttribute('data-fidibeki-mask', '')
       article.append(text)
 
       const input = document.createElement('input')
@@ -1943,7 +1945,7 @@ for (const consentMode of ['customer_cmp', 'fidibeki_managed'] as const) {
       const labeled = document.createElement('button')
       labeled.title = 'SENTINEL-TITLE-Jane'
       labeled.setAttribute('aria-label', 'SENTINEL-ARIA-Jane')
-      labeled.id = 'SENTINEL-ID-jane-42'
+      labeled.id = 'account-menu'
       labeled.dataset.reporter = 'SENTINEL-DATA-jane'
       labeled.textContent = 'Button'
       article.append(labeled)
@@ -2035,10 +2037,10 @@ for (const viewport of [
   { name: 'desktop', width: 1280, height: 800 },
   { name: 'mobile', width: 390, height: 844 },
 ] as const) {
-  test(`anonymous replay preserves safe computed presentation at ${viewport.name} size`, async ({ page }) => {
+  test(`replay preserves native presentation and readable UI at ${viewport.name} size`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height })
     const replayRule = customerReplayRule({
-      ...browserRule, replay_mode: 'full', replay_sampling_rate: 0,
+      ...browserRule, replay_mode: 'full', replay_sampling_rate: 0, replay_mask_text_selector: '.customer-private',
     })
     const baseConfiguration = browserConfiguration(replayRule)
     const configuration: WidgetConfiguration = {
@@ -2046,10 +2048,9 @@ for (const viewport of [
       features: { ...baseConfiguration.features, session_replay: true },
     }
     const identitySentinels = [
-      'private-layout-jane',
       'jane@example.com',
       'https://example.com/avatar/jane',
-      'PRIVATE-STYLESHEET-JANE',
+      'PRIVATE-STYLESHEET-JANE', 'Jane Doe', 'Sam Jones', 'personal-secret',
     ]
 
     await seedActiveReplayConsent(page)
@@ -2059,11 +2060,11 @@ for (const viewport of [
         style.textContent = `
           /* PRIVATE-STYLESHEET-JANE */
           body { background: rgb(238, 242, 239); }
-          main.private-layout-jane {
+          main.replay-layout {
             width: min(640px, calc(100% - 32px));
             margin: 40px auto;
           }
-          article.private-layout-jane {
+          article.replay-layout {
             display: flex;
             flex-direction: column;
             gap: 18px;
@@ -2077,7 +2078,7 @@ for (const viewport of [
             --reporter-email: "jane@example.com";
             background-image: url("https://example.com/avatar/jane");
           }
-          article.private-layout-jane button {
+          article.replay-layout button {
             padding: 0;
             border: 0;
             border-radius: 0;
@@ -2088,9 +2089,25 @@ for (const viewport of [
         document.head.append(style)
         const main = document.querySelector('main')
         const article = document.querySelector('article')
-        main?.classList.add('private-layout-jane')
-        article?.classList.add('private-layout-jane')
+        main?.classList.add('replay-layout')
+        article?.classList.add('replay-layout')
         article?.setAttribute('data-reporter-email', 'jane@example.com')
+        const privateName = document.createElement('p')
+        privateName.className = 'customer-private'
+        privateName.innerHTML = '<span data-fidibeki-safe-text>Jane Doe</span>'
+        article?.append(privateName)
+        const contact = document.createElement('p')
+        contact.textContent = 'Contact jane@example.com'
+        article?.append(contact)
+        const input = document.createElement('input')
+        input.value = 'personal-secret'
+        article?.append(input)
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        icon.setAttribute('viewBox', '0 0 24 24')
+        icon.setAttribute('width', '24')
+        icon.setAttribute('height', '24')
+        icon.innerHTML = '<path d="M2 12h20" stroke="currentColor" />'
+        article?.querySelector('button')?.prepend(icon)
       }, { once: true })
     })
 
@@ -2145,6 +2162,14 @@ for (const viewport of [
     await page.goto('/sample.html')
     await expect.poll(() => sessionCreated).toBe(true)
     await page.waitForTimeout(100)
+    await page.evaluate(() => {
+      document.querySelector('h1')!.textContent = 'Payment details'
+      document.querySelector('.customer-private span')!.textContent = 'Sam Jones'
+      const sheet = document.querySelectorAll('style')[1]!.sheet!
+      const index = sheet.insertRule('article.replay-layout { border-left-width: 5px; }', sheet.cssRules.length)
+      ;(sheet.cssRules[index] as CSSStyleRule).style.setProperty('border-right-width', '6px')
+    })
+    await page.waitForTimeout(100)
     const original = await page.evaluate(() => {
       const main = document.querySelector('main')
       const article = document.querySelector('article')
@@ -2154,6 +2179,8 @@ for (const viewport of [
       const style = getComputedStyle(article)
       const buttonStyle = getComputedStyle(article.querySelector('button')!)
       return {
+        heading: article.querySelector('h1')!.textContent,
+        icon: article.querySelector('svg path')!.getAttribute('d'),
         mainX: mainRect.x,
         articleX: articleRect.x,
         articleWidth: articleRect.width,
@@ -2175,9 +2202,17 @@ for (const viewport of [
 
     const events = uploadedBatches.flatMap(batch => batch.events)
     const serialized = JSON.stringify(events)
+    await writeFile(testInfo.outputPath('captured-replay.json'), serialized)
+    await testInfo.attach('captured-replay', { body: serialized, contentType: 'application/json' })
     for (const sentinel of identitySentinels) expect(serialized).not.toContain(sentinel)
-    expect(serialized).not.toContain('background-image')
-    expect(serialized).toContain('"style":"')
+    expect(serialized).not.toContain('https://example.com/avatar')
+    expect(serialized).toContain('"_cssText":"')
+    expect(serialized).toContain('Checkout summary')
+    expect(serialized).toContain('Place order')
+    expect(serialized).toContain('Payment details')
+    expect(serialized).toContain('M2 12h20')
+    expect(serialized).toContain('\"source\":8')
+    expect(serialized).toContain('\"source\":13')
     expect(uploadedBatches.every(batch => batch.bytes < 2 * 1024 * 1024)).toBe(true)
     expect(uploadedBatches.reduce((total, batch) => total + batch.bytes, 0)).toBeLessThan(512 * 1024)
 
@@ -2192,7 +2227,7 @@ for (const viewport of [
           Replayer: new (
             events: unknown[],
             options: { root: Element; showWarning: boolean; showDebug: boolean },
-          ) => { play(offset?: number): void }
+          ) => { pause(offset?: number): void }
         }
       }).rrweb
       const replayer = new rrweb.Replayer(capturedEvents, {
@@ -2200,7 +2235,8 @@ for (const viewport of [
         showWarning: false,
         showDebug: false,
       })
-      replayer.play(0)
+      const timestamps = capturedEvents as Array<{ timestamp: number }>
+      replayer.pause(timestamps[timestamps.length - 1]!.timestamp - timestamps[0]!.timestamp + 1)
     }, events)
 
     await expect.poll(() => page.evaluate(() => {
@@ -2218,6 +2254,8 @@ for (const viewport of [
       const style = getComputedStyle(article)
       const buttonStyle = getComputedStyle(article.querySelector('button')!)
       return {
+        heading: article.querySelector('h1')!.textContent,
+        icon: article.querySelector('svg path')!.getAttribute('d'),
         mainX: mainRect.x,
         articleX: articleRect.x,
         articleWidth: articleRect.width,
@@ -2239,6 +2277,8 @@ for (const viewport of [
     expect(Math.abs(replayed.articleX - original.articleX)).toBeLessThan(2)
     expect(Math.abs(replayed.articleWidth - original.articleWidth)).toBeLessThan(2)
     expect(replayed).toMatchObject({
+      heading: original.heading,
+      icon: original.icon,
       display: original.display,
       paddingTop: original.paddingTop,
       paddingRight: original.paddingRight,
@@ -2252,9 +2292,13 @@ for (const viewport of [
       buttonBackgroundColor: original.buttonBackgroundColor,
     })
 
+    const privateText = await page.locator('#replay-presentation-proof iframe').contentFrame().locator('.customer-private').innerText()
+    expect(privateText).toBe('*** *****')
     const iframeScreenshot = await page
       .locator('#replay-presentation-proof iframe')
       .screenshot({ animations: 'disabled' })
+    await writeFile(testInfo.outputPath('replay.png'), iframeScreenshot)
+    await testInfo.attach('replay', { body: iframeScreenshot, contentType: 'image/png' })
     const nonBackgroundPixels = await page.evaluate(async dataURL => {
       const image = new Image()
       image.src = dataURL

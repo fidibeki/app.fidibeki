@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -573,7 +572,11 @@ func validReplayCustomData(data map[string]any, expectedPageURL string) bool {
 	return valid && canonical == rawURL && rawURL == expectedPageURL
 }
 
-func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
+func validReplaySnapshotNode(value any, privateAncestor bool) bool {
+	return validReplaySnapshotContent(value, privateAncestor, "")
+}
+
+func validReplaySnapshotContent(value any, privateAncestor bool, parentTag string) bool {
 	node, ok := replayObject(value)
 	if !ok {
 		return false
@@ -645,13 +648,18 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 		}
 	}
 
-	safeText := safeTextAncestor
+	privateRegion := privateAncestor
+	tag, _ := node["tagName"].(string)
+	if tag == "" {
+		tag = parentTag
+	}
+	privateRegion = privateRegion || tag == "input" || tag == "textarea" || tag == "select"
 	if attributes, exists := node["attributes"]; exists {
 		marker, valid := validReplayAttributes(attributes)
 		if !valid {
 			return false
 		}
-		safeText = safeText || marker
+		privateRegion = privateRegion || marker
 	} else if nodeType == 2 {
 		return false
 	}
@@ -660,8 +668,18 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 		if !ok {
 			return false
 		}
-		if nodeType == 3 && !safeText && !maskedReplayText(text) {
-			return false
+		if nodeType == 3 {
+			if tag == "style" || node["isStyle"] == true {
+				if !validReplayCSS(text, false) {
+					return false
+				}
+			} else if privateRegion {
+				if !maskedReplayText(text) {
+					return false
+				}
+			} else if !validReplayText(text) {
+				return false
+			}
 		}
 		if (nodeType == 4 || nodeType == 5) && text != "" {
 			return false
@@ -675,7 +693,7 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 			return false
 		}
 		for _, child := range list {
-			if !validReplaySnapshotNode(child, safeText) {
+			if !validReplaySnapshotContent(child, privateRegion, tag) {
 				return false
 			}
 		}
@@ -684,384 +702,7 @@ func validReplaySnapshotNode(value any, safeTextAncestor bool) bool {
 }
 
 func validReplayAttributes(value any) (bool, bool) {
-	attributes, ok := replayObject(value)
-	if !ok || !hasOnlyKeys(attributes, "data-fidibeki-safe-text", "style") {
-		return false, false
-	}
-	if rawStyle, exists := attributes["style"]; exists {
-		style, styleOK := rawStyle.(string)
-		if !styleOK || !validReplayPresentationStyle(style) {
-			return false, false
-		}
-	}
-	marker, exists := attributes["data-fidibeki-safe-text"]
-	if !exists {
-		return false, true
-	}
-	return true, marker == nil || marker == ""
-}
-
-const (
-	maximumReplayPresentationStyleBytes = 4 * 1024
-	maximumReplayPresentationValueBytes = 256
-)
-
-var (
-	replayPresentationNumberPattern = regexp.MustCompile(
-		`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`,
-	)
-	replayPresentationLengthPattern = regexp.MustCompile(
-		`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:px|%)$`,
-	)
-	replayPresentationColorPattern = regexp.MustCompile(
-		`^(rgba?)\(([0-9]{1,3}), ([0-9]{1,3}), ([0-9]{1,3})(?:, ((?:0|1)(?:\.[0-9]+)?))?\)$`,
-	)
-	replayPresentationTransformPattern = regexp.MustCompile(
-		`^(matrix|matrix3d)\(([^)]+)\)$`,
-	)
-	replayPresentationPropertyOrder = map[string]int{
-		"display":                    0,
-		"position":                   1,
-		"box-sizing":                 2,
-		"top":                        3,
-		"right":                      4,
-		"bottom":                     5,
-		"left":                       6,
-		"z-index":                    7,
-		"visibility":                 8,
-		"opacity":                    9,
-		"width":                      10,
-		"height":                     11,
-		"min-width":                  12,
-		"min-height":                 13,
-		"max-width":                  14,
-		"max-height":                 15,
-		"margin-top":                 16,
-		"margin-right":               17,
-		"margin-bottom":              18,
-		"margin-left":                19,
-		"padding-top":                20,
-		"padding-right":              21,
-		"padding-bottom":             22,
-		"padding-left":               23,
-		"overflow-x":                 24,
-		"overflow-y":                 25,
-		"aspect-ratio":               26,
-		"border-top-width":           27,
-		"border-right-width":         28,
-		"border-bottom-width":        29,
-		"border-left-width":          30,
-		"border-top-style":           31,
-		"border-right-style":         32,
-		"border-bottom-style":        33,
-		"border-left-style":          34,
-		"border-top-color":           35,
-		"border-right-color":         36,
-		"border-bottom-color":        37,
-		"border-left-color":          38,
-		"border-top-left-radius":     39,
-		"border-top-right-radius":    40,
-		"border-bottom-right-radius": 41,
-		"border-bottom-left-radius":  42,
-		"outline-width":              43,
-		"outline-style":              44,
-		"outline-color":              45,
-		"flex-direction":             46,
-		"flex-wrap":                  47,
-		"flex-grow":                  48,
-		"flex-shrink":                49,
-		"flex-basis":                 50,
-		"order":                      51,
-		"justify-content":            52,
-		"align-items":                53,
-		"align-content":              54,
-		"align-self":                 55,
-		"column-gap":                 56,
-		"row-gap":                    57,
-		"grid-auto-flow":             58,
-		"grid-template-columns":      59,
-		"grid-template-rows":         60,
-		"grid-auto-columns":          61,
-		"grid-auto-rows":             62,
-		"background-color":           63,
-		"color":                      64,
-		"font-family":                65,
-		"font-size":                  66,
-		"font-style":                 67,
-		"font-weight":                68,
-		"line-height":                69,
-		"letter-spacing":             70,
-		"text-align":                 71,
-		"white-space":                72,
-		"text-transform":             73,
-		"object-fit":                 74,
-		"object-position":            75,
-		"border-collapse":            76,
-		"table-layout":               77,
-		"transform":                  78,
-		"transform-origin":           79,
-	}
-)
-
-func validReplayPresentationStyle(style string) bool {
-	if len(style) > maximumReplayPresentationStyleBytes {
-		return false
-	}
-	if style == "" {
-		return true
-	}
-	if strings.HasSuffix(style, ";") {
-		return false
-	}
-	previousOrder := -1
-	for declaration := range strings.SplitSeq(style, ";") {
-		if strings.Count(declaration, ":") != 1 {
-			return false
-		}
-		name, value, found := strings.Cut(declaration, ":")
-		if !found || name == "" || value == "" || len(value) > maximumReplayPresentationValueBytes {
-			return false
-		}
-		order, exists := replayPresentationPropertyOrder[name]
-		if !exists || order <= previousOrder || !validReplayPresentationValue(name, value) {
-			return false
-		}
-		previousOrder = order
-	}
-	return true
-}
-
-func validReplayPresentationValue(name, value string) bool {
-	switch name {
-	case "display":
-		return replayPresentationKeyword(value,
-			"none", "contents", "block", "inline", "inline-block", "flow-root",
-			"flex", "inline-flex", "grid", "inline-grid", "table", "inline-table",
-			"table-row-group", "table-header-group", "table-footer-group", "table-row",
-			"table-cell", "table-column-group", "table-column", "table-caption", "list-item",
-		)
-	case "position":
-		return replayPresentationKeyword(value, "static", "relative", "absolute", "fixed", "sticky")
-	case "box-sizing":
-		return replayPresentationKeyword(value, "content-box", "border-box")
-	case "top", "right", "bottom", "left":
-		return validReplayPresentationLength(value, "auto")
-	case "z-index":
-		return replayPresentationKeyword(value, "auto") ||
-			validReplayPresentationNumber(value, -math.MaxFloat64, math.MaxFloat64)
-	case "visibility":
-		return replayPresentationKeyword(value, "visible", "hidden", "collapse")
-	case "opacity":
-		return validReplayPresentationNumber(value, 0, 1)
-	case "width", "height":
-		return validReplayPresentationLength(value, "auto")
-	case "min-width", "min-height":
-		return validReplayPresentationLength(value, "auto")
-	case "max-width", "max-height":
-		return validReplayPresentationLength(value, "none")
-	case "margin-top", "margin-right", "margin-bottom", "margin-left":
-		return validReplayPresentationLength(value, "auto")
-	case "padding-top", "padding-right", "padding-bottom", "padding-left":
-		return validReplayPresentationLength(value)
-	case "overflow-x", "overflow-y":
-		return replayPresentationKeyword(value, "visible", "hidden", "clip", "scroll", "auto")
-	case "aspect-ratio":
-		return validReplayPresentationAspectRatio(value)
-	case "border-top-width", "border-right-width", "border-bottom-width",
-		"border-left-width", "outline-width", "font-size":
-		return validReplayPresentationLength(value)
-	case "border-top-style", "border-right-style", "border-bottom-style",
-		"border-left-style", "outline-style":
-		return replayPresentationKeyword(value,
-			"none", "hidden", "dotted", "dashed", "solid", "double",
-			"groove", "ridge", "inset", "outset",
-		)
-	case "border-top-color", "border-right-color", "border-bottom-color",
-		"border-left-color", "outline-color", "background-color", "color":
-		return validReplayPresentationColor(value)
-	case "border-top-left-radius", "border-top-right-radius",
-		"border-bottom-right-radius", "border-bottom-left-radius":
-		return validReplayPresentationLengthList(value, 1, 2)
-	case "flex-direction":
-		return replayPresentationKeyword(value, "row", "row-reverse", "column", "column-reverse")
-	case "flex-wrap":
-		return replayPresentationKeyword(value, "nowrap", "wrap", "wrap-reverse")
-	case "flex-grow", "flex-shrink":
-		return validReplayPresentationNumber(value, 0, math.MaxFloat64)
-	case "flex-basis":
-		return validReplayPresentationLength(value, "auto", "content")
-	case "order":
-		return validReplayPresentationNumber(value, -math.MaxFloat64, math.MaxFloat64)
-	case "justify-content":
-		return replayPresentationKeyword(value,
-			"normal", "start", "end", "center", "flex-start", "flex-end",
-			"left", "right", "space-between", "space-around", "space-evenly", "stretch",
-		)
-	case "align-items", "align-content":
-		return replayPresentationKeyword(value,
-			"normal", "stretch", "start", "end", "center", "flex-start", "flex-end",
-			"self-start", "self-end", "baseline",
-		)
-	case "align-self":
-		return replayPresentationKeyword(value,
-			"auto", "normal", "stretch", "start", "end", "center", "flex-start", "flex-end",
-			"self-start", "self-end", "baseline",
-		)
-	case "column-gap", "row-gap":
-		return validReplayPresentationLength(value, "normal")
-	case "grid-auto-flow":
-		return replayPresentationKeyword(value, "row", "column", "dense", "row dense", "column dense")
-	case "grid-template-columns", "grid-template-rows", "grid-auto-columns", "grid-auto-rows":
-		return validReplayPresentationTrackList(value)
-	case "font-family":
-		return replayPresentationKeyword(value, "serif", "sans-serif", "monospace")
-	case "font-style":
-		return replayPresentationKeyword(value, "normal", "italic", "oblique")
-	case "font-weight":
-		return replayPresentationKeyword(value, "normal", "bold", "bolder", "lighter") ||
-			validReplayPresentationNumber(value, 1, 1000)
-	case "line-height":
-		return replayPresentationKeyword(value, "normal") ||
-			validReplayPresentationLength(value)
-	case "letter-spacing":
-		return replayPresentationKeyword(value, "normal") ||
-			validReplayPresentationLength(value)
-	case "text-align":
-		return replayPresentationKeyword(
-			value, "start", "end", "left", "right", "center", "justify", "match-parent",
-		)
-	case "white-space":
-		return replayPresentationKeyword(
-			value, "normal", "pre", "nowrap", "pre-wrap", "pre-line", "break-spaces",
-		)
-	case "text-transform":
-		return replayPresentationKeyword(
-			value, "none", "capitalize", "uppercase", "lowercase", "full-width", "full-size-kana",
-		)
-	case "object-fit":
-		return replayPresentationKeyword(value, "fill", "contain", "cover", "none", "scale-down")
-	case "object-position":
-		return validReplayPresentationLengthList(value, 2, 2)
-	case "border-collapse":
-		return replayPresentationKeyword(value, "separate", "collapse")
-	case "table-layout":
-		return replayPresentationKeyword(value, "auto", "fixed")
-	case "transform":
-		return validReplayPresentationTransform(value)
-	case "transform-origin":
-		return validReplayPresentationLengthList(value, 2, 3)
-	default:
-		return false
-	}
-}
-
-func replayPresentationKeyword(value string, allowed ...string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func validReplayPresentationNumber(value string, minimum, maximum float64) bool {
-	if !replayPresentationNumberPattern.MatchString(value) {
-		return false
-	}
-	number, err := strconv.ParseFloat(value, 64)
-	return err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) &&
-		number >= minimum && number <= maximum
-}
-
-func validReplayPresentationLength(value string, keywords ...string) bool {
-	return replayPresentationKeyword(value, keywords...) ||
-		replayPresentationLengthPattern.MatchString(value)
-}
-
-func validReplayPresentationLengthList(value string, minimum, maximum int) bool {
-	parts := strings.Fields(value)
-	if len(parts) < minimum || len(parts) > maximum || strings.Join(parts, " ") != value {
-		return false
-	}
-	for _, part := range parts {
-		if !validReplayPresentationLength(part) {
-			return false
-		}
-	}
-	return true
-}
-
-func validReplayPresentationAspectRatio(value string) bool {
-	if value == "auto" {
-		return true
-	}
-	parts := strings.Split(value, " / ")
-	return len(parts) == 2 &&
-		validReplayPresentationNumber(parts[0], 0, math.MaxFloat64) &&
-		validReplayPresentationNumber(parts[1], 0, math.MaxFloat64)
-}
-
-func validReplayPresentationTrackList(value string) bool {
-	if value == "none" {
-		return true
-	}
-	parts := strings.Fields(value)
-	if len(parts) == 0 || len(parts) > 64 || strings.Join(parts, " ") != value {
-		return false
-	}
-	for _, part := range parts {
-		if !validReplayPresentationLength(part, "auto", "min-content", "max-content") {
-			return false
-		}
-	}
-	return true
-}
-
-func validReplayPresentationColor(value string) bool {
-	if value == "transparent" {
-		return true
-	}
-	match := replayPresentationColorPattern.FindStringSubmatch(value)
-	if match == nil {
-		return false
-	}
-	for _, channel := range match[2:5] {
-		number, err := strconv.Atoi(channel)
-		if err != nil || number < 0 || number > 255 {
-			return false
-		}
-	}
-	if match[1] == "rgb" {
-		return match[5] == ""
-	}
-	if match[5] == "" {
-		return false
-	}
-	return validReplayPresentationNumber(match[5], 0, 1)
-}
-
-func validReplayPresentationTransform(value string) bool {
-	if value == "none" {
-		return true
-	}
-	match := replayPresentationTransformPattern.FindStringSubmatch(value)
-	if match == nil {
-		return false
-	}
-	values := strings.Split(match[2], ", ")
-	expected := 6
-	if match[1] == "matrix3d" {
-		expected = 16
-	}
-	if len(values) != expected {
-		return false
-	}
-	for _, value := range values {
-		if !validReplayPresentationNumber(value, -math.MaxFloat64, math.MaxFloat64) {
-			return false
-		}
-	}
-	return true
+	return validReplayContentAttributes(value)
 }
 
 func safeReplayTagName(value string) bool {
@@ -1099,6 +740,8 @@ func validReplayIncrementalData(data map[string]any) bool {
 	switch source {
 	case 0:
 		return validReplayMutationData(data)
+	case 8, 13, 16:
+		return validReplayStyleMutation(data, source)
 	case 1, 6, 12:
 		return validReplayPositionData(data)
 	case 2:
@@ -1293,7 +936,7 @@ func validReplayMutationData(data map[string]any) bool {
 			// rrweb emits null when a text node's content is cleared; null carries no text.
 			if text["value"] != nil {
 				masked, textOK := text["value"].(string)
-				if !textOK || !maskedReplayText(masked) {
+				if !textOK || (!validReplayText(masked) && !(strings.Contains(masked, "{") && validReplayCSS(masked, false))) {
 					return false
 				}
 			}

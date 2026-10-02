@@ -19,6 +19,7 @@ export default defineConfig({
         'contracts/widget-objective-policy.ts',
         'src/modules/replay.ts',
         'src/modules/privacy.ts',
+        'src/modules/replay-content.ts',
         'src/modules/element-attachment.ts',
         'src/modules/media-mime.ts',
       ],

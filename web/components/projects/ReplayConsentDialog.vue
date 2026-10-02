@@ -165,7 +165,7 @@ function defaultNotice(locale: string): ReplayConsentNotice {
   if (locale.startsWith('pt')) {
     return {
       title: 'Ajude-nos a melhorar esta experiência',
-      description: 'Autorize a gravação anónima das suas interações nesta página.',
+      description: 'Autorize a gravação das interações nesta página com os campos privados mascarados.',
       accept_label: 'Aceitar',
       reject_label: 'Recusar',
       withdraw_label: 'Retirar consentimento',
@@ -173,7 +173,7 @@ function defaultNotice(locale: string): ReplayConsentNotice {
   }
   return {
     title: 'Help us improve this experience',
-    description: 'Allow anonymous recording of your interactions on this page.',
+    description: 'Allow recording of page interactions with private fields masked.',
     accept_label: 'Accept',
     reject_label: 'Reject',
     withdraw_label: 'Withdraw consent',
