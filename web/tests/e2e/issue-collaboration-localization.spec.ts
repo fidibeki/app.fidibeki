@@ -215,6 +215,9 @@ async function installAPI(page: Page, state: State) {
     if (path === '/v1/projects' && method === 'GET') {
       return json(route, { projects: [project] })
     }
+    if (path === `/v1/projects/${project.id}/chat/issues/${state.issue.id}/conversations` && method === 'GET') {
+      return json(route, { conversations: [], truncated: false })
+    }
     if (path === '/v1/tags' && method === 'GET') {
       return json(route, { tags })
     }
