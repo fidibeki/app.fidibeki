@@ -1,0 +1,41 @@
+name: Live support E2E
+on:
+  pull_request:
+    paths: ["backend/**", "infra/migrations/**", "infra/docker-compose.support-test.yml", "shared/**", "web/**", "backoffice/**", "widget/**", "scripts/*live-support*", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".github/workflows/live-support-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["backend/**", "infra/migrations/**", "infra/docker-compose.support-test.yml", "shared/**", "web/**", "backoffice/**", "widget/**", "scripts/*live-support*", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".github/workflows/live-support-ci.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: live-support-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  real-stack:
+    runs-on: warp-ubuntu-2604-arm64-4x
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fidibeki/backoffice exec playwright install --with-deps chromium
+      - run: pnpm test:live-support
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-support-evidence
+          path: |
+            docs/evidence/live-support-*.png
+            docs/evidence/website-chat-*.png
+            backoffice/test-results/

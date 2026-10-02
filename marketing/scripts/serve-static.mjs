@@ -19,6 +19,7 @@ const mimeTypes = {
   '.json': 'application/json',
   '.xml': 'application/xml',
   '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -44,7 +45,17 @@ function resolveFile(urlPath) {
   return filePath
 }
 
-const compressible = new Set(['.html', '.css', '.js', '.mjs', '.json', '.xml', '.txt', '.svg'])
+const compressible = new Set([
+  '.html',
+  '.css',
+  '.js',
+  '.mjs',
+  '.json',
+  '.xml',
+  '.txt',
+  '.md',
+  '.svg',
+])
 
 const server = createServer(async (request, response) => {
   const filePath = resolveFile(request.url ?? '/')
@@ -62,7 +73,11 @@ const server = createServer(async (request, response) => {
       body = gzipSync(body)
       headers['content-encoding'] = 'gzip'
     }
-    if (request.url?.startsWith('/_nuxt/') || extension === '.woff2' || extension === '.png') {
+    if (
+      request.url?.startsWith('/_nuxt/') ||
+      extension === '.woff2' ||
+      extension === '.png'
+    ) {
       headers['cache-control'] = 'public, max-age=31536000, immutable'
     }
     response.writeHead(200, headers)

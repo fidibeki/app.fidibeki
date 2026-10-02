@@ -8,6 +8,7 @@ COPY web/package.json web/package.json
 RUN pnpm install --frozen-lockfile --filter @fidibeki/web...
 
 COPY contracts contracts
+COPY shared shared
 COPY web web
 RUN pnpm --filter @fidibeki/web build
 

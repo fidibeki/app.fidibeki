@@ -10,6 +10,8 @@ import (
 type Operation string
 
 const (
+	OperationWebsiteChatConversations Operation = "website_chat_conversations"
+	OperationSupportConversations     Operation = "support_conversations"
 	OperationTenantMagicLinks         Operation = "tenant_magic_links"
 	OperationPlatformAdminMagicLinks  Operation = "platform_admin_magic_links"
 	OperationAttachments              Operation = "attachments"
@@ -29,6 +31,8 @@ const (
 // Migrations seed exactly one retention_maintenance_status row
 // per entry; Read fails when the table and this map disagree.
 var operationCategories = map[Operation]string{
+	OperationWebsiteChatConversations: "website_chat",
+	OperationSupportConversations:     "platform_support",
 	OperationTenantMagicLinks:         "auth_magic_links",
 	OperationPlatformAdminMagicLinks:  "auth_magic_links",
 	OperationAttachments:              "attachments",

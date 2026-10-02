@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 withDefaults(defineProps<{ height?: number }>(), { height: 26 })
 </script>
 
@@ -8,7 +10,7 @@ withDefaults(defineProps<{ height?: number }>(), { height: 26 })
       class="brand-logo-light"
       src="/brand/wordmark-color.png"
       srcset="/brand/wordmark-color.png 1x, /brand/wordmark-color@2x.png 2x"
-      alt="Fidibeki"
+      :alt="copy('Fidibeki')"
       :height="height"
       :width="Math.round(height * 3.944)"
     />
@@ -16,7 +18,7 @@ withDefaults(defineProps<{ height?: number }>(), { height: 26 })
       class="brand-logo-dark"
       src="/brand/wordmark-white.png"
       srcset="/brand/wordmark-white.png 1x, /brand/wordmark-white@2x.png 2x"
-      alt="Fidibeki"
+      :alt="copy('Fidibeki')"
       :height="height"
       :width="Math.round(height * 3.944)"
     />

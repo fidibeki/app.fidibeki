@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Building2, ChevronDown, House, ListTodo, LogOut, Search, ShieldAlert } from '@lucide/vue'
+import { Building2, ChevronDown, House, ListTodo, LogOut, MessageCircle, Search, ShieldAlert } from '@lucide/vue'
 import type { PlatformCommand } from '~/components/PlatformCommandPalette.client.vue'
 
 const route = useRoute()
@@ -8,16 +8,17 @@ const paletteOpen = ref(false)
 const accountMenu = ref<HTMLDetailsElement | null>(null)
 const main = ref<HTMLElement | null>(null)
 
-const navigation = [
+const navigation = computed(() => [
   { label: 'Overview', to: '/', icon: House },
   { label: 'Workspaces', to: '/workspaces', icon: Building2 },
+  ...(session.value.admin?.permissions.includes('platform:support:read') ? [{ label: 'Conversations', to: '/support', icon: MessageCircle }] : []),
   { label: 'Queues', to: '/queues', icon: ListTodo },
   { label: 'Privacy', to: '/privacy', icon: ShieldAlert },
-]
+])
 const displayName = computed(() => session.value.admin?.email.split('@')[0] || 'Platform admin')
 
 const commands = computed<PlatformCommand[]>(() => [
-  ...navigation.map((item) => ({
+  ...navigation.value.map((item) => ({
     id: `page:${item.to}`,
     label: item.label,
     hint: item.to,

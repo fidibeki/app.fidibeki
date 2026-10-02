@@ -198,7 +198,7 @@ func TestCustomerMigrationCanRollBackBeforeEnablement(t *testing.T) {
 	defer cancel()
 	pool := aiTestDatabase(t, ctx)
 	for _, direction := range []string{"down", "up"} {
-		content, err := os.ReadFile(filepath.Join(aiMigrationsPath(t), "000138_add_customer_ai_connections."+direction+".sql"))
+		content, err := os.ReadFile(filepath.Join(aiMigrationsPath(t), "000143_add_customer_ai_connections."+direction+".sql"))
 		if err != nil {
 			t.Fatal(err)
 		}

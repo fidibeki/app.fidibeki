@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
 
-
 test('system dark preference is respected by default', async ({ browser }) => {
   const context = await browser.newContext({ colorScheme: 'dark' })
   const page = await context.newPage()
@@ -17,7 +16,9 @@ test('system light preference is respected by default', async ({ browser }) => {
   await context.close()
 })
 
-test('explicit choice wins over system preference and persists', async ({ browser }) => {
+test('explicit choice wins over system preference and persists', async ({
+  browser,
+}) => {
   const context = await browser.newContext({ colorScheme: 'dark' })
   const page = await context.newPage()
   await page.goto('/')
@@ -47,7 +48,9 @@ test('theme is applied before first paint (no flash)', async ({ browser }) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   // The inline head script must have applied the stored theme synchronously,
   // before hydration had any chance to run.
-  const theme = await page.evaluate(() => document.documentElement.dataset.theme)
+  const theme = await page.evaluate(
+    () => document.documentElement.dataset.theme,
+  )
   expect(theme).toBe('light')
   await context.close()
 })
@@ -58,7 +61,9 @@ test('reduced motion disables reveal animations', async ({ browser }) => {
   await page.goto('/')
   const hero = page.locator('h1')
   await expect(hero).toBeVisible()
-  const opacity = await hero.evaluate((element) => getComputedStyle(element).opacity)
+  const opacity = await hero.evaluate(
+    (element) => getComputedStyle(element).opacity,
+  )
   expect(Number(opacity)).toBe(1)
   await context.close()
 })
@@ -69,12 +74,18 @@ test('both themes keep primary CTA contrast', async ({ page }) => {
     await page.evaluate((value) => {
       document.documentElement.dataset.theme = value
     }, theme)
-    const cta = page.locator('.hero-actions .btn-primary').first()
-    const { background, color } = await cta.evaluate((element) => {
-      const style = getComputedStyle(element)
-      return { background: style.backgroundColor, color: style.color }
-    })
-    expect(background).toBe('rgb(8, 127, 115)')
-    expect(color).toBe('rgb(255, 255, 255)')
+    for (const selector of ['.home-header-cta', '.home-closing .home-button']) {
+      const cta = page.locator(selector)
+      const { background, color } = await cta.evaluate((element) => {
+        const style = getComputedStyle(element)
+        return { background: style.backgroundColor, color: style.color }
+      })
+      expect(background).toBe(
+        theme === 'dark' ? 'rgb(245, 245, 245)' : 'rgb(25, 25, 25)',
+      )
+      expect(color).toBe(
+        theme === 'dark' ? 'rgb(23, 23, 23)' : 'rgb(255, 255, 255)',
+      )
+    }
   }
 })

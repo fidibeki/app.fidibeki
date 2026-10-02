@@ -2820,3 +2820,264 @@ test('preserves the complete draft and offers retry after a public rate decision
   expect(payloads[1]?.attachments).toEqual(payloads[0]?.attachments)
   expect(payloads[1]?.attachments).toHaveLength(1)
 })
+
+test('website chat reset on ready forgets the previous browser user before loading history', async ({ page }) => {
+  const oldToken = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const freshToken = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+  const historyTokens: string[] = [], revoked: string[] = []
+  await page.addInitScript(({ token }) => {
+    localStorage.setItem('fidibeki:chat:project-browser', JSON.stringify({ token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() }))
+    window.addEventListener('fidibeki:ready', () => { void (window as any).Fidibeki.chat.reset() }, { once: true })
+  }, { token: oldToken })
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    const token = route.request().headers()['x-fidibeki-chat-token'] || ''
+    if (path.endsWith('/session/revoke')) { revoked.push(token); return route.fulfill({ status: 204 }) }
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token: freshToken, visitor_id: freshToken.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) { historyTokens.push(token); return route.fulfill({ json: { conversation: null, messages: [], has_more: false } }) }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: 'event: change\ndata: {}\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  await expect(page.locator('#fidibeki-chat')).toBeVisible()
+  await expect.poll(() => historyTokens.length).toBeGreaterThan(0)
+  expect(historyTokens).not.toContain(oldToken)
+  expect(revoked).toContain(oldToken)
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('fidibeki:chat:project-browser')!).token)).toBe(freshToken)
+})
+
+test('opening chat feedback does not suppress automatic feedback after chat is turned off', async ({ page }) => {
+  let enabled = true
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+  await expect(chat.getByText('How clear was checkout?', { exact: true })).toBeVisible()
+  enabled = false
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'How clear was checkout?', exact: true })).toBeVisible()
+})
+
+test('logout reset survives unavailable configuration and a subsequent page navigation', async ({ page }) => {
+  let available = false
+  const oldToken = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const newToken = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+  const historyTokens: string[] = []
+  await page.addInitScript(({ token }) => {
+    if (sessionStorage.getItem('reset-fixture-seeded')) return
+    sessionStorage.setItem('reset-fixture-seeded', 'true')
+    localStorage.setItem('fidibeki:chat:project-browser', JSON.stringify({ token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() }))
+    window.addEventListener('fidibeki:ready', () => { void (window as any).Fidibeki.chat.reset().catch(() => {}) }, { once: true })
+  }, { token: oldToken })
+  await page.route('**/v1/widget/config*', route => available
+    ? route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } })
+    : route.fulfill({ status: 503, json: {} }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token: newToken, visitor_id: newToken.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) { historyTokens.push(route.request().headers()['x-fidibeki-chat-token'] || ''); return route.fulfill({ json: { conversation: null, messages: [], has_more: false } }) }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: 'event: change\ndata: {}\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  await expect.poll(() => page.evaluate(() => Number(localStorage.getItem('fidibeki:chat-reset:pk_live_browser_contract')))).toBeGreaterThan(Date.now())
+  available = true
+  await page.reload()
+  await expect(page.locator('#fidibeki-chat')).toBeVisible()
+  await expect.poll(() => historyTokens.length).toBeGreaterThan(0)
+  expect(historyTokens).not.toContain(oldToken)
+  expect(await page.evaluate(() => localStorage.getItem('fidibeki:chat-reset:pk_live_browser_contract'))).toBeNull()
+})
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`chat and feedback share one frame and theme on desktop and mobile (${theme})`, async ({ page }) => {
+    const rule = { ...browserRule, theme, accent_color: '#216e59', can_record_audio: false, can_record_video: false } satisfies WidgetRule
+    const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+    let submitted: { text: string; rating: number } | undefined
+    await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(rule), chat: { enabled: true, name: 'Store team' } } }))
+    await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+    await page.route('**/v1/widget/chat/**', route => {
+      const path = new URL(route.request().url()).pathname
+      if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+      if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+      if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+      return route.fulfill({ status: 204 })
+    })
+    await page.route('**/v1/feedback?*', route => {
+      submitted = route.request().postDataJSON()
+      return route.fulfill({ status: 201, json: { feedback_id: 'integrated-feedback', attachments: [] } })
+    })
+    await page.goto('/sample.html')
+    const chat = page.locator('#fidibeki-chat')
+    const launcher = chat.getByRole('button', { name: 'Messages & feedback', exact: true })
+    await launcher.click()
+    await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+    const feedback = chat.locator('[data-embedded-chat]')
+    await expect(feedback.getByRole('heading', { name: 'How clear was checkout?' })).toBeVisible()
+    await expect(chat.getByRole('button', { name: /Close/ })).toHaveCount(1)
+    await expect(chat.getByRole('button', { name: 'Forget this chat on this browser' })).toBeHidden()
+    await expect(feedback.locator('[data-panel]')).toHaveCSS('border-top-width', '0px')
+    await expect(feedback.locator('form')).toHaveCSS('overflow-y', 'visible')
+    await expect(chat.locator('section.panel').first()).toHaveCSS('background-color', theme === 'dark' ? 'rgb(23, 25, 24)' : 'rgb(255, 255, 255)')
+    await expect(feedback.locator('textarea')).toHaveCSS('background-color', theme === 'dark' ? 'rgb(23, 25, 24)' : 'rgb(255, 255, 255)')
+    await chat.locator('section.panel').first().screenshot({ path: `../docs/evidence/website-chat-integrated-${theme}-desktop.png`, animations: 'disabled' })
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.evaluate(() => {
+      const nav = document.createElement('nav'); nav.id = 'mobile-site-nav'; nav.setAttribute('aria-label', 'Website navigation')
+      nav.textContent = 'Home     Markets     Portfolio     More'
+      nav.style.cssText = 'position:fixed;inset:auto 0 0;height:64px;background:#151a18;color:white;display:grid;place-items:center;z-index:100;font:14px sans-serif'
+      document.body.append(nav)
+    })
+    await expect(launcher).toBeHidden()
+    await chat.getByRole('button', { name: 'Close conversation', exact: true }).click()
+    await expect(launcher).toBeVisible()
+    const launcherBounds = await launcher.boundingBox(), navBounds = await page.locator('#mobile-site-nav').boundingBox()
+    expect(launcherBounds!.width).toBeLessThanOrEqual(56)
+    expect(launcherBounds!.y + launcherBounds!.height).toBeLessThan(navBounds!.y)
+    await page.evaluate(() => document.documentElement.style.setProperty('--fidibeki-chat-bottom-offset', '96px'))
+    expect((await launcher.boundingBox())!.y).toBe(launcherBounds!.y - 32)
+    await page.evaluate(() => document.documentElement.style.removeProperty('--fidibeki-chat-bottom-offset'))
+    await page.screenshot({ path: `../docs/evidence/website-chat-launcher-${theme}-mobile.png`, animations: 'disabled' })
+
+    await launcher.click()
+    await expect(feedback.getByRole('heading')).toBeVisible()
+    await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+    await feedback.getByRole('button', { name: '5 out of 5' }).click()
+    await feedback.getByRole('textbox', { name: 'Feedback', exact: true }).fill('One integrated panel, including on mobile.')
+    await chat.locator('section.panel').first().screenshot({ path: `../docs/evidence/website-chat-integrated-${theme}-mobile.png`, animations: 'disabled' })
+    await page.setViewportSize({ width: 320, height: 420 })
+    await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+    await feedback.getByRole('button', { name: 'Send feedback' }).scrollIntoViewIfNeeded()
+    await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.clock.install()
+    await feedback.getByRole('button', { name: 'Send feedback' }).click()
+    await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+    await page.clock.fastForward(4000)
+    await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+    expect(submitted).toMatchObject({ text: 'One integrated panel, including on mobile.', rating: 5 })
+    await page.evaluate(nextTheme => document.documentElement.setAttribute('data-theme', nextTheme), theme === 'dark' ? 'light' : 'dark')
+    await expect(chat.locator('section.panel').first()).toHaveCSS('background-color', theme === 'dark' ? 'rgb(255, 255, 255)' : 'rgb(23, 25, 24)')
+    await chat.getByRole('button', { name: 'Messages', exact: true }).click()
+    await expect(chat.getByText('Your conversations live here.')).toBeVisible()
+    await expect(chat.getByRole('button', { name: 'Forget this chat on this browser' })).toBeVisible()
+  })
+}
+
+test('feedback panel grows with the complete form and shrinks after submission', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1100 })
+  const rule: WidgetRule = {
+    ...browserRule, theme: 'dark', can_attach_screenshot: true,
+    ai_processing: { enabled: true, input_categories: ['feedback_text'], privacy_policy_url: 'https://example.test/privacy' },
+  }
+  const configuration = browserConfiguration(rule)
+  configuration.features.audio = true
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...configuration, chat: { enabled: true, name: 'Store team' } } }))
+  await page.route('**/v1/widget/connected*', route => route.fulfill({ status: 204 }))
+  await page.route('**/v1/widget/chat/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { conversation: null, messages: [], has_more: false } })
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.route('**/v1/feedback?*', route => route.fulfill({ status: 201, json: { feedback_id: 'content-height-feedback', attachments: [] } }))
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  const panel = chat.locator('section.panel').first()
+  const messageHeight = (await panel.boundingBox())!.height
+  await chat.getByRole('button', { name: 'Give feedback', exact: true }).click()
+  const feedback = chat.locator('[data-embedded-chat]')
+  await expect(feedback.getByRole('button', { name: 'Record audio' })).toBeVisible()
+  await expect(feedback.getByRole('button', { name: 'Capture screenshot' })).toBeVisible()
+  const field = feedback.getByRole('textbox', { name: 'Feedback', exact: true })
+  const initialHeight = (await panel.boundingBox())!.height
+  // A visitor can resize this textarea; the surrounding form must follow it.
+  await field.evaluate(element => { element.style.height = '320px' })
+  const expandedHeight = (await panel.boundingBox())!.height
+  expect(expandedHeight).toBeGreaterThan(initialHeight + 100)
+  expect(expandedHeight).toBeGreaterThan(messageHeight)
+  expect(await panel.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
+  await expect(chat.locator('.feedback')).toHaveCSS('overflow-y', 'visible')
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+  await panel.screenshot({ path: '../docs/evidence/website-chat-content-height-desktop.png', animations: 'disabled' })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await field.evaluate(element => { element.style.height = '' })
+  expect(await panel.evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await panel.screenshot({ path: '../docs/evidence/website-chat-content-height-mobile.png', animations: 'disabled' })
+  await page.setViewportSize({ width: 320, height: 420 })
+  await feedback.getByRole('button', { name: 'Send feedback' }).scrollIntoViewIfNeeded()
+  await expect(feedback.getByRole('button', { name: 'Send feedback' })).toBeInViewport()
+  await field.fill('The panel follows the form height.')
+  await feedback.getByRole('button', { name: 'Send feedback' }).click()
+  await expect(feedback.getByText('Your feedback was sent.', { exact: true })).toBeVisible()
+  expect((await panel.boundingBox())!.height).toBeLessThan(initialHeight)
+  await expect(chat.getByRole('button', { name: 'Close conversation' })).toBeInViewport()
+  await chat.getByRole('button', { name: 'Messages', exact: true }).click()
+  await page.setViewportSize({ width: 1280, height: 1100 })
+  expect((await panel.boundingBox())!.height).toBe(messageHeight)
+})
+
+test('visitors can start a chat when enabled and keep replying after it is disabled', async ({ page }) => {
+  let allowed = false
+  const token = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+  const messages: Record<string, unknown>[] = []
+  await page.route('**/v1/widget/config*', route => route.fulfill({ json: { ...browserConfiguration(), chat: { enabled: true, name: 'Store' } } }))
+  await page.route('**/v1/widget/chat/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/session')) return route.fulfill({ status: 201, json: { token, visitor_id: token.split('.')[0], expires_at: new Date(Date.now() + 86400000).toISOString() } })
+    if (path.endsWith('/conversation')) return route.fulfill({ json: { allow_visitor_messages: allowed, conversation: messages.length ? { id: token.split('.')[0], project_id: 'project-browser', last_sequence: messages.length, visitor_read_sequence: messages.length, unread: 0 } : null, messages, has_more: false } })
+    if (path.endsWith('/messages')) {
+      const body = route.request().postDataJSON()
+      if (!messages.length && !allowed) return route.fulfill({ status: 403, json: {} })
+      const message = { ...body, id: body.client_id, sequence: messages.length + 1, sender_type: 'visitor', sender_name: 'Visitor', created_at: new Date().toISOString() }
+      messages.push(message)
+      return route.fulfill({ json: { message } })
+    }
+    if (path.endsWith('/events')) return route.fulfill({ contentType: 'text/event-stream', body: ': ready\n\n' })
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('/sample.html')
+  const chat = page.locator('#fidibeki-chat')
+  await chat.getByRole('button', { name: 'Messages & feedback', exact: true }).click()
+  await expect(chat.getByRole('textbox')).toBeHidden()
+  allowed = true
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat.getByText('Send us a message.', { exact: true })).toBeVisible()
+  await chat.getByRole('textbox', { name: 'Your message', exact: true }).fill('Can I ask something?')
+  // A setting change can race a send. The server still owns the permission.
+  allowed = false
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(chat.getByRole('alert')).toContainText('Your draft is still here.')
+  await expect(chat.getByRole('textbox')).toBeHidden()
+  expect(messages).toHaveLength(0)
+  allowed = true
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(chat.getByRole('textbox')).toHaveValue('Can I ask something?')
+  await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(chat.getByRole('log')).toContainText('Can I ask something?')
+  expect(messages).toHaveLength(1)
+  allowed = false
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await chat.getByRole('textbox', { name: 'Your reply', exact: true }).fill('Here is some more detail.')
+  await chat.getByRole('button', { name: 'Send reply', exact: true }).click()
+  await expect(chat.getByRole('log')).toContainText('Here is some more detail.')
+  expect(messages).toHaveLength(2)
+})

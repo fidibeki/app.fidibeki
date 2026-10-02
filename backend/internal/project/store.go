@@ -666,7 +666,7 @@ func (store Store) LoadPublicConfiguration(
 		       tenant.plan, tenant.status, tenant.trial_ends_at, tenant.deletion_requested_at,
 		       tenant.logo_version::text, tenant.name, tenant.privacy_contact_email::text,
 		       tenant.privacy_rights_email::text, tenant.privacy_policy_url,
-		       tenant.privacy_profile_version
+		       tenant.privacy_profile_version, project.chat_enabled, project.name
 		FROM projects AS project
 		JOIN tenants AS tenant ON tenant.id = project.tenant_id
 		WHERE project.public_key = $1
@@ -677,7 +677,7 @@ func (store Store) LoadPublicConfiguration(
 		&plan, &status, &trialEndsAt,
 		&deletionRequestedAt, &logoVersion,
 		&controllerName, &privacyContactEmail, &privacyRightsEmail, &privacyPolicyURL,
-		&privacyProfileVersion,
+		&privacyProfileVersion, &configuration.ChatEnabled, &configuration.ProjectName,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicConfiguration{}, ErrNotFound

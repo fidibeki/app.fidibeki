@@ -6,6 +6,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { allTenantPermissions } from "../../data/permissions";
+import { mockSupportRequest } from "./support-fixture";
 import type {
   PrivacyCase,
   PrivacyCaseCommunication,
@@ -1389,6 +1390,7 @@ async function installMockAPI(page: Page, state: MockState) {
     if (request.resourceType() === "document") return route.continue();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (await mockSupportRequest(route)) return;
     const method = request.method();
     const body = () => request.postDataJSON() as Record<string, unknown>;
 
@@ -8955,6 +8957,7 @@ test("Portuguese administration preserves permissions and operational mutations"
   expect(state.apiKeys.at(-1)).toMatchObject({
     name: "Warehouse exporter",
     permissions: [
+      "chat:read",
       "project:read",
       "widget_rule:read",
       "feedback:read",
@@ -9186,7 +9189,7 @@ test("member and API key permissions share a compact custom-aware editor", async
   const memberDialog = page.getByRole("dialog", { name: "Invite member" });
   const memberEditor = memberDialog.locator(".permission-editor");
   await expect(memberEditor).toBeVisible();
-  await expect(memberEditor.locator("fieldset")).toHaveCount(13);
+  await expect(memberEditor.locator("fieldset")).toHaveCount(14);
   await memberEditor.getByRole("button", { name: "Admin" }).click();
   await expect(
     memberEditor.getByRole("button", { name: "Admin" }),
@@ -9219,7 +9222,7 @@ test("member and API key permissions share a compact custom-aware editor", async
   const keyDialog = page.getByRole("dialog", { name: "Create API key" });
   const keyEditor = keyDialog.locator(".permission-editor");
   await expect(keyEditor).toBeVisible();
-  await expect(keyEditor.locator("fieldset")).toHaveCount(13);
+  await expect(keyEditor.locator("fieldset")).toHaveCount(14);
   await expect(
     keyEditor.getByRole("button", { name: "Viewer" }),
   ).toHaveAttribute("data-active", "true");

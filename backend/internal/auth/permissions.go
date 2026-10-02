@@ -5,6 +5,9 @@ type Permission string
 const (
 	PermissionAIConnectionRead    Permission = "ai_connection:read"
 	PermissionAIConnectionManage  Permission = "ai_connection:manage"
+	PermissionChatRead            Permission = "chat:read"
+	PermissionChatWrite           Permission = "chat:write"
+	PermissionChatDelete          Permission = "chat:delete"
 	PermissionProjectCreate       Permission = "project:create"
 	PermissionProjectRead         Permission = "project:read"
 	PermissionProjectUpdate       Permission = "project:update"
@@ -53,6 +56,8 @@ const (
 )
 
 const (
+	PermissionPlatformSupportRead   Permission = "platform:support:read"
+	PermissionPlatformSupportWrite  Permission = "platform:support:write"
 	PermissionPlatformTenantCreate  Permission = "platform:tenant:create"
 	PermissionPlatformTenantRead    Permission = "platform:tenant:read"
 	PermissionPlatformTenantUpdate  Permission = "platform:tenant:update"
@@ -79,6 +84,8 @@ const (
 )
 
 var AllPlatformPermissions = []Permission{
+	PermissionPlatformSupportRead,
+	PermissionPlatformSupportWrite,
 	PermissionPlatformTenantCreate,
 	PermissionPlatformTenantRead,
 	PermissionPlatformTenantUpdate,
@@ -97,6 +104,7 @@ var AllPlatformPermissions = []Permission{
 
 var AllTenantPermissions = []Permission{
 	PermissionAIConnectionRead, PermissionAIConnectionManage,
+	PermissionChatRead, PermissionChatWrite, PermissionChatDelete,
 	PermissionProjectCreate, PermissionProjectRead, PermissionProjectUpdate, PermissionProjectDelete,
 	PermissionWidgetRuleCreate, PermissionWidgetRuleRead, PermissionWidgetRuleUpdate, PermissionWidgetRuleDelete,
 	PermissionFeedbackRead, PermissionFeedbackUpdate, PermissionFeedbackDelete,

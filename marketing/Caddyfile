@@ -18,6 +18,10 @@
 		-Server
 	}
 
+	@markdown path *.md
+	header @markdown Content-Type "text/markdown; charset=utf-8"
+	header @markdown Link "</llms.txt>; rel=\"describedby\""
+
 	respond /healthz 200
 
 	# Serve /route from /route/index.html directly — no trailing-slash

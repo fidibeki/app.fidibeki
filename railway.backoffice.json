@@ -4,6 +4,7 @@
     "builder": "DOCKERFILE",
     "dockerfilePath": "backoffice/Dockerfile",
     "watchPatterns": [
+      "shared/**",
       "backoffice/**",
       "web/assets/css/main.css",
       "package.json",

@@ -1,6 +1,6 @@
 # Fidibeki Technical Privacy Data Map
 
-**Last technical review:** 2026-07-24
+**Last technical review:** 2026-10-01
 
 This document is an engineering inventory for founder and legal review. It is not a published
 privacy policy, data processing agreement, residency commitment, legal opinion, or guarantee.
@@ -9,8 +9,8 @@ customer-facing claims.
 
 ## Executable Retention Registry
 
-`GET /v1/privacy/retention` is backed by registry version 1. Its 30 lifecycle categories cover
-every one of the 96 PostgreSQL tables created by current migrations exactly once, plus the known
+`GET /v1/privacy/retention` is backed by registry version 1. Its 36 lifecycle categories cover
+every one of the 103 PostgreSQL tables created by current migrations exactly once, plus the known
 object-prefix, queue, browser-key, and provider boundaries. Automated validation rejects duplicate
 resources and rejects `enforced` or `configurable` claims without a bounded lifecycle and a real
 implementation reference.
@@ -35,14 +35,14 @@ and mobile-capture-session cleaners; the ledger stores schedule metadata, last a
 budget exhaustion, and only the generic failure code `cleanup_failed`. It stores no tenant, person,
 credential, token, IP/user-agent, or raw error data and no append-only run history. Health is derived
 as `healthy`, `attention`, `failed`, `overdue`, or `not_observed` from each operation's schedule and
-15-minute grace window. The bilingual Data & privacy surface shows the thirteen tracked operations,
+15-minute grace window. The bilingual Data & privacy surface shows the sixteen tracked operations,
 their last success, next expected run, counts, and alert reason. Every enforced cleaner now reports
 into this ledger; categories without a cleaner still have no health row and are not represented
 as healthy.
 
 ## Records Of Processing Activities (ROPA) And DPIA Screening
 
-`backend/internal/privacy/ropa_registry.go` groups the retention registry's 30 categories into 19
+`backend/internal/privacy/ropa_registry.go` groups the retention registry's 36 categories into 21
 code-owned processing activities — GDPR Article 30's actual unit of record — each covering one or
 more retention categories exactly once. Every activity carries its Fidibeki role (derived from, and
 validated against, the retention registry rather than hand-duplicated), data-subject (including a
@@ -75,6 +75,7 @@ processing-instruction and safeguards framework, not itself an Article 6 lawful 
 | Workspace identity | Workspace name, slug, plan, status | Tenant routing, authorization, billing state | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
 | Members and authentication | Email, permissions, session/token hashes, login and invitation records | Authenticate people and enforce RBAC | PostgreSQL, Redis for rate limits/queues | Login and invitation magic links (`tenant_magic_links`, `platform_admin_magic_links`) are hard-deleted, consumed or not, within 1 hour of their configured expiry (default 10 minutes) by bounded hourly maintainers; each deletion records a non-content audit event (`auth.magic_link_expired` in `tenant_access_events`, or `auth.platform_magic_link_expired` in the global `platform_security_events` ledger for platform-admin links). `retention_maintenance_status` retains only the current non-personal aggregate health of the enforced cleaners (these two included) and drives overdue/failure/budget alerts in Data & privacy. Those minimized security events themselves, and other authentication/security records (sessions, platform admins, reporter access tokens), remain `decision_required`; no maximum period is claimed |
 | Projects and widget configuration | Domains, rules, targeting, appearance, form blocks | Decide where and how feedback is collected | PostgreSQL | `decision_required`: no approved maximum period or general cleanup is implemented |
+| Private platform support | Member/staff messages, sequence and read positions; ephemeral active/idle section | Staff-initiated support inside the app | PostgreSQL messages; Redis presence | Conversations deleted 180 days after their last message, subject to member privacy holds; member/workspace deletion cascades. Presence expires after 60 seconds and index after 120 seconds without heartbeats. Participant-only transcript download; workspace/operator member exports omit private chats. See [live support](live-support.md) |
 | Feedback and issue workflow | Original description, title, rating, answers, comments, page URL, status, tags, assignments | Triage, decision, resolution, and reporter communication | PostgreSQL | `decision_required`: supported subject anonymization is narrower than a general workflow-retention policy |
 | Email feedback invitations | Customer event ID, normalized recipient while delivery requires it, one-way recipient/request/token digests, locale, privacy-safe context URL, captured configuration, delivery state, and optional Feedback link | Send a customer-directed post-transaction solicitation, enforce idempotency, and collect Feedback only after an explicit form submission | PostgreSQL, Asynq/Redis, configured email provider | Plaintext recipient data is removed after successful delivery or terminal failure. Reporter access/erasure/restriction matches the normalized recipient digest. The remaining invitation and associated outbox event are hard-deleted by a bounded daily maintainer 90 days after invitation expiry |
 | Email feedback suppressions | One-way recipient digest, opt-out/bounce/complaint reason, and lifecycle timestamps | Prevent unwanted solicitation from resuming | PostgreSQL | Retained until the customer removes the workspace or an approved policy changes; deleting it earlier would resume unwanted email. Workspace deletion cascades to the ledger |
@@ -95,6 +96,14 @@ processing-instruction and safeguards framework, not itself an Article 6 lawful 
 | Personal-data breach register | Incident facts and affected tenant references; authority/high-risk/communication assessments; chronology; containment controls; post-incident actions, owners, deadlines, outcomes, corrective references, opaque evidence references; frozen processor-to-controller notification/contact snapshots; delivery attempts and restricted outbox evidence; external-provider incident notices with frozen code-owned governance facts, affected data-flow categories, and incident-scoped tenant mappings | Preserve restricted decision and response evidence, deliver explicitly queued, minimized controller notifications without exposing the workflow to the tenant runtime role, record bounded external-provider notices without asserting a legal subprocessor classification, and let a platform admin download a frozen notification snapshot or a deterministic point-in-time post-incident report (JSON or Markdown) rendered read-only from these same facts | PostgreSQL through the platform-admin-only connection boundary; configured transactional email provider after an explicit platform-admin queue command | `decision_required`: incident/action/content/provider snapshots and delivery attempts are append-only, notification delivery state is narrowly mutable, and every table is excluded from `fidibeki_app`; the register's maximum period and legal-hold behavior require founder/legal approval. Exports add no storage and no new lifecycle |
 | Audit and observability | Actor/resource IDs, change metadata, request/error telemetry | Security investigation, accountability, and service operation | PostgreSQL and configured telemetry provider | `decision_required` for database security evidence. Telemetry-provider *retention* remains `external_control`, pending founder/legal/provider evidence. Outgoing Sentry error events are technically scrubbed on both the backend and widget by a deterministic `BeforeSend`/`beforeSend` allowlist (`backend/internal/observability/scrub.go`, `widget/src/modules/error-reporting.ts`): only exception type/structural stack frames/timestamp/release/environment (plus a known widget phase and bounded `project_id`/`widget_rule_id`) leave the application; request URL/headers/cookies/body, user/IP/user-agent, frame absolute paths/source context/locals, breadcrumbs, arbitrary contexts/tags, and the free-text exception/message value itself are always removed or replaced with a fixed placeholder — see `docs/superpowers/specs/2026-07-24-sentry-telemetry-scrubbing-design.md` |
 | Privacy cases, jobs, and requests | Case subject/right/evidence, hashed reporter verification token, one-way email digest, job state, counts, private archive key | Verified reporter/member access, assessed portability, anonymization execution, retry, and audit | PostgreSQL, Asynq/Redis, private object storage | Archives are enforced at 7 days; unverified reporter requests at 48 hours; verified reporter access at 30 days. The privacy-case evidence maximum period is `decision_required` |
+
+## Tenant website conversations
+
+`website_chat_visitors` and `website_chat_messages` hold anonymous, tenant/project-bound conversations started by a tenant operator. A visitor cannot start a thread or access another visitor's messages with the public project key. PostgreSQL stores a SHA-256 credential hash, origin, sequence/read markers, operator identity and message content; the browser's `fidibeki:chat:<project>` entry stores only the 24-hour opaque credential. The host logout reset clears that entry and attempts server revocation. Transcript download is a direct, bounded browser download and creates no export archive.
+
+The `website_chat` retention category deletes conversations 180 days after their last message and unused visitor records 24 hours after credential expiry, with tenant-wide legal holds respected. The `website_chat_presence` category covers per-tab Redis presence (60-second TTL), its index (120-second TTL), and the expiring browser credential. Presence contains only anonymous IDs, active/idle state and an existing-rule-projected page location without query strings/fragments. Unmatched pages expose only the origin. No message content is sent in Pub/Sub invalidations or access-audit metadata. Both categories belong to the processor-role feedback workflow processing activity. The dedicated worker operation reports to retention health and resumes exhausted batches promptly.
+
+See [Website conversations](website-chat.md) for permissions, host logout integration and the independent platform-support boundary.
 
 ## Technical Data Flows
 

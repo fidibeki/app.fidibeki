@@ -15,18 +15,24 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 1000 },
+      },
     },
     {
       // Chromium with a tablet viewport; WebKit is not installed in this repo's
       // Playwright cache and the responsive checks only need the dimensions.
       name: 'tablet',
       testMatch: /responsive\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], viewport: { width: 834, height: 1112 } },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 834, height: 1112 },
+      },
     },
     {
       name: 'mobile',
-      testMatch: /(responsive|navigation)\.spec\.ts/,
+      testMatch: /(responsive|navigation|homepage|marketing)\.spec\.ts/,
       use: { ...devices['Pixel 7'] },
     },
   ],

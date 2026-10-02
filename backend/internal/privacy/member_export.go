@@ -231,6 +231,7 @@ func (exporter Exporter) buildMemberArchive(
 		Files:            []manifestFile{{Name: "member.json", Records: 1}},
 		BinaryDataPolicy: "The member avatar binary is not copied; member.json reports only its version identifier.",
 		SensitiveOmissions: []string{
+			"private platform support conversations; available to the participant through their own support transcript download",
 			"session refresh hashes and magic-link token hashes",
 			"API keys, integration credentials, signed URLs, and internal queue payloads",
 			"other members' identities and content authored by other people",

@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ArrowRight } from '@lucide/vue'
+const { copy } = useMarketingI18n()
+
+import { ArrowUpRight } from '@lucide/vue'
 import { useCases } from '~/data/use-cases'
+import { useCasePhotography } from '~/data/photography'
 
 useSiteMeta({
   title: 'Use cases',
@@ -17,104 +20,99 @@ useSiteMeta({
 <template>
   <div>
     <PageHero
-      eyebrow="Use cases"
-      title="One workflow, different jobs"
-      lede="The same capture-to-resolution workflow serves very different teams. Pick the shape that matches yours."
+      :eyebrow="copy('Use cases')"
+      :title="copy('One workflow, different jobs')"
+      :lede="
+        copy(
+          'A bug to reproduce. An idea to consider. A customer who needs an answer. Start with the work your team does.',
+        )
+      "
     >
-      <template #breadcrumbs>
-        <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Use cases', path: '/use-cases' }]" />
-      </template>
+      <template #breadcrumbs
+        ><Breadcrumbs
+          :items="[
+            { name: 'Home', path: '/' },
+            { name: 'Use cases', path: '/use-cases' },
+          ]"
+      /></template>
     </PageHero>
-
-    <section class="section">
-      <div class="container">
-        <div class="usecase-grid">
-          <NuxtLink
-            v-for="(useCase, index) in useCases"
-            :key="useCase.slug"
-            v-reveal="index * 60"
-            :to="`/use-cases/${useCase.slug}`"
-            class="card usecase-card"
-          >
-            <span class="usecase-icon"><FeatureIcon :name="useCase.icon" :size="24" /></span>
-            <span class="usecase-audience">{{ useCase.audience }}</span>
-            <h2>{{ useCase.name }}</h2>
-            <p>{{ useCase.summary }}</p>
-            <span class="usecase-more">Read more <ArrowRight :size="14" aria-hidden="true" /></span>
-          </NuxtLink>
-        </div>
+    <section class="section catalog-section" :aria-label="copy('Use cases')">
+      <div class="container usecase-grid">
+        <NuxtLinkLocale
+          v-for="useCase in useCases"
+          :key="useCase.slug"
+          :to="`/use-cases/${useCase.slug}`"
+          class="usecase-entry"
+        >
+          <EditorialPhoto
+            :photo="useCasePhotography[useCase.slug]!"
+            decorative
+            ratio="8 / 5"
+          />
+          <span class="usecase-audience">{{ copy(useCase.audience) }}</span>
+          <h2>{{ copy(useCase.name) }}</h2>
+          <p>{{ copy(useCase.summary) }}</p>
+          <span class="usecase-link"
+            >{{ copy('Explore the workflow') }}
+            <ArrowUpRight :size="18" aria-hidden="true"
+          /></span>
+        </NuxtLinkLocale>
       </div>
     </section>
-
     <CtaSection />
   </div>
 </template>
-
 <style scoped>
 .usecase-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 48px;
+  row-gap: 64px;
 }
-
-.usecase-card {
+.usecase-entry {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  color: var(--ink);
-  transition: border-color 160ms ease, transform 160ms ease;
+  align-items: flex-start;
 }
-
-.usecase-card:hover {
-  text-decoration: none;
-  border-color: var(--accent);
-  transform: translateY(-3px);
-}
-
-.usecase-card h2 {
-  margin: 0;
-  font-size: 1.25rem;
-}
-
-.usecase-card p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.94rem;
-}
-
-.usecase-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  margin-bottom: 0.4rem;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
 .usecase-audience {
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-text);
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 24px;
+  margin-bottom: 14px;
 }
-
-.usecase-more {
+.usecase-entry h2 {
+  font-size: 32px;
+  margin-bottom: 20px;
+}
+.usecase-entry p {
+  color: var(--muted);
+  max-width: 480px;
+  margin-bottom: 32px;
+}
+.usecase-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.5rem;
-  color: var(--accent-text);
-  font-size: 0.88rem;
-  font-weight: 600;
+  gap: 12px;
+  font-size: 14px;
+  margin-top: auto;
 }
-
-@media (min-width: 760px) {
+.usecase-entry:hover {
+  text-decoration: none;
+}
+.usecase-entry:hover .usecase-link {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+@media (max-width: 700px) {
   .usecase-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 36px;
+  }
+  .usecase-audience {
+    margin-bottom: 24px;
+  }
+  .usecase-entry h2 {
+    font-size: 28px;
   }
 }
 </style>

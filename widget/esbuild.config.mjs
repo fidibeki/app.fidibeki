@@ -15,6 +15,7 @@ await rm('dist', { recursive: true, force: true })
 
 const moduleEntries = {
   widget: 'src/widget.ts',
+  chat: 'src/chat.ts',
   rating: 'src/modules/rating.ts',
   audio: 'src/modules/audio.ts',
   video: 'src/modules/video.ts',

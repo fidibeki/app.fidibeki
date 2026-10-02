@@ -1,11 +1,18 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
+import { sectionAnchor } from '~/utils/section-anchor'
 import { docBySlug, docs } from '~/data/docs'
 
 const route = useRoute()
 const doc = docBySlug(route.params.slug as string)
 
 if (!doc) {
-  throw createError({ statusCode: 404, statusMessage: 'Doc not found', fatal: true })
+  throw createError({
+    statusCode: 404,
+    statusMessage: 'Doc not found',
+    fatal: true,
+  })
 }
 
 const config = useRuntimeConfig()
@@ -37,7 +44,14 @@ useSiteMeta({
 
 <template>
   <div v-if="doc">
-    <PageHero :eyebrow="`Docs · ${doc.minutes} min read`" :title="doc.title" :lede="doc.description">
+    <PageHero
+      show-eyebrow
+      :eyebrow="
+        copy('Docs · {minutes} min read', { minutes: copy(doc.minutes) })
+      "
+      :title="copy(doc.title)"
+      :lede="copy(doc.description)"
+    >
       <template #breadcrumbs>
         <Breadcrumbs
           :items="[
@@ -51,13 +65,42 @@ useSiteMeta({
 
     <section class="section">
       <div class="container detail-grid">
-        <DetailSections :sections="doc.sections" />
+        <div>
+          <details class="mobile-contents">
+            <summary>{{ copy('On this page') }}</summary>
+            <nav :aria-label="copy('Article sections')">
+              <ul class="aside-related">
+                <li v-for="section in doc.sections" :key="section.heading">
+                  <a :href="`#${sectionAnchor(section.heading)}`">{{
+                    copy(section.heading)
+                  }}</a>
+                </li>
+              </ul>
+            </nav>
+          </details>
+          <DetailSections :sections="doc.sections" />
+        </div>
         <aside class="detail-aside">
-          <div class="card">
-            <h2 class="aside-heading">More guides</h2>
+          <nav
+            :aria-label="copy('On this page')"
+            class="aside-section desktop-contents"
+          >
+            <h2 class="aside-heading">{{ copy('On this page') }}</h2>
+            <ul class="aside-related">
+              <li v-for="section in doc.sections" :key="section.heading">
+                <a :href="`#${sectionAnchor(section.heading)}`">{{
+                  copy(section.heading)
+                }}</a>
+              </li>
+            </ul>
+          </nav>
+          <div class="aside-section">
+            <h2 class="aside-heading">{{ copy('More guides') }}</h2>
             <ul class="aside-related">
               <li v-for="entry in otherDocs" :key="entry.slug">
-                <NuxtLink :to="`/docs/${entry.slug}`">{{ entry.title }}</NuxtLink>
+                <NuxtLinkLocale :to="`/docs/${entry.slug}`">{{
+                  copy(entry.title)
+                }}</NuxtLinkLocale>
               </li>
             </ul>
           </div>
@@ -66,53 +109,37 @@ useSiteMeta({
     </section>
 
     <CtaSection
-      title="Ready to try it on your own site?"
-      body="Start a free trial, create a project, and the in-app checklist walks you through your first live connection."
+      :title="copy('Ready to try it on your own site?')"
+      :body="
+        copy(
+          'Start a free trial, create a project, and the in-app checklist walks you through your first live connection.',
+        )
+      "
     />
   </div>
 </template>
 
 <style scoped>
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 2.5rem;
-  align-items: start;
+.mobile-contents {
+  display: none;
 }
-
-.detail-grid > * {
-  /* Grid items default to min-width auto; code blocks must not widen the page. */
-  min-width: 0;
-}
-
-.aside-heading {
-  font-size: 0.85rem;
-  font-family: var(--font-body);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 0.9rem;
-}
-
-.aside-related {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  font-weight: 600;
-}
-
-@media (min-width: 900px) {
-  .detail-grid {
-    grid-template-columns: 1.6fr 1fr;
+@media (max-width: 899px) {
+  .desktop-contents {
+    display: none;
   }
-
-  .detail-aside {
-    position: sticky;
-    top: calc(var(--header-height) + 1.5rem);
+  .mobile-contents {
+    display: block;
+    padding-bottom: 24px;
+    margin-bottom: 36px;
+    border-bottom: 1px solid var(--line);
+  }
+  .mobile-contents summary {
+    cursor: pointer;
+    font-size: 14px;
+    width: fit-content;
+  }
+  .mobile-contents nav {
+    margin-top: 24px;
   }
 }
 </style>

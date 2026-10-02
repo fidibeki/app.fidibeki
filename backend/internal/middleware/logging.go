@@ -21,6 +21,8 @@ type responseObserver struct {
 	status int
 }
 
+func (o *responseObserver) Unwrap() http.ResponseWriter { return o.ResponseWriter }
+
 func (o *responseObserver) WriteHeader(status int) {
 	if o.status != 0 {
 		return

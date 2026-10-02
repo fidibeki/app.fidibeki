@@ -1,16 +1,21 @@
 import { aiProviderMessages } from '../messages/ai-providers.pt'
+import { chatMessages } from '../messages/chat.pt'
 import { feedbackMessages } from '../messages/feedback.pt'
 import { adminMessages } from '../messages/admin.pt'
 import { replayMessages } from '../messages/replays.pt'
+import { supportMessages } from '../messages/support.pt'
 
 export const portugueseMessages = {
   aiProviders: aiProviderMessages,
+  support: supportMessages,
+  chat: chatMessages,
   common: {
     workspace: 'Workspace',
     account: 'Conta',
     cancel: 'Cancelar',
   },
   navigation: {
+    conversations: 'Conversas',
     overview: 'Visão geral',
     feedback: 'Feedback',
     replays: 'Replays de sessão',

@@ -335,7 +335,7 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 		!strings.Contains(retention.Body.String(), `"hold_behavior":"case_scoped"`) ||
 		!strings.Contains(retention.Body.String(), `"category":"attachments"`) ||
 		!strings.Contains(retention.Body.String(), `"health"`) ||
-		!strings.Contains(retention.Body.String(), `"tracked":14`) ||
+		!strings.Contains(retention.Body.String(), `"tracked":16`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"tenant_magic_links"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"saml_auth_artifacts"`) ||
 		!strings.Contains(retention.Body.String(), `"operation":"platform_admin_magic_links"`) ||

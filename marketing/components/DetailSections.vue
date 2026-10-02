@@ -1,5 +1,9 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import type { DetailSection } from '~/data/types'
+
+import { sectionAnchor } from '~/utils/section-anchor'
 
 defineProps<{ sections: DetailSection[] }>()
 </script>
@@ -7,12 +11,18 @@ defineProps<{ sections: DetailSection[] }>()
 <template>
   <div class="prose">
     <section v-for="section in sections" :key="section.heading">
-      <h2>{{ section.heading }}</h2>
-      <p>{{ section.body }}</p>
+      <h2 :id="sectionAnchor(section.heading)">{{ copy(section.heading) }}</h2>
+      <p>{{ copy(section.body) }}</p>
       <ul v-if="section.bullets">
-        <li v-for="bullet in section.bullets" :key="bullet">{{ bullet }}</li>
+        <li v-for="bullet in section.bullets" :key="bullet">
+          {{ copy(bullet) }}
+        </li>
       </ul>
-      <CodeBlock v-if="section.code" :code="section.code.snippet" :language="section.code.language" />
+      <CodeBlock
+        v-if="section.code"
+        :code="section.code.snippet"
+        :language="section.code.language"
+      />
     </section>
   </div>
 </template>

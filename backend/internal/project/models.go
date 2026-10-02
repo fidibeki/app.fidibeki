@@ -403,6 +403,8 @@ type WidgetRuleValues struct {
 }
 
 type PublicConfiguration struct {
+	ChatEnabled                bool
+	ProjectName                string
 	TenantID                   string
 	TenantSlug                 string
 	ProjectID                  string

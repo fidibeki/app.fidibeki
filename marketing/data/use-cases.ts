@@ -45,11 +45,11 @@ export const useCases: UseCaseEntry[] = [
     slug: 'customer-support',
     name: 'Support & success workflows',
     audience: 'Support & CX teams',
-    tagline: 'A triage queue your whole team can operate, not another shared inbox.',
+    tagline: 'Help visitors now. Keep the follow-up connected to the problem.',
     summary:
-      'Filter and bulk-triage incoming feedback, escalate real problems to issues with priorities and tags. On Scale and Enterprise plans, Slack and Teams destinations can announce events to the channels you configure.',
+      'For small SaaS teams that want to understand a problem while someone is using the product. Start a website conversation, link a visitor message to an issue, and return to the same chat to explain what changed.',
     icon: 'headset',
-    featureSlugs: ['issue-tracking', 'reporter-loop', 'feedback-widget'],
+    featureSlugs: ['website-conversations', 'issue-tracking', 'reporter-loop', 'feedback-widget'],
     sections: [
       {
         heading: 'Volume without chaos',

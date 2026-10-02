@@ -90,6 +90,8 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 		"devDependencies:vue-tsc":          {Class: dependencyBuildTest},
 	},
 	"marketing/package.json": {
+		"devDependencies:@nuxtjs/i18n":     {Class: dependencyApplication},
+		"devDependencies:turndown":         {Class: dependencyBuildTest},
 		"dependencies:@lucide/vue":         {Class: dependencyApplication},
 		"dependencies:highlight.js":        {Class: dependencyApplication},
 		"dependencies:nuxt":                {Class: dependencyApplication},

@@ -1,0 +1,2 @@
+DROP TABLE website_chat_issue_links;
+ALTER TABLE website_chat_messages DROP CONSTRAINT website_chat_messages_source_key;

@@ -388,6 +388,7 @@ export const adminMessages = {
       viewer: 'Viewer',
     },
     groups: {
+      chat: 'conversations',
       project: 'Projects',
       widget_rule: 'Widget rules',
       feedback: 'Feedback',
@@ -404,6 +405,7 @@ export const adminMessages = {
       tenant: 'Account',
     },
     resources: {
+      chat: 'conversations',
       project: 'project',
       widget_rule: 'widget rule',
       feedback: 'feedback',
@@ -1231,6 +1233,7 @@ export const adminMessages = {
         object_prefix: '{count} object prefix | {count} object prefixes',
         queue: '{count} queue | {count} queues',
         browser_key: '{count} browser key | {count} browser keys',
+        redis_key: '{count} Redis key pattern | {count} Redis key patterns',
         provider: '{count} provider boundary | {count} provider boundaries',
       },
       notices: {

@@ -204,6 +204,18 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 
 	return []ProcessingActivityRecord{
 		{
+			ActivityID: "platform_support_conversations", Version: 1,
+			Label: "First-party live support", Purpose: "Let platform staff contact signed-in members and receive their replies.",
+			Role:                RetentionRoleController,
+			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectTenantMembers, ROPADataSubjectPlatformAdmins, ROPADataSubjectThirdParties},
+			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryIdentityContact, ROPADataCategoryContentCommunications, ROPADataCategoryTechnicalUsage},
+			RetentionCategories: []string{"platform_support", "support_presence"},
+			SecurityControls:    []string{"Member-scoped forced RLS; separate platform read and write permissions", "Authenticated expiring streams; content-free Redis notifications", "Member access exports and case-aware bounded retention"},
+			LawfulBasis:         LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonController,
+			Owner: governanceUnassigned, ReviewedBy: governanceUnassigned,
+			DPIA: DPIAScreening{Outcome: DPIAOutcomePending, Reason: dpiaReasonNoIndicator, Owner: governanceUnassigned},
+		},
+		{
 			ActivityID: "workspace_identity_and_access", Version: 1,
 			Label:   "Workspace identity and access administration",
 			Purpose: "Operate tenant identity, membership, projects, access, targeting, and widget configuration.",
@@ -227,7 +239,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 		{
 			ActivityID: "feedback_workflow_management", Version: 1,
 			Label:   "Feedback and issue workflow management",
-			Purpose: "Send customer-directed post-transaction feedback solicitations, capture responses, triage, resolve, and communicate reporter-submitted product feedback and issues.",
+			Purpose: "Operate customer-directed website conversations, send post-transaction feedback solicitations, capture responses, and resolve reporter-submitted feedback and issues.",
 			Role:    RetentionRoleProcessor,
 			DataSubjects: []ROPADataSubjectClass{
 				ROPADataSubjectReporters, ROPADataSubjectTenantMembers, ROPADataSubjectThirdParties,
@@ -238,10 +250,11 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			},
 			RetentionCategories: []string{
 				"workflow_metadata", "mobile_capture_credentials",
-				"email_feedback_delivery", "email_feedback_suppressions",
+				"email_feedback_delivery", "email_feedback_suppressions", "website_chat", "website_chat_presence",
 			},
 			SecurityControls: []string{
-				"Forced tenant PostgreSQL RLS",
+				"Forced tenant/project/visitor PostgreSQL RLS; tenant chat permissions and origin-bound hashed visitor credentials",
+				"Short-lived streams; replay-blocked chat; anonymous expiring presence; bounded conversation retention and downloads",
 				"tenant:update required for privacy-relevant workflow mutation",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,

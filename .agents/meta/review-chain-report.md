@@ -1,70 +1,36 @@
 ---
 skill: review-chain
 version: 1
-date: 2026-07-30
+date: 2026-10-01
 status: final
 ---
 
 # Review Chain Report
 
-**Artifact**: Issue #162 unpublished Flutter feedback SDK (`529bfc5..d313a37`)
-**Date**: 2026-07-30
-**Rounds**: 2
+Artifact: Per-project visitor-initiated website chat flag.
+Rounds: 1 specialist review, followed by resolution verification.
+Verdict: FIXED.
 
-## Verdict: FIXED
+## Issues found
 
-## Issues Found
+| Severity | Confidence | Location | Problem | Status |
+|---|---|---|---|---|
+| Major | 10/10 | backend/internal/db/migrations_test.go:26 | Latest migration assertion remained 139 after migration 140 was added. | Fixed to 140; independently verified. |
 
-| # | Round | Severity | Problem | Resolution |
-|---|-------|----------|---------|------------|
-| 1 | 1 | major | Backend-controlled 422 messages could cross the SDK trust boundary into public fields and UI | Active field paths now map only to localized SDK-owned copy; adversarial UI and `toString` tests reject leaked text |
-| 2 | 1 | major | Screenshot declarations trusted MIME metadata without validating the byte signature | PNG, JPEG, and WebP signatures are verified before upload, with cross-type, invalid, and cleanup coverage |
-| 3 | 1 | minor | Session parsing did not reject unknown fields consistently or share that failure mode with React Native | Strict unknown-field rejection now covers every contract object in both clients through a shared fixture |
-| 4 | 1 | minor | The public error taxonomy diverged from the approved design | Design, API, and exact enum tests now define one stable typed taxonomy |
-| 5 | 1 | minor | Publishable package metadata omitted the supported platform declarations | Both packages declare Android and iOS only, enforced by a structural test |
-| 6 | 2 | minor | Cooldown eligibility woke only after lifecycle resume, so a continuously foregrounded app could remain stale | A generation-guarded timer wakes in foreground, pauses in background, recalculates on resume, and is race-tested |
-| 7 | 2 | minor | A sanitized 422 field outside the visible form produced no actionable UI error | Unmapped validation now renders safe generic SDK-owned submit guidance, with an adversarial widget test |
+## Specialist results
 
-All seven findings were fixed. No findings were declined.
+- Security: PASS. Settings require project:update, visitor first-message policy is enforced on each authorized request, tenant/project/origin/token isolation is retained, SSE publishes empty invalidations only, and migration defaults off.
+- Performance: PASS. No additional request round trips, unbounded indexes, or transcript broadcasts. Notifications are scoped and coalesced; pagination and connection cleanup are retained.
+- Correctness: one confirmed migration-test regression, fixed. Partial settings updates, existing-conversation replies after flag-off, project-scoped invalidations, and draft preservation match requirements.
 
-## Input Quality Assessment
+## Input quality
 
-| Input | Rating | Evidence |
-|-------|--------|----------|
-| Product/domain context | Rich | Approved Flutter design and implementation plan reuse the shipped capture-session, Feedback, recurrence, screenshot, and React Native contracts |
-| Requirements clarity | Precise | Tasks 55-62 define acceptance, boundaries, test gates, supported platforms, and explicit non-goals |
-| Upstream artifacts | Fresh | Design, plan, shared fixtures, React Native implementation, and backend contract were current on 2026-07-30 |
+Product context: Rich, existing website chat with established tenant/project boundaries.
+Requirements: Precise user correction to permit first messages under a tenant-controlled flag.
+Upstream artifacts: Fresh implementation, existing browser and backend tests.
 
-## Changes Made
+## Resolution
 
-The final SDK rejects untrusted copy and unknown contract fields, validates screenshot signatures,
-formalizes errors and platforms, wakes cooldowns without lifecycle dependence, and always exposes a
-safe recovery path. CI isolates Flutter on WarpBuild x64 Linux and ARM macOS, runs logical tests and
-coverage independently of rasterization, and keeps four visual snapshots mandatory with a tested
-0.005% renderer-drift ceiling.
+Changed latestMigrationVersion from 139 to 140. A separate reviewer verified the fix against paired up/down migrations. No findings declined and no broad refactor.
 
-Remote Flutter CI
-[`30549838734`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838734)
-passes 9 example tests (1 opt-in smoke skipped), 72 package tests, 81 lowest-dependency tests
-(1 opt-in smoke skipped), 90.93% package line coverage (1624/1786), fatal analysis, API docs,
-unpublished package dry-runs, four macOS goldens, Android release, and iOS simulator builds.
-Mobile CI
-[`30547917774`](https://github.com/fidibeki/app.fidibeki/actions/runs/30547917774)
-and Security CI
-[`30549838762`](https://github.com/fidibeki/app.fidibeki/actions/runs/30549838762)
-also pass. Local Android and iOS runtime smokes each completed one rating/text Feedback and one
-70-byte screenshot attachment without duplicate submission.
-
-## Simplifications
-
-No material simplification was accepted. Narrowing the public barrel export was declined because
-host integration intentionally needs the exposed controller, model, theme, storage, and client
-types; changing that surface would be a separate API-design decision. Safe validation-copy
-generation remains centralized at the trust boundary.
-
-## Reviewer Summary
-
-Round 1 found five contract and trust-boundary gaps; round 2 confirmed those fixes and found two
-lifecycle/recovery gaps. The final implementation addresses every finding with focused regression
-coverage, preserves parity with the shared mobile contract, and adds no backend, production,
-deployment, runtime infrastructure, or registry behavior.
+The thread limit prevented creating two new reviewers, so existing agents were given independent read-only specialist review tasks. The security reviewer was newly spawned. No reviewer wrote the feature implementation.

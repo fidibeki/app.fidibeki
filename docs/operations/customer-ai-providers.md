@@ -16,14 +16,14 @@ Compatibility is a tested subset. Listing a model does not validate it. Validati
 
 ## Deployment
 
-1. Apply migration 138 with customer flags empty. Retain previous encryption keys.
+1. Apply migration 143 with customer flags empty. Retain previous encryption keys.
 2. Deploy the API, schedulers and **every** worker before enabling customer accounts. New inference uses `ai-pool-v2`; new workers also drain `ai-pool`. Queue separation does not make old scheduling/maintenance processes safe for customer work.
 3. Set `AI_ENCRYPTION_KEYS` to a JSON map of key IDs to base64 32-byte AES keys and `AI_ACTIVE_ENCRYPTION_KEY` to the active ID (default `v1`). If omitted, the integration encryption key is used as `integration-v1`; retain this ID when migrating. Never remove a decrypt key while a connection or cleanup envelope refers to it.
 4. Set `AI_CUSTOMER_PROVIDERS` to a comma-separated subset of `google_gemini,openai,anthropic,amazon_bedrock,openai_compatible,anthropic_compatible` and `AI_CUSTOMER_TENANTS` to pilot workspace UUIDs, or `*` after pilot acceptance. Both default empty. `AI_MANAGED_MODE=enabled` preserves managed Gemini. `disabled` removes managed inference and its production key requirement.
 5. Complete the existing provider-governance review before enabling production recipients. Registry entries remain pending; code does not invent contract or legal approvals. Release updated mobile SDKs before enabling customer providers for strict older mobile clients.
 6. Run synthetic live smoke tests using test provider accounts: each profile's text and screenshot output, Gemini upload/delete, expired/revoked keys, throttling, model access, and Bedrock trust restrictions. Protocol fixtures cover these branches locally; deployment verification needs actual accounts. Check charges in the provider account. Usage counts are evidence, not invoices or dollar estimates.
 
-Administrators need `ai_connection:read` and `ai_connection:manage`. Rule editors need read permission to choose customer connections. Migration 138 grants both to owners and existing broadly privileged administrators; custom grants remain explicit.
+Administrators need `ai_connection:read` and `ai_connection:manage`. Rule editors need read permission to choose customer connections. Migration 143 grants both to owners and existing broadly privileged administrators; custom grants remain explicit.
 
 ## Customer workflow
 
@@ -49,6 +49,6 @@ Gemini cleanup retains a separate encrypted credential snapshot, surviving rotat
 
 ## Rollback and evidence
 
-Disable the customer flags to stop dispatch. Keep the new cleanup workers and decrypt keyring deployed until remote cleanup completes. Keep migration 138 applied during rollback; managed-only code is unsafe while customer contracts or jobs exist. The down migration refuses when customer or pending credential-bearing cleanup evidence exists. Do not erase evidence to force a rollback.
+Disable the customer flags to stop dispatch. Keep the new cleanup workers and decrypt keyring deployed until remote cleanup completes. Keep migration 143 applied during rollback; managed-only code is unsafe while customer contracts or jobs exist. The down migration refuses when customer or pending credential-bearing cleanup evidence exists. Do not erase evidence to force a rollback.
 
 Processing exports include requested/resolved models, billing mode, connection/config/credential versions, safe failure classifications, provider attempts and reported tokens. Workspace exports include connection metadata, never credentials or cleanup envelopes. Connection changes and validation appear in the access audit. External provider retention follows the customer's account settings and contract.

@@ -1,0 +1,116 @@
+.legal-layout,
+.compliance-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 704px);
+  gap: 96px;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  padding-top: 40px;
+}
+.legal-nav-sticky,
+.compliance-nav-sticky {
+  position: sticky;
+  top: calc(var(--header-height) + 24px);
+  max-height: calc(100dvh - var(--header-height) - 48px);
+  overflow-y: auto;
+  padding: 6px;
+  margin: -6px;
+}
+.legal-nav,
+.compliance-nav {
+  align-self: stretch;
+}
+.legal-nav-list,
+.compliance-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.legal-nav-list a,
+.compliance-nav-list a {
+  display: block;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legal-nav-list a:hover,
+.legal-nav-list a.active,
+.compliance-nav-list a:hover,
+.compliance-nav-list a.active {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.legal-notice,
+.compliance-notice {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.legal-notice h2,
+.compliance-notice h2 {
+  font-size: 25px;
+}
+.legal-notice h3,
+.compliance-notice h3 {
+  font-size: 19px;
+}
+.effective-date,
+.last-updated {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 36px;
+}
+.effective-date summary,
+.last-updated summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.effective-date p,
+.last-updated p {
+  margin-top: 12px;
+}
+.review-banner,
+.trader-address {
+  background: var(--surface-soft);
+  padding: 20px 24px;
+  border-radius: 10px;
+  font-size: 15px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+  margin-bottom: 28px;
+  font-style: normal;
+}
+@media (max-width: 899px) {
+  .legal-layout,
+  .compliance-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+  .legal-nav,
+  .compliance-nav {
+    order: -1;
+  }
+  .legal-nav-sticky,
+  .compliance-nav-sticky {
+    position: static;
+    max-height: none;
+  }
+  .legal-nav-list,
+  .compliance-nav-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 24px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+}
+@media (max-width: 380px) {
+  .legal-nav-list,
+  .compliance-nav-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

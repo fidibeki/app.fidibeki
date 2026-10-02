@@ -190,6 +190,7 @@ export interface ControllerProfile {
 }
 
 export interface WidgetConfiguration {
+  chat?: { enabled: boolean; name: string }
   schema_version?: number
   project_id: string
   default_locale?: string
