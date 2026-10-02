@@ -339,8 +339,8 @@ useHead(() => ({
           <template v-if="tab === 'evidence'">
             <section v-if="structuredResponses.length || feedback.comment" class="feedback-response-section">
               <header><div><h2>{{ t('feedback.detail.submittedResponse') }}</h2><p v-if="feedback.widget_definition_version">{{ t('feedback.detail.widgetVersion', { version: integer(feedback.widget_definition_version) }) }}</p></div></header>
-              <dl v-if="structuredResponses.length"><div v-for="[key, value] in structuredResponses" :key="key"><dt>{{ responseLabel(key) }}</dt><dd>{{ value }}</dd></div></dl>
-              <div v-if="feedback.comment" class="feedback-response-comment"><b>{{ t('feedback.detail.additionalContext') }}</b><p>{{ feedback.comment }}</p></div>
+              <dl v-if="structuredResponses.length"><div v-for="[key, value] in structuredResponses" :key="key"><dt>{{ responseLabel(key) }}</dt><dd data-fidibeki-mask>{{ value }}</dd></div></dl>
+              <div v-if="feedback.comment" class="feedback-response-comment"><b>{{ t('feedback.detail.additionalContext') }}</b><p data-fidibeki-mask>{{ feedback.comment }}</p></div>
             </section>
             <section id="attachments" class="feedback-evidence-section">
               <header><div><h2>{{ t('feedback.detail.capturedEvidence') }}</h2><p>{{ plural('feedback.detail.attachments', feedback.attachments.length, { count: integer(feedback.attachments.length) }) }}</p></div><NuxtLink v-if="canWrite('feedback:update') && configuration && !aiEnabled" class="app-button" to="/billing">{{ t('feedback.actions.upgradeAI') }} <ArrowUpRight :size="14" /></NuxtLink><button v-else-if="canReprocessAll" class="app-button" :disabled="mutationPending" @click="reprocessAll"><RotateCcw :size="14" /> {{ t('feedback.actions.reprocessAll') }}</button></header>

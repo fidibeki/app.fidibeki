@@ -55,6 +55,7 @@ var governedGoDependencies = map[string]dependencyClassification{
 	"github.com/redis/go-redis/v9":                                 {Class: dependencyProvider, ProviderIDs: []string{"redis_asynq"}},
 	"github.com/russellhaering/goxmldsig":                          {Class: dependencyProvider, ProviderIDs: []string{"customer_saml_identity_provider"}},
 	"github.com/stripe/stripe-go/v85":                              {Class: dependencyProvider, ProviderIDs: []string{"stripe_billing_api"}},
+	"github.com/tdewolff/parse/v2":                                 {Class: dependencyApplication},
 	"github.com/svix/svix-webhooks":                                {Class: dependencyApplication},
 	"github.com/testcontainers/testcontainers-go":                  {Class: dependencyBuildTest},
 	"github.com/testcontainers/testcontainers-go/modules/postgres": {Class: dependencyBuildTest},

@@ -27,6 +27,7 @@ require (
 	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/stripe/stripe-go/v85 v85.2.0
 	github.com/svix/svix-webhooks v1.98.0
+	github.com/tdewolff/parse/v2 v2.8.3
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	golang.org/x/image v0.45.0

@@ -192,6 +192,154 @@
         "timestamp": 1784800000000,
         "data": { "source": 14, "ranges": [{ "start": 2, "startOffset": 0, "end": 2, "endOffset": 4 }] }
       }
+    },
+    {
+      "name": "readable UI with native styles and a private region",
+      "event": {
+        "type": 2,
+        "timestamp": 1784800000000,
+        "data": {
+          "node": {
+            "type": 2,
+            "id": 100,
+            "tagName": "main",
+            "attributes": {
+              "class": "dashboard",
+              "id": "app"
+            },
+            "childNodes": [
+              {
+                "type": 2,
+                "id": 101,
+                "tagName": "style",
+                "attributes": {
+                  "_cssText": ".dashboard { display: flex; }"
+                },
+                "childNodes": []
+              },
+              {
+                "type": 3,
+                "id": 102,
+                "textContent": "Save changes"
+              },
+              {
+                "type": 2,
+                "id": 103,
+                "tagName": "span",
+                "attributes": {
+                  "data-fidibeki-mask": ""
+                },
+                "childNodes": [
+                  {
+                    "type": 3,
+                    "id": 104,
+                    "textContent": "**** ***"
+                  }
+                ]
+              },
+              {
+                "type": 2,
+                "id": 105,
+                "tagName": "svg",
+                "isSVG": true,
+                "attributes": {
+                  "viewBox": "0 0 24 24",
+                  "fill": "none"
+                },
+                "childNodes": [
+                  {
+                    "type": 2,
+                    "id": 106,
+                    "tagName": "path",
+                    "isSVG": true,
+                    "attributes": {
+                      "d": "M2 12h20",
+                      "stroke": "currentColor"
+                    },
+                    "childNodes": []
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "readable UI text mutation",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000001,
+        "data": {
+          "source": 0,
+          "texts": [
+            {
+              "id": 102,
+              "value": "Payment details"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "native stylesheet rule insertion",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000001,
+        "data": {
+          "source": 8,
+          "id": 101,
+          "adds": [
+            {
+              "index": 0,
+              "rule": ".dashboard { display: grid; }"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "native stylesheet declaration change",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000001,
+        "data": {
+          "source": 13,
+          "id": 101,
+          "index": [
+            0
+          ],
+          "set": {
+            "property": "color",
+            "value": "red"
+          }
+        }
+      }
+    },
+    {
+      "name": "native adopted stylesheet",
+      "event": {
+        "type": 3,
+        "timestamp": 1784800000001,
+        "data": {
+          "source": 16,
+          "id": 100,
+          "styleIds": [
+            0
+          ],
+          "styles": [
+            {
+              "styleId": 0,
+              "rules": [
+                {
+                  "index": 0,
+                  "rule": ".dashboard { display: grid; }"
+                }
+              ]
+            }
+          ]
+        }
+      }
     }
   ]
 }

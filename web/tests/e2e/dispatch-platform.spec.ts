@@ -4923,7 +4923,7 @@ test("widget appearance controls fit the mobile editor", async ({
   await capture(page, testInfo, "widget-appearance-mobile");
 });
 
-test("widget canvas replay is disabled by the anonymous privacy contract", async ({
+test("replay masks private selectors and keeps canvas capture disabled", async ({
   page,
 }, testInfo) => {
   const state = createMockState();
@@ -4933,6 +4933,10 @@ test("widget canvas replay is disabled by the anonymous privacy contract", async
     .locator(".project-list")
     .getByRole("link", { name: /Storefront/ })
     .click();
+
+  const privateSelector = page.getByLabel("Additional private text selector");
+  await expect(privateSelector).toBeEnabled();
+  await privateSelector.fill(".customer-private");
 
   const captureCanvas = page.getByRole("checkbox", {
     name: /Capture canvas content/,
@@ -4944,8 +4948,8 @@ test("widget canvas replay is disabled by the anonymous privacy contract", async
   await expect(
     page
       .getByRole("note")
-      .filter({ hasText: "Replay is anonymous by default." }),
-  ).toContainText("Replay is anonymous by default.");
+      .filter({ hasText: "Keep the interface visible and personal content private." }),
+  ).toContainText("Keep the interface visible and personal content private.");
 
   const canvasNote = page
     .getByRole("note")
@@ -4955,6 +4959,7 @@ test("widget canvas replay is disabled by the anonymous privacy contract", async
 
   await expect(page.locator(".project-toast")).toHaveText("Widget rule saved.");
   expect(state.widgetRules[0]).toMatchObject({
+    replay_mask_text_selector: ".customer-private",
     replay_record_canvas: false,
     replay_canvas_fps: 2,
   });

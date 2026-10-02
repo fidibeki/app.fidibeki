@@ -617,7 +617,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
           <span v-else class="feedback-row-check" aria-hidden="true" />
           <RatingMark :rating="item.rating" compact />
           <div class="feedback-row-copy">
-            <strong>{{ copy(item) }}</strong>
+            <strong data-fidibeki-mask>{{ copy(item) }}</strong>
             <div class="feedback-row-context">
               <span class="sr-only">{{ item.public_id }}</span>
               <span v-if="showProjectName">{{ item.project_name }} ·</span>
@@ -659,7 +659,7 @@ useHead(() => ({ title: t('feedback.pageTitle') }))
       </div>
       <nav :aria-label="t('feedback.inspector.sections')"><button :data-active="inspectorTab === 'feedback'" @click="inspectorTab = 'feedback'">{{ t('feedback.inspector.feedback') }}</button><button :data-active="inspectorTab === 'evidence'" @click="inspectorTab = 'evidence'">{{ t('feedback.inspector.evidence') }}</button><button :data-active="inspectorTab === 'replay'" @click="inspectorTab = 'replay'">{{ t('feedback.inspector.replay') }}</button></nav>
       <div v-if="inspectorTab === 'feedback'" class="feedback-inspector-body">
-        <p class="feedback-quote">{{ selected.description || selected.text || t('feedback.common.noWrittenFeedback') }}</p>
+        <p class="feedback-quote" data-fidibeki-mask>{{ selected.description || selected.text || t('feedback.common.noWrittenFeedback') }}</p>
         <OperationalTriageControls
           :priority="selected.priority"
           :assignee="selected.assignee"

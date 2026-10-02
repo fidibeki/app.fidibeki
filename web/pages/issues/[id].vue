@@ -416,13 +416,13 @@ useHead(() => ({
             <div v-if="data.comments.length" class="issue-comment-list">
               <article v-for="entry in [...data.comments].reverse()" :key="entry.id">
                 <span><MemberAvatar v-if="entry.author" :member-id="entry.author.id" :name="entry.author.name" :email="entry.author.email" :avatar-version="entry.author.avatar_version" /><template v-else>F</template></span>
-                <div><header><b>{{ entry.author?.name || entry.author?.email || t('issues.detail.comments.formerMember') }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p>{{ entry.body }}</p><small v-if="entry.mentions.length"><AtSign :size="12" /> {{ t('issues.detail.comments.mentions', { members: list(entry.mentions.map(member => member.name || member.email)) }) }}</small></div>
+                <div><header><b data-fidibeki-mask>{{ entry.author?.name || entry.author?.email || t('issues.detail.comments.formerMember') }}</b><time>{{ formatDate(entry.created_at) }}</time></header><p data-fidibeki-mask>{{ entry.body }}</p><small v-if="entry.mentions.length" data-fidibeki-mask><AtSign :size="12" /> {{ t('issues.detail.comments.mentions', { members: list(entry.mentions.map(member => member.name || member.email)) }) }}</small></div>
               </article>
             </div>
             <div v-else class="issue-empty"><MessageSquare :size="20" /> {{ t('issues.detail.comments.empty') }}</div>
             <form v-if="canWrite('issue:update')" class="issue-comment-form" @submit.prevent="createComment">
               <textarea v-model="commentBody" :aria-label="t('issues.detail.comments.input')" :placeholder="t('issues.detail.comments.placeholder')" maxlength="5000" required />
-              <fieldset v-if="triageMembers.length"><legend><AtSign :size="12" /> {{ t('issues.detail.comments.notify') }}</legend><label v-for="member in triageMembers" :key="member.id"><input v-model="mentionedMemberIDs" type="checkbox" :value="member.id" /><span>{{ member.name || member.email }}</span></label></fieldset>
+              <fieldset v-if="triageMembers.length"><legend><AtSign :size="12" /> {{ t('issues.detail.comments.notify') }}</legend><label v-for="member in triageMembers" :key="member.id"><input v-model="mentionedMemberIDs" type="checkbox" :value="member.id" /><span data-fidibeki-mask>{{ member.name || member.email }}</span></label></fieldset>
               <button class="app-button app-button--primary" type="submit" :disabled="pending || !commentBody.trim()"><Send :size="14" /> {{ t('issues.detail.comments.submit') }}</button>
             </form>
           </section>

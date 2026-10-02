@@ -192,7 +192,7 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 		{
 			name: "raw text mutation",
 			event: `{"type":3,"timestamp":1784800000000,"data":{"source":0,` +
-				`"texts":[{"id":4,"value":"Jane Doe"}]}}`,
+				`"texts":[{"id":4,"value":"jane@example.com"}]}}`,
 		},
 		{
 			name:  "mouse movement",
@@ -261,7 +261,7 @@ func TestValidRRWebEventEnforcesAnonymousReplayContract(t *testing.T) {
 		},
 		{
 			name:  "raw visible text",
-			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":3,"id":1,"textContent":"Jane Doe"}}}`,
+			event: `{"type":2,"timestamp":1784800000000,"data":{"node":{"type":3,"id":1,"textContent":"jane@example.com"}}}`,
 		},
 		{
 			name:  "identity attribute",

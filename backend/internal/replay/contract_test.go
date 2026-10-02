@@ -54,12 +54,14 @@ func TestReplayPresentationContract(t *testing.T) {
 	}
 	var contract struct {
 		Valid []struct {
-			Name  string `json:"name"`
-			Style string `json:"style"`
+			Name   string `json:"name"`
+			Style  string `json:"style"`
+			Inline bool   `json:"inline"`
 		} `json:"valid"`
 		Invalid []struct {
-			Name  string `json:"name"`
-			Style string `json:"style"`
+			Name   string `json:"name"`
+			Style  string `json:"style"`
+			Inline bool   `json:"inline"`
 		} `json:"invalid"`
 	}
 	if err := json.Unmarshal(raw, &contract); err != nil {
@@ -69,21 +71,16 @@ func TestReplayPresentationContract(t *testing.T) {
 		t.Fatal("replay presentation contract needs valid and invalid cases")
 	}
 	for _, entry := range contract.Valid {
-		if !validReplayPresentationStyle(entry.Style) {
+		if !validReplayCSS(entry.Style, entry.Inline) {
 			t.Errorf("validator rejects valid presentation %q: %q", entry.Name, entry.Style)
 		}
 	}
 	for _, entry := range contract.Invalid {
-		if validReplayPresentationStyle(entry.Style) {
+		if validReplayCSS(entry.Style, entry.Inline) {
 			t.Errorf("validator accepts invalid presentation %q: %q", entry.Name, entry.Style)
 		}
 	}
-	if validReplayPresentationStyle(
-		"grid-template-columns:" + strings.Repeat("1px ", 70),
-	) {
-		t.Error("validator accepts an oversized presentation value")
-	}
-	if validReplayPresentationStyle(strings.Repeat("x", maximumReplayPresentationStyleBytes+1)) {
-		t.Error("validator accepts an oversized presentation style")
+	if validReplayCSS(strings.Repeat("x", 1024*1024+1), true) {
+		t.Error("validator accepts an oversized stylesheet")
 	}
 }

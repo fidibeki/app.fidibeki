@@ -301,10 +301,10 @@ watch(
         <details ref="accountMenu" class="app-account-menu">
           <summary>
             <i class="app-account-avatar"><MemberAvatar :member-id="member?.id || ''" :name="member?.name" :email="member?.email" :avatar-version="member?.avatar_version" /></i>
-            <span>{{ displayName }}</span><ChevronDown :size="13" />
+            <span data-fidibeki-mask>{{ displayName }}</span><ChevronDown :size="13" />
           </summary>
           <div>
-            <p><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
+            <p data-fidibeki-mask><b>{{ displayName }}</b><span>{{ member?.email }}</span></p>
             <NuxtLink to="/profile"><UserRoundPen :size="15" /> {{ t('navigation.profile') }}</NuxtLink>
             <NuxtLink to="/settings/notifications"><BellRing :size="15" /> {{ t('navigation.notificationPreferences') }}</NuxtLink>
             <NuxtLink v-if="can('billing:read') || can('billing:manage')" to="/billing"><CreditCard :size="15" /> {{ t('navigation.billing') }}</NuxtLink>

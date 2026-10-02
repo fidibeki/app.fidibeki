@@ -23,7 +23,7 @@ onBeforeUnmount(() => control.abort())
     <h2><MessageCircle :size="16" aria-hidden="true" />{{ t('chat.issues.sources') }}</h2>
     <p>{{ t('chat.issues.replyHint') }}</p>
     <p v-if="failed" role="alert">{{ t('chat.issues.loadError') }} <button type="button" class="app-button" @click="load">{{ t('chat.retry') }}</button></p>
-    <NuxtLink v-for="conversation in conversations" :key="conversation.id" :to="{ path: '/conversations', query: { project: projectId, visitor: conversation.id } }"><span>{{ conversation.name }}<small>{{ t('chat.issues.return') }}</small></span><ArrowUpRight :size="16" aria-hidden="true" /></NuxtLink>
+    <NuxtLink v-for="conversation in conversations" :key="conversation.id" :to="{ path: '/conversations', query: { project: projectId, visitor: conversation.id } }"><span><span data-fidibeki-mask>{{ conversation.name }}</span><small>{{ t('chat.issues.return') }}</small></span><ArrowUpRight :size="16" aria-hidden="true" /></NuxtLink>
     <p v-if="truncated">{{ t('chat.issues.truncated') }}</p>
   </section>
 </template>
