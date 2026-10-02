@@ -57,6 +57,9 @@ func TestProviderAdaptersPreserveModelAuthAndStructuredOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, err := p.AnalyzeAttachment(context.Background(), AttachmentWork{Kind: "screenshot", ContentType: "image/png"}, strings.NewReader("synthetic-image")); err != nil {
+				t.Fatal(err)
+			}
 			if result.Priority != "high" || result.Usage.Input == nil || *result.Usage.Input != 12 || *result.Usage.Output != 34 {
 				t.Fatalf("unexpected result: %#v", result)
 			}
@@ -134,5 +137,57 @@ func TestQueueDoesNotCloneLegacyWorkDuringDrain(t *testing.T) {
 	q.legacy = legacyInspectorFixture{}
 	if err := q.Enqueue(context.Background(), task); err != nil || client.task == nil {
 		t.Fatal("new task not queued", err)
+	}
+}
+
+func TestProviderResponseFailuresDoNotRetainPrivateContent(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		code   string
+	}{
+		{"redirect", 302, `secret response`, "redirect_rejected"},
+		{"credentials", 401, `secret response`, "invalid_credentials"},
+		{"oversized", 200, strings.Repeat("x", maxProviderResponse+1), "response_too_large"},
+		{"malformed", 200, `not JSON secret response`, "invalid_response"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := providerHTTP{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}, connection: aiprovider.Connection{Provider: aiprovider.OpenAI}, model: "fixture"}
+			_, err := p.AnalyzeText(context.Background(), "private feedback")
+			var failure *aiprovider.Failure
+			if !errors.As(err, &failure) || failure.Code != tc.code || strings.Contains(err.Error(), "secret") {
+				t.Fatal("unexpected or unsafe response", err)
+			}
+		})
+	}
+	for _, original := range []error{context.Canceled, context.DeadlineExceeded, &aiprovider.Failure{Code: "credential_changed", Retryable: true}, errors.New("secret network detail")} {
+		p := providerHTTP{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, original })}, connection: aiprovider.Connection{Provider: aiprovider.OpenAI}, model: "fixture"}
+		_, err := p.AnalyzeText(context.Background(), "private feedback")
+		if err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatal("unsafe transport error", err)
+		}
+	}
+	p := providerHTTP{client: &http.Client{}, connection: aiprovider.Connection{Provider: aiprovider.OpenAI}}
+	for _, work := range []AttachmentWork{{Kind: "audio"}, {Kind: "screenshot", ContentType: "image/svg+xml"}, {Kind: "screenshot", ContentType: "image/png"}} {
+		_, err := p.AnalyzeAttachment(context.Background(), work, strings.NewReader(strings.Repeat("x", maxProviderImage+1)))
+		if err == nil {
+			t.Fatal("unsupported or oversized attachment accepted")
+		}
+	}
+	p.sign = func(context.Context, *http.Request, []byte) error {
+		return &aiprovider.Failure{Code: "credential_expired"}
+	}
+	if err := p.request(context.Background(), http.MethodPost, "https://bedrock.example", nil, new(any)); err == nil || !strings.Contains(err.Error(), "credential_expired") {
+		t.Fatal("unsigned request escaped", err)
+	}
+	if err := p.request(context.Background(), http.MethodPost, ":bad URL", nil, new(any)); err == nil {
+		t.Fatal("invalid URL accepted")
+	}
+	if err := p.request(context.Background(), http.MethodPost, "https://provider.example", make(chan int), new(any)); err == nil {
+		t.Fatal("unencodable body accepted")
 	}
 }

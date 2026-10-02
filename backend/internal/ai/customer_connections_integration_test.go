@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/aiprovider"
+	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/hibiken/asynq"
 )
 
 func TestCustomerConnectionsPinWorkAndPreserveCleanup(t *testing.T) {
@@ -106,6 +108,27 @@ func TestCustomerConnectionsPinWorkAndPreserveCleanup(t *testing.T) {
 	if work.Execution.Model != model.ID || work.Execution.ConnectionID != c.ID {
 		t.Fatalf("wrong execution: %#v", work.Execution)
 	}
+	// Resolve with the validated credential and retain that exact analyzer while
+	// rotation races dispatch. Its transport must reject before any network call.
+	factory := &ProviderFactory{Connections: cs, Ledger: store, Allowed: func(string, string) bool { return true }}
+	resolved, _, _, err := factory.Resolve(ctx, testTenantID, work.Execution, "feedback_text", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &countingConnectionLeaser{}
+	processor := Processor{Factory: factory, Store: store, Leaser: lease, Limiter: testLimiter{decision: ratelimit.Decision{Allowed: false, RetryAfter: time.Second}}}
+	if _, _, _, err := processor.resolve(ctx, testTenantID, work.Execution, "feedback_text", work.RunID, func(context.Context) (bool, error) { return true, nil }); err == nil || lease.released != 1 {
+		t.Fatal("rate-limit rejection leaked connection lease", err)
+	}
+	processor.Limiter = allowLimiter{}
+	_, _, release, err := processor.resolve(ctx, testTenantID, work.Execution, "feedback_text", work.RunID, func(context.Context) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if lease.released != 2 {
+		t.Fatal("completed dispatch preparation leaked lease")
+	}
 	// The caller keeps the key for cleanup, independently of later rotation/deletion.
 	secret, err := cs.Credential(ctx, pool, c)
 	if err != nil {
@@ -135,6 +158,9 @@ func TestCustomerConnectionsPinWorkAndPreserveCleanup(t *testing.T) {
 	}
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if _, err = resolved.AnalyzeText(ctx, "This must never reach the provider"); err == nil || !strings.Contains(err.Error(), "credential_changed") || IsPermanent(err) {
+		t.Fatalf("rotation did not stop stale dispatch: %v", err)
 	}
 	allowed, err := store.AuthorizeTextForProvider(ctx, work, now)
 	if err != nil || !allowed {
@@ -207,5 +233,51 @@ func TestCustomerMigrationCanRollBackBeforeEnablement(t *testing.T) {
 		if _, err = pool.Exec(ctx, string(content)); err != nil {
 			t.Fatalf("migration %s: %v", direction, err)
 		}
+	}
+}
+
+type countingConnectionLeaser struct{ released int }
+
+func (l *countingConnectionLeaser) Acquire(context.Context, string, int) (func(), error) {
+	return func() { l.released++ }, nil
+}
+
+func TestCleanupWithoutDecryptionKeyPreservesRecoveryEvidence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("PostgreSQL integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	pool := aiTestDatabase(t, ctx)
+	seedAIFeedback(t, ctx, pool)
+	store := Store{Database: pool}
+	now := time.Now().UTC()
+	id, err := store.TrackGeminiFile(ctx, AttachmentWork{TenantID: testTenantID, AttachmentID: testAudioID, CredentialVersion: 1, CredentialEnvelope: []byte(`{"v":1,"key":"retired","data":"YQ=="}`)}, "files/recovery", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.PrepareGeminiFileDeletions(ctx, 10, now)
+	if err != nil || len(tasks) != 1 {
+		t.Fatal("cleanup not scheduled", err)
+	}
+	payload, err := json.Marshal(taskPayload{TenantID: testTenantID, ResourceID: id, Attempt: tasks[0].Attempt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &ProviderFactory{Ledger: store}
+	task := asynq.NewTask(TaskGeminiFileDelete, payload)
+	if err = f.FileDeleteHandler()(ctx, task); !errors.Is(err, asynq.SkipRetry) {
+		t.Fatal("missing key did not stop dispatch", err)
+	}
+	var failed bool
+	var envelope []byte
+	if err = pool.QueryRow(ctx, `SELECT failed_at IS NOT NULL AND deleted_at IS NULL,credential_envelope FROM ai_gemini_files WHERE id=$1`, id).Scan(&failed, &envelope); err != nil || !failed || len(envelope) == 0 {
+		t.Fatal("lost cleanup recovery evidence", err)
+	}
+	if err = f.FileDeleteHandler()(ctx, task); err != nil {
+		t.Fatal("completed attempt was replayed", err)
+	}
+	if err = f.FileDeleteHandler()(ctx, asynq.NewTask(TaskGeminiFileDelete, []byte("{"))); !errors.Is(err, asynq.SkipRetry) {
+		t.Fatal("invalid cleanup payload retried", err)
 	}
 }

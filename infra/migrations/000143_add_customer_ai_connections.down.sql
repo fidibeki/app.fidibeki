@@ -4,7 +4,7 @@ DO $$ BEGIN
        OR EXISTS(SELECT 1 FROM ai_processing_runs WHERE billing_mode='customer' OR char_length(model)>120)
        OR EXISTS(SELECT 1 FROM ai_gemini_files WHERE deleted_at IS NULL)
        OR EXISTS(SELECT 1 FROM widget_rules WHERE ai_processing->>'billing_mode'='customer') THEN
-        RAISE EXCEPTION 'Disable BYOK and finish connection/file cleanup before rolling down migration 138';
+        RAISE EXCEPTION 'Disable BYOK and finish connection/file cleanup before rolling down migration 143';
     END IF;
 END $$;
 ALTER TABLE ai_gemini_files DROP COLUMN connection_id, DROP COLUMN config_version, DROP COLUMN credential_version, DROP COLUMN credential_envelope, DROP COLUMN provider;

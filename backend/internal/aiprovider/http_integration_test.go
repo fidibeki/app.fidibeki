@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -23,12 +24,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type rejectedValidation struct{}
+type rejectedValidation struct{ ready bool }
 
-func (rejectedValidation) Models(context.Context, aiprovider.Connection, aiprovider.Secret) ([]aiprovider.Model, error) {
+func (v *rejectedValidation) Models(context.Context, aiprovider.Connection, aiprovider.Secret) ([]aiprovider.Model, error) {
+	if v.ready {
+		return []aiprovider.Model{{ID: "fixture-model"}}, nil
+	}
 	return nil, &aiprovider.Failure{Code: "models_unavailable"}
 }
-func (rejectedValidation) Validate(context.Context, aiprovider.Connection, aiprovider.Secret, string, []string) (aiprovider.Model, error) {
+func (v *rejectedValidation) Validate(_ context.Context, _ aiprovider.Connection, _ aiprovider.Secret, model string, inputs []string) (aiprovider.Model, error) {
+	if v.ready {
+		return aiprovider.Model{ID: model, Inputs: inputs, Validated: true}, nil
+	}
 	return aiprovider.Model{}, &aiprovider.Failure{Code: "unauthenticated"}
 }
 
@@ -46,8 +53,9 @@ func TestCustomerConnectionHTTPPermissionsAndSafeValidationStatus(t *testing.T) 
 		t.Fatal(err)
 	}
 	router := chi.NewRouter()
+	tester := &rejectedValidation{}
 	cs := aiprovider.Store{Database: pool, Keys: keys}
-	aiprovider.RegisterRoutes(router, aiprovider.HTTPOptions{Store: cs, JWT: jwt, Tester: rejectedValidation{}, Allowed: func(string, string) bool { return true }, ManagedAvailable: true})
+	aiprovider.RegisterRoutes(router, aiprovider.HTTPOptions{Store: cs, JWT: jwt, Tester: tester, Allowed: func(string, string) bool { return true }, ManagedAvailable: true})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{BaseDomain: "localhost", Resolver: tenant.ResolverFunc(func(context.Context, string) (tenant.Tenant, error) {
 		return tenant.Tenant{ID: testTenantID, Slug: "ai-tenant", Plan: tenant.PlanGrowth, Status: tenant.StatusActive}, nil
 	}), Begin: db.BeginFromPool(pool)})(router)
@@ -97,6 +105,21 @@ func TestCustomerConnectionHTTPPermissionsAndSafeValidationStatus(t *testing.T) 
 	response = request("GET", "/v1/ai/connections/"+created.Connection.ID+"/models", "", permissions)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"manual_model_supported":true`) {
 		t.Fatalf("discovery fallback: %d %s", response.Code, response.Body)
+	}
+	tester.ready = true
+	response = request("GET", "/v1/ai/connections/"+created.Connection.ID+"/models", "", permissions)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"discovery_available":true`) {
+		t.Fatalf("model discovery: %s", response.Body)
+	}
+	for _, invalid := range []string{`{"model":"","input_categories":["feedback_text"]}`, `{"model":"fixture-model","input_categories":["video"]}`} {
+		response = request("POST", "/v1/ai/connections/"+created.Connection.ID+"/validate", invalid, permissions)
+		if response.Code != 422 {
+			t.Fatalf("invalid validation accepted: %d", response.Code)
+		}
+	}
+	response = request("POST", "/v1/ai/connections/"+created.Connection.ID+"/validate", `{"model":"fixture-model","input_categories":["feedback_text"]}`, permissions)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"valid":true`) {
+		t.Fatalf("validation success: %s", response.Body)
 	}
 	if response = request("PATCH", "/v1/ai/connections/"+created.Connection.ID, body, permissions); response.Code != 409 {
 		t.Fatalf("stale update accepted: %d %s", response.Code, response.Body)
@@ -213,6 +236,121 @@ func seedAIFeedback(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tenant_members (id,tenant_id,email,permissions) VALUES ($1,$2,'analyst@ai-tenant.test',ARRAY['feedback:update'])`, testMemberID, testTenantID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidatedDestinationChangesRequireFreshAuthorization(t *testing.T) {
+	if testing.Short() {
+		t.Skip("PostgreSQL integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	pool := aiTestDatabase(t, ctx)
+	seedAIFeedback(t, ctx, pool)
+	keys, err := aiprovider.NewKeyring("v1", map[string]string{"v1": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := aiprovider.Store{Database: pool, Keys: keys}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	input := aiprovider.Input{Name: "Compatible account", Provider: aiprovider.CustomOpenAI, BaseURL: "https://api.example.com/v1", Credential: "fixture-key", Enabled: true, IsDefault: true}
+	c, err := store.Create(ctx, tx, testTenantID, testMemberID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := aiprovider.Selection{BillingMode: aiprovider.Customer, Provider: c.Provider, ConnectionID: c.ID, ConfigVersion: c.ConfigVersion, Model: "model"}
+	model := aiprovider.Model{ID: "model", Inputs: []string{"feedback_text"}, Validated: true}
+	if err = store.RecordValidation(ctx, tx, c, testMemberID, model, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, selection, model.Inputs); err != nil {
+		t.Fatal(err)
+	}
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, selection, []string{"screenshot"}); !errors.Is(err, aiprovider.ErrUnvalidated) {
+		t.Fatal("untested input accepted", err)
+	}
+	input.BaseURL = "https://new.example.com/v1"
+	input.Revision = c.Revision
+	input.Credential = ""
+	if _, err = store.Update(ctx, tx, testTenantID, testMemberID, c.ID, input); !errors.Is(err, aiprovider.ErrInvalid) {
+		t.Fatal("destination reused secret", err)
+	}
+	input.Credential = "replacement-fixture-key"
+	changed, err := store.Update(ctx, tx, testTenantID, testMemberID, c.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.ConfigVersion != c.ConfigVersion+1 || changed.CredentialVersion != c.CredentialVersion+1 || len(changed.Models) != 0 {
+		t.Fatal("destination retained authorization")
+	}
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, selection, model.Inputs); !errors.Is(err, aiprovider.ErrUnvalidated) {
+		t.Fatal("old selection survived", err)
+	}
+	if err = store.RecordValidation(ctx, tx, c, testMemberID, model, nil); !errors.Is(err, aiprovider.ErrConflict) {
+		t.Fatal("stale validation accepted", err)
+	}
+	if err = store.RecordValidation(ctx, tx, changed, testMemberID, model, nil); err != nil {
+		t.Fatal(err)
+	}
+	selection.ConfigVersion = changed.ConfigVersion
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, selection, model.Inputs); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.RecordValidation(ctx, tx, changed, testMemberID, model, &aiprovider.Failure{Code: "model_unavailable"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, selection, model.Inputs); !errors.Is(err, aiprovider.ErrUnvalidated) {
+		t.Fatal("failed revalidation retained access", err)
+	}
+	input.Name = "Second account"
+	second, err := store.Create(ctx, tx, testTenantID, testMemberID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Get(ctx, tx, testTenantID, c.ID)
+	if err != nil || first.IsDefault || !second.IsDefault {
+		t.Fatal("multiple default accounts", err)
+	}
+	role, err := store.Create(ctx, tx, testTenantID, testMemberID, aiprovider.Input{Name: "AWS role", Provider: aiprovider.Bedrock, Region: "eu-west-1", AuthMode: "role", RoleARN: "arn:aws:iam::123456789012:role/customer", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role.ExternalID == "" {
+		t.Fatal("role missing external ID")
+	}
+	secret, err := store.Credential(ctx, tx, role)
+	if err != nil || secret.Value != "" {
+		t.Fatal("role persisted supplied key", err)
+	}
+	role.Enabled = false
+	if _, err = store.Credential(ctx, tx, role); !errors.Is(err, aiprovider.ErrDisabled) {
+		t.Fatal("disabled account credential disclosed", err)
+	}
+	role.Enabled = true
+	expired := time.Now().Add(-time.Minute)
+	role.CredentialExpiresAt = &expired
+	if _, err = store.Credential(ctx, tx, role); err == nil {
+		t.Fatal("expired credential disclosed")
+	}
+	role.CredentialExpiresAt = nil
+	role.CredentialVersion = 999
+	if _, err = store.Credential(ctx, tx, role); !errors.Is(err, aiprovider.ErrNotFound) {
+		t.Fatal("missing key version disclosed", err)
+	}
+	for _, invalid := range []aiprovider.Selection{{BillingMode: "unknown"}, {BillingMode: aiprovider.Managed, ConnectionID: c.ID, Provider: aiprovider.Google}, {BillingMode: aiprovider.Customer, ConnectionID: "bad-id", Model: "model"}} {
+		if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, invalid, model.Inputs); !errors.Is(err, aiprovider.ErrInvalid) {
+			t.Fatal("invalid selection accepted", err)
+		}
+	}
+	if err = aiprovider.ValidateSelection(ctx, tx, testTenantID, aiprovider.Selection{BillingMode: aiprovider.Managed, Provider: aiprovider.Google}, model.Inputs); err != nil {
+		t.Fatal("managed selection rejected", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

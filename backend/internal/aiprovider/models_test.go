@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +84,58 @@ func TestExpiredBedrockKeyCanBeDisabledButNotEnabled(t *testing.T) {
 	input.Enabled = false
 	if _, err := ValidateInput(input); err != nil {
 		t.Fatal("expired connection cannot be disabled", err)
+	}
+}
+
+func TestConnectionInputBoundsAndAWSAuthentication(t *testing.T) {
+	for _, input := range []Input{
+		{Name: "Account", Provider: "unknown"},
+		{Provider: OpenAI},
+		{Name: strings.Repeat("n", 101), Provider: OpenAI},
+		{Name: "Account", Provider: OpenAI, Credential: strings.Repeat("k", 16385)},
+		{Name: "Account", Provider: OpenAI, RPM: 121},
+		{Name: "Account", Provider: OpenAI, Concurrency: 9},
+		{Name: "Account", Provider: OpenAI, DefaultModel: "model with spaces"},
+		{Name: "AWS", Provider: Bedrock, AuthMode: "role", RoleARN: "arn:aws:iam::123456789012:role/customer"},
+		{Name: "AWS", Provider: Bedrock, Region: "eu-west-1", AuthMode: "role", RoleARN: "not-a-role"},
+		{Name: "AWS", Provider: Bedrock, Region: "eu-west-1", AuthMode: "api_key"},
+		{Name: "AWS", Provider: Bedrock, Region: "eu-west-1", AuthMode: "ambient"},
+	} {
+		if _, err := ValidateInput(input); err == nil {
+			t.Errorf("accepted invalid configuration: %s %s", input.Name, input.Provider)
+		}
+	}
+	if ValidModelID(strings.Repeat("m", 513), false) || ValidModelID("", false) || ValidModelID("model?query", false) || !ValidModelID("model-v1", false) {
+		t.Fatal("model identifier bounds failed")
+	}
+	if _, ok := Lookup("unknown"); ok {
+		t.Fatal("unknown provider present")
+	}
+	if Supports([]string{"feedback_text"}, "audio") || !Supports([]string{"feedback_text"}, "feedback_text") {
+		t.Fatal("input capability mismatch")
+	}
+}
+
+func TestKeyringRejectsMissingKeysAndMalformedEnvelopes(t *testing.T) {
+	for _, keys := range []map[string]string{{}, {"v1": "not base64"}, {"v1": base64.StdEncoding.EncodeToString([]byte("too short"))}} {
+		if _, err := NewKeyring("v1", keys); err == nil {
+			t.Fatal("invalid keyring accepted")
+		}
+	}
+	var unavailable *Keyring
+	if _, err := unavailable.Encrypt("secret", "aad"); err == nil {
+		t.Fatal("nil encryption key accepted")
+	}
+	if _, err := unavailable.Decrypt(nil, "aad"); err == nil {
+		t.Fatal("nil decryption key accepted")
+	}
+	key, err := NewKeyring("v1", map[string]string{"v1": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{`{`, `{"v":2}`, `{"v":1,"key":"retired","data":"YQ=="}`, `{"v":1,"key":"v1","data":"YQ=="}`} {
+		if _, err = key.Decrypt([]byte(data), "aad"); err == nil {
+			t.Fatal("malformed or unavailable envelope decrypted")
+		}
 	}
 }
