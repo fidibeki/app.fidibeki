@@ -63,3 +63,20 @@ For authority, a real customer case study and useful integration guides offer ma
 The product now links visitor messages to issues, with a return path for manual chat replies. `/features/website-conversations` explains this implemented workflow and links to issue tracking and the separate opted-in reporter email flow. It is available in all four locales and included in generated canonical/hreflang metadata, sitemap, Markdown and `llms.txt`. Comparison tables now start with conversation and follow-up, before discussing prices. Canny comparisons acknowledge private boards and roadmaps.
 
 Evaluate this positioning through trial activation and customer interviews; no ranking or conversion improvement has been measured. A useful activation event to define is completing the first visitor message → issue → reply journey. Existing analytics do not yet measure that full product journey.
+
+### Buying intent and practical guides, 2 October 2026
+
+The homepage title and visible demo introduction target website feedback for SaaS teams. The existing widget and conversations pages now use descriptive category headings, preserving their established URLs. This avoids duplicate landing pages for small keyword variations.
+
+Published in EN, PT, ES and FR:
+
+| Intent hypothesis | Page | Reader outcome |
+| --- | --- | --- |
+| Website feedback tool for a small SaaS team | `/guides/choose-website-feedback-tool` | Choose a workflow, run a complete trial, compare limits and identify situations where another category is a better fit. |
+| Website bug report template | `/guides/website-bug-report-template` | Reuse concrete questions, understand a mobile example and follow a report through investigation and reply. |
+
+The guide index is linked from the footer. Relevant feature pages link to guides, and guides link back to features, pricing and sourced competitor comparisons. Each guide has visible publisher/date information and matching Article data, localized canonical/hreflang, a Markdown version and an entry in the sitemap and `llms.txt`. There are now 48 indexable routes in four locales, 192 HTML pages and 192 Markdown versions.
+
+The new guides answer practical product questions and avoid invented customer stories, rankings or keyword-volume claims. Editorial references: [Google's helpful-content guidance](https://developers.google.com/search/docs/fundamentals/creating-helpful-content) and [descriptive title guidance](https://developers.google.com/search/docs/appearance/title-link). Their presence alone is not evidence of improved search performance.
+
+Authority work remains external. With authorization and real evidence, the next useful steps are a customer case study showing an actual conversation-to-fix journey, an integration tutorial a partner can reference, and relevant product-directory profiles with consistent product details. Track the referring page, date, relevance and whether the link is live. Do not buy links, fabricate testimonials or send unsolicited outreach from this task. Search Console access remains necessary to establish the non-branded baseline and track results; no property verification or sitemap submission has been claimed.

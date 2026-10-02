@@ -224,7 +224,8 @@ func TestWebsiteChatJourney(t *testing.T) {
 	base := "/v1/projects/" + projectID + "/chat"
 	request("POST", "/v1/widget/chat/session", "", map[string]any{}, 403)
 	request("PUT", base+"/settings", token, map[string]any{"enabled": true}, 200)
-	session := request("POST", "/v1/widget/chat/session", "", map[string]any{}, 201)
+	request("POST", "/v1/widget/chat/session", "", map[string]any{"locale": "<invalid>"}, 400)
+	session := request("POST", "/v1/widget/chat/session", "", map[string]any{"locale": "pt-pt"}, 201)
 	var visitorToken, visitorID string
 	if err = json.Unmarshal(session["token"], &visitorToken); err != nil {
 		t.Fatal(err)
@@ -258,22 +259,41 @@ func TestWebsiteChatJourney(t *testing.T) {
 		testIssueLinks(t, ctx, pool, begin, jwt, token, tenantID, projectID, visitorID, request)
 	})
 	t.Run("presence, read markers and inbox are scoped to the website", func(t *testing.T) {
+		initial := request("GET", base+"/visitors/"+visitorID, token, nil, 200)
+		var before Conversation
+		if err := json.Unmarshal(initial["conversation"], &before); err != nil {
+			t.Fatal(err)
+		}
+		if before.Locale != "pt-PT" {
+			t.Fatalf("session locale = %q", before.Locale)
+		}
 		tab := uuid.NewString()
-		request("PUT", "/v1/widget/chat/presence", visitorToken, map[string]any{"tab_id": tab, "page_url": "https://shop.test/orders/private?token=secret", "state": "active"}, 204)
+		request("PUT", "/v1/widget/chat/presence", visitorToken, map[string]any{"tab_id": tab, "page_url": "https://shop.test/orders/private?token=secret", "state": "active", "locale": "pt-ao"}, 204)
 		online := request("GET", base+"/online", token, nil, 200)
 		var visitors []map[string]any
 		if err = json.Unmarshal(online["visitors"], &visitors); err != nil {
 			t.Fatal(err)
 		}
-		if len(visitors) != 1 || visitors[0]["id"] != visitorID || visitors[0]["page_url"] != "https://shop.test/" {
+		if len(visitors) != 1 || visitors[0]["id"] != visitorID || visitors[0]["page_url"] != "https://shop.test/" || visitors[0]["locale"] != "pt-AO" {
 			t.Fatalf("bad presence: %s", online["visitors"])
 		}
 		inbox := request("GET", base+"/conversations", token, nil, 200)
 		if err = json.Unmarshal(inbox["conversations"], &visitors); err != nil {
 			t.Fatal(err)
 		}
-		if len(visitors) != 1 || visitors[0]["unread"] != float64(1) {
+		if len(visitors) != 1 || visitors[0]["unread"] != float64(1) || visitors[0]["locale"] != "pt-AO" {
 			t.Fatalf("bad inbox: %s", inbox["conversations"])
+		}
+		// Older widgets omit locale; they must not erase the saved preference.
+		request("PUT", "/v1/widget/chat/presence", visitorToken, map[string]any{"tab_id": tab, "page_url": "https://shop.test/", "state": "idle"}, 204)
+		request("PUT", "/v1/widget/chat/presence", visitorToken, map[string]any{"tab_id": tab, "page_url": "https://shop.test/", "state": "idle", "locale": "en-US-x-private"}, 400)
+		current := request("GET", base+"/visitors/"+visitorID, token, nil, 200)
+		var after Conversation
+		if err := json.Unmarshal(current["conversation"], &after); err != nil {
+			t.Fatal(err)
+		}
+		if after.Locale != "pt-AO" || !after.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Fatalf("heartbeat changed conversation: %+v", after)
 		}
 		request("POST", base+"/visitors/"+visitorID+"/read", token, map[string]any{"sequence": 2}, 204)
 		thread = request("GET", base+"/visitors/"+visitorID, token, nil, 200)

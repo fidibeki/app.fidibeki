@@ -10,6 +10,7 @@ export interface ChatMessage {
   created_at: string
 }
 export interface ChatConversation {
+  locale?: string
   id: string
   project_id: string
   name: string
@@ -22,7 +23,7 @@ export interface ChatConversation {
   preview: string
 }
 export interface ChatThread { allow_visitor_messages?: boolean; conversation: ChatConversation | null; messages: ChatMessage[]; has_more: boolean }
-export interface ChatVisitor { id: string; name: string; page_url: string; state: 'active' | 'idle'; last_seen: string }
+export interface ChatVisitor { locale?: string; id: string; name: string; page_url: string; state: 'active' | 'idle'; last_seen: string }
 export const emptyChat = (): ChatThread => ({ conversation: null, messages: [], has_more: false })
 export function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   return [...new Map([...current, ...incoming].map(message => [message.id, message])).values()].sort((a, b) => a.sequence - b.sequence)

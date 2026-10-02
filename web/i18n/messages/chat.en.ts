@@ -1,4 +1,7 @@
 export const chatMessages = {
+ browserLocale: "Browser language",
+ browserLocaleUnknown: "Browser language unavailable",
+ browserLocaleHint: "Preferred browser language, not a verified location.",
  issues: {
   "linked": "Tracked issues",
   "track": "Track an issue",

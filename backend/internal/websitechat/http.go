@@ -389,9 +389,15 @@ func (h *Handler) settings(r *http.Request, s *scope) (any, error) {
 	return map[string]any{"enabled": s.enabled, "allow_visitor_messages": s.allowVisitorMessages}, nil
 }
 func (h *Handler) session(r *http.Request, s *scope) (any, error) {
-	var input struct{}
+	var input struct {
+		Locale string `json:"locale"`
+	}
 	if err := decode(r, &input); err != nil {
 		return nil, err
+	}
+	locale, valid := normalizeVisitorLocale(input.Locale)
+	if !valid {
+		return nil, invalid()
 	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
@@ -400,7 +406,7 @@ func (h *Handler) session(r *http.Request, s *scope) (any, error) {
 	token := s.visitorID + "." + base64.RawURLEncoding.EncodeToString(secret)
 	hash := sha256.Sum256([]byte(token))
 	expires := time.Now().UTC().Add(24 * time.Hour)
-	_, err := s.tx.Exec(r.Context(), `INSERT INTO website_chat_visitors(id,tenant_id,project_id,origin,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, s.visitorID, s.tenantID, s.projectID, s.origin, hash[:], expires)
+	_, err := s.tx.Exec(r.Context(), `INSERT INTO website_chat_visitors(id,tenant_id,project_id,origin,token_hash,expires_at,locale) VALUES($1,$2,$3,$4,$5,$6,$7)`, s.visitorID, s.tenantID, s.projectID, s.origin, hash[:], expires, locale)
 	return map[string]any{"token": token, "visitor_id": s.visitorID, "expires_at": expires}, err
 }
 func messageInput(r *http.Request) (string, string, error) {

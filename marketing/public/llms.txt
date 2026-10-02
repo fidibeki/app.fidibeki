@@ -24,6 +24,11 @@ The linked Markdown pages are generated from the same published content as the w
 - [Fidibeki vs BugHerd](https://fidibeki.com/fidibeki-vs-bugherd.md): Live product feedback and client design review.
 - [Fidibeki vs Canny](https://fidibeki.com/fidibeki-vs-canny.md): Private reports, public voting and roadmaps.
 
+## Practical guides
+
+- [Choose a website feedback tool](https://fidibeki.com/guides/choose-website-feedback-tool.md): A purchasing checklist for small SaaS teams, including workflow fit, trial tasks and plan limits.
+- [Website bug report template](https://fidibeki.com/guides/website-bug-report-template.md): Questions to ask, a mobile example and a follow-up checklist.
+
 ## Documentation
 
 - [Documentation overview](https://fidibeki.com/docs.md): Installation and configuration guides.

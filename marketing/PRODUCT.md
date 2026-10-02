@@ -39,7 +39,7 @@ Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing 
 
 ## Languages and discovery
 
-English is the unprefixed default; Portuguese, Spanish and French use `/pt`, `/es` and `/fr`. All 45 pages are available in all four languages, including documentation and policies. Use European Portuguese. Preserve pricing and product facts across translations. Each page has localized metadata, a canonical URL, reciprocal language links and a generated Markdown version. The curated `/llms.txt` links to those versions. These files support content discovery; they do not promise search rankings or AI citations.
+English is the unprefixed default; Portuguese, Spanish and French use `/pt`, `/es` and `/fr`. All 48 pages are available in all four languages, including documentation and policies. Use European Portuguese. Preserve pricing and product facts across translations. Each page has localized metadata, a canonical URL, reciprocal language links and a generated Markdown version. The curated `/llms.txt` links to those versions. These files support content discovery; they do not promise search rankings or AI citations.
 
 ## Comparison pages
 

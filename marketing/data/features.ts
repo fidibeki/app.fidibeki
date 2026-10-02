@@ -3,7 +3,7 @@ import type { FeatureEntry } from './types'
 export const features: FeatureEntry[] = [
 {
   "slug": "website-conversations",
-  "name": "Website conversations",
+  "name": "Live chat for SaaS teams",
   "loopStage": "Communicate",
   "icon": "message-circle",
   "availability": "All plans",
@@ -42,7 +42,7 @@ export const features: FeatureEntry[] = [
 },
   {
     slug: 'feedback-widget',
-    name: 'Feedback widget',
+    name: 'Website feedback widget',
     loopStage: 'Capture',
     tagline: 'Collect feedback where it happens, with tools reporters choose to use.',
     summary:

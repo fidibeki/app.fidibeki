@@ -6,7 +6,7 @@ const origin = `http://acme.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
 const now = new Date().toISOString()
 const tenant = { id: 'tenant-1', name: 'Acme Studio', slug: 'acme', plan: 'growth', status: 'active', default_locale: 'en', default_timezone: 'UTC', widget_appearance_defaults: {}, logo_version: null }
 const member = { id: 'member-chat', tenant_id: tenant.id, email: 'operator@example.test', name: 'Operator', permissions: [...allTenantPermissions], status: 'active', role: 'owner', verified: true, locale: 'en', timezone: 'UTC', avatar_version: null }
-const conversation = (id: number) => ({ id: String(id), project_id: 'project-chat', name: `Visitor ${id}`, last_sequence: 100, operator_read_sequence: 100, visitor_read_sequence: 100, updated_at: now, expires_at: new Date(Date.now() + 86400000).toISOString(), unread: 0, preview: 'Hello' })
+const conversation = (id: number) => ({ id: String(id), project_id: 'project-chat', name: `Visitor ${id}`, locale: 'pt-AO', last_sequence: 100, operator_read_sequence: 100, visitor_read_sequence: 100, updated_at: now, expires_at: new Date(Date.now() + 86400000).toISOString(), unread: 0, preview: 'Hello' })
 const message = (id: string, sequence: number) => ({ id: `${id}-${sequence}`, sequence, client_id: `${id}-${sequence}`, sender_type: 'operator', sender_name: 'Operator', body: `History ${id} message ${sequence}`, created_at: now })
 
 test('inbox refresh preserves loaded pages and older history remains usable after switching visitors', async ({ page }) => {
@@ -47,7 +47,9 @@ test('inbox refresh preserves loaded pages and older history remains usable afte
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await expect.poll(() => firstPageRequests).toBeGreaterThan(previous)
   await expect(page.locator('.chat-person')).toHaveCount(52)
+  await expect(page.locator('.chat-person').first()).toContainText('pt-AO')
   await page.locator('.chat-person').filter({ hasText: 'Visitor 51' }).click()
+  await expect(page.locator('.chat-thread-head')).toContainText('Browser language: Portuguese (Angola) pt-AO')
   const older = page.getByRole('button', { name: 'Load earlier messages', exact: true })
   await older.click()
   await expect.poll(() => olderAStarted).toBe(true)

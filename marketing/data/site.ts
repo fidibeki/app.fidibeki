@@ -1,3 +1,4 @@
+import { guideSlugs } from './guides'
 import { featureSlugs } from './features'
 import { integrationSlugs } from './integrations'
 import { useCaseSlugs } from './use-cases'
@@ -9,7 +10,7 @@ export const siteName = 'Fidibeki'
 export const siteTagline = 'Product feedback that finishes the job.'
 
 export const siteDescription =
-  'Collect website feedback and talk with visitors. Add screenshots and session replay, track issues, and update users from one shared workspace.'
+  'Collect website feedback, chat with visitors, and track the issues behind their messages. Fidibeki helps small SaaS teams follow through with a personal reply.'
 
 export const loopStages = [
   {
@@ -110,6 +111,7 @@ export const footerGroups = [
   {
     heading: 'Resources',
     links: [
+      { label: 'Guides', to: '/guides' },
       { label: 'Documentation', to: '/docs' },
       { label: 'Install the widget', to: '/docs/installation' },
       { label: 'Widget rules', to: '/docs/widget-rules' },
@@ -146,6 +148,8 @@ export const marketingRoutes: string[] = [
   '/integrations',
   ...integrationSlugs.map((slug) => `/integrations/${slug}`),
   '/pricing',
+  '/guides',
+  ...guideSlugs.map(slug => `/guides/${slug}`),
   '/docs',
   ...docSlugs.map((slug) => `/docs/${slug}`),
   '/use-cases',

@@ -15,6 +15,7 @@ import (
 const presenceTTL = 60 * time.Second
 
 type Presence struct {
+	Locale   string    `json:"locale,omitempty"`
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
 	PageURL  string    `json:"page_url"`
@@ -39,11 +40,16 @@ func presenceKey(s *scope, tab string) string {
 }
 func (h *Handler) presence(r *http.Request, s *scope) (any, error) {
 	var input struct {
+		Locale  string `json:"locale"`
 		TabID   string `json:"tab_id"`
 		PageURL string `json:"page_url"`
 		State   string `json:"state"`
 	}
 	if decode(r, &input) != nil || !validID(input.TabID) || (input.State != "active" && input.State != "idle") || len(input.PageURL) > 2048 {
+		return nil, invalid()
+	}
+	locale, valid := normalizeVisitorLocale(input.Locale)
+	if !valid {
 		return nil, invalid()
 	}
 	u, err := url.Parse(input.PageURL)
@@ -62,7 +68,13 @@ func (h *Handler) presence(r *http.Request, s *scope) (any, error) {
 			safe = location.Target
 		}
 	}
-	p := Presence{ID: s.visitorID, PageURL: safe, State: input.State, LastSeen: time.Now().UTC()}
+	// A heartbeat must not change inbox order or extend conversation retention.
+	if locale != "" {
+		if _, err = s.tx.Exec(r.Context(), `UPDATE website_chat_visitors SET locale=$2 WHERE id=$1 AND locale<>$2`, s.visitorID, locale); err != nil {
+			return nil, err
+		}
+	}
+	p := Presence{Locale: locale, ID: s.visitorID, PageURL: safe, State: input.State, LastSeen: time.Now().UTC()}
 	data, err := json.Marshal(p)
 	if err != nil {
 		return nil, err
@@ -137,25 +149,26 @@ func (h *Handler) online(r *http.Request, s *scope) (any, error) {
 	if len(ids) == 0 {
 		return response(truncated), nil
 	}
-	rows, err := s.tx.Query(r.Context(), `SELECT id FROM website_chat_visitors WHERE id=ANY($1::uuid[]) AND expires_at>now()`, ids)
+	rows, err := s.tx.Query(r.Context(), `SELECT id,locale FROM website_chat_visitors WHERE id=ANY($1::uuid[]) AND expires_at>now()`, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	valid := map[string]bool{}
+	valid := map[string]string{}
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var id, locale string
+		if err = rows.Scan(&id, &locale); err != nil {
 			return nil, err
 		}
-		valid[id] = true
+		valid[id] = locale
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
 	for _, id := range ids {
-		if valid[id] {
+		if locale, exists := valid[id]; exists {
 			p := byID[id]
+			p.Locale = locale
 			p.Name = "Visitor " + id[:8]
 			result = append(result, p)
 		}

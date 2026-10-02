@@ -4,6 +4,7 @@ const { copy } = useMarketingI18n()
 import { Check } from '@lucide/vue'
 import { featureBySlug, features } from '~/data/features'
 import { competitors, versusPath } from '~/data/comparisons'
+import { guides } from '~/data/guides'
 import { featurePhotography } from '~/data/photography'
 
 const route = useRoute()
@@ -20,6 +21,7 @@ if (!feature) {
 const comparisons = competitors.filter((entry) =>
   entry.featureSlugs.includes(feature.slug),
 )
+const reading = guides.filter(guide => guide.related.some(link => link.to === `/features/${feature.slug}`))
 const links = useAppLinks()
 
 const related = feature.related
@@ -75,6 +77,10 @@ useSiteMeta({
           <DetailSections :sections="feature.sections" />
         </div>
         <aside class="detail-aside">
+          <div v-if="reading.length" class="aside-section">
+            <h2 class="aside-heading">{{ copy('Related reading') }}</h2>
+            <ul class="aside-related"><li v-for="guide in reading" :key="guide.slug"><NuxtLinkLocale :to="`/guides/${guide.slug}`">{{ copy(guide.title) }}</NuxtLinkLocale></li></ul>
+          </div>
           <div class="aside-section">
             <h2 class="aside-heading">{{ copy('At a glance') }}</h2>
             <ul class="aside-list">

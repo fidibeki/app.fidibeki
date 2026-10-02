@@ -26,7 +26,7 @@ const siteUrl = config.public.siteUrl.replace(/\/$/, '')
 const widgetTestimonialsKey = config.public.widgetTestimonialsKey
 const starter = plans.find((plan) => plan.id === 'starter')!
 useSiteMeta(() => ({
-  title: 'Website feedback widget & live chat',
+  title: 'Website feedback widget for SaaS teams',
   description: siteDescription,
   path: '/',
   structuredData: [

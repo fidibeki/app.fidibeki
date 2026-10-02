@@ -205,7 +205,7 @@ onBeforeUnmount(() => {
     >
       <h1 id="home-title">{{ copy('What could be better?') }}</h1>
       <p class="home-intro">
-        {{ copy('Website feedback and live chat, in one widget.') }}
+        {{ copy('Website feedback and live chat for SaaS teams.') }}
       </p>
       <form
         v-if="!submitted"

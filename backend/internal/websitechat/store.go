@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const visitorColumns = `id,project_id,last_sequence,visitor_read_sequence,operator_read_sequence,updated_at,expires_at`
+const visitorColumns = `id,project_id,last_sequence,visitor_read_sequence,operator_read_sequence,updated_at,expires_at,locale`
 
 func scanVisitor(row pgx.Row) (Conversation, error) {
 	var c Conversation
-	err := row.Scan(&c.ID, &c.ProjectID, &c.LastSequence, &c.VisitorReadSequence, &c.OperatorReadSequence, &c.UpdatedAt, &c.ExpiresAt)
+	err := row.Scan(&c.ID, &c.ProjectID, &c.LastSequence, &c.VisitorReadSequence, &c.OperatorReadSequence, &c.UpdatedAt, &c.ExpiresAt, &c.Locale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, missing()
 	}
@@ -143,7 +143,7 @@ func (h *Handler) inbox(r *http.Request, s *scope) (any, error) {
 	result := []Conversation{}
 	for rows.Next() {
 		var c Conversation
-		if err = rows.Scan(&c.ID, &c.ProjectID, &c.LastSequence, &c.VisitorReadSequence, &c.OperatorReadSequence, &c.UpdatedAt, &c.ExpiresAt, &c.Unread, &c.Preview); err != nil {
+		if err = rows.Scan(&c.ID, &c.ProjectID, &c.LastSequence, &c.VisitorReadSequence, &c.OperatorReadSequence, &c.UpdatedAt, &c.ExpiresAt, &c.Locale, &c.Unread, &c.Preview); err != nil {
 			return nil, err
 		}
 		c.Name = "Visitor " + c.ID[:8]

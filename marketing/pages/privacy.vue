@@ -137,6 +137,9 @@ useSiteMeta({
             }}
           </p>
 
+          <h2 id="website-conversations">{{ copy('Website conversation data') }}</h2>
+          <p>{{ copy("When a website enables chat, a separate browser session supports the conversation and online presence. The website team can see the visitor's messages, activity state, privacy-filtered page location and preferred browser language, including its regional variant when available. Browser language helps the team choose a language for its reply; it does not verify the visitor's location or nationality. The last reported language is kept with the conversation. This chat session is separate from optional analytics, targeting and replay consent.") }}</p>
+
           <h2 id="widget-consent">
             {{ copy('Widget analytics and storage consent') }}
           </h2>

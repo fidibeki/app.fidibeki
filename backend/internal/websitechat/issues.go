@@ -194,7 +194,7 @@ func (h *Handler) issueConversations(r *http.Request, s *scope) (any, error) {
 	rows, err := s.tx.Query(r.Context(), `WITH RECURSIVE family AS (
   SELECT id FROM issues WHERE tenant_id=$1 AND project_id=$2 AND id=$3
   UNION SELECT i.id FROM issues i JOIN family f ON i.merged_into_id=f.id WHERE i.tenant_id=$1 AND i.project_id=$2
- ) SELECT DISTINCT v.id,v.project_id,v.last_sequence,v.visitor_read_sequence,v.operator_read_sequence,v.updated_at,v.expires_at
+ ) SELECT DISTINCT v.id,v.project_id,v.last_sequence,v.visitor_read_sequence,v.operator_read_sequence,v.updated_at,v.expires_at,v.locale
  FROM website_chat_issue_links l JOIN family f ON f.id=l.issue_id JOIN website_chat_visitors v ON v.id=l.visitor_id
  ORDER BY v.updated_at DESC,v.id LIMIT 501`, s.tenantID, s.projectID, issueID)
 	if err != nil {

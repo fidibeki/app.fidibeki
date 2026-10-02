@@ -23,7 +23,7 @@ test('tenant talks to its own website visitor and feedback stays available', asy
     INSERT INTO projects(id,tenant_id,name,public_key,allowed_domains) VALUES('${project}','${tenant}','Field Store website','${key}',ARRAY['shop.localhost']);
     INSERT INTO widget_rules(project_id,name,matcher_type,trigger_type,trigger_delay_seconds,localizations) VALUES('${project}','Website feedback','all_pages','delay',0,'{"en":{"launcher_label":"Feedback","prompt":"How was your visit?","comment_placeholder":"Tell us more","contact_label":"Email","consent_label":"Email me","submit_label":"Send feedback","success_message":"Your feedback was sent."}}');
     INSERT INTO widget_rule_target_conditions(widget_rule_id,kind,matcher_type,position) SELECT id,'include','all_pages',0 FROM widget_rules WHERE project_id='${project}';`)
-  const operatorContext = await browser.newContext(), visitorContext = await browser.newContext()
+  const operatorContext = await browser.newContext(), visitorContext = await browser.newContext({ locale: 'pt-PT' })
   await operatorContext.addCookies([{ name: 'fidibeki_tenant_refresh', value: cookie, domain: app.hostname, path: '/', httpOnly: true, sameSite: 'Strict' }])
   const dashboard = await operatorContext.newPage(), site = await visitorContext.newPage()
   const errors: string[] = []
@@ -41,7 +41,10 @@ test('tenant talks to its own website visitor and feedback stays available', asy
     await expect(widget.getByRole('textbox', { name: 'Your reply', exact: true })).toBeHidden()
     await widget.getByRole('button', { name: 'Close conversation', exact: true }).click()
     await expect(dashboard.locator('.chat-person')).toHaveCount(1)
+    await expect(dashboard.locator('.chat-person')).toContainText('pt-PT')
     await dashboard.locator('.chat-person').click()
+    await expect(dashboard.locator('.chat-thread-head')).toContainText('Browser language:')
+    await expect(dashboard.locator('.chat-thread-head .visitor-locale-code')).toHaveText('pt-PT')
     await dashboard.getByRole('textbox', { name: /^Message to Visitor/ }).fill('Hi! Can I help you choose something?')
     await dashboard.getByRole('button', { name: 'Send message', exact: true }).click()
     await expect(widget.locator('.preview')).toContainText('Hi! Can I help you choose something?')
@@ -119,7 +122,10 @@ test('tenant talks to its own website visitor and feedback stays available', asy
     await dashboard.getByRole('button', { name: /^Inbox/ }).click()
     await expect(dashboard.locator('.chat-person')).toHaveCount(1)
     await expect(dashboard.locator('.chat-person')).toContainText('Hello, I would like help with my order.')
+    await expect(dashboard.locator('.chat-person')).toContainText('pt-PT')
     await dashboard.locator('.chat-person').click()
+    await expect(dashboard.locator('.chat-thread-head')).toContainText('Browser language:')
+    await expect(dashboard.locator('.chat-thread-head .visitor-locale-code')).toHaveText('pt-PT')
     await expect(dashboard.getByRole('log')).toContainText('Hello, I would like help with my order.')
     await incoming.click()
     await expect(incoming).not.toBeChecked()
